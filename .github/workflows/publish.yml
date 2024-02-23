@@ -23,5 +23,5 @@ jobs:
     - name: Publish
       run: dotnet fsi build.fsx -- -- pack push
       env:
-        VER: ${{ startsWith(github.ref_name, 'v') ? github.ref_name[1:] + '.' + github.run_number : '1.0.0.' + github.run_number }}
+        VER: ${{ startsWith(github.ref_name, 'v') && (github.ref_name.split('v')[1] + '.' + github.run_number) || ('1.0.0.' + github.run_number) }}
         NUGET_KEY: ${{ secrets.NUGET_API_KEY }}

@@ -4,7 +4,7 @@
     <AssemblyName>Xake</AssemblyName>
     <OutputType>Library</OutputType>
     <TargetFrameworks>net462;netstandard2.0</TargetFrameworks>
-    <Copyright>(c) OlegZee 2014-2024</Copyright>
+    <Copyright>(c) OlegZee 2014-2025</Copyright>
 
     <PackageProjectUrl>https://github.com/xakebuild/Xake</PackageProjectUrl>
     <PackageIconUrl>https://github.com/xakebuild/Xake/raw/dev/Icon.png</PackageIconUrl>

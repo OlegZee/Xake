@@ -1,7 +1,5 @@
 Xake is a build utility that uses the full power of the F# programming language. Xake is inspired by [shake](https://github.com/ndmitchell/shake) build tool.
 
-[![Build Status](https://travis-ci.org/xakebuild/Xake.svg?branch=dev)](https://travis-ci.org/xakebuild/Xake)
-
 ## Sample script
 
 The simple script looks like:
@@ -24,7 +22,7 @@ This script compiles helloworld assembly from helloworld.cs file.
 
 ## Getting started
 
-Make sure dotnet SDK 7.0+ is installed.
+Make sure dotnet SDK 9.0+ is installed.
 
 1. Clone the project:
 

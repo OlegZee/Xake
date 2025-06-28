@@ -1,4 +1,4 @@
-#r "nuget: Xake, 2.0.0"
+#r "nuget: Xake, 2.2.0"
 
 open Xake
 open Xake.Tasks

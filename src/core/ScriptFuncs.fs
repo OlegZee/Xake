@@ -117,7 +117,7 @@ module ScriptFuncs =
     let trace = ExecCore.traceLog
 
     /// Defines a rule that demands specified targets
-    /// e.g. "main" ==> ["build-release"; "build-debug"; "unit-test"]
+    /// e.g. "main" <== ["build-release"; "build-debug"; "unit-test"]
     let (<==) name targets = PhonyRule (name, recipe {
         do! need targets
         do! alwaysRerun()   // always check demanded dependencies. Otherwise it wan't check any target is available

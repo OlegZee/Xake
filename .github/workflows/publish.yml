@@ -1,0 +1,27 @@
+# This workflow will build a .NET project
+# For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-net
+
+name: .NET
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v3
+      with:
+        dotnet-version: 9.0.x
+    - name: Build and test
+      run: dotnet fsi build.fsx -- -- build test
+    - name: Publish
+      run: dotnet fsi build.fsx -- -- pack push
+      env:
+        VER: ${GITHUB_REF_NAME:1}.${{github.run_number}}
+        NUGET_KEY: ${{ secrets.NUGET_API_KEY }}

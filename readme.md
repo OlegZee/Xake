@@ -1,5 +1,7 @@
 Xake is a build utility that uses the full power of the F# programming language. Xake is inspired by [shake](https://github.com/ndmitchell/shake) build tool.
 
+[![Build and Test](https://github.com/OlegZee/Xake/actions/workflows/build.yml/badge.svg)](https://github.com/OlegZee/Xake/actions/workflows/build.yml)
+
 ## Sample script
 
 The simple script looks like:

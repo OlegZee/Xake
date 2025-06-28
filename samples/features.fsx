@@ -1,14 +1,14 @@
-#r "nuget: Xake, 2.0.0"
+// #r "nuget: Xake, 2.0.0"
+#r "../out/netstandard2.0/Xake.dll"
 #r "nuget: Xake.Dotnet, 1.1.4.7-beta"
 
 // This a sample Xake script to show off some features.
 //
 // USAGE:
-// * `fake run` or
-// * `dotnet restore && dotnet fake run`
+// * `dotnet fsi features.fsx` or
 // 
-// Running particular target:
-// * `dotnet fake run build.fsx -- clean`
+// Running particular targets:
+// * `dotnet fsi features.fsx -- -- clean main`
 
 open Xake
 open Xake.Tasks
@@ -43,6 +43,24 @@ do xakeScript {
                     includes "samplefile*"
                 }); verbose
             }
+        }
+
+        "dotnet-version" => recipe {
+            // this rule will run `dotnet --version` command and print the result
+            do! sh "dotnet --version" {}
+
+            // you can pass arguments and set options for the command
+            do! sh "dotnet" {
+                arg "--version"
+                logprefix "sh:dotnet-version"
+            }
+
+            // Third option with `shellCmd` builder (wont fail on error by default)
+            let! error_code = shellCmd "dotnet" {
+                args [ "sdk"]
+                arg "check"
+            }
+            ()
         }
 
         // .NET build rules
@@ -151,10 +169,10 @@ do xakeScript {
                     do! log "Fizz"  // use let!, do! to call any recipe
             
             try
-                let j = ref 3
-                while !j < 5 do
-                    do! log (sprintf "j=%i" !j)
-                    j := !j + 1                
+                let mutable j = 3
+                while j < 5 do
+                    do! log (sprintf "j=%i" j)
+                    j <- j + 1                
             with _ ->
                 do! trace Error "Exception occured!"
         }
@@ -167,6 +185,9 @@ do xakeScript {
 
             // `let! files...` above records the dependency of `fileset` target from the set of files matching `src/*.cs` pattern. Whenever file is added or removed the dependency will be triggered
             // `do! needFiles` records that `fileset` depends on *contents* of each file matching the mask. It will trigger if file size or timestamp is changed
+
+            // shorter way to express the same
+            do! dependsOn !! "src/*.cs"
         }
 
 

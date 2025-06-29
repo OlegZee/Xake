@@ -6,6 +6,7 @@ open NUnit.Framework
 open Xake
 open Xake.Tasks
 open Storage
+open System
 
 type Runtime = {Ver: string; Folder: string}
 
@@ -99,7 +100,7 @@ type ``XakeScript tests``() =
 
         File.WriteAllText("hello.cs", "empty file")
         
-        let build () = xake x.TestOptions {
+        let build () = xake {x.TestOptions with ResetDb = false} {
             rules [
                 "main" <== ["hello"]
                 "hello" ..> recipe {
@@ -112,13 +113,13 @@ type ``XakeScript tests``() =
             ]
         }
 
-        do build()
-        do build()
+        do build ()
+        do build ()
         Assert.AreEqual(1, !needExecuteCount)
 
         // now add another file and make sure target ir rebuilt
         File.WriteAllText("hello1.cs", "empty file")
-        do build()
+        do build ()
         Assert.AreEqual(2, !needExecuteCount)
 
     [<Test>]
@@ -129,7 +130,7 @@ type ``XakeScript tests``() =
 
         System.Environment.SetEnvironmentVariable("TTT", "1")
         
-        let build () = xake x.TestOptions {
+        let build () = xake { x.TestOptions with ResetDb = false } {
             rules [
                 "main" <== ["hlo"]
                 "hlo" ..> recipe {
@@ -161,42 +162,42 @@ type ``XakeScript tests``() =
     [<Test>]
     member x.``defaults target to `main` ``() =
 
-        let count = ref 0
+        let mutable count = 0
         
         do xake x.TestOptions {
             rules [
                 "main" => action {
-                    count := !count + 1
+                    count <- count + 1
                 }
             ]
         }
 
-        Assert.AreEqual(1, !count)
+        Assert.AreEqual(1, count)
 
     [<Test>]
     member x.``allows to define target in parameters``() =
 
-        let mainCount = ref 0
-        let xxxCount = ref 0
+        let mutable mainCount = 0
+        let mutable xxxCount = 0
         
         do xake {x.TestOptions with Targets = ["xxx"]} {
             rules [
                 "main" => action {
-                    mainCount := !mainCount + 1
+                    mainCount <- mainCount + 1
                 }
                 "xxx" => action {
-                    xxxCount := !xxxCount + 1
+                    xxxCount <- xxxCount + 1
                 }
             ]
         }
 
-        Assert.AreEqual(0, !mainCount)
-        Assert.AreEqual(1, !xxxCount)
+        Assert.AreEqual(0, mainCount)
+        Assert.AreEqual(1, xxxCount)
 
     [<Test; Platform("Win"); Explicit("Won't run on linux")>]
     member x.``target could be a relative``() =
 
-        let needExecuteCount = ref 0
+        let mutable needExecuteCount = 0
 
         let subdir = Directory.CreateDirectory "subd1"
         let preserveDir = Directory.GetCurrentDirectory()
@@ -208,13 +209,13 @@ type ``XakeScript tests``() =
                     "main" <== ["../subd1/a.ss"]
                     "../subd1/a.ss" ..> action {
                         do! trace Error "Running inside 'a.ss' rule"
-                        needExecuteCount := !needExecuteCount + 1
+                        needExecuteCount <- needExecuteCount + 1
                         do! writeText "ss"
                     }
                 ]
             }
 
-            Assert.AreEqual(1, !needExecuteCount)
+            Assert.AreEqual(1, needExecuteCount)
 
         finally
             Directory.SetCurrentDirectory preserveDir

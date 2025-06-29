@@ -4,6 +4,7 @@ open System.IO
 open NUnit.Framework
 
 open Xake
+open Xake.Tasks
 
 let currentDir = __SOURCE_DIRECTORY__
 let XakeOptions = ExecOptions.Default
@@ -60,6 +61,27 @@ let ``reads target lists``() =
     Assert.AreEqual(["target1"; "target2"], finalOptions.Targets)
     Assert.IsTrue !executed2
 
+[<Test>]
+let ``preserves target name case``() =
+
+    let scriptOptions = ref XakeOptions
+    let executed = ref false
+    let args = ["MyTarget"]
+
+    do xakeArgs args XakeOptions {
+        rules [
+            "MyTarget" => recipe {
+                let! opts = getCtxOptions()
+                scriptOptions := opts
+                executed := true
+            }
+        ]
+    }
+
+    let finalOptions = !scriptOptions
+    Assert.AreEqual(["MyTarget"], finalOptions.Targets)
+    Assert.IsTrue(!executed, "Rule with mixed-case name should be executed")
+
 
 [<Test; Ignore("")>]
 let ``warns on incorrect switch``() =
@@ -92,3 +114,38 @@ let ``supports ignoring command line``() =
     Assert.AreEqual(2, finalOptions.Threads)
     Assert.AreEqual("~testout~" </> "ss", finalOptions.FileLog)
     Assert.AreEqual(["main"], finalOptions.Targets)
+
+[<Test>]
+let ``resetdb ignores previously recorded information``() =
+
+    let testRoot = currentDir </> "~testout~" </> ("resetdb-" + System.Guid.NewGuid().ToString("N"))
+    let dbFile = ".xake-resetdb-test"
+    let runCount = ref 0
+
+    Directory.CreateDirectory(testRoot) |> ignore
+    File.WriteAllText(testRoot </> "input.txt", "seed")
+
+    let runBuild args =
+        xakeArgs args { XakeOptions with ProjectRoot = testRoot; DbFileName = dbFile } {
+            rules [
+                "out.txt" ..> action {
+                    do! need ["input.txt"]
+                    runCount := !runCount + 1
+                    do! writeText "result"
+                }
+            ]
+        }
+
+    try
+        runBuild ["out.txt"]
+        Assert.AreEqual(1, !runCount, "First build should execute target")
+
+        runBuild ["out.txt"]
+        Assert.AreEqual(1, !runCount, "Second build should reuse recorded database state")
+
+        runBuild ["--resetdb"; "out.txt"]
+        Assert.AreEqual(2, !runCount, "--resetdb should force target execution")
+    finally
+        try
+            Directory.Delete(testRoot, true)
+        with _ -> ()

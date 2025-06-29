@@ -35,39 +35,42 @@ Options:
   -d <name>=<value>   - defines a script variable value
   --dryrun            - prints dependency graph and estimates the build duration
   --dump              - prints dependency graph based on the last run
+  --resetdb           - reset the database before starting the build
   --progress, -p      - display progress indicator
   --noprogress, -p-   - do not display progress
 
             """
             exit(0)
         | "-t" | "/t" -> 
-            (optionsSoFar, Number ("thread count", fun o v -> {o with ExecOptions.Threads = v}))
+            optionsSoFar, Number ("thread count", fun o v -> {o with ExecOptions.Threads = v})
         | "-r" | "/r" -> 
-            (optionsSoFar, String ("root folder", fun o v -> {o with ExecOptions.ProjectRoot = v}))
+            optionsSoFar, String ("root folder", fun o v -> {o with ExecOptions.ProjectRoot = v})
         | "-fl" | "/fl" -> 
-            (optionsSoFar, String ("file log filename", fun o v -> {o with ExecOptions.FileLog = v}))
+            optionsSoFar, String ("file log filename", fun o v -> {o with ExecOptions.FileLog = v})
         | "-d" | "/d" -> 
-            (optionsSoFar, KeyValue ("variable", fun o k v -> {o with Vars = o.Vars @ [(k,v)] }))
+            optionsSoFar, KeyValue ("variable", fun o k v -> {o with Vars = o.Vars @ [(k,v)] })
         | "-ll" | "/ll" -> 
-            (optionsSoFar, String ("console verbosity", fun o s -> {o with ConLogLevel = s |> parseVerbosity }))
+            optionsSoFar, String ("console verbosity", fun o s -> {o with ConLogLevel = s |> parseVerbosity })
         | "-fll" | "/fll" -> 
-            (optionsSoFar, String ("filelog verbosity", fun o s -> {o with FileLogLevel = s |> parseVerbosity }))
+            optionsSoFar, String ("filelog verbosity", fun o s -> {o with FileLogLevel = s |> parseVerbosity })
         | "-nologo" -> 
-            ({optionsSoFar with Nologo = true}, TopLevel)
+            {optionsSoFar with Nologo = true}, TopLevel
         | "--dryrun" | "--dry-run" -> 
-            ({optionsSoFar with DryRun = true}, TopLevel)
+            {optionsSoFar with DryRun = true}, TopLevel
         | "--dump" -> 
-            ({optionsSoFar with DumpDeps = true}, TopLevel)
+            {optionsSoFar with DumpDeps = true}, TopLevel
+        | "--resetdb" -> 
+            {optionsSoFar with ResetDb = true}, TopLevel
         | "--progress" | "-p" -> 
-            ({optionsSoFar with Progress = true}, TopLevel)
+            {optionsSoFar with Progress = true}, TopLevel
         | "--noprogress" | "-p-" -> 
-            ({optionsSoFar with Progress = false}, TopLevel)
+            {optionsSoFar with Progress = false}, TopLevel
 
         | x when x.StartsWith("-") || x.StartsWith("/") ->
             printfn "Option '%s' is unrecognized" x
-            (optionsSoFar, TopLevel)
-        | x -> 
-            ({optionsSoFar with Targets = optionsSoFar.Targets @ [x]}, TopLevel)
+            optionsSoFar, TopLevel
+        | _ -> 
+            {optionsSoFar with Targets = optionsSoFar.Targets @ [arg]}, TopLevel
 
     let (|NumberVar|_|) str =
         match System.Int32.TryParse str with
@@ -79,10 +82,10 @@ Options:
         | NumberVar v -> (fn optionsSoFar v, TopLevel)
         | _ -> 
             printfn "%s needs a second argument" name
-            (optionsSoFar, TopLevel)
+            optionsSoFar, TopLevel
 
     let readString name arg optionsSoFar fn =
-        (fn optionsSoFar arg, TopLevel)
+        fn optionsSoFar arg, TopLevel
 
     let readKeyValue name (arg:string) optionsSoFar fn =
         
@@ -91,21 +94,21 @@ Options:
             | -1 -> arg,""
             | n -> arg.Substring(0, n), arg.Substring(n+1)
 
-        (fn optionsSoFar k v, TopLevel)
+        fn optionsSoFar k v, TopLevel
 
     let foldFunction state element =
         try
             match state with
-            | (optionsSoFar, TopLevel) ->
+            | optionsSoFar, TopLevel ->
                 parseTopLevel element optionsSoFar
 
-            | (optionsSoFar, Number (name, fn)) ->
+            | optionsSoFar, Number (name, fn) ->
                 readNumber name element optionsSoFar fn
 
-            | (optionsSoFar, String (name, fn)) ->
+            | optionsSoFar, String (name, fn) ->
                 readString name element optionsSoFar fn
 
-            | (optionsSoFar, KeyValue (name, fn)) ->
+            | optionsSoFar, KeyValue (name, fn) ->
                 readKeyValue name element optionsSoFar fn
         with e ->
             let argName =
@@ -115,7 +118,7 @@ Options:
                 | _ ->
                     "switch"
             printfn "Failed to parse '%s' due to %s" argName e.Message
-            (fst state, TopLevel)
+            fst state, TopLevel
 
 end
 
@@ -153,5 +156,5 @@ module Main =
     let xakeScript =
         xake ExecOptions.Default
 
-    /// Runs the set of rules - need a function accepting target list and rules
+    // Runs the set of rules - need a function accepting target list and rules
     // let run = ExecCore.runScript

@@ -10,23 +10,9 @@ let libtargets =
         -> $"out/%s{fwk}/Xake.%s{ext}"
     ]
 
-let getVersion () = recipe {
-    let! verVar = getVar "VER"
-    let! verEnv = getEnv "VER"
-    let ver = verVar |> Option.defaultValue (verEnv |> Option.defaultValue "0.0.1")
+let getVersion () = getEnv "VERSION" |> map (Option.defaultValue "0.0.1")
 
-    let! verSuffix =
-        getVar "SUFFIX"
-        |> map (
-            function
-            | None -> "-beta"
-            | Some "" -> "" // this is release!
-            | Some s -> "-" + s
-            )
-    return ver + verSuffix
-}
-
-let makePackageName = sprintf "Xake.%s.nupkg"
+let makePackageName version = $"Xake.%s{version}.nupkg"
 
 let dotnet arglist =
     shell {

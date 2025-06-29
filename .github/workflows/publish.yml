@@ -18,12 +18,21 @@ jobs:
       uses: actions/setup-dotnet@v3
       with:
         dotnet-version: 9.0.x
+    
+    - name: Extract version from tag
+      id: version
+      run: |
+        TAG_NAME="${{ github.ref_name }}"
+        VERSION="${TAG_NAME#v}"  # Remove 'v' prefix
+        echo "version=${VERSION}.${{ github.run_number }}" >> $GITHUB_OUTPUT
+    
     - name: Build and test
       run: dotnet fsi build.fsx -- -- build test
+    
     - name: Publish
       run: dotnet fsi build.fsx -- -- pack push
       env:
-        VER: ${GITHUB_REF_NAME:1}.${{github.run_number}}  
+        VERSION: ${{ steps.version.outputs.version }}
         NUGET_KEY: ${{ secrets.NUGET_API_KEY }}
     
     - name: Upload build log

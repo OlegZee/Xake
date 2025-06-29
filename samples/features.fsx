@@ -174,7 +174,7 @@ do xakeScript {
                     do! log (sprintf "j=%i" j)
                     j <- j + 1                
             with _ ->
-                do! trace Error "Exception occured!"
+                do! trace Error "Exception occurred!"
         }
 
         // working with filesets and dependencies

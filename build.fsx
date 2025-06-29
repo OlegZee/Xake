@@ -5,9 +5,9 @@ open Xake.Tasks
 
 let frameworks = ["netstandard2.0" (*; "net46" *)]
 let libtargets =
-    [ for t in frameworks do
-      for e in ["dll"; "xml"]
-        -> sprintf "out/%s/Xake.%s" t e
+    [ for fwk in frameworks do
+      for ext in ["dll"; "xml"]
+        -> $"out/%s{fwk}/Xake.%s{ext}"
     ]
 
 let getVersion () = recipe {
@@ -17,7 +17,7 @@ let getVersion () = recipe {
 
     let! verSuffix =
         getVar "SUFFIX"
-        |> Recipe.map (
+        |> map (
             function
             | None -> "-beta"
             | Some "" -> "" // this is release!
@@ -36,8 +36,7 @@ let dotnet arglist =
     } |> Ignore
 
 do xakeScript {
-    filelog "build.log" Verbosity.Diag
-    // consolelog Verbosity.Normal
+    filelog "build.log" Diag
 
     rules [
         "main" <<< ["build"; "test"]
@@ -49,12 +48,10 @@ do xakeScript {
             do! alwaysRerun()
 
             let! where =
-              getVar("FILTER")
+              getVar "FILTER"
               |> map (function |Some clause -> ["--filter"; $"Name~\"{clause}\""] | None -> [])
 
-            // in case of travis only run tests for standard runtime, eventually will add more
-            let! limitFwk = getEnv("TRAVIS") |> map (function | Some _ -> ["-f:netcoreapp2.0"] | _ -> [])
-            do! dotnet <| ["test"; "src/tests"; "-c"; "Release"] @ where @ limitFwk
+            do! dotnet <| ["test"; "src/tests"; "-c"; "Release"] @ where
         }
 
         libtargets *..> recipe {
@@ -103,7 +100,7 @@ do xakeScript {
         "push" => recipe {
             let! version = getVersion()
 
-            let! nuget_key = getEnv("NUGET_KEY")
+            let! nuget_key = getEnv "NUGET_KEY"
             do! dotnet [
                 "nuget"; "push"
                 "out" </> makePackageName version

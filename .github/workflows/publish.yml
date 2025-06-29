@@ -23,5 +23,13 @@ jobs:
     - name: Publish
       run: dotnet fsi build.fsx -- -- pack push
       env:
-        VER: ${GITHUB_REF_NAME:1}.${{github.run_number}}
+        VER: ${GITHUB_REF_NAME:1}.${{github.run_number}}  
         NUGET_KEY: ${{ secrets.NUGET_API_KEY }}
+    
+    - name: Upload build log
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: build-log-${{ github.run_number }}
+        path: build.log
+        retention-days: 30

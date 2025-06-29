@@ -120,7 +120,7 @@ module ScriptFuncs =
     /// <returns>Recipe that returns the list of current target files</returns>
     let getTargetFiles() : Recipe<ExecContext, File list> = recipe {
         let! ctx = getCtx()
-        return ctx.Targets |> List.collect (function |FileTarget file -> [file] |_ -> failwith "Expected only a file targets"; [])
+        return ctx.Targets |> List.collect (function |FileTarget file -> [file] |_ -> failwith "Expected only a file targets")
     }
 
     /// <summary>

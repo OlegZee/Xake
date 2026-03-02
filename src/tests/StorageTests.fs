@@ -4,7 +4,7 @@ open System.IO
 open NUnit.Framework
 
 open Xake
-open Xake.BuildLog
+open Xake.BuildDatabase
 open Xake.Storage
 
 type Bookmark =

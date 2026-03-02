@@ -37,7 +37,7 @@ type ``Testing Copy task``() =
 
         do xake x.TestOptions {
             rules [
-                "main" => action {
+                "main" => recipe {
                     do! need ["cpin/samplefile"]
                     do! Cp {CpArgs.Default with dir = "cpin"; todir = "cptgt"; flatten = true}
                 }
@@ -54,7 +54,7 @@ type ``Testing Copy task``() =
 
         do xake x.TestOptions {
             rules [
-                "main" => action {
+                "main" => recipe {
                     do! need ["cpin/a/samplefile"]
                     do! Cp {CpArgs.Default with dir = "cpin"; todir = "cptgt"; flatten = false}
                 }
@@ -71,7 +71,7 @@ type ``Testing Copy task``() =
 
         do xake x.TestOptions {
             rules [
-                "main" => action {
+                "main" => recipe {
                     do! need ["cpin/a/samplefile"]
                     do! Cp {
                       CpArgs.Default with
@@ -93,7 +93,7 @@ type ``Testing Copy task``() =
 
         do xake x.TestOptions {
             rules [
-                "main" => action {
+                "main" => recipe {
                     do! need ["cpin/a/samplefile"]
                     do! cp {files !!"cpin/**/*"; todir "cptgt"; flatten}
                 }

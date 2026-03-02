@@ -1,6 +1,6 @@
 ﻿namespace Xake
 
-module BuildLog = 
+module BuildDatabase = 
     open Xake
     open System
     
@@ -28,7 +28,7 @@ type 't Agent = 't MailboxProcessor
 
 module Storage = 
     open Xake
-    open BuildLog
+    open BuildDatabase
     
     module private Persist = 
         open Pickler
@@ -107,11 +107,11 @@ module Storage =
                 log Level.Message "Backup file found ('%s'), restoring db" 
                     bkpath
                 try 
-                    File.Delete(dbpath)
+                    File.Delete dbpath
                 with _ -> ()
                 File.Move(bkpath, dbpath)
-            let db = ref (newDatabase())
-            let recordCount = ref 0
+            let mutable db = newDatabase()
+            let mutable recordCount = 0
             // read database
             if File.Exists(dbpath) then 
                 try 
@@ -122,8 +122,8 @@ module Storage =
                         failwith "Database version is old."
                     while stream.Position < stream.Length do
                         let result = resultPU.unpickle reader
-                        db := result |> addResult !db
-                        recordCount := !recordCount + 1
+                        db <- result |> addResult db
+                        recordCount <- recordCount + 1
                 // if fails create new
                 with ex -> 
                     log Level.Error 
@@ -133,13 +133,13 @@ module Storage =
                         File.Delete(dbpath)
                     with _ -> ()
             // check if we can cleanup db
-            if !recordCount > (!db).Status.Count * 5 then 
+            if recordCount > db.Status.Count * 5 then 
                 log Level.Message "Compacting database"
                 File.Move(dbpath, bkpath)
                 use writer = 
                     new BinaryWriter(File.Open(dbpath, FileMode.CreateNew))
                 writeHeader writer
-                (!db).Status
+                db.Status
                 |> Map.toSeq
                 |> Seq.map snd
                 |> Seq.iter (fun r -> resultPU.pickle r writer)
@@ -150,7 +150,7 @@ module Storage =
             db, dbwriter
     
     type DatabaseApi = 
-        | GetResult of Target * AsyncReplyChannel<Option<BuildResult>>
+        | GetResult of Target * AsyncReplyChannel<BuildResult option>
         | Store of BuildResult
         | Close
         | CloseWait of AsyncReplyChannel<unit>
@@ -190,7 +190,7 @@ module Storage =
                         ch.Reply()
                         return ()
                 }
-            loop (!db))
+            loop db)
 
 /// Utility methods to manipulate build stats
 module internal Step =

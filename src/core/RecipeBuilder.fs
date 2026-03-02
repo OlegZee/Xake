@@ -85,5 +85,6 @@ module Builder =
         member this.TryFinally(body, compensation) = tryFinallyF (body) compensation
         member this.Using(disposable:#System.IDisposable, body) = usingF disposable body
     
+    [<System.Obsolete("Use recipe expression instead")>]
     let action = RecipeBuilder()
     let recipe = RecipeBuilder()

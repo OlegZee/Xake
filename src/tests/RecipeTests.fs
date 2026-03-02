@@ -1,7 +1,8 @@
-﻿module ``action block is capable of``
+﻿module ``recipe block is capable of``
 
 open NUnit.Framework
 open Xake
+open Xake.Experimental
 
 let makeStringList() = new System.Collections.Generic.List<string>()
 let DebugOptions = {ExecOptions.Default with ThrowOnError = true; FileLog = ""}
@@ -12,9 +13,11 @@ let ``execute the body``() =
     let wasExecuted = ref false
     
     do xake DebugOptions {
-      phony "main" (recipe {
-        wasExecuted := true
-      })
+        rules [
+            phony "main" {
+                wasExecuted := true
+            }
+        ]
     }
 
     Assert.IsTrue(!wasExecuted)
@@ -28,7 +31,7 @@ let ``ordered execution``() =
     let note = errorlist.Add
     
     do xake DebugOptions {
-      phony "main" (recipe {
+      phony' "main" (recipe {
         do note "1"
         wasExecuted := true
         do note "2"
@@ -49,7 +52,7 @@ let ``starting async operations``() =
     let note = errorlist.Add
 
     do xake DebugOptions {
-      phony "main" (recipe {
+      phony' "main" (recipe {
         do! async {note "1"}
         wasExecuted := true
         do! async {note "2"}
@@ -63,7 +66,7 @@ let ``starting async operations``() =
     Assert.That(errorlist, Is.EqualTo(["1"; "2"; "3"; "4"]))
 
 [<Test>]
-let ``invoke other actions within action (do!)``() =
+let ``invoke other actions within recipe (do!)``() =
 
     let wasExecuted = ref false
 
@@ -73,7 +76,7 @@ let ``invoke other actions within action (do!)``() =
     let noteAction t = recipe {do note t}
     
     do xake DebugOptions {
-      phony "main" (recipe {
+      phony' "main" (recipe {
         do! noteAction "1"
         wasExecuted := true
         do! noteAction "2"
@@ -88,7 +91,7 @@ let ``invoke other actions within action (do!)``() =
 
 
 [<Test>]
-let ``ignoring result of do! action``() =
+let ``ignoring result of do! recipe``() =
 
     let wasExecuted = ref false
 
@@ -102,7 +105,7 @@ let ``ignoring result of do! action``() =
         }
     
     do xake DebugOptions {
-        phony "main" (recipe {
+        phony' "main" (recipe {
             do! (testee "1") |> Ignore
             wasExecuted := true
             do! testee "2" |> Recipe.Ignore
@@ -117,7 +120,7 @@ let ``ignoring result of do! action``() =
 
 
 [<Test>]
-let ``obtaining action result``() =
+let ``obtaining recipe result``() =
 
     let errorlist = makeStringList()
     let note = errorlist.Add
@@ -128,7 +131,7 @@ let ``obtaining action result``() =
         }
     
     do xake DebugOptions {
-      phony "main" (action {
+      phony' "main" (recipe {
         let! s1 = testee "1"
         do note s1
         let! s2 = testee ("2+" + s1)
@@ -151,7 +154,7 @@ let ``ifs within actions``() =
         }
     
     do xake DebugOptions {
-      phony "main" (recipe {
+      phony' "main" (recipe {
         if true then
             do note "i1-t"
         else
@@ -184,7 +187,7 @@ let ``branching using if without else``() =
     
     do xake DebugOptions {
 
-      phony "main" (recipe {
+      phony' "main" (recipe {
         if true then
             do note "i1-t"
 
@@ -209,7 +212,7 @@ let ``for and while loops``() =
 
     do xake DebugOptions {
 
-      phony "main" (recipe {
+      phony' "main" (recipe {
 
         let! s1 = recipe {return "122"}
         let s2 = s1
@@ -241,16 +244,18 @@ let ``exception handling with 'try finally'``() =
 
     do xake DebugOptions {
 
-      phony "main" (recipe {
-        note "before try"
-        try
-            printfn "Body executed"
-            do! anote "try"
-        finally
-            printfn "Finally executed"
-            do note "finally"
-        do note "4"
-      })
+      rules [ 
+        phony "main" {
+            note "before try"
+            try
+                printfn "Body executed"
+                do! anote "try"
+            finally
+                printfn "Finally executed"
+                do note "finally"
+            do note "4"
+        }
+      ]
     }
 
     // printfn "%A" errorlist
@@ -267,7 +272,7 @@ let ``try finally fail``() =
 
     do xake DebugOptions {
 
-      phony "main" (recipe {
+      phony' "main" (recipe {
         do! anote "before try"
 
         try
@@ -295,7 +300,7 @@ let ``exception handling with 'try with'``() =
 
     do xake DebugOptions {
 
-      phony "main" (recipe {
+      phony' "main" (recipe {
         do! anote "before try"
 
         try
@@ -339,8 +344,7 @@ let ``try/with for the whole script body``() =
     let excCount = ref 0
     do xake DebugOptions {
         rules [
-            "main" =>
-            recipe {
+            phony "main"{
                 try
                     printfn "Some useful job"
                     do 3/0 |> ignore
@@ -367,8 +371,7 @@ let ``use! for disposable resources``() =
     let disposeCount = ref 0
     do xake DebugOptions {
         rules [
-            "main" =>
-            recipe {
+            phony "main" {
                 try
                     printfn "Some useful job"
                     use a = new DisposeMock(disposeCount)

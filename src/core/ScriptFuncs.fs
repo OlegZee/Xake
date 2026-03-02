@@ -1,5 +1,7 @@
 ﻿namespace Xake
 
+open Xake.Experimental
+
 [<AutoOpen>]
 module ScriptFuncs =
 
@@ -7,10 +9,7 @@ module ScriptFuncs =
     /// Gets the script execution context options.
     /// </summary>
     /// <returns>Recipe that returns the execution options</returns>
-    let getCtxOptions () = recipe {
-        let! (ctx: ExecContext) = getCtx()
-        return ctx.Options
-    }
+    let getCtxOptions () = getCtx() |> map _.Options
 
     /// <summary>
     /// Executes and awaits specified artifacts (targets).
@@ -169,29 +168,42 @@ module ScriptFuncs =
     /// <param name="name">Name of the phony target</param>
     /// <param name="targets">List of target names to demand</param>
     /// <returns>Phony rule that demands the specified targets</returns>
-    let (<==) name targets = PhonyRule (name, recipe {
+    let (<=>) name targets = PhonyRule (name, recipe {
         do! need targets
         do! alwaysRerun()   // always check demanded dependencies. Otherwise it wan't check any target is available
     })
 
     /// <summary>
-    /// Alias for the &lt;== operator.
-    /// Defines a phony rule that demands specified targets in parallel.
+    /// Executes and awaits specified targets sequentially.
+    /// Unlike 'need' which executes targets in parallel, this function waits for completion
+    /// of one target before starting the next one in the list order.
     /// </summary>
-    let (<||) = (<==)
-    
+    /// <param name="targets">List of target names to execute in sequence</param>
+    /// <returns>Recipe that ensures the targets are built sequentially</returns>
+    let needSequentially targets = recipe {
+        for t in targets do
+            do! need [t]
+    }
+        
     /// <summary>
-    /// Defines a phony rule that demands targets to be built sequentially.
+    /// Defines a phony rule that demands targets to be built sequentially (one at a time).
     /// Unlike '&lt;==' operator, this one waits for completion of one target before starting another.
     /// Example: "deploy" &lt;&lt;&lt; ["build"; "test"; "package"]
     /// </summary>
     /// <param name="name">Name of the phony target</param>
     /// <param name="targets">List of target names to build sequentially</param>
     /// <returns>Phony rule that builds targets in sequence</returns>
-    let (<<<) name targets = PhonyRule (name, recipe {
-        for t in targets do
-            do! need [t]
+    let (<|>) name targets = phony name {
+        do! needSequentially targets
         do! alwaysRerun()
-    })
+    }
 
+    [<System.Obsolete("Use <|> instead")>]
+    let (<<<) = (<|>)
+
+    [<System.Obsolete("Use <== instead")>]
+    let (<||) = (<=>)
+
+    [<System.Obsolete("Use <=> instead")>]
+    let (<==) = (<=>)
 

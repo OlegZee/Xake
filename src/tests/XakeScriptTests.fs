@@ -21,18 +21,18 @@ type ``XakeScript tests``() =
         
         do xake x.TestOptions {
             rules [
-                "main" <== ["test"; "test1"]
-                "test" => action {
+                "main" <=> ["test"; "test1"]
+                "test" => recipe {
                     do! trace Error "Running inside 'test' rule"
                     do! need ["aaa"]
                     wasExecuted := ("test" :: !wasExecuted)
                 }
-                "test1" => action {
+                "test1" => recipe {
                     do! trace Error "Running inside 'test1' rule"
                     do! need ["aaa"]
                     wasExecuted := ("test1" :: !wasExecuted)
                 }
-                "aaa" => action {
+                "aaa" => recipe {
                     needExecuteCount := !needExecuteCount + 1
                 }
             ]
@@ -50,7 +50,7 @@ type ``XakeScript tests``() =
         File.WriteAllText("hlo.cs", "empty file")
         
         let build () = xake {x.TestOptions with Targets = ["hlo"]} {
-            rule ("hlo" ..> action {
+            rule ("hlo" ..> recipe {
                 do! trace Error "Running inside 'hlo' rule"
                 do! need ["hlo.cs"]
                 needExecuteCount := !needExecuteCount + 1
@@ -101,7 +101,7 @@ type ``XakeScript tests``() =
         
         let build () = xake x.TestOptions {
             rules [
-                "main" <== ["hello"]
+                "main" <=> ["hello"]
                 "hello" ..> recipe {
                     do! trace Error "Running inside 'hello' rule"
                     let! files = (!!"hello*.cs") |> getFiles 
@@ -131,7 +131,7 @@ type ``XakeScript tests``() =
         
         let build () = xake x.TestOptions {
             rules [
-                "main" <== ["hlo"]
+                "main" <=> ["hlo"]
                 "hlo" ..> recipe {
                     do! need ["hlo.cs"]
                     let! var = getEnv("TTT")
@@ -165,7 +165,7 @@ type ``XakeScript tests``() =
         
         do xake x.TestOptions {
             rules [
-                "main" => action {
+                "main" => recipe {
                     count := !count + 1
                 }
             ]
@@ -181,10 +181,10 @@ type ``XakeScript tests``() =
         
         do xake {x.TestOptions with Targets = ["xxx"]} {
             rules [
-                "main" => action {
+                "main" => recipe {
                     mainCount := !mainCount + 1
                 }
-                "xxx" => action {
+                "xxx" => recipe {
                     xxxCount := !xxxCount + 1
                 }
             ]
@@ -205,8 +205,8 @@ type ``XakeScript tests``() =
         try
             do xake x.TestOptions {
                 rules [
-                    "main" <== ["../subd1/a.ss"]
-                    "../subd1/a.ss" ..> action {
+                    "main" <=> ["../subd1/a.ss"]
+                    "../subd1/a.ss" ..> recipe {
                         do! trace Error "Running inside 'a.ss' rule"
                         needExecuteCount := !needExecuteCount + 1
                         do! writeText "ss"
@@ -379,15 +379,15 @@ type ``XakeScript tests``() =
         do xake { x.TestOptions with Threads = 4 } {
             rules [
                 "main" <== ["rule1"; "rule2"; "rule3"]
-                "rule1" => action {
+                "rule1" => recipe {
                     do! Async.Sleep(80)
                     steps.Add 1
                 }
-                "rule2" => action {
+                "rule2" => recipe {
                     do! Async.Sleep(40)
                     steps.Add 2
                 }
-                "rule3" => action {
+                "rule3" => recipe {
                     do! Async.Sleep(10)
                     steps.Add 3
                 }
@@ -404,15 +404,15 @@ type ``XakeScript tests``() =
         do xake { x.TestOptions with Threads = 4 } {
             rules [
                 "main" <<< ["rule1"; "rule2"; "rule3"]
-                "rule1" => action {
+                "rule1" => recipe {
                     do! Async.Sleep(40)
                     steps.Add 1
                 }
-                "rule2" => action {
+                "rule2" => recipe {
                     do! Async.Sleep(20)
                     steps.Add 2
                 }
-                "rule3" => action {
+                "rule3" => recipe {
                     do! Async.Sleep(10)
                     steps.Add 3
                 }
@@ -433,24 +433,24 @@ type ``XakeScript tests``() =
         do xake x.TestOptions {
             rules [
                 "main" <== ["test"; "test1"]
-                "test" => action {
+                "test" => recipe {
                     do! need ["aaa"]
 
                     // check nested actions are also collected
-                    do! action {
-                    do! action {
+                    do! recipe {
+                    do! recipe {
                         do! need ["deeplyNested"]
                         do! need ["bbb.c"]
                     }
                     }
                 }
-                "test1" => action {
+                "test1" => recipe {
                     do! need ["aaa"]
                 }
-                "aaa" => action {
+                "aaa" => recipe {
                 return ()
                 }
-                "deeplyNested" => action {
+                "deeplyNested" => recipe {
                 return ()
                 }
             ]
@@ -491,17 +491,17 @@ type ``XakeScript tests``() =
 
         do xake {x.TestOptions with Threads = 1} {
             rules [
-                "main" => action {
+                "main" => recipe {
                     do! need ["aaa"; "bbb"]
                 }
 
-                "aaa" => action {
+                "aaa" => recipe {
                     do! newstep "a"
                     do! Async.Sleep 100
                     do! newstep "b"
                     do! Async.Sleep 70
                 }
-                "bbb" ..> action {
+                "bbb" ..> recipe {
                     do! Async.Sleep 200
                 }
             ]
@@ -531,10 +531,10 @@ type ``XakeScript tests``() =
             filelog "errors.log" Verbosity.Chatty
             rules [
                 "main" <== ["rule1"; "rule2"]
-                "rule1" => action {
+                "rule1" => recipe {
                     count := !count + 1
                 }
-                "rule2" => action {
+                "rule2" => recipe {
                     count := !count + 10
                 }
             ]

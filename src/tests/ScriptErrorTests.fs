@@ -5,11 +5,12 @@ open System.Collections.Generic
 open NUnit.Framework
 
 open Xake
+open Xake.Experimental
 open Xake.Tasks
 
 [<TestFixture>]
 type ``Script error handling``() =
-    inherit XakeTestBase("scripterr")
+    inherit XakeTestBase "scripterr"
 
     member x.MakeDebugOptions (errorlist:List<string>) =
         {x.TestOptions with ThrowOnError = true; CustomLogger = CustomLogger ((=) Level.Error) errorlist.Add; FileLog = ""}
@@ -17,51 +18,57 @@ type ``Script error handling``() =
     [<Test>]
     member __.``verifies executing target action``() =
 
-        let wasExecuted = ref false
+        let mutable wasExecuted = false
         
         do xake ExecOptions.Default {
-            want (["test"])
-            phony "test" (recipe {
-                do! trace Info "Running inside 'test' rule"
-                wasExecuted := true
-            })
+            want ["test"]
+            rules [
+                phony "test" {
+                    do! trace Info "Running inside 'test' rule"
+                    wasExecuted <- true
+                }
+            ]
         }
 
-        Assert.IsTrue(!wasExecuted)
+        Assert.IsTrue wasExecuted
 
     [<Test>]
     member x.``handles (throws exception) exception is thrown in script body``() =
 
-        let errorlist = new System.Collections.Generic.List<string>()
+        let errorlist = new List<string>()
 
         Assert.Throws<XakeException> (fun () ->
           do xake (x.MakeDebugOptions errorlist) {
-            phony "main" (recipe {
-              do! trace Info "Running inside 'test' rule"
-              failwith "exception happens"
-            })
+            rules [
+                phony "main" {
+                    do! trace Info "Running inside 'test' rule"
+                    failwith "exception happens"
+                }
+            ]
           }) |> ignore
 
-        Assert.IsTrue(errorlist.Exists (fun (x:string) -> x.Contains("exception happens")))
+        Assert.IsTrue(errorlist.Exists (fun (x:string) -> x.Contains "exception happens"))
 
     [<Test>]
     member x.``handles exception occured in inner rule``() =
 
-        let errorlist = new System.Collections.Generic.List<string>()
+        let errorlist = new List<string>()
 
         Assert.Throws<XakeException> (fun () ->
             do xake (x.MakeDebugOptions errorlist) {
-                phony "main" (recipe {
-                    do! trace Info "Running inside 'test' rule"
-                    do! need ["clean"]
-                })
-                phony "clean" (recipe {
-                    do! trace Info "Running inside 'clean' rule"
-                    failwith "exception happens"
-                })
+                rules [
+                    phony "main" {
+                        do! trace Info "Running inside 'test' rule"
+                        do! need ["clean"]
+                    }
+                    phony "clean" {
+                        do! trace Info "Running inside 'clean' rule"
+                        failwith "exception happens"
+                    }
+                ]
             }) |> ignore
 
-        Assert.IsTrue(errorlist.Exists (fun (x:string) -> x.Contains("exception happens")))
+        Assert.IsTrue(errorlist.Exists (fun (x:string) -> x.Contains "exception happens"))
 
     [<Test>]
     member x.``fails if rule is not found``() =
@@ -70,8 +77,8 @@ type ``Script error handling``() =
 
         Assert.Throws<XakeException> (fun () ->
             do xake (x.MakeDebugOptions errorlist) {
-                want (["test"])
-                phony "clean" (recipe {
+                want ["test"]
+                phony' "clean" (recipe {
                    do! trace Info "Running inside 'clean' rule"
                 })
             }) |> ignore
@@ -102,4 +109,4 @@ type ``Script error handling``() =
               }
             ) |> ignore
         printf "result is %A" errorlist
-        Assert.IsTrue(errorlist.Exists (fun (x:string) -> x.Contains("Failed to read database, so recreating")))
+        Assert.IsTrue(errorlist.Exists (fun (x:string) -> x.Contains "Failed to read database, so recreating"))

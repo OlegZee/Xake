@@ -15,7 +15,7 @@ type ``Testing Rm``() =
 
         do xake x.TestOptions {
             rules [
-                "main" => action {
+                "main" => recipe {
                     do! need ["samplefile"]
                     File.Exists "samplefile" |> Assert.True
                     do! rm {file "samplefile"; verbose}
@@ -33,7 +33,7 @@ type ``Testing Rm``() =
         do xake x.TestOptions {
             filelog "c:\\!\\logggg" Diag
             rules [
-                "main" => action {
+                "main" => recipe {
                     do! need ["samplefile"; "samplefile1"]
                     (File.Exists >> Assert.True) "samplefile"
                     (File.Exists >> Assert.True) "samplefile1"

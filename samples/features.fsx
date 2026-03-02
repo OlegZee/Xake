@@ -14,28 +14,62 @@ open Xake
 open Xake.Tasks
 open Xake.Dotnet
 
+open Xake.Experimental
+
+let mapDefault d = map (Option.defaultValue d)
+
+let vars = {|
+    outDir = getEnv "OUTDIR" |> mapDefault "out"
+    srcDir = getVar "src" |> mapDefault "src"
+|}
+
 do xakeScript {
 
     consolelog Verbosity.Diag
 
+    rules [
+        ("file123/Version" ..> recipe {
+            let! version = getEnv "VERSION" |> mapDefault "1.0.0"
+            do! trace Info "Version: %s" version
+            // return version
+        })
+    ]
+
+
     // this instruction defines the default target and could be overriden by command-line parameters
     // this is redundant as "main" is default target
+    // "main" <| need ["tracetest"; "temp/a.exe"]
     want ["main"]
-
     rules [
+        phony "main" {
+            do! need ["tracetest"; "temp/a.exe"]
+        }
+        phony "main" { do! need ["tracetest"; "temp/a.exe"] }
 
         // this rule does nothing but demands the other targets
         // the execution of the recipe is suspended until all demanded targets are built.
         // Targets are executed in parallel. Dependencies could be demanded in any part of recipe.
-        "main"  => recipe {
+        "main" => recipe {
             do! need ["tracetest"; "temp/a.exe"]
-            }
+        }
 
         // this is shorter way to express the same. See also `<==` and '<<<' operators.
         "main"  => need ["tracetest"; "temp/a.exe"]
 
         // "phony" rule that produces no file but just removes the files
         // `rm` recipe (Xake.Tasks namespace) allow to remove files and folders
+
+        phony "clean" {
+            let! outDir = vars.outDir
+            do! rm {file "paket-files/*.*"}
+            do! rm {dir outDir}
+            do! rm {files (fileset {
+                    includes "samplefile*"
+                }); verbose
+            }
+        }
+
+        // this is another way to define phony rule
         "clean" => recipe {
             do! rm {file "paket-files/*.*"}
             do! rm {dir "out"}
@@ -45,7 +79,7 @@ do xakeScript {
             }
         }
 
-        "dotnet-version" => recipe {
+        phony "dotnet-version" {
             // this rule will run `dotnet --version` command and print the result
             do! sh "dotnet --version" {}
 
@@ -69,8 +103,7 @@ do xakeScript {
         "temp/a.exe" ..> csc {src (!!"temp/a.cs" + "temp/AssemblyInfo.cs")}
 
         // the rule above demands a.cs source file, this rule creates the source file
-        "temp/a.cs" ..> writeText
-            """
+        target "temp/a.cs" { do! writeText """
             class Program
             {
             	public static void Main()
@@ -79,11 +112,12 @@ do xakeScript {
             	}
             }
             """
+        }
 
         // this rule gets the version from VERSION script variable and generates
         // define the variable by running `dotnet fake run features.fsx -- -d VERSION:2.1.1`
-        "temp/AssemblyInfo.cs" ..> recipe {
-            let! envVersion = getVar("VERSION")
+        target "temp/AssemblyInfo.cs" {
+            let! envVersion = getVar "VERSION"
             let version = envVersion |> Option.defaultValue "1.0.0"
             do! writeText <| sprintf "[assembly: System.Reflection.AssemblyVersion(\"%s\")]" version
         }
@@ -92,7 +126,7 @@ do xakeScript {
         // defining the target which produces multiple files
         // recipe will be executed just once, regardless how many times its outcome was requested in other targets
         // notice the `*..>` operator is used
-        ["app.exe"; "app.xml"] *..> recipe {
+        targets ["app.exe"; "app.xml"] {
 
             let! [appfile; xmlfile] = getTargetFiles()
 
@@ -114,12 +148,10 @@ do xakeScript {
         // The following rule defines how to build any file which names matches "*/*.cs*" pattern.
         // Round brackets specify the named groups (known from regexps), the values can be accessed via getRuleMatch function
         // e.g. for src/hello.csx the matches will be: dir=src, file=hello, ext=csx
+        "logs-auto/(dir:*)/(file:*).(ext:c*)" ..> recipe {
 
-        "(dir:*)/(file:*).(ext:c*)" ..> recipe {
-
-            let! dir = getRuleMatch "dir"
-            let! file = getRuleMatch "file"
-            let! ext = getRuleMatch "ext"
+            let! mm = getRuleMatches()
+            let dir, file, ext = mm["dir"], mm["file"], mm["ext"]
 
             // here you place regular build steps
 
@@ -148,6 +180,9 @@ do xakeScript {
                 workdir "."
             }
 
+            // the same command using `sh` function
+            do! sh "dir *.* /A" {}
+
             // this will fail the script
             // if errorLevel <> 0 then failwith "command failed"
             // the same results could be obtained by `failonerror` instruction within shell {}
@@ -156,7 +191,7 @@ do xakeScript {
         }
 
         // all kind of control flow constructs are supported with recipe
-        "control-flow" => recipe {
+        phony "control-flow" {
 
             // defining recipe
             let log text = recipe {

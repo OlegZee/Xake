@@ -44,7 +44,7 @@ type ExecOptions = {
     /// Dump dependencies only
     DumpDeps: bool
 
-    /// Dump dependencies only
+    /// Display progress bar
     Progress: bool
 } with static member Default = {
         ProjectRoot = System.IO.Directory.GetCurrentDirectory()

@@ -16,7 +16,7 @@ type ``File tasks module``() =
         let execCount = ref 0
         do xake x.TestOptions {
             rules [
-                "main" => action {
+                "main" => recipe {
                     execCount := !execCount + 1
                     do! need ["samplefile"]
                     File.Exists "samplefile" |> Assert.True
@@ -36,7 +36,7 @@ type ``File tasks module``() =
         
         do xake x.TestOptions {
             rules [
-                "main" => action {
+                "main" => recipe {
                     do! need ["$$1"; "$$2"]
                     File.Exists "$$2" |> Assert.True
                     do! rm {file "$$*"}
@@ -54,7 +54,7 @@ type ``File tasks module``() =
     member x.``allows to delete by several masks``() =
         do xake x.TestOptions {
             rules [
-                "main" => action {
+                "main" => recipe {
                     do! need ["$aa"; "$bb"]
                     File.Exists ("$bb") |> Assert.True
                     do! rm {file "$aa"}
@@ -71,7 +71,7 @@ type ``File tasks module``() =
     member x.``supports simple file copy``() =
         do xake x.TestOptions {
             rules [
-                "main" => action {
+                "main" => recipe {
                     do! trace Error "Running inside 'main' rule"
                     do! need ["aaa"; "clean"]
                     do! copyFile "aaa" "aaa-copy"

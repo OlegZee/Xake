@@ -17,8 +17,6 @@ let traceLog (level:Logging.Level) fmt =
 let wildcardsRegex = Regex(@"\*\*|\*|\?", RegexOptions.Compiled)
 let patternTagRegex = Regex(@"\((?'tag'\w+?)\:[^)]+\)", RegexOptions.Compiled)
 let replace (regex:Regex) (evaluator: Match -> string) text = regex.Replace(text, evaluator)
-let ifNone x = function |Some x -> x | _ -> x
-
 let (|Dump|Dryrun|Run|) (opts:ExecOptions) =
     match opts with
     | _ when opts.DumpDeps -> Dump
@@ -32,9 +30,9 @@ let applyWildcards = function
             let mutable i = 0
             let evaluator m =
                 i <- i + 1
-                matches |> Map.tryFind (i.ToString()) |> ifNone ""
+                matches |> Map.tryFind (i.ToString()) |> Option.defaultValue ""
             let evaluatorTag (m: Match) =
-                matches |> (Map.tryFind m.Groups.["tag"].Value) |> ifNone ""
+                matches |> Map.tryFind m.Groups.["tag"].Value |> Option.defaultValue ""
             pat
             |> replace wildcardsRegex evaluator
             |> replace patternTagRegex evaluatorTag
@@ -108,8 +106,8 @@ let rec execOne ctx target =
 
                 do Progress.TaskStart primaryTarget |> ctx.Progress.Post
 
-                let startResult = {BuildLog.makeResult targets with Steps = [Step.start "all"]}
-                let! (result,_) = action (startResult, taskContext)
+                let startResult = {BuildDatabase.makeResult targets with Steps = [Step.start "all"]}
+                let! result,_ = action (startResult, taskContext)
                 let result = Step.updateTotalDuration result
 
                 Store result |> ctx.Db.Post

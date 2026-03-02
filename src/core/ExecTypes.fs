@@ -49,7 +49,14 @@ type ExecOptions = {
 
     /// Reset database before build
     ResetDb: bool
-} with static member Default = {
+
+    /// Skip build database; every target always rebuilds.
+    NoPersist: bool
+
+    /// Targets executed sequentially during XakeEngine.StopAsync.
+    Teardown: string list
+} with
+    static member Default = {
         ProjectRoot = System.IO.Directory.GetCurrentDirectory()
         Threads = System.Environment.ProcessorCount
         ConLogLevel = Normal
@@ -67,6 +74,11 @@ type ExecOptions = {
         DumpDeps = false
         Progress = true
         ResetDb = false
+        NoPersist = false
+        Teardown = []
+    }
+    static member DefaultEngine = {
+        ExecOptions.Default with IgnoreCommandLine = true; Targets = []
     }
 end
 

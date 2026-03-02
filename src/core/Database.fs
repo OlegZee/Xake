@@ -194,6 +194,21 @@ module Storage =
                 }
             loop (!db))
 
+    /// <summary>
+    /// No-op database for use when NoPersist = true. Always reports targets as not built.
+    /// </summary>
+    let noopDb () =
+        MailboxProcessor.Start(fun mbox ->
+            let rec loop () = async {
+                let! msg = mbox.Receive()
+                match msg with
+                | GetResult (_, ch) -> ch.Reply None; return! loop ()
+                | Store _ -> return! loop ()
+                | Close -> ()
+                | CloseWait ch -> ch.Reply ()
+            }
+            loop ())
+
     /// Deletes existing database and backup files to reset the build log. Should be called before starting the build.
     let cleanupDb dbpath (logger : ILogger) = 
         let bkpath = impl.makeBkpath dbpath

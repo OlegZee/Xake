@@ -165,7 +165,7 @@ and execNeed ctx targets : Async<ExecStatus * Dependency list> =
 
         do ctx.Throttler.Release() |> ignore
         let! statuses = targets |> execParallel ctx
-        do! ctx.Throttler.WaitAsync(-1) |> Async.AwaitTask |> Async.Ignore
+        do! ctx.Throttler.WaitAsync -1 |> Async.AwaitTask |> Async.Ignore
 
         primaryTarget |> (Progress.TaskResume >> ctx.Progress.Post)
 
@@ -302,8 +302,8 @@ let runBuild ctx options groups =
     |> runSeq
     |> asyncMap (Array.concat >> List.ofArray)
 
-/// Executes the build script
-let runScript options rules =
+/// Creates execution context and returns it together with a finalize function.
+let createContext options rules =
     let logger = CombineLogger (ConsoleLogger options.ConLogLevel) options.CustomLogger
     let logger =
         match options.FileLog, options.FileLogLevel with
@@ -312,23 +312,19 @@ let runScript options rules =
         | logFileName,level -> CombineLogger logger (FileLogger logFileName level)
 
     let throttler, pool = WorkerPool.create logger options.Threads
-    
-    let dbpath = options.ProjectRoot </> options.DbFileName
-    // Reset database if requested
-    if options.ResetDb then
-        Storage.cleanupDb dbpath logger
 
-    let db = Storage.openDb dbpath logger
+    let db =
+        if options.NoPersist then
+            Storage.noopDb ()
+        else
+            let dbpath = options.ProjectRoot </> options.DbFileName
+            if options.ResetDb then
+                Storage.cleanupDb dbpath logger
+            Storage.openDb dbpath logger
 
     let finalize () =
         db.PostAndReply Storage.CloseWait
         FlushLogs()
-
-    System.Console.CancelKeyPress
-    |> Event.add (fun _ -> 
-        logger.Log Error "Build interrupted by user"
-        finalize()
-        exit 1)
 
     let ctx = {
         Ordinal = 0
@@ -340,6 +336,34 @@ let runScript options rules =
         Targets = []
         RuleMatches = Map.empty
         }
+    ctx, finalize
+
+/// Demand a single target be built; returns its ExecStatus.
+let demandTarget (ctx: ExecContext) (targetName: string) : Async<ExecStatus> =
+    async {
+        let target = makeTarget ctx targetName
+        let getDeps = getChangeReasons ctx |> memoizeRec
+        let needRebuild (t: Target) =
+            getDeps t |> function | [] -> false | _ -> true
+        let progressSink = Progress.openProgress (getDurationDeps ctx getDeps) ctx.Options.Threads [target] ctx.Options.Progress
+        let stepCtx = {ctx with NeedRebuild = List.exists needRebuild; Progress = progressSink}
+        try
+            let! (_, status, _) = execOne stepCtx target
+            return status
+        finally
+            Progress.Finish |> progressSink.Post
+    }
+
+/// Executes the build script
+let runScript options rules =
+    let ctx, finalize = createContext options rules
+    let logger = ctx.Logger
+
+    System.Console.CancelKeyPress
+    |> Event.add (fun _ ->
+        logger.Log Error "Build interrupted by user"
+        finalize()
+        exit 1)
 
     logger.Log Info "Options: %A" options
 

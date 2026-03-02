@@ -156,5 +156,8 @@ module Main =
     let xakeScript =
         xake ExecOptions.Default
 
+    let xakeEngine =
+        RulesBuilder ExecOptions.DefaultEngine
+
     // Runs the set of rules - need a function accepting target list and rules
     // let run = ExecCore.runScript

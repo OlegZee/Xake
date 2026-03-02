@@ -80,5 +80,53 @@ module XakeScript =
 
         [<CustomOperation("wantOverride")>]
         member __.WantOverride(script,targets) =
-        
+
             updTargets script (fun _ -> targets)
+
+        [<CustomOperation("noPersist")>]
+        member __.NoPersist(XakeScript (options, rules)) =
+            XakeScript ({options with NoPersist = true}, rules)
+
+        [<CustomOperation("teardown")>]
+        member __.Teardown(XakeScript (options, rules), targets: string list) =
+            XakeScript ({options with Teardown = targets}, rules)
+
+        [<CustomOperation("start")>]
+        member __.Start(script: XakeScript) : XakeEngine =
+            XakeEngine.Start script
+
+        member __.Run(e: XakeEngine) = e
+
+    /// Long-lived engine for watch/LSP-style callers. Start once, demand targets on demand, stop cleanly.
+    and XakeEngine private (ctx: ExecContext, finalize: unit -> unit) =
+        let gate = obj ()
+        let mutable stopped = false
+        let inFlight = System.Collections.Generic.Dictionary<string, System.Threading.Tasks.Task<ExecStatus>> ()
+
+        static member Start(XakeScript (options, rules)) =
+            let ctx, finalize = ExecCore.createContext options rules
+            XakeEngine (ctx, finalize)
+
+        member _.Demand(targetName: string) : System.Threading.Tasks.Task =
+            lock gate (fun () ->
+                if stopped then raise (System.InvalidOperationException "XakeEngine has been stopped")
+                match inFlight.TryGetValue targetName with
+                | true, t -> t :> System.Threading.Tasks.Task
+                | _ ->
+                    let t = ExecCore.demandTarget ctx targetName |> Async.StartAsTask
+                    inFlight.[targetName] <- t
+                    t :> System.Threading.Tasks.Task)
+
+        member this.StopAsync() : System.Threading.Tasks.Task =
+            async {
+                let snapshot = lock gate (fun () -> stopped <- true; inFlight.Values |> Seq.toArray)
+                do! snapshot |> Array.map Async.AwaitTask |> Async.Parallel |> Async.Ignore
+                for name in ctx.Options.Teardown do
+                    do! ExecCore.demandTarget ctx name |> Async.Ignore
+                finalize ()
+            } |> Async.StartAsTask :> System.Threading.Tasks.Task
+
+#if NETSTANDARD2_1_OR_GREATER || NET5_0_OR_GREATER
+        interface System.IAsyncDisposable with
+            member this.DisposeAsync() = System.Threading.Tasks.ValueTask (this.StopAsync ())
+#endif

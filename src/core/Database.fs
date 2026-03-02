@@ -194,7 +194,7 @@ module Storage =
                 }
             loop (!db))
 
-    /// Cleans up database files if they are too big. Should be called before starting the build.
+    /// Deletes existing database and backup files to reset the build log. Should be called before starting the build.
     let cleanupDb dbpath (logger : ILogger) = 
         let bkpath = impl.makeBkpath dbpath
         [dbpath; bkpath]

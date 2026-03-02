@@ -27,13 +27,12 @@ jobs:
         echo "version=${VERSION}.${{ github.run_number }}" >> $GITHUB_OUTPUT
     
     - name: Build and test
-      run: dotnet fsi build.fsx -- -- build test
-    
-    - name: Publish
-      run: dotnet fsi build.fsx -- -- pack push
+      run: dotnet fsi build.fsx -- -- build test pack
       env:
         VERSION: ${{ steps.version.outputs.version }}
-        NUGET_KEY: ${{ secrets.NUGET_API_KEY }}
+    
+    - name: Publish
+      run: dotnet nuget push out/*.nupkg --api-key ${{ secrets.NUGET_API_KEY }} --source https://www.nuget.org/api/v2/package
     
     - name: Upload build log
       uses: actions/upload-artifact@v4

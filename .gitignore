@@ -40,6 +40,7 @@ samples/**/*.dll
 samples/**/*.fsx.lock
 .idea
 temp
+.claude/settings.local.json
 ~testout~
 paket-files/
 /out

@@ -90,6 +90,8 @@ module Storage =
     module private impl = 
         open System.IO
         open Persist
+
+        let makeBkpath dbpath = dbpath <.> "bak"
         
         let writeHeader w = 
             let h = 
@@ -101,7 +103,7 @@ module Storage =
         let openDatabaseFile dbpath (logger : ILogger) = 
             let log = logger.Log
             let resultPU = Persist.result
-            let bkpath = dbpath <.> "bak"
+            let bkpath = makeBkpath dbpath
             // if exists backup restore
             if File.Exists(bkpath) then 
                 log Level.Message "Backup file found ('%s'), restoring db" 
@@ -192,6 +194,19 @@ module Storage =
                 }
             loop (!db))
 
+    /// Deletes existing database and backup files to reset the build log. Should be called before starting the build.
+    let cleanupDb dbpath (logger : ILogger) = 
+        let bkpath = impl.makeBkpath dbpath
+        [dbpath; bkpath]
+        |> List.iter (fun path ->
+            if System.IO.File.Exists(path) then
+                try
+                    System.IO.File.Delete(path)
+                    logger.Log Level.Message "Deleted database file: %s" path
+                with ex ->
+                    logger.Log Level.Warning "Failed to delete %s: %s" path (ex.Message)
+        )
+            
 /// Utility methods to manipulate build stats
 module internal Step =
 

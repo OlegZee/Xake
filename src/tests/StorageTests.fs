@@ -177,3 +177,40 @@ let ``repairs (cleans) broken db``() =
     Assert.IsTrue(Option.isSome read)
     testee.PostAndReply CloseWait
     Assert.That(msgs, IsAny().Contains("Failed to read database"))
+[<Test>]
+let ``cleanupDb deletes database files``() =
+    let msgs = System.Collections.Generic.List<string>()
+    let logger = createStrLogger msgs
+
+    let inline (<--) (agent : ^a) (msg : 'b) =
+        (^a : (member Post : 'b -> unit) (agent, msg))
+        agent
+
+    // Create database with some data
+    use testee = Storage.openDb dbname logger
+    testee <-- Store(createResult "abc.exe") <-- Store(createResult "def.exe") |> ignore
+    testee.PostAndReply CloseWait
+    
+    // Verify database file exists
+    Assert.IsTrue(File.Exists(dbname), "Database file should exist before cleanup")
+    
+    // Create a backup file to test its deletion
+    let bkpath = dbname + ".bak"
+    File.WriteAllText(bkpath, "backup")
+    Assert.IsTrue(File.Exists(bkpath), "Backup file should exist before cleanup")
+    
+    // Call cleanupDb
+    Storage.cleanupDb dbname logger
+    
+    // Verify both files are deleted
+    Assert.IsFalse(File.Exists(dbname), "Database file should be deleted")
+    Assert.IsFalse(File.Exists(bkpath), "Backup file should be deleted")
+    
+    // Verify deletion was logged
+    Assert.That(msgs, IsAny().Contains("Deleted database file"))
+    
+    // Open database again - should create a fresh one
+    use testee = Storage.openDb dbname logger
+    let read = testee <-* mkFileTarget "abc.exe"
+    Assert.IsTrue(Option.isNone read, "Fresh database should not contain old data")
+    testee.PostAndReply CloseWait

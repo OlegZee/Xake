@@ -311,8 +311,14 @@ let runScript options rules =
         | _, Silent -> logger
         | logFileName,level -> CombineLogger logger (FileLogger logFileName level)
 
-    let (throttler, pool) = WorkerPool.create logger options.Threads
-    let db = Storage.openDb (options.ProjectRoot </> options.DbFileName) logger
+    let throttler, pool = WorkerPool.create logger options.Threads
+    
+    let dbpath = options.ProjectRoot </> options.DbFileName
+    // Reset database if requested
+    if options.ResetDb then
+        Storage.cleanupDb dbpath logger
+
+    let db = Storage.openDb dbpath logger
 
     let finalize () =
         db.PostAndReply Storage.CloseWait

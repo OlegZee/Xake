@@ -46,6 +46,9 @@ type ExecOptions = {
 
     /// Dump dependencies only
     Progress: bool
+
+    /// Reset database before build
+    ResetDb: bool
 } with static member Default = {
         ProjectRoot = System.IO.Directory.GetCurrentDirectory()
         Threads = System.Environment.ProcessorCount
@@ -63,6 +66,7 @@ type ExecOptions = {
         DryRun = false
         DumpDeps = false
         Progress = true
+        ResetDb = false
     }
 end
 

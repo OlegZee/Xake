@@ -15,6 +15,7 @@ module MiscImpl =
         do File.WriteAllText(fileName, content)
     }
 
+    /// Writes text to a file, ensuring the directory exists.
     let writeText content = writeTargetText content
 
     /// <summary>
@@ -26,8 +27,19 @@ module MiscImpl =
         do File.WriteAllBytes(fileName, content)
     }
 
-    let readText path = recipe {
+    let private read f path = recipe {
         do! need [path]
-        let content = File.ReadAllText path
+
+        let! options = getCtxOptions()
+        let content = f (options.ProjectRoot </> path)
         return content
     }
+
+    /// Reads the entire content of a text file and returns it as a string.
+    let readText path = read File.ReadAllText path
+
+    /// Reads all lines from a text file and returns them as an array of strings.
+    let readAllLines path = read File.ReadAllLines path
+
+    /// Reads the entire content of a binary file and returns it as a byte array.
+    let readAllBytes path = read File.ReadAllBytes path

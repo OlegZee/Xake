@@ -99,27 +99,28 @@ module XakeScript =
 
     /// Long-lived engine for watch/LSP-style callers. Start once, demand targets on demand, stop cleanly.
     and XakeEngine private (ctx: ExecContext, finalize: unit -> unit) =
-        let gate = obj ()
+        [<VolatileField>]
         let mutable stopped = false
-        let inFlight = System.Collections.Generic.Dictionary<string, System.Threading.Tasks.Task<ExecStatus>> ()
+        let inFlight = System.Collections.Concurrent.ConcurrentDictionary<string, Lazy<System.Threading.Tasks.Task<ExecStatus>>> ()
 
         static member Start(XakeScript (options, rules)) =
             let ctx, finalize = ExecCore.createContext options rules
             XakeEngine (ctx, finalize)
 
-        member _.Demand(targetName: string) : System.Threading.Tasks.Task =
-            lock gate (fun () ->
-                if stopped then raise (System.InvalidOperationException "XakeEngine has been stopped")
-                match inFlight.TryGetValue targetName with
-                | true, t -> t :> System.Threading.Tasks.Task
-                | _ ->
-                    let t = ExecCore.demandTarget ctx targetName |> Async.StartAsTask
-                    inFlight.[targetName] <- t
-                    t :> System.Threading.Tasks.Task)
+        member _.Demand(targetName: string, ?vars: (string * string) list) : System.Threading.Tasks.Task =
+            if stopped then raise (System.InvalidOperationException "XakeEngine has been stopped")
+            let demandCtx =
+                match vars with
+                | None | Some [] -> ctx
+                | Some extraVars -> { ctx with Options = { ctx.Options with Vars = ctx.Options.Vars @ extraVars } }
+            inFlight.GetOrAdd(targetName, Lazy<_>(fun () ->
+                ExecCore.demandTarget demandCtx targetName |> Async.StartAsTask
+            )).Value :> System.Threading.Tasks.Task
 
         member this.StopAsync() : System.Threading.Tasks.Task =
             async {
-                let snapshot = lock gate (fun () -> stopped <- true; inFlight.Values |> Seq.toArray)
+                stopped <- true
+                let snapshot = inFlight.Values |> Seq.map (fun l -> l.Value) |> Seq.toArray
                 do! snapshot |> Array.map Async.AwaitTask |> Async.Parallel |> Async.Ignore
                 for name in ctx.Options.Teardown do
                     do! ExecCore.demandTarget ctx name |> Async.Ignore

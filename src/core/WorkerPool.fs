@@ -49,7 +49,10 @@ module internal WorkerPool =
 
 open System.Threading
 
-type Scheduler<'s> = private { Throttle: SemaphoreSlim; Pool: Agent<ExecMessage<'s>> }
+type Scheduler<'s> =
+    private { Throttle: SemaphoreSlim; Pool: Agent<ExecMessage<'s>> }
+    interface System.IDisposable with
+        member this.Dispose() = this.Throttle.Dispose()
 
 module Scheduler =
 

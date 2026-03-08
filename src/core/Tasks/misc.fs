@@ -31,7 +31,10 @@ module MiscImpl =
         do! need [path]
 
         let! options = getCtxOptions()
-        let content = f (options.ProjectRoot </> path)
+        let fullPath = 
+            if Path.IsPathRooted path then path
+            else options.ProjectRoot </> path
+        let content = f fullPath
         return content
     }
 

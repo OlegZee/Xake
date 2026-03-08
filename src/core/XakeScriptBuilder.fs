@@ -119,12 +119,14 @@ module XakeScriptBuilder =
         member this.StopAsync() : System.Threading.Tasks.Task =
             async {
                 stopped <- true
-                let snapshot = inFlight.Values |> Seq.map (fun l -> l.Value) |> Seq.toArray
-                do! snapshot |> Array.map Async.AwaitTask |> Async.Parallel |> Async.Ignore
-                for name in engine.Options.Teardown do
-                    let ctx = makeCtx None
-                    do! ExecCore.demandTarget ctx name |> Async.Ignore
-                finalize ()
+                try
+                    let snapshot = inFlight.Values |> Seq.map (fun l -> l.Value) |> Seq.toArray
+                    do! snapshot |> Array.map Async.AwaitTask |> Async.Parallel |> Async.Ignore
+                    for name in engine.Options.Teardown do
+                        let ctx = makeCtx None
+                        do! ExecCore.demandTarget ctx name |> Async.Ignore
+                finally
+                    finalize ()
             } |> Async.StartAsTask :> System.Threading.Tasks.Task
 
 #if NETSTANDARD2_1_OR_GREATER || NET5_0_OR_GREATER

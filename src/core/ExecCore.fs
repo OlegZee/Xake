@@ -325,6 +325,7 @@ let private createContextCore (options: EngineOptions) (db: Agent<Storage.Databa
 
     let finalize () =
         db.PostAndReply Storage.CloseWait
+        (scheduler :> System.IDisposable).Dispose()
         FlushLogs()
 
     let engineState = {

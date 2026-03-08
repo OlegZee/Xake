@@ -46,3 +46,23 @@ module internal WorkerPool =
                   return! loop newMap
         }
         loop(Map.empty) )
+
+open System.Threading
+
+type Scheduler<'s> = private { Throttle: SemaphoreSlim; Pool: Agent<ExecMessage<'s>> }
+
+module Scheduler =
+
+    let create logger maxThreads : Scheduler<_> =
+        let throttler, pool = WorkerPool.create logger maxThreads
+        { Throttle = throttler; Pool = pool }
+
+    let pool s = s.Pool
+
+    /// Release current slot, run work, reacquire slot.
+    let withYieldedSlot scheduler work = async {
+        scheduler.Throttle.Release() |> ignore
+        let! result = work
+        do! scheduler.Throttle.WaitAsync -1 |> Async.AwaitTask |> Async.Ignore
+        return result
+    }

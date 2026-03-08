@@ -1,105 +1,49 @@
-﻿namespace Xake
+namespace Xake
 
-open System.Threading
 open Xake.WorkerPool
 
-/// Script execution options
-type ExecOptions = {
-    /// Defines project root folder
-    ProjectRoot : string
-    /// Maximum number of rules processed simultaneously.
+type ExecStatus = | Succeed | Skipped | JustFile
+
+/// Engine-level options: immutable after construction.
+type EngineOptions = {
+    ProjectRoot: string
     Threads: int
-
-    /// custom logger
-    CustomLogger: ILogger
-
-    /// Log file and verbosity level.
-    FileLog: string
-    FileLogLevel: Verbosity
-
-    /// Console output verbosity level. Default is Warn
-    ConLogLevel: Verbosity
-    /// Overrides "want", i.e. target list
-    Targets: string list
-
-    /// Global script variables
-    Vars: (string * string) list
-
-    /// Defines whether `run` should throw exception if script fails.
-    /// Default is false which means to exit process with non-zero code.
-    ThrowOnError: bool
-
-    /// Ignores command line swithes
-    IgnoreCommandLine: bool
-
-    /// Disable logo message
-    Nologo: bool
-
-    /// Database file
-    DbFileName: string
-
-    /// Do not execute rules, just display run stats
-    DryRun: bool
-
-    /// Dump dependencies only
-    DumpDeps: bool
-
-    /// Dump dependencies only
-    Progress: bool
-
-    /// Reset database before build
-    ResetDb: bool
-
-    /// Skip build database; every target always rebuilds.
-    NoPersist: bool
-
-    /// Targets executed sequentially during XakeEngine.StopAsync.
+    Logger: ILogger
     Teardown: string list
+    Rules: Rules<ExecContext>
 } with
     static member Default = {
         ProjectRoot = System.IO.Directory.GetCurrentDirectory()
         Threads = System.Environment.ProcessorCount
-        ConLogLevel = Normal
-
-        CustomLogger = CustomLogger (fun _ -> false) ignore
-        FileLog = "build.log"
-        FileLogLevel = Chatty
-        Targets = []
-        ThrowOnError = false
-        Vars = List<string*string>.Empty
-        IgnoreCommandLine = false
-        Nologo = false
-        DbFileName = ".xake"
-        DryRun = false
-        DumpDeps = false
-        Progress = true
-        ResetDb = false
-        NoPersist = false
+        Logger = CustomLogger (fun _ -> false) ignore
         Teardown = []
+        Rules = Rules []
     }
-    static member DefaultEngine = {
-        ExecOptions.Default with IgnoreCommandLine = true; Targets = []
-    }
-end
 
-type ExecStatus = | Succeed | Skipped | JustFile
-type TaskPool = Agent<ExecMessage<ExecStatus>>
+/// Engine-level immutable state shared across all tasks.
+and EngineState = {
+    Options: EngineOptions
+    Db: Agent<Storage.DatabaseApi>
+    Scheduler: Scheduler<ExecStatus>
+    RootLogger: ILogger
+}
 
 /// Script execution context
-type ExecContext = {
-    TaskPool: TaskPool
-    Db: Agent<Storage.DatabaseApi>
-    Throttler: SemaphoreSlim
-    Options: ExecOptions
-    Rules: Rules<ExecContext>
-    Logger: ILogger
-    RootLogger: ILogger
+and ExecContext = {
+    Engine: EngineState
+    // Build-level
+    Vars: (string * string) list
     Progress: Agent<Progress.ProgressReport>
+    NeedRebuild: Target list -> bool
+    ShowProgress: bool
+    // Task-level
     Targets: Target list
     RuleMatches: Map<string,string>
     Ordinal: int
-    NeedRebuild: Target list -> bool
-}
+    Logger: ILogger
+} with
+    member ctx.Options = ctx.Engine.Options
+    member ctx.Db = ctx.Engine.Db
 
 module internal Util =
 
@@ -107,4 +51,4 @@ module internal Util =
     let getEnvVar = System.Environment.GetEnvironmentVariable >> nullableToOption
 
     let private valueByName variableName = function |name,value when name = variableName -> Some value | _ -> None
-    let getVar (options: ExecOptions) name = options.Vars |> List.tryPick (valueByName name)
+    let getVar (vars: (string * string) list) name = vars |> List.tryPick (valueByName name)

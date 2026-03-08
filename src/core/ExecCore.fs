@@ -1,10 +1,15 @@
-﻿module internal Xake.ExecCore
+module internal Xake.ExecCore
 
 open System.Text.RegularExpressions
 open DependencyAnalysis
 
 open Storage
 open WorkerPool
+
+/// <summary>
+/// Gets action context.
+/// </summary>
+let getCtx() = Recipe (fun (r,c) -> async {return (r,c)})
 
 /// Writes the message with formatting to a log
 let traceLog (level:Logging.Level) fmt =
@@ -18,6 +23,17 @@ let wildcardsRegex = Regex(@"\*\*|\*|\?", RegexOptions.Compiled)
 let patternTagRegex = Regex(@"\((?'tag'\w+?)\:[^)]+\)", RegexOptions.Compiled)
 let replace (regex:Regex) (evaluator: Match -> string) text = regex.Replace(text, evaluator)
 let ifNone x = function |Some x -> x | _ -> x
+
+/// Converts CLI ExecOptions into engine-level EngineOptions, constructing the logger.
+let toEngineOptions (opts: ExecOptions) (rules: Rules<ExecContext>) : EngineOptions =
+    let logger = CombineLogger (ConsoleLogger opts.ConLogLevel) opts.CustomLogger
+    let logger =
+        match opts.FileLog, opts.FileLogLevel with
+        | null,_ | "",_
+        | _, Silent -> logger
+        | logFileName,level -> CombineLogger logger (FileLogger logFileName level)
+    { ProjectRoot = opts.ProjectRoot; Threads = opts.Threads
+      Logger = logger; Teardown = opts.Teardown; Rules = rules }
 
 let (|Dump|Dryrun|Run|) (opts:ExecOptions) =
     match opts with
@@ -38,7 +54,7 @@ let applyWildcards = function
             pat
             |> replace wildcardsRegex evaluator
             |> replace patternTagRegex evaluatorTag
-            
+
 // locates the rule
 let locateRule (Rules rules) projectRoot target =
     let matchRule rule =
@@ -64,7 +80,7 @@ let locateRule (Rules rules) projectRoot target =
                 )
             |> Option.map (fun (groups, _) ->
                 let generateName = applyWildcards (Map.ofList groups |> Some)
-                
+
                 let targets = patterns |> List.map (generateName >> (</>) projectRoot >> File.make >> FileTarget)
                 rule, groups, targets)
 
@@ -90,13 +106,13 @@ let newTaskContext targets matches ctx =
     let prefix = ordinal |> sprintf "%i> "
     in
     {ctx with
-        Ordinal = ordinal; Logger = PrefixLogger prefix ctx.RootLogger
+        Ordinal = ordinal; Logger = PrefixLogger prefix ctx.Engine.RootLogger
         Targets = targets
         RuleMatches = matches
     }
 
 // executes single artifact
-let rec execOne ctx target =
+let rec execOne (ctx: ExecContext) target =
 
     let run ruleMatches action targets =
         let primaryTarget = targets |> List.head
@@ -129,12 +145,12 @@ let rec execOne ctx target =
         | PhonyRule (_, a) -> a
 
     // result expression is...
-    match target |> locateRule ctx.Rules ctx.Options.ProjectRoot with
+    match target |> locateRule ctx.Options.Rules ctx.Options.ProjectRoot with
     | Some(rule,groups,targets) ->
         let groupsMap = groups |> Map.ofSeq
         let (Recipe action) = rule |> getAction
         async {
-            let! waitTask = (fun channel -> Run(target, targets, run groupsMap action targets, channel)) |> ctx.TaskPool.PostAndAsyncReply
+            let! waitTask = (fun channel -> Run(target, targets, run groupsMap action targets, channel)) |> (Scheduler.pool ctx.Engine.Scheduler).PostAndAsyncReply
             let! status = waitTask
             return target, status, ArtifactDep target
         }
@@ -146,7 +162,7 @@ let rec execOne ctx target =
             let errorText = sprintf "Neither rule nor file is found for '%s'" target.FullName
             do ctx.Logger.Log Error "%s" errorText
             raise (XakeException errorText)
-        
+
 /// <summary>
 /// Executes several artifacts in parallel.
 /// </summary>
@@ -158,14 +174,12 @@ and execParallel ctx = List.map (execOne ctx) >> Seq.ofList >> Async.Parallel
 /// <returns>
 /// ExecStatus.Succeed,... in case at least one dependency was rebuilt
 /// </returns>
-and execNeed ctx targets : Async<ExecStatus * Dependency list> =
+and execNeed (ctx: ExecContext) targets : Async<ExecStatus * Dependency list> =
     async {
         let primaryTarget = ctx.Targets |> List.head
         primaryTarget |> (Progress.TaskSuspend >> ctx.Progress.Post)
 
-        do ctx.Throttler.Release() |> ignore
-        let! statuses = targets |> execParallel ctx
-        do! ctx.Throttler.WaitAsync -1 |> Async.AwaitTask |> Async.Ignore
+        let! statuses = Scheduler.withYieldedSlot ctx.Engine.Scheduler (targets |> execParallel ctx)
 
         primaryTarget |> (Progress.TaskResume >> ctx.Progress.Post)
 
@@ -177,8 +191,8 @@ and execNeed ctx targets : Async<ExecStatus * Dependency list> =
     }
 
 /// phony actions are detected by their name so if there's "clean" phony and file "clean" in `need` list if will choose first
-let makeTarget ctx name =
-    let (Rules rules) = ctx.Rules
+let makeTarget (ctx: ExecContext) name =
+    let (Rules rules) = ctx.Options.Rules
     let isPhonyRule nm = function
         |PhonyRule (pattern,_) ->
             nm |> Path.matchGroups pattern "" |> Option.isSome
@@ -189,7 +203,8 @@ let makeTarget ctx name =
     | _ -> ctx.Options.ProjectRoot </> name |> File.make |> FileTarget
 
 /// Implementation of "dry run"
-let dryRun ctx options (groups: string list list) =
+let dryRun (ctx: ExecContext) (groups: string list list) =
+    let options = ctx.Options
     let getDeps = getChangeReasons ctx |> memoizeRec
 
     // getPlainDeps getDeps (getExecTime ctx)
@@ -250,7 +265,7 @@ let rec unwindAggEx (e:System.Exception) = seq {
         | a -> yield a
     }
 
-let rec runSeq<'r> :Async<'r> list -> Async<'r list> = 
+let rec runSeq<'r> :Async<'r> list -> Async<'r list> =
     List.fold
         (fun rest i -> async {
             let! tail = rest
@@ -262,11 +277,12 @@ let rec runSeq<'r> :Async<'r> list -> Async<'r list> =
 let asyncMap f c = async.Bind(c, f >> async.Return)
 
 /// Runs the build (main function of xake)
-let runBuild ctx options groups =
+let runBuild (ctx: ExecContext) groups =
+    let options = ctx.Options
 
-    let runTargets ctx options targets =
+    let runTargets ctx targets =
         let getDeps = getChangeReasons ctx |> memoizeRec
-        
+
         let needRebuild (target: Target) =
             getDeps >>
             function
@@ -288,7 +304,7 @@ let runBuild ctx options groups =
         async {
             do ctx.Logger.Log Info "Build target list %A" targets
 
-            let progressSink = Progress.openProgress (getDurationDeps ctx getDeps) options.Threads targets options.Progress
+            let progressSink = Progress.openProgress (getDurationDeps ctx getDeps) options.Threads targets ctx.ShowProgress
             let stepCtx = {ctx with NeedRebuild = List.exists needRebuild; Progress = progressSink}
 
             try
@@ -297,46 +313,57 @@ let runBuild ctx options groups =
                 do Progress.Finish |> progressSink.Post
         }
 
-    groups |> List.map 
-        (List.map (makeTarget ctx) >> (runTargets ctx options))
+    groups |> List.map
+        (List.map (makeTarget ctx) >> (runTargets ctx))
     |> runSeq
     |> asyncMap (Array.concat >> List.ofArray)
 
-/// Creates execution context and returns it together with a finalize function.
-let createContext options rules =
-    let logger = CombineLogger (ConsoleLogger options.ConLogLevel) options.CustomLogger
-    let logger =
-        match options.FileLog, options.FileLogLevel with
-        | null,_ | "",_
-        | _, Silent -> logger
-        | logFileName,level -> CombineLogger logger (FileLogger logFileName level)
-
-    let throttler, pool = WorkerPool.create logger options.Threads
-
-    let db =
-        if options.NoPersist then
-            Storage.noopDb ()
-        else
-            let dbpath = options.ProjectRoot </> options.DbFileName
-            if options.ResetDb then
-                Storage.cleanupDb dbpath logger
-            Storage.openDb dbpath logger
+/// Shared context creation logic.
+let private createContextCore (options: EngineOptions) (db: Agent<Storage.DatabaseApi>) vars showProgress =
+    let logger = options.Logger
+    let scheduler = Scheduler.create logger options.Threads
 
     let finalize () =
         db.PostAndReply Storage.CloseWait
         FlushLogs()
 
+    let engineState = {
+        Options = options
+        Db = db
+        Scheduler = scheduler
+        RootLogger = logger
+    }
+
     let ctx = {
         Ordinal = 0
-        TaskPool = pool; Throttler = throttler
-        Options = options; Rules = rules
-        Logger = logger; RootLogger = logger; Db = db
+        Engine = engineState
+        Logger = logger
         Progress = Progress.emptyProgress()
         NeedRebuild = fun _ -> false
         Targets = []
         RuleMatches = Map.empty
+        Vars = vars
+        ShowProgress = showProgress
         }
     ctx, finalize
+
+/// Creates execution context for engine mode: noPersist, no progress.
+let createContext (options: EngineOptions) vars =
+    let db = Storage.noopDb ()
+    createContextCore options db vars false
+
+/// Creates execution context from CLI ExecOptions, handling ResetDb and logger construction.
+let createScriptContext (opts: ExecOptions) rules =
+    let engineOpts = toEngineOptions opts rules
+    let db =
+        if opts.NoPersist then
+            Storage.noopDb ()
+        else
+            let dbPath = engineOpts.ProjectRoot </> opts.DbFileName
+            if opts.ResetDb then
+                Storage.cleanupDb dbPath engineOpts.Logger
+            Storage.openDb dbPath engineOpts.Logger
+    createContextCore engineOpts db opts.Vars opts.Progress
 
 /// Demand a single target be built; returns its ExecStatus.
 let demandTarget (ctx: ExecContext) (targetName: string) : Async<ExecStatus> =
@@ -345,7 +372,7 @@ let demandTarget (ctx: ExecContext) (targetName: string) : Async<ExecStatus> =
         let getDeps = getChangeReasons ctx |> memoizeRec
         let needRebuild (t: Target) =
             getDeps t |> function | [] -> false | _ -> true
-        let progressSink = Progress.openProgress (getDurationDeps ctx getDeps) ctx.Options.Threads [target] ctx.Options.Progress
+        let progressSink = Progress.openProgress (getDurationDeps ctx getDeps) ctx.Engine.Options.Threads [target] ctx.ShowProgress
         let stepCtx = {ctx with NeedRebuild = List.exists needRebuild; Progress = progressSink}
         try
             let! (_, status, _) = execOne stepCtx target
@@ -354,20 +381,15 @@ let demandTarget (ctx: ExecContext) (targetName: string) : Async<ExecStatus> =
             Progress.Finish |> progressSink.Post
     }
 
-/// Executes the build script
-let runScript options rules =
-    let ctx, finalize = createContext options rules
-    let logger = ctx.Logger
+type ScriptResult = BuildOk | BuildFailed of exn
 
-    System.Console.CancelKeyPress
-    |> Event.add (fun _ ->
-        logger.Log Error "Build interrupted by user"
-        finalize()
-        exit 1)
+/// Pure build execution - no process lifecycle, no exit calls.
+let runBuildScript options rules : ScriptResult =
+    let ctx, finalize = createScriptContext options rules
+    let logger = ctx.Logger
 
     logger.Log Info "Options: %A" options
 
-    // splits list of targets ["t1;t2"; "t3;t4"] into list of list.
     let targetLists =
         options.Targets |>
         function
@@ -380,19 +402,22 @@ let runScript options rules =
     let reportError ctx error details =
         do ctx.Logger.Log Error "Error '%s'. See build.log for details" error
         do ctx.Logger.Log Verbose "Error details are:\n%A\n\n" details
-            
+
     try
         match options with
         | Dump ->
             do logger.Log Level.Command "Dumping dependencies for targets %A" targetLists
             targetLists |> List.iter (List.map (makeTarget ctx) >> (dumpDeps ctx))
+            BuildOk
         | Dryrun ->
-            targetLists |> (dryRun ctx options)
+            targetLists |> (dryRun ctx)
+            BuildOk
         | _ ->
             let start = System.DateTime.Now
             try
-                targetLists |> (runBuild ctx options) |> Async.RunSynchronously |> ignore
+                targetLists |> (runBuild ctx) |> Async.RunSynchronously |> ignore
                 ctx.Logger.Log Message "\n\n    Build completed in %A\n" (System.DateTime.Now - start)
+                BuildOk
             with | exn ->
                 let exceptions = exn |> unwindAggEx
                 let errors = exceptions |> Seq.map (fun e -> e.Message) in
@@ -401,14 +426,18 @@ let runScript options rules =
 
                 do reportError ctx errorText details
                 ctx.Logger.Log Message "\n\n\tBuild failed after running for %A\n" (System.DateTime.Now - start)
-
-                if options.ThrowOnError then
-                    raise (XakeException "Script failure. See log file for details.")
-                else
-                    finalize()
-                    exit 2
+                BuildFailed exn
     finally
         finalize()
+
+/// CLI entry point - adds Ctrl+C handler and exit calls.
+let runScript options rules =
+    System.Console.CancelKeyPress |> Event.add (fun _ -> exit 1)
+    match runBuildScript options rules with
+    | BuildOk -> ()
+    | BuildFailed _ when options.ThrowOnError ->
+        raise (XakeException "Script failure. See log file for details.")
+    | BuildFailed _ -> exit 2
 
 /// "need" implementation
 let need targets = recipe {

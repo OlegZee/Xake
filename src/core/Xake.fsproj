@@ -29,9 +29,10 @@
     <Compile Include="WorkerPool.fs" />
     <Compile Include="Progress.fs" />
     <Compile Include="ExecTypes.fs" />
+    <Compile Include="XakeScript.fs" />
     <Compile Include="DependencyAnalysis.fs" />
     <Compile Include="ExecCore.fs" />
-    <Compile Include="XakeScript.fs" />
+    <Compile Include="XakeScriptBuilder.fs" />
     <Compile Include="ScriptFuncs.fs" />
     <Compile Include="ProcessExec.fs" />
     <Compile Include="FileTasksImpl.fs" />

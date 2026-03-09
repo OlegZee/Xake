@@ -103,7 +103,8 @@ let runScript options rules =
         finalize()
         exit 1)
 
-    logger.Log Level.Debug "Options: %A" options // be careful with debug option as it may contain sensitive info like script variables
+    logger.Log Level.Debug "Options: %A" { options with Vars = [] }
+        // be careful with debug option as it may contain sensitive info like script variables
 
     let targetLists =
         options.Targets |>

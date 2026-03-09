@@ -157,7 +157,7 @@ module Main =
         xake ExecOptions.Default
 
     let xakeEngine =
-        RulesBuilder { ExecOptions.Default with IgnoreCommandLine = true; NoPersist = true; ConLogLevel = Silent; FileLogLevel = Silent }
+        RulesBuilder { ExecOptions.Default with IgnoreCommandLine = true; NoPersist = true; ConLogLevel = Silent; FileLogLevel = Silent; Progress = false }
 
     // Runs the set of rules - need a function accepting target list and rules
     // let run = ExecCore.runScript

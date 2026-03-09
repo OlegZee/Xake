@@ -117,7 +117,10 @@ module XakeScriptBuilder =
             if stopped then raise (System.InvalidOperationException "XakeEngine has been stopped")
             let demandCtx = makeCtx vars
             inFlight.GetOrAdd(targetName, Lazy<_>(fun () ->
-                ExecCore.demandTarget demandCtx targetName |> Async.StartAsTask
+                let task = ExecCore.demandTarget demandCtx targetName |> Async.StartAsTask
+                task.ContinueWith(fun (_: System.Threading.Tasks.Task<_>) -> inFlight.TryRemove(targetName) |> ignore) |> ignore
+                    // TODO need test for this cleanup logic, and also consider what to do if the task faults - do we want to remove it from inFlight so that a retry can be attempted?
+                task
             )).Value :> System.Threading.Tasks.Task
 
         /// Stops the engine: waits for in-flight tasks, runs teardown targets, then releases resources.

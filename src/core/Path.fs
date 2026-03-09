@@ -3,6 +3,7 @@
 open System.IO
 open System.Text.RegularExpressions
 
+/// A single segment of a parsed file path or pattern.
 type Part =
     | FsRoot
     | Parent
@@ -14,8 +15,10 @@ type Part =
     | FileMask of string
     | FileName of string
 
+/// A parsed Ant-style path pattern consisting of part segments.
 type PathMask = PathMask of Part list
 
+/// Result of matching a file path against a pattern.
 type MatchResult =
     | Matches of (string*string) list
     | Nope
@@ -174,7 +177,7 @@ module internal matchImpl =
         | m::ms, x::xs ->
             matchPart m x && matchPaths ms xs
 
-// API
+/// Pickler for PathMask serialization.
 let pickler = PicklerImpl.pattern
 
 /// <summary>
@@ -215,17 +218,19 @@ let matchesPattern (pattern:string) =
     let regex = matchImpl.maskToRegex pattern
     fun file -> regex.Match(matchImpl.normalizeSlashes file).Success
 *)
+/// Returns true if the parsed file path matches the given PathMask.
 let matchesPattern (PathMask mask) file =
     let (PathMask fileParts) = file |> impl.parse impl.isLastPartForFile in
     matchImpl.matchPaths mask fileParts
 
+/// Returns true if the file matches the Ant-style pattern relative to the given root.
 let matches filePattern rootPath =
     // IDEA: make relative path then match to pattern?
     // matches "src/**/*.cs" "c:\!\src\a\b\c.cs" -> true
 
     matchesPattern <| join (parseDir rootPath) (parse filePattern)
 
-/// file name match implementation for rules
+/// Matches a file against a pattern and returns captured named groups, or None if no match.
 let matchGroups (pattern:string) rootPath =
 
     let regex = Path.Combine(rootPath, pattern) |> matchImpl.maskToRegex

@@ -5,6 +5,7 @@ module DomainTypes =
 
     let private stringCompare = if Env.isUnix then System.StringComparer.Ordinal else System.StringComparer.OrdinalIgnoreCase
 
+    /// A build target: either a file to produce or a phony named action.
     [<CustomEquality;CustomComparison>]
     type Target =
         | FileTarget of File
@@ -32,12 +33,14 @@ module DomainTypes =
                     | :? Target as y -> stringCompare.Compare(x.FullName, y.FullName)
                     | _ -> invalidArg "y" "cannot compare target to different types"
 
-    // structures, database processor and store
+    /// Alias for System.DateTime used for file timestamps.
     type Timestamp = System.DateTime
 
+    /// Unit of measure for milliseconds.
     [<Measure>]
     type ms
 
+    /// A tracked dependency that determines whether a target needs rebuilding.
     type Dependency =
         | FileDep of File * Timestamp // regular file (such as source code file), triggers when file date/time is changed
         | ArtifactDep of Target // other target (triggers when target is rebuilt)
@@ -46,26 +49,28 @@ module DomainTypes =
         | AlwaysRerun // trigger always
         | GetFiles of Fileset * Filelist // depends on set of files. Triggers when resulting filelist is changed
 
+    /// Timing information for one named step within a recipe execution.
     type StepInfo =
         { Name: string; Start: System.DateTime; OwnTime: int<ms>; WaitTime: int<ms> }
         with static member Empty = {Name = ""; Start = new System.DateTime(1900,1,1); OwnTime = 0<ms>; WaitTime = 0<ms>}
 
+    /// Recorded result of building one or more targets, including dependencies and step timings.
     type BuildResult =
         { Targets : Target list
           Built : Timestamp
           Depends : Dependency list
           Steps : StepInfo list }
 
-    // expression type
+    /// An async build action that threads BuildResult state through its execution.
     type Recipe<'a,'b> = Recipe of (BuildResult * 'a -> Async<BuildResult * 'b>)
 
-    /// Data type for action's out parameter. Defined target file and named groups in pattern
-
+    /// A build rule that maps a target pattern to a recipe.
     type 'ctx Rule =
         | FileRule of string * Recipe<'ctx,unit>
         | MultiFileRule of string list * Recipe<'ctx,unit>
         | PhonyRule of string * Recipe<'ctx,unit>
         | FileConditionRule of (string -> bool) * Recipe<'ctx,unit>
+    /// A list of build rules.
     type 'ctx Rules = Rules of 'ctx Rule list
 
     /// Defines common exception type

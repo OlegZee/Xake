@@ -4,6 +4,12 @@
 module ScriptFuncs =
 
     /// <summary>
+    /// Gets action context.
+    /// </summary>
+    let getCtx(): Recipe<ExecContext, ExecContext> = ExecCore.getCtx()
+
+
+    /// <summary>
     /// Gets the script execution context options.
     /// </summary>
     /// <returns>Recipe that returns the execution options</returns>
@@ -59,7 +65,7 @@ module ScriptFuncs =
     /// <returns>Recipe that returns the variable value</returns>
     let getVar variableName = recipe {
         let! ctx = getCtx()
-        let value = Util.getVar ctx.Options variableName
+        let value = Util.getVar ctx.Vars variableName
 
         do! Var (variableName,value) |> recordDependency
         return value

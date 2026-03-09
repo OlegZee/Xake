@@ -25,7 +25,8 @@ type Verbosity =
     | Chatty
     | Diag
 
-let LevelToString = 
+/// Converts a log level to its short display string.
+let LevelToString =
     function 
     | Message -> "MSG"
     | Error -> "ERROR"

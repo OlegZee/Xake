@@ -20,7 +20,7 @@ let TimeCompareToleranceMs = 10.0
 /// </summary>
 /// <param name="ctx"></param>
 /// <param name="target"></param>
-let getExecTime ctx target =
+let getExecTime (ctx: ExecContext) target =
     (fun ch -> Storage.GetResult(target, ch)) |> ctx.Db.PostAndReply
     |> Option.fold (fun _ r -> r.Steps |> List.sumBy (fun s -> s.OwnTime)) 0<ms>
 
@@ -69,7 +69,7 @@ let getDepState getVar getFileList (getChangedDeps: Target -> ChangeReason list)
 /// <param name="ctx"></param>
 /// <param name="getTargetDeps">gets state for nested dependency</param>
 /// <param name="target">The target to analyze</param>
-let getChangeReasons ctx getTargetDeps target =
+let getChangeReasons (ctx: ExecContext) getTargetDeps target =
 
     // separates change reason into two lists and collabses FilesChanged all into one
     let collapseFilesChanged reasons =
@@ -87,7 +87,7 @@ let getChangeReasons ctx getTargetDeps target =
         [ChangeReason.Other "No dependencies", Some "It means target is not \"pure\" and depends on something beyond our control (oracle)"]
 
     | Some {BuildResult.Depends = depends; Targets = result} ->
-        let depState = getDepState (Util.getVar ctx.Options) (toFileList ctx.Options.ProjectRoot) getTargetDeps
+        let depState = getDepState (Util.getVar ctx.Vars) (toFileList ctx.Options.ProjectRoot) getTargetDeps
 
         depends
             |> List.map depState

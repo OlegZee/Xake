@@ -1,4 +1,4 @@
-﻿module internal Xake.ExecCore
+module internal Xake.ExecCore
 
 open System.Text.RegularExpressions
 open DependencyAnalysis
@@ -6,7 +6,10 @@ open DependencyAnalysis
 open Storage
 open WorkerPool
 
-/// Writes the message with formatting to a log
+/// Returns the current recipe execution context as a tuple of build result and execution context.
+let getCtx() = Recipe (fun (r,c) -> async {return (r,c)})
+
+/// Writes a formatted message to the build log at the specified logging level.
 let traceLog (level:Logging.Level) fmt =
     let write s = recipe {
         let! ctx = getCtx()
@@ -19,12 +22,8 @@ let patternTagRegex = Regex(@"\((?'tag'\w+?)\:[^)]+\)", RegexOptions.Compiled)
 let replace (regex:Regex) (evaluator: Match -> string) text = regex.Replace(text, evaluator)
 let ifNone x = function |Some x -> x | _ -> x
 
-let (|Dump|Dryrun|Run|) (opts:ExecOptions) =
-    match opts with
-    | _ when opts.DumpDeps -> Dump
-    | _ when opts.DryRun -> Dryrun
-    | _ -> Run
-
+/// Substitutes wildcard and named capture group matches into a file pattern.
+/// Positional wildcards (*, **, ?) are replaced by index, named groups by tag.
 let applyWildcards = function
     | None -> id
     | Some matches ->
@@ -38,8 +37,9 @@ let applyWildcards = function
             pat
             |> replace wildcardsRegex evaluator
             |> replace patternTagRegex evaluatorTag
-            
-// locates the rule
+
+/// Finds the first rule whose pattern matches the given target.
+/// Returns the matched rule, captured groups, and the full list of targets it produces.
 let locateRule (Rules rules) projectRoot target =
     let matchRule rule =
         match rule, target with
@@ -64,7 +64,7 @@ let locateRule (Rules rules) projectRoot target =
                 )
             |> Option.map (fun (groups, _) ->
                 let generateName = applyWildcards (Map.ofList groups |> Some)
-                
+
                 let targets = patterns |> List.map (generateName >> (</>) projectRoot >> File.make >> FileTarget)
                 rule, groups, targets)
 
@@ -79,24 +79,25 @@ let locateRule (Rules rules) projectRoot target =
 
     rules |> List.tryPick matchRule
 
-// Ordinal of the task being added to a task pool
+/// Global counter for assigning ordinals to tasks submitted to the worker pool.
 let refTaskOrdinal = ref 0
 
-/// <summary>
-/// Creates a context for a new task
-/// </summary>
+/// Creates a new execution context for a task, assigning it a unique ordinal and a prefixed logger.
 let newTaskContext targets matches ctx =
     let ordinal = System.Threading.Interlocked.Increment(refTaskOrdinal)
     let prefix = ordinal |> sprintf "%i> "
     in
     {ctx with
-        Ordinal = ordinal; Logger = PrefixLogger prefix ctx.RootLogger
+        Ordinal = ordinal; Logger = PrefixLogger prefix ctx.Engine.RootLogger
         Targets = targets
         RuleMatches = matches
     }
 
-// executes single artifact
-let rec execOne ctx target =
+/// Executes a single target: locates the matching rule, submits the work to the
+/// scheduler, and returns the target, its execution status, and a dependency record.
+/// If no rule matches but a corresponding file exists, returns JustFile status.
+/// Raises XakeException when neither a rule nor a file is found.
+let rec execOne (ctx: ExecContext) target =
 
     let run ruleMatches action targets =
         let primaryTarget = targets |> List.head
@@ -129,12 +130,12 @@ let rec execOne ctx target =
         | PhonyRule (_, a) -> a
 
     // result expression is...
-    match target |> locateRule ctx.Rules ctx.Options.ProjectRoot with
+    match target |> locateRule ctx.Options.Rules ctx.Options.ProjectRoot with
     | Some(rule,groups,targets) ->
         let groupsMap = groups |> Map.ofSeq
         let (Recipe action) = rule |> getAction
         async {
-            let! waitTask = (fun channel -> Run(target, targets, run groupsMap action targets, channel)) |> ctx.TaskPool.PostAndAsyncReply
+            let! waitTask = (fun channel -> Run(target, targets, run groupsMap action targets, channel)) |> (Scheduler.pool ctx.Engine.Scheduler).PostAndAsyncReply
             let! status = waitTask
             return target, status, ArtifactDep target
         }
@@ -146,26 +147,19 @@ let rec execOne ctx target =
             let errorText = sprintf "Neither rule nor file is found for '%s'" target.FullName
             do ctx.Logger.Log Error "%s" errorText
             raise (XakeException errorText)
-        
-/// <summary>
-/// Executes several artifacts in parallel.
-/// </summary>
+
+/// Executes multiple targets in parallel and collects their results.
 and execParallel ctx = List.map (execOne ctx) >> Seq.ofList >> Async.Parallel
 
-/// <summary>
-/// Gets the status of dependency artifacts (obtained from 'need' calls).
-/// </summary>
-/// <returns>
-/// ExecStatus.Succeed,... in case at least one dependency was rebuilt
-/// </returns>
-and execNeed ctx targets : Async<ExecStatus * Dependency list> =
+/// Executes dependency targets in parallel, yielding the current scheduler slot while waiting.
+/// Returns Succeed if at least one dependency was rebuilt, Skipped otherwise,
+/// along with the list of recorded dependencies.
+and execNeed (ctx: ExecContext) targets : Async<ExecStatus * Dependency list> =
     async {
         let primaryTarget = ctx.Targets |> List.head
         primaryTarget |> (Progress.TaskSuspend >> ctx.Progress.Post)
 
-        do ctx.Throttler.Release() |> ignore
-        let! statuses = targets |> execParallel ctx
-        do! ctx.Throttler.WaitAsync(-1) |> Async.AwaitTask |> Async.Ignore
+        let! statuses = Scheduler.withYieldedSlot ctx.Engine.Scheduler (targets |> execParallel ctx)
 
         primaryTarget |> (Progress.TaskResume >> ctx.Progress.Post)
 
@@ -176,9 +170,10 @@ and execNeed ctx targets : Async<ExecStatus * Dependency list> =
                 |false -> Skipped), dependencies
     }
 
-/// phony actions are detected by their name so if there's "clean" phony and file "clean" in `need` list if will choose first
-let makeTarget ctx name =
-    let (Rules rules) = ctx.Rules
+/// Resolves a target name to a PhonyAction if a matching phony rule exists, otherwise to a FileTarget.
+/// Phony actions take precedence over files with the same name.
+let makeTarget (ctx: ExecContext) name =
+    let (Rules rules) = ctx.Options.Rules
     let isPhonyRule nm = function
         |PhonyRule (pattern,_) ->
             nm |> Path.matchGroups pattern "" |> Option.isSome
@@ -188,69 +183,15 @@ let makeTarget ctx name =
     | true -> PhonyAction name
     | _ -> ctx.Options.ProjectRoot </> name |> File.make |> FileTarget
 
-/// Implementation of "dry run"
-let dryRun ctx options (groups: string list list) =
-    let getDeps = getChangeReasons ctx |> memoizeRec
-
-    // getPlainDeps getDeps (getExecTime ctx)
-    do ctx.Logger.Log Command "Running (dry) targets %A" groups
-    let doneTargets = System.Collections.Hashtable()
-
-    let print f = ctx.Logger.Log Info f
-    let indent i = String.replicate i "  "
-
-    let rec showDepStatus ii reasons =
-        reasons |> function
-        | Other reason ->
-            print "%sReason: %s" (indent ii) reason
-        | Depends t ->
-            print "%sDepends '%s' - changed target" (indent ii) t.ShortName
-        | DependsMissingTarget t ->
-            print "%sDepends on '%s' - missing target" (indent ii) t.ShortName
-        | FilesChanged (file:: rest) ->
-            print "%sFile is changed '%s' %s" (indent ii) file (if List.isEmpty rest then "" else sprintf " and %d more file(s)" <| List.length rest)
-        | reasons ->
-            do print "%sSome reason %A" (indent ii) reasons
-        ()
-    let rec displayNestedDeps ii =
-        function
-        | DependsMissingTarget t
-        | Depends t ->
-            showTargetStatus ii t
-        | _ -> ()
-    and showTargetStatus ii target =
-        if not <| doneTargets.ContainsKey(target) then
-            doneTargets.Add(target, 1)
-            let deps = getDeps target
-            if not <| List.isEmpty deps then
-                let execTimeEstimate = getExecTime ctx target
-                do ctx.Logger.Log Command "%sRebuild %A (~%Ams)" (indent ii) target.ShortName execTimeEstimate
-                deps |> List.iter (showDepStatus (ii+1))
-                deps |> List.iter (displayNestedDeps (ii+1))
-
-    let targetGroups = makeTarget ctx |> List.map |> List.map <| groups
-    let toSec v = float (v / 1<ms>) * 0.001
-    let endTime = Progress.estimateEndTime (getDurationDeps ctx getDeps) options.Threads targetGroups |> toSec
-
-    targetGroups |> List.collect id |> List.iter (showTargetStatus 0)
-    let alldeps = targetGroups |> List.collect id |> List.collect getDeps
-    if List.isEmpty alldeps then
-        ctx.Logger.Log Message "\n\n\tNo changed dependencies. Nothing to do.\n"
-    else
-        let parallelismMsg =
-            let endTimeTotal = Progress.estimateEndTime (getDurationDeps ctx getDeps) 1 targetGroups |> toSec
-            if options.Threads > 1 && endTimeTotal > endTime * 1.05 then
-                sprintf "\n\tTotal tasks duration is (estimate) in %As\n\tParallelist degree: %.2f" endTimeTotal (endTimeTotal / endTime)
-            else ""
-        ctx.Logger.Log Message "\n\n\tBuild will be completed (estimate) in %As%s\n" endTime parallelismMsg
-
+/// Recursively flattens an AggregateException into its leaf exceptions.
 let rec unwindAggEx (e:System.Exception) = seq {
     match e with
         | :? System.AggregateException as a -> yield! a.InnerExceptions |> Seq.collect unwindAggEx
         | a -> yield a
     }
 
-let rec runSeq<'r> :Async<'r> list -> Async<'r list> = 
+/// Executes a list of async computations sequentially, collecting results in order.
+let rec runSeq<'r> :Async<'r> list -> Async<'r list> =
     List.fold
         (fun rest i -> async {
             let! tail = rest
@@ -259,14 +200,18 @@ let rec runSeq<'r> :Async<'r> list -> Async<'r list> =
         })
         (async {return []})
 
+/// Maps a function over the result of an async computation.
 let asyncMap f c = async.Bind(c, f >> async.Return)
 
-/// Runs the build (main function of xake)
-let runBuild ctx options groups =
+/// Runs the full build pipeline for the given target groups.
+/// Each group is executed sequentially; targets within a group run in parallel.
+/// Returns the combined list of target/status/dependency results.
+let runBuild (ctx: ExecContext) groups =
+    let options = ctx.Options
 
-    let runTargets ctx options targets =
+    let runTargets ctx targets =
         let getDeps = getChangeReasons ctx |> memoizeRec
-        
+
         let needRebuild (target: Target) =
             getDeps >>
             function
@@ -288,7 +233,7 @@ let runBuild ctx options groups =
         async {
             do ctx.Logger.Log Info "Build target list %A" targets
 
-            let progressSink = Progress.openProgress (getDurationDeps ctx getDeps) options.Threads targets options.Progress
+            let progressSink = Progress.openProgress (getDurationDeps ctx getDeps) options.Threads targets ctx.ShowProgress
             let stepCtx = {ctx with NeedRebuild = List.exists needRebuild; Progress = progressSink}
 
             try
@@ -297,96 +242,66 @@ let runBuild ctx options groups =
                 do Progress.Finish |> progressSink.Post
         }
 
-    groups |> List.map 
-        (List.map (makeTarget ctx) >> (runTargets ctx options))
+    groups |> List.map
+        (List.map (makeTarget ctx) >> (runTargets ctx))
     |> runSeq
     |> asyncMap (Array.concat >> List.ofArray)
 
-/// Executes the build script
-let runScript options rules =
-    let logger = CombineLogger (ConsoleLogger options.ConLogLevel) options.CustomLogger
-    let logger =
-        match options.FileLog, options.FileLogLevel with
-        | null,_ | "",_
-        | _, Silent -> logger
-        | logFileName,level -> CombineLogger logger (FileLogger logFileName level)
-
-    let throttler, pool = WorkerPool.create logger options.Threads
-    
-    let dbpath = options.ProjectRoot </> options.DbFileName
-    // Reset database if requested
-    if options.ResetDb then
-        Storage.cleanupDb dbpath logger
-
-    let db = Storage.openDb dbpath logger
+/// Creates the shared execution context and returns it together with a finalize callback.
+/// The finalize callback closes the database, disposes the scheduler, and flushes logs.
+let createContextCore (options: EngineOptions) (db: Agent<Storage.DatabaseApi>) vars showProgress =
+    let logger = options.Logger
+    let scheduler = Scheduler.create logger options.Threads
 
     let finalize () =
         db.PostAndReply Storage.CloseWait
+        (scheduler :> System.IDisposable).Dispose()
         FlushLogs()
 
-    System.Console.CancelKeyPress
-    |> Event.add (fun _ -> 
-        logger.Log Error "Build interrupted by user"
-        finalize()
-        exit 1)
+    let engineState = {
+        Options = options
+        Db = db
+        Scheduler = scheduler
+        RootLogger = logger
+    }
 
     let ctx = {
         Ordinal = 0
-        TaskPool = pool; Throttler = throttler
-        Options = options; Rules = rules
-        Logger = logger; RootLogger = logger; Db = db
+        Engine = engineState
+        Logger = logger
         Progress = Progress.emptyProgress()
         NeedRebuild = fun _ -> false
         Targets = []
         RuleMatches = Map.empty
+        Vars = vars
+        ShowProgress = showProgress
         }
+    ctx, finalize
 
-    logger.Log Info "Options: %A" options
+/// Creates an execution context for engine/library mode with no persistence and no progress display.
+let createContext (options: EngineOptions) vars =
+    let db = Storage.noopDb ()
+    createContextCore options db vars false
 
-    // splits list of targets ["t1;t2"; "t3;t4"] into list of list.
-    let targetLists =
-        options.Targets |>
-        function
-        | [] ->
-            do logger.Log Level.Message "No target(s) specified. Defaulting to 'main'"
-            [["main"]]
-        | tt ->
-            tt |> List.map (fun (s: string) -> s.Split(';', '|') |> List.ofArray)
+/// Builds a single target by name and returns its execution status.
+/// Sets up dependency analysis, progress tracking, and scheduler context for the build.
+let demandTarget (ctx: ExecContext) (targetName: string) : Async<ExecStatus> =
+    async {
+        let target = makeTarget ctx targetName
+        let getDeps = getChangeReasons ctx |> memoizeRec
+        let needRebuild (t: Target) =
+            getDeps t |> function | [] -> false | _ -> true
+        let progressSink = Progress.openProgress (getDurationDeps ctx getDeps) ctx.Engine.Options.Threads [target] ctx.ShowProgress
+        let stepCtx = {ctx with NeedRebuild = List.exists needRebuild; Progress = progressSink}
+        try
+            let! (_, status, _) = execOne stepCtx target
+            return status
+        finally
+            Progress.Finish |> progressSink.Post
+    }
 
-    let reportError ctx error details =
-        do ctx.Logger.Log Error "Error '%s'. See build.log for details" error
-        do ctx.Logger.Log Verbose "Error details are:\n%A\n\n" details
-            
-    try
-        match options with
-        | Dump ->
-            do logger.Log Level.Command "Dumping dependencies for targets %A" targetLists
-            targetLists |> List.iter (List.map (makeTarget ctx) >> (dumpDeps ctx))
-        | Dryrun ->
-            targetLists |> (dryRun ctx options)
-        | _ ->
-            let start = System.DateTime.Now
-            try
-                targetLists |> (runBuild ctx options) |> Async.RunSynchronously |> ignore
-                ctx.Logger.Log Message "\n\n    Build completed in %A\n" (System.DateTime.Now - start)
-            with | exn ->
-                let exceptions = exn |> unwindAggEx
-                let errors = exceptions |> Seq.map (fun e -> e.Message) in
-                let details = exceptions |> Seq.last |> fun e -> e.ToString()
-                let errorText = errors |> String.concat "\r\n"
-
-                do reportError ctx errorText details
-                ctx.Logger.Log Message "\n\n\tBuild failed after running for %A\n" (System.DateTime.Now - start)
-
-                if options.ThrowOnError then
-                    raise (XakeException "Script failure. See log file for details.")
-                else
-                    finalize()
-                    exit 2
-    finally
-        finalize()
-
-/// "need" implementation
+/// Recipe action that declares dependencies on the given targets.
+/// Executes them in parallel, records their dependencies, and updates step wait time.
 let need targets = recipe {
     let startTime = System.DateTime.Now
 

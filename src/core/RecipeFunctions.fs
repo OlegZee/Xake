@@ -18,11 +18,6 @@ let map f (rc: Recipe<_,_>) = recipe {
 }
 
 /// <summary>
-/// Gets action context.
-/// </summary>
-let getCtx()     = Recipe (fun (r,c) -> async {return (r,c)})
-
-/// <summary>
 /// Gets current task result.
 /// </summary>
 let getResult()  = Recipe (fun (s,_) -> async {return (s,s)})

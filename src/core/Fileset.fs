@@ -16,21 +16,26 @@ type FileSystemType = {
     ScanFiles: string -> string -> string seq // mask -> dir -> files
 }
 
+/// Type alias for a file pattern string.
 type FilePattern = string
 
 /// Filesystem pattern
 type FilesetElement = | Includes of Path.PathMask | Excludes of Path.PathMask
 
+/// Options controlling fileset evaluation: base directory and empty-result behavior.
 type FilesetOptions = {FailOnEmpty:bool; BaseDir:string option}
 
-// Fileset is either set of rules or list of files (materialized)
+/// A fileset definition: options plus a list of include/exclude elements.
 type Fileset = Fileset of FilesetOptions * FilesetElement list
+/// A materialized list of files produced from evaluating a Fileset.
 type Filelist = Filelist of File list
 
 /// Default fileset options
 let DefaultOptions = {FilesetOptions.BaseDir = None; FailOnEmpty = false}
 
+/// The empty fileset with default options.
 let Empty = Fileset (DefaultOptions,[])
+/// The empty file list.
 let EmptyList = Filelist []
 
 /// Implementation module
@@ -159,6 +164,7 @@ open Impl
 
 /// Gets the pickler for fileset type
 let filesetPickler = PicklerImpl.fileset
+/// Gets the pickler for filelist type
 let filelistPickler = PicklerImpl.filelist
 
 /// <summary>
@@ -192,6 +198,7 @@ let parseDirMask = Path.parseDir
 [<System.Obsolete("Use Path.matches instead")>]
 let matches = Path.matches
 
+/// The real file system adapter used by default.
 let FileSystem = Impl.FileSystem
 
 /// <summary>
@@ -209,6 +216,7 @@ let listByMask (root:string) = Impl.listFiles Impl.FileSystem [root]
 /// </summary>
 let toFileList1 = Impl.scan
 
+/// Describes how a file list changed: an item was added or removed.
 type ListDiffType<'a> = | Added of 'a | Removed of 'a
 
 /// <summary>
@@ -251,7 +259,7 @@ type Fileset with
         Fileset (opts, pts @ [excludes |> Path.parse |> Excludes])
 end
 
-(******** builder ********)
+/// Computation expression builder for constructing Fileset values.
 type FilesetBuilder() =
 
     [<CustomOperation("failonempty")>]
@@ -292,4 +300,5 @@ type FilesetBuilder() =
     member x.For(fs, f) = x.Bind(fs, f)
     member x.Return(a) = x.Yield(a)
 
+/// The fileset computation expression builder instance.
 let fileset = FilesetBuilder()

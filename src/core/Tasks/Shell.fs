@@ -112,10 +112,12 @@ module ShellImpl =
         /// <summary>Set the prefix for log messages</summary>
         [<CustomOperation("logprefix")>] member __.LogPrefix(a:ShellOptions, value) = {a with LogPrefix = value}
 
+        /// <summary>Attach an additional stdout handler</summary>
         [<CustomOperation("stdout")>]
         member _.Stdout(state:ShellOptions, handler: string -> unit) =
             {state with StdOutLevel = fun x -> handler x; state.StdOutLevel x}
-        
+
+        /// <summary>Attach an additional stderr handler</summary>
         [<CustomOperation("stderr")>]
         member _.Stderr(state:ShellOptions, handler: string -> unit) =
             {state with ErrOutLevel = fun x -> handler x; state.ErrOutLevel x}

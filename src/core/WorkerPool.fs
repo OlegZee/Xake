@@ -1,15 +1,18 @@
 ﻿module Xake.WorkerPool
 
 
-// execution context
+/// Message type for the worker pool mailbox: requests execution of a target.
 type ExecMessage<'r> =
     | Run of Target * Target list * Async<'r> * AsyncReplyChannel<Async<'r>>
 
+/// Internal worker pool that deduplicates and throttles parallel task execution.
 module internal WorkerPool =
 
   open System.Threading
   open System.Threading.Tasks
 
+  /// Creates a throttled worker pool that deduplicates tasks by target name.
+  /// Returns the semaphore and the mailbox processor.
   let create (logger:ILogger) maxThreads =
     // controls how many threads are running in parallel
     let throttler = new SemaphoreSlim (maxThreads)
@@ -46,3 +49,44 @@ module internal WorkerPool =
                   return! loop newMap
         }
         loop(Map.empty) )
+
+open System.Threading
+
+/// Scheduler combining a throttle semaphore and a worker pool mailbox.
+type Scheduler<'s> =
+    private { Throttle: SemaphoreSlim; Pool: Agent<ExecMessage<'s>> }
+    interface System.IDisposable with
+        member this.Dispose() = this.Throttle.Dispose()
+
+/// Scheduler API for creating, accessing, and yielding execution slots.
+module Scheduler =
+
+    /// Creates a new Scheduler with the given thread limit.
+    let create logger maxThreads : Scheduler<_> =
+        let throttler, pool = WorkerPool.create logger maxThreads
+        { Throttle = throttler; Pool = pool }
+
+    /// Returns the underlying mailbox processor for posting work items.
+    let pool s = s.Pool
+
+    /// Release current slot, run work, reacquire slot.
+    let withYieldedSlot scheduler work = async {
+        // Yield the current semaphore slot so other work can run.
+        scheduler.Throttle.Release() |> ignore
+
+        let reacquire () =
+            scheduler.Throttle.WaitAsync(-1) |> Async.AwaitTask |> Async.Ignore
+
+        try
+            let! result = work
+            do! reacquire()
+            return result
+        with ex ->
+            try
+                do! reacquire()
+            with
+            | :? System.OperationCanceledException
+            | :? System.ObjectDisposedException
+            | :? System.AggregateException -> ()
+            return raise ex
+    }

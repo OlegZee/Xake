@@ -6,6 +6,7 @@ open System.IO
 [<AutoOpen>]
 module RmImpl =
 
+    /// Configuration for the Rm task: specifies files or directories to delete.
     type RmArgs = {
         dir: string
         file: string
@@ -18,6 +19,7 @@ module RmImpl =
             verbose = false
         }
 
+    /// Deletes files or directories matching the patterns specified in RmArgs.
     let Rm (args: RmArgs) =
 
         recipe {
@@ -67,6 +69,7 @@ module RmImpl =
             return ()
         }
 
+    /// Computation expression builder for the rm/del task.
     type RmArgsBuilder() =
 
         [<CustomOperation("file")>]    member __.File(a :RmArgs, value) =   {a with file = value }
@@ -78,5 +81,7 @@ module RmImpl =
         member __.Zero() = RmArgs.Default
         member __.Run(args:RmArgs) = Rm args
 
+    /// The rm task builder instance.
     let rm = RmArgsBuilder()
+    /// Alias for rm.
     let del = rm

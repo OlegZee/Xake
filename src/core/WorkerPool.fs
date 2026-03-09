@@ -64,8 +64,30 @@ module Scheduler =
 
     /// Release current slot, run work, reacquire slot.
     let withYieldedSlot scheduler work = async {
+        // Yield the current semaphore slot so other work can run.
         scheduler.Throttle.Release() |> ignore
-        let! result = work
-        do! scheduler.Throttle.WaitAsync -1 |> Async.AwaitTask |> Async.Ignore
-        return result
+
+        // Async action to reacquire the semaphore slot.
+        let reacquire =
+            scheduler.Throttle.WaitAsync -1
+            |> Async.AwaitTask
+            |> Async.Ignore
+
+        try
+            // Run the provided work while the slot is yielded.
+            let! result = work
+            // On success, always attempt to reacquire the slot.
+            do! reacquire
+            return result
+        with ex ->
+            // On failure, still attempt to reacquire the slot, but do not let
+            // reacquisition failures hide the original exception from 'work'.
+            try
+                do! reacquire
+            with
+            | :? System.OperationCanceledException
+            | :? System.ObjectDisposedException
+            | :? System.AggregateException -> ()
+            // Re-raise the original exception in the async workflow.
+            return raise ex
     }

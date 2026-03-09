@@ -3,7 +3,8 @@ module internal Xake.ProcessExec
 
 open System.Diagnostics
 
-// internal implementation
+/// Starts an external process, redirecting stdout and stderr to the given handlers.
+/// Returns the process exit code.
 let pexec handleStd handleErr cmd args (envvars:(string * string) list) workDir =
     let pinfo =
       ProcessStartInfo

@@ -17,7 +17,7 @@ module XakeScriptBuilder =
         member this.Yield(()) = this.Zero()
 
         member __.Run(XakeScript (options,rules)) =
-            ExecCore.runScript options rules
+            ScriptRunner.runScript options rules
 
         [<CustomOperation("dryrun")>]
         member __.DryRun(XakeScript (options, rules)) =
@@ -77,6 +77,7 @@ module XakeScriptBuilder =
         member __.Teardown(XakeScript (options, rules), targets: string list) =
             XakeScript ({options with Teardown = targets}, rules)
 
+        /// Starts the engine, returning a long-lived XakeEngine.
         [<CustomOperation("start")>]
         member __.Start(script: XakeScript) : XakeEngine =
             XakeEngine.Start script
@@ -101,14 +102,17 @@ module XakeScriptBuilder =
             Logger = engine.RootLogger
         }
 
+        /// Starts a XakeEngine from a fully assembled XakeScript.
         static member Start(XakeScript (options, rules)) =
-            let ctx, finalize = ExecCore.createScriptContext options rules
+            let ctx, finalize = ScriptRunner.createScriptContext options rules
             XakeEngine (ctx.Engine, ctx.Vars, ctx.ShowProgress, finalize)
 
+        /// Starts a XakeEngine from raw EngineOptions without a script.
         static member Start(options: EngineOptions) =
             let ctx, finalize = ExecCore.createContext options []
             XakeEngine (ctx.Engine, ctx.Vars, ctx.ShowProgress, finalize)
 
+        /// Builds a single target by name. Deduplicates concurrent requests for the same target.
         member _.Demand(targetName: string, ?vars: (string * string) list) : System.Threading.Tasks.Task =
             if stopped then raise (System.InvalidOperationException "XakeEngine has been stopped")
             let demandCtx = makeCtx vars
@@ -116,6 +120,7 @@ module XakeScriptBuilder =
                 ExecCore.demandTarget demandCtx targetName |> Async.StartAsTask
             )).Value :> System.Threading.Tasks.Task
 
+        /// Stops the engine: waits for in-flight tasks, runs teardown targets, then releases resources.
         member this.StopAsync() : System.Threading.Tasks.Task =
             async {
                 stopped <- true

@@ -7,6 +7,7 @@ open Xake.FileTasksImpl
 [<AutoOpen>]
 module CpImpl =
 
+    /// Configuration for the Cp task: specifies source and destination files.
     type CpArgs = {
         dir: string
         file: string
@@ -50,6 +51,7 @@ module CpImpl =
             let basedir = basedir' |> function | None -> projectRoot | Some s -> Path.Combine(projectRoot, s)
             FileInfo(basedir).FullName
 
+    /// Copies files matching the patterns specified in CpArgs to the target directory.
     let Cp (args: CpArgs) = recipe {
         do! trace Level.Debug "Copy: args=%A" args
 
@@ -129,6 +131,7 @@ module CpImpl =
         do! copyFile src tgt
     }
 
+    /// Computation expression builder for the copy task.
     type CopyBuilder() =
 
         [<CustomOperation("file")>]    member this.File(a :CpArgs, value) =   {a with file = value }
@@ -147,5 +150,7 @@ module CpImpl =
         member this.Zero() = CpArgs.Default
         member this.Run(args:CpArgs) = Cp args
 
+    /// The copy task builder instance.
     let copy = CopyBuilder()
+    /// Alias for copy.
     let cp = copy

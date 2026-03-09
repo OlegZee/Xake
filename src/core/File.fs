@@ -55,15 +55,22 @@ module File =
 
     type private BclFile = System.IO.File
 
+    /// Creates a File from the given path string. Fails if the name is null or whitespace.
     let make n =
         if String.IsNullOrWhiteSpace n then
             failwith "File name cannot be empty"
 
         T (n, System.IO.FileInfo n)
 
+    /// Returns the file name portion of a File's path.
     let getFileName (f:File) = f.Name |> Path.GetFileName
+    /// Returns the file extension including the leading dot.
     let getFileExt (f:File) = f.Name |> Path.GetExtension
+    /// Returns the directory portion of a File's full path.
     let getDirName (f:File) = f.FullName |> Path.GetDirectoryName
+    /// Returns the fully qualified path of the file.
     let getFullName (f:File) = f.FullName
+    /// Returns true if the file exists on disk.
     let exists (f:File) = BclFile.Exists f.FullName
+    /// Returns the last write time of the file.
     let getLastWriteTime (f:File) = BclFile.GetLastWriteTime f.FullName

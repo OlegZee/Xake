@@ -4,8 +4,10 @@ module BuildLog =
     open Xake
     open System
     
+    /// Current database schema version. Old databases are discarded on version mismatch.
     let XakeDbVersion = "0.4"
-    
+
+    /// In-memory build database mapping targets to their last build results.
     type Database = { Status : Map<Target, BuildResult> }
     
     (* API *)
@@ -24,6 +26,7 @@ module BuildLog =
     let internal addResult db result =
         { db with Status = result.Targets |> List.fold (fun m i -> Map.add i result m) db.Status }
 
+/// Type alias for MailboxProcessor used as a message-passing agent.
 type 't Agent = 't MailboxProcessor
 
 module Storage = 
@@ -151,7 +154,8 @@ module Storage =
             if dbwriter.BaseStream.Position = 0L then writeHeader dbwriter
             db, dbwriter
     
-    type DatabaseApi = 
+    /// Messages accepted by the database agent.
+    type DatabaseApi =
         | GetResult of Target * AsyncReplyChannel<Option<BuildResult>>
         | Store of BuildResult
         | Close

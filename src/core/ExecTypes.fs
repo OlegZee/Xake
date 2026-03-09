@@ -2,6 +2,7 @@ namespace Xake
 
 open Xake.WorkerPool
 
+/// Execution status of a single target: built, skipped, or was already a file.
 type ExecStatus = | Succeed | Skipped | JustFile
 
 /// Engine-level options: immutable after construction.
@@ -42,13 +43,18 @@ and ExecContext = {
     Ordinal: int
     Logger: ILogger
 } with
+    /// Shortcut to engine options.
     member ctx.Options = ctx.Engine.Options
+    /// Shortcut to the build database agent.
     member ctx.Db = ctx.Engine.Db
 
+/// Internal utility functions for reading environment and script variables.
 module internal Util =
 
     let private nullableToOption = function | null -> None | s -> Some s
+    /// Reads an environment variable, returning None if unset.
     let getEnvVar = System.Environment.GetEnvironmentVariable >> nullableToOption
 
     let private valueByName variableName = function |name,value when name = variableName -> Some value | _ -> None
+    /// Looks up a script variable by name from a key-value list.
     let getVar (vars: (string * string) list) name = vars |> List.tryPick (valueByName name)

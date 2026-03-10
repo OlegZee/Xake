@@ -131,9 +131,7 @@ module Storage =
                         recordCount := !recordCount + 1
                 // if fails create new
                 with ex -> 
-                    log Level.Error 
-                        "Failed to read database, so recreating. Got \"%s\"" 
-                    <| ex.ToString()
+                    log Warning "Failed to read database, so recreating. Got \"%s\"" <| ex.ToString()
                     try 
                         File.Delete(dbpath)
                     with _ -> ()
@@ -199,19 +197,23 @@ module Storage =
             loop (!db))
 
     /// <summary>
-    /// No-op database for use when NoPersist = true. Always reports targets as not built.
+    /// In-memory database for use when NoPersist = true.
+    /// Tracks build results within the session but does not write to disk.
     /// </summary>
     let noopDb () =
         MailboxProcessor.Start(fun mbox ->
-            let rec loop () = async {
+            let rec loop (db: Database) = async {
                 let! msg = mbox.Receive()
                 match msg with
-                | GetResult (_, ch) -> ch.Reply None; return! loop ()
-                | Store _ -> return! loop ()
+                | GetResult (key, ch) ->
+                    db.Status |> Map.tryFind key |> ch.Reply
+                    return! loop db
+                | Store result ->
+                    return! loop (result |> addResult db)
                 | Close -> ()
                 | CloseWait ch -> ch.Reply ()
             }
-            loop ())
+            loop { Status = Map.empty })
 
     /// Deletes existing database and backup files to reset the build log. Should be called before starting the build.
     let cleanupDb dbpath (logger : ILogger) = 

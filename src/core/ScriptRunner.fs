@@ -103,7 +103,8 @@ let runScript options rules =
         finalize()
         exit 1)
 
-    logger.Log Level.Debug "Options: %A" options // be careful with debug option as it may contain sensitive info like script variables
+    logger.Log Level.Debug "Options: %A" { options with Vars = [] }
+        // be careful with debug option as it may contain sensitive info like script variables
 
     let targetLists =
         options.Targets |>
@@ -114,10 +115,7 @@ let runScript options rules =
         | tt ->
             tt |> List.map (fun (s: string) -> s.Split(';', '|') |> List.ofArray)
 
-    let reportError ctx error details =
-        do ctx.Logger.Log Error "Error '%s'. See build.log for details" error
-        do ctx.Logger.Log Verbose "Error details are:\n%A\n\n" details
-
+    let mutable exitCode = 0
     try
         match options with
         | Dump ->
@@ -136,11 +134,13 @@ let runScript options rules =
                 let details = exceptions |> Seq.last |> fun e -> e.ToString()
                 let errorText = errors |> String.concat "\r\n"
 
-                do reportError ctx errorText details
-                ctx.Logger.Log Message "\n\n\tBuild failed after running for %A\n" (System.DateTime.Now - start)
+                do ctx.Logger.Log Error "Error '%s'. See build.log for more details" errorText
+                do ctx.Logger.Log Verbose "Error details are:\n%A\n\n" details
+                do ctx.Logger.Log Message "\n\n\tBuild failed after running for %A\n" (System.DateTime.Now - start)
 
                 if options.ThrowOnError then
                     raise (XakeException "Script failure. See log file for details.")
-                exit 2
+                exitCode <- 2
     finally
         finalize()
+    if exitCode <> 0 then exit exitCode

@@ -58,7 +58,7 @@ module ScriptFuncs =
 
     /// <summary>
     /// Gets the script (options) variable value and records it as a dependency. 
-    /// See `Xake.Options.Vars` for available variables.
+    /// See `ExecOptions.Vars` for available variables.
     /// If the variable changes, targets depending on it will be rebuilt.
     /// </summary>
     /// <param name="variableName">Name of the script variable to retrieve</param>

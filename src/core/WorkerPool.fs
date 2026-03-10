@@ -4,6 +4,7 @@
 /// Message type for the worker pool mailbox: requests execution of a target.
 type ExecMessage<'r> =
     | Run of Target * Target list * Async<'r> * AsyncReplyChannel<Async<'r>>
+    | Done of string list
 
 /// Internal worker pool that deduplicates and throttles parallel task execution.
 module internal WorkerPool =
@@ -35,7 +36,7 @@ module internal WorkerPool =
               | None ->
                   do log Info "Task queued '%s'" artifact.ShortName
                   do! throttler.WaitAsync(-1) |> Async.AwaitTask |> Async.Ignore
-                
+                  let keys = targets |> List.map mapKey
                   let task = Async.StartAsTask (async {
                       try
                           let! buildResult = action
@@ -43,10 +44,14 @@ module internal WorkerPool =
                           return buildResult
                       finally
                           throttler.Release() |> ignore
+                          mbox.Post(Done keys)
                     })
                   chnl.Reply <| Async.AwaitTask task
-                  let newMap = targets |> List.fold (fun m t -> m |> Map.add (mapKey t) task) map
+                  let newMap = keys |> List.fold (fun m k -> m |> Map.add k task) map
                   return! loop newMap
+
+          | Done keys ->
+              return! loop (keys |> List.fold (fun m k -> m |> Map.remove k) map)
         }
         loop(Map.empty) )
 

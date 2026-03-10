@@ -3,6 +3,9 @@ namespace Xake
 [<AutoOpen>]
 module XakeScriptBuilder =
 
+    open System.Collections.Concurrent
+    open System.Threading.Tasks
+
     /// Script builder.
     type RulesBuilder(options) =
 
@@ -88,7 +91,7 @@ module XakeScriptBuilder =
     and XakeEngine private (engine: EngineState, vars: (string * string) list, showProgress: bool, finalize: unit -> unit) =
         [<VolatileField>]
         let mutable stopped = false
-        let inFlight = System.Collections.Concurrent.ConcurrentDictionary<string, Lazy<System.Threading.Tasks.Task<ExecStatus>>> ()
+        let inFlight = ConcurrentDictionary<string, Lazy<Task<ExecStatus>>> ()
 
         let makeCtx extraVars = {
             Engine = engine
@@ -112,16 +115,31 @@ module XakeScriptBuilder =
             let ctx, finalize = ExecCore.createContext options []
             XakeEngine (ctx.Engine, ctx.Vars, ctx.ShowProgress, finalize)
 
-        /// Builds a single target by name. Deduplicates concurrent requests for the same target.
-        member _.Demand(targetName: string, ?vars: (string * string) list) : System.Threading.Tasks.Task =
+        /// Builds a single target by name. Serializes concurrent requests for the same target:
+        /// if a demand is in-flight, waits for it to complete then re-evaluates with the new context.
+        member _.Demand(targetName: string, ?vars: (string * string) list) : Task =
             if stopped then raise (System.InvalidOperationException "XakeEngine has been stopped")
             let demandCtx = makeCtx vars
-            inFlight.GetOrAdd(targetName, Lazy<_>(fun () ->
-                ExecCore.demandTarget demandCtx targetName |> Async.StartAsTask
-            )).Value :> System.Threading.Tasks.Task
+            let rec tryDemand () : Task =
+                let newLazy = Lazy<_>(fun () ->
+                    let task = ExecCore.demandTarget demandCtx targetName |> Async.StartAsTask
+                    task.ContinueWith(fun (_: Task<ExecStatus>) -> inFlight.TryRemove targetName |> ignore) |> ignore
+                    task
+                )
+                let existing = inFlight.GetOrAdd(targetName, newLazy)
+                if obj.ReferenceEquals(existing, newLazy) then
+                    newLazy.Value :> Task
+                else
+                    async {
+                        try do! existing.Value |> Async.AwaitTask |> Async.Ignore
+                        with _ -> ()
+                        inFlight.TryRemove targetName |> ignore
+                        return! tryDemand () |> Async.AwaitTask
+                    } |> Async.StartAsTask :> Task
+            tryDemand ()
 
         /// Stops the engine: waits for in-flight tasks, runs teardown targets, then releases resources.
-        member this.StopAsync() : System.Threading.Tasks.Task =
+        member this.StopAsync() : Task =
             async {
                 stopped <- true
                 try
@@ -132,7 +150,7 @@ module XakeScriptBuilder =
                         do! ExecCore.demandTarget ctx name |> Async.Ignore
                 finally
                     finalize ()
-            } |> Async.StartAsTask :> System.Threading.Tasks.Task
+            } |> Async.StartAsTask :> Task
 
 #if NETSTANDARD2_1_OR_GREATER || NET5_0_OR_GREATER
         interface System.IAsyncDisposable with

@@ -9,7 +9,11 @@ module RuleBuilder =
         inherit RecipeBuilder()
         member __.Run(expr: Recipe<ExecContext, unit>) =
             match ruleType with
-            | "command" -> PhonyRule (name, expr)
+            | "command" -> PhonyRule (name, recipe {
+                do! expr
+                let! result = getResult()
+                do! setResult { result with Depends = AlwaysRerun :: result.Depends }
+              })
             | "target"  -> FileRule (name, expr)
             | "targets" -> MultiFileRule (patterns.Value, expr)
             | _ -> failwith "Invalid rule type"

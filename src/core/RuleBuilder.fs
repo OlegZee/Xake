@@ -12,7 +12,12 @@ module RuleBuilder =
             | "command" -> PhonyRule (name, recipe {
                 do! expr
                 let! result = getResult()
-                do! setResult { result with Depends = AlwaysRerun :: result.Depends }
+                let depends =
+                    if List.contains AlwaysRerun result.Depends then
+                        result.Depends
+                    else
+                        AlwaysRerun :: result.Depends
+                do! setResult { result with Depends = depends }
               })
             | "target"  -> FileRule (name, expr)
             | "targets" -> MultiFileRule (patterns.Value, expr)

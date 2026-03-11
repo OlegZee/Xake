@@ -1,4 +1,4 @@
-namespace Xake.Experimental
+namespace Xake
 
 open Xake
 

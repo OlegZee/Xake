@@ -1,9 +1,8 @@
 namespace Tests
 
 open System.IO
-open NUnit.Framework
 open Xake
-open Xake.Experimental
+open NUnit.Framework
 
 [<TestFixture>]
 type ``Command tests``() =

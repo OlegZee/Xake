@@ -21,6 +21,7 @@
     <Compile Include="ProgressTests.fs" />
     <Compile Include="CommandLineTests.fs" />
     <Compile Include="SystemTaskTests.fs" />
+    <Compile Include="CommandTests.fs" />
     <Compile Include="XakeEngineTests.fs" />
   </ItemGroup>
   <ItemGroup>

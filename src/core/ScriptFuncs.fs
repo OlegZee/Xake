@@ -168,6 +168,15 @@ module ScriptFuncs =
     let trace = ExecCore.traceLog
 
     /// <summary>
+    /// Demands specified targets sequentially, waiting for each to complete before starting the next.
+    /// </summary>
+    /// <param name="targets">List of target names to demand in sequence</param>
+    let needSequentially targets = recipe {
+        for t in targets do
+            do! need [t]
+    }
+
+    /// <summary>
     /// Defines a phony rule that demands specified targets in parallel.
     /// All targets are started simultaneously and the rule completes when all are done.
     /// Example: "main" &lt;== ["build-release"; "build-debug"; "unit-test"]
@@ -195,8 +204,7 @@ module ScriptFuncs =
     /// <param name="targets">List of target names to build sequentially</param>
     /// <returns>Phony rule that builds targets in sequence</returns>
     let (<<<) name targets = PhonyRule (name, recipe {
-        for t in targets do
-            do! need [t]
+        do! needSequentially targets
         do! alwaysRerun()
     })
 

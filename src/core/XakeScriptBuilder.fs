@@ -24,8 +24,12 @@ module XakeScriptBuilder =
 
         [<CustomOperation("dryrun")>]
         member __.DryRun(XakeScript (options, rules)) =
-
             XakeScript ({options with DryRun = true}, rules)
+
+        /// Sets the project root directory for relative paths in rules. Defaults to current directory.        
+        [<CustomOperation("rootdir")>]
+        member __.RootDir(XakeScript (options, rules), dir) =
+            XakeScript ({options with ProjectRoot = dir}, rules)
 
         [<CustomOperation("var")>]
         member __.AddVar(XakeScript (options, rules), name, value) =

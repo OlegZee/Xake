@@ -1,4 +1,4 @@
-#r "nuget: Xake, 2.2.0"
+#r "nuget: Xake, 2.9.6"
 
 open Xake
 open Xake.Tasks
@@ -14,12 +14,7 @@ let getVersion () = getEnv "VERSION" |> map (Option.defaultValue "0.0.1")
 
 let makePackageName version = $"Xake.%s{version}.nupkg"
 
-let dotnet arglist =
-    shell {
-        cmd "dotnet"
-        args arglist
-        failonerror
-    } |> Ignore
+let dotnet arglist = sh "dotnet" { args arglist; failonerror }
 
 do xakeScript {
     filelog "build.log" Diag
@@ -30,9 +25,7 @@ do xakeScript {
         "build" <== libtargets
         "clean" => rm {dir "out"}
 
-        "test" => recipe {
-            do! alwaysRerun()
-
+        command "test" {
             let! where =
               getVar "FILTER"
               |> map (function |Some clause -> ["--filter"; $"Name~\"{clause}\""] | None -> [])
@@ -40,7 +33,7 @@ do xakeScript {
             do! dotnet <| ["test"; "src/tests"; "-c"; "Release"] @ where
         }
 
-        libtargets *..> recipe {
+        targets libtargets {
 
             let! allFiles = getFiles <| fileset {
                 basedir "src/core"
@@ -66,7 +59,7 @@ do xakeScript {
 
     (* Nuget publishing rules *)
     rules [
-        "pack" => recipe {
+        command "pack" {
             let! version = getVersion()
             do! need ["out" </> makePackageName version]
         }
@@ -83,7 +76,7 @@ do xakeScript {
         }
 
         // push need pack to be explicitly called in advance
-        "push" => recipe {
+        command "push" {
             let! version = getVersion()
 
             let! nuget_key = getEnv "NUGET_KEY"

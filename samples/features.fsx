@@ -1,5 +1,5 @@
-// #r "nuget: Xake, 2.0.0"
-#r "../out/netstandard2.0/Xake.dll"
+#r "nuget: Xake, 2.9.6"
+// #r "../out/netstandard2.0/Xake.dll"
 #r "nuget: Xake.Dotnet, 1.1.4.7-beta"
 
 // This a sample Xake script to show off some features.
@@ -27,9 +27,9 @@ do xakeScript {
         // this rule does nothing but demands the other targets
         // the execution of the recipe is suspended until all demanded targets are built.
         // Targets are executed in parallel. Dependencies could be demanded in any part of recipe.
-        "main"  => recipe {
+        command "main"  {
             do! need ["tracetest"; "temp/a.exe"]
-            }
+        }
 
         // this is shorter way to express the same. See also `<==` and '<<<' operators.
         "main"  => need ["tracetest"; "temp/a.exe"]
@@ -45,7 +45,7 @@ do xakeScript {
             }
         }
 
-        "dotnet-version" => recipe {
+        command "dotnet-version" {
             // this rule will run `dotnet --version` command and print the result
             do! sh "dotnet --version" {}
 
@@ -82,7 +82,7 @@ do xakeScript {
 
         // this rule gets the version from VERSION script variable and generates
         // define the variable by running `dotnet fake run features.fsx -- -d VERSION:2.1.1`
-        "temp/AssemblyInfo.cs" ..> recipe {
+        target "temp/AssemblyInfo.cs" {
             let! envVersion = getVar("VERSION")
             let version = envVersion |> Option.defaultValue "1.0.0"
             do! writeText <| sprintf "[assembly: System.Reflection.AssemblyVersion(\"%s\")]" version
@@ -194,7 +194,7 @@ do xakeScript {
         // `trace` function demo
         // note: output verbosity is set to Diag to display all messages (see the "consolelog" instruction on top of xakeScript body)
 
-        "tracetest" => recipe {
+        command "tracetest" {
             do! trace Message "=============== Sample output follows this line\n\n"
 
             for loglevel in [Level.Command; Level.Message; Level.Error; Level.Warning; Level.Debug; Level.Info; Level.Verbose] do

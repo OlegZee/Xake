@@ -39,14 +39,12 @@ module ShellImpl =
             FailOnErrorLevel = false
         }
 
-    /// <summary>
-    /// Start shell/system process.
-    /// Executes a shell command with the specified options and returns the exit code.
-    /// </summary>
-    /// <param name="opts">Shell execution options</param>
-    /// <returns>Recipe that returns the exit code of the executed command</returns>
-    let Shell (opts: ShellOptions) =
-      let args = (opts.Args |> String.concat " ")
+    type ShellModeExitCode = private ShellModeExitCode of ShellOptions
+    type ShellModeOutput   = private ShellModeOutput   of ShellOptions
+    type ShellModeBoth     = private ShellModeBoth     of ShellOptions
+
+    let private shellCore (opts: ShellOptions) (extraStd: string -> unit) =
+      let args = opts.Args |> String.concat " "
       let isExt file ext = System.IO.Path.GetExtension(file).Equals(ext, System.StringComparison.OrdinalIgnoreCase)
 
       recipe {
@@ -56,26 +54,35 @@ module ShellImpl =
         let! ctx = getCtx()
         let log = ctx.Logger.Log
 
-        do! trace Level.Debug "[shell] settings: '%A'" opts
+        do! trace Level.Debug "[shell] settings: '%A'" opts // dangerous to log all options, but we need it for debugging purposes. Consider redacting sensitive info in the future.
 
         let handleErr s = log (opts.ErrOutLevel s) "%s %s" opts.LogPrefix s
-        let handleStd s = log (opts.StdOutLevel s) "%s %s" opts.LogPrefix s
+        let handleStd s =
+            log (opts.StdOutLevel s) "%s %s" opts.LogPrefix s
+            extraStd s
 
         let cmd, args =
             if isWindows && not <| isExt cmd ".exe" then
-                "cmd.exe", (sprintf "/c %s %s" cmd args)
-            else if opts.UseClr && not isWindows then
+                "cmd.exe", sprintf "/c %s %s" cmd args
+            elif opts.UseClr && not isWindows then
                 "mono", cmd + " " + args
             else
                 cmd, args
         let exitCode = pexec handleStd handleErr cmd args opts.EnvVars opts.WorkingDir
         if exitCode <> 0 && opts.FailOnErrorLevel then failwith "System command resulted in non-zero errorlevel"
 
-        // let! exitCode = _system opts
         do! trace Info "[shell] completed '%s' exitcode: %d" cmd exitCode
 
         return exitCode
       }
+
+    /// <summary>
+    /// Start shell/system process.
+    /// Executes a shell command with the specified options and returns the exit code.
+    /// </summary>
+    /// <param name="opts">Shell execution options</param>
+    /// <returns>Recipe that returns the exit code of the executed command</returns>
+    let Shell (opts: ShellOptions) = shellCore opts ignore
 
     /// <summary>
     /// Builder for shell command execution with a fluent API.
@@ -122,12 +129,46 @@ module ShellImpl =
         member _.Stderr(state:ShellOptions, handler: string -> unit) =
             {state with ErrOutLevel = fun x -> handler x; state.ErrOutLevel x}
 
+        /// <summary>Return exit code from the CE</summary>
+        [<CustomOperation("result")>]
+        member _.Result(opts: ShellOptions) = ShellModeExitCode opts
+
+        [<CustomOperation("result")>]
+        member _.Result(ShellModeOutput opts) = ShellModeBoth opts
+
+        /// <summary>Capture stdout lines from the CE</summary>
+        [<CustomOperation("output")>]
+        member _.Output(opts: ShellOptions) = ShellModeOutput opts
+
+        [<CustomOperation("output")>]
+        member _.Output(ShellModeExitCode opts) = ShellModeBoth opts
+
+        /// <summary>Shorthand for result + output: returns exit code and stdout lines</summary>
+        [<CustomOperation("resultAndOutput")>]
+        member _.ResultAndOutput(opts: ShellOptions) = ShellModeBoth opts
+
         member __.Bind(x, f) = f x
         member __.Yield(()) = __.Zero()
         member __.For(sq, b) = for e in sq do b e
 
         member __.Zero() = { ShellOptions.Default with Command = command; Args = arglist }
         member __.Run(opts:ShellOptions) = Shell opts
+
+        member __.Run(ShellModeExitCode opts) = shellCore opts ignore
+
+        member __.Run(ShellModeOutput opts) =
+            recipe {
+                let lines = System.Collections.Generic.List<string>()
+                let! _ = shellCore opts lines.Add
+                return lines |> Seq.toList
+            }
+
+        member __.Run(ShellModeBoth opts) =
+            recipe {
+                let lines = System.Collections.Generic.List<string>()
+                let! exitCode = shellCore opts lines.Add
+                return exitCode, lines |> Seq.toList
+            }
 
     /// <summary>
     /// Default shell builder with no command set.

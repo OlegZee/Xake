@@ -142,3 +142,63 @@ let ``stdout and stderr handlers can be combined on shell builder``() =
     Assert.AreEqual("out", outLines.[0])
     Assert.AreEqual(1, errLines.Count)
     Assert.AreEqual("err", errLines.[0])
+
+[<Test; Platform("Unix,MacOsX,Linux")>]
+let ``result keyword returns exit code`` () =
+    do xake TestOptionsStrict {
+        rules [
+            "main" => recipe {
+                let! code = sh "echo" { arg "hello"; result }
+                Assert.AreEqual(0, code)
+            }
+        ]
+    }
+
+[<Test; Platform("Unix,MacOsX,Linux")>]
+let ``output keyword captures stdout lines`` () =
+    do xake TestOptionsStrict {
+        rules [
+            "main" => recipe {
+                let! lines = sh "echo" { arg "hello"; output }
+                Assert.AreEqual(1, List.length lines)
+                Assert.AreEqual("hello", lines.[0])
+            }
+        ]
+    }
+
+[<Test; Platform("Unix,MacOsX,Linux")>]
+let ``resultAndOutput keyword captures both exit code and stdout`` () =
+    do xake TestOptionsStrict {
+        rules [
+            "main" => recipe {
+                let! code, lines = sh "echo" { arg "hello"; resultAndOutput }
+                Assert.AreEqual(0, code)
+                Assert.AreEqual(["hello"], lines)
+            }
+        ]
+    }
+
+[<Test; Platform("Unix,MacOsX,Linux")>]
+let ``result and output keywords compose`` () =
+    do xake TestOptionsStrict {
+        rules [
+            "main" => recipe {
+                let! code, lines = sh "echo" { arg "hello"; result; output }
+                Assert.AreEqual(0, code)
+                Assert.AreEqual(["hello"], lines)
+            }
+        ]
+    }
+
+[<Test; Platform("Unix,MacOsX,Linux")>]
+let ``stdout handler and output keyword both fire`` () =
+    let sideEffect = System.Collections.Generic.List<string>()
+    do xake TestOptionsStrict {
+        rules [
+            "main" => recipe {
+                let! lines = sh "echo" { arg "hello"; stdout sideEffect.Add; output }
+                Assert.AreEqual(["hello"], lines)
+                Assert.AreEqual(1, sideEffect.Count)
+            }
+        ]
+    }

@@ -39,9 +39,9 @@ module ShellImpl =
             FailOnErrorLevel = false
         }
 
-    type ShellModeExitCode = ShellModeExitCode of ShellOptions
-    type ShellModeOutput   = ShellModeOutput   of ShellOptions
-    type ShellModeBoth     = ShellModeBoth     of ShellOptions
+    type ShellModeExitCode = private ShellModeExitCode of ShellOptions
+    type ShellModeOutput   = private ShellModeOutput   of ShellOptions
+    type ShellModeBoth     = private ShellModeBoth     of ShellOptions
 
     let private shellCore (opts: ShellOptions) (extraStd: string -> unit) =
       let args = opts.Args |> String.concat " "

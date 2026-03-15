@@ -40,7 +40,7 @@ Options:
   --noprogress, -p-   - do not display progress
 
             """
-            { optionsSoFar with ShowHelp = true }, TopLevel
+            { optionsSoFar with ShowHelp = true; Nologo = true }, TopLevel
         | "-t" | "/t" -> 
             optionsSoFar, Number ("thread count", fun o v -> {o with ExecOptions.Threads = v})
         | "-r" | "/r" -> 

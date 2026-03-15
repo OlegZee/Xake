@@ -6,6 +6,17 @@ module XakeScriptBuilder =
     open System.Collections.Concurrent
     open System.Threading.Tasks
 
+    let private printVarsHelp (schema: (string * VarHelp) list) =
+        if schema <> [] then
+            printfn "\nScript variables:"
+            for (name, help) in schema do
+                let cliName = name
+                let required = if help.IsRequired then " (required)" else ""
+                let envStr = help.EnvVarName |> Option.map (sprintf ", env: %s") |> Option.defaultValue ""
+                let defaultStr = help.DefaultStr |> Option.map (sprintf ", default: %s") |> Option.defaultValue ""
+                let descStr = help.Description |> Option.map (sprintf " — %s") |> Option.defaultValue ""
+                printfn "  -d %s=<value> [%s]%s%s%s%s" cliName help.TypeName required envStr defaultStr descStr
+
     /// Script builder.
     type RulesBuilder(options) =
 
@@ -19,7 +30,10 @@ module XakeScriptBuilder =
         member __.Zero() = XakeScript (options, Rules [])
         member this.Yield(()) = this.Zero()
 
-        member __.Run(XakeScript (options,rules)) =
+        member __.Run(XakeScript (options, rules)) =
+            if options.ShowHelp then
+                printVarsHelp options.VarSchema
+                exit 0
             ScriptRunner.runScript options rules
 
         [<CustomOperation("dryrun")>]

@@ -58,3 +58,13 @@ module internal Util =
     let private valueByName variableName = function |name,value when name = variableName -> Some value | _ -> None
     /// Looks up a script variable by name from a key-value list.
     let getVar (vars: (string * string) list) name = vars |> List.tryPick (valueByName name)
+
+/// Help metadata for --help output.
+type VarHelp = {
+    TypeName: string
+    EnvVarName: string option
+    DefaultStr: string option
+    IsRequired: bool
+    Description: string option
+}
+

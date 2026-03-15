@@ -36,6 +36,7 @@
     <Compile Include="XakeScriptBuilder.fs" />
     <Compile Include="RuleBuilder.fs" />
     <Compile Include="ScriptFuncs.fs" />
+    <Compile Include="Vars.fs" />
     <Compile Include="ProcessExec.fs" />
     <Compile Include="FileTasksImpl.fs" />
     <Compile Include="Tasks\Cp.fs" />

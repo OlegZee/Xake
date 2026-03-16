@@ -243,3 +243,53 @@ let ``skips teardown for dryrun and dump CLI modes``() =
         }
 
         Assert.IsEmpty(log)
+
+[<Test>]
+let ``teardown failure is reported when build succeeds``() =
+    withTempRoot "cli-teardown-fail-after-success" <| fun testRoot ->
+        let log = System.Collections.Generic.List<string> ()
+
+        let exn =
+            Assert.Throws<XakeException>(fun () ->
+                xakeArgs ["build"] { XakeOptions with ProjectRoot = testRoot; NoPersist = true; Nologo = true; ThrowOnError = true } {
+                    teardown ["cleanup"]
+                    rules [
+                        "build" => recipe {
+                            lock log <| fun () -> log.Add "build"
+                        }
+                        "cleanup" => recipe {
+                            lock log <| fun () -> log.Add "cleanup"
+                            failwith "teardown boom"
+                        }
+                    ]
+                })
+
+        Assert.AreEqual(["build"; "cleanup"], log |> Seq.toList)
+        Assert.That(exn.Message, Does.Contain("Teardown failure"))
+
+[<Test>]
+let ``original build error is preserved when teardown also fails``() =
+    withTempRoot "cli-teardown-both-fail" <| fun testRoot ->
+        let log = System.Collections.Generic.List<string> ()
+
+        let exn =
+            Assert.Throws<XakeException>(fun () ->
+                xakeArgs ["build"] { XakeOptions with ProjectRoot = testRoot; NoPersist = true; Nologo = true; ThrowOnError = true } {
+                    teardown ["cleanup"]
+                    rules [
+                        "build" => recipe {
+                            lock log <| fun () -> log.Add "build"
+                            failwith "build boom"
+                        }
+                        "cleanup" => recipe {
+                            lock log <| fun () -> log.Add "cleanup"
+                            failwith "teardown boom"
+                        }
+                    ]
+                })
+
+        Assert.AreEqual(["build"; "cleanup"], log |> Seq.toList)
+        Assert.That(exn.Message, Does.Contain "build boom")
+
+        // Assert.AreEqual("build boom", exn.Message)
+   

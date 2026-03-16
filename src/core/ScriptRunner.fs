@@ -102,16 +102,16 @@ let dryRun (ctx: ExecContext) (groups: string list list) =
 let runScript options rules =
     let ctx, finalize = createScriptContext options rules
     let logger = ctx.Logger
+    let cts = new System.Threading.CancellationTokenSource()
 
+    // Only cancel the token — do not touch teardown or call exit here.
+    // The main thread observes the cancellation via Async.RunSynchronously,
+    // exits the build loop cleanly, then runs teardown before exiting.
     System.Console.CancelKeyPress
-    |> Event.add (fun _ ->
+    |> Event.add (fun args ->
+        args.Cancel <- true  // suppress default process termination
         logger.Log Error "Build interrupted by user"
-        try
-            ctx |> runTeardownAsync |> Async.RunSynchronously
-        with exn ->
-            logger.Log Error "Teardown failed during cancellation: %s" exn.Message
-        finalize()
-        exit 1)
+        cts.Cancel())
 
     logger.Log Level.Debug "Options: %A" { options with Vars = [] }
         // be careful with debug option as it may contain sensitive info like script variables
@@ -137,9 +137,14 @@ let runScript options rules =
             let start = System.DateTime.Now
             let mutable reraisedError = None
             try
-                targetLists |> ExecCore.runBuild ctx |> Async.RunSynchronously |> ignore
+                targetLists |> ExecCore.runBuild ctx |> fun a -> Async.RunSynchronously(a, cancellationToken = cts.Token) |> ignore
                 ctx.Logger.Log Message "\n\n    Build completed in %A\n" (System.DateTime.Now - start)
-            with | exn ->
+            with
+            | :? System.OperationCanceledException ->
+                // Ctrl+C: build async workflow was cancelled; fall through to teardown on main thread
+                ctx.Logger.Log Message "\n\n\tBuild interrupted after running for %A\n" (System.DateTime.Now - start)
+                exitCode <- 1
+            | exn ->
                 let exceptions = exn |> ExecCore.unwindAggEx
                 let errors = exceptions |> Seq.map (fun e -> e.Message) in
                 let details = exceptions |> Seq.last |> fun e -> e.ToString()
@@ -150,7 +155,7 @@ let runScript options rules =
                 do ctx.Logger.Log Message "\n\n\tBuild failed after running for %A\n" (System.DateTime.Now - start)
 
                 if options.ThrowOnError then
-                    reraisedError <- Some (XakeException "Script failure. See log file for details.")
+                    reraisedError <- Some (XakeException errorText)
                 exitCode <- 2
 
             try
@@ -162,7 +167,7 @@ let runScript options rules =
                     // build succeeded but teardown failed — teardown is the only failure
                     exitCode <- 2
                     if options.ThrowOnError then
-                        reraisedError <- Some (XakeException "Teardown failure. See log file for details.")
+                        reraisedError <- Some (XakeException (sprintf "Teardown failure: %s" teardownExn.Message))
                 // else: build already failed — log teardown failure but preserve the
                 // original build error in reraisedError and exitCode so it is reported
 

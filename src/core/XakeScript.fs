@@ -55,6 +55,12 @@ module XakeScript =
 
         /// Targets executed sequentially during XakeEngine.StopAsync.
         Teardown: string list
+
+        /// Deferred --help exit; set by CLI parser, acted on in Run.
+        ShowHelp: bool
+
+        /// Variable schema collected by the `vars` operation, used for --help output.
+        VarSchema: (string * VarHelp) list
     } with
         static member Default = {
             ProjectRoot = System.IO.Directory.GetCurrentDirectory()
@@ -76,6 +82,8 @@ module XakeScript =
             ResetDb = false
             NoPersist = false
             Teardown = []
+            ShowHelp = false
+            VarSchema = []
         }
     end
 

@@ -23,6 +23,7 @@
     <Compile Include="SystemTaskTests.fs" />
     <Compile Include="CommandTests.fs" />
     <Compile Include="XakeEngineTests.fs" />
+    <Compile Include="VarsTests.fs" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\core\Xake.fsproj" />

@@ -22,8 +22,16 @@ module Vars =
         Scope             : LookupScope
     }
 
-    let private convertTo<'t> (s: string) : 't =
-        System.Convert.ChangeType(s, typeof<'t>) :?> 't
+    let private convertTo<'t> (name: string) (s: string) : 't =
+        try
+            System.Convert.ChangeType(s, typeof<'t>) :?> 't
+        with
+        | :? System.FormatException as ex
+        | :? System.InvalidCastException as ex ->
+            let targetType = typeof<'t>.FullName
+            let message =
+                sprintf "Failed to convert value '%s' for variable '%s' to type '%s'." s name targetType
+            raise (System.FormatException(message, ex))
 
     /// Converts a camelCase or PascalCase field name to UPPER_SNAKE_CASE env var name.
     let private toEnvName (fieldName: string) : string =
@@ -71,7 +79,7 @@ module Vars =
             let! cliVal = if scope = EnvOnly then recipe { return None } else getVar fieldName
             let! envVal = if scope = ArgOnly then recipe { return None } else getEnv resolvedEnvName
             let reportName = if scope = EnvOnly then resolvedEnvName else fieldName
-            return reportName, cliVal |> Option.orElse envVal |> Option.map convertTo<'t>
+            return reportName, cliVal |> Option.orElse envVal |> Option.map (convertTo<'t> reportName)
         }
 
     type RecipeBuilder with

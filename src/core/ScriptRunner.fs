@@ -107,11 +107,12 @@ let runScript options rules =
     // Only cancel the token — do not touch teardown or call exit here.
     // The main thread observes the cancellation via Async.RunSynchronously,
     // exits the build loop cleanly, then runs teardown before exiting.
-    System.Console.CancelKeyPress
-    |> Event.add (fun args ->
-        args.Cancel <- true  // suppress default process termination
-        logger.Log Error "Build interrupted by user"
-        cts.Cancel())
+    let handler =
+        new System.ConsoleCancelEventHandler(fun _ args ->
+            args.Cancel <- true  // suppress default process termination
+            logger.Log Error "Build interrupted by user"
+            cts.Cancel())
+    System.Console.CancelKeyPress.AddHandler(handler)
 
     logger.Log Level.Debug "Options: %A" { options with Vars = [] }
         // be careful with debug option as it may contain sensitive info like script variables
@@ -175,5 +176,7 @@ let runScript options rules =
             | Some exn -> raise exn
             | None -> ()
     finally
+        System.Console.CancelKeyPress.RemoveHandler(handler)
+        cts.Dispose()
         finalize()
     if exitCode <> 0 then exit exitCode

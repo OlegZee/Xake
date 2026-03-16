@@ -466,6 +466,44 @@ let ``Var dependency is recorded when resolving``() =
     Assert.IsTrue(hasVarDep, "Expected Var(\"config\", _) dependency to be recorded")
 
 [<Test>]
+let ``EnvVar dependency is NOT recorded when CLI var is set``() =
+    let myVar = Var.create(cliArg = "config", envVar = "MY_CONFIG")
+    let capturedDepends = ref []
+
+    do xakeArgs ["-d"; "config=Release"] DebugOptions {
+        phony "main" (recipe {
+            let! _ = myVar
+            let! result = getResult()
+            capturedDepends := result.Depends
+        })
+    }
+
+    let hasEnvDep =
+        !capturedDepends |> List.exists (function
+            | EnvVar ("MY_CONFIG", _) -> true
+            | _ -> false)
+    Assert.IsFalse(hasEnvDep, "EnvVar dependency should not be recorded when CLI var is set")
+
+[<Test>]
+let ``EnvVar dependency IS recorded when CLI var is absent``() =
+    let myVar = Var.create(cliArg = "config", envVar = "MY_CONFIG")
+    let capturedDepends = ref []
+
+    do xake DebugOptions {
+        phony "main" (recipe {
+            let! _ = myVar
+            let! result = getResult()
+            capturedDepends := result.Depends
+        })
+    }
+
+    let hasEnvDep =
+        !capturedDepends |> List.exists (function
+            | EnvVar ("MY_CONFIG", _) -> true
+            | _ -> false)
+    Assert.IsTrue(hasEnvDep, "EnvVar dependency should be recorded when CLI var is absent")
+
+[<Test>]
 let ``Var.env reads from env var``() =
     System.Environment.SetEnvironmentVariable("XAKE_SCOPE_ENV", "from-env")
     try

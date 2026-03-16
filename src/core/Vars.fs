@@ -84,7 +84,10 @@ module Vars =
         let resolvedEnvName = envName |> Option.defaultWith (fun () -> toEnvName resolvedName)
         recipe {
             let! cliVal = if scope = EnvOnly then recipe { return None } else getVar resolvedCliName
-            let! envVal = if scope = ArgOnly then recipe { return None } else getEnv resolvedEnvName
+            let! envVal =
+                match scope, cliVal with
+                | ArgOnly, _ | _, Some _ -> recipe { return None }
+                | _ -> getEnv resolvedEnvName
             let reportName = if scope = EnvOnly then resolvedEnvName else resolvedCliName
             return reportName, cliVal |> Option.orElse envVal |> Option.map (convertTo<'t> reportName)
         }

@@ -157,11 +157,12 @@ let runScript options rules =
                 ctx |> runTeardownAsync |> Async.RunSynchronously
             with teardownExn ->
                 ctx.Logger.Log Error "Teardown failed: %s" teardownExn.Message
+                ctx.Logger.Log Verbose "Teardown error details are:\n%A\n\n" teardownExn
                 if exitCode = 0 then
                     // build succeeded but teardown failed — teardown is the only failure
                     exitCode <- 2
                     if options.ThrowOnError then
-                        reraisedError <- Some teardownExn
+                        reraisedError <- Some (XakeException "Teardown failure. See log file for details.")
                 // else: build already failed — log teardown failure but preserve the
                 // original build error in reraisedError and exitCode so it is reported
 

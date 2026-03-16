@@ -1,67 +1,105 @@
-# Develop/release routines
+# Development process
 
-Describes some routines, mostly notes for myself.
+This document describes the practical workflow for developing and releasing Xake.
 
-## Developing a new feature (repo owner)
+## Requirements
 
-* create feature branch (local)
-* push to server
-* create PR to Xake/dev branch
-* wait for checks, in case of failure push fixes to the same branch
-* merge with squash to dev
+- .NET SDK 9.0 or newer
+- GitHub access to the repository
 
-## Contributing new feature
+## Branch workflow
 
-* clone repo
-* create feature branch from origin/dev head)
-* push branch to server
-* create PR to Xake/dev branch
-* wait for checks, in case of failure push fixes to the same branch
+Repository owner flow:
+
+1. Create a feature branch from `dev`
+2. Push branch
+3. Open a pull request to `dev`
+4. Wait for checks
+5. Push fixes if checks fail
+6. Merge with squash
+
+External contribution flow:
+
+1. Fork or clone repository
+2. Create a feature branch from `origin/dev`
+3. Push branch
+4. Open a pull request to `dev`
+5. Address review comments and failed checks
+
+## Build and test
+
+Primary command:
+
+```bash
+dotnet fsi build.fsx -- -- build test
+```
+
+Build core only:
+
+```bash
+dotnet build src/core -c Release
+```
+
+Run all tests:
+
+```bash
+dotnet test src/tests -c Release
+```
+
+Run filtered tests:
+
+```bash
+dotnet test src/tests -c Release --filter "Name~Rm"
+```
+
+Run filtered tests through Xake variable:
+
+```bash
+dotnet fsi build.fsx -- -- test -d FILTER=Rm
+```
+
+## Command line style
+
+Use this format for Xake scripts:
+
+```bash
+dotnet fsi build.fsx -- -- [options] [targets]
+```
+
+Examples:
+
+```bash
+dotnet fsi build.fsx
+dotnet fsi build.fsx -- -- clean build test
+dotnet fsi build.fsx -- -- build;test
+dotnet fsi build.fsx -- -- build --dryrun
+```
+
+## Packaging and publishing
+
+Set `NUGET_KEY` in environment.
+
+Create package:
+
+```bash
+dotnet fsi build.fsx -- -- pack -d Version=3.0.0
+```
+
+Push package:
+
+```bash
+dotnet fsi build.fsx -- -- push -d Version=3.0.0 -d NUGET_KEY=$NUGET_KEY
+```
 
 ## Release
 
-* merge dev to master
-* tag the version with `v` prefix
+1. Merge `dev` into `master`
+2. Tag release with `v` prefix
+3. Push tag
 
-```cmd
+```bash
 git checkout master
-git tag -v v1.0
+git pull
+git tag v3.0.0
 git push --tags
-```
-
-## Tests
-
-Running tests on netstandard target:
-
-```
-dotnet test -f:netcoreapp2.0
-```
-
-Example of selective test run:
-
-```
-dotnet test -f:net46 --filter Name~"Rm deletes"
-dotnet fake run build.fsx -- test -d FILTER=Rm
-```
-
-## Publishing
-
-The commands below assume you've defined `NUGET_KEY` in environment variables.
-
-```
-dotnet fake run build.fsx -- pack -d VER=1.2.3
-dotnet fake run build.fsx -- push -d VER=1.2.3
-```
-
-> Define `SUFFIX` variable set to empty for final releases. Otherwise it defaults to `-alpha`
-
-### Not using build.fsx
-
-Here're the commands issues by a build script.
-> Do not use for publishing. This is just for reference.
-
-```
-dotnet pack -c Release /p:Version=1.2.3-alpha4
-dotnet nuget push out\Xake.1.0.6.344-alpha.nupkg --source https://www.nuget.org/api/v2/package --api-key %NUGET_KEY%
-
 ```

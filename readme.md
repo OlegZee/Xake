@@ -44,9 +44,9 @@ Make sure dotnet SDK 9.0+ is installed.
     
 ## Further reading
 
-* See [the features.fsx](https://github.com/xakebuild/Xake/blob/dev/samples/features.fsx) script for various samples.
-* We have the [introduction page](https://github.com/xakebuild/Xake/wiki/introduction) for you to learn more about Xake.
-* And there're the [documentation notes](https://github.com/xakebuild/Xake/wiki) for more details.
+* See [the features.fsx](https://github.com/OlegZee/Xake/blob/dev/samples/features.fsx) script for various samples.
+* We have the [introduction page](https://github.com/OlegZee/Xake/wiki/Introduction) for you to learn more about Xake.
+* And there're the [documentation notes](https://github.com/OlegZee/Xake/wiki) for more details.
 
 ## Build the project
 
@@ -77,7 +77,7 @@ See [documentation](docs/overview.md) for more details.
 
 ## References
 
-* [documentation](https://github.com/xakebuild/Xake/wiki) 
+* [documentation](https://github.com/OlegZee/Xake/wiki) 
 * [implementation notes](docs/implnotes.md)
 * [Shake manual](https://github.com/ndmitchell/shake/blob/master/docs/Manual.md)
 * [samples repository](https://github.com/xakebuild/Samples)

@@ -393,7 +393,7 @@ let ``varschema mixes explicit cliArg names with implicit property names``() =
     Assert.AreEqual("accessToken", vars.accessToken.FieldName)
 
 [<Test>]
-let ``Var.create with cliArg sets FieldName directly``() =
+let ``Var.create with name sets Name directly``() =
     let myVar = Var.create(name = "config") |> withDefault "Debug"
     let result = ref ""
 

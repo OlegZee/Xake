@@ -106,6 +106,10 @@ let runScript options rules =
     System.Console.CancelKeyPress
     |> Event.add (fun _ ->
         logger.Log Error "Build interrupted by user"
+        try
+            ctx |> runTeardownAsync |> Async.RunSynchronously
+        with exn ->
+            logger.Log Error "Teardown failed during cancellation: %s" exn.Message
         finalize()
         exit 1)
 
@@ -149,7 +153,17 @@ let runScript options rules =
                     reraisedError <- Some (XakeException "Script failure. See log file for details.")
                 exitCode <- 2
 
-            ctx |> runTeardownAsync |> Async.RunSynchronously
+            try
+                ctx |> runTeardownAsync |> Async.RunSynchronously
+            with teardownExn ->
+                ctx.Logger.Log Error "Teardown failed: %s" teardownExn.Message
+                if exitCode = 0 then
+                    // build succeeded but teardown failed — teardown is the only failure
+                    exitCode <- 2
+                    if options.ThrowOnError then
+                        reraisedError <- Some teardownExn
+                // else: build already failed — log teardown failure but preserve the
+                // original build error in reraisedError and exitCode so it is reported
 
             match reraisedError with
             | Some exn -> raise exn

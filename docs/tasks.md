@@ -1,108 +1,125 @@
-# Xake Tasks
+# Xake tasks
 
-// TBD
-
-## Common tasks
-
-### Xake.SystemTasks
-
-Module shell provides actions related to command shell.
-Usage:
+The examples below use current API style:
 
 ```fsharp
-open Xake.SystemTasks
-let! errorlevel = system (fun o -> o) "ls" ["-lr"]
-```
-
-There several predefined functions for passing task settings. Here's the example with all three used:
-
-```fsharp
-open Xake.SystemTasks
-do! system (useClr >> checkErrorLevel >> (workingDir "/etc")) "ls" ["-lr"] |> Recipe.Ignore
-```
-
-The first sets `UseClr` which instructs system command to run `mono <cmd>` on linux. The second one instructs **system** to fail when command returned non-zero errorlevel. The last one defines working directory.
-
-> Notice there's another `system` action in Xake.CommonTasks. It lacks the first parameter (for settings) and is marked as obsolete.
-
-## File tasks
-
-These tasks allows to perform various file operations. Using these tasks ensures the dependencies are properly resolved are recorded.
-
-* `cp <srcfile> <dest-file-name>` - copies the file
-* `rm <mask list>` - removes the files by mask
-* `writeText <text>` - writes content to target (of recipe)
-* `copyFrom <location>` - copies file to target (of recipe)
-
-### Dotnet tasks
-
-Set of tasks to build .NET applications.
-
-* `Csc` - compiles C# files
-* `Fsc` - F# compiler
-* `MsBuild` - builds the project or solution using msbuild or xbuild
-* `ResGen` - compiles resource file[s]
-
-### NETFX, NETFX-TARGET variables
-
-Xake allows using both Mono and .NET frameworks explicitly by defining `NETFX` variable.
-Default behavior is to use the framework the script is running under. E.g. if running under Mono `fsharpi` recent mono toolset will be used.
-
-List of valid targets:
-
-    | "net-20" | "net-2.0" | "2.0"
-    | "net-30" | "net-3.0" | "3.0"
-    | "net-35" | "net-3.5" | "3.5"
-    | "net-40c"| "net-4.0c" | "4.0-client"
-    | "net-40" | "net-4.0" | "4.0"| "4.0-full"
-    | "net-45" | "net-4.5" | "4.5"| "4.5-full"
-
-    | "mono-20" | "mono-2.0" | "2.0"
-    | "mono-35" | "mono-3.5" | "3.5"
-    | "mono-40" | "mono-4.0" | "4.0"
-    | "mono-45" | "mono-4.5" | "4.5"
-
-Use "2.0".."4.5" targets for multiplatform environments (will target mono-XXX being run under mono framework).
-
-The following script compiles application using 4.5 framework (mono or .net depending on running environment).
-
-```fsharp
-#r @"packages/Xake/tools/Xake.Core.dll"
+#r "nuget: Xake, 3.0.0"
 open Xake
-
-do xake {ExecOptions.Default with } {
-  var "NETFX" "4.5"
-  rule ("main" ==> ["hw.exe"])
-
-  rule("hw.exe" *> fun exe -> action {
-    do! Csc {
-      CscSettings with
-        Out = exe
-        Src = !! "a.cs"
-      }
-    })
-}
+open Xake.Tasks
 ```
 
-`NETFX-TARGET` variable allow to specify target framework in the similar way, i.e. for all `csc` and `fsc` tasks.
+## Shell tasks
 
-### F# compiler task
+### sh recommended
 
-Fsc task compiles fsharp project.
+`sh` fails on non zero exit code by default.
 
 ```fsharp
-do! Fsc {
-    FscSettings with
-        Out = file
-        Src = sources
-        Ref = !! "bin/FSharp.Core.dll" + "bin/nunit.framework.dll" + "bin/Xake.Core.dll"
-        RefGlobal = ["mscorlib.dll"; "System.dll"; "System.Core.dll"]
-        Define = ["TRACE"]
-        CommandArgs = ["--optimize+"; "--warn:3"; "--warnaserror:76"; "--utf8output"]
+do! sh "dotnet build src/core -c Release" {}
+```
+
+With arguments and working directory:
+
+```fsharp
+do! sh "dotnet" {
+  args ["test"; "src/tests"; "-c"; "Release"]
+  workdir "."
+  failonerror
 }
 ```
 
-Fsc uses most recent (from known) compiler version and allows to specify particular version.
+Capture output:
 
-* global var `FSCVER` defines version for all fsc tasks.
-* `FscVersion` field in compiler settings. Settings has higher priority.
+```fsharp
+let! code, lines = sh "dotnet --list-sdks" { resultAndOutput }
+```
+
+## Copy tasks
+
+Copy by file mask:
+
+```fsharp
+do! cp {file "bin/*.dll"; todir "deploy"}
+```
+
+Copy directory tree:
+
+```fsharp
+do! cp {dir "bin"; todir "deploy"}
+```
+
+Copy from fileset:
+
+```fsharp
+do! cp {
+  files (fileset {
+    basedir "bin"
+    includes "*.dll"
+    includes "*.exe"
+  })
+  todir "deploy"
+}
+```
+
+Other copy helpers:
+
+```fsharp
+do! copyFile "src/App.config" "out/App.config"
+"out/config.json" ..> copyFrom "src/config.json"
+```
+
+## Remove tasks
+
+Delete file or mask:
+
+```fsharp
+do! rm {file "temp/*.tmp"}
+```
+
+Delete directory:
+
+```fsharp
+do! rm {dir "out"}
+```
+
+Delete files from fileset:
+
+```fsharp
+do! rm {
+  files (fileset {
+    basedir "out"
+    includes "**/*.cache"
+  })
+  verbose
+}
+```
+
+## Inner recipe helpers
+
+Common helpers used inside `recipe`:
+
+- `need`
+- `needFiles`
+- `dependsOn`
+- `trace`
+- `getVar`
+- `getEnv`
+- `getCtxOptions`
+- `getTargetFile`
+- `getTargetFullName`
+
+Example:
+
+```fsharp
+recipe {
+  do! dependsOn !! "src/**/*.fs"
+  let! cfg = getVar "Config"
+  do! trace Info "Config: %A" cfg
+}
+```
+
+## Notes
+
+- Prefer `Xake.Tasks` namespace in new scripts
+- Prefer `sh`, `cp`, and `rm` builders over older legacy APIs
+- Prefer typed variables with `Var.*` and `varschema` for better help output

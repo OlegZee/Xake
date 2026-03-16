@@ -172,9 +172,7 @@ module XakeScriptBuilder =
                 try
                     let snapshot = inFlight.Values |> Seq.map (fun l -> l.Value) |> Seq.toArray
                     do! snapshot |> Array.map Async.AwaitTask |> Async.Parallel |> Async.Ignore
-                    for name in engine.Options.Teardown do
-                        let ctx = makeCtx None
-                        do! ExecCore.demandTarget ctx name |> Async.Ignore
+                    do! makeCtx None |> ScriptRunner.runTeardownAsync
                 finally
                     finalize ()
             } |> Async.StartAsTask :> Task

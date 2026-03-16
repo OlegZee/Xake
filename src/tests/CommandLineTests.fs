@@ -13,6 +13,16 @@ let XakeOptions = ExecOptions.Default
 let private parseArgs args initial =
     args |> List.fold ParseArgs.foldFunction (initial, ParseArgs.TopLevel) |> fst
 
+let private withTempRoot testName action =
+    let testRoot = currentDir </> "~testout~" </> (testName + "-" + System.Guid.NewGuid().ToString "N")
+    Directory.CreateDirectory testRoot |> ignore
+    try
+        action testRoot
+    finally
+        try
+            Directory.Delete(testRoot, true)
+        with _ -> ()
+
 [<Test>]
 let ``accepts various switches``() =
 
@@ -161,3 +171,122 @@ let ``resetdb ignores previously recorded information``() =
         try
             Directory.Delete(testRoot, true)
         with _ -> ()
+
+[<Test>]
+let ``runs teardown after successful CLI execution``() =
+    withTempRoot "cli-teardown-success" <| fun testRoot ->
+        let log = System.Collections.Generic.List<string> ()
+
+        xakeArgs ["build"] { XakeOptions with ProjectRoot = testRoot; DbFileName = ".xake-teardown-success"; NoPersist = true; Nologo = true } {
+            teardown ["cleanup"]
+            rules [
+                "build" => recipe {
+                    lock log <| fun () -> log.Add "build"
+                }
+                "cleanup" => recipe {
+                    lock log <| fun () -> log.Add "cleanup"
+                }
+            ]
+        }
+
+        Assert.AreEqual(["build"; "cleanup"], log |> Seq.toList)
+
+[<Test>]
+let ``runs teardown after failed CLI execution when ThrowOnError is enabled``() =
+    withTempRoot "cli-teardown-failure" <| fun testRoot ->
+        let log = System.Collections.Generic.List<string> ()
+
+        Assert.Throws<XakeException>(fun () ->
+            xakeArgs ["build"] { XakeOptions with ProjectRoot = testRoot; DbFileName = ".xake-teardown-failure"; NoPersist = true; Nologo = true; ThrowOnError = true } {
+                teardown ["cleanup"]
+                rules [
+                    "build" => recipe {
+                        lock log <| fun () -> log.Add "build"
+                        failwith "boom"
+                    }
+                    "cleanup" => recipe {
+                        lock log <| fun () -> log.Add "cleanup"
+                    }
+                ]
+            }) |> ignore
+
+        Assert.AreEqual(["build"; "cleanup"], log |> Seq.toList)
+
+[<Test>]
+let ``skips teardown for dryrun and dump CLI modes``() =
+    withTempRoot "cli-teardown-nonrun" <| fun testRoot ->
+        let log = System.Collections.Generic.List<string> ()
+        let options = { XakeOptions with ProjectRoot = testRoot; DbFileName = ".xake-teardown-nonrun"; NoPersist = true; Nologo = true }
+
+        xakeArgs ["--dryrun"; "build"] options {
+            teardown ["cleanup"]
+            rules [
+                "build" => recipe {
+                    lock log <| fun () -> log.Add "build"
+                }
+                "cleanup" => recipe {
+                    lock log <| fun () -> log.Add "cleanup"
+                }
+            ]
+        }
+
+        xakeArgs ["--dump"; "build"] options {
+            teardown ["cleanup"]
+            rules [
+                "build" => recipe {
+                    lock log <| fun () -> log.Add "build"
+                }
+                "cleanup" => recipe {
+                    lock log <| fun () -> log.Add "cleanup"
+                }
+            ]
+        }
+
+        Assert.IsEmpty(log)
+
+[<Test>]
+let ``teardown failure is reported when build succeeds``() =
+    withTempRoot "cli-teardown-fail-after-success" <| fun testRoot ->
+        let log = System.Collections.Generic.List<string> ()
+
+        let exn =
+            Assert.Throws<XakeException>(fun () ->
+                xakeArgs ["build"] { XakeOptions with ProjectRoot = testRoot; NoPersist = true; Nologo = true; ThrowOnError = true } {
+                    teardown ["cleanup"]
+                    rules [
+                        "build" => recipe {
+                            lock log <| fun () -> log.Add "build"
+                        }
+                        "cleanup" => recipe {
+                            lock log <| fun () -> log.Add "cleanup"
+                            failwith "teardown boom"
+                        }
+                    ]
+                })
+
+        Assert.AreEqual(["build"; "cleanup"], log |> Seq.toList)
+        Assert.That(exn.Message, Does.Contain("Teardown failure"))
+
+[<Test>]
+let ``original build error is preserved when teardown also fails``() =
+    withTempRoot "cli-teardown-both-fail" <| fun testRoot ->
+        let log = System.Collections.Generic.List<string> ()
+
+        let exn =
+            Assert.Throws<XakeException>(fun () ->
+                xakeArgs ["build"] { XakeOptions with ProjectRoot = testRoot; NoPersist = true; Nologo = true; ThrowOnError = true } {
+                    teardown ["cleanup"]
+                    rules [
+                        "build" => recipe {
+                            lock log <| fun () -> log.Add "build"
+                            failwith "build boom"
+                        }
+                        "cleanup" => recipe {
+                            lock log <| fun () -> log.Add "cleanup"
+                            failwith "teardown boom"
+                        }
+                    ]
+                })
+
+        Assert.AreEqual(["build"; "cleanup"], log |> Seq.toList)
+        Assert.That(exn.Message, Does.Contain "build boom")

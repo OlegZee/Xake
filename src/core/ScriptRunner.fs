@@ -33,6 +33,12 @@ let createScriptContext (opts: ExecOptions) rules =
             Storage.openDb dbPath engineOpts.Logger
     ExecCore.createContextCore engineOpts db opts.Vars opts.Progress
 
+let runTeardownAsync (ctx: ExecContext) =
+    async {
+        for targetName in ctx.Engine.Options.Teardown do
+            do! ExecCore.demandTarget ctx targetName |> Async.Ignore
+    }
+
 /// Performs a dry run: analyzes dependencies and logs what would be rebuilt without executing anything.
 /// Displays estimated build time and parallelism degree.
 let dryRun (ctx: ExecContext) (groups: string list list) =
@@ -125,6 +131,7 @@ let runScript options rules =
             targetLists |> dryRun ctx
         | _ ->
             let start = System.DateTime.Now
+            let mutable reraisedError = None
             try
                 targetLists |> ExecCore.runBuild ctx |> Async.RunSynchronously |> ignore
                 ctx.Logger.Log Message "\n\n    Build completed in %A\n" (System.DateTime.Now - start)
@@ -139,8 +146,14 @@ let runScript options rules =
                 do ctx.Logger.Log Message "\n\n\tBuild failed after running for %A\n" (System.DateTime.Now - start)
 
                 if options.ThrowOnError then
-                    raise (XakeException "Script failure. See log file for details.")
+                    reraisedError <- Some (XakeException "Script failure. See log file for details.")
                 exitCode <- 2
+
+            ctx |> runTeardownAsync |> Async.RunSynchronously
+
+            match reraisedError with
+            | Some exn -> raise exn
+            | None -> ()
     finally
         finalize()
     if exitCode <> 0 then exit exitCode

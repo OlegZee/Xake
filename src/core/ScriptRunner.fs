@@ -107,11 +107,18 @@ let runScript options rules =
     // Only cancel the token — do not touch teardown or call exit here.
     // The main thread observes the cancellation via Async.RunSynchronously,
     // exits the build loop cleanly, then runs teardown before exiting.
+    // Double Ctrl+C support: first press cancels gracefully, second press allows OS termination.
+    let mutable cancelledOnce = false
     let handler =
         new System.ConsoleCancelEventHandler(fun _ args ->
-            args.Cancel <- true  // suppress default process termination
-            logger.Log Error "Build interrupted by user"
-            cts.Cancel())
+            if not cancelledOnce then
+                args.Cancel <- true  // suppress default process termination
+                cancelledOnce <- true
+                logger.Log Error "Build interrupted by user. Press Ctrl+C again to force exit"
+                cts.Cancel()
+            else
+                args.Cancel <- false  // allow default termination on second press
+                logger.Log Error "Force exiting build process...")
     System.Console.CancelKeyPress.AddHandler(handler)
 
     logger.Log Level.Debug "Options: %A" { options with Vars = [] }

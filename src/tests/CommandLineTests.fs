@@ -290,6 +290,3 @@ let ``original build error is preserved when teardown also fails``() =
 
         Assert.AreEqual(["build"; "cleanup"], log |> Seq.toList)
         Assert.That(exn.Message, Does.Contain "build boom")
-
-        // Assert.AreEqual("build boom", exn.Message)
-   

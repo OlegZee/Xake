@@ -82,9 +82,9 @@ The result type in a recipe depends on how the variable is declared:
 
 | Declaration                            | Result in recipe  |
 |----------------------------------------|-------------------|
-| `Var.create()`                         | `string option`   |
-| `Var.create() \|> required`            | `string`          |
-| `Var.create() \|> withDefault "Debug"` | `string`          |
+| `Var.string()`                         | `string option`   |
+| `Var.string() \|> required`            | `string`          |
+| `Var.string() \|> withDefault "Debug"` | `string`          |
 | `Var.create<int>() \|> withDefault 4`  | `int`             |
 | `Var.create<bool>()`                   | `bool option`     |
 
@@ -96,10 +96,10 @@ A variable without `required` or `withDefault` is optional — its recipe result
 ```fsharp
 // closing combinators — determine result type, must appear last
 Var.string() |> required              // throws at execution time if no value found
-Var.create() |> withDefault "Debug"   // always has a value
+Var.string() |> withDefault "Debug"   // always has a value
 
 // modifiers — appear before the closing combinator
-Var.create() |> describe "..." |> withDefault "x"   // shown in --help output
+Var.string() |> describe "..." |> withDefault "x"   // shown in --help output
 ```
 
 | Combinator              | Purpose                                     |

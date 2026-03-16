@@ -21,7 +21,11 @@ Typed convenience factories (`Var.string`, `Var.int`, `Var.bool`) save you writi
 generic type parameter in the common cases. For other types use `Var.create<'t>`:
 
 ```fsharp
-Var.create<'t>(cliArg = "cfg", envVar = "BUILD_CFG", description = "build config") |> withDefault "Debug"
+// logical name drives both CLI lookup and env derivation:
+Var.create<'t>(name = "cfg", envVar = "BUILD_CFG", description = "build config") |> withDefault "Debug"
+
+// separate logical name and explicit CLI key:
+Var.create<'t>(name = "logicalName", cliArg = "externalName", description = "build config") |> withDefault "Debug"
 ```
 
 All named parameters on every factory are optional.
@@ -30,10 +34,10 @@ All named parameters on every factory are optional.
 
 | Method | Named params | Returns |
 |--------|-------------|---------|
-| `Var.create<'t>` | `?cliArg`, `?envVar`, `?description` | `OptionalVar<'t>` |
-| `Var.string` | `?cliArg`, `?envVar`, `?description` | `OptionalVar<string>` |
-| `Var.int` | `?cliArg`, `?envVar`, `?description` | `OptionalVar<int>` |
-| `Var.bool` | `?cliArg`, `?envVar`, `?description` | `OptionalVar<bool>` |
+| `Var.create<'t>` | `?name`, `?cliArg`, `?envVar`, `?description` | `OptionalVar<'t>` |
+| `Var.string` | `?name`, `?cliArg`, `?envVar`, `?description` | `OptionalVar<string>` |
+| `Var.int` | `?name`, `?cliArg`, `?envVar`, `?description` | `OptionalVar<int>` |
+| `Var.bool` | `?name`, `?cliArg`, `?envVar`, `?description` | `OptionalVar<bool>` |
 | `Var.env<'t>` | `?envVar`, `?description` | `OptionalVar<'t>` |
 | `Var.arg<'t>` | `?cliArg`, `?description` | `OptionalVar<'t>` |
 
@@ -42,13 +46,45 @@ All named parameters on every factory are optional.
 Each variable declared with `Var.create` (or a typed shorthand) resolves from two sources
 in priority order:
 
-1. **CLI arg** — `-d FieldName=value`
-2. **Environment variable** — field name converted to `UPPER_SNAKE_CASE`
+1. **CLI arg** — `-d <cliName>=value`
+2. **Environment variable** — logical name converted to `UPPER_SNAKE_CASE`
+
+The names used for lookup are determined as follows:
+
+| Parameter supplied | CLI lookup key | Env var derived from |
+|--------------------|---------------|----------------------|
+| neither `name` nor `cliArg` | field name | field name |
+| `name` only | `name` value | `name` value |
+| `cliArg` only | `cliArg` value | field name |
+| `name` + `cliArg` | `cliArg` value | `name` value |
+
+The UPPER_SNAKE_CASE conversion applies to whichever name drives env derivation:
 
 ```
-Config   -> CONFIG
-ApiKey   -> API_KEY
-Threads  -> THREADS
+buildConfig -> BUILD_CONFIG
+apiKey      -> API_KEY
+threads     -> THREADS
+```
+
+### `name` vs `cliArg`
+
+Use `name` when you want a logical alias that controls both the CLI key and the derived
+env var name independently of the record field name:
+
+```fsharp
+let vars = {|
+    config = Var.create<string>(name = "buildConfig")   // CLI: -d buildConfig=... ; env: BUILD_CONFIG
+|}
+```
+
+Use `cliArg` when you only want to override the CLI key — env derivation still comes from
+`name` (if given) or the field name:
+
+```fsharp
+let vars = {|
+    // CLI: -d externalName=... ; env: LOGICAL_NAME (derived from name)
+    config = Var.create<string>(name = "logicalName", cliArg = "externalName")
+|}
 ```
 
 ## Scoped Lookup

@@ -10,12 +10,21 @@ module XakeScriptBuilder =
         if schema <> [] then
             printfn "\nScript variables:"
             for (name, help) in schema do
-                let cliName = name
+                let header =
+                    match help.Scope with
+                    | EnvOnly ->
+                        let envName = help.EnvVarName |> Option.defaultValue name
+                        sprintf "  $%s [%s]" envName help.TypeName
+                    | _ ->
+                        sprintf "  -d %s=<value> [%s]" name help.TypeName
                 let required = if help.IsRequired then " (required)" else ""
-                let envStr = help.EnvVarName |> Option.map (sprintf ", env: %s") |> Option.defaultValue ""
+                let envStr =
+                    match help.Scope with
+                    | EnvOnly -> ""  // env name already shown in header
+                    | _ -> help.EnvVarName |> Option.map (sprintf ", env: %s") |> Option.defaultValue ""
                 let defaultStr = help.DefaultStr |> Option.map (sprintf ", default: %s") |> Option.defaultValue ""
                 let descStr = help.Description |> Option.map (sprintf " — %s") |> Option.defaultValue ""
-                printfn "  -d %s=<value> [%s]%s%s%s%s" cliName help.TypeName required envStr defaultStr descStr
+                printfn "%s%s%s%s%s" header required envStr defaultStr descStr
 
     /// Script builder.
     type RulesBuilder(options) =

@@ -173,10 +173,10 @@ let ``RequiredVar throws when absent``() =
     ) |> ignore
 
 [<Test>]
-let ``auto-env: buildConfig resolves from BUILD_CONFIG env var``() =
+let ``auto-env: buildConfig resolves from BUILD_CONFIG env var derived from name``() =
     System.Environment.SetEnvironmentVariable("BUILD_CONFIG", "Release")
     try
-        let myVar = Var.create<string>(cliArg = "buildConfig")
+        let myVar = Var.create<string>(name = "buildConfig")
         let result = ref None
 
         do xake DebugOptions {
@@ -191,22 +191,58 @@ let ``auto-env: buildConfig resolves from BUILD_CONFIG env var``() =
         System.Environment.SetEnvironmentVariable("BUILD_CONFIG", null)
 
 [<Test>]
-let ``auto-env: apiKey resolves from API_KEY env var``() =
-    System.Environment.SetEnvironmentVariable("API_KEY", "secret")
+let ``name param drives CLI lookup and env derivation``() =
+    System.Environment.SetEnvironmentVariable("BUILD_CONFIG", "Release")
     try
-        let myVar = Var.create<string>(cliArg = "apiKey")
-        let result = ref None
+        let myVar = Var.create<string>(name = "buildConfig")
+        let fromEnv = ref None
+        let fromCli = ref None
 
         do xake DebugOptions {
             phony "main" (recipe {
                 let! v = myVar
-                result := v
+                fromEnv := v
             })
         }
 
-        Assert.AreEqual(Some "secret", !result)
+        do xakeArgs ["-d"; "buildConfig=Debug"] DebugOptions {
+            phony "main" (recipe {
+                let! v = myVar
+                fromCli := v
+            })
+        }
+
+        Assert.AreEqual(Some "Release", !fromEnv)
+        Assert.AreEqual(Some "Debug", !fromCli)
     finally
-        System.Environment.SetEnvironmentVariable("API_KEY", null)
+        System.Environment.SetEnvironmentVariable("BUILD_CONFIG", null)
+
+[<Test>]
+let ``name param derives env while cliArg overrides CLI lookup``() =
+    System.Environment.SetEnvironmentVariable("LOGICAL_NAME", "from-env")
+    try
+        let myVar = Var.create<string>(name = "logicalName", cliArg = "externalName")
+        let fromEnv = ref None
+        let fromCli = ref None
+
+        do xake DebugOptions {
+            phony "main" (recipe {
+                let! v = myVar
+                fromEnv := v
+            })
+        }
+
+        do xakeArgs ["-d"; "externalName=from-cli"] DebugOptions {
+            phony "main" (recipe {
+                let! v = myVar
+                fromCli := v
+            })
+        }
+
+        Assert.AreEqual(Some "from-env", !fromEnv)
+        Assert.AreEqual(Some "from-cli", !fromCli)
+    finally
+        System.Environment.SetEnvironmentVariable("LOGICAL_NAME", null)
 
 [<Test>]
 let ``vars sets FieldName from anonymous record property name``() =
@@ -277,8 +313,88 @@ let ``two plain vars in schema resolve independently from CLI args``() =
     Assert.AreEqual(Some "secret",  !key)
 
 [<Test>]
+let ``varschema preserves explicit cliArg for lookup and FieldName``() =
+    let vars = {|
+        myAlias = Var.create(cliArg = "originalName") |> withDefault "default"
+    |}
+    let result = ref ""
+
+    do xakeArgs ["-d"; "originalName=expected"] DebugOptions {
+        varschema vars
+        phony "main" (recipe {
+            let! v = vars.myAlias
+            result := v
+        })
+    }
+
+    Assert.AreEqual("expected", !result)
+    Assert.AreEqual("myAlias", vars.myAlias.FieldName)
+
+[<Test>]
+let ``varschema uses explicit name for derived CLI and env lookup``() =
+    System.Environment.SetEnvironmentVariable("BUILD_CONFIG", "Release")
+    try
+        let vars = {|
+            myAlias = Var.create<string>(name = "buildConfig")
+        |}
+        let fromEnv = ref None
+        let fromCli = ref None
+
+        do xake DebugOptions {
+            varschema vars
+            phony "main" (recipe {
+                let! v = vars.myAlias
+                fromEnv := v
+            })
+        }
+
+        do xakeArgs ["-d"; "buildConfig=Debug"] DebugOptions {
+            varschema vars
+            phony "main" (recipe {
+                let! v = vars.myAlias
+                fromCli := v
+            })
+        }
+
+        Assert.AreEqual(Some "Release", !fromEnv)
+        Assert.AreEqual(Some "Debug", !fromCli)
+        Assert.AreEqual("myAlias", vars.myAlias.FieldName)
+    finally
+        System.Environment.SetEnvironmentVariable("BUILD_CONFIG", null)
+
+[<Test>]
+let ``varschema mixes explicit cliArg names with implicit property names``() =
+    let vars = {|
+        config = Var.create(name = "logicalConfig", cliArg = "buildConfig") |> withDefault "Release"
+        outputDir = Var.create() |> withDefault "bin"
+        accessToken = Var.create(name = "tokenName", cliArg = "apiToken") |> required
+    |}
+    let config = ref ""
+    let outputDir = ref ""
+    let accessToken = ref ""
+
+    do xakeArgs ["-d"; "buildConfig=Debug"; "-d"; "outputDir=dist"; "-d"; "apiToken=secret123"] DebugOptions {
+        varschema vars
+        phony "main" (recipe {
+            let! currentConfig = vars.config
+            let! currentOutputDir = vars.outputDir
+            let! currentAccessToken = vars.accessToken
+            config := currentConfig
+            outputDir := currentOutputDir
+            accessToken := currentAccessToken
+        })
+    }
+
+    Assert.AreEqual("Debug", !config)
+    Assert.AreEqual("dist", !outputDir)
+    Assert.AreEqual("secret123", !accessToken)
+    Assert.AreEqual("config", vars.config.FieldName)
+    Assert.AreEqual("outputDir", vars.outputDir.FieldName)
+    Assert.AreEqual("accessToken", vars.accessToken.FieldName)
+
+[<Test>]
 let ``Var.create with cliArg sets FieldName directly``() =
-    let myVar = Var.create(cliArg = "config") |> withDefault "Debug"
+    let myVar = Var.create(name = "config") |> withDefault "Debug"
     let result = ref ""
 
     do xake DebugOptions {
@@ -288,7 +404,7 @@ let ``Var.create with cliArg sets FieldName directly``() =
         })
     }
 
-    Assert.AreEqual("config", myVar.FieldName)
+    Assert.AreEqual(Some "config", myVar.Name)
     Assert.AreEqual("Debug", !result)
 
 [<Test>]
@@ -313,7 +429,7 @@ let ``Var.create with envVar arg resolves from that env var``() =
 [<Test>]
 let ``Var.create with cliArg and envVar args combines both``() =
     let myVar = Var.create(cliArg = "myField", envVar = "MY_COMBINED_VAR")
-    Assert.AreEqual("myField", myVar.FieldName)
+    Assert.AreEqual(Some "myField", myVar.CliArgName)
     Assert.AreEqual(Some "MY_COMBINED_VAR", myVar.EnvName)
 
 [<Test>]
@@ -405,9 +521,9 @@ let ``Var.arg reads from CLI arg``() =
 
 [<Test>]
 let ``Var.arg ignores env var``() =
-    System.Environment.SetEnvironmentVariable("PATH", "system-path")
+    System.Environment.SetEnvironmentVariable("EXT_MY_PATH", "system-path")
     try
-        let myVar = Var.arg(cliArg = "path") |> withDefault "default"
+        let myVar = Var.arg(cliArg = "extMyPath") |> withDefault "default"
         let result = ref ""
 
         do xake DebugOptions {
@@ -419,4 +535,4 @@ let ``Var.arg ignores env var``() =
 
         Assert.AreEqual("default", !result)
     finally
-        ()
+        System.Environment.SetEnvironmentVariable("EXT_MY_PATH", null)

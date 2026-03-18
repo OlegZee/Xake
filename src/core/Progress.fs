@@ -237,7 +237,7 @@ let openProgress getDurationDeps threadCount goals toConsole =
         let rec loop (state,runningTasks) = 
             async {
                 try
-                    let! msg = mbox.Receive 187
+                    let! msg = mbox.Receive 243
                     let runningTasks = runningTasks |> advanceRunningTime
 
                     match msg with

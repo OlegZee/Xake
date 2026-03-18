@@ -204,15 +204,12 @@ module private ConsoleSink =
                         match state.Interactive with
                         | false -> { state with StatusBarText = barText; StatusText = barText; StatusVisible = false }
                         | true ->
-                            if barText = state.StatusBarText then
-                                state
-                            else
-                                if state.StatusVisible then eraseStatus()
-                                let newTick = (state.SpinnerTick + 1) % spinnerFrames.Length
-                                let fullText = barText |> Option.map (fun bt -> sprintf "%s %s" spinnerFrames.[newTick] bt)
-                                let visible = fullText.IsSome
-                                if visible then drawStatus fullText
-                                { state with StatusBarText = barText; StatusText = fullText; StatusVisible = visible; SpinnerTick = newTick }
+                            if state.StatusVisible then eraseStatus()
+                            let newTick = (state.SpinnerTick + 1) % spinnerFrames.Length
+                            let fullText = barText |> Option.map (fun bt -> sprintf "%s %s" spinnerFrames.[newTick] bt)
+                            let visible = fullText.IsSome
+                            if visible then drawStatus fullText
+                            { state with StatusBarText = barText; StatusText = fullText; StatusVisible = visible; SpinnerTick = newTick }
                     return! loop nextState
 
                 | Flush ch ->

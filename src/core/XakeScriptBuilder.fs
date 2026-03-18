@@ -109,8 +109,12 @@ module XakeScriptBuilder =
 
         /// Starts the engine, returning a long-lived XakeEngine.
         [<CustomOperation("start")>]
-        member __.Start(script: XakeScript) : XakeEngine =
-            XakeEngine.Start script
+        member __.Start(XakeScript (options, rules)) : XakeEngine =
+            // explicitly disable progress for long-lived engine
+            XakeEngine.Start (XakeScript ({ options with Progress = false }, rules))
+
+        [<CustomOperation("engine")>]
+        member this.Engine script : XakeEngine = this.Start script
 
         member __.Run(e: XakeEngine) = e
 

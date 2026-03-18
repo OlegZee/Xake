@@ -20,7 +20,7 @@ type ``Script error handling``() =
         let wasExecuted = ref false
         
         do xake ExecOptions.Default {
-            want (["test"])
+            want ["test"]
             phony "test" (recipe {
                 do! trace Info "Running inside 'test' rule"
                 wasExecuted := true

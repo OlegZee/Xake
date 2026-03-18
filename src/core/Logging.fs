@@ -102,7 +102,19 @@ module private ConsoleSink =
     // Going to render progress bar this way:
     // | 22% [MM------------------] 0m 12s left
     let ProgressBarLen = 20
-    type Message = | Message of Level * string | Progress of int * System.TimeSpan | Flush of AsyncReplyChannel<unit>
+
+    type RenderCommand =
+        | WriteLine of Level * string
+        | SetStatus of string option
+        | Flush of AsyncReplyChannel<unit>
+
+    type RenderState = {
+        StatusBarText: string option  // raw bar text without spinner, for dedup
+        StatusText: string option     // full rendered text with spinner, for display/clear
+        StatusVisible: bool
+        Interactive: bool
+        SpinnerTick: int
+    }
 
     let levelToColor = function
         | Level.Message -> Some (ConsoleColor.White, ConsoleColor.White)
@@ -115,78 +127,102 @@ module private ConsoleSink =
         | _ -> None
 
     let fmtTs (ts:System.TimeSpan) =
-        (if ts.TotalHours >= 1.0 then "h'h'\ mm'm'\ ss's'"
-        else if ts.TotalMinutes >= 1.0 then "mm'm'\ ss's'"
-        else "'0m 'ss's'")
-        |> ts.ToString
+        if ts.TotalHours >= 1.0 then sprintf "%dh %02dm" (int ts.TotalHours) ts.Minutes
+        else if ts.TotalMinutes >= 1.0 then sprintf "%dm %02ds" (int ts.TotalMinutes) ts.Seconds
+        else sprintf "%ds" ts.Seconds
+
+    let isInteractiveConsole =
+        not Console.IsOutputRedirected && not Console.IsErrorRedirected
+
+    let spinnerFrames = [|"⠋";"⠙";"⠹";"⠸";"⠼";"⠴";"⠦";"⠧";"⠇";"⠏"|]
+
+    let formatStatus (timeLeft:System.TimeSpan, pct, activeTasks) =
+        match pct with
+        | a when a >= 100 || a < 0 || timeLeft.TotalMilliseconds < 100.0 -> None
+        | _ ->
+            let partialChars = [|""; "▏"; "▎"; "▍"; "▌"; "▋"; "▊"; "▉"|]
+            let filledSubunits = pct * ProgressBarLen * 8 / 100
+            let fullBlocks = filledSubunits / 8
+            let partial = filledSubunits % 8
+            let emptyLen = ProgressBarLen - fullBlocks - (if partial > 0 then 1 else 0)
+            let bar = sprintf "%s%s%s" (String.replicate fullBlocks "█") partialChars.[partial] (String.replicate emptyLen " ") // '░'
+            let taskStr = if activeTasks = 1 then "1 task" else sprintf "%d tasks" activeTasks
+            Some <| sprintf "%3d%% [%s]  %s · %s left" pct bar taskStr (fmtTs timeLeft)
 
     let po = MailboxProcessor.Start(fun mbox ->
 
-        let rec loop (progressMessage) =
-            let wipeProgressMessage () =
-                let len = progressMessage |> Option.fold (fun _ -> String.length) 0
-                Console.Out.Flush()
-                let cursorLeft = Console.CursorLeft
-                len - cursorLeft |> function
-                | e when e > 0 -> Console.Write (String.replicate e " ")
-                | _ -> ()
-            let renderProgress = function
-                | Some (outputString: string) ->
+        let rec loop state =
+            // Writes \r + spaces + \r to fully erase current status bar, cursor returns to col 0
+            let eraseStatus () =
+                let len = state.StatusText |> Option.fold (fun _ -> String.length) 0
+                Console.Write ("\r" + String.replicate len " " + "\r")
+
+            let drawStatus statusText =
+                match state.Interactive, statusText with
+                | true, Some outputString ->
                     Console.ForegroundColor <- ConsoleColor.White
-                    Console.Write outputString
-                    wipeProgressMessage()
-
+                    Console.Write (outputString: string)  // caller already at col 0 after eraseStatus
                     Console.ResetColor()
-                | None -> ()
-            let renderLineWithInfo (color, textColor) level (txt: string) =
-                Console.ForegroundColor <- color
-                Console.Write (sprintf "\r[%s] " level)
+                | _ -> ()
 
+            let renderLineWithInfo (color, textColor) level (txt: string) =
+                // caller has already erased the status bar so cursor is at col 0
+                Console.ForegroundColor <- color
+                Console.Write (sprintf "[%s] " level)
                 Console.ForegroundColor <- textColor
                 Console.Write txt
-                wipeProgressMessage()
+                // pad any remaining status bar width so old chars don't bleed through
+                let statusLen = state.StatusText |> Option.fold (fun _ -> String.length) 0
+                let writtenLen = level.Length + 3 + txt.Length  // "[level] " = level+3
+                let pad = statusLen - writtenLen
+                if pad > 0 then Console.Write (String.replicate pad " ")
                 Console.WriteLine()
 
-            async { 
+            let writeLines level (text: string) =
+                match level |> levelToColor with
+                | Some colors ->
+                    text.Split '\n'
+                    |> Seq.iteri (fun index (part: string) ->
+                        let line = part.TrimEnd '\r'
+                        match index with
+                        | 0 -> renderLineWithInfo colors (LevelToString level) line
+                        | _ -> Console.WriteLine line)
+                | _ -> ()
+                Console.ResetColor()
+
+            async {
                 let! msg = mbox.Receive()
                 match msg with
-                | Message(level, text) ->
-                    match level |> levelToColor with
-                    | Some colors ->
-                        // in case of CRLF in the string make sure we washed out the progress message
-                        text.Split('\n') |> Seq.iteri (function
-                            | 0 -> renderLineWithInfo colors (LevelToString level)
-                            | _ -> System.Console.WriteLine)
-                        renderProgress progressMessage
+                | WriteLine(level, text) ->
+                    if state.StatusVisible then eraseStatus()
+                    writeLines level text
+                    if state.StatusVisible then drawStatus state.StatusText
+                    return! loop state
 
-                    | _ -> ()
-                    Console.ResetColor()
-
-                | Progress (pct, timeLeft) ->
-                    let outputString =
-                        match pct with
-                        | a when a >= 100 || a < 0 || timeLeft.TotalMilliseconds < 100.0 -> ""
-                        | pct ->
-                            let barlen = pct * ProgressBarLen / 100
-                            sprintf "\r%3d%% Complete [%s%s] %s Left" pct (String.replicate barlen "=") (String.replicate (ProgressBarLen - barlen) " ") (fmtTs timeLeft)
-                        |> Some
-
-                    renderProgress outputString
-                    return! loop outputString
+                | SetStatus barText ->
+                    let nextState =
+                        match state.Interactive with
+                        | false -> { state with StatusBarText = barText; StatusText = barText; StatusVisible = false }
+                        | true ->
+                            if barText = state.StatusBarText then
+                                state
+                            else
+                                if state.StatusVisible then eraseStatus()
+                                let newTick = (state.SpinnerTick + 1) % spinnerFrames.Length
+                                let fullText = barText |> Option.map (fun bt -> sprintf "%s %s" spinnerFrames.[newTick] bt)
+                                let visible = fullText.IsSome
+                                if visible then drawStatus fullText
+                                { state with StatusBarText = barText; StatusText = fullText; StatusVisible = visible; SpinnerTick = newTick }
+                    return! loop nextState
 
                 | Flush ch ->
-                    Console.Write "\r"
-                    wipeProgressMessage()
-                    Console.Write "\r"
-
+                    if state.StatusVisible then eraseStatus()
                     do! Console.Out.FlushAsync() |> Async.AwaitTask
- 
                     ch.Reply ()
-                    return! loop None
-
-                return! loop progressMessage
+                    return! loop { state with StatusVisible = false }
             }
-        loop None)
+
+        loop { StatusBarText = None; StatusText = None; StatusVisible = false; Interactive = isInteractiveConsole; SpinnerTick = 0 })
 
 
 /// <summary>
@@ -209,7 +245,7 @@ let DumbConsoleLogger =
 
 /// Console logger with colors highlighting
 let ConsoleLogger =
-    ConsoleLoggerBase (fun level s -> ConsoleSink.Message(level,s) |>  ConsoleSink.po.Post)
+    ConsoleLoggerBase (fun level s -> ConsoleSink.WriteLine(level,s) |> ConsoleSink.po.Post)
 
 /// Ensures all logs finished pending output.
 let FlushLogs () =
@@ -219,8 +255,11 @@ let FlushLogs () =
 
 /// Draws a progress bar to console log.
 let WriteConsoleProgress =
-    let swap (a,b) = (b,a) in
-    swap >> ConsoleSink.Progress >> ConsoleSink.po.Post
+    fun progressData ->
+        progressData
+        |> ConsoleSink.formatStatus
+        |> ConsoleSink.SetStatus
+        |> ConsoleSink.po.Post
 
 /// <summary>
 /// Creates a logger that is combination of two loggers.

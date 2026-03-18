@@ -213,10 +213,11 @@ let openProgress getDurationDeps threadCount goals toConsole =
         let _,leftTime = execMany state (getDuration2 runningTasks) goals
         //printf "progress %A to %A " timePassed endTime
         let percentDone = timePassed * 100 / (timePassed + leftTime) |> int
-        let progressData = System.TimeSpan.FromMilliseconds (leftTime/1<ms> |> float), percentDone
-        do ProgressMessage.Progress progressData |> progressBar
+        let timeLeft = System.TimeSpan.FromMilliseconds (leftTime/1<ms> |> float)
+        do ProgressMessage.Progress (timeLeft, percentDone) |> progressBar
         if toConsole then
-            do WriteConsoleProgress progressData
+            let activeTasks = runningTasks |> Map.filter (fun _ (_,isRunning) -> isRunning) |> Map.count
+            do WriteConsoleProgress (timeLeft, percentDone, activeTasks)
 
     let updTime = ref System.DateTime.Now
     let advanceRunningTime rt =
@@ -236,7 +237,7 @@ let openProgress getDurationDeps threadCount goals toConsole =
         let rec loop (state,runningTasks) = 
             async {
                 try
-                    let! msg = mbox.Receive(1000)
+                    let! msg = mbox.Receive 187
                     let runningTasks = runningTasks |> advanceRunningTime
 
                     match msg with

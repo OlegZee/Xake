@@ -7,6 +7,14 @@ open Xake.ProcessExec
 [<AutoOpen>]
 module ShellImpl =
 
+    type CaptureStream = Stdout | Stderr | Both
+
+    type OutputDest =
+        | ToLog        of CaptureStream * (string -> Level)
+        | ToFile       of CaptureStream * string
+        | ToFileAppend of CaptureStream * string
+        | ToHandler    of CaptureStream * (string -> unit)
+
     /// <summary>
     /// Configuration options for shell command execution.
     /// </summary>
@@ -29,6 +37,8 @@ module ShellImpl =
         UseClr: bool
         /// Whether to fail the build on non-zero exit code
         FailOnErrorLevel: bool
+        /// Additional output destinations (file, log, handler)
+        CaptureSpecs: OutputDest list
     }
     with static member Default = {
             Command = null; Args = []
@@ -37,6 +47,7 @@ module ShellImpl =
             WorkingDir = None
             UseClr = false
             FailOnErrorLevel = false
+            CaptureSpecs = []
         }
 
     type ShellModeExitCode = private ShellModeExitCode of ShellOptions
@@ -56,10 +67,47 @@ module ShellImpl =
 
         do! trace Level.Debug "[shell] settings: '%A'" opts // dangerous to log all options, but we need it for debugging purposes. Consider redacting sensitive info in the future.
 
-        let handleErr s = log (opts.ErrOutLevel s) "%s %s" opts.LogPrefix s
+        let makeFileWriter path append =
+            let sw = new System.IO.StreamWriter(path, append, System.Text.Encoding.UTF8)
+            let gate = obj ()
+            let mutable closed = false
+            let write (line: string) = lock gate (fun () -> if not closed then sw.WriteLine line)
+            let dispose () = lock gate (fun () -> closed <- true; sw.Flush(); (sw :> System.IDisposable).Dispose())
+            write, dispose
+
+        let sinks =
+            opts.CaptureSpecs
+            |> List.map (fun dest ->
+                match dest with
+                | ToLog (stream, levelFn) ->
+                    stream, (fun line -> log (levelFn line) "%s %s" opts.LogPrefix line), None
+                | ToFile (stream, path) ->
+                    let write, dispose = makeFileWriter path false
+                    stream, write, Some dispose
+                | ToFileAppend (stream, path) ->
+                    let write, dispose = makeFileWriter path true
+                    stream, write, Some dispose
+                | ToHandler (stream, handler) ->
+                    stream, handler, None)
+
+        let covers sinkStream target =
+            match sinkStream with Both -> true | s -> s = target
+
+        let stdSuppressLog = opts.CaptureSpecs |> List.exists (fun d -> match d with ToLog (s, _) -> covers s Stdout | _ -> false)
+        let errSuppressLog = opts.CaptureSpecs |> List.exists (fun d -> match d with ToLog (s, _) -> covers s Stderr | _ -> false)
+
+        let fanOut target line =
+            for sinkStream, write, _ in sinks do
+                if covers sinkStream target then write line
+
+        let handleErr s =
+            if not errSuppressLog then log (opts.ErrOutLevel s) "%s %s" opts.LogPrefix s
+            fanOut Stderr s
+
         let handleStd s =
-            log (opts.StdOutLevel s) "%s %s" opts.LogPrefix s
+            if not stdSuppressLog then log (opts.StdOutLevel s) "%s %s" opts.LogPrefix s
             extraStd s
+            fanOut Stdout s
 
         let cmd, args =
             if isWindows && not <| isExt cmd ".exe" then
@@ -68,7 +116,14 @@ module ShellImpl =
                 "mono", cmd + " " + args
             else
                 cmd, args
-        let exitCode = pexec handleStd handleErr cmd args opts.EnvVars opts.WorkingDir
+
+        let! exitCode = async {
+            try
+                return! pexec handleStd handleErr cmd args opts.EnvVars opts.WorkingDir
+            finally
+                for _, _, d in sinks do d |> Option.iter (fun dispose -> dispose ())
+        }
+
         if exitCode <> 0 && opts.FailOnErrorLevel then failwith "System command resulted in non-zero errorlevel"
 
         do! trace Info "[shell] completed '%s' exitcode: %d" cmd exitCode
@@ -116,18 +171,32 @@ module ShellImpl =
         [<CustomOperation("arg")>]     member __.Arg(a:ShellOptions, value) =    {a with Args = Seq.append a.Args [value]}
         /// <summary>Set an environment variable for the process</summary>
         [<CustomOperation("env")>]     member __.Env(a:ShellOptions, (name, value)) = {a with EnvVars = a.EnvVars @ [(name, value)]}
+
+        // Appends multiple environment variables to the shell invocation.
+        [<CustomOperation("envs")>]    member _.Envs(opts: ShellOptions, vars: (string * string) list) = { opts with EnvVars = opts.EnvVars @ vars }
+
         /// <summary>Set the prefix for log messages</summary>
         [<CustomOperation("logprefix")>] member __.LogPrefix(a:ShellOptions, value) = {a with LogPrefix = value}
 
         /// <summary>Attach an additional stdout handler</summary>
         [<CustomOperation("stdout")>]
         member _.Stdout(state:ShellOptions, handler: string -> unit) =
-            {state with StdOutLevel = fun x -> handler x; state.StdOutLevel x}
+            { state with CaptureSpecs = state.CaptureSpecs @ [ToHandler (Stdout, handler)] }
 
         /// <summary>Attach an additional stderr handler</summary>
         [<CustomOperation("stderr")>]
         member _.Stderr(state:ShellOptions, handler: string -> unit) =
-            {state with ErrOutLevel = fun x -> handler x; state.ErrOutLevel x}
+            { state with CaptureSpecs = state.CaptureSpecs @ [ToHandler (Stderr, handler)] }
+
+        /// <summary>Add an output destination: ToLog, ToFile, ToFileAppend, or ToHandler</summary>
+        [<CustomOperation("captureOutput")>]
+        member _.CaptureOutput(state: ShellOptions, dest: OutputDest) =
+            { state with CaptureSpecs = state.CaptureSpecs @ [dest] }
+
+        /// <summary>Add multiple output destinations at once</summary>
+        [<CustomOperation("captureOutput")>]
+        member _.CaptureOutput(state: ShellOptions, dests: OutputDest list) =
+            { state with CaptureSpecs = state.CaptureSpecs @ dests }
 
         /// <summary>Return exit code from the CE</summary>
         [<CustomOperation("result")>]

@@ -202,3 +202,123 @@ let ``stdout handler and output keyword both fire`` () =
             }
         ]
     }
+
+[<Test; Platform("Unix,MacOsX,Linux")>]
+let ``captureOutput ToFile writes stdout to file`` () =
+    let tmpFile = System.IO.Path.GetTempFileName()
+    try
+        do xake TestOptionsStrict {
+            rules [
+                "main" => recipe {
+                    do! sh "echo" {
+                        arg "hello"
+                        captureOutput (ToFile (Stdout, tmpFile))
+                    }
+                }
+            ]
+        }
+        let lines = File.ReadAllLines tmpFile
+        Assert.AreEqual(1, lines.Length)
+        Assert.AreEqual("hello", lines.[0])
+    finally
+        File.Delete tmpFile
+
+[<Test; Platform("Unix,MacOsX,Linux")>]
+let ``captureOutput ToFile writes stderr to file`` () =
+    let tmpFile = System.IO.Path.GetTempFileName()
+    try
+        do xake TestOptionsStrict {
+            rules [
+                "main" => recipe {
+                    let! _ = shellCmd "" {
+                        cmd "/bin/sh"
+                        arg "-c"
+                        arg "\"echo errline >&2\""
+                        captureOutput (ToFile (Stderr, tmpFile))
+                    }
+                    ()
+                }
+            ]
+        }
+        let lines = File.ReadAllLines tmpFile
+        Assert.AreEqual(1, lines.Length)
+        Assert.AreEqual("errline", lines.[0])
+    finally
+        File.Delete tmpFile
+
+[<Test; Platform("Unix,MacOsX,Linux")>]
+let ``captureOutput ToFileAppend accumulates across invocations`` () =
+    let tmpFile = System.IO.Path.GetTempFileName()
+    try
+        do xake TestOptionsStrict {
+            rules [
+                "main" => recipe {
+                    do! sh "echo" {
+                        arg "first"
+                        captureOutput (ToFileAppend (Stdout, tmpFile))
+                    }
+                    do! sh "echo" {
+                        arg "second"
+                        captureOutput (ToFileAppend (Stdout, tmpFile))
+                    }
+                }
+            ]
+        }
+        let lines = File.ReadAllLines tmpFile
+        Assert.AreEqual(2, lines.Length)
+        Assert.AreEqual("first", lines.[0])
+        Assert.AreEqual("second", lines.[1])
+    finally
+        File.Delete tmpFile
+
+[<Test; Platform("Unix,MacOsX,Linux")>]
+let ``captureOutput ToFile with Both captures stdout and stderr`` () =
+    let tmpFile = System.IO.Path.GetTempFileName()
+    try
+        do xake TestOptionsStrict {
+            rules [
+                "main" => recipe {
+                    let! _ = shellCmd "" {
+                        cmd "/bin/sh"
+                        arg "-c"
+                        arg "\"echo out; echo err >&2\""
+                        captureOutput (ToFile (Both, tmpFile))
+                    }
+                    ()
+                }
+            ]
+        }
+        let lines = File.ReadAllLines tmpFile |> Array.sort
+        Assert.AreEqual(2, lines.Length)
+        CollectionAssert.AreEquivalent([|"err"; "out"|], lines)
+    finally
+        File.Delete tmpFile
+
+[<Test; Platform("Unix,MacOsX,Linux")>]
+let ``captureOutput ToHandler receives stdout lines`` () =
+    let captured = System.Collections.Generic.List<string>()
+    do xake TestOptionsStrict {
+        rules [
+            "main" => recipe {
+                do! sh "echo" {
+                    arg "hello"
+                    captureOutput (ToHandler (Stdout, captured.Add))
+                }
+            }
+        ]
+    }
+    Assert.AreEqual(1, captured.Count)
+    Assert.AreEqual("hello", captured.[0])
+
+[<Test; Platform("Unix,MacOsX,Linux")>]
+let ``captureOutput ToLog suppresses default log for that stream`` () =
+    do xake TestOptionsStrict {
+        rules [
+            "main" => recipe {
+                do! sh "echo" {
+                    arg "hello"
+                    captureOutput (ToLog (Stdout, fun _ -> Warning))
+                }
+            }
+        ]
+    }

@@ -100,5 +100,13 @@ module XakeScript =
     /// Creates phony action (check if I can unify the operator name)
     let (=>) name action = PhonyRule (name, action)
 
+    /// Marks a rule as distributed, delegating its up-to-date check and execution to the
+    /// caller-supplied executor. Script authors keep writing `need ["target"]`; whether the
+    /// target runs locally, runs remotely, or is fetched from a shared store is the
+    /// executor's decision. Compose with the existing rule operators, e.g.
+    /// `"out/*.bin" ..> recipe { ... } |> distributed myExecutor`.
+    let distributed (executor: DistributedExecutor<ExecContext>) (rule: ExecContext Rule) : ExecContext Rule =
+        DistributedRule (rule, executor)
+
     /// Main type.
     type XakeScript = XakeScript of ExecOptions * Rules<ExecContext>

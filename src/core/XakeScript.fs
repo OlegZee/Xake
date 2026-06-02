@@ -100,5 +100,37 @@ module XakeScript =
     /// Creates phony action (check if I can unify the operator name)
     let (=>) name action = PhonyRule (name, action)
 
+    open WorkerPool
+
+    let private wrapRecipe (resource: Resource) (body: Recipe<ExecContext, unit>) : Recipe<ExecContext, unit> =
+        Recipe (fun (s, ctx: ExecContext) -> async {
+            do! Scheduler.withYieldedSlot ctx.Engine.Scheduler (Resource.acquire resource 1)
+            try
+                return! A.runAction body (s, ctx)
+            finally
+                Resource.release resource 1
+        })
+
+    let rec private mapRecipe (f: Recipe<ExecContext, unit> -> Recipe<ExecContext, unit>) = function
+        | FileRule (p, r)          -> FileRule (p, f r)
+        | MultiFileRule (ps, r)    -> MultiFileRule (ps, f r)
+        | PhonyRule (n, r)         -> PhonyRule (n, f r)
+        | FileConditionRule (c, r) -> FileConditionRule (c, f r)
+        | DelegatedRule (inner, exec) -> DelegatedRule (mapRecipe f inner, exec)
+
+    /// Wraps a rule so its recipe runs under a resource lock (1 unit, CPU-slot yielding).
+    /// Compose with the existing rule operators, e.g.
+    /// `"restore:*" => recipe { ... } |> requiring restoreLock`.
+    let requiring (resource: Resource) (rule: ExecContext Rule) : ExecContext Rule =
+        rule |> mapRecipe (wrapRecipe resource)
+
+    /// Marks a rule as delegated, delegating its up-to-date check and execution to the
+    /// caller-supplied executor. Script authors keep writing `need ["target"]`; whether the
+    /// target runs locally, runs remotely, or is fetched from a shared store is the
+    /// executor's decision. Compose with the existing rule operators, e.g.
+    /// `"out/*.bin" ..> recipe { ... } |> delegated myExecutor`.
+    let delegated (executor: DelegatedExecutor<ExecContext>) (rule: ExecContext Rule) : ExecContext Rule =
+        DelegatedRule (rule, executor)
+
     /// Main type.
     type XakeScript = XakeScript of ExecOptions * Rules<ExecContext>

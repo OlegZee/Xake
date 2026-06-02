@@ -2,6 +2,10 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Session Context
+
+Always read `docs/session.md` at the start of every session, unconditionally.
+
 ## Project Overview
 
 Xake is an F# build utility inspired by Shake. It uses F# as a full programming language to define build rules with dependency tracking, incremental builds, and parallel execution. Xake is self-hosting — it builds itself using its own build script (`build.fsx`).

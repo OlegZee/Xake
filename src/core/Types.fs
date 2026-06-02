@@ -64,12 +64,25 @@ module DomainTypes =
     /// An async build action that threads BuildResult state through its execution.
     type Recipe<'a,'b> = Recipe of (BuildResult * 'a -> Async<BuildResult * 'b>)
 
+    /// Caller-supplied delegated up-to-date check and execution for a delegated rule.
+    /// Given the execution context, the produced targets, and a thunk that runs the inner
+    /// recipe body locally and yields its BuildResult, the executor returns the BuildResult
+    /// to record. The executor owns: identity-key computation, shared run-scoped result
+    /// store lookup, in-flight dedup by key, publish-on-miss, and return-stored-on-hit —
+    /// calling the body thunk only when it decides the work must actually run.
+    /// 'ctx is instantiated to ExecContext at use sites.
+    type DelegatedExecutor<'ctx> =
+        'ctx -> Target list -> (unit -> Async<BuildResult>) -> Async<BuildResult>
+
     /// A build rule that maps a target pattern to a recipe.
     type 'ctx Rule =
         | FileRule of string * Recipe<'ctx,unit>
         | MultiFileRule of string list * Recipe<'ctx,unit>
         | PhonyRule of string * Recipe<'ctx,unit>
         | FileConditionRule of (string -> bool) * Recipe<'ctx,unit>
+        /// Wraps any inner rule, delegating its up-to-date check and execution to the
+        /// caller-supplied executor. Opt-in: ordinary rules are unaffected.
+        | DelegatedRule of 'ctx Rule * DelegatedExecutor<'ctx>
     /// A list of build rules.
     type 'ctx Rules = Rules of 'ctx Rule list
 

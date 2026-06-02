@@ -41,7 +41,7 @@ let applyWildcards = function
 /// Finds the first rule whose pattern matches the given target.
 /// Returns the matched rule, captured groups, and the full list of targets it produces.
 let locateRule (Rules rules) projectRoot target =
-    let matchRule rule =
+    let rec matchRule rule =
         match rule, target with
 
         |FileConditionRule (meetCondition,_), FileTarget file when file |> File.getFullName |> meetCondition ->
@@ -74,6 +74,11 @@ let locateRule (Rules rules) projectRoot target =
             phony
             |> Path.matchGroups pattern ""
             |> Option.map (fun groups -> rule,groups,[target])
+
+        |DelegatedRule (inner, _), _ ->
+            // Match using the inner rule's pattern logic, but surface the outer
+            // DelegatedRule so the dispatcher knows execution is delegated.
+            matchRule inner |> Option.map (fun (_, groups, targets) -> rule, groups, targets)
 
         | _ -> None
 
@@ -123,19 +128,54 @@ let rec execOne (ctx: ExecContext) target =
                 return Skipped
         }
 
-    let getAction = function
+    // Runs a delegated rule: the up-to-date check and execution are delegated to the
+    // caller-supplied executor. The ENTIRE delegated task — executor (store lookup /
+    // dedup / remote dispatch) AND the recipe body — runs detached: it holds no CPU slot,
+    // so a delegated rule is never bounded by the local thread pool. Its concurrency is
+    // governed solely by whatever dispatch Resource the executor applies (or is unbounded).
+    // `runDetached` inside a delegated body is therefore redundant. The result is still
+    // stored locally so downstream targets resolve as built.
+    let runDelegated ruleMatches action (executor: DelegatedExecutor<ExecContext>) targets =
+        let primaryTarget = targets |> List.head
+        async {
+            let taskContext = newTaskContext targets ruleMatches ctx
+            do ctx.Logger.Log Command "Started %s as delegated task %i" primaryTarget.ShortName taskContext.Ordinal
+            do Progress.TaskStart primaryTarget |> ctx.Progress.Post
+
+            let bodyThunk () = async {
+                let startResult = {BuildLog.makeResult targets with Steps = [Step.start "all"]}
+                let! (result,_) = action (startResult, taskContext)
+                return Step.updateTotalDuration result
+            }
+
+            let! result =
+                Scheduler.withYieldedSlot ctx.Engine.Scheduler (executor taskContext targets bodyThunk)
+
+            Store result |> ctx.Db.Post
+
+            do Progress.TaskComplete primaryTarget |> ctx.Progress.Post
+            do ctx.Logger.Log Command "Completed delegated %s" primaryTarget.ShortName
+            return Succeed
+        }
+
+    let rec getAction = function
         | FileRule (_, a)
         | FileConditionRule (_, a)
         | MultiFileRule (_, a)
         | PhonyRule (_, a) -> a
+        | DelegatedRule (inner, _) -> getAction inner
 
     // result expression is...
     match target |> locateRule ctx.Options.Rules ctx.Options.ProjectRoot with
     | Some(rule,groups,targets) ->
         let groupsMap = groups |> Map.ofSeq
         let (Recipe action) = rule |> getAction
+        let taskAction =
+            match rule with
+            | DelegatedRule (_, executor) -> runDelegated groupsMap action executor targets
+            | _ -> run groupsMap action targets
         async {
-            let! waitTask = (fun channel -> Run(target, targets, run groupsMap action targets, channel)) |> (Scheduler.pool ctx.Engine.Scheduler).PostAndAsyncReply
+            let! waitTask = (fun channel -> Run(target, targets, taskAction, channel)) |> (Scheduler.pool ctx.Engine.Scheduler).PostAndAsyncReply
             let! status = waitTask
             return target, status, ArtifactDep target
         }
@@ -174,9 +214,10 @@ and execNeed (ctx: ExecContext) targets : Async<ExecStatus * Dependency list> =
 /// Phony actions take precedence over files with the same name.
 let makeTarget (ctx: ExecContext) name =
     let (Rules rules) = ctx.Options.Rules
-    let isPhonyRule nm = function
+    let rec isPhonyRule nm = function
         |PhonyRule (pattern,_) ->
             nm |> Path.matchGroups pattern "" |> Option.isSome
+        |DelegatedRule (inner, _) -> isPhonyRule nm inner
         | _ -> false
     in
     match rules |> List.exists (isPhonyRule name) with

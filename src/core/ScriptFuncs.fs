@@ -1,5 +1,7 @@
 ﻿namespace Xake
 
+open Xake.WorkerPool
+
 [<AutoOpen>]
 module ScriptFuncs =
 
@@ -7,6 +9,40 @@ module ScriptFuncs =
     /// Gets action context.
     /// </summary>
     let getCtx(): Recipe<ExecContext, ExecContext> = ExecCore.getCtx()
+
+    /// <summary>
+    /// Runs a recipe body without holding a local CPU slot for its duration: the slot is
+    /// released before the body runs and reacquired after it completes (guaranteed even on
+    /// exception). Intended for I/O-bound or async waits — e.g. a rule that blocks on a
+    /// remote/delegated operation — so the local worker pool is not starved by waits that
+    /// are not doing CPU work. Many more detached rules than CPU cores can be in flight at once.
+    /// </summary>
+    let runDetached (body: Recipe<ExecContext,'b>) : Recipe<ExecContext,'b> =
+        recipe {
+            let! ctx = getCtx()
+            let! r0 = getResult()
+            let! (r', b) = Scheduler.withYieldedSlot ctx.Engine.Scheduler (A.runAction body (r0, ctx))
+            do! setResult r'
+            return b
+        }
+
+    /// <summary>
+    /// Acquires `units` of a resource for the duration of `body`, modeled on Shake's
+    /// `withResource`. The CPU slot is yielded while waiting to acquire (so a blocked holder
+    /// never pins a worker), then held together with the resource while the body runs; the
+    /// resource is released even if the body throws. The scheduler honors the resource limit
+    /// when running recipes concurrently. Unbounded resources impose no limit.
+    /// </summary>
+    let withResource (resource: Resource) (units: int) (body: Recipe<ExecContext,'b>) : Recipe<ExecContext,'b> =
+        recipe {
+            let! ctx = getCtx()
+            do! Scheduler.withYieldedSlot ctx.Engine.Scheduler (Resource.acquire resource units)
+            try
+                let! b = body
+                return b
+            finally
+                Resource.release resource units
+        }
 
 
     /// <summary>

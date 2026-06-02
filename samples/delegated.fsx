@@ -1,8 +1,8 @@
 // ---------------------------------------------------------------------------
-// Distributed build — a complete, runnable LOCAL example.
+// Delegated build — a complete, runnable LOCAL example.
 //
 // It shows the three new core mechanisms working together:
-//   1. a distributed-rule hook        — `distributed executor rule`
+//   1. a delegated-rule hook        — `delegated executor rule`
 //   2. CPU-slot decoupling            — `runDetached`
 //   3. a concurrency Resource         — `Resource.newResource` / `acquire`
 //
@@ -10,12 +10,12 @@
 // `executor` plays the role of Qualhalla's infrastructure:
 //   * a run-scoped result store      (≈ S3 / Garage): identity -> BuildResult
 //   * in-flight deduplication        (≈ Temporal at-most-once by identity)
-//   * an advisory dispatch budget    (a distributed Resource)
+//   * an advisory dispatch budget    (a delegated Resource)
 // All of that is policy living OUTSIDE Xake core — exactly as intended.
 //
 // USAGE:
-//   dotnet fsi samples/distributed.fsx
-//   dotnet fsi samples/distributed.fsx -- -- main
+//   dotnet fsi samples/delegated.fsx
+//   dotnet fsi samples/delegated.fsx -- -- main
 // ---------------------------------------------------------------------------
 
 // Use the locally built library (the new API is not on NuGet yet).
@@ -27,7 +27,7 @@ open System.Threading.Tasks
 
 // ---------------------------------------------------------------------------
 // "Infrastructure" layer — this is what Qualhalla would implement.
-// A factory that returns a DistributedExecutor backed by an in-memory,
+// A factory that returns a DelegatedExecutor backed by an in-memory,
 // run-scoped store + in-flight dedup, throttled by a dispatch Resource.
 // ---------------------------------------------------------------------------
 
@@ -40,7 +40,7 @@ let identityOf (targets: Target list) =
     | PhonyAction name -> name.Replace("build:", "").Replace("-mirror", "")
     | FileTarget file  -> sprintf "%A" file
 
-let makeLocalExecutor (budget: Resource) : DistributedExecutor<ExecContext> =
+let makeLocalExecutor (budget: Resource) : DelegatedExecutor<ExecContext> =
     // ≈ S3: published results, keyed by identity. Empty at start of the run.
     let store = ConcurrentDictionary<string, BuildResult>()
     // ≈ Temporal: at-most-once execution per identity; concurrent demands join.
@@ -57,18 +57,14 @@ let makeLocalExecutor (budget: Resource) : DistributedExecutor<ExecContext> =
             | _ ->
                 let fresh = lazy (
                     (async {
-                        // Advisory dispatch budget (caller-owned policy). Use the non-yielding
-                        // `acquire` here: the engine already runs the executor detached, so this
-                        // code holds no CPU slot — `acquireYielding` would over-release one.
-                        do! Resource.acquire budget 1
-                        try
+                        // Advisory dispatch budget (caller-owned policy).
+                        return! Resource.withAcquired budget 1 (async {
                             printfn "  [dispatch] MISS '%s' — running the work (budget acquired)" key
                             let! result = runBody ()        // runs the recipe body exactly once
                             store.[key] <- result           // publish to the shared store
                             printfn "  [store]   PUT  '%s'" key
                             return result
-                        finally
-                            Resource.release budget 1
+                        })
                     }) |> Async.StartAsTask)
 
                 let entry = inFlight.GetOrAdd(key, fresh)
@@ -81,7 +77,7 @@ let makeLocalExecutor (budget: Resource) : DistributedExecutor<ExecContext> =
 
 // ---------------------------------------------------------------------------
 // The actual "remote" work: a REAL external process.
-// (Swap this for ssh/docker/Temporal-activity in a real distributed runner.)
+// (Swap this for ssh/docker/Temporal-activity in a real delegated runner.)
 // ---------------------------------------------------------------------------
 
 let runExternal (script: string) = async {
@@ -104,7 +100,7 @@ let buildModule name = recipe {
 
 // ---------------------------------------------------------------------------
 // The script. The author only ever writes `need` — distribution is a property
-// of the rule, configured once via `|> distributed executor`.
+// of the rule, configured once via `|> delegated executor`.
 // ---------------------------------------------------------------------------
 
 // One executor instance per run. Dispatch budget = at most 2 remote runs at once.
@@ -116,13 +112,13 @@ do xakeScript {
     want ["main"]
 
     rules [
-        // Three distributed rules. "build:core" and "build:core-mirror" intentionally
+        // Three delegated rules. "build:core" and "build:core-mirror" intentionally
         // share an identity ("core") to demonstrate in-flight dedup.
-        ("build:core"        => buildModule "core")  |> distributed executor
-        ("build:core-mirror" => buildModule "core")  |> distributed executor
-        ("build:utils"       => buildModule "utils") |> distributed executor
+        ("build:core"        => buildModule "core")  |> delegated executor
+        ("build:core-mirror" => buildModule "core")  |> delegated executor
+        ("build:utils"       => buildModule "utils") |> delegated executor
 
-        // A plain (non-distributed) I/O-bound rule that must NOT pin a CPU slot:
+        // A plain (non-delegated) I/O-bound rule that must NOT pin a CPU slot:
         // `runDetached` releases the slot while it waits on the external process.
         "slow-io" => runDetached (recipe {
                 let! _ = runExternal "sleep 1; echo done"

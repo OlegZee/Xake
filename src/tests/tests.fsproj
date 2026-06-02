@@ -24,7 +24,7 @@
     <Compile Include="CommandTests.fs" />
     <Compile Include="XakeEngineTests.fs" />
     <Compile Include="VarsTests.fs" />
-    <Compile Include="DistributedTests.fs" />
+    <Compile Include="DelegatedTests.fs" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\core\Xake.fsproj" />

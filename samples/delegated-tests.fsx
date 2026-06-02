@@ -1,18 +1,18 @@
 // ---------------------------------------------------------------------------
-// Distributed TEST RUN — single-process simulation.
+// Delegated TEST RUN — single-process simulation.
 //
 //   * 100 suites matched by ONE masked rule "testsuite-(num:*)"; each "runs" as
 //     a real external process that sleeps 5–10s.
 //   * Dispatch BUDGET caps concurrency at 20.
 //
-// KEY POINT: a distributed rule is NEVER bounded by the local CPU/thread pool.
-// The whole distributed task (the executor AND the rule body) runs detached, so
+// KEY POINT: a delegated rule is NEVER bounded by the local CPU/thread pool.
+// The whole delegated task (the executor AND the rule body) runs detached, so
 // THREADS below is deliberately tiny (4) yet the observed peak is the BUDGET (20).
-// `runDetached` is therefore NOT needed inside a distributed rule body — the
+// `runDetached` is therefore NOT needed inside a delegated rule body — the
 // engine already runs it off the CPU pool. (Contrast: `runDetached` IS needed for
-// an ordinary, non-distributed I/O rule whose body runs holding a CPU slot.)
+// an ordinary, non-delegated I/O rule whose body runs holding a CPU slot.)
 //
-// USAGE:  dotnet fsi samples/distributed-tests.fsx
+// USAGE:  dotnet fsi samples/delegated-tests.fsx
 // ---------------------------------------------------------------------------
 
 #r "../out/netstandard2.0/Xake.dll"
@@ -24,7 +24,7 @@ open System.Threading.Tasks
 
 let SUITES = 100
 let BUDGET = 20
-let THREADS = 4              // tiny on purpose — proves distributed work ignores the CPU pool
+let THREADS = 4              // tiny on purpose — proves delegated work ignores the CPU pool
 
 // ---------------------------------------------------------------------------
 // Live concurrency meter — peak number of suites running at once.
@@ -45,7 +45,7 @@ let identityOf (targets: Target list) =
     | PhonyAction name -> name
     | FileTarget file  -> sprintf "%A" file
 
-let makeLocalExecutor (budget: Resource) : DistributedExecutor<ExecContext> =
+let makeLocalExecutor (budget: Resource) : DelegatedExecutor<ExecContext> =
     let store    = ConcurrentDictionary<string, BuildResult>()
     let inFlight = ConcurrentDictionary<string, Lazy<Task<BuildResult>>>()
 
@@ -58,14 +58,12 @@ let makeLocalExecutor (budget: Resource) : DistributedExecutor<ExecContext> =
                 let fresh = lazy (
                     (async {
                         // The engine runs this executor detached (it holds no CPU slot),
-                        // so acquire the budget WITHOUT yielding a slot.
-                        do! Resource.acquire budget 1
-                        try
+                        // so use `withAcquired` (no CPU-slot yielding).
+                        return! Resource.withAcquired budget 1 (async {
                             let! result = runBody ()           // runs the suite exactly once
                             store.[key] <- result
                             return result
-                        finally
-                            Resource.release budget 1
+                        })
                     }) |> Async.StartAsTask)
                 let entry = inFlight.GetOrAdd(key, fresh)      // concurrent demands join one run
                 let! result = entry.Value |> Async.AwaitTask
@@ -93,7 +91,7 @@ let logLine fmt = Printf.kprintf (fun s -> lock printLock (fun () -> System.Cons
 // ---------------------------------------------------------------------------
 // ONE masked rule. `num` (the captured suite number) drives the simulated
 // duration (5..10s) and outcome (every 7th suite "fails"). No `runDetached` —
-// a distributed body is already detached from the CPU pool by the engine.
+// a delegated body is already detached from the CPU pool by the engine.
 // ---------------------------------------------------------------------------
 let executor = makeLocalExecutor (Resource.newResource "dispatch" BUDGET)
 
@@ -113,7 +111,7 @@ let suiteRule =
         finally
             leave ()
     })
-    |> distributed executor
+    |> delegated executor
 
 let suiteNames = [ for i in 1..SUITES -> sprintf "testsuite-%03d" i ]
 

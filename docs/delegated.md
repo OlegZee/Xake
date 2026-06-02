@@ -1,9 +1,9 @@
-# Distributed builds: Resources, detached execution, and the distributed-rule hook
+# Delegated builds: Resources, detached execution, and the delegated-rule hook
 
 This note documents three opt-in extensions to Xake core that let an external system
-express *distributed* builds — rules that execute across many machines, share their
+express *delegated* builds — rules that execute across many machines, share their
 results, and deduplicate concurrent demands — while leaving every existing local build
-unchanged. They were added for [Qualhalla](https://example.invalid)'s distributed
+unchanged. They were added for [Qualhalla](https://example.invalid)'s delegated
 test/build runner (EP-0018), but the mechanism is general.
 
 The guiding constraint: **distribution is a property of a rule, not a new API verb.** The
@@ -23,7 +23,7 @@ The design follows two well-known references:
   into a **scheduler** — task ordering and parallelism — and a **rebuilder** — the decision
   whether a task must run. In Xake the scheduler is the worker pool (`WorkerPool.fs`) and
   the rebuilder is `NeedRebuild` / `getChangeReasons` (`DependencyAnalysis.fs`). The
-  distributed-rule hook (extension 3) **replaces the rebuilder for one rule** — the caller's
+  delegated-rule hook (extension 3) **replaces the rebuilder for one rule** — the caller's
   executor decides up-to-dateness by consulting a shared store — while reusing the
   scheduler. Detached execution (extension 2) is a scheduler refinement: it moves I/O-bound
   work off the CPU resource.
@@ -61,18 +61,15 @@ Resource.newResource  : string -> int -> Resource     // bounded, quantity >= 1
 Resource.newUnbounded : string -> Resource
 withResource          : Resource -> int -> Recipe<ExecContext,'b> -> Recipe<ExecContext,'b>
 
-// async-level acquire/release, for code that is not inside a recipe (e.g. an executor):
-Resource.acquire         : Resource -> int -> Async<unit>          // does NOT touch the CPU slot
-Resource.acquireYielding : Scheduler<_> -> Resource -> int -> Async<unit>  // yields the slot while blocked
+// async-level bracket and low-level acquire/release for non-recipe code (e.g. an executor):
+Resource.withAcquired    : Resource -> int -> Async<'a> -> Async<'a>  // bracket: acquire, run body, release
+Resource.acquire         : Resource -> int -> Async<unit>
 Resource.release         : Resource -> int -> unit
 ```
 
-**`acquire` vs `acquireYielding` — which to use.** Yield the CPU slot only when you
-currently hold one. `withResource` runs inside a recipe (which holds a slot), so it uses
-`acquireYielding`. A `DistributedExecutor`, by contrast, is already run **detached** by the
-engine — it holds no slot — so it must use the plain `acquire`; calling `acquireYielding`
-there would `Release()` a permit it does not own and corrupt the scheduler's slot count
-(silently disabling the `Threads` limit).
+`withResource` is the recipe-level bracket — it yields the CPU slot while waiting for the
+resource so the worker pool is not starved. `withAcquired` is the async-level bracket for
+code that does not hold a CPU slot, such as a `DelegatedExecutor`.
 
 ## 2. Detached execution — decoupling I/O-bound rules from the CPU pool
 
@@ -104,13 +101,13 @@ runDetached : Recipe<ExecContext,'b> -> Recipe<ExecContext,'b>
 
 Built on the existing `Scheduler.withYieldedSlot`.
 
-## 3. Distributed-rule hook — pluggable execution and rebuilder
+## 3. Delegated-rule hook — pluggable execution and rebuilder
 
-`distributed executor rule` wraps any inner rule (file, phony, or multi-file) so its
+`delegated executor rule` wraps any inner rule (file, phony, or multi-file) so its
 up-to-date check **and** execution are delegated to a caller-supplied function:
 
 ```fsharp
-type DistributedExecutor<'ctx> =
+type DelegatedExecutor<'ctx> =
     'ctx -> Target list -> (unit -> Async<BuildResult>) -> Async<BuildResult>
 ```
 
@@ -129,27 +126,27 @@ definition time:
 
 ```fsharp
 rules [
-    ("run-suite-*" => recipe { do! runSuite () }) |> distributed qualhallaExecutor
+    ("run-suite-*" => recipe { do! runSuite () }) |> delegated qualhallaExecutor
 ]
 ```
 
-### How core runs a distributed rule (`ExecCore.execOne`)
+### How core runs a delegated rule (`ExecCore.execOne`)
 
 - The rule is still posted through the scheduler's `Run` message, so **local per-target
   dedup by target name is preserved** (two demands for the same target still collapse to one
   task).
 - The **`ctx.NeedRebuild` gate is skipped** — the executor *is* the rebuilder.
-- The **entire distributed task — the executor AND the `body` thunk — runs detached**
-  (`withYieldedSlot` around the whole executor call). A distributed rule therefore **never
+- The **entire delegated task — the executor AND the `body` thunk — runs detached**
+  (`withYieldedSlot` around the whole executor call). A delegated rule therefore **never
   consumes a local CPU slot**, and is **never bounded by the `Threads` pool**. Its
   concurrency is governed solely by whatever dispatch `Resource` the executor applies (or is
-  unbounded). This is goal #2: distributed work is I/O-bound waiting on a remote agent, not
+  unbounded). This is goal #2: delegated work is I/O-bound waiting on a remote agent, not
   local CPU work.
-  - Consequence: **`runDetached` inside a distributed body is redundant** — the engine has
-    already detached it. (`runDetached` is for *non-distributed* I/O-bound rules, whose body
+  - Consequence: **`runDetached` inside a delegated body is redundant** — the engine has
+    already detached it. (`runDetached` is for *non-delegated* I/O-bound rules, whose body
     runs holding a CPU slot.)
-  - A distributed body should be **leaf work**; declare prerequisites with `need` in the
-    *enclosing* rule, not inside the distributed body. (A `need` issued from inside a detached
+  - A delegated body should be **leaf work**; declare prerequisites with `need` in the
+    *enclosing* rule, not inside the delegated body. (A `need` issued from inside a detached
     body still works but may briefly exceed the local `Threads` count during the wait, since
     `withYieldedSlot` would release a slot the detached body does not hold.)
 - The returned `BuildResult` is still **stored in the local `.xake` database**, so downstream
@@ -179,15 +176,15 @@ run a sample with `dotnet fsi`):
 
 | Sample | Demonstrates |
 |--------|--------------|
-| `distributed.fsx` | All three mechanisms together: a distributed rule whose body runs a real external process; an in-memory run-scoped store showing a **cache hit** (phase 2) and **in-flight dedup** of two targets that share one identity; a *non-distributed* `slow-io` rule using `runDetached`; a dispatch budget via `Resource`. |
-| `distributed-tests.fsx` | 100 test suites via ONE masked rule `testsuite-(num:*)`, governed by a dispatch budget of 20. `THREADS=4` yet peak concurrency = 20 — **a distributed rule is not bounded by the CPU pool**, and `runDetached` is intentionally absent (redundant for a distributed body). |
-| `distributed-proc.fsx` + `worker.fsx` | Two-process variant: the orchestrator dispatches each suite to a **separate worker process** and collects results from an on-disk run-scoped store. Phase 1 spawns workers (distinct PIDs); phase 2 serves every suite from the store with **no workers** (cache hit). Makes visible that the executor is the seam where work leaves the local process. |
+| `delegated.fsx` | All three mechanisms together: a delegated rule whose body runs a real external process; an in-memory run-scoped store showing a **cache hit** (phase 2) and **in-flight dedup** of two targets that share one identity; a *non-delegated* `slow-io` rule using `runDetached`; a dispatch budget via `Resource`. |
+| `delegated-tests.fsx` | 100 test suites via ONE masked rule `testsuite-(num:*)`, governed by a dispatch budget of 20. `THREADS=4` yet peak concurrency = 20 — **a delegated rule is not bounded by the CPU pool**, and `runDetached` is intentionally absent (redundant for a delegated body). |
+| `delegated-proc.fsx` + `worker.fsx` | Two-process variant: the orchestrator dispatches each suite to a **separate worker process** and collects results from an on-disk run-scoped store. Phase 1 spawns workers (distinct PIDs); phase 2 serves every suite from the store with **no workers** (cache hit). Makes visible that the executor is the seam where work leaves the local process. |
 
 **Where the I/O lives decides whether you need `runDetached`:**
-- I/O in the rule **body** (e.g. the external `sleep` in `distributed-tests.fsx`): a
-  *non-distributed* rule would hold a CPU slot and needs `runDetached`; a *distributed*
+- I/O in the rule **body** (e.g. the external `sleep` in `delegated-tests.fsx`): a
+  *non-delegated* rule would hold a CPU slot and needs `runDetached`; a *delegated*
   rule's body is already detached by the engine, so `runDetached` is redundant.
-- I/O in the **executor** (e.g. the worker dispatch in `distributed-proc.fsx`): always
+- I/O in the **executor** (e.g. the worker dispatch in `delegated-proc.fsx`): always
   detached by the engine — no `runDetached` anywhere.
 
 There is no `maxThreads` computation-expression operation — set the CPU-slot count via the
@@ -198,10 +195,10 @@ or the `-t N` CLI flag.
 
 | File | Change |
 |------|--------|
-| `Types.fs` | `DistributedExecutor<'ctx>` type; `DistributedRule` case on the `Rule` DU |
-| `Resource.fs` | `Resource` type, `newResource`/`newUnbounded`, FIFO agent, `acquire` (non-yielding) / `acquireYielding` / `release` |
-| `ExecCore.fs` | `locateRule`/`getAction`/`isPhonyRule` recurse through `DistributedRule`; `execOne` distributed branch runs the whole task detached |
-| `XakeScript.fs` | `distributed` combinator |
+| `Types.fs` | `DelegatedExecutor<'ctx>` type; `DelegatedRule` case on the `Rule` DU |
+| `Resource.fs` | `Resource` type, `newResource`/`newUnbounded`, FIFO agent, `acquire`/`release`/`withAcquired` |
+| `ExecCore.fs` | `locateRule`/`getAction`/`isPhonyRule` recurse through `DelegatedRule`; `execOne` delegated branch runs the whole task detached |
+| `XakeScript.fs` | `delegated` combinator |
 | `ScriptFuncs.fs` | public `runDetached`, `withResource` |
-| `tests/DistributedTests.fs` | resource cap / unbounded / detached-scale / **distributed-not-CPU-bounded** / hook miss-dedup-hit |
-| `samples/` | `distributed.fsx`, `distributed-tests.fsx`, `distributed-proc.fsx`, `worker.fsx` |
+| `tests/DelegatedTests.fs` | resource cap / unbounded / detached-scale / **delegated-not-CPU-bounded** / hook miss-dedup-hit |
+| `samples/` | `delegated.fsx`, `delegated-tests.fsx`, `delegated-proc.fsx`, `worker.fsx` |

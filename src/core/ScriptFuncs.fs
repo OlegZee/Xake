@@ -14,7 +14,7 @@ module ScriptFuncs =
     /// Runs a recipe body without holding a local CPU slot for its duration: the slot is
     /// released before the body runs and reacquired after it completes (guaranteed even on
     /// exception). Intended for I/O-bound or async waits — e.g. a rule that blocks on a
-    /// remote/distributed operation — so the local worker pool is not starved by waits that
+    /// remote/delegated operation — so the local worker pool is not starved by waits that
     /// are not doing CPU work. Many more detached rules than CPU cores can be in flight at once.
     /// </summary>
     let runDetached (body: Recipe<ExecContext,'b>) : Recipe<ExecContext,'b> =
@@ -36,7 +36,7 @@ module ScriptFuncs =
     let withResource (resource: Resource) (units: int) (body: Recipe<ExecContext,'b>) : Recipe<ExecContext,'b> =
         recipe {
             let! ctx = getCtx()
-            do! Resource.acquireYielding ctx.Engine.Scheduler resource units
+            do! Scheduler.withYieldedSlot ctx.Engine.Scheduler (Resource.acquire resource units)
             try
                 let! b = body
                 return b

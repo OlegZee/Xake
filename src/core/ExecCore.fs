@@ -75,9 +75,9 @@ let locateRule (Rules rules) projectRoot target =
             |> Path.matchGroups pattern ""
             |> Option.map (fun groups -> rule,groups,[target])
 
-        |DistributedRule (inner, _), _ ->
+        |DelegatedRule (inner, _), _ ->
             // Match using the inner rule's pattern logic, but surface the outer
-            // DistributedRule so the dispatcher knows execution is delegated.
+            // DelegatedRule so the dispatcher knows execution is delegated.
             matchRule inner |> Option.map (fun (_, groups, targets) -> rule, groups, targets)
 
         | _ -> None
@@ -128,18 +128,18 @@ let rec execOne (ctx: ExecContext) target =
                 return Skipped
         }
 
-    // Runs a distributed rule: the up-to-date check and execution are delegated to the
-    // caller-supplied executor. The ENTIRE distributed task — executor (store lookup /
+    // Runs a delegated rule: the up-to-date check and execution are delegated to the
+    // caller-supplied executor. The ENTIRE delegated task — executor (store lookup /
     // dedup / remote dispatch) AND the recipe body — runs detached: it holds no CPU slot,
-    // so a distributed rule is never bounded by the local thread pool. Its concurrency is
+    // so a delegated rule is never bounded by the local thread pool. Its concurrency is
     // governed solely by whatever dispatch Resource the executor applies (or is unbounded).
-    // `runDetached` inside a distributed body is therefore redundant. The result is still
+    // `runDetached` inside a delegated body is therefore redundant. The result is still
     // stored locally so downstream targets resolve as built.
-    let runDistributed ruleMatches action (executor: DistributedExecutor<ExecContext>) targets =
+    let runDelegated ruleMatches action (executor: DelegatedExecutor<ExecContext>) targets =
         let primaryTarget = targets |> List.head
         async {
             let taskContext = newTaskContext targets ruleMatches ctx
-            do ctx.Logger.Log Command "Started %s as distributed task %i" primaryTarget.ShortName taskContext.Ordinal
+            do ctx.Logger.Log Command "Started %s as delegated task %i" primaryTarget.ShortName taskContext.Ordinal
             do Progress.TaskStart primaryTarget |> ctx.Progress.Post
 
             let bodyThunk () = async {
@@ -154,7 +154,7 @@ let rec execOne (ctx: ExecContext) target =
             Store result |> ctx.Db.Post
 
             do Progress.TaskComplete primaryTarget |> ctx.Progress.Post
-            do ctx.Logger.Log Command "Completed distributed %s" primaryTarget.ShortName
+            do ctx.Logger.Log Command "Completed delegated %s" primaryTarget.ShortName
             return Succeed
         }
 
@@ -163,7 +163,7 @@ let rec execOne (ctx: ExecContext) target =
         | FileConditionRule (_, a)
         | MultiFileRule (_, a)
         | PhonyRule (_, a) -> a
-        | DistributedRule (inner, _) -> getAction inner
+        | DelegatedRule (inner, _) -> getAction inner
 
     // result expression is...
     match target |> locateRule ctx.Options.Rules ctx.Options.ProjectRoot with
@@ -172,7 +172,7 @@ let rec execOne (ctx: ExecContext) target =
         let (Recipe action) = rule |> getAction
         let taskAction =
             match rule with
-            | DistributedRule (_, executor) -> runDistributed groupsMap action executor targets
+            | DelegatedRule (_, executor) -> runDelegated groupsMap action executor targets
             | _ -> run groupsMap action targets
         async {
             let! waitTask = (fun channel -> Run(target, targets, taskAction, channel)) |> (Scheduler.pool ctx.Engine.Scheduler).PostAndAsyncReply
@@ -217,7 +217,7 @@ let makeTarget (ctx: ExecContext) name =
     let rec isPhonyRule nm = function
         |PhonyRule (pattern,_) ->
             nm |> Path.matchGroups pattern "" |> Option.isSome
-        |DistributedRule (inner, _) -> isPhonyRule nm inner
+        |DelegatedRule (inner, _) -> isPhonyRule nm inner
         | _ -> false
     in
     match rules |> List.exists (isPhonyRule name) with

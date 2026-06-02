@@ -1,21 +1,21 @@
 // ---------------------------------------------------------------------------
-// Distributed TEST RUN — TWO-PROCESS variant.
+// Delegated TEST RUN — TWO-PROCESS variant.
 //
 // Here the orchestrator (this process) does NOT run any suite logic. Its
-// `DistributedExecutor` is the seam where execution leaves the local process:
+// `DelegatedExecutor` is the seam where execution leaves the local process:
 //   * on a MISS it dispatches the suite to a SEPARATE worker process
 //     (`dotnet fsi worker.fsx <id> <storeDir>`) and waits for it;
 //   * the worker publishes its result to a shared store (a directory ≈ S3);
 //   * on a HIT it reads the stored result and runs NO worker at all;
 //   * concurrent demands for the same suite deduplicate to one worker.
 //
-// This is exactly what `distributed` adds over a plain `runDetached` rule: a
+// This is exactly what `delegated` adds over a plain `runDetached` rule: a
 // pluggable rebuilder/executor that can serve from a shared store, dedup, and
 // run work elsewhere. Note there is NO `runDetached` in this script — the
 // executor's wait is already off the CPU pool (the core runs it detached), so
 // the dispatch budget (not the core count) is the only concurrency limit.
 //
-// USAGE:  dotnet fsi samples/distributed-proc.fsx
+// USAGE:  dotnet fsi samples/delegated-proc.fsx
 // ---------------------------------------------------------------------------
 
 #r "../out/netstandard2.0/Xake.dll"
@@ -69,11 +69,11 @@ let dispatchToWorker id = async {
 }
 
 // ---------------------------------------------------------------------------
-// The distributed executor (≈ Qualhalla policy): store lookup + in-flight dedup
+// The delegated executor (≈ Qualhalla policy): store lookup + in-flight dedup
 // + dispatch budget. It synthesizes the BuildResult; the local recipe body is
 // never run, because the work happens in the worker process.
 // ---------------------------------------------------------------------------
-let makeExecutor (budget: Resource) : DistributedExecutor<ExecContext> =
+let makeExecutor (budget: Resource) : DelegatedExecutor<ExecContext> =
     let inFlight = ConcurrentDictionary<string, Lazy<Task<BuildResult>>>()
     let synthResult targets : BuildResult =
         { Targets = targets; Built = System.DateTime.Now; Depends = []; Steps = [] }
@@ -89,16 +89,14 @@ let makeExecutor (budget: Resource) : DistributedExecutor<ExecContext> =
             | None ->
                 let fresh = lazy (
                     (async {
-                        do! Resource.acquire budget 1   // detached executor holds no CPU slot — non-yielding acquire
-                        try
+                        return! Resource.withAcquired budget 1 (async {
                             enter ()
                             let! _code = dispatchToWorker id        // runs in ANOTHER process
                             leave ()
                             let status = tryFetch name |> Option.defaultValue "?"
                             log "  [executed] %-16s : %s" name status
                             return synthResult targets
-                        finally
-                            Resource.release budget 1
+                        })
                     }) |> Async.StartAsTask)
                 let entry = inFlight.GetOrAdd(name, fresh)
                 if not (obj.ReferenceEquals(entry, fresh)) then
@@ -137,6 +135,6 @@ do xakeScript {
         }
 
         // empty body: the work lives in the worker process, not here
-        ("testsuite-(num:*)" => recipe { () }) |> distributed executor
+        ("testsuite-(num:*)" => recipe { () }) |> delegated executor
     ]
 }

@@ -197,6 +197,130 @@ module DotNetFwk =
             | _ ->
                 None, err
 
+    /// Locates the compilers shipped with the .NET SDK and the .NET Framework reference
+    /// assemblies distributed as a NuGet package. This is what makes building binaries for
+    /// full framework possible on any OS: neither a Framework installation nor the registry
+    /// is involved, only the SDK and a restorable package.
+    module internal sdkImpl =
+
+        let referenceAssembliesVersion = "1.0.3"
+
+        let private knownMonikers =
+            [ "net20"; "net35"; "net40"; "net45"; "net451"; "net452"; "net46"
+              "net461"; "net462"; "net47"; "net471"; "net472"; "net48" ]
+
+        /// "net-4.6.2" | "4.6.2" | "sdk-net462" | "4.5-full" -> Some "net462"
+        let moniker (fwk: string) =
+            let digits =
+                fwk.ToLowerInvariant().Replace("-full", "").Replace("sdk-", "").Replace("net-", "")
+                   .Replace("net", "").Replace(".", "").Replace("-", "")
+            let m = "net" + digits
+            if knownMonikers |> List.contains m then Some m else None
+
+        /// Numeric-aware pick of the latest subdirectory: "10.0.400" beats "8.0.424",
+        /// and a released version beats a preview one.
+        let private latestDir path =
+            let versionKey (dir: string) =
+                (Path.GetFileName dir).Split([| '.'; '-' |])
+                |> Array.map (fun part -> match System.Int32.TryParse part with | true, v -> v | _ -> -1)
+                |> List.ofArray
+            if not <| Directory.Exists path then None
+            else
+                let dirs = Directory.GetDirectories path
+                let released = dirs |> Array.filter (fun d -> not <| (Path.GetFileName d).Contains "-")
+                let candidates = if Array.isEmpty released then dirs else released
+                candidates |> Array.sortBy versionKey |> Array.tryLast
+
+        let private nugetRoot () =
+            match %"NUGET_PACKAGES" with
+            | null | "" ->
+                System.Environment.GetFolderPath System.Environment.SpecialFolder.UserProfile
+                    </> ".nuget" </> "packages"
+            | dir -> dir
+
+        /// Restores the reference assemblies package, so that the first build on a clean
+        /// machine works without the user having to prepare anything.
+        let private restorePackage moniker =
+            let dir = Path.GetTempPath() </> ("xake-refasm-" + moniker)
+            let project = dir </> "refasm.csproj"
+            try
+                Directory.CreateDirectory dir |> ignore
+                File.WriteAllText (project, sprintf """<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><TargetFramework>netstandard2.0</TargetFramework></PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies.%s" Version="%s" />
+  </ItemGroup>
+</Project>""" moniker referenceAssembliesVersion)
+                pexec ignore ignore "dotnet" (sprintf "restore \"%s\"" project) [] (Some dir) |> ignore
+            with _ -> ()
+
+        let private refAssembliesDir moniker =
+            let locate () =
+                latestDir (nugetRoot () </> ("microsoft.netframework.referenceassemblies." + moniker))
+                |> Option.bind (fun version -> latestDir (version </> "build" </> ".NETFramework"))
+            match locate () with
+            | Some dir -> Some dir
+            | None ->
+                restorePackage moniker
+                locate ()
+
+        let private dotnetHost () =
+            match %"DOTNET_HOST_PATH" with
+            | null | "" -> try System.Diagnostics.Process.GetCurrentProcess().MainModule.FileName with _ -> null
+            | path -> path
+
+        let private sdkDir () =
+            let hostDir =
+                match dotnetHost () with
+                | null | "" -> None
+                | path when Path.GetFileNameWithoutExtension path = "dotnet" -> Some (Path.GetDirectoryName path)
+                | _ -> None
+            [ hostDir
+              (match %"DOTNET_ROOT" with | null | "" -> None | dir -> Some dir)
+              Some "/usr/local/share/dotnet"
+              Some "/usr/share/dotnet"
+              (match %"ProgramFiles" with | null | "" -> None | dir -> Some (dir </> "dotnet")) ]
+            |> List.tryPick (Option.filter (fun root -> Directory.Exists (root </> "sdk")))
+            |> Option.bind (fun root -> latestDir (root </> "sdk"))
+
+        /// fsc and msbuild ship as managed dlls, so they are launched through a tiny script.
+        let private launcher name (args: string) =
+            let host = dotnetHost ()
+            let ext, text =
+                if Env.isWindows
+                then ".cmd", sprintf "@\"%s\" %s %%*" host args
+                else "", sprintf "#!/bin/sh\nexec \"%s\" %s \"$@\"\n" host args
+            let path = Path.GetTempPath() </> (sprintf "xake-%s-%x%s" name (hash (host + args) &&& 0xffffff) ext)
+            File.WriteAllText (path, text)
+            if not Env.isWindows then
+                pexec ignore ignore "chmod" (sprintf "+x \"%s\"" path) [] None |> ignore
+            path
+
+        let tryLocateFwk fwk =
+            match moniker fwk with
+            | None -> None, sprintf "'%s' is not a known .NET Framework profile" fwk
+            | Some moniker ->
+
+            match sdkDir () with
+            | None -> None, "the .NET SDK is not found, cannot locate the compilers"
+            | Some sdk ->
+
+            match refAssembliesDir moniker with
+            | None ->
+                None, sprintf "reference assemblies for '%s' are not available: failed to restore package Microsoft.NETFramework.ReferenceAssemblies.%s" moniker moniker
+            | Some refDir ->
+                let exe name = if Env.isWindows then name + ".exe" else name
+                Some {
+                    Version = moniker
+                    InstallPath = sdk
+                    ToolDir = sdk </> "Roslyn" </> "bincore"
+                    AssemblyDirs = [refDir; refDir </> "Facades"]
+                    CscTool = sdk </> "Roslyn" </> "bincore" </> exe "csc"
+                    FscTool = fun _ -> Some (launcher "fsc" (sprintf "\"%s\"" (sdk </> "FSharp" </> "fsc.dll")))
+                    MsbuildTool = launcher "msbuild" "msbuild"
+                    EnvVars = []
+                }, null
+
     module internal impl =
 
         let locateFramework (fwk) : FrameworkInfo =
@@ -206,11 +330,29 @@ module DotNetFwk =
                 | None | Some null -> false
                 | Some str -> str.StartsWith fragment
 
+            // MsImpl throws when the framework is not installed, so any kind of failure
+            // has to fall through to the next provider
+            let orElse fallback primary name =
+                let attempt locate = try locate name with e -> None, e.Message
+                match attempt primary with
+                | Some _, _ as found -> found
+                | None, err ->
+                    match attempt fallback with
+                    | Some _, _ as found -> found
+                    | None, err2 -> None, err + "; " + err2
+
             let tryLocate =
-                match Env.isUnix || fwk |> startsWith "mono-", fwk |> startsWith "net-" with
-                | true, _ -> monoFwkImpl.tryLocateFwk
-                | _, true -> MsImpl.tryLocateFwk
-                | _,_ -> if Env.isRunningOnMono then monoFwkImpl.tryLocateFwk else MsImpl.tryLocateFwk
+                if fwk |> startsWith "mono-" then monoFwkImpl.tryLocateFwk
+                elif fwk |> startsWith "sdk-" then sdkImpl.tryLocateFwk
+                elif Env.isUnix then
+                    // SDK compilers over reference assemblies from NuGet build for full
+                    // framework on any OS; mono is just a fallback these days
+                    sdkImpl.tryLocateFwk |> orElse monoFwkImpl.tryLocateFwk
+                elif Env.isRunningOnMono then
+                    monoFwkImpl.tryLocateFwk |> orElse sdkImpl.tryLocateFwk
+                else
+                    // a real Framework installation found through the registry wins on Windows
+                    MsImpl.tryLocateFwk |> orElse sdkImpl.tryLocateFwk
 
             match fwk with
             | None ->

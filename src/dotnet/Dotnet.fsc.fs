@@ -100,8 +100,13 @@ module FscImpl =
 
             logger.Log Debug "targetFramework: %s" targetFramework
 
+            // fsc reads a leading '/' as a path on Unix, so long options must use '--' there;
+            // '-r:' is understood on both platforms
+            let opt (name: string) = (if Env.isWindows then "/" else "--") + name
+            let refOpt = if Env.isWindows then "/r:" else "-r:"
+
             let (globalRefs,noframework) =
-                let mapfn = (+) "/r:"
+                let mapfn = (+) refOpt
                 match targetFramework with
                 | null ->
                     // TODO provide an option for user to explicitly specify all grefs (currently csc.rsp is used)
@@ -115,30 +120,32 @@ module FscImpl =
 
             let args =
                 seq {
-                    yield "/nologo"
+                    yield opt "nologo"
 
-                    yield "/target:" + Impl.targetStr outFile.Name settings.Target
-                    //yield "/platform:" + Impl.platformStr settings.Platform
+                    yield opt "target:" + Impl.targetStr outFile.Name settings.Target
+                    //yield opt "platform:" + Impl.platformStr settings.Platform
 
                     if settings.NoFramework || noframework then
-                        yield "--noframework"
+                        yield opt "noframework"
 
                     if outFile <> File.undefined then
-                        yield sprintf "/out:%s" (File.getFullName outFile)
+                        yield sprintf "%sout:%s" (opt "") (File.getFullName outFile)
 
                     if not (List.isEmpty settings.Define) then
-                        yield "/define:" + (settings.Define |> String.concat ";")
+                        yield opt "define:" + (settings.Define |> String.concat ";")
 
                     yield! src |> List.map (fun f -> f.FullName)
 
-                    yield! refs |> List.map ((fun f -> f.FullName) >> (+) "/r:")
+                    yield! refs |> List.map ((fun f -> f.FullName) >> (+) refOpt)
                     yield! globalRefs
 
-                    yield! resinfos |> List.map (fun(name,file,_) -> sprintf "/res:%s,%s" file.FullName name)
+                    yield! resinfos |> List.map (fun(name,file,_) -> sprintf "%sresource:%s,%s" (opt "") file.FullName name)
                     yield! settings.CommandArgs
                 }
 
-            let! dotnetFwk = getVar "NETFX"
+            let! netfxVar = getVar "NETFX"
+            // the compiler is taken from the framework being targeted, unless NETFX says otherwise
+            let dotnetFwk = match netfxVar with | Some _ -> netfxVar | None -> Option.ofObj targetFramework
             let fwkInfo = DotNetFwk.locateFramework dotnetFwk
 
             let! fscVer = getVar "FSCVER"

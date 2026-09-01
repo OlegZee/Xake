@@ -127,7 +127,9 @@ module CscImpl =
                     yield! settings.CommandArgs
                 }
 
-            let! dotnetFwk = getVar "NETFX"
+            let! netfxVar = getVar "NETFX"
+            // the compiler is taken from the framework being targeted, unless NETFX says otherwise
+            let dotnetFwk = match netfxVar with | Some _ -> netfxVar | None -> Option.ofObj targetFramework
             let fwkInfo = DotNetFwk.locateFramework dotnetFwk
 
 // TODO for short args this is ok, otherwise use rsp file --    let commandLine = args |> escapeAndJoinArgs

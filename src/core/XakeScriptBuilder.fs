@@ -39,6 +39,33 @@ module XakeScriptBuilder =
         member __.Zero() = XakeScript (options, Rules [])
         member this.Yield(()) = this.Zero()
 
+        // --- flat script body: rules may be written directly in the script, no `rules [..]` needed ---
+
+        /// Yields a single rule into the script body.
+        member __.Yield(rule: ExecContext Rule) = XakeScript (options, Rules [rule])
+
+        /// Yields a list of rules into the script body (`yield! rules` or a bare list).
+        member __.Yield(rules: ExecContext Rule list) =
+            XakeScript (options, Rules (List.rev rules))
+
+        member this.YieldFrom(rules: #seq<ExecContext Rule>) =
+            this.Yield(rules |> List.ofSeq)
+
+        /// Rules accumulate in reverse declaration order (last matching rule wins),
+        /// which is what the `rules [..]` operation has always done.
+        member __.Combine(XakeScript (opts, Rules head), XakeScript (_, Rules tail)) =
+            XakeScript (opts, Rules (tail @ head))
+
+        member __.Delay(f: unit -> XakeScript) = f ()
+        member __.Delay(f: unit -> XakeEngine) = f ()
+
+        /// Continuation of the script body after a custom operation (`filelog`, `want`, ...).
+        member this.For(script: XakeScript, f: unit -> XakeScript) = this.Combine(script, f ())
+
+        /// `for x in xs do ...` inside a script body, generating rules.
+        member this.For(items: #seq<'T>, f: 'T -> XakeScript) =
+            items |> Seq.fold (fun acc x -> this.Combine(acc, f x)) (XakeScript (options, Rules []))
+
         member __.Run(XakeScript (options, rules)) =
             if options.ShowHelp then
                 printVarsHelp options.VarSchema

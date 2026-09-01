@@ -25,6 +25,7 @@
     <Compile Include="XakeEngineTests.fs" />
     <Compile Include="VarsTests.fs" />
     <Compile Include="DelegatedTests.fs" />
+    <Compile Include="FlatScriptTests.fs" />
     <Compile Include="DotnetTasksTests.fs" />
   </ItemGroup>
   <ItemGroup>

@@ -2,14 +2,21 @@
 
   <PropertyGroup>
     <AssemblyName>Xake.Dotnet</AssemblyName>
+
+    <!-- The whole tool ships as a single package: this project references the core and
+         pulls its assembly into the same nupkg (see IncludeCoreOutput below), so both
+         assemblies share one version and one publish. -->
+    <PackageId>Xake</PackageId>
+    <TargetsForTfmSpecificBuildOutput>$(TargetsForTfmSpecificBuildOutput);IncludeCoreOutput</TargetsForTfmSpecificBuildOutput>
     <OutputType>Library</OutputType>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <TargetFrameworks>net462;netstandard2.0</TargetFrameworks>
     <Copyright>(c) OlegZee 2014-2025</Copyright>
+    <Authors>OlegZee</Authors>
 
     <PackageProjectUrl>https://github.com/xakebuild/Xake</PackageProjectUrl>
     <PackageIconUrl>https://github.com/xakebuild/Xake/raw/dev/Icon.png</PackageIconUrl>
-    <Description>Xake build tool tasks for full .NET framework</Description>
+    <Description>Xake build tool: the engine and the tasks for full .NET framework</Description>
   </PropertyGroup>
 
   <ItemGroup>
@@ -26,8 +33,15 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\core\Xake.fsproj" />
+    <ProjectReference Include="..\core\Xake.fsproj" PrivateAssets="all" />
   </ItemGroup>
+
+  <!-- Xake.dll and Xake.xml next to Xake.Dotnet.dll in lib/{tfm} -->
+  <Target Name="IncludeCoreOutput">
+    <ItemGroup>
+      <BuildOutputInPackage Include="@(ReferenceCopyLocalPaths->WithMetadataValue('ReferenceSourceTarget','ProjectReference'))" />
+    </ItemGroup>
+  </Target>
 
   <ItemGroup Condition="'$(TargetFramework)' == 'netstandard2.0'">
     <PackageReference Include="Microsoft.Win32.Registry" Version="5.0.0" />

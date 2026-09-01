@@ -3,6 +3,12 @@
   <PropertyGroup>
     <AssemblyName>Xake</AssemblyName>
     <OutputType>Library</OutputType>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <!-- Packed together with Xake.Dotnet into a single "Xake" package, see src/dotnet.
+         The id below is never published; it only has to differ from that package's id,
+         otherwise restore fails with "Ambiguous project name 'Xake'". -->
+    <IsPackable>false</IsPackable>
+    <PackageId>Xake.Engine</PackageId>
     <TargetFrameworks>net462;netstandard2.0</TargetFrameworks>
     <Copyright>(c) OlegZee 2014-2025</Copyright>
 

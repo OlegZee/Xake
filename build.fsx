@@ -11,13 +11,28 @@ let vars = {|
 |}
 
 let frameworks = ["netstandard2.0" (*; "net46" *)]
-let libtargets =
+
+/// A library this script builds and publishes. `Needs` are the libraries it is compiled against.
+type Library = { Name: string; Dir: string; Needs: string list }
+
+let libraries =
+    [ { Name = "Xake";        Dir = "src/core";   Needs = [] }
+      { Name = "Xake.Dotnet"; Dir = "src/dotnet"; Needs = ["Xake"] } ]
+
+let library name = libraries |> List.find (fun lib -> lib.Name = name)
+
+/// Assembly and doc file a library produces, for every target framework.
+let binaries name =
     [ for fwk in frameworks do
       for ext in ["dll"; "xml"]
-        -> $"out/%s{fwk}/Xake.%s{ext}"
+        -> $"out/%s{fwk}/%s{name}.%s{ext}"
     ]
 
-let makePackageName version = $"Xake.%s{version}.nupkg"
+/// The single NuGet package. It is packed from the leaf project: that one references the
+/// core and pulls its assembly into the same nupkg, so both share one version (see
+/// src/dotnet/Xake.Dotnet.fsproj).
+let packageProject = "src/dotnet"
+let packageName version = $"Xake.%s{version}.nupkg"
 
 let dotnet arglist = sh "dotnet" { args arglist; failonerror }
 
@@ -28,7 +43,7 @@ do xakeScript {
     rules [
         "main" <<< ["build"; "test"]
 
-        "build" <== libtargets
+        "build" <== List.collect (fun lib -> binaries lib.Name) libraries
         "clean" => rm {dir "out"}
 
         command "test" {
@@ -38,45 +53,46 @@ do xakeScript {
             do! sh "dotnet test src/tests -c Release" { args where; failonerror }
         }
 
-        targets libtargets {
+        // one rule compiles them all: which library and which framework is asked for
+        // is read off the target being built
+        targets ["out/(fwk:*)/(lib:*).dll"; "out/(fwk:*)/(lib:*).xml"] {
+
+            let! framework = getRuleMatch "fwk"
+            let! lib = getRuleMatch "lib" |> Recipe.map library
 
             let! allFiles = getFiles <| fileset {
-                basedir "src/core"
-                includes "Xake.fsproj"
+                basedir lib.Dir
+                includes $"%s{lib.Name}.fsproj"
                 includes "**/*.fs"
             }
 
             do! needFiles allFiles
+            do! need [for dep in lib.Needs -> $"out/%s{framework}/%s{dep}.dll"]
             let! version = vars.Version
 
-            for framework in frameworks do
-                do! dotnet [
-                    "build"
-                    "src/core"
-                    "/p:Version=" + version
-                    "--configuration"; "Release"
-                    "--framework"; framework
-                    "--output"; "./out/" + framework
-                    "/p:DocumentationFile=Xake.xml"
-                ]
+            do! dotnet [
+                "build"
+                lib.Dir
+                "/p:Version=" + version
+                "--configuration"; "Release"
+                "--framework"; framework
+                "--output"; "./out/" + framework
+            ]
         }
-    ]
 
-    (* Nuget publishing rules *)
-    rules [
+        (* Nuget publishing rules *)
         command "pack" {
             let! version = vars.Version
-            do! need ["out" </> makePackageName version]
+            do! need ["out" </> packageName version]
         }
 
         target "out/Xake.(ver:*).nupkg" {
             let! ver = getRuleMatch "ver"
             do! dotnet [
-                "pack"; "src/core"
+                "pack"; packageProject
                 "-c"; "Release"
                 $"/p:Version={ver}"
                 "--output"; "out/"
-                "/p:DocumentationFile=Xake.xml"
             ]
         }
 
@@ -87,7 +103,7 @@ do xakeScript {
 
             do! dotnet [
                 "nuget"; "push"
-                "out" </> makePackageName version
+                "out" </> packageName version
                 "--source"; "https://www.nuget.org/api/v2/package"
                 "--api-key"; nuget_key
             ]

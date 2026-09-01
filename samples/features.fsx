@@ -1,6 +1,6 @@
 // #r "nuget: Xake, 2.9.6"
 #r "../out/netstandard2.0/Xake.dll"
-#r "nuget: Xake.Dotnet, 1.1.4.7-beta"
+#r "../out/netstandard2.0/Xake.Dotnet.dll"
 
 // This a sample Xake script to show off some features.
 //

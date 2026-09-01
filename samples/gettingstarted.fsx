@@ -1,5 +1,5 @@
-#r "nuget: Xake, 2.0.0"
-#r "nuget: Xake.Dotnet, 1.1.4.7-beta"
+// the package ships both the engine and the .NET Framework tasks
+#r "nuget: Xake"
 
 open Xake
 open Xake.Dotnet

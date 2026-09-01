@@ -66,7 +66,7 @@ module FscImpl =
 
         recipe {
             let! ctx = getCtx()
-            let logger = ctx.RootLogger
+            let logger = ctx.Engine.RootLogger
 
             let! options = getCtxOptions()
             let getFiles = toFileList options.ProjectRoot

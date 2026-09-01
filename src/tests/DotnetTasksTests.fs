@@ -7,19 +7,24 @@ open Xake.Tasks
 open Xake.Dotnet
 
 [<TestFixture>]
-type ``Various tests``() =
-    inherit XakeTestBase("misc")
+type ``Dotnet tasks tests``() =
+    inherit XakeTestBase("dotnet")
 
     let taskReturn n = recipe {
         return n
     }
 
-    [<Test>]
+    // DotNetFwk locates csc by probing pkg-config/Mono prefixes and the Windows registry,
+    // neither of which exists on a machine that only has the .NET SDK -- it fails with
+    // "No framework found". Re-enable once DotNetFwk resolves Roslyn from the SDK.
+    // ThrowOnError keeps a failure inside the test: without it Xake terminates the process
+    // and takes the whole test host down with it.
+    [<Test; Ignore("DotNetFwk cannot locate a C# compiler without Mono or .NET Framework")>]
     member x.``runs csc task (full test)``() =
 
         let needExecuteCount = ref 0
         
-        do xake {x.TestOptions with FileLog="skipbuild.log"; ConLogLevel = Verbosity.Diag} {  // one thread to avoid simultaneous access to 'wasExecuted'
+        do xake {x.TestOptions with FileLog="skipbuild.log"; ConLogLevel = Verbosity.Diag; ThrowOnError = true} {  // one thread to avoid simultaneous access to 'wasExecuted'
             wantOverride (["hello"])
             filelog "csc-err.log" Verbosity.Diag
 

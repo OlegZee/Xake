@@ -1,8 +1,12 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFrameworks>net46;netstandard2.0</TargetFrameworks>
-    <Copyright>(c) OlegZee 2014-1018</Copyright>
+    <AssemblyName>Xake.Dotnet</AssemblyName>
+    <OutputType>Library</OutputType>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <TargetFrameworks>net462;netstandard2.0</TargetFrameworks>
+    <Copyright>(c) OlegZee 2014-2025</Copyright>
+
     <PackageProjectUrl>https://github.com/xakebuild/Xake</PackageProjectUrl>
     <PackageIconUrl>https://github.com/xakebuild/Xake/raw/dev/Icon.png</PackageIconUrl>
     <Description>Xake build tool tasks for full .NET framework</Description>
@@ -22,15 +26,10 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Xake" Version="1.1.0.413-alpha" />
+    <ProjectReference Include="..\core\Xake.fsproj" />
   </ItemGroup>
 
   <ItemGroup Condition="'$(TargetFramework)' == 'netstandard2.0'">
-    <PackageReference Include="Microsoft.Win32.Registry" Version="4.4.0" />
+    <PackageReference Include="Microsoft.Win32.Registry" Version="5.0.0" />
   </ItemGroup>
-  <ItemGroup Condition="'$(TargetFramework)' == 'net46'">
-    <PackageReference Include="FSharp.Core" Version="3.1.2.5" />
-    <Reference Include="System.Windows.Forms.dll" />
-  </ItemGroup>
-
 </Project>

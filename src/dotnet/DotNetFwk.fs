@@ -4,34 +4,42 @@ open Xake
 open Xake.ProcessExec
 open System.IO
 
-module (* internal *) pkg_config =
+module internal PkgConfig =
 
-    let private pkgcgf args =
+    /// Runs pkg-config and returns its first line of output, or "" on any failure.
+    let private pkgConfig args =
+        // a ref cell rather than `let mutable`: the handler is a closure, and F# does not
+        // allow a mutable local to be captured
         let outp = ref option<string>.None
-        let dump s = outp := match !outp with | None -> Some s | s -> s
+        // stdout only -- a diagnostic on stderr must not become the value
+        let takeFirst s = if Option.isNone outp.Value then outp.Value <- Some s
         try
-            do pexecSync dump dump "pkg-config" (args |> String.concat " ") [] None |> ignore
-            match !outp with | None -> "" | Some str -> str
+            pexecSync takeFirst ignore "pkg-config" (args |> String.concat " ") [] None |> ignore
+            outp.Value |> Option.defaultValue ""
         with _ ->
             ""
 
-    /// Gets true if specified package exists
-    let private pkgcgf_bool args =
-        let dump (s : string) = ()
+    /// Runs pkg-config and returns true when it succeeds.
+    let private pkgConfigBool args =
         try
-            0 = pexecSync dump dump "pkg-config" (args |> String.concat " ") [] None
+            0 = pexecSync ignore ignore "pkg-config" (args |> String.concat " ") [] None
         with _ ->
             false
+
     /// Gets true if specified package exists
-    let exists package = pkgcgf_bool ["--exists"; package]
+    let exists package = pkgConfigBool ["--exists"; package]
 
     /// Get the version of a package
-    let get_mod_version package = pkgcgf ["--modversion"; package]
+    let modVersion package = pkgConfig ["--modversion"; package]
 
-    /// Get the version of a package
-    let get_variable package var = pkgcgf ["--variable=\"" + var + "\""; package]
-    let is_atleast_version package version = pkgcgf_bool ["--atleast-version=\"" + version + "\""; package]
-    let is_exact_version package version = pkgcgf_bool ["--exact-version=\"" + version + "\""; package]
+    /// Get the value of a package variable
+    let variable package var = pkgConfig ["--variable=\"" + var + "\""; package]
+
+    /// Gets true if the package version is at least the one specified
+    let isAtLeastVersion package version = pkgConfigBool ["--atleast-version=\"" + version + "\""; package]
+
+    /// Gets true if the package version is exactly the one specified
+    let isExactVersion package version = pkgConfigBool ["--exact-version=\"" + version + "\""; package]
 
 module DotNetFwk =
 
@@ -66,13 +74,13 @@ module DotNetFwk =
         let tryLocateFwk fwk : option<FrameworkInfo> * string =
 
             let (sdkroot,libdir,err) =
-                if pkg_config.exists "mono" then
-                    let prefix = pkg_config.get_variable "mono" "prefix" in
+                if PkgConfig.exists "mono" then
+                    let prefix = PkgConfig.variable "mono" "prefix" in
 
                     let winpath (str:string) = str.Replace('/', System.IO.Path.DirectorySeparatorChar)
                     (
                         prefix |> winpath,
-                        pkg_config.get_variable "mono" "libdir" |> winpath,
+                        PkgConfig.variable "mono" "libdir" |> winpath,
                         null
                     )
                 else if Env.isWindows then
@@ -99,10 +107,10 @@ module DotNetFwk =
                     | _ ->
                         ("", "", "Failed to locate default mono version")
                 else
-                    ("", "", "Failed to obtain mono framework (check if mono and pkg_config are installed)")
+                    ("", "", "Failed to obtain mono framework (check if mono and pkg-config are installed)")
             match err with
             | null ->
-                let cscTool = if pkg_config.is_atleast_version "mono" "3.0" then "mcs" else "dmcs"
+                let cscTool = if PkgConfig.isAtLeastVersion "mono" "3.0" then "mcs" else "dmcs"
 
                 let fwkinfo libpath ver =
                     let libPath = libdir </> "mono" </> libpath
@@ -130,7 +138,7 @@ module DotNetFwk =
             | _ ->
                 None, err
 
-    module internal MsImpl =
+    module internal msImpl =
         open registry
 
         let ifNone f arg = function
@@ -324,13 +332,12 @@ module DotNetFwk =
     module internal impl =
 
         let locateFramework (fwk) : FrameworkInfo =
-            let flip f x y = f y x
             let startsWith fragment (s: string option) =
                 match s with
                 | None | Some null -> false
                 | Some str -> str.StartsWith fragment
 
-            // MsImpl throws when the framework is not installed, so any kind of failure
+            // msImpl throws when the framework is not installed, so any kind of failure
             // has to fall through to the next provider
             let orElse fallback primary name =
                 let attempt locate = try locate name with e -> None, e.Message
@@ -352,7 +359,7 @@ module DotNetFwk =
                     monoFwkImpl.tryLocateFwk |> orElse sdkImpl.tryLocateFwk
                 else
                     // a real Framework installation found through the registry wins on Windows
-                    MsImpl.tryLocateFwk |> orElse sdkImpl.tryLocateFwk
+                    msImpl.tryLocateFwk |> orElse sdkImpl.tryLocateFwk
 
             match fwk with
             | None ->

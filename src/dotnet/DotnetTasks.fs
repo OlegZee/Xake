@@ -64,10 +64,19 @@ module internal Impl =
     let platformStr = function
         |AnyCpu -> "anycpu" |AnyCpu32Preferred -> "anycpu32preferred" |ARM -> "arm" | X64 -> "x64" | X86 -> "x86" |Itanium -> "itanium"
 
-    /// Parses the compiler output and returns messageLevel
+    /// <summary>
+    /// Classifies a line of compiler output by log level.
+    /// </summary>
+    /// <remarks>
+    /// Diagnostics tied to a source position read "file.cs(1,1): error CS0103: ...", while
+    /// whole-compilation ones read "error FS0084: ..." with no position at all. Both have to be
+    /// recognized, otherwise a failing compile reports nothing above the default verbosity.
+    /// </remarks>
     let levelFromString defaultLevel (text:string) :Level =
-        if text.Contains "): warning " then Level.Warning
-        else if text.Contains "): error " then Level.Error
+        let hasDiagnostic kind =
+            text.Contains ("): " + kind + " ") || text.TrimStart().StartsWith (kind + " ")
+        if hasDiagnostic "warning" then Level.Warning
+        else if hasDiagnostic "error" then Level.Error
         else defaultLevel
     let inline coalesce ls = //: 'a option list -> 'a option =
         ls |> List.fold (fun r a -> if Option.isSome r then r else a) None

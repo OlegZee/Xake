@@ -191,7 +191,10 @@ module CscImpl =
         [<CustomOperation("unsafe")>]    member __.Unsafe(s:CscSettingsType, value) =      {s with Unsafe = value}
         [<CustomOperation("cscpath")>]       member __.CscPath(s:CscSettingsType, value) =   {s with CscPath = Some value}
 
+        /// <summary>Passes custom arguments to the compiler</summary>
         [<CustomOperation("args")>]       member __.Args(s:CscSettingsType, args) =   {s with CommandArgs = args}
+        /// <summary>Does not fail the build on a compile error</summary>
+        [<CustomOperation("nofailonerror")>] member __.NoFailOnError(s:CscSettingsType) = {s with FailOnError = false}
 
         member __.Bind(x, f) = f x
         member __.Yield(()) = CscSettingsType.Default

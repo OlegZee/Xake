@@ -14,7 +14,7 @@ open Xake
 open Xake.Tasks
 open Xake.Dotnet
 
-do xakeScript {
+xake ExecOptions.Default {
 
     consolelog Verbosity.Diag
 
@@ -141,10 +141,10 @@ do xakeScript {
 
     // shell commands runs shell command
     "shell" => recipe {
-        let! errorLevel = shell {
-            cmd "dir"
+        let! errorLevel = sh "dir" {
             args ["*.*"; "/A"]
             workdir "."
+            result
         }
 
         // this will fail the script

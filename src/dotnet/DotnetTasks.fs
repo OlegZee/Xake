@@ -4,7 +4,7 @@ open System.IO
 open System.Resources
 
 open Xake
-open Xake.Dotnet.ProcessExec
+open Xake.ProcessExec
 
 [<AutoOpen>]
 module DotNetTaskTypes =
@@ -148,5 +148,6 @@ module internal Impl =
             let handleStd s = log (StdOutLevel s) "%s %s" logPrefix s
             let workingDir = None
 
-            return pexec handleStd handleErr cmd argsStr envVars workingDir
+            let! exitCode = pexec handleStd handleErr cmd argsStr envVars workingDir
+            return exitCode
         }

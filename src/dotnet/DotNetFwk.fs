@@ -1,7 +1,7 @@
 ﻿namespace Xake.Dotnet
 
 open Xake
-open Xake.Dotnet.ProcessExec
+open Xake.ProcessExec
 open System.IO
 
 module (* internal *) pkg_config =
@@ -10,7 +10,7 @@ module (* internal *) pkg_config =
         let outp = ref option<string>.None
         let dump s = outp := match !outp with | None -> Some s | s -> s
         try
-            do pexec dump dump "pkg-config" (args |> String.concat " ") [] None |> ignore
+            do pexecSync dump dump "pkg-config" (args |> String.concat " ") [] None |> ignore
             match !outp with | None -> "" | Some str -> str
         with _ ->
             ""
@@ -19,7 +19,7 @@ module (* internal *) pkg_config =
     let private pkgcgf_bool args =
         let dump (s : string) = ()
         try
-            0 = pexec dump dump "pkg-config" (args |> String.concat " ") [] None
+            0 = pexecSync dump dump "pkg-config" (args |> String.concat " ") [] None
         with _ ->
             false
     /// Gets true if specified package exists
@@ -251,7 +251,7 @@ module DotNetFwk =
     <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies.%s" Version="%s" />
   </ItemGroup>
 </Project>""" moniker referenceAssembliesVersion)
-                pexec ignore ignore "dotnet" (sprintf "restore \"%s\"" project) [] (Some dir) |> ignore
+                pexecSync ignore ignore "dotnet" (sprintf "restore \"%s\"" project) [] (Some dir) |> ignore
             with _ -> ()
 
         let private refAssembliesDir moniker =
@@ -293,7 +293,7 @@ module DotNetFwk =
             let path = Path.GetTempPath() </> (sprintf "xake-%s-%x%s" name (hash (host + args) &&& 0xffffff) ext)
             File.WriteAllText (path, text)
             if not Env.isWindows then
-                pexec ignore ignore "chmod" (sprintf "+x \"%s\"" path) [] None |> ignore
+                pexecSync ignore ignore "chmod" (sprintf "+x \"%s\"" path) [] None |> ignore
             path
 
         let tryLocateFwk fwk =

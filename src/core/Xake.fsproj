@@ -52,6 +52,16 @@
     <Compile Include="Tasks\misc.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
+  <ItemGroup>
+    <!-- Xake.Dotnet ships in the same package and reuses the engine's low-level plumbing
+         (ProcessExec, CommonLib) rather than carrying its own copies. -->
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
+      <_Parameter1>Xake.Dotnet</_Parameter1>
+    </AssemblyAttribute>
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
+      <_Parameter1>tests</_Parameter1>
+    </AssemblyAttribute>
+  </ItemGroup>
   <ItemGroup Condition="'$(TargetFramework)' == 'net46'">
     <PackageReference Include="FSharp.Core" Version="3.1.2.5" />
   </ItemGroup>

@@ -20,8 +20,6 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Compile Include="CommonLib.fs" />
-    <Compile Include="ProcessExec.fs" />
     <Compile Include="DotNetFwk.fs" />
     <Compile Include="ResourceFileset.fs" />
 
@@ -34,6 +32,12 @@
 
   <ItemGroup>
     <ProjectReference Include="..\core\Xake.fsproj" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
+      <_Parameter1>tests</_Parameter1>
+    </AssemblyAttribute>
   </ItemGroup>
 
   <!-- Xake.dll and Xake.xml next to Xake.Dotnet.dll in lib/{tfm} -->

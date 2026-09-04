@@ -40,7 +40,7 @@ type ``Dotnet tasks tests``() =
                         Out = File.make "hello.exe"
                     }
                 }
-                "hello.cs" ..> action {
+                "hello.cs" ..> recipe {
                     do! writeText """class Program
                     {
     	                public static void Main()

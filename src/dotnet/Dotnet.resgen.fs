@@ -8,22 +8,24 @@ module ResgenImpl =
     open System.Resources
     open Xake
 
-    // ResGen task and its settings
+    /// ResGen task settings.
+    // TODO single file mode
+    // TODO extra command-line args
     type ResgenSettingsType = {
-
+        /// Resource sets to compile.
         Resources: ResourceFileset list
+        /// Directory the generated .resources files are written to.
         TargetDir: DirectoryInfo
+        /// Resolve relative paths inside a resx against the resx file location.
         UseSourcePath: bool
+    } with static member Default = {
+            Resources = []
+            TargetDir = DirectoryInfo "."
+            UseSourcePath = true
+        }
 
-        // TODO single file mode
-        // TODO extra command-line args
-    }
-
-    let ResgenSettings = {
-        Resources = [ResourceFileset.Empty]
-        TargetDir = DirectoryInfo "."
-        UseSourcePath = true
-    }
+    /// Default settings for the ResGen task.
+    let ResgenSettings = ResgenSettingsType.Default
 
     /// Generates binary resource files from resx, txt etc
     let ResGen (settings:ResgenSettingsType) =

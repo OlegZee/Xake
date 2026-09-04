@@ -38,36 +38,39 @@ module FscImpl =
         /// Do not reference the default CLI assemblies by default
         NoFramework: bool
 
+        /// Generate tailcalls where possible.
         Tailcalls: bool
-    }
+    } with static member Default = {
+            Platform = AnyCpu
+            Target = Auto
+            Out = File.undefined
+            Src = Fileset.Empty
+            Ref = Fileset.Empty
+            RefGlobal = []
+            Resources = []
+            Define = []
+            TargetFramework = null
+            FscVersion = None
+            CommandArgs = []
+            FailOnError = true
+            NoFramework = false
+            Tailcalls = true
+        }
 
-        /// <summary>
-    /// Default settings for Fsc task.
+    /// <summary>
+    /// Default settings for the Fsc task, so that you could only override required settings.
     /// </summary>
-    let FscSettings = {
-        FscSettingsType.Platform = AnyCpu
-        FscSettingsType.Target = Auto
-        Out = File.undefined
-        Src = Fileset.Empty
-        Ref = Fileset.Empty
-        RefGlobal = []
-        Resources = []
-        Define = []
-        TargetFramework = null
-        FscVersion = None
-        CommandArgs = []
-        FailOnError = true
-        NoFramework = false
+    let FscSettings = FscSettingsType.Default
 
-        Tailcalls = true
-    }
-
-    /// F# compiler task
+    /// <summary>
+    /// F# compiler task. Compiles the source fileset into the target assembly.
+    /// </summary>
+    /// <param name="settings">Compiler settings</param>
+    /// <returns>Recipe compiling the target</returns>
     let Fsc (settings:FscSettingsType) =
 
         recipe {
-            let! ctx = getCtx()
-            let logger = ctx.Engine.RootLogger
+            do! trace Level.Debug "Fsc: settings=%A" settings
 
             let! options = getCtxOptions()
             let getFiles = toFileList options.ProjectRoot
@@ -79,13 +82,7 @@ module FscImpl =
                     settings.Out |> recipe.Return
 
             let resinfos = settings.Resources |> List.collect (Impl.collectResInfo options.ProjectRoot) |> List.map Impl.compileResxFiles
-            let resfiles =
-                List.ofSeq <|
-                query {
-                    for (_,file,istemp) in resinfos do
-                        where (not istemp)
-                        select (file)
-                }
+            let resfiles = resinfos |> List.choose (fun (_, file, istemp) -> if istemp then None else Some file)
 
             let (Filelist src)  = settings.Src |> getFiles
             let (Filelist refs) = settings.Ref |> getFiles
@@ -99,7 +96,7 @@ module FscImpl =
                 | _, Some s when s <> "" -> s
                 | _ -> null
 
-            logger.Log Debug "targetFramework: %s" targetFramework
+            do! trace Debug "targetFramework: %s" targetFramework
 
             // fsc reads a leading '/' as a path on Unix, so long options must use '--' there;
             // '-r:' is understood on both platforms
@@ -115,8 +112,6 @@ module FscImpl =
                 | tgt ->
                     let fwk = Some tgt |> DotNetFwk.locateFramework in
                     let lookup = DotNetFwk.locateAssembly fwk
-                    do logger.Log Debug "Found fwk %A" fwk
-
                     ("mscorlib.dll" :: settings.RefGlobal |> List.map (lookup >> mapfn)), true
 
             let args =
@@ -159,28 +154,29 @@ module FscImpl =
                 if settings.FailOnError then failwithf "Exiting due to FailOnError set on '%s'" outFile.Name
 
             let commandLineArgs = args |> Seq.map Impl.escapeArgument
+
+            // the resx files compiled to a temporary location have to go regardless of how the
+            // compilation ends
+            let deleteTempFiles () =
+                resinfos
+                |> List.choose (fun (_, file, istemp) -> if istemp then Some file.FullName else None)
+                |> List.iter (fun file -> try System.IO.File.Delete file with _ -> ())
+
             do! trace Info "compiling '%s' using framework '%s'" outFile.Name fwkInfo.Version
             do! trace Debug "Command line: '%s %s'" fsc (commandLineArgs |> String.concat "\r\n\t")
 
-            let! exitCode =
-                shell {
-                    cmd fsc
-                    args commandLineArgs
-                    envs fwkInfo.EnvVars
-                    logprefix "[fsc]"
-                    stdoutlevel (Impl.levelFromString Level.Verbose)
-                    erroutlevel (Impl.levelFromString Level.Verbose)
-                }
+            try
+                let! exitCode =
+                    shell {
+                        cmd fsc
+                        args commandLineArgs
+                        envs fwkInfo.EnvVars
+                        logprefix "[fsc]"
+                        stdoutlevel (Impl.levelFromString Level.Verbose)
+                        erroutlevel (Impl.levelFromString Level.Verbose)
+                    }
 
-            do! trace Verbose "Deleting temporary files"
-            seq {
-                yield! query {
-                    for (_,file,istemp) in resinfos do
-                        where istemp
-                        select file.FullName
-                }
-            }
-            |> Seq.iter File.Delete
-
-            do! Impl.failOnExitCode settings.FailOnError outFile.Name exitCode
+                do! Impl.failOnExitCode settings.FailOnError outFile.Name exitCode
+            finally
+                deleteTempFiles ()
         }

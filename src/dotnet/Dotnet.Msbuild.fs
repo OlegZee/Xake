@@ -7,7 +7,7 @@ module MsbuildImpl =
     open Xake.Tasks
     open DotNetTaskTypes
 
-    // Sln (msbuild/xbuild) task settings
+    /// Sln (msbuild/xbuild) task settings.
     type MSBuildSettingsType = {
         /// Build file location
         BuildFile: string
@@ -23,25 +23,32 @@ module MsbuildImpl =
         Verbosity: MsbVerbosity
         /// Insert command-line settings from file
         RspFile: string option
-        // Build fails on compile error.
+        /// Build fails on compile error.
         FailOnError: bool
-    }
+    } with static member Default = {
+            BuildFile = null
+            Target = []
+            Property = []
+            MaxCpuCount = None
+            ToolsVersion = None
+            Verbosity = Normal
+            RspFile = None
+            FailOnError = true
+        }
 
-    // Default settings for Sln (MSBuild) task
-    let MSBuildSettings = {
-        BuildFile = null
-        Target = []
-        Property = []
-        MaxCpuCount = None
-        ToolsVersion = None
-        Verbosity = Normal
-        RspFile = None
-        FailOnError = true
-    }
+    /// Default settings for the Sln (MSBuild) task.
+    let MSBuildSettings = MSBuildSettingsType.Default
 
+    /// <summary>
+    /// Builds a project or a solution with MSBuild (xbuild under mono).
+    /// </summary>
+    /// <param name="settings">MSBuild settings</param>
+    /// <returns>Recipe running the build</returns>
     let MSBuild (settings:MSBuildSettingsType) =
 
-        action {
+        recipe {
+            do! trace Level.Debug "MSBuild: settings=%A" settings
+
             let! dotnetFwk = getVar "NETFX"
             let fwkInfo = DotNetFwk.locateFramework dotnetFwk
 
@@ -90,6 +97,5 @@ module MsbuildImpl =
 
             do! trace Info "%s done '%s'" pfx settings.BuildFile
             do! Impl.failOnExitCode settings.FailOnError settings.BuildFile exitCode
-            ()
         }
 

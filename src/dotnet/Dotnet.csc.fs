@@ -34,29 +34,35 @@ module CscImpl =
         FailOnError: bool
         /// Path to csc executable
         CscPath: string option
-    }
+    } with static member Default = {
+            Platform = AnyCpu
+            Target = Auto    // try to resolve the type from name etc
+            Out = File.undefined
+            Src = Fileset.Empty
+            Ref = Fileset.Empty
+            RefGlobal = []
+            Resources = []
+            Define = []
+            Unsafe = false
+            TargetFramework = null
+            CommandArgs = []
+            FailOnError = true
+            CscPath = None
+        }
 
-    /// Default setting for CSC task so that you could only override required settings
-    let CscSettings = {
-        CscSettingsType.Platform = AnyCpu
-        Target = Auto    // try to resolve the type from name etc
-        Out = File.undefined
-        Src = Fileset.Empty
-        Ref = Fileset.Empty
-        RefGlobal = []
-        Resources = []
-        Define = []
-        Unsafe = false
-        TargetFramework = null
-        CommandArgs = []
-        FailOnError = true
-        CscPath = None
-    }
+    /// Default settings for the CSC task, so that you could only override required settings.
+    let CscSettings = CscSettingsType.Default
 
-    /// C# compiler task
+    /// <summary>
+    /// C# compiler task. Compiles the source fileset into the target assembly.
+    /// </summary>
+    /// <param name="settings">Compiler settings</param>
+    /// <returns>Recipe compiling the target</returns>
     let Csc (settings:CscSettingsType) =
 
-        action {
+        recipe {
+            do! trace Level.Debug "Csc: settings=%A" settings
+
             let! options = getCtxOptions()
             let getFiles = toFileList options.ProjectRoot
 
@@ -67,13 +73,7 @@ module CscImpl =
                     settings.Out |> recipe.Return
 
             let resinfos = settings.Resources |> List.collect (Impl.collectResInfo options.ProjectRoot) |> List.map Impl.compileResxFiles
-            let resfiles =
-                List.ofSeq <|
-                query {
-                    for (_,file,istemp) in resinfos do
-                        where (not istemp)
-                        select (file)
-                }
+            let resfiles = resinfos |> List.choose (fun (_, file, istemp) -> if istemp then None else Some file)
 
             let (Filelist src)  = settings.Src |> getFiles
             let (Filelist refs) = settings.Ref |> getFiles
@@ -144,62 +144,61 @@ module CscImpl =
                     }
             let cscTool = settings.CscPath |> function | Some v -> v | _ -> fwkInfo.CscTool
 
+            // the response file and the resx files compiled to a temporary location have to go
+            // regardless of how the compilation ends
+            let tempFiles =
+                rspFile :: (resinfos |> List.choose (fun (_, file, istemp) -> if istemp then Some file.FullName else None))
+            let deleteTempFiles () =
+                tempFiles |> List.iter (fun file -> try System.IO.File.Delete file with _ -> ())
+
             do! trace Info "compiling '%s' using framework '%s'" outFile.Name fwkInfo.Version
             do! trace Debug "Command line: '%s %s'" cscTool (args |> Seq.map Impl.escapeArgument |> String.concat "\r\n\t")
 
-            let! exitCode =
-                shell {
-                    cmd cscTool
-                    args commandLineArgs
-                    envs fwkInfo.EnvVars
-                    logprefix "[csc]"
-                    stdoutlevel (Impl.levelFromString Level.Verbose)
-                    erroutlevel (Impl.levelFromString Level.Verbose)
-                }
+            try
+                let! exitCode =
+                    shell {
+                        cmd cscTool
+                        args commandLineArgs
+                        envs fwkInfo.EnvVars
+                        logprefix "[csc]"
+                        stdoutlevel (Impl.levelFromString Level.Verbose)
+                        erroutlevel (Impl.levelFromString Level.Verbose)
+                    }
 
-            do! trace Level.Verbose "Deleting temporary files"
-            seq {
-                yield rspFile
-
-                yield! query {
-                    for (_,file,istemp) in resinfos do
-                        where istemp
-                        select file.FullName
-                }
-            }
-            |> Seq.iter File.Delete
-
-            do! Impl.failOnExitCode settings.FailOnError outFile.Name exitCode
+                do! Impl.failOnExitCode settings.FailOnError outFile.Name exitCode
+            finally
+                deleteTempFiles ()
         }
 
-    (* csc options builder *)
+    /// Computation expression builder for the csc task.
     type CscSettingsBuilder() =
 
-        [<CustomOperation("platform")>]  member this.Platform(s:CscSettingsType, value) =    {s with Platform = value}
-        [<CustomOperation("target")>]    member this.Target(s:CscSettingsType, value) =    {s with Target = value}
-        [<CustomOperation("targetfwk")>] member this.TargetFwk(s:CscSettingsType, value) = {s with TargetFramework = value}
-        [<CustomOperation("out")>]       member this.OutFile(s:CscSettingsType, value) =   {s with Out = value}
-        [<CustomOperation("src")>]       member this.SrcFiles(s:CscSettingsType, value) =  {s with Src = value}
+        [<CustomOperation("platform")>]  member __.Platform(s:CscSettingsType, value) =    {s with Platform = value}
+        [<CustomOperation("target")>]    member __.Target(s:CscSettingsType, value) =    {s with Target = value}
+        [<CustomOperation("targetfwk")>] member __.TargetFwk(s:CscSettingsType, value) = {s with TargetFramework = value}
+        [<CustomOperation("out")>]       member __.OutFile(s:CscSettingsType, value) =   {s with Out = value}
+        [<CustomOperation("src")>]       member __.SrcFiles(s:CscSettingsType, value) =  {s with Src = value}
 
-        [<CustomOperation("ref")>]       member this.Ref(s:CscSettingsType, value) =         {s with Ref = s.Ref + value}
-        [<CustomOperation("refif")>]     member this.Refif(s:CscSettingsType, cond, (value:Fileset)) = {s with Ref = s.Ref +? (cond,value)}
+        [<CustomOperation("ref")>]       member __.Ref(s:CscSettingsType, value) =         {s with Ref = s.Ref + value}
+        [<CustomOperation("refif")>]     member __.Refif(s:CscSettingsType, cond, (value:Fileset)) = {s with Ref = s.Ref +? (cond,value)}
 
-        [<CustomOperation("refs")>]      member this.Refs(s:CscSettingsType, value) =        {s with Ref = value}
-        [<CustomOperation("grefs")>]     member this.RefGlobal(s:CscSettingsType, value) =   {s with RefGlobal = value}
-        [<CustomOperation("resources")>] member this.Resources(s:CscSettingsType, value) =   {s with CscSettingsType.Resources = value :: s.Resources}
-        [<CustomOperation("resourceslist")>] member this.ResourcesList(s:CscSettingsType, values) = {s with CscSettingsType.Resources = values @ s.Resources}
+        [<CustomOperation("refs")>]      member __.Refs(s:CscSettingsType, value) =        {s with Ref = value}
+        [<CustomOperation("grefs")>]     member __.RefGlobal(s:CscSettingsType, value) =   {s with RefGlobal = value}
+        [<CustomOperation("resources")>] member __.Resources(s:CscSettingsType, value) =   {s with CscSettingsType.Resources = value :: s.Resources}
+        [<CustomOperation("resourceslist")>] member __.ResourcesList(s:CscSettingsType, values) = {s with CscSettingsType.Resources = values @ s.Resources}
 
-        [<CustomOperation("define")>]    member this.Define(s:CscSettingsType, value) =      {s with Define = value}
-        [<CustomOperation("unsafe")>]    member this.Unsafe(s:CscSettingsType, value) =      {s with Unsafe = value}
-        [<CustomOperation("cscpath")>]       member this.CscPath(s:CscSettingsType, value) =   {s with CscPath = Some value}
+        [<CustomOperation("define")>]    member __.Define(s:CscSettingsType, value) =      {s with Define = value}
+        [<CustomOperation("unsafe")>]    member __.Unsafe(s:CscSettingsType, value) =      {s with Unsafe = value}
+        [<CustomOperation("cscpath")>]       member __.CscPath(s:CscSettingsType, value) =   {s with CscPath = Some value}
 
-        [<CustomOperation("args")>]       member this.Args(s:CscSettingsType, args) =   {s with CommandArgs = args}
+        [<CustomOperation("args")>]       member __.Args(s:CscSettingsType, args) =   {s with CommandArgs = args}
 
-        member this.Bind(x, f) = f x
-        member this.Yield(()) = CscSettings
-        member this.For(x, f) = f x
+        member __.Bind(x, f) = f x
+        member __.Yield(()) = CscSettingsType.Default
+        member __.For(x, f) = f x
 
-        member this.Zero() = CscSettings
-        member this.Run(s:CscSettingsType) = Csc s
+        member __.Zero() = CscSettingsType.Default
+        member __.Run(s:CscSettingsType) = Csc s
 
+    /// The csc task builder instance.
     let csc = CscSettingsBuilder()

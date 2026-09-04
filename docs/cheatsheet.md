@@ -76,6 +76,20 @@ do! sh "dotnet" {
 }
 ```
 
+## .NET tasks
+
+```fsharp
+open Xake.Dotnet
+
+"hello.exe" ..> csc { src !!"hello.cs" }                    // target file is the output
+"hello.exe" ..> csc { targetfwk "net-4.6.2"; src !!"hello.cs"; grefs ["System.dll"] }
+"app.exe"   ..> fsc { src !!"src/*.fs"; ref !!"bin/FSharp.Core.dll" }
+"build"      => msbuild { buildfile "a.sln"; target "Rebuild"; prop ("Configuration","Release") }
+"res"        => resgen { resources (resourceset { prefix "App"; files !!"**/*.resx" }) }
+```
+
+Script variables: `NETFX` (tool framework), `NETFX-TARGET` (default target framework), `FSCVER`.
+
 ## Filesets
 
 ```fsharp

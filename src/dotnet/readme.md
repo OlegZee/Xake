@@ -2,19 +2,23 @@ Xake is a make utility made for .NET on F# language. Xake is inspired by [shake]
 
 See [Xake documentation](https://github.com/xakebuild/Xake/wiki/introduction) for more details.
 
+These are the tasks for the full .NET framework: `csc`, `fsc`, `msbuild`, `resgen` and
+`resourceset`. They ship in the same `Xake` package as the engine, so a single reference is
+enough. See [docs/tasks.md](../../docs/tasks.md#net-tasks) for the full set of options.
+
 ## Prerequisites
 
-The build sctipt expects dotnet 2.1.300+ to build the package. That version properly writes package metadata.
-You will need [net46 Dev Pack](https://www.microsoft.com/net/download/thank-you/net46-developer-pack) to build for .net 4.6 target.
+The .NET SDK 9.0+ (see `global.json`). Nothing else: the compilers come from the SDK and the
+.NET Framework reference assemblies from the
+`Microsoft.NETFramework.ReferenceAssemblies.*` packages, restored on first use -- so
+full-framework binaries can be built on any OS without a Framework installation.
 
 ## Csc task
 
 The simple script looks like:
 
 ```fsharp
-#r "paket:
-  nuget Xake ~> 1.1 prerelease
-  nuget Xake.Dotnet ~> 1.1 prerelease //"
+#r "nuget: Xake, 3.0.0"
 
 open Xake
 open Xake.Dotnet
@@ -28,4 +32,5 @@ do xakeScript {
 }
 ```
 
-This script compiles helloworld assembly from helloworld.cs file.
+This script compiles helloworld assembly from helloworld.cs file. See
+[samples/fullframework.fsx](../../samples/fullframework.fsx) for targeting a specific framework.

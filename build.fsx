@@ -10,7 +10,7 @@ let vars = {|
     TestFilter = Var.string(envVar = "FILTER", description = "Optional filter clause for test selection, e.g. 'MyNamespace.*Tests'")
 |}
 
-let frameworks = ["netstandard2.0" (*; "net46" *)]
+let frameworks = ["netstandard2.0" (*; "net462" *)]
 
 /// A library this script builds and publishes. `Needs` are the libraries it is compiled against.
 type Library = { Name: string; Dir: string; Needs: string list }

@@ -144,15 +144,6 @@ module FscImpl =
             let dotnetFwk = match netfxVar with | Some _ -> netfxVar | None -> Option.ofObj targetFramework
             let fwkInfo = DotNetFwk.locateFramework dotnetFwk
 
-            let! fscVer = getVar "FSCVER"
-            let fsc = 
-                match fwkInfo.FscTool ([settings.FscVersion; fscVer] |> Impl.coalesce) with
-                | Some tool -> tool
-                | None -> ""
-            if fsc = "" then
-                do! trace Error "('%s') failed: F# compiler not found" outFile.Name
-                if settings.FailOnError then failwithf "Exiting due to FailOnError set on '%s'" outFile.Name
-
             let commandLineArgs = args |> Seq.map Impl.escapeArgument
 
             // the resx files compiled to a temporary location have to go regardless of how the
@@ -162,23 +153,32 @@ module FscImpl =
                 |> List.choose (fun (_, file, istemp) -> if istemp then Some file.FullName else None)
                 |> List.iter (fun file -> try System.IO.File.Delete file with _ -> ())
 
-            do! trace Info "compiling '%s' using framework '%s'" outFile.Name fwkInfo.Version
-            do! trace Debug "Command line: '%s %s'" fsc (commandLineArgs |> String.concat "\r\n\t")
-
-            try
-                let! exitCode =
-                    shell {
-                        cmd fsc
-                        args commandLineArgs
-                        envs fwkInfo.EnvVars
-                        logprefix "[fsc]"
-                        stdoutlevel (Impl.levelFromString Level.Verbose)
-                        erroutlevel (Impl.levelFromString Level.Verbose)
-                    }
-
-                do! Impl.failOnExitCode settings.FailOnError outFile.Name exitCode
-            finally
+            let! fscVer = getVar "FSCVER"
+            match fwkInfo.FscTool ([settings.FscVersion; fscVer] |> Impl.coalesce) with
+            | None ->
+                // there is nothing to run -- carrying on would shell out with an empty command
                 deleteTempFiles ()
+                do! trace Error "('%s') failed: F# compiler not found" outFile.Name
+                if settings.FailOnError then failwithf "Exiting due to FailOnError set on '%s'" outFile.Name
+
+            | Some fsc ->
+                do! trace Info "compiling '%s' using framework '%s'" outFile.Name fwkInfo.Version
+                do! trace Debug "Command line: '%s %s'" fsc (commandLineArgs |> String.concat "\r\n\t")
+
+                try
+                    let! exitCode =
+                        shell {
+                            cmd fsc
+                            args commandLineArgs
+                            envs fwkInfo.EnvVars
+                            logprefix "[fsc]"
+                            stdoutlevel (Impl.levelFromString Level.Verbose)
+                            erroutlevel (Impl.levelFromString Level.Verbose)
+                        }
+
+                    do! Impl.failOnExitCode settings.FailOnError outFile.Name exitCode
+                finally
+                    deleteTempFiles ()
         }
 
     /// Computation expression builder for the fsc task.

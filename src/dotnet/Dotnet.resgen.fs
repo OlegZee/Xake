@@ -27,7 +27,11 @@ module ResgenImpl =
     /// Default settings for the ResGen task.
     let ResgenSettings = ResgenSettingsType.Default
 
-    /// Generates binary resource files from resx, txt etc
+    /// <summary>
+    /// Generates binary .resources files from resx, txt etc.
+    /// </summary>
+    /// <param name="settings">ResGen settings</param>
+    /// <returns>Recipe generating the resource files</returns>
     let ResGen (settings:ResgenSettingsType) =
 
         // TODO rewrite everything, it's just demo code
@@ -35,11 +39,10 @@ module ResgenImpl =
             let rcfile =
                 Path.Combine(
                     settings.TargetDir.FullName,
-                    Path.ChangeExtension(resxfile, ".resource") |> Impl.makeResourceName options baseDir)
+                    Path.ChangeExtension(resxfile, ".resources") |> Impl.makeResourceName options baseDir)
 
+#if NETFRAMEWORK
             use writer = new ResourceWriter (rcfile)
-
-#if NET46
             use resxreader = new ResXResourceReader (resxfile)
 
             if settings.UseSourcePath then
@@ -48,17 +51,27 @@ module ResgenImpl =
             let reader = resxreader.GetEnumerator()
             while reader.MoveNext() do
                 writer.AddResource (reader.Key :?> string, reader.Value)
-#endif
+
             rcfile
+#else
+            // ResXResourceReader ships with the full framework only; writing the file without
+            // reading the resx would silently produce an empty resource set
+            ignore rcfile
+            failwith "ERROR: resx compilation is not supported under netstandard target"
+#endif
 
         recipe {
-            for r in settings.Resources do
-                let (ResourceFileset (settings,fileset)) = r
-                let (Fileset (options,_)) = fileset
+            do! trace Level.Debug "Resgen: settings=%A" settings
+
+            for ResourceFileset (resOptions, fileset) in settings.Resources do
+                let (Fileset (fsOptions, _)) = fileset
                 let! (Filelist files) = getFiles fileset
 
-                do files |> List.map (File.getFullName >> generate options.BaseDir settings) |> ignore
-            ()
+                do! needFiles (Filelist files)
+
+                for file in files do
+                    let rcfile = file |> File.getFullName |> generate fsOptions.BaseDir resOptions
+                    do! trace Info "[resgen] generated '%s'" rcfile
         }
 
     /// Computation expression builder for the resgen task.

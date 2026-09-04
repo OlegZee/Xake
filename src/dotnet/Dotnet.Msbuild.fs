@@ -89,6 +89,7 @@ module MsbuildImpl =
                 shell {
                     cmd fwkInfo.MsbuildTool
                     args commandLineArgs
+                    envs fwkInfo.EnvVars
                     logprefix pfx
                     stdoutlevel (Impl.levelFromString Level.Verbose)
                     erroutlevel (Impl.levelFromString Level.Verbose)

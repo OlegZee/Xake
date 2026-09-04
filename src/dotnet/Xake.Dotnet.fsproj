@@ -47,6 +47,12 @@
     </ItemGroup>
   </Target>
 
+  <!-- ResXResourceReader, needed to compile .resx, lives in System.Windows.Forms and is not
+       one of the SDK's implicit references for net462. -->
+  <ItemGroup Condition="'$(TargetFramework)' == 'net462'">
+    <Reference Include="System.Windows.Forms" />
+  </ItemGroup>
+
   <ItemGroup Condition="'$(TargetFramework)' == 'netstandard2.0'">
     <PackageReference Include="Microsoft.Win32.Registry" Version="5.0.0" />
   </ItemGroup>

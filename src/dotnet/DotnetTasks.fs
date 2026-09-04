@@ -109,7 +109,7 @@ module internal Impl =
             fun(t:System.Type) ->
                 t.AssemblyQualifiedName.Replace("4.0.0.0", "2.0.0.0")
 
-#if NET46
+#if NETFRAMEWORK
         use resxreader = new System.Resources.ResXResourceReader (resxfile.FullName)
         resxreader.BasePath <- File.getDirName resxfile
 

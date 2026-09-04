@@ -5,6 +5,7 @@ module FscImpl =
 
     open System.IO
     open Xake
+    open Xake.Tasks
 
     /// <summary>
     /// Fsc (F# compiler) task settings.
@@ -157,11 +158,19 @@ module FscImpl =
                 do! trace Error "('%s') failed: F# compiler not found" outFile.Name
                 if settings.FailOnError then failwithf "Exiting due to FailOnError set on '%s'" outFile.Name
 
-            let args = args |> Seq.map Impl.escapeArgument
+            let commandLineArgs = args |> Seq.map Impl.escapeArgument
             do! trace Info "compiling '%s' using framework '%s'" outFile.Name fwkInfo.Version
-            do! trace Debug "Command line: '%s %s'" fsc (args |> String.concat "\r\n\t")
+            do! trace Debug "Command line: '%s %s'" fsc (commandLineArgs |> String.concat "\r\n\t")
 
-            let! exitCode = Impl._system fsc args fwkInfo.EnvVars "[FSC] "
+            let! exitCode =
+                shell {
+                    cmd fsc
+                    args commandLineArgs
+                    envs fwkInfo.EnvVars
+                    logprefix "[fsc]"
+                    stdoutlevel (Impl.levelFromString Level.Verbose)
+                    erroutlevel (Impl.levelFromString Level.Verbose)
+                }
 
             do! trace Verbose "Deleting temporary files"
             seq {
@@ -173,7 +182,5 @@ module FscImpl =
             }
             |> Seq.iter File.Delete
 
-            if exitCode <> 0 then
-                do! trace Error "('%s') failed with exit code '%i'" outFile.Name exitCode
-                if settings.FailOnError then failwithf "Exiting due to FailOnError set on '%s'" outFile.Name
+            do! Impl.failOnExitCode settings.FailOnError outFile.Name exitCode
         }

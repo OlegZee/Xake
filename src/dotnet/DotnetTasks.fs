@@ -4,7 +4,7 @@ open System.IO
 open System.Resources
 
 open Xake
-open Xake.ProcessExec
+open Xake.Tasks
 
 [<AutoOpen>]
 module DotNetTaskTypes =
@@ -130,24 +130,14 @@ module internal Impl =
             (res,file,false)
 
     /// <summary>
-    /// Executes system command. E.g. '_system SystemOptions "dir" []'
+    /// The exit-code epilogue shared by the compiler tasks: reports a non-zero exit code and
+    /// fails the build when the task is configured to.
     /// </summary>
-    let _system cmd args envVars logPrefix =
-
-        let StdOutLevel = fun _ -> Level.Verbose
-        let ErrOutLevel = levelFromString Level.Verbose
-        let argsStr = (args |> String.concat " ")
-
-        recipe {
-            let! ctx = getCtx()
-            let log = ctx.Logger.Log
-
-            // do! trace Level.Debug "[_system] settings: '%A'"
-
-            let handleErr s = log (ErrOutLevel s) "%s %s" logPrefix s
-            let handleStd s = log (StdOutLevel s) "%s %s" logPrefix s
-            let workingDir = None
-
-            let! exitCode = pexec handleStd handleErr cmd argsStr envVars workingDir
-            return exitCode
-        }
+    /// <param name="failOnError">Whether a non-zero exit code has to fail the build</param>
+    /// <param name="name">The target being built, for the diagnostic message</param>
+    /// <param name="exitCode">The tool's exit code</param>
+    let failOnExitCode failOnError (name: string) exitCode = recipe {
+        if exitCode <> 0 then
+            do! trace Error "('%s') failed with exit code '%i'" name exitCode
+            if failOnError then failwithf "Exiting due to FailOnError set on '%s'" name
+    }

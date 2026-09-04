@@ -5,6 +5,7 @@ module CscImpl =
 
     open System.IO
     open Xake
+    open Xake.Tasks
 
     type CscSettingsType = {
         /// Limits which platforms this code can run on. The default is anycpu.
@@ -146,7 +147,15 @@ module CscImpl =
             do! trace Info "compiling '%s' using framework '%s'" outFile.Name fwkInfo.Version
             do! trace Debug "Command line: '%s %s'" cscTool (args |> Seq.map Impl.escapeArgument |> String.concat "\r\n\t")
 
-            let! exitCode = Impl._system cscTool commandLineArgs fwkInfo.EnvVars "[CSC] "
+            let! exitCode =
+                shell {
+                    cmd cscTool
+                    args commandLineArgs
+                    envs fwkInfo.EnvVars
+                    logprefix "[csc]"
+                    stdoutlevel (Impl.levelFromString Level.Verbose)
+                    erroutlevel (Impl.levelFromString Level.Verbose)
+                }
 
             do! trace Level.Verbose "Deleting temporary files"
             seq {
@@ -160,9 +169,7 @@ module CscImpl =
             }
             |> Seq.iter File.Delete
 
-            if exitCode <> 0 then
-                do! trace Error "('%s') failed with exit code '%i'" outFile.Name exitCode
-                if settings.FailOnError then failwithf "Exiting due to FailOnError set on '%s'" outFile.Name
+            do! Impl.failOnExitCode settings.FailOnError outFile.Name exitCode
         }
 
     (* csc options builder *)

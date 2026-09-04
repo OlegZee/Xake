@@ -4,6 +4,7 @@
 module MsbuildImpl =
 
     open Xake
+    open Xake.Tasks
     open DotNetTaskTypes
 
     // Sln (msbuild/xbuild) task settings
@@ -44,11 +45,11 @@ module MsbuildImpl =
             let! dotnetFwk = getVar "NETFX"
             let fwkInfo = DotNetFwk.locateFramework dotnetFwk
 
-            let pfx = "msbuild"
+            let pfx = "[msbuild]"
 
             let verbosityKey = function | Quiet -> "q" | Minimal -> "m" | Normal -> "n" | Detailed -> "d" | Diag -> "diag"
 
-            let args =
+            let commandLineArgs =
                 seq {
                     yield "/nologo"
                     yield settings.BuildFile
@@ -75,16 +76,20 @@ module MsbuildImpl =
                 }
 
             do! trace Info "%s making '%s' using framework '%s'" pfx settings.BuildFile fwkInfo.Version
-            do! trace Debug "Command line: '%A'" args
+            do! trace Debug "Command line: '%s'" (commandLineArgs |> String.concat " ")
 
-            let envVars = [] // fwkInfo.EnvVars ?
-            let! exitCode = Impl._system fwkInfo.MsbuildTool args envVars pfx
+            let! exitCode =
+                shell {
+                    cmd fwkInfo.MsbuildTool
+                    args commandLineArgs
+                    logprefix pfx
+                    stdoutlevel (Impl.levelFromString Level.Verbose)
+                    erroutlevel (Impl.levelFromString Level.Verbose)
+                }
 
 
             do! trace Info "%s done '%s'" pfx settings.BuildFile
-            if exitCode <> 0 then
-                do! trace Error "%s ('%s') failed with exit code '%i'" pfx settings.BuildFile exitCode
-                if settings.FailOnError then failwithf "Exiting due to FailOnError set on '%s'" pfx
+            do! Impl.failOnExitCode settings.FailOnError settings.BuildFile exitCode
             ()
         }
 

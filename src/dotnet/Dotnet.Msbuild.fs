@@ -99,3 +99,36 @@ module MsbuildImpl =
             do! Impl.failOnExitCode settings.FailOnError settings.BuildFile exitCode
         }
 
+    /// Computation expression builder for the msbuild task.
+    type MSBuildSettingsBuilder() =
+
+        /// <summary>Sets the project or solution file to build</summary>
+        [<CustomOperation("buildfile")>]  member __.BuildFile(s:MSBuildSettingsType, value) = {s with BuildFile = value}
+        /// <summary>Adds a target to build</summary>
+        [<CustomOperation("target")>]     member __.Target(s:MSBuildSettingsType, value) =    {s with Target = s.Target @ [value]}
+        /// <summary>Sets the list of targets to build</summary>
+        [<CustomOperation("targets")>]    member __.Targets(s:MSBuildSettingsType, value) =   {s with Target = value}
+        /// <summary>Sets or overrides a project-level property</summary>
+        [<CustomOperation("prop")>]       member __.Prop(s:MSBuildSettingsType, (name, value)) = {s with Property = s.Property @ [(name, value)]}
+        /// <summary>Sets or overrides project-level properties</summary>
+        [<CustomOperation("props")>]      member __.Props(s:MSBuildSettingsType, value) =     {s with Property = s.Property @ value}
+        /// <summary>Maximum number of concurrent processes, 0 for the number of processors</summary>
+        [<CustomOperation("maxcpu")>]     member __.MaxCpu(s:MSBuildSettingsType, value) =    {s with MaxCpuCount = Some value}
+        /// <summary>The MSBuild toolset version to use</summary>
+        [<CustomOperation("toolsversion")>] member __.ToolsVersion(s:MSBuildSettingsType, value) = {s with ToolsVersion = Some value}
+        /// <summary>How much information MSBuild outputs</summary>
+        [<CustomOperation("verbosity")>]  member __.Verbosity(s:MSBuildSettingsType, value) = {s with Verbosity = value}
+        /// <summary>Inserts command-line settings from a response file</summary>
+        [<CustomOperation("rspfile")>]    member __.RspFile(s:MSBuildSettingsType, value) =   {s with RspFile = Some value}
+        /// <summary>Does not fail the build on a non-zero exit code</summary>
+        [<CustomOperation("nofailonerror")>] member __.NoFailOnError(s:MSBuildSettingsType) = {s with FailOnError = false}
+
+        member __.Bind(x, f) = f x
+        member __.Yield(()) = MSBuildSettingsType.Default
+        member __.For(x, f) = f x
+
+        member __.Zero() = MSBuildSettingsType.Default
+        member __.Run(s:MSBuildSettingsType) = MSBuild s
+
+    /// The msbuild task builder instance.
+    let msbuild = MSBuildSettingsBuilder()

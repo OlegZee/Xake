@@ -178,6 +178,14 @@ module ShellImpl =
         /// <summary>Set the prefix for log messages</summary>
         [<CustomOperation("logprefix")>] member __.LogPrefix(a:ShellOptions, value) = {a with LogPrefix = value}
 
+        /// <summary>Sets the function computing the log level for each stdout line</summary>
+        [<CustomOperation("stdoutlevel")>]
+        member __.StdOutLevel(a:ShellOptions, fn: string -> Level) = {a with StdOutLevel = fn}
+
+        /// <summary>Sets the function computing the log level for each stderr line</summary>
+        [<CustomOperation("erroutlevel")>]
+        member __.ErrOutLevel(a:ShellOptions, fn: string -> Level) = {a with ErrOutLevel = fn}
+
         /// <summary>Attach an additional stdout handler</summary>
         [<CustomOperation("stdout")>]
         member _.Stdout(state:ShellOptions, handler: string -> unit) =

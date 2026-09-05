@@ -1,2 +1,2 @@
 #!/bin/bash
-dotnet fsi build.fsx -- --
+dotnet fsi build.fsx -- -- build test

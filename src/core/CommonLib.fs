@@ -11,15 +11,15 @@ let memoize f =
     let cache = ref Map.empty
     let lck = System.Object()
     fun x ->
-        match !cache |> Map.tryFind (K x) with
+        match cache.Value |> Map.tryFind (K x) with
         | Some v -> v
         | None ->
             lock lck (fun () ->
-                match !cache |> Map.tryFind (K x) with
+                match cache.Value |> Map.tryFind (K x) with
                 | Some v -> v
                 | None ->
                     let res = f x
-                    cache := !cache |> Map.add (K x) res
+                    cache.Value <- cache.Value |> Map.add (K x) res
                     res)
 
 

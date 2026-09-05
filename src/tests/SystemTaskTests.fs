@@ -59,7 +59,7 @@ let ``sh fails by default on non-zero exit code on Unix``() =
     do xake TestOptionsStrict {
         rules [
             "main" => (WhenError (fun _ -> exceptionThrown <- true) <| recipe {
-                do! sh "false" {}
+                do! sh "false" { () }
             })
         ]
     }

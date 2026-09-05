@@ -1,4 +1,4 @@
-# This workflow will build a .NET project
+# Publishes the Xake package to nuget.org. Triggered by a `v*` tag; see docs/devprocess.md.
 # For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-net
 
 name: Publish package
@@ -13,31 +13,37 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v7
     - name: Setup .NET
-      uses: actions/setup-dotnet@v3
+      uses: actions/setup-dotnet@v6
       with:
-        dotnet-version: 9.0.x
-    
+        dotnet-version: 10.0.x
+
+    # The tag carries the release version; the run number becomes the fourth component, so
+    # re-tagging or re-running never collides with an already published version.
     - name: Extract version from tag
       id: version
       run: |
         TAG_NAME="${{ github.ref_name }}"
         VERSION="${TAG_NAME#v}"  # Remove 'v' prefix
         echo "version=${VERSION}.${{ github.run_number }}" >> $GITHUB_OUTPUT
-    
+
     - name: Build and test
       run: dotnet fsi build.fsx -- -- build test pack
       env:
         VERSION: ${{ steps.version.outputs.version }}
-    
+
     - name: Publish
-      run: dotnet nuget push out/*.nupkg --api-key ${{ secrets.NUGET_API_KEY }} --source https://www.nuget.org/api/v2/package
-    
+      run: >
+        dotnet nuget push out/*.nupkg
+        --api-key ${{ secrets.NUGET_API_KEY }}
+        --source https://api.nuget.org/v3/index.json
+        --skip-duplicate
+
     - name: Upload build log
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       if: always()
       with:
-        name: build-log-${{ github.run_number }}.txt
+        name: build-log-${{ github.run_number }}
         path: build.log
         retention-days: 5

@@ -36,3 +36,10 @@ let pexec handleStd handleErr cmd args (envvars:(string * string) list) workDir 
     proc.WaitForExit()
     return proc.ExitCode
 }
+
+/// Runs an external process and blocks until it exits, returning the exit code.
+/// For use outside recipes -- framework and tool probing, where there is no async context to
+/// await in. Safe on the worker pool: recipes run without a SynchronizationContext, and the
+/// process output handlers are raised on other thread-pool threads.
+let pexecSync handleStd handleErr cmd args envvars workDir =
+    pexec handleStd handleErr cmd args envvars workDir |> Async.RunSynchronously

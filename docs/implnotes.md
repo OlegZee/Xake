@@ -68,9 +68,11 @@ Log levels:
 
 ## Runtime and platform
 
-The current repository targets modern `dotnet` workflow with .NET SDK 9.0+.
+The current repository targets modern `dotnet` workflow with .NET SDK 8.0+ (see `global.json`).
 
-Legacy Mono and .NET Framework details from older versions are intentionally excluded from this document.
+The build script itself always runs on modern .NET. Full framework and Mono are compilation
+*targets* handled by the `Xake.Dotnet` tasks; see [dotnet-build.md](dotnet-build.md) for how
+that toolchain is discovered and selected.
 
 ## Teardown behavior
 

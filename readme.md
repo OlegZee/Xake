@@ -108,7 +108,7 @@ Create `name.txt` next to the script and run it twice: the second run reports
 ### More samples
 
 ```bash
-git clone http://github.com/xakebuild/xake
+git clone https://github.com/OlegZee/Xake
 cd xake
 dotnet fsi build.fsx -- -- build      # features.fsx and fullframework.fsx use the local build
 cd samples

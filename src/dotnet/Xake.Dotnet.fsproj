@@ -17,8 +17,8 @@
     <Authors>OlegZee</Authors>
 
     <Description>Xake build tool: the engine and the tasks for full .NET framework</Description>
-    <PackageProjectUrl>https://github.com/xakebuild/Xake</PackageProjectUrl>
-    <RepositoryUrl>https://github.com/xakebuild/Xake</RepositoryUrl>
+    <PackageProjectUrl>https://github.com/OlegZee/Xake</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/OlegZee/Xake</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
     <PackageTags>fsharp;build;make;buildtool;automation;shake</PackageTags>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>

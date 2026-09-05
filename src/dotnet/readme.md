@@ -1,10 +1,10 @@
 Xake is a make utility made for .NET on F# language. Xake is inspired by [shake](https://github.com/ndmitchell/shake) build tool.
 
-See [Xake documentation](https://github.com/xakebuild/Xake/wiki/introduction) for more details.
+See [Xake documentation](https://github.com/OlegZee/Xake/wiki/Introduction) for more details.
 
 These are the tasks for the full .NET framework: `csc`, `fsc`, `msbuild`, `resgen` and
 `resourceset`. They ship in the same `Xake` package as the engine, so a single reference is
-enough. See [docs/tasks.md](../../docs/tasks.md#net-tasks) for the full set of options.
+enough. See [Dotnet tasks](https://github.com/OlegZee/Xake/wiki/Tasks-%7C-Dotnet) for the full set of options.
 
 ## Prerequisites
 

@@ -138,8 +138,12 @@ type ``Delegated and resource tests``() =
     [<Test>]
     member _.``delegated rules are never bounded by the CPU thread pool``() =
         // A delegated rule must NOT consume a local CPU slot — the whole task runs
-        // detached. With only 2 CPU slots and no dispatch budget, all 16 delegated
-        // rules must still overlap. (No runDetached in the body — it is redundant here.)
+        // detached. With only 2 CPU slots and no dispatch budget, the 16 delegated rules
+        // must still overlap far beyond those slots. (No runDetached in the body — it is
+        // redundant here.) The bar is "many times the slot count", not "all 16 at once":
+        // on a loaded 2-core CI runner the rules ramp up over tens of milliseconds, so the
+        // first ones can finish before the last ones start.
+        let expectedOverlap = 8
         let n = 16
         let enter, leave, peak = meter ()
 
@@ -148,7 +152,7 @@ type ``Delegated and resource tests``() =
 
         let body = recipe {
             enter ()
-            do! Async.Sleep 200
+            do! Async.Sleep 300
             leave ()
         }
 
@@ -162,8 +166,8 @@ type ``Delegated and resource tests``() =
         Task.WaitAll tasks
         eng.StopAsync().Wait()
 
-        Assert.AreEqual(n, !peak,
-            sprintf "delegated rules must not be capped by CPU slots (peak was %d, expected %d)" !peak n)
+        Assert.GreaterOrEqual(!peak, expectedOverlap,
+            sprintf "delegated rules must not be capped by CPU slots (peak was %d, expected at least %d)" !peak expectedOverlap)
 
     [<Test>]
     member _.``delegated cache miss runs the body exactly once``() =

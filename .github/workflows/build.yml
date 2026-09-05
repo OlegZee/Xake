@@ -22,15 +22,15 @@ jobs:
         dotnet: [ '8.0.x', '10.0.x' ]
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
     - name: Setup .NET
-      uses: actions/setup-dotnet@v4
+      uses: actions/setup-dotnet@v5
       with:
         dotnet-version: ${{ matrix.dotnet }}
     - name: Build & test
       run: dotnet fsi build.fsx -- -- build test
     - name: Upload build log
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v5
       if: always()
       with:
         name: build-log-${{ github.run_number }}-${{ matrix.dotnet }}

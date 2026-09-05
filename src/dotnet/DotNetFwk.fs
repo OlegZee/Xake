@@ -122,7 +122,9 @@ module DotNetFwk =
                         CscTool = cscTool
                         FscTool = fun _ -> Some "fsharpc"
                         MsbuildTool = "xbuild"
-                        EnvVars =["PATH", sdkroot </> "bin" + ";" + (%"PATH")]
+                        // `+` binds tighter than `</>`, so the parentheses matter here; and the
+                        // separator is platform-dependent (';' on Windows, ':' elsewhere)
+                        EnvVars = ["PATH", (sdkroot </> "bin") + string Path.PathSeparator + (%"PATH")]
                     }
 
                     r

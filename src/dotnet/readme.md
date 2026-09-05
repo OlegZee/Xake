@@ -8,7 +8,7 @@ enough. See [docs/tasks.md](../../docs/tasks.md#net-tasks) for the full set of o
 
 ## Prerequisites
 
-The .NET SDK 9.0+ (see `global.json`). Nothing else: the compilers come from the SDK and the
+The .NET SDK 8.0+ (see `global.json`). Nothing else: the compilers come from the SDK and the
 .NET Framework reference assemblies from the
 `Microsoft.NETFramework.ReferenceAssemblies.*` packages, restored on first use -- so
 full-framework binaries can be built on any OS without a Framework installation.
@@ -18,7 +18,7 @@ full-framework binaries can be built on any OS without a Framework installation.
 The simple script looks like:
 
 ```fsharp
-#r "nuget: Xake, 3.0.0"
+#r "nuget: Xake"
 
 open Xake
 open Xake.Dotnet
@@ -33,4 +33,6 @@ do xakeScript {
 ```
 
 This script compiles helloworld assembly from helloworld.cs file. See
-[samples/fullframework.fsx](../../samples/fullframework.fsx) for targeting a specific framework.
+[samples/fullframework.fsx](../../samples/fullframework.fsx) for targeting a specific framework,
+and [docs/dotnet-build.md](../../docs/dotnet-build.md) for how the toolchain is discovered and
+how to switch between the SDK, a Framework installation and Mono.

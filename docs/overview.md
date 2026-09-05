@@ -5,25 +5,18 @@ It tracks dependencies, supports incremental builds, and runs independent target
 
 Current project baseline:
 
-- .NET SDK 9.0 or newer
-- Xake NuGet package `3.0.0`
+- .NET SDK 8.0 or newer
+- Xake NuGet package `Xake` — the engine and the .NET Framework tasks in one
 
 ## Minimal script
 
 ```fsharp
-#r "nuget: Xake, 3.0.0"
+#r "nuget: Xake"
 
 open Xake
-open Xake.Tasks
 
 do xakeScript {
-    rules [
-        "main" <== ["hello"]
-
-        command "hello" {
-            do! trace Message "Hello from Xake"
-        }
-    ]
+    "main" => trace Message "Hello from Xake"
 }
 ```
 
@@ -58,12 +51,12 @@ When dependencies do not change, Xake skips rebuilds.
 
 ## Rule styles
 
-Preferred builder style:
+Rules are written directly in the body of `xakeScript`. Preferred builder style:
 
 ```fsharp
-rules [
+do xakeScript {
     command "build" {
-        do! sh "dotnet build src/core -c Release" {}
+        do! sh "dotnet build src/core -c Release" { () }
     }
 
     target "out/version.txt" {
@@ -72,17 +65,29 @@ rules [
     }
 
     "main" <== ["build"]
-]
+}
 ```
 
 Operator style also works:
 
 ```fsharp
-rules [
+do xakeScript {
     "main" <== ["build"; "test"]
     "deploy" <<< ["build"; "test"; "package"]
     "clean" => rm {dir "out"}
-]
+}
+```
+
+Rules may also be generated with `for`, and the older `rules [ ... ]` wrapper is still
+accepted — the two forms can be mixed in one script:
+
+```fsharp
+do xakeScript {
+    for fwk in ["net8.0"; "netstandard2.0"] do
+        $"out/{fwk}/lib.dll" ..> recipe {
+            do! sh $"dotnet build src/lib -f {fwk} -o out/{fwk}" { () }
+        }
+}
 ```
 
 ## Useful links

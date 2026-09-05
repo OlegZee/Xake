@@ -22,6 +22,26 @@ xake ExecOptions.Default {
     // this is redundant as "main" is default target
     want ["main"]
 
+    // using wildcards and named groups when defining target
+    // The following rule defines how to build any file which names matches "*/*.cs*" pattern.
+    // Round brackets specify the named groups (known from regexps), the values can be accessed via getRuleMatch function
+    // e.g. for src/hello.csx the matches will be: dir=src, file=hello, ext=csx
+    //
+    // NOTE it is declared before the concrete rules on purpose: rules are matched in reverse
+    // declaration order, so a catch-all pattern placed *after* "temp/AssemblyInfo.cs" would
+    // shadow it and quietly produce nothing.
+
+    "(dir:*)/(file:*).(ext:c*)" ..> recipe {
+
+        let! dir = getRuleMatch "dir"
+        let! file = getRuleMatch "file"
+        let! ext = getRuleMatch "ext"
+
+        // here you place regular build steps
+
+        return ()
+    }
+
     // this rule does nothing but demands the other targets
     // the execution of the recipe is suspended until all demanded targets are built.
     // Targets are executed in parallel. Dependencies could be demanded in any part of recipe.
@@ -45,7 +65,7 @@ xake ExecOptions.Default {
 
     command "dotnet-version" {
         // this rule will run `dotnet --version` command and print the result
-        do! sh "dotnet --version" {}
+        do! sh "dotnet --version" { () }
 
         // you can pass arguments and set options for the command
         do! sh "dotnet" {
@@ -64,7 +84,13 @@ xake ExecOptions.Default {
     // .NET build rules
     // build .net executable from C# sources using full .net framework (or mono under unix)
     // notice there's no "out" parameter: csc recipe will use the target file as an output
-    "temp/a.exe" ..> csc {src (!!"temp/a.cs" + "temp/AssemblyInfo.cs")}
+    // `targetfwk` selects the framework to compile against, and with it the reference
+    // assemblies -- without it csc is invoked with no framework references at all
+    "temp/a.exe" ..> csc {
+        targetfwk "net-4.6.2"
+        src (!!"temp/a.cs" + "temp/AssemblyInfo.cs")
+        grefs ["System.dll"]
+    }
 
     // the rule above demands a.cs source file, this rule creates the source file
     "temp/a.cs" ..> writeText
@@ -109,22 +135,6 @@ xake ExecOptions.Default {
             }
         }
     ]
-    // using wildcards and named groups when defining target
-    // The following rule defines how to build any file which names matches "*/*.cs*" pattern.
-    // Round brackets specify the named groups (known from regexps), the values can be accessed via getRuleMatch function
-    // e.g. for src/hello.csx the matches will be: dir=src, file=hello, ext=csx
-
-    "(dir:*)/(file:*).(ext:c*)" ..> recipe {
-
-        let! dir = getRuleMatch "dir"
-        let! file = getRuleMatch "file"
-        let! ext = getRuleMatch "ext"
-
-        // here you place regular build steps
-
-        return ()
-    }
-
     "libs" => recipe {
         // this command will copy all dlls to `lib` (flat files)
         do! cp {file "packages/mylib/net46/*.dll"; todir "lib"}

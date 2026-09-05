@@ -1,2 +1,2 @@
 @echo off
-dotnet fsi build.fsx -- -- build
+dotnet fsi build.fsx -- -- build test

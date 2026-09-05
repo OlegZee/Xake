@@ -32,7 +32,7 @@ dotnet fsi build.fsx -- -- build test -d FILTER=TestName
 dotnet fsi build.fsx -- -- clean
 ```
 
-Requires .NET SDK 9.0+ (see `global.json`).
+Requires .NET SDK 8.0+ (see `global.json`).
 
 ## Architecture
 

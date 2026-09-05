@@ -3,7 +3,7 @@
 ## Package reference
 
 ```fsharp
-#r "nuget: Xake, 3.0.0"
+#r "nuget: Xake"
 open Xake
 open Xake.Tasks
 ```
@@ -12,11 +12,12 @@ open Xake.Tasks
 
 ```fsharp
 do xakeScript {
-	rules [
-		"main" <== ["build"; "test"]
-	]
+	"main" <== ["build"; "test"]
 }
 ```
+
+Rules go straight in the script body. The older `rules [ ... ]` wrapper still works, and both
+forms may be mixed.
 
 ## Dependency operators
 
@@ -41,9 +42,9 @@ do xakeScript {
 ## Preferred rule forms
 
 ```fsharp
-rules [
+do xakeScript {
 	command "build" {
-		do! sh "dotnet build src/core -c Release" {}
+		do! sh "dotnet build src/core -c Release" { () }
 	}
 
 	target "out/version.txt" {
@@ -51,9 +52,13 @@ rules [
 	}
 
 	targets ["out/a.dll"; "out/a.xml"] {
-		do! sh "dotnet build src/core -c Release -o out" {}
+		do! sh "dotnet build src/core -c Release -o out" { () }
 	}
-]
+
+	// rules can also be generated
+	for name in ["a"; "b"] do
+		$"clean-{name}" => rm { dir $"out/{name}" }
+}
 ```
 
 ## Recipe helpers
@@ -81,7 +86,7 @@ do! sh "dotnet" {
 ```fsharp
 open Xake.Dotnet
 
-"hello.exe" ..> csc { src !!"hello.cs" }                    // target file is the output
+// the target file is the output; `targetfwk` selects the reference assemblies
 "hello.exe" ..> csc { targetfwk "net-4.6.2"; src !!"hello.cs"; grefs ["System.dll"] }
 "app.exe"   ..> fsc { src !!"src/*.fs"; ref !!"bin/FSharp.Core.dll" }
 "build"      => msbuild { buildfile "a.sln"; target "Rebuild"; prop ("Configuration","Release") }

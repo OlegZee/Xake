@@ -9,15 +9,29 @@
     <PackageId>Xake</PackageId>
     <TargetsForTfmSpecificBuildOutput>$(TargetsForTfmSpecificBuildOutput);IncludeCoreOutput</TargetsForTfmSpecificBuildOutput>
     <OutputType>Library</OutputType>
+    <!-- The SDK would otherwise reference its own FSharp.Core, see the pin below. -->
+    <DisableImplicitFSharpCoreReference>true</DisableImplicitFSharpCoreReference>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <TargetFrameworks>net462;netstandard2.0</TargetFrameworks>
-    <Copyright>(c) OlegZee 2014-2025</Copyright>
+    <Copyright>(c) OlegZee 2014-2026</Copyright>
     <Authors>OlegZee</Authors>
 
-    <PackageProjectUrl>https://github.com/xakebuild/Xake</PackageProjectUrl>
-    <PackageIconUrl>https://github.com/xakebuild/Xake/raw/dev/Icon.png</PackageIconUrl>
     <Description>Xake build tool: the engine and the tasks for full .NET framework</Description>
+    <PackageProjectUrl>https://github.com/xakebuild/Xake</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/xakebuild/Xake</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageTags>fsharp;build;make;buildtool;automation;shake</PackageTags>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageIcon>Icon.png</PackageIcon>
+    <PackageReadmeFile>readme.md</PackageReadmeFile>
   </PropertyGroup>
+
+  <!-- nuget.org renders these; they are packed, not referenced by path, so the files have to
+       be listed explicitly. -->
+  <ItemGroup>
+    <None Include="..\..\Icon.png" Pack="true" PackagePath="\" Visible="false" />
+    <None Include="..\..\readme.md" Pack="true" PackagePath="\" Visible="false" />
+  </ItemGroup>
 
   <ItemGroup>
     <Compile Include="DotNetFwk.fs" />
@@ -55,5 +69,11 @@
 
   <ItemGroup Condition="'$(TargetFramework)' == 'netstandard2.0'">
     <PackageReference Include="Microsoft.Win32.Registry" Version="5.0.0" />
+  </ItemGroup>
+
+  <!-- Kept in step with src/core: this is the FSharp.Core floor the package imposes on its
+       consumers. See the note there. -->
+  <ItemGroup>
+    <PackageReference Include="FSharp.Core" Version="8.0.100" />
   </ItemGroup>
 </Project>

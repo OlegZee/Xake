@@ -1,6 +1,42 @@
 # Session notes
 
-## Current work: modernizing `src/dotnet` (branch `feature/rulesless-syntax`)
+## Release prep (branch `feature/rulesless-syntax`)
+
+Preparing the first release that ships `Xake.Dotnet` inside the `Xake` package. What was
+touched, so it is not re-litigated:
+
+- [`docs/dotnet-build.md`](dotnet-build.md) is the reference for toolchain discovery: the three
+  providers (`sdkImpl`, `msImpl`, `monoFwkImpl`), the fallback chain, framework-name
+  normalization, and the `NETFX`/`NETFX-TARGET`/`FSCVER` variables. Read it before touching
+  `DotNetFwk.fs`.
+- The nupkg had **no license metadata at all** and a deprecated `PackageIconUrl`. It now
+  declares `MIT`, packs `Icon.png` and `readme.md`, and packs with zero warnings. The readme is
+  referenced as `readme.md` — that is the git-tracked casing, and `README.md` would break the
+  pack on a case-sensitive CI filesystem.
+- The published version is *not* the tag: `publish.yml` appends the run number, so `v3.3.0`
+  publishes as `3.3.0.<run>`.
+- `FSharp.Core` in the nupkg is whatever the SDK pins — currently `10.1.400`. Bumping the SDK
+  raises the floor for every consumer. Pin it explicitly in the projects if that matters.
+- The mono provider built its `PATH` env var as `sdkroot </> ("bin" + ";" + PATH)` — `+` binds
+  tighter than `</>`, and `;` is not the Unix separator. Fixed, but the mono path has no test
+  coverage.
+- `build.fsx`'s `#r "nuget: Xake, 3.0.1"` bootstrap is deliberately behind the release; bump it
+  only after a release lands on nuget.org. Same for `samples/gettingstarted.fsx`, which
+  references the published package and therefore cannot be run until this release is out.
+- **The supported floor is .NET 8**, enforced in three places (`global.json`, the tests TFM, the
+  CI matrix) and by an explicit `FSharp.Core` 8.0.100 pin with
+  `DisableImplicitFSharpCoreReference`. Without the pin the SDK's own FSharp.Core lands in the
+  nuspec and every consumer inherits it. See docs/devprocess.md.
+- `builder {}` (the empty settings block) does **not** compile on F# 8 — `builder { () }` does,
+  and is what the docs, samples and tests use.
+- `csc` with no `targetfwk` passes no framework references at all, so it only ever worked on
+  Windows via `csc.rsp`. Every documented `csc` sample now sets `targetfwk`. Making the default
+  probe supply references too would be a real fix, and is not done.
+- `samples/features.fsx` had a catch-all `"(dir:*)/(file:*).(ext:c*)"` rule declared *after*
+  `temp/AssemblyInfo.cs`; since the last matching rule wins, it shadowed it and the sample had
+  been failing for a long time. The catch-all now comes first.
+
+## Earlier work: modernizing `src/dotnet`
 
 `src/dotnet` (Xake.Dotnet) was merged in from a separate repository and had not caught up with
 the engine. It has now been reworked to reuse the engine's APIs and match its style. What is

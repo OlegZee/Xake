@@ -3,7 +3,7 @@
 The examples below use current API style:
 
 ```fsharp
-#r "nuget: Xake, 3.0.0"
+#r "nuget: Xake"
 open Xake
 open Xake.Tasks
 ```
@@ -15,8 +15,11 @@ open Xake.Tasks
 `sh` fails on non zero exit code by default.
 
 ```fsharp
-do! sh "dotnet build src/core -c Release" {}
+do! sh "dotnet build src/core -c Release" { () }
 ```
+
+`{ () }` is the empty settings block. The shorter `{}` also works, but only from F# 9 onward;
+`{ () }` compiles on every SDK the package supports.
 
 With arguments and working directory:
 
@@ -129,9 +132,13 @@ built on any OS with nothing pre-installed beyond the SDK:
 Other operations: `out`, `target`, `platform`, `ref`/`refs`/`refif`, `resources`/`resourceslist`,
 `unsafe`, `cscpath`, `args`, `nofailonerror`.
 
+How the compiler and the reference assemblies are located, and how to force a particular
+toolchain, is described in [dotnet-build.md](dotnet-build.md).
+
 ### fsc
 
-Same shape as `csc`, plus `fscver`, `noframework` and `notailcalls`:
+Same shape as `csc`, plus `fscver`, `noframework` and `notailcalls` (there is no `fscpath`
+counterpart to `cscpath` — pin the toolchain with `fscver` or the `NETFX` variable instead):
 
 ```fsharp
 "app.exe" ..> fsc {
@@ -187,6 +194,10 @@ let strings = resourceset {
 ```bash
 dotnet fsi build.fsx -- -- build -d NETFX-TARGET:net-4.6.2
 ```
+
+Names such as `net-4.6.2`, `sdk-net462` and `mono-4.5` select both the framework and, through
+the prefix, the provider that supplies the tools. See
+[dotnet-build.md](dotnet-build.md#how-to-switch).
 
 ## Inner recipe helpers
 

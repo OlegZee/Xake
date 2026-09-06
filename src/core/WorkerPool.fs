@@ -4,17 +4,19 @@
 /// Message type for the worker pool mailbox: requests execution of a target.
 type ExecMessage<'r> =
     | Run of Target * Target list * Async<'r> * AsyncReplyChannel<Async<'r>>
-    /// Marks the boundary between one run and the next: within a run a target is executed at
-    /// most once, across runs the database decides again.
+    /// Reports a finished task: it moves aside and stays available for the rest of the run
+    | Done of string list
+    /// Marks the boundary between one run and the next
     | NewRun
 
 /// Internal worker pool that deduplicates and throttles parallel task execution.
 module internal WorkerPool =
 
   open System.Threading
-  open System.Threading.Tasks
 
-  /// Creates a throttled worker pool that deduplicates tasks by target name.
+  /// Creates a throttled worker pool that runs a target at most once per run: a request for
+  /// a target already running joins it, a request for one this run has finished gets its
+  /// result, and a new run starts over -- there the database decides what needs rebuilding.
   /// Returns the semaphore and the mailbox processor.
   let create (logger:ILogger) maxThreads =
     // controls how many threads are running in parallel
@@ -24,22 +26,20 @@ module internal WorkerPool =
     let mapKey (artifact:Target) = artifact.FullName
 
     throttler, MailboxProcessor.Start(fun mbox ->
-        let rec loop (run, map) = async {
+        let rec loop (running, finished) = async {
           match! mbox.Receive() with
           | Run(artifact, targets, action, chnl) ->
               let mkey = artifact |> mapKey
 
-              match map |> Map.tryFind mkey with
-              // A task of this run answers the request whether it is still going or already
-              // finished: one target, one execution per run. A task of an earlier run is
-              // joined only while it is in flight -- once it is done the next run asks the
-              // database again, which is what makes a second Demand notice a changed variable.
-              | Some (taskRun, (task: Task<'a>)) when taskRun = run || not task.IsCompleted ->
-                  log Never "Task found for '%s'. Status %A" artifact.ShortName task.Status
-                  chnl.Reply <| Async.AwaitTask task
-                  return! loop (run, map)
+              // running tasks are shared whenever they started, finished ones only within the
+              // run that produced them
+              match running |> Map.tryFind mkey |> Option.orElse (finished |> Map.tryFind mkey) with
+              | Some result ->
+                  log Never "Task found for '%s'" artifact.ShortName
+                  chnl.Reply result
+                  return! loop (running, finished)
 
-              | _ ->
+              | None ->
                   do log Info "Task queued '%s'" artifact.ShortName
                   do! throttler.WaitAsync(-1) |> Async.AwaitTask |> Async.Ignore
                   let keys = targets |> List.map mapKey
@@ -50,17 +50,23 @@ module internal WorkerPool =
                           return buildResult
                       finally
                           throttler.Release() |> ignore
+                          mbox.Post (Done keys)
                     })
-                  chnl.Reply <| Async.AwaitTask task
-                  let newMap = keys |> List.fold (fun m k -> m |> Map.add k (run, task)) map
-                  return! loop (run, newMap)
+                  let result = Async.AwaitTask task
+                  chnl.Reply result
+                  return! loop (keys |> List.fold (fun m k -> m |> Map.add k result) running, finished)
+
+          | Done keys ->
+              let move (running, finished) key =
+                  match running |> Map.tryFind key with
+                  | Some result -> running |> Map.remove key, finished |> Map.add key result
+                  | None -> running, finished
+              return! loop (keys |> List.fold move (running, finished))
 
           | NewRun ->
-              // finished tasks are forgotten, the ones still in flight are not: overlapping
-              // runs keep sharing them instead of doing the work twice
-              return! loop (run + 1, map |> Map.filter (fun _ (_, task: Task<'a>) -> not task.IsCompleted))
+              return! loop (running, Map.empty)
         }
-        loop (0, Map.empty) )
+        loop (Map.empty, Map.empty) )
 
 open System.Threading
 

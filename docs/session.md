@@ -1,5 +1,63 @@
 # Session notes
 
+## Hermetic build script (branch `feature/hermetic-build`)
+
+`build.fsx` is untouched and still the build of record. Next to it, `build.fsc.fsx` compiles both
+assemblies with the `fsc` task — msbuild compiles nothing — and is meant to replace it after the
+next release.
+
+**The division of labour**: msbuild is the only thing that reads a project file correctly, so it
+is asked, once per project, what to compile, what to reference and what to define; the answer is
+cached in a file rule; the compilation itself is the `fsc` task's, driven by explicit arguments.
+
+- **`Fsproj.evaluate`** (`src/dotnet/Fsproj.fs`) runs
+  `dotnet msbuild -restore -t:PrepareForBuild;GenerateAssemblyInfo;ResolveReferences` with
+  `-getItem`/`-getProperty` and writes msbuild's json to a file. Every part of that target list
+  earns its place: `PrepareForBuild` triggers `AddImplicitDefineConstants` (that is where
+  `NETSTANDARD2_0` and the `_OR_GREATER` chain come from), `GenerateAssemblyInfo` writes the
+  attributes file, `ResolveReferences` produces the reference list. `BuildProjectReferences=false`
+  is not optional: without it msbuild builds the referenced project, which is the thing being
+  avoided.
+  What msbuild writes is *dumped*, not kept: every metadata field of every item, 200 KB and 3600
+  lines per project of which one field is read. `evaluate` rewrites it into the ~15 KB of lists
+  the build actually consumes (`Fsproj.write`), so the cached file stays readable by a person.
+- **`Fsproj.parse`** reads that kept form (`parseEvaluation` reads msbuild's own). Sources are `CompileBefore @ Compile @ CompileAfter` — for
+  F# the SDK puts the generated `AssemblyInfo.fs` in **`CompileBefore`** (see
+  `FSharp/Microsoft.FSharp.Overrides.NetSdk.targets`), not `Compile`, so it lands first, which is
+  what makes `InternalsVisibleTo("Xake.Dotnet")` reach the compiler. The json parser is
+  hand-written: `System.Text.Json` is a package dependency on netstandard2.0 and would land on
+  every consumer of Xake.
+- **The cache is a plain file rule** in the script: `out/obj/<fwk>/<lib>.json` depends on the
+  `.fsproj` and (through the recipe) on the `Version` var. Second build: 37 ms, msbuild not
+  started. Touch a source file: recompiled, msbuild still not started.
+- **`ReferencePath` points a project reference at that project's own `bin/`**, so the script
+  filters those out and substitutes its own `out/<fwk>/<name>.dll`.
+- **The `fsc` task stayed thin** — the whole diff against `dev` is `doc`, netstandard targeting
+  (`DotNetFwk.sdkImpl`, see docs/dotnet-build.md) and a `define` fix: fsc reads `--define:A;B` as
+  one symbol named `A;B`, so the task emits one switch per symbol.
+
+Traps worth remembering:
+
+- A list expression that mixes literals with a `for` comprehension turns the literals into
+  statements and **silently drops them** (`FS0020`); the msbuild command line lost every flag
+  that way. Use `@` between lists, or `yield` on every element.
+- A triple-quoted string whose closing `"""` sits left of the enclosing offside line breaks the
+  parse of everything after it (`FS0010: Unexpected identifier in member definition`). Indent the
+  literal into the block.
+
+**Bootstrapping it** needs a *frozen copy* of the assemblies — the script overwrites `out/`, and
+overwriting an assembly fsi has loaded kills the run with a `BadImageFormatException`:
+
+```bash
+dotnet fsi build.fsx -- -- build
+mkdir -p .bootstrap && cp out/netstandard2.0/*.dll .bootstrap/
+dotnet fsi build.fsc.fsx -- -- build test
+```
+
+After the release both `#r` lines become `#r "nuget: Xake, <version>"` and the staging goes away.
+`dotnet test` and `dotnet pack` still shell out to the SDK: the test project is msbuild's, and the
+nupkg carries a `net462` asset fsc cannot produce here (see the limitation below).
+
 ## Release prep (branch `feature/rulesless-syntax`)
 
 Preparing the first release that ships `Xake.Dotnet` inside the `Xake` package. What was
@@ -73,8 +131,9 @@ worth knowing before touching it again:
   the first request completes. Reproducible with no .NET task involved (engine-level, in
   `WorkerPool.fs`). This is why the csc test asserts on its output file rather than an
   execution count.
-- `build.fsx` builds `netstandard2.0` only; the `net462` asset comes from `dotnet build` /
-  `dotnet pack`.
+- `build.fsx` builds `netstandard2.0` only; the `net462` asset comes from `dotnet pack`. An
+  fsc-built net462 leg would need an FSharp.Core with a net4x assembly, which the pinned
+  package does not have.
 
 ## How to verify changes here
 
@@ -82,7 +141,7 @@ worth knowing before touching it again:
 dotnet build src/core -c Release && dotnet build src/dotnet -c Release   # both TFMs
 dotnet test src/tests                                                    # 233 passed, 1 skipped
 dotnet test src/tests --filter 'Category=Integration'                    # real csc invocation
-dotnet fsi build.fsx -- -- build test                                    # self-hosting
+dotnet fsi build.fsx -- -- build test                                    # self-hosting, fsc only
 dotnet fsi samples/fullframework.fsx                                     # end-to-end csc
 ```
 

@@ -63,6 +63,82 @@ type ``Dotnet tasks tests``() =
         Assert.That(needExecuteCount.Value, Is.GreaterThanOrEqualTo 1)
         Assert.That(File.Exists "hello.exe", Is.True, "csc did not produce hello.exe")
 
+    // Same discovery, but for a profile rather than a framework version: the reference
+    // assembly comes from the SDK's netstandard pack or from the NETStandard.Library
+    // package. FSharp.Core is referenced explicitly since --noframework is in effect.
+    [<Test; Category("Integration")>]
+    member x.``runs fsc task targeting netstandard``() =
+
+        let fsharpCore = System.Reflection.Assembly.GetAssembly(typeof<option<int>>).Location
+
+        do xake {x.TestOptions with FileLog="fsc-netstandard.log"; ThrowOnError = true} {
+            wantOverride (["hi.dll"])
+
+            rules [
+                "hi.dll" ..> recipe {
+                    do! need ["hi.fs"]
+                    do! Fsc {
+                    FscSettingsType.Default with
+                        Src = !!"hi.fs"
+                        Out = File.make "hi.dll"
+                        Ref = Fileset.Empty ++ fsharpCore
+                        TargetFramework = "netstandard2.0"
+                    }
+                }
+                "hi.fs" ..> writeText """module Hi
+let greet name = sprintf "Hello, %s" name
+"""
+            ]
+        }
+
+        Assert.That(File.Exists "hi.dll", Is.True, "fsc did not produce hi.dll")
+
+    [<Test>]
+    member x.``reads the project msbuild evaluated``() =
+
+
+        let result = Path.Combine(Path.GetTempPath(), "xake-test-eval.json")
+        File.WriteAllText(result, """{
+              "Properties": {
+                "AssemblyName": "Sample.Lib",
+                "DefineConstants": "TRACE;RELEASE;NETSTANDARD;NETSTANDARD2_0",
+                "Copyright": "(c) \"nobody\" \u00a9"
+              },
+              "Items": {
+                "CompileBefore": [
+                  { "Identity": "obj/Release/netstandard2.0/Sample.AssemblyInfo.fs", "FullPath": "/proj/obj/Release/netstandard2.0/Sample.AssemblyInfo.fs" }
+                ],
+                "Compile": [
+                  { "Identity": "First.fs", "FullPath": "/proj/First.fs" },
+                  { "Identity": "Second.fs", "FullPath": "/proj/Second.fs" }
+                ],
+                "CompileAfter": [],
+                "ReferencePath": [
+                  { "Identity": "FSharp.Core", "FullPath": "/packages/FSharp.Core.dll" }
+                ],
+                "ProjectReference": [
+                  { "Identity": "../core/Core.fsproj", "FullPath": "/core/Core.fsproj" }
+                ]
+              }
+            }""")
+
+        let project = Fsproj.parseEvaluation result
+
+        Assert.That(project.AssemblyName, Is.EqualTo "Sample.Lib")
+        // the generated assembly attributes are the CompileBefore item and come first
+        Assert.That(project.Sources, Is.EqualTo [
+            "/proj/obj/Release/netstandard2.0/Sample.AssemblyInfo.fs"; "/proj/First.fs"; "/proj/Second.fs"])
+        Assert.That(project.References, Is.EqualTo ["/packages/FSharp.Core.dll"])
+        Assert.That(project.ProjectRefs, Is.EqualTo ["/core/Core.fsproj"])
+        Assert.That(project.Defines, Is.EqualTo ["TRACE"; "RELEASE"; "NETSTANDARD"; "NETSTANDARD2_0"])
+        // escapes are the parser's own business -- there is no json library underneath
+        Assert.That(project.Properties.["Copyright"], Is.EqualTo "(c) \"nobody\" \u00a9")
+
+        // msbuild's answer is kept in the compact form, which has to read back the same
+        let kept = Path.Combine(Path.GetTempPath(), "xake-test-eval-kept.json")
+        File.WriteAllText(kept, Fsproj.write project)
+        Assert.That(Fsproj.parse kept, Is.EqualTo project)
+
     [<Test>]
     member x.``resource set instantiation``() =
 

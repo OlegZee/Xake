@@ -215,6 +215,10 @@ module DotNetFwk =
 
         let referenceAssembliesVersion = "1.0.3"
 
+        /// The package carrying the netstandard2.0 reference assemblies. 2.1 ships with the
+        /// SDK instead, see netstandardRefDir.
+        let netstandardLibraryVersion = "2.0.3"
+
         let private knownMonikers =
             [ "net20"; "net35"; "net40"; "net45"; "net451"; "net452"; "net46"
               "net461"; "net462"; "net47"; "net471"; "net472"; "net48" ]
@@ -226,6 +230,13 @@ module DotNetFwk =
                    .Replace("net", "").Replace(".", "").Replace("-", "")
             let m = "net" + digits
             if knownMonikers |> List.contains m then Some m else None
+
+        /// "netstandard2.0" | "sdk-netstandard2.0" -> Some "netstandard2.0". Kept apart from
+        /// `moniker`: netstandard is a profile, not a Framework version, and it is resolved
+        /// against a different set of reference assemblies.
+        let netstandardMoniker (fwk: string) =
+            let m = fwk.ToLowerInvariant().Replace("sdk-", "")
+            if ["netstandard2.0"; "netstandard2.1"] |> List.contains m then Some m else None
 
         /// Numeric-aware pick of the latest subdirectory: "10.0.400" beats "8.0.424",
         /// and a released version beats a preview one.
@@ -250,17 +261,17 @@ module DotNetFwk =
 
         /// Restores the reference assemblies package, so that the first build on a clean
         /// machine works without the user having to prepare anything.
-        let private restorePackage moniker =
-            let dir = Path.GetTempPath() </> ("xake-refasm-" + moniker)
+        let private restorePackage (packageId: string) (version: string) =
+            let dir = Path.GetTempPath() </> ("xake-refasm-" + packageId.ToLowerInvariant())
             let project = dir </> "refasm.csproj"
             try
                 Directory.CreateDirectory dir |> ignore
                 File.WriteAllText (project, sprintf """<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup><TargetFramework>netstandard2.0</TargetFramework></PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies.%s" Version="%s" />
+    <PackageReference Include="%s" Version="%s" />
   </ItemGroup>
-</Project>""" moniker referenceAssembliesVersion)
+</Project>""" packageId version)
                 pexecSync ignore ignore "dotnet" (sprintf "restore \"%s\"" project) [] (Some dir) |> ignore
             with _ -> ()
 
@@ -271,7 +282,7 @@ module DotNetFwk =
             match locate () with
             | Some dir -> Some dir
             | None ->
-                restorePackage moniker
+                restorePackage ("Microsoft.NETFramework.ReferenceAssemblies." + moniker) referenceAssembliesVersion
                 locate ()
 
         let private dotnetHost () =
@@ -279,7 +290,7 @@ module DotNetFwk =
             | null | "" -> try System.Diagnostics.Process.GetCurrentProcess().MainModule.FileName with _ -> null
             | path -> path
 
-        let private sdkDir () =
+        let private dotnetRoot () =
             let hostDir =
                 match dotnetHost () with
                 | null | "" -> None
@@ -291,7 +302,27 @@ module DotNetFwk =
               Some "/usr/share/dotnet"
               (match %"ProgramFiles" with | null | "" -> None | dir -> Some (dir </> "dotnet")) ]
             |> List.tryPick (Option.filter (fun root -> Directory.Exists (root </> "sdk")))
-            |> Option.bind (fun root -> latestDir (root </> "sdk"))
+
+        let private sdkDir () =
+            dotnetRoot () |> Option.bind (fun root -> latestDir (root </> "sdk"))
+
+        /// netstandard reference assemblies: 2.1 ships with the SDK as a pack, 2.0 only
+        /// exists in the NETStandard.Library package.
+        let private netstandardRefDir moniker =
+            let fromSdkPack () =
+                dotnetRoot ()
+                |> Option.bind (fun root -> latestDir (root </> "packs" </> "NETStandard.Library.Ref"))
+                |> Option.map (fun pack -> pack </> "ref" </> moniker)
+                |> Option.filter Directory.Exists
+            let packageDir () =
+                let dir = nugetRoot () </> "netstandard.library" </> netstandardLibraryVersion
+                             </> "build" </> moniker </> "ref"
+                if Directory.Exists dir then Some dir else None
+            match fromSdkPack () |> Option.orElseWith packageDir with
+            | Some dir -> Some dir
+            | None ->
+                restorePackage "NETStandard.Library" netstandardLibraryVersion
+                packageDir ()
 
         /// fsc and msbuild ship as managed dlls, so they are launched through a tiny script.
         let private launcher name (args: string) =
@@ -306,30 +337,42 @@ module DotNetFwk =
                 pexecSync ignore ignore "chmod" (sprintf "+x \"%s\"" path) [] None |> ignore
             path
 
-        let tryLocateFwk fwk =
-            match moniker fwk with
-            | None -> None, sprintf "'%s' is not a known .NET Framework profile" fwk
-            | Some moniker ->
-
+        /// The compilers always come from the SDK; only the reference assemblies differ
+        /// between the profiles.
+        let private sdkFwkInfo refDirs version =
             match sdkDir () with
             | None -> None, "the .NET SDK is not found, cannot locate the compilers"
             | Some sdk ->
-
-            match refAssembliesDir moniker with
-            | None ->
-                None, sprintf "reference assemblies for '%s' are not available: failed to restore package Microsoft.NETFramework.ReferenceAssemblies.%s" moniker moniker
-            | Some refDir ->
                 let exe name = if Env.isWindows then name + ".exe" else name
                 Some {
-                    Version = moniker
+                    Version = version
                     InstallPath = sdk
                     ToolDir = sdk </> "Roslyn" </> "bincore"
-                    AssemblyDirs = [refDir; refDir </> "Facades"]
+                    AssemblyDirs = refDirs
                     CscTool = sdk </> "Roslyn" </> "bincore" </> exe "csc"
                     FscTool = fun _ -> Some (launcher "fsc" (sprintf "\"%s\"" (sdk </> "FSharp" </> "fsc.dll")))
                     MsbuildTool = launcher "msbuild" "msbuild"
                     EnvVars = []
                 }, null
+
+        let tryLocateFwk fwk =
+            match netstandardMoniker fwk with
+            | Some moniker ->
+                match netstandardRefDir moniker with
+                | Some refDir -> sdkFwkInfo [refDir] moniker
+                | None ->
+                    None, sprintf "reference assemblies for '%s' are not available: failed to restore package NETStandard.Library" moniker
+            | None ->
+
+            match moniker fwk with
+            | None -> None, sprintf "'%s' is not a known .NET Framework profile" fwk
+            | Some moniker ->
+
+            match refAssembliesDir moniker with
+            | None ->
+                None, sprintf "reference assemblies for '%s' are not available: failed to restore package Microsoft.NETFramework.ReferenceAssemblies.%s" moniker moniker
+            | Some refDir ->
+                sdkFwkInfo [refDir; refDir </> "Facades"] moniker
 
     module internal impl =
 

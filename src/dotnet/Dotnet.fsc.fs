@@ -31,6 +31,8 @@ module FscImpl =
         TargetFramework: string
         /// Use specific FSC compiler version (only dotnet)
         FscVersion: string option
+        /// Xml documentation file to produce alongside the assembly.
+        Doc: File
         /// Custom command-line arguments
         CommandArgs: string list
         /// Build fails on compile error.
@@ -51,6 +53,7 @@ module FscImpl =
             Define = []
             TargetFramework = null
             FscVersion = None
+            Doc = File.undefined
             CommandArgs = []
             FailOnError = true
             NoFramework = false
@@ -103,6 +106,11 @@ module FscImpl =
             let opt (name: string) = (if Env.isWindows then "/" else "--") + name
             let refOpt = if Env.isWindows then "/r:" else "-r:"
 
+            // netstandard is a profile rather than a framework version: its whole surface
+            // lives in netstandard.dll, and fsc has to be told about it explicitly
+            let isNetstandard =
+                targetFramework <> null && targetFramework.StartsWith("netstandard", System.StringComparison.OrdinalIgnoreCase)
+
             let (globalRefs,noframework) =
                 let mapfn = (+) refOpt
                 match targetFramework with
@@ -112,7 +120,8 @@ module FscImpl =
                 | tgt ->
                     let fwk = Some tgt |> DotNetFwk.locateFramework in
                     let lookup = DotNetFwk.locateAssembly fwk
-                    ("mscorlib.dll" :: settings.RefGlobal |> List.map (lookup >> mapfn)), true
+                    let sysAssembly = if isNetstandard then "netstandard.dll" else "mscorlib.dll"
+                    (sysAssembly :: settings.RefGlobal |> List.map (lookup >> mapfn)), true
 
             let args =
                 seq {
@@ -124,11 +133,18 @@ module FscImpl =
                     if settings.NoFramework || noframework then
                         yield opt "noframework"
 
+                    if isNetstandard then
+                        yield opt "targetprofile:netstandard"
+
                     if outFile <> File.undefined then
                         yield sprintf "%sout:%s" (opt "") (File.getFullName outFile)
 
-                    if not (List.isEmpty settings.Define) then
-                        yield opt "define:" + (settings.Define |> String.concat ";")
+                    if settings.Doc <> File.undefined then
+                        yield sprintf "%sdoc:%s" (opt "") (File.getFullName settings.Doc)
+
+                    // one symbol per switch: fsc, unlike csc, takes '--define:A;B' as a
+                    // single (and useless) symbol named "A;B"
+                    yield! settings.Define |> List.map (fun symbol -> opt "define:" + symbol)
 
                     yield! src |> List.map (fun f -> f.FullName)
 
@@ -143,6 +159,10 @@ module FscImpl =
             // the compiler is taken from the framework being targeted, unless NETFX says otherwise
             let dotnetFwk = match netfxVar with | Some _ -> netfxVar | None -> Option.ofObj targetFramework
             let fwkInfo = DotNetFwk.locateFramework dotnetFwk
+
+            if settings.Doc <> File.undefined then
+                // fsc creates the directory for --out, but fails when the one for --doc is missing
+                System.IO.Directory.CreateDirectory (System.IO.Path.GetDirectoryName (File.getFullName settings.Doc)) |> ignore
 
             let commandLineArgs = args |> Seq.map Impl.escapeArgument
 
@@ -211,6 +231,8 @@ module FscImpl =
 
         /// <summary>Defines conditional compilation symbols</summary>
         [<CustomOperation("define")>]    member __.Define(s:FscSettingsType, value) =    {s with Define = value}
+        /// <summary>Writes the xml documentation file</summary>
+        [<CustomOperation("doc")>]       member __.Doc(s:FscSettingsType, value) =       {s with Doc = value}
         /// <summary>Uses a specific F# compiler version</summary>
         [<CustomOperation("fscver")>]    member __.FscVer(s:FscSettingsType, value) =    {s with FscVersion = Some value}
         /// <summary>Does not reference the default CLI assemblies</summary>

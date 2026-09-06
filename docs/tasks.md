@@ -149,6 +149,68 @@ counterpart to `cscpath` — pin the toolchain with `fscver` or the `NETFX` vari
 }
 ```
 
+`targetfwk` also takes `netstandard2.0` and `netstandard2.1`: the task then compiles against
+`netstandard.dll` with `--noframework --targetprofile:netstandard`. `doc` writes the xml
+documentation file, creating its directory — fsc creates the one for `--out` only.
+
+`define` takes one symbol per switch: unlike `csc`, `fsc` reads `--define:A;B` as a single
+symbol named `A;B`, so the task emits a separate `--define:` for each.
+
+#### Compiling what a project file describes
+
+A script that drives the compiler itself still has to know what to compile, what to reference
+and what to define. `Fsproj` asks msbuild, which is the only thing that reads a project file
+correctly — conditions, imports, the resolved reference list and the generated assembly
+attributes included — and the answer is cached in a file, so msbuild runs only when the project
+file changes:
+
+```fsharp
+// the one rule that runs msbuild
+"out/obj/(fwk:*)/(lib:*).json" ..> recipe {
+    let! framework = getRuleMatch "fwk"
+    let! name = getRuleMatch "lib"
+    let! result = getTargetFile()
+    do! needFiles (Filelist [File.make (projectOf name)])
+    do! Fsproj.evaluate {
+        Fsproj.EvalOptions.Default with
+            Project = projectOf name
+            Framework = framework
+            Configuration = "Release"
+            Properties = ["Version", "1.2.3"]
+            Output = result.FullName
+    }
+}
+
+// ... and the compile, which only reads the result
+let project = Fsproj.parse (evaluated name framework)
+do! fsc {
+    targetfwk framework
+    out (File.make outputPath)
+    doc (File.make docPath)
+    src (project.Sources |> List.fold (fun fs f -> fs ++ f) Fileset.Empty)
+    refs (project.References |> List.fold (fun fs f -> fs ++ f) Fileset.Empty)
+    define project.Defines
+}
+```
+
+`Fsproj.evaluate` runs `dotnet msbuild -restore -t:PrepareForBuild;GenerateAssemblyInfo;
+ResolveReferences` with `-getItem`/`-getProperty`. msbuild answers with every metadata field of
+every item — some 200 KB and 3600 lines per project, of which the build reads one field — so
+that dump goes to a scratch file and what is kept is only what gets consumed: a ~15 KB file of
+plain lists, readable and diffable. `Fsproj.parse` turns it back into a record:
+
+| Field | What is in it |
+|---|---|
+| `Sources` | `CompileBefore`, `Compile`, `CompileAfter` in that order — the generated `AssemblyInfo.fs` (`InternalsVisibleTo`, copyright, the versions from the `Version` property) is the `CompileBefore` item, so it comes first |
+| `References` | `ReferencePath`: every assembly resolved, framework references and packages alike |
+| `ProjectRefs` | `ProjectReference` items — msbuild points `References` at the referenced project's own `bin/`, so a build with its own layout substitutes them |
+| `Defines` | `DefineConstants`, including the symbols msbuild derives from the framework (`NETSTANDARD2_0`, the `_OR_GREATER` chain) |
+| `Properties` | whatever was asked for: `AssemblyName`, `Optimize`, `DebugType`, ... |
+
+`BuildProjectReferences=false` is passed for you: resolving a project reference must not make
+msbuild build the very thing the script is about to compile. Nothing else is compiled either —
+the evaluation only reads the project and writes the assembly attributes.
+
 ### msbuild
 
 ```fsharp

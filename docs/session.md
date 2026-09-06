@@ -35,10 +35,25 @@ cached in a file rule; the compilation itself is the `fsc` task's, driven by exp
   build: 38 ms, msbuild not started. Touch a source file: recompiled, msbuild still not started.
   `clean` does not touch it.
 - **`ReferencePath` points a project reference at that project's own `bin/`**, so the script
-  filters those out and substitutes its own `out/<fwk>/<name>.dll`.
+  filters those out and substitutes its own `out/<fwk>/<name>.dll`. It does *not* `need` them:
+  the `fsc` task already `needFiles` everything it references, and a target asked for twice in
+  one build is built twice (the WorkerPool dedup limitation below). That one redundant `need`
+  cost 3 of the 7 seconds a clean build took.
 - **The `fsc` task stayed thin** — the whole diff against `dev` is `doc`, netstandard targeting
   (`DotNetFwk.sdkImpl`, see docs/dotnet-build.md) and a `define` fix: fsc reads `--define:A;B` as
   one symbol named `A;B`, so the task emits one switch per symbol.
+
+Where the time goes, measured with everything cold (`obj/`, `bin/`, `out/`, `.xake` removed):
+
+| | `build.fsx` (dotnet build) | `build.fsc.fsx` |
+|---|---|---|
+| everything cold | 4.4 s | 4.6 s |
+| only `out/` removed | 1.9 s — msbuild's `obj/` is still warm, so it copies rather than compiles | 4.7 s — it has no such cache, it recompiles |
+| nothing changed | 0.7 s | 0.7 s |
+
+The middle row is the whole of the difference: msbuild keeps its own incremental state in `obj/`
+and `bin/`, and `dotnet build --output out` then degenerates into a copy. Comparing that against
+a real compilation is what made the fsc build look twice as slow.
 
 Traps worth remembering:
 

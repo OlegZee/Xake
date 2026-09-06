@@ -127,10 +127,11 @@ do xakeScript {
             let project = Fsproj.parse (evaluated name framework)
 
             // msbuild points a project reference at that project's own bin/; this build has
-            // its own layout, so those references are swapped for the artifacts it produces
+            // its own layout, so those references are swapped for the artifacts it produces.
+            // They are not `need`ed here: the fsc task does that for everything it references,
+            // and asking twice builds twice (see docs/session.md).
             let referenced = project.ProjectRefs |> List.choose libraryOf
             let ours = [for library in referenced -> $"out/%s{framework}/%s{library}.dll"]
-            do! need ours
 
             let references =
                 project.References

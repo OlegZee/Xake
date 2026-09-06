@@ -154,10 +154,12 @@ worth knowing before touching it again:
     analysis ties its knot, not an optimization that can be dropped — so the second request did
     not ask the database again and got the pre-build "Not built yet" answer.
 
-  The pool now keeps finished tasks, tagged with a run number: within a run a target executes
-  once, across runs (a new group, another `Demand`) the database decides again. `Scheduler.newRun`
-  marks the boundary and is posted exactly where the memo is created. Tasks still in flight are
-  kept across that boundary, so overlapping demands keep collapsing into one. Covered by
+  The pool now keeps two maps: `running`, which is shared by whoever asks whenever they ask,
+  and `finished`, which serves the rest of the run and is emptied when the next one starts.
+  `Scheduler.newRun` marks that boundary and is posted exactly where the memo is created. So:
+  within a run a target executes once; across runs the database decides again; and a task that
+  was already going when a run began still serves it, which is the pre-existing behaviour for
+  concurrent demands. Covered by
   `builds a target requested twice in one run only once` and `builds a file needed and then
   needFiled only once`.
 - `build.fsx` builds `netstandard2.0` only; the `net462` asset comes from `dotnet pack`. An

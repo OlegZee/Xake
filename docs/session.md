@@ -20,16 +20,20 @@ cached in a file rule; the compilation itself is the `fsc` task's, driven by exp
   avoided.
   What msbuild writes is *dumped*, not kept: every metadata field of every item, 200 KB and 3600
   lines per project of which one field is read. `evaluate` rewrites it into the ~15 KB of lists
-  the build actually consumes (`Fsproj.write`), so the cached file stays readable by a person.
+  the build actually consumes (`Fsproj.write`), with paths written against `$(NuGetPackageRoot)`
+  and `$(ProjectRoot)`.
 - **`Fsproj.parse`** reads that kept form (`parseEvaluation` reads msbuild's own). Sources are `CompileBefore @ Compile @ CompileAfter` — for
   F# the SDK puts the generated `AssemblyInfo.fs` in **`CompileBefore`** (see
   `FSharp/Microsoft.FSharp.Overrides.NetSdk.targets`), not `Compile`, so it lands first, which is
   what makes `InternalsVisibleTo("Xake.Dotnet")` reach the compiler. The json parser is
   hand-written: `System.Text.Json` is a package dependency on netstandard2.0 and would land on
   every consumer of Xake.
-- **The cache is a plain file rule** in the script: `out/obj/<fwk>/<lib>.json` depends on the
-  `.fsproj` and (through the recipe) on the `Version` var. Second build: 37 ms, msbuild not
-  started. Touch a source file: recompiled, msbuild still not started.
+- **The kept evaluation is tracked in git** (`projects/<fwk>/<lib>.json`) and behaves as a
+  lockfile for the compilation: because of the tokens, a regeneration on another machine is
+  byte-identical, so a diff there means the project really changed. It is produced by a plain
+  file rule that depends on the `.fsproj` and (through the recipe) on the `Version` var. Second
+  build: 38 ms, msbuild not started. Touch a source file: recompiled, msbuild still not started.
+  `clean` does not touch it.
 - **`ReferencePath` points a project reference at that project's own `bin/`**, so the script
   filters those out and substitutes its own `out/<fwk>/<name>.dll`.
 - **The `fsc` task stayed thin** — the whole diff against `dev` is `doc`, netstandard targeting

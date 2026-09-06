@@ -167,6 +167,34 @@ module Fsproj =
     let internal items = "CompileBefore,Compile,CompileAfter,ReferencePath,ProjectReference"
     let internal wantedProperties = "AssemblyName,DefineConstants,Optimize,DebugType,NoWarn,OtherFlags"
 
+    /// Roots replaced by a token when an evaluation is kept, and expanded back when it is
+    /// read: what a build links against sits under a package cache and a checkout, and neither
+    /// is in the same place on the next machine. Longest root first, so the more specific one
+    /// wins.
+    let internal roots () =
+        let nuget =
+            match System.Environment.GetEnvironmentVariable "NUGET_PACKAGES" with
+            | null | "" ->
+                System.Environment.GetFolderPath System.Environment.SpecialFolder.UserProfile
+                    </> ".nuget" </> "packages"
+            | dir -> dir
+        [ "$(NuGetPackageRoot)", nuget
+          "$(ProjectRoot)", Directory.GetCurrentDirectory() ]
+        |> List.map (fun (token, path) -> token, path.Replace('\\', '/').TrimEnd '/')
+        |> List.sortByDescending (snd >> String.length)
+
+    /// Paths are written with '/' whatever the platform: a kept evaluation is a file people
+    /// read and diff, and fsc takes forward slashes everywhere.
+    let internal tokenize roots (path: string) =
+        let path = path.Replace('\\', '/')
+        roots
+        |> List.tryPick (fun (token: string, root: string) ->
+            if path.StartsWith (root + "/") then Some (token + path.Substring root.Length) else None)
+        |> Option.defaultValue path
+
+    let internal expand roots (path: string) =
+        roots |> List.fold (fun (path: string) (token: string, root: string) -> path.Replace(token, root)) path
+
     let private defines (properties: Map<string, string>) =
         properties |> Map.tryFind "DefineConstants" |> Option.defaultValue ""
         |> fun value -> value.Split(';') |> List.ofArray |> List.filter (System.String.IsNullOrWhiteSpace >> not)
@@ -206,9 +234,10 @@ module Fsproj =
     /// item -- a couple of hundred kilobytes of which two fields are ever looked at -- so what
     /// gets kept is this: readable, diffable, and about a twentieth of the size.
     let internal write (project: ProjectInfo) =
+        let roots = roots ()
         let list name items =
             items
-            |> List.map (fun item -> sprintf "    %s" (Json.escape item))
+            |> List.map (tokenize roots >> Json.escape >> sprintf "    %s")
             |> String.concat ",\n"
             |> sprintf "  %s: [\n%s\n  ]" (Json.escape name)
 
@@ -284,10 +313,11 @@ module Fsproj =
     /// <param name="resultFile">The file the evaluation was written to</param>
     let parse (resultFile: string) =
         let root = File.ReadAllText resultFile |> Json.parse
+        let roots = roots ()
 
         let strings name =
             Json.field name root |> Option.map Json.asArray |> Option.defaultValue []
-            |> List.choose Json.asString
+            |> List.choose Json.asString |> List.map (expand roots)
 
         let properties =
             match Json.field "Properties" root with

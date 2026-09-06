@@ -197,7 +197,10 @@ do! fsc {
 ResolveReferences` with `-getItem`/`-getProperty`. msbuild answers with every metadata field of
 every item — some 200 KB and 3600 lines per project, of which the build reads one field — so
 that dump goes to a scratch file and what is kept is only what gets consumed: a ~15 KB file of
-plain lists, readable and diffable. `Fsproj.parse` turns it back into a record:
+plain lists, readable and diffable. Paths in it are written against `$(NuGetPackageRoot)` and
+`$(ProjectRoot)` and expanded again on read, so the file is byte-identical on every machine and
+belongs in the repository — a lockfile for the compilation, whose diff shows what a project
+change did. `Fsproj.parse` turns it back into a record:
 
 | Field | What is in it |
 |---|---|

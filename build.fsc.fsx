@@ -57,9 +57,11 @@ let binaries =
         -> $"out/%s{fwk}/%s{name}.%s{ext}"
     ]
 
-/// Where the evaluated project is cached. Its rule is the only thing that runs msbuild, and
-/// only when the project file or the version changed.
-let evaluated name framework = $"out/obj/%s{framework}/%s{name}.json"
+/// What msbuild answered about a project, kept in the repository: paths in it are written
+/// against `$(NuGetPackageRoot)` and `$(ProjectRoot)`, so the file is the same on every
+/// machine and its diff shows what a project change did to the compilation. Its rule is the
+/// only thing that runs msbuild, and only when the project file or the version changed.
+let evaluated name framework = $"projects/%s{framework}/%s{name}.json"
 
 /// A fileset made of exact paths, in the order given -- unlike a mask, this preserves the
 /// compile order fsc is handed.
@@ -92,7 +94,7 @@ do xakeScript {
 
         // ask msbuild what the project says: sources in compile order (the generated
         // assembly attributes first), the resolved references, the define symbols
-        target "out/obj/(fwk:*)/(lib:*).json" {
+        target "projects/(fwk:*)/(lib:*).json" {
 
             let! framework = getRuleMatch "fwk"
             let! name = getRuleMatch "lib"

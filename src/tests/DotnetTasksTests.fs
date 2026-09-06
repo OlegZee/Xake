@@ -139,6 +139,15 @@ let greet name = sprintf "Hello, %s" name
         File.WriteAllText(kept, Fsproj.write project)
         Assert.That(Fsproj.parse kept, Is.EqualTo project)
 
+        // a path under the package cache is kept as a token: the file goes into the
+        // repository and the cache is somewhere else on the next machine
+        let packages = Fsproj.roots () |> List.find (fst >> (=) "$(NuGetPackageRoot)") |> snd
+        let reference = packages + "/fsharp.core/8.0.100/lib/netstandard2.0/FSharp.Core.dll"
+        File.WriteAllText(kept, Fsproj.write { project with References = [reference] })
+
+        Assert.That(File.ReadAllText kept, Does.Contain "$(NuGetPackageRoot)/fsharp.core")
+        Assert.That((Fsproj.parse kept).References, Is.EqualTo [reference])
+
     [<Test>]
     member x.``resource set instantiation``() =
 

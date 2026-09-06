@@ -274,6 +274,10 @@ let runBuild (ctx: ExecContext) groups =
         async {
             do ctx.Logger.Log Info "Build target list %A" targets
 
+            // the change analysis below is memoized for the whole group, so the pool has to
+            // treat the group as one run: a target it already built must not be built again
+            do Scheduler.newRun ctx.Engine.Scheduler
+
             let progressSink = Progress.openProgress (getDurationDeps ctx getDeps) options.Threads targets ctx.ShowProgress
             let stepCtx = {ctx with NeedRebuild = List.exists needRebuild; Progress = progressSink}
 
@@ -329,6 +333,7 @@ let createContext (options: EngineOptions) vars =
 let demandTarget (ctx: ExecContext) (targetName: string) : Async<ExecStatus> =
     async {
         let target = makeTarget ctx targetName
+        do Scheduler.newRun ctx.Engine.Scheduler
         let getDeps = getChangeReasons ctx |> memoizeRec
         let needRebuild (t: Target) =
             getDeps t |> function | [] -> false | _ -> true

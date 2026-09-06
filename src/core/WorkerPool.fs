@@ -4,7 +4,9 @@
 /// Message type for the worker pool mailbox: requests execution of a target.
 type ExecMessage<'r> =
     | Run of Target * Target list * Async<'r> * AsyncReplyChannel<Async<'r>>
-    | Done of string list
+    /// Marks the boundary between one run and the next: within a run a target is executed at
+    /// most once, across runs the database decides again.
+    | NewRun
 
 /// Internal worker pool that deduplicates and throttles parallel task execution.
 module internal WorkerPool =
@@ -22,18 +24,22 @@ module internal WorkerPool =
     let mapKey (artifact:Target) = artifact.FullName
 
     throttler, MailboxProcessor.Start(fun mbox ->
-        let rec loop(map) = async {
+        let rec loop (run, map) = async {
           match! mbox.Receive() with
           | Run(artifact, targets, action, chnl) ->
               let mkey = artifact |> mapKey
 
               match map |> Map.tryFind mkey with
-              | Some (task:Task<'a>) ->
+              // A task of this run answers the request whether it is still going or already
+              // finished: one target, one execution per run. A task of an earlier run is
+              // joined only while it is in flight -- once it is done the next run asks the
+              // database again, which is what makes a second Demand notice a changed variable.
+              | Some (taskRun, (task: Task<'a>)) when taskRun = run || not task.IsCompleted ->
                   log Never "Task found for '%s'. Status %A" artifact.ShortName task.Status
                   chnl.Reply <| Async.AwaitTask task
-                  return! loop(map)
+                  return! loop (run, map)
 
-              | None ->
+              | _ ->
                   do log Info "Task queued '%s'" artifact.ShortName
                   do! throttler.WaitAsync(-1) |> Async.AwaitTask |> Async.Ignore
                   let keys = targets |> List.map mapKey
@@ -44,16 +50,17 @@ module internal WorkerPool =
                           return buildResult
                       finally
                           throttler.Release() |> ignore
-                          mbox.Post(Done keys)
                     })
                   chnl.Reply <| Async.AwaitTask task
-                  let newMap = keys |> List.fold (fun m k -> m |> Map.add k task) map
-                  return! loop newMap
+                  let newMap = keys |> List.fold (fun m k -> m |> Map.add k (run, task)) map
+                  return! loop (run, newMap)
 
-          | Done keys ->
-              return! loop (keys |> List.fold (fun m k -> m |> Map.remove k) map)
+          | NewRun ->
+              // finished tasks are forgotten, the ones still in flight are not: overlapping
+              // runs keep sharing them instead of doing the work twice
+              return! loop (run + 1, map |> Map.filter (fun _ (_, task: Task<'a>) -> not task.IsCompleted))
         }
-        loop(Map.empty) )
+        loop (0, Map.empty) )
 
 open System.Threading
 
@@ -73,6 +80,10 @@ module Scheduler =
 
     /// Returns the underlying mailbox processor for posting work items.
     let pool s = s.Pool
+
+    /// Starts a new run: a target an earlier run finished is looked at afresh, through the
+    /// database, rather than answered from the pool.
+    let newRun s = s.Pool.Post NewRun
 
     /// Release current slot, run work, reacquire slot.
     let withYieldedSlot scheduler work = async {

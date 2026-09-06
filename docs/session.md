@@ -36,20 +36,39 @@ cached in a file rule; the compilation itself is the `fsc` task's, driven by exp
   `clean` does not touch it.
 - **`ReferencePath` points a project reference at that project's own `bin/`**, so the script
   filters those out and substitutes its own `out/<fwk>/<name>.dll`. It does *not* `need` them:
-  the `fsc` task already `needFiles` everything it references, and a target asked for twice in
-  one build is built twice (the WorkerPool dedup limitation below). That one redundant `need`
-  cost 3 of the 7 seconds a clean build took.
+  the `fsc` task already `needFiles` everything it references, and asking once is the way to
+  write it. Back when a second request rebuilt the target, that one redundant `need` cost 3 of
+  the 7 seconds a clean build took — which is what uncovered the engine bug below.
 - **The `fsc` task stayed thin** — the whole diff against `dev` is `doc`, netstandard targeting
   (`DotNetFwk.sdkImpl`, see docs/dotnet-build.md) and a `define` fix: fsc reads `--define:A;B` as
   one symbol named `A;B`, so the task emits one switch per symbol.
+- **One target, one execution per run** (`WorkerPool.fs`). A target asked for a second time
+  after the first request had finished used to be built again, and it took two mechanisms to
+  get there: the pool deduped only *in-flight* requests (dropping the entry on completion), and
+  the "does it need rebuilding" verdict is memoized for the whole run
+  (`getChangeReasons ctx |> memoizeRec`, `ExecCore.fs`) — that memo is how the recursive graph
+  analysis ties its knot, not an optimization one can drop — so the second request never asked
+  the database again and got the pre-build "Not built yet" answer.
+
+  The pool now keeps two maps: `running`, shared by whoever asks whenever they ask, and
+  `finished`, which serves the rest of the run and is emptied when the next one starts.
+  `Scheduler.newRun` marks that boundary and is posted exactly where the memo is created — in
+  `runBuild.runTargets` (a target group) and in `demandTarget` (one `Demand`). So within a run a
+  target executes once; across runs the database decides again, which is what makes a second
+  `Demand` notice a changed variable; and a task already going when a run begins still serves
+  it, as it always did for concurrent demands. A run-numbered variant was tried first and
+  dropped: same size, more to explain. Covered by `builds a target requested twice in one run
+  only once` and `builds a file needed and then needFiled only once`.
 
 Where the time goes, measured with everything cold (`obj/`, `bin/`, `out/`, `.xake` removed):
 
 | | `build.fsx` (dotnet build) | `build.fsc.fsx` |
 |---|---|---|
-| everything cold | 4.4 s | 4.6 s |
-| only `out/` removed | 1.9 s — msbuild's `obj/` is still warm, so it copies rather than compiles | 4.7 s — it has no such cache, it recompiles |
+| everything cold | 4.6 s | 4.9 s |
+| only `out/` removed | 2.1 s — msbuild's `obj/` is still warm, so it copies rather than compiles | 4.9 s — it has no such cache, it recompiles |
 | nothing changed | 0.7 s | 0.7 s |
+| a source file touched | — | 4.0 s, no msbuild run |
+| a `.fsproj` touched | — | 4.5 s, one msbuild run, `projects/` unchanged |
 
 The middle row is the whole of the difference: msbuild keeps its own incremental state in `obj/`
 and `bin/`, and `dotnet build --output out` then degenerates into a copy. Comparing that against
@@ -145,23 +164,9 @@ worth knowing before touching it again:
   drags in a `netstandard` facade that the net4x reference-assembly packages do not carry.
   Hence there is no `fsc` end-to-end test; `samples/features.fsx` works around it by
   referencing an `FSharp.Core.dll` of its own.
-- **A target requested twice in one run used to be built twice** — `need ["x"]` followed by
-  `needFiles` on the same `x` rebuilt it. Fixed in `WorkerPool.fs`; what actually went wrong
-  took two mechanisms, so it is worth writing down:
-  - the pool deduped only *in-flight* requests, dropping the entry when the task finished, and
-  - the "does it need rebuilding" verdict is memoized for the whole run
-    (`getChangeReasons ctx |> memoizeRec`, `ExecCore.fs`) — the memo is how the recursive graph
-    analysis ties its knot, not an optimization that can be dropped — so the second request did
-    not ask the database again and got the pre-build "Not built yet" answer.
-
-  The pool now keeps two maps: `running`, which is shared by whoever asks whenever they ask,
-  and `finished`, which serves the rest of the run and is emptied when the next one starts.
-  `Scheduler.newRun` marks that boundary and is posted exactly where the memo is created. So:
-  within a run a target executes once; across runs the database decides again; and a task that
-  was already going when a run began still serves it, which is the pre-existing behaviour for
-  concurrent demands. Covered by
-  `builds a target requested twice in one run only once` and `builds a file needed and then
-  needFiled only once`.
+- ~~A target requested twice in one recipe is built twice~~ — fixed on this branch, see
+  "One target, one execution per run" above. The csc test still asserts on its output file
+  rather than an execution count.
 - `build.fsx` builds `netstandard2.0` only; the `net462` asset comes from `dotnet pack`. An
   fsc-built net462 leg would need an FSharp.Core with a net4x assembly, which the pinned
   package does not have.
@@ -169,11 +174,16 @@ worth knowing before touching it again:
 ## How to verify changes here
 
 ```bash
-dotnet build src/core -c Release && dotnet build src/dotnet -c Release   # both TFMs
-dotnet test src/tests                                                    # 233 passed, 1 skipped
-dotnet test src/tests --filter 'Category=Integration'                    # real csc invocation
-dotnet fsi build.fsx -- -- build test                                    # self-hosting, fsc only
+dotnet build src/core -c Release && dotnet build src/dotnet -c Release   # both TFMs, 0 warnings
+dotnet test src/tests -c Release                                         # 237 passed, 1 skipped
+dotnet test src/tests --filter 'Category=Integration'                    # real csc and fsc runs
+dotnet fsi build.fsx -- -- build test                                    # self-hosting, dotnet build
 dotnet fsi samples/fullframework.fsx                                     # end-to-end csc
+
+# and the fsc build, which needs its bootstrap staged first
+mkdir -p .bootstrap && cp out/netstandard2.0/*.dll .bootstrap/
+rm -rf out .xake && dotnet fsi build.fsc.fsx -- -- build test
+dotnet fsi build.fsc.fsx -- -- build                                     # no-op, no msbuild run
 ```
 
 `samples/*.fsx` reference `out/netstandard2.0/*.dll`, so run the self-hosting build first.

@@ -45,6 +45,49 @@ type ``XakeScript tests``() =
         Assert.AreEqual(1, !needExecuteCount)
 
     [<Test>]
+    member x.``builds a target requested twice in one run only once``() =
+
+        let needExecuteCount = ref 0
+
+        do xake x.TestOptions {
+            rules [
+                "main" => action {
+                    // the second request comes in after the first one completed -- the pool
+                    // has to remember what this run already built
+                    do! need ["aaa"]
+                    do! need ["aaa"]
+                }
+                "aaa" => action {
+                    needExecuteCount := !needExecuteCount + 1
+                }
+            ]
+        }
+
+        Assert.AreEqual(1, !needExecuteCount)
+
+    [<Test>]
+    member x.``builds a file needed and then needFiled only once``() =
+
+        let needExecuteCount = ref 0
+
+        do xake x.TestOptions {
+            rules [
+                "main" => action {
+                    // the shape a compiler task produces: the rule needs the assembly, then
+                    // the task needs the very same file as one of its references
+                    do! need ["ccc.txt"]
+                    do! needFiles (Filelist [File.make "ccc.txt"])
+                }
+                "ccc.txt" ..> action {
+                    needExecuteCount := !needExecuteCount + 1
+                    do! writeText "hi"
+                }
+            ]
+        }
+
+        Assert.AreEqual(1, !needExecuteCount)
+
+    [<Test>]
     member x.``executes need only once``() =
 
         let needExecuteCount = ref 0

@@ -34,11 +34,16 @@ module CscImpl =
         FailOnError: bool
         /// Path to csc executable
         CscPath: string option
+        /// Compiler package version (`Microsoft.Net.Compilers.Toolset`): when set, `resolve`
+        /// takes `csc.dll` from that package in the NuGet cache instead of the SDK's own, so
+        /// the compiler is a pinned, hashed dependency in the lock rather than whatever the
+        /// SDK happens to ship. `CscPath` still overrides everything, this included.
+        Toolset: string option
         /// A project imported by `Project.import`, or resolved by a previous `csc {}` run: when
         /// set, the task replays that project's command line verbatim instead of composing one
         /// from `Src`/`Ref`/`Define`/... (those and `Target`/`Platform`/`Out`/`TargetFramework`
         /// are ignored in this mode). See `resolve` and `run`.
-        Invocation: Lock.Project option
+        FromLock: Lock.Project option
     } with static member Default = {
             Platform = AnyCpu
             Target = Auto    // try to resolve the type from name etc
@@ -53,7 +58,8 @@ module CscImpl =
             CommandArgs = []
             FailOnError = true
             CscPath = None
-            Invocation = None
+            Toolset = None
+            FromLock = None
         }
 
     /// Default settings for the CSC task, so that you could only override required settings.
@@ -63,7 +69,7 @@ module CscImpl =
     /// Runs the compiler over an already-resolved compilation: `project` is exactly what would
     /// go into a lock file, whether it came from `Project.import`, from a hand-built
     /// `Lock.Project`, or from `resolve` composing one from `Src`/`Ref`/... at recipe time. This
-    /// is the only place that shells out to csc; both `csc { invocation ... }` and the composed
+    /// is the only place that shells out to csc; both `csc { fromlock ... }` and the composed
     /// `csc { src ... }` end up here.
     ///
     /// Before running the compiler this: writes back any `Generated` file that is missing or
@@ -261,6 +267,24 @@ module CscImpl =
             let dotnetFwk = match netfxVar with | Some _ -> netfxVar | None -> Option.ofObj targetFramework
             let fwkInfo = DotNetFwk.locateFramework dotnetFwk
 
+            // references and env vars always come from the targeted framework -- `toolset`
+            // only replaces the compiler executable, restoring the package into the NuGet
+            // cache first when it is not there yet (the same mechanism `DotNetFwk.sdkImpl`
+            // uses for the reference-assemblies packages)
+            let compilerPath =
+                match settings.Toolset with
+                | None -> fwkInfo.CscTool
+                | Some version ->
+                    let dir =
+                        DotNetFwk.sdkImpl.nugetRoot () </> "microsoft.net.compilers.toolset" </> version
+                        </> "tasks" </> "netcore" </> "bincore"
+                    let cscDll = dir </> "csc.dll"
+                    if not (File.Exists cscDll) then
+                        DotNetFwk.sdkImpl.restorePackage "Microsoft.Net.Compilers.Toolset" version
+                    if not (File.Exists cscDll) then
+                        failwithf "compiler package Microsoft.Net.Compilers.Toolset %s could not be restored (expected '%s')" version cscDll
+                    cscDll
+
             let references =
                 (refs |> List.map (fun f -> f.FullName)) @ globalRefPaths
                 |> List.map (fun path -> { Lock.Path = path; Lock.Sha256 = "" })
@@ -269,7 +293,10 @@ module CscImpl =
                 Name = Path.GetFileNameWithoutExtension outFile.Name
                 Project = ""
                 Directory = options.ProjectRoot
-                Compiler = { Tool = "csc"; Path = fwkInfo.CscTool; Sha256 = ""; Sdk = fwkInfo.Version }
+                // `Sdk` names the reference-assembly framework, as everywhere else in this
+                // record -- the package version (when `Toolset` is set) is in `Path` instead,
+                // there being nowhere else in `Compiler` for it
+                Compiler = { Tool = "csc"; Path = compilerPath; Sha256 = ""; Sdk = fwkInfo.Version }
                 Args = args
                 References = references
                 Analyzers = []
@@ -285,7 +312,7 @@ module CscImpl =
     /// <summary>
     /// C# compiler task. Compiles the source fileset into the target assembly.
     ///
-    /// With `invocation` set, replays that `Lock.Project`'s command line exactly (see `run`).
+    /// With `fromlock` set, replays that `Lock.Project`'s command line exactly (see `run`).
     /// Otherwise composes one from the settings (see `resolve`) and runs it the same way. Either
     /// way there is one resolved form -- a `Lock.Project` -- and one runner: settings are intent,
     /// `Lock.Project` is the resolved compilation.
@@ -294,7 +321,7 @@ module CscImpl =
     /// <returns>Recipe compiling the target</returns>
     let Csc (settings:CscSettingsType) =
 
-      match settings.Invocation with
+      match settings.FromLock with
       | Some project -> run settings project [] []
       | None ->
 
@@ -324,9 +351,13 @@ module CscImpl =
         [<CustomOperation("define")>]    member __.Define(s:CscSettingsType, value) =      {s with Define = value}
         [<CustomOperation("unsafe")>]    member __.Unsafe(s:CscSettingsType, value) =      {s with Unsafe = value}
         [<CustomOperation("cscpath")>]       member __.CscPath(s:CscSettingsType, value) =   {s with CscPath = Some value}
+        /// <summary>Takes `csc.dll` from `Microsoft.Net.Compilers.Toolset/&lt;version&gt;` in the
+        /// NuGet cache (restoring the package if it is missing) instead of the SDK's own, so the
+        /// compiler is a pinned, hashed dependency in the lock. `cscpath` still overrides this.</summary>
+        [<CustomOperation("toolset")>]       member __.Toolset(s:CscSettingsType, version: string) = {s with Toolset = Some version}
         /// <summary>Replays a project imported by `Project.import` (or resolved by an earlier
-        /// `csc {}`) verbatim; see `Invocation`</summary>
-        [<CustomOperation("invocation")>]    member __.Invocation(s:CscSettingsType, project) = {s with Invocation = Some project}
+        /// `csc {}`) verbatim; see `FromLock`</summary>
+        [<CustomOperation("fromlock")>]    member __.FromLock(s:CscSettingsType, project) = {s with FromLock = Some project}
 
         /// <summary>Passes custom arguments to the compiler</summary>
         [<CustomOperation("args")>]       member __.Args(s:CscSettingsType, args) =   {s with CommandArgs = args}

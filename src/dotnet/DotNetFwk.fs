@@ -252,7 +252,7 @@ module DotNetFwk =
                 let candidates = if Array.isEmpty released then dirs else released
                 candidates |> Array.sortBy versionKey |> Array.tryLast
 
-        let private nugetRoot () =
+        let internal nugetRoot () =
             match %"NUGET_PACKAGES" with
             | null | "" ->
                 System.Environment.GetFolderPath System.Environment.SpecialFolder.UserProfile
@@ -261,7 +261,7 @@ module DotNetFwk =
 
         /// Restores the reference assemblies package, so that the first build on a clean
         /// machine works without the user having to prepare anything.
-        let private restorePackage (packageId: string) (version: string) =
+        let internal restorePackage (packageId: string) (version: string) =
             let dir = Path.GetTempPath() </> ("xake-refasm-" + packageId.ToLowerInvariant())
             let project = dir </> "refasm.csproj"
             try

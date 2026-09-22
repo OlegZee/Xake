@@ -60,6 +60,36 @@ module CscArgs =
 
     let private outputSwitches = set [ "out"; "doc"; "refout"; "pdb"; "errorlog"; "generatedfilesout"; "touchedfiles" ]
 
+    /// Splits a switch value on ',' the way csc itself does: a comma inside a `"..."` quoted
+    /// segment does not split (msbuild quotes a path in a list when the path itself contains a
+    /// comma, e.g. the generated `.NETStandard,Version=vX.Y.AssemblyAttributes.cs` a netstandard
+    /// project embeds); the quotes themselves are not part of the path and are dropped.
+    let private splitList (value: string) =
+        let items = ResizeArray<string>()
+        let current = System.Text.StringBuilder()
+        let mutable inQuotes = false
+        for ch in value do
+            match ch with
+            | '"' -> inQuotes <- not inQuotes
+            | ',' when not inQuotes -> items.Add (current.ToString()); current.Clear() |> ignore
+            | c -> current.Append c |> ignore
+        items.Add (current.ToString())
+        List.ofSeq items
+
+    /// Re-quotes a path list item if joining it back with ',' would make it split again where
+    /// it did not before -- the inverse of `splitList`.
+    let private quoteIfNeeded (s: string) = if s.Contains "," then "\"" + s + "\"" else s
+
+    /// A `/reference:` (etc.) list item may be `alias=path`: the alias is a short identifier
+    /// with no path separator in it, always at the very start, so an `=` is only the alias
+    /// marker when it comes before the first `/` -- a bare path may itself contain an `=` after
+    /// one (e.g. the generated `.NETStandard,Version=vX.Y.AssemblyAttributes.cs`, once its
+    /// comma-hiding quotes are gone).
+    let private aliasSplitIndex (p: string) =
+        match p.IndexOf '=' with
+        | -1 -> -1
+        | i -> match p.IndexOf '/' with | slash when slash >= 0 && slash < i -> -1 | _ -> i
+
     /// Paths named by one argument.
     let paths arg =
         match arg with
@@ -68,9 +98,9 @@ module CscArgs =
             match shapes |> Map.tryFind (canonical name) with
             | Some Path -> [value]
             | Some PathList ->
-                value.Split ',' |> List.ofArray |> List.filter ((<>) "")
-                |> List.map (fun p -> match p.IndexOf '=' with | -1 -> p | i -> p.Substring (i + 1))
-            | Some PathFirst -> [value.Split(',').[0]]
+                splitList value |> List.filter ((<>) "")
+                |> List.map (fun p -> match aliasSplitIndex p with | -1 -> p | i -> p.Substring (i + 1))
+            | Some PathFirst -> [(splitList value).[0]]
             | None -> []
 
     /// Rewrites every path an argument names, leaving the rest of it as it is.
@@ -82,15 +112,15 @@ module CscArgs =
             | Some Path -> Switch (name, f value)
             | Some PathList ->
                 let mapped =
-                    value.Split ',' |> Array.map (fun p ->
+                    splitList value |> List.map (fun p ->
                         if p = "" then p else
-                        match p.IndexOf '=' with
-                        | -1 -> f p
-                        | i -> p.Substring (0, i + 1) + f (p.Substring (i + 1)))
+                        (match aliasSplitIndex p with
+                         | -1 -> f p
+                         | i -> p.Substring (0, i + 1) + f (p.Substring (i + 1)))
+                        |> quoteIfNeeded)
                 Switch (name, System.String.Join (",", mapped))
             | Some PathFirst ->
-                let parts = value.Split ','
-                parts.[0] <- f parts.[0]
+                let parts = splitList value |> List.mapi (fun i p -> if i = 0 then quoteIfNeeded (f p) else p)
                 Switch (name, System.String.Join (",", parts))
             | None -> arg
 
@@ -356,7 +386,7 @@ module Project =
     let internal items = "CscCommandLineArgs,ReferencePath,Analyzer,ProjectReference"
     let internal wantedProperties =
         "AssemblyName,MSBuildProjectFullPath,MSBuildProjectDirectory,IntermediateOutputPath,BaseIntermediateOutputPath,TargetPath," +
-        "CscToolPath,CscToolExe,RoslynTargetsPath,NETCoreSdkVersion,NetCoreRoot,NuGetPackageRoot,ProjectAssetsFile," +
+        "CscToolPath,CscToolExe,CSharpCoreTargetsPath,RoslynTargetsPath,NETCoreSdkVersion,NetCoreRoot,NuGetPackageRoot,ProjectAssetsFile," +
         "TargetFrameworkMoniker,LangVersion,Version,InformationalVersion,SignAssembly,AssemblyOriginatorKeyFile,Deterministic"
 
     /// Every file msbuild imported, from a preprocessed project (`-pp`): each import is
@@ -391,9 +421,27 @@ module Project =
         let args = items "CscCommandLineArgs" |> List.map identity |> CscArgs.absolutize directory
         let slash (p: string) = p.Replace ('\\', '/')
 
+        // A project that pins the compiler via the `Microsoft.Net.Compilers.Toolset` package
+        // does not set `CscToolPath`/`CscToolExe` -- that package only redirects
+        // `CSharpCoreTargetsPath` (and the `Csc` task's assembly) to its own `tasks/<tfm>/`
+        // directory, and the task's `ToolPath` defaults to a `bincore` folder next to whatever
+        // targets file is driving it. So `CSharpCoreTargetsPath`'s own directory (not
+        // `RoslynTargetsPath`, which the SDK always reports as its own Roslyn regardless of a
+        // toolset override) is what actually tells the SDK csc.dll from the package's: for an
+        // unpinned project it is `<sdk>/Roslyn/Microsoft.CSharp.Core.targets`, so this produces
+        // the exact same path the old `RoslynTargetsPath </> "bincore" </> "csc.dll"` fallback
+        // did; for a pinned one it is
+        // `<nuget>/microsoft.net.compilers.toolset/<version>/build/../tasks/netcore/Microsoft.CSharp.Core.targets`,
+        // so this resolves to the package's own compiler.
         let compilerPath =
             match prop "CscToolPath" with
-            | "" -> prop "RoslynTargetsPath" </> "bincore" </> "csc.dll"
+            | "" ->
+                match prop "CSharpCoreTargetsPath" with
+                | "" -> prop "RoslynTargetsPath" </> "bincore" </> "csc.dll"
+                | csTargets ->
+                    // the package's path goes through `build/../tasks`: folded, so the lock
+                    // names one spelling of the file
+                    Path.GetFullPath (Path.GetDirectoryName (slash csTargets) </> "bincore" </> "csc.dll")
             | toolPath -> toolPath </> (match prop "CscToolExe" with | "" -> "csc.dll" | exe -> exe)
             |> slash
 

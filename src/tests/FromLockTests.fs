@@ -7,13 +7,13 @@ open Xake
 open Xake.Tasks
 open Xake.Dotnet
 
-/// The `csc { invocation project }` mode: the compiler runs exactly the command line a
+/// The `csc { fromlock project }` mode: the compiler runs exactly the command line a
 /// `Lock.Project` carries, with no composition. The lock is built by hand here, the way
 /// `Project.import` would have produced it for a trivial project, so the tests do not need
 /// msbuild -- only the compiler the lock names.
 [<TestFixture>]
-type ``Csc invocation``() =
-    inherit XakeTestBase("csc-invocation")
+type ``Csc fromlock``() =
+    inherit XakeTestBase("csc-fromlock")
 
     /// A lock for a one-file "Hello" library: `netstandard.dll` as the only reference,
     /// `Hello.cs` as the only real source, and an `AssemblyInfo.cs` that only exists through
@@ -64,12 +64,12 @@ type ``Csc invocation``() =
         let dir = Directory.GetCurrentDirectory()
         let project, outDll, assemblyInfoCs, assemblyInfoContent = makeLock dir
 
-        do xake {x.TestOptions with FileLog="csc-invocation.log"; ThrowOnError = true} {
+        do xake {x.TestOptions with FileLog="csc-fromlock.log"; ThrowOnError = true} {
             wantOverride (["hello"])
 
             rules [
                 "hello" => recipe {
-                    do! Csc {CscSettingsType.Default with Invocation = Some project}
+                    do! Csc {CscSettingsType.Default with FromLock = Some project}
                 }
             ]
         }
@@ -87,12 +87,12 @@ type ``Csc invocation``() =
             { project with References = project.References |> List.map (fun r -> { r with Sha256 = "0000000000000000000000000000000000000000000000000000000000000000" }) }
 
         let build () =
-            xake {x.TestOptions with FileLog="csc-invocation-tamper.log"; ThrowOnError = true} {
+            xake {x.TestOptions with FileLog="csc-fromlock-tamper.log"; ThrowOnError = true} {
                 wantOverride (["hello-tamper"])
 
                 rules [
                     "hello-tamper" => recipe {
-                        do! Csc {CscSettingsType.Default with Invocation = Some tampered}
+                        do! Csc {CscSettingsType.Default with FromLock = Some tampered}
                     }
                 ]
             }

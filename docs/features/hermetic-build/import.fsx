@@ -81,7 +81,7 @@ do xakeScript {
             let mapped = project |> Lock.mapPaths (fun p -> if unbuilt.Contains p then outputOf p else p)
 
             do! need (unbuilt |> Set.toList |> List.map (outputOf >> relative))
-            do! csc { invocation mapped }
+            do! csc { fromlock mapped }
         }
 
         // compiles every project the locks name, for every framework and brand. Dynamic

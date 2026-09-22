@@ -2,7 +2,7 @@
 
 Today `Lock.Project` -- exact `csc` args, hashed references/analyzers/compiler, generated inputs
 -- comes from `Project.import` (msbuild design-time build), or gets replayed with
-`csc { invocation lock.project }`. The composed mode (`csc { src ...; ref ...; define ... }`)
+`csc { fromlock lock.project }`. The composed mode (`csc { src ...; ref ...; define ... }`)
 also builds a `Lock.Project` internally now, in `resolve` (`Dotnet.csc.fs`), but `resolve` is
 private, used once, then discarded after `run` compiles from it. This asks how a script gets
 that value out, for which uses, and what each needs in the library.
@@ -24,7 +24,7 @@ dependency tracking of the lock itself), and races if two `csc {}` calls share o
 (scenario 6).
 
 **(b) A public `Csc.resolve` a separate lock rule calls**, mirroring `Project.import`: the lock
-is its own file target, a downstream rule reads it and compiles with `invocation`.
+is its own file target, a downstream rule reads it and compiles with `fromlock`.
 
 ```fsharp
 target "out/helloworld.lock.json" {
@@ -34,7 +34,7 @@ target "out/helloworld.lock.json" {
         (Lock.write { Framework = ""; Configuration = ""; Properties = []; Projects = [project] })
 }
 "out/helloworld.dll" ..> csc {
-    invocation (Lock.project "helloworld" (Lock.read "out/helloworld.lock.json"))
+    fromlock (Lock.project "helloworld" (Lock.read "out/helloworld.lock.json"))
 }
 ```
 
@@ -133,7 +133,7 @@ read-modify-write one shared file safely -- the race (a)'s unconditional write h
 
 1. **One lock file per target** (what 1b's snippet does). No aggregation, no race by
    construction -- each record rule owns a distinct output path. Consistent with how
-   `csc { invocation }` reads one project at a time via `Lock.project name lock` regardless of
+   `csc { fromlock }` reads one project at a time via `Lock.project name lock` regardless of
    how many share a file.
 2. **A phony aggregate target** that resolves every compilation without compiling and writes one
    file -- structurally `Project.import`'s loop over `ImportOptions.Projects`, for composed
@@ -151,7 +151,7 @@ loop. Skip **3** until a concrete need for a merged file shows up.
 
 ## 7. Env vars and temp files
 
-`Csc { invocation project } = run settings project [] []` -- empty env, no temp files. The
+`Csc { fromlock project } = run settings project [] []` -- empty env, no temp files. The
 composed mode needs `DotNetFwk`'s env vars (e.g. PATH for a full-framework or mono toolchain) at
 `run` time; a replayed lock carries none.
 
@@ -163,12 +163,12 @@ resolves the SDK itself; `cscpath`/native-launcher branches carry the risk.
 Does the lock need to record env? No -- `Lock.Project` is deliberately the file format, and env
 is a property of *how* a compiler runs on *this* machine, not *what* was compiled (the same
 reasoning that kept env a `run` parameter, not a lock field, in the one-resolved-form refactor).
-The fix, when replay needs env, is for invocation mode to re-derive it the way `resolve` does --
+The fix, when replay needs env, is for `fromlock` mode to re-derive it the way `resolve` does --
 from `DotNetFwk.locateFramework`, not from the lock. Today it does not (`[]` unconditionally);
 fine for the proven SDK/netstandard case, a real gap the day a full-framework or mono lock is
 replayed.
 
-If it comes up: let `csc { invocation project; targetfwk "net-4.6.2" }` resolve env from
+If it comes up: let `csc { fromlock project; targetfwk "net-4.6.2" }` resolve env from
 `DotNetFwk.locateFramework (Some fwk)` when both are set. Effort S once needed -- no design
 blocker, just undone work; `project.Compiler.Sdk` already carries enough identity to make this
 recoverable rather than guessed.
@@ -211,7 +211,7 @@ error.
 
 **B. `cscSettings { ... }`**, a second builder with the same operations whose `Run` returns the
 `CscSettingsType`; the tuned block moves into `let settings = cscSettings { ... }` unchanged and
-scenario 1b applies (`Csc.resolve settings` in the lock rule, `invocation` in the build rule).
+scenario 1b applies (`Csc.resolve settings` in the lock rule, `fromlock` in the build rule).
 ~15 lines.
 
 **Open: how the lock gets updated.** A script variable such as `-d UPDATE_LOCKS=true` was
@@ -254,5 +254,5 @@ string) list * string list>` (made public) plus `Lock.diff : Project -> Project 
 two and the `Lock` functions that already exist (`hashed`, `write`, `read`, `project`,
 `mapPaths`). That keeps the symmetry the task asked about: `Project.import` is the recipe
 producing a `Lock.Project` for an msbuild project; `Csc.resolve` is the recipe producing one for
-a composed `csc {}` -- both feed `invocation`, and nothing about record/verify/update needs to
+a composed `csc {}` -- both feed `fromlock`, and nothing about record/verify/update needs to
 live anywhere but a rule built from what already exists.

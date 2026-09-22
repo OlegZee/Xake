@@ -1,44 +1,75 @@
 # Session state: hermetic-build
 
-Updated 2026-09-22 (late: import, invocation mode, byte-identical proof).
+Updated 2026-09-23 (Toolset compiler source; before that: import, fromlock mode, one runner, byte-identical proof).
 
-`brief.md` next to this file (not committed yet, do not stage) is the working brief:
+`brief.md` next to this file (committed by the user on 2026-09-22, together with the
+`samples/hermetic/dataengine/` inspection artifacts) is the working brief:
 positioning, decisions, the design of the library surface (§11), and the day-zero results on
 the two ActiveReports repositories (§8j). Everything decided so far is there; do not re-litigate.
 
 `lock-from-settings.md` analyses how a lock is obtained from composed `csc {}` settings (nine
 scenarios; migration of an existing tuned block is §9; the update mechanism is an open question,
 a global `UPDATE_LOCKS` variable was rejected). `csc-syntax.md` documents the `csc {}` task as it stands on this branch: composed settings,
-`invocation` from a lock, one runner.
+`fromlock` from a lock, one runner.
 
-State: **slice 1's core is done and proven** — `Project.import`, `Lock`, `csc { invocation }`,
+State: **slice 1's core is done and proven** — `Project.import`, `Lock`, `csc { fromlock }`,
 and `import.fsx build` compiles dataengine develop (3 projects × 2 brands) **byte-identical to
 `dotnet build`**, 18/18 files (dll, pdb, xml). All uncommitted. The **one-resolved-form refactor of `csc` is done** (2026-09-22, late):
 `Dotnet.csc.fs` is now `run` (the only runner: generated files, output dirs, hash check,
 `needFiles` on `CscArgs.inputs`, rsp with `/noconfig` outside, compiler selection, `shell`),
 `resolve` (the composed settings turned into a `Lock.Project` with the exact argument list the
 old code produced, `/noconfig` first when the target framework asks for it), and `Csc` choosing
-between `Invocation` and `resolve`. Env vars and resx temp files are `run` parameters, not lock
+between `FromLock` and `resolve`. Env vars and resx temp files are `run` parameters, not lock
 fields -- the lock's shape is the file format. Two behaviour changes for the composed mode,
 both intended: it creates the output directory (before, `samples/fullframework.fsx` needed
 `samples/temp/` to exist), and it `needFiles` the framework references too. Trap: `samples/*.fsx`
 load Xake from `out/`, so run `dotnet fsi build.fsx -- -- build` before judging them; a stale
-`out/` made the refactor look like it had not fixed the directory issue. **Next step**: the remaining
-slice-1 items — the `Microsoft.Net.Compilers.Toolset` compiler source (today the lock names the
-SDK's `csc.dll`; a project pinning the toolset package needs `CscToolPath`/`CscToolExe` honoured,
-the import already reads them), the resgen recipe (dataengine has no `.resx`, page does), then
-page with `-p:LocalBuild=true` (cross-repo project references; `$(ProjectRoot)` is cwd, so the
-sibling repo will not tokenize — decide on a `$(Root)` covering both). Fixture as before:
+`out/` made the refactor look like it had not fixed the directory issue. **Toolset compiler source landed (2026-09-23)**, see "What landed" below. **Next step**: the
+resgen recipe (dataengine has no `.resx`, page does; also the prerequisite for locks from
+composed settings, see `lock-from-settings.md` §9), then page with `-p:LocalBuild=true`
+(cross-repo project references; `$(ProjectRoot)` is cwd, so the sibling repo will not tokenize
+— decide on a `$(Root)` covering both). Fixture as before:
 `git archive origin/develop` of `~/Projects-work/ar/ar-net-core-dataengine` into the job tmp dir
 (its checkout is on a broken feature branch), then `ar-net-core-page`. Always
 `-p:NuGetAudit=false` (the import sets it) or load the feed token with `cd <ar project dir> &&
 source ~/set-secrets.sh` (never print it). Xake stays referenced via `#r` on `.bootstrap/` — no
 release.
 
-### What landed (2026-09-22, late): `csc { invocation }` and the end-to-end proof
+### What landed (2026-09-23): the Toolset compiler source
 
-- **`compileFromLock`** (`Dotnet.csc.fs`), reached through `CscSettingsType.Invocation:
-  Lock.Project option` / the `invocation` custom operation. Replays `project.Args` verbatim:
+- **Brief §11 assumed the import reads `CscToolPath`/`CscToolExe` — it cannot.** The
+  `Microsoft.Net.Compilers.Toolset` package never sets them; it redirects `CSharpCoreTargetsPath`
+  and the `Csc` task assembly to its own `tasks/netcore/`, and the task's tool path defaults to
+  the `bincore` next to whatever targets file drives it. `parseImport` therefore derives the
+  compiler from `CSharpCoreTargetsPath`'s directory (`GetFullPath` folds the `build/../tasks`):
+  the SDK's `Roslyn/bincore/csc.dll` for an unpinned project, the package's for a pinned one.
+  `RoslynTargetsPath` always reports the SDK's Roslyn and is only the fallback.
+- **On SDK 9+/10 the package is silently ignored** unless the project also sets
+  `<RoslynCompilerType>Toolset</RoslynCompilerType>` — `Microsoft.NET.Sdk.BeforeCommon.targets`
+  otherwise reassigns `CSharpCoreTargetsPath` back. The fixture sets it. Worth checking on any
+  customer project that pins the toolset. Note the Xake repo's `global.json` rolls forward to
+  the newest SDK (10.0.401 here), so the fixture is evaluated by SDK 10 while dataengine's is 8.
+- **`csc { toolset "4.12.0" }`** in the composed mode: `csc.dll` from
+  `microsoft.net.compilers.toolset/<version>/tasks/netcore/bincore` in the NuGet cache, restored
+  through `DotNetFwk.sdkImpl.restorePackage` (made internal, with `nugetRoot`) when missing;
+  references and env vars still from `DotNetFwk.locateFramework`; `run` executes it through the
+  existing `dotnet <dll>` branch. `cscpath` still overrides everything.
+- **`CscArgs` bug found by the fixture**: netstandard2.0 projects embed
+  `.NETStandard,Version=v2.0.AssemblyAttributes.cs` via `/embed:"..."` — a *quoted* list item
+  with a comma inside, and an `=` inside a path. The list splitter is now quote-aware
+  (`splitList`/`quoteIfNeeded`) and `alias=` is only recognized before the first `/`. dataengine
+  did not show it (SDK 8 emits no `/embed` for it); still 18/18 identical after the fix.
+- Fixture `samples/hermetic/toolset/` (the in-repo C# fixture of brief §12, first piece),
+  `samples/hermetic/README.md`, `src/tests/ToolsetTests.fs` (3 Integration tests: import names
+  the package compiler, `fromlock` compiles with it, composed `toolset` compiles with it — each
+  with its own `Variant`, since the design-time build's `obj/xake` lives in the fixture dir, not
+  the test sandbox). Suite: 249 passed, 1 skipped. `csc-syntax.md` has a "Compiler sources"
+  section.
+
+### What landed (2026-09-22, late): `csc { fromlock }` and the end-to-end proof
+
+- **`compileFromLock`** (`Dotnet.csc.fs`), reached through `CscSettingsType.FromLock:
+  Lock.Project option` / the `fromlock` custom operation. Replays `project.Args` verbatim:
   writes back `Generated` files that are missing or differ (the lock is the source of truth),
   creates output directories, verifies SHA-256 of every hashed reference, analyzer and the
   compiler (all mismatches reported at once, "missing" when absent, then fails), `needFiles` the
@@ -51,7 +82,7 @@ release.
   project references (`src/<Other>/bin/Release/...`, msbuild's own output) at the lock's own
   `/out` for that project, and `need`s those first — so the build order comes from the lock.
 - **`import.fsx build`**: rule `src/(proj:*)/obj/xake/(fwk:*)/(brand:*)/(name:*).dll` reads the
-  lock, maps the project references, `csc { invocation }`; `build` reads every lock and needs
+  lock, maps the project references, `csc { fromlock }`; `build` reads every lock and needs
   every `Output`. `need` takes paths relative to `ProjectRoot`, so the absolute `Output` is
   relativized with `Path.GetRelativePath`.
 - **Proof**: clean `build` 4.6 s for 6 assemblies; no-op 50 ms; `touch` a VBFunctionLib source →
@@ -62,7 +93,7 @@ release.
   the PDB and, via `/deterministic`, in the PE — which is why the baseline must be built in
   place (or both builds must use `/pathmap`). Worth remembering for the auditor mode: a
   reproduction on another machine needs `/pathmap` or the same checkout path.
-- **Tests**: `CscInvocationTests.fs` (3, two Integration). Suite: 246 passed, 1 skipped. Both
+- **Tests**: `FromLockTests.fs` (3, two Integration). Suite: 246 passed, 1 skipped. Both
   projects 0 warnings. `DotNetFwk.locateFramework (Some "netstandard2.0")` returns the SDK's
   native `csc` launcher, not `csc.dll`, so the test takes `csc.dll` next to it — and it is the
   *latest* SDK (10.0.401 here), while the imported lock names 8.0.425 via `global.json`.
@@ -80,7 +111,7 @@ All in `src/dotnet/Project.fs`, after `Fsproj.fs` (it reuses `Fsproj.Json`, `roo
   optional `alias=`, `PathFirst` for `/resource:file,name`); `inputs`, `outputs`, `sources`,
   `switchValues`, `mapPaths`, `absolutize` (also folds `..`, so the SDK's
   `targets/../analyzers/x.dll` and its real path are one file). Both the import and the
-  future invocation mode read arguments through it — keep the switch tables here only.
+  future `fromlock` mode read arguments through it — keep the switch tables here only.
 - **`Lock`** — `Lock.File = { Framework; Configuration; Properties; Projects }`, one file per
   (TFM, variant), one `Lock.Project` per project: `Args` verbatim with absolute paths,
   `References`/`Analyzers`/`Imports` as `{ Path; Sha256 }` (empty hash = did not exist at

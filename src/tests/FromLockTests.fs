@@ -101,6 +101,110 @@ type ``Csc fromlock``() =
         let ex = Assert.Throws<XakeException> (fun () -> build () |> ignore)
         Assert.That(ex.Data0, Does.Contain (Path.GetFileName (tampered.References.Head.Path)))
 
+    /// "make the compiler available" (`ensureCompilerAvailable` in `Dotnet.csc.fs`), exercised
+    /// through the public `Csc { fromlock ... }` entry point rather than calling the private
+    /// helper directly.
+    [<Test; Category("Integration")>]
+    member x.``restores the toolset compiler named by the lock``() =
+
+        // exercises the restore path for real, without touching the user's own NuGet cache:
+        // point NUGET_PACKAGES at a scratch directory for the duration of this test.
+        // `Fsproj.roots ()` and `DotNetFwk.sdkImpl.nugetRoot ()` both read it directly (see
+        // Fsproj.fs / DotNetFwk.fs), and `restorePackage` shells out to `dotnet restore`, which
+        // inherits it like any other environment variable -- confirmed against this package
+        // before writing the test.
+        let originalNugetPackages = System.Environment.GetEnvironmentVariable "NUGET_PACKAGES"
+        let scratchNuget = Path.Combine (Path.GetTempPath(), "xake-fromlock-restore-" + System.Guid.NewGuid().ToString("N"))
+
+        try
+            System.Environment.SetEnvironmentVariable ("NUGET_PACKAGES", scratchNuget)
+
+            let dir = Directory.GetCurrentDirectory()
+            let project, outDll, _, _ = makeLock dir
+
+            // the compiler this test names is the toolset package restored into the scratch
+            // cache, at the version already present in the user's own cache on this machine
+            // (so the hash the lock records is real): `~/.nuget/packages/microsoft.net.compilers.toolset/`
+            let version = "4.12.0"
+            let userNugetRoot =
+                match originalNugetPackages with
+                | null | "" -> Path.Combine (System.Environment.GetFolderPath System.Environment.SpecialFolder.UserProfile, ".nuget", "packages")
+                | dir -> dir
+            let userCscDll = Path.Combine (userNugetRoot, "microsoft.net.compilers.toolset", version, "tasks", "netcore", "bincore", "csc.dll")
+            Assume.That(File.Exists userCscDll, Is.True,
+                sprintf "microsoft.net.compilers.toolset %s is not restored on this machine (%s) -- nothing to compare the restore against" version userCscDll)
+
+            let scratchCscDll = Path.Combine (scratchNuget, "microsoft.net.compilers.toolset", version, "tasks", "netcore", "bincore", "csc.dll")
+            let project =
+                { project with
+                    Compiler = { project.Compiler with Path = scratchCscDll; Sha256 = Lock.sha256 userCscDll } }
+
+            Assert.That(File.Exists scratchCscDll, Is.False, "the scratch NuGet cache already has the package -- test setup is wrong")
+
+            do xake {x.TestOptions with FileLog="csc-fromlock-restore.log"; ThrowOnError = true} {
+                wantOverride (["hello-restore"])
+
+                rules [
+                    "hello-restore" => recipe {
+                        do! Csc {CscSettingsType.Default with FromLock = Some project}
+                    }
+                ]
+            }
+
+            Assert.That(File.Exists scratchCscDll, Is.True, "the toolset package was not restored into the scratch NuGet cache")
+            Assert.That(File.Exists outDll, Is.True, "csc did not produce Hello.dll after restoring the compiler")
+        finally
+            System.Environment.SetEnvironmentVariable ("NUGET_PACKAGES", originalNugetPackages)
+            try Directory.Delete (scratchNuget, true) with _ -> ()
+
+    [<Test>]
+    member x.``explains a missing SDK compiler``() =
+
+        let dir = Directory.GetCurrentDirectory()
+        let project, _, _, _ = makeLock dir
+        let dotnetRoot =
+            match DotNetFwk.sdkImpl.dotnetRoot () with
+            | Some root -> root
+            | None -> Assert.Ignore("no .NET SDK root found on this machine"); failwith "unreachable"
+        let sdkCompilerPath = Path.Combine (dotnetRoot, "sdk", "0.0.1", "Roslyn", "bincore", "csc.dll")
+        let project = { project with Compiler = { project.Compiler with Path = sdkCompilerPath; Sha256 = "" } }
+
+        let build () =
+            xake {x.TestOptions with FileLog="csc-fromlock-missing-sdk.log"; ThrowOnError = true} {
+                wantOverride (["hello-missing-sdk"])
+
+                rules [
+                    "hello-missing-sdk" => recipe {
+                        do! Csc {CscSettingsType.Default with FromLock = Some project}
+                    }
+                ]
+            }
+
+        let ex = Assert.Throws<XakeException> (fun () -> build () |> ignore)
+        Assert.That(ex.Data0, Does.Contain "SDK 0.0.1")
+
+    [<Test>]
+    member x.``explains a compiler that does not exist anywhere``() =
+
+        let dir = Directory.GetCurrentDirectory()
+        let project, _, _, _ = makeLock dir
+        let nowhere = if Env.isUnix then "/nonexistent/csc.dll" else "C:\\nonexistent\\csc.dll"
+        let project = { project with Compiler = { project.Compiler with Path = nowhere; Sha256 = "" } }
+
+        let build () =
+            xake {x.TestOptions with FileLog="csc-fromlock-missing-anywhere.log"; ThrowOnError = true} {
+                wantOverride (["hello-missing-anywhere"])
+
+                rules [
+                    "hello-missing-anywhere" => recipe {
+                        do! Csc {CscSettingsType.Default with FromLock = Some project}
+                    }
+                ]
+            }
+
+        let ex = Assert.Throws<XakeException> (fun () -> build () |> ignore)
+        Assert.That(ex.Data0, Does.Contain nowhere)
+
     [<Test>]
     member x.``Lock.mapPaths rewrites a reference and drops its hash``() =
 

@@ -25,7 +25,7 @@ details live in brief.md (section refs) or session.md.
 - [x] tests in src/tests for import parsing, lock round-trip, fromlock — `ProjectImportTests.fs` (6) and `FromLockTests.fs` (3: compiles from a hand-made lock and writes generated inputs, refuses a changed hash, `mapPaths`)
 
 ## `fromlock` on a machine that lacks what the lock names (raised 2026-09-23)
-- [ ] today: a missing compiler or reference fails the hash check as "expected <sha>, got missing" — correct, unhelpful, no attempt to restore. To do: when `Compiler.Path` is under `$(NuGetPackageRoot)`, derive package id/version from the path, restore it the way `toolset` does, then verify the hash (a mismatch after restore is a different package build and stays an error); when it is under `$(DotnetRoot)/sdk/<v>/`, say which SDK to install. Missing *references* from packages are the same "missing" — restoring them from the lock is slice 2's `Nuget` module
+- [x] a missing compiler: `run` now starts with `ensureCompilerAvailable` — under `$(NuGetPackageRoot)` the package (id/version from the path) is restored with the `toolset` mechanism and the hash then checked; under `$(DotnetRoot)/sdk/<v>/` the message names the SDK to install; elsewhere "does not exist". Three tests in `FromLockTests.fs` (the restore one against a scratch `NUGET_PACKAGES`). Missing *references* from packages remain slice 2's `Nuget` module
 
 ## Lock stability (raised 2026-09-22, decision: defer until someone diffs locks for real)
 - [ ] split the lock file: dependencies (references, analyzers, compiler, imports — rare, reviewed) apart from compilation (args, sources, generated — every PR); framework/SDK its own section. `Lock.Project` in memory stays one record; only `Lock.write`/`parse` change

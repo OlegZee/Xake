@@ -65,6 +65,9 @@ in order: `/noconfig` (when the target framework requires it), `/nologo`, `/targ
 - The lock records what ran in `Lock.Project.Compiler`: `Path` and `Sha256` name the compiler
   file; `Sdk` is always the framework's version from `DotNetFwk.locateFramework`, not the
   toolset package's -- that version is part of `Path`.
+- `fromlock` restores a toolset package the lock names when it is not on this machine yet
+  (`ensureCompilerAvailable`, see below) -- the same restore mechanism as `toolset` above, just
+  triggered by replaying a lock instead of by the `toolset` operation.
 
 ### Import: the project decides, msbuild answers
 
@@ -94,27 +97,47 @@ still apply, because they govern how the runner behaves, not what it compiles.
 
 The runner (`run` in `Dotnet.csc.fs`, shared by both modes) does, in order:
 
-1. Writes back every `Generated` file that is missing or whose content differs from what is on
+1. **Makes the compiler available** (`ensureCompilerAvailable`, raised 2026-09-23), before
+   anything else touches it, so the hash check below has something to check:
+   - already on disk (`project.Compiler.Path` exists) -- nothing to do.
+   - under `$(NuGetPackageRoot)` -- the path names a `Microsoft.Net.Compilers.Toolset`-shaped
+     package (`<root>/<packageId>/<version>/...`) that just is not restored yet on this
+     machine: `trace Info "restoring compiler package %s %s"` and restore it, the same
+     mechanism the composed mode's `toolset` uses (factored into a shared
+     `restoreToolsetCompiler`). Still missing afterwards fails with `'<name>': the compiler
+     <path> is not available and restoring <id> <version> did not provide it`. A hash mismatch
+     *after* a successful restore is left to step 4 -- it means a different package build, not
+     a missing one.
+   - under `$(DotnetRoot)/sdk/<version>/` -- an SDK this machine does not have; nothing to
+     restore, so this fails immediately: `'<name>': the lock names the compiler of SDK
+     <version> (<path>), which is not installed; install that SDK or re-import with the
+     installed one` (or, under `$(DotnetRoot)` but not `sdk/`, a generic "not installed"
+     message naming the path).
+   - anywhere else -- `'<name>': the compiler <path> named by the lock does not exist`.
+
+   Every failure here goes through the same `trace Error` + `FailOnError`-gated `failwith` shape
+   as the hash-mismatch check (step 4) and `Impl.failOnExitCode`.
+2. Writes back every `Generated` file that is missing or whose content differs from what is on
    disk -- the resolved project is the source of truth for msbuild-generated inputs like
    `AssemblyInfo.cs`. The composed mode never populates `Generated`, so this is a no-op there.
-2. Creates the output directories, for every path `CscArgs.outputs project.Args` names.
-3. `needFiles` every resx in `project.Resources` (so a resx edit rebuilds the dll) and, for each
+3. Creates the output directories, for every path `CscArgs.outputs project.Args` names.
+4. `needFiles` every resx in `project.Resources` (so a resx edit rebuilds the dll) and, for each
    `(resx, resources)` pair, compiles the resx to that `.resources` path with `Xake.Dotnet.Resx`
    when the output is missing or older than the resx -- so a machine with only the lock, or a
    cleaned `obj/`, still ends up with the exact file the recorded `/resource:` switch names. The
    composed mode never populates `Resources`, so this is a no-op there.
-4. Verifies the SHA-256 of every hashed reference, analyzer, and the compiler itself against what
+5. Verifies the SHA-256 of every hashed reference, analyzer, and the compiler itself against what
    is on disk. An empty recorded hash means "not checked" (the composed mode never records one,
    and neither does an unbuilt project reference). Any mismatch is collected and reported
    together, then fails the build when `FailOnError` is set (`XakeException`, message containing
    the path).
-5. `needFiles` on `CscArgs.inputs project.Args` -- every file any input switch names, plus the
+6. `needFiles` on `CscArgs.inputs project.Args` -- every file any input switch names, plus the
    sources. For the composed mode this now covers everything the args name, including the
    framework's global references, not only sources/refs/resources.
-6. Writes the arguments to a response file, with `Impl.escapeArgument`, and runs the compiler.
+7. Writes the arguments to a response file, with `Impl.escapeArgument`, and runs the compiler.
    `/noconfig` cannot go inside the rsp -- csc warns `CS2023` and ignores it there -- so it stays
    on the command line and everything else goes into `@<rspfile>`.
-7. Picks the compiler: `settings.CscPath` wins if set; otherwise, when the project's recorded
+8. Picks the compiler: `settings.CscPath` wins if set; otherwise, when the project's recorded
    compiler path ends in `.dll`, it runs through `dotnet <path>`; otherwise the path is run
    directly (a native launcher, e.g. the SDK's `csc` apphost).
 

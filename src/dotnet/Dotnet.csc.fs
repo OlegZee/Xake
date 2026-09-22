@@ -86,9 +86,83 @@ module CscImpl =
     /// with the response file once the compiler exits, whatever the outcome -- the composed
     /// mode's resx-compiled temporaries.
     /// </summary>
+    /// The path `csc.dll` would have under a `Microsoft.Net.Compilers.Toolset`-shaped package
+    /// (`<nugetRoot>/<packageId>/<version>/tasks/netcore/bincore/csc.dll`), restoring the
+    /// package into the NuGet cache first when it is not there yet. Shared by `resolve`'s
+    /// `toolset` operation (composing a lock) and `run`'s "make the compiler available" step
+    /// (replaying a lock that names a package not yet restored on this machine).
+    let private restoreToolsetCompiler (packageId: string) (version: string) =
+        let dir =
+            DotNetFwk.sdkImpl.nugetRoot () </> packageId.ToLowerInvariant() </> version
+            </> "tasks" </> "netcore" </> "bincore"
+        let cscDll = dir </> "csc.dll"
+        if not (File.Exists cscDll) then
+            DotNetFwk.sdkImpl.restorePackage packageId version
+        cscDll
+
+    /// Traces `msg` as an error and, when `failOnError`, fails the build with it -- the same
+    /// shape as `Impl.failOnExitCode` and the hash-mismatch check below.
+    let private failStep (failOnError: bool) (msg: string) =
+        recipe {
+            do! trace Error "%s" msg
+            if failOnError then failwith msg
+        }
+
+    /// Makes `project.Compiler.Path` available on this machine before the hash check runs,
+    /// for a lock imported (or resolved) somewhere else:
+    ///  - already on disk: nothing to do.
+    ///  - under `$(NuGetPackageRoot)`: the compiler is a `Microsoft.Net.Compilers.Toolset`-shaped
+    ///    package (see `resolve`'s `toolset`) that simply is not restored yet on this machine --
+    ///    restore it, the same way `toolset` does. A hash mismatch after a successful restore is
+    ///    still a hard error (a different package build), left to the check that follows.
+    ///  - under `$(DotnetRoot)/sdk/<version>/`: an SDK this machine does not have; nothing to
+    ///    restore, so this fails immediately naming the SDK version.
+    ///  - anywhere else: the path simply does not exist.
+    let private ensureCompilerAvailable (settings: CscSettingsType) (project: Lock.Project) =
+        recipe {
+            if File.Exists project.Compiler.Path then
+                ()
+            else
+                let path = project.Compiler.Path.Replace('\\', '/')
+                let comparer = if Env.isUnix then System.StringComparison.Ordinal else System.StringComparison.OrdinalIgnoreCase
+                let root token = Fsproj.roots () |> List.tryFind (fst >> (=) token) |> Option.map snd
+                let under (r: string) = path.StartsWith(r + "/", comparer)
+
+                match root "$(NuGetPackageRoot)" |> Option.filter under with
+                | Some nugetRoot ->
+                    let rest = path.Substring(nugetRoot.Length + 1).Split('/')
+                    let packageId, version = rest.[0], rest.[1]
+                    do! trace Info "restoring compiler package %s %s" packageId version
+                    restoreToolsetCompiler packageId version |> ignore
+                    if not (File.Exists project.Compiler.Path) then
+                        do! failStep settings.FailOnError
+                                (sprintf "'%s': the compiler %s is not available and restoring %s %s did not provide it"
+                                    project.Name project.Compiler.Path packageId version)
+                | None ->
+                    match root "$(DotnetRoot)" |> Option.filter under with
+                    | Some dotnetRoot ->
+                        let sdkPrefix = dotnetRoot + "/sdk/"
+                        let msg =
+                            if path.StartsWith(sdkPrefix, comparer) then
+                                let version = path.Substring(sdkPrefix.Length).Split('/').[0]
+                                sprintf "'%s': the lock names the compiler of SDK %s (%s), which is not installed; install that SDK or re-import with the installed one"
+                                    project.Name version project.Compiler.Path
+                            else
+                                sprintf "'%s': the compiler %s named by the lock is not installed" project.Name project.Compiler.Path
+                        do! failStep settings.FailOnError msg
+                    | None ->
+                        do! failStep settings.FailOnError
+                                (sprintf "'%s': the compiler %s named by the lock does not exist" project.Name project.Compiler.Path)
+        }
+
     let private run (settings: CscSettingsType) (project: Lock.Project) (envVars: (string * string) list) (extraTempFiles: string list) =
         recipe {
             do! trace Info "compiling '%s' (%s %s)" project.Name project.Compiler.Tool project.Compiler.Sdk
+
+            // a lock built on another machine may name a compiler this one does not have yet
+            // (a toolset package not restored, an SDK not installed): make it available -- or
+            // fail with a clear reason -- before the hash check below even looks at it
+            do! ensureCompilerAvailable settings project
 
             // the resolved project is the source of truth for what msbuild (or the composed
             // front end) generated (assembly attributes, TFM defines): write it back whenever
@@ -298,12 +372,7 @@ module CscImpl =
                 match settings.Toolset with
                 | None -> fwkInfo.CscTool
                 | Some version ->
-                    let dir =
-                        DotNetFwk.sdkImpl.nugetRoot () </> "microsoft.net.compilers.toolset" </> version
-                        </> "tasks" </> "netcore" </> "bincore"
-                    let cscDll = dir </> "csc.dll"
-                    if not (File.Exists cscDll) then
-                        DotNetFwk.sdkImpl.restorePackage "Microsoft.Net.Compilers.Toolset" version
+                    let cscDll = restoreToolsetCompiler "Microsoft.Net.Compilers.Toolset" version
                     if not (File.Exists cscDll) then
                         failwithf "compiler package Microsoft.Net.Compilers.Toolset %s could not be restored (expected '%s')" version cscDll
                     cscDll

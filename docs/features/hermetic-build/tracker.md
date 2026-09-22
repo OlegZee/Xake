@@ -52,7 +52,7 @@ details live in brief.md (section refs) or session.md.
 
 ## Conceptual review (requested 2026-09-23, after the page run)
 - [x] step back and audit what slice 1 produced — `conceptual-review.md` (2026-09-23). Verdict: no drift of the engine (two core files changed, both the one-execution-per-run fix); two blurred seams — `Lock.Project` mixes evaluation provenance, compile manifest and dependency evidence; `FromLock` is a mode flag inside the settings record
-- [ ] review follow-ups, cheap, before more code depends on them: `needFiles` the compiler too (hashed but never a tracked dependency, so an SDK update never triggers the check); drop the `.resources` mtime test in `run` (a second rebuilder next to the engine's); document the gate semantics (engine decides rebuilds, the lock only refuses). **User decisions**: a separate `Csc.fromLock project` instead of `fromlock` inside `csc {}`; `Fsproj.roots ()` from `ExecOptions.ProjectRoot` instead of cwd (today the scripts must run from the imported repo); move `Json`/roots helpers out of `Fsproj`; renames (`Lock.Project`, `Lock.File`, `Compiler.Sdk`, `Properties` as an untyped bag)
+- [x] review follow-ups (cheap): compiler is `needFiles`'d; the `.resources` mtime test is gone (regenerate only when missing, the engine decides staleness); gate semantics documented in `csc-syntax.md`. **User decisions remain**: a separate `Csc.fromLock project` instead of `fromlock` inside `csc {}`; `Fsproj.roots ()` from `ExecOptions.ProjectRoot` instead of cwd; move `Json`/roots helpers out of `Fsproj`; renames (`Lock.Project`, `Lock.File`, `Compiler.Sdk`, `Properties` as an untyped bag)
 
 ## Housekeeping
 - [ ] release of `feature/hermetic-build` — deferred by the user; `#r` on `.bootstrap/` for now

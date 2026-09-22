@@ -121,23 +121,38 @@ The runner (`run` in `Dotnet.csc.fs`, shared by both modes) does, in order:
    disk -- the resolved project is the source of truth for msbuild-generated inputs like
    `AssemblyInfo.cs`. The composed mode never populates `Generated`, so this is a no-op there.
 3. Creates the output directories, for every path `CscArgs.outputs project.Args` names.
-4. `needFiles` every resx in `project.Resources` (so a resx edit rebuilds the dll) and, for each
+4. `needFiles` the compiler itself (raised 2026-09-23, conceptual-review.md 2.4): the hash check
+   in step 5 covers `project.Compiler.Path`, but nothing before this made it a tracked
+   dependency, so an SDK or toolset update that changed `csc.dll`'s bytes left the target looking
+   up to date and the hash check never ran. `needFiles [project.Compiler.Path]`, right after
+   `ensureCompilerAvailable`, closes that.
+5. `needFiles` every resx in `project.Resources` (so a resx edit rebuilds the dll) and, for each
    `(resx, resources)` pair, compiles the resx to that `.resources` path with `Xake.Dotnet.Resx`
-   when the output is missing or older than the resx -- so a machine with only the lock, or a
-   cleaned `obj/`, still ends up with the exact file the recorded `/resource:` switch names. The
-   composed mode never populates `Resources`, so this is a no-op there.
-5. Verifies the SHA-256 of every hashed reference, analyzer, and the compiler itself against what
+   when the output is **missing** -- so a machine with only the lock, or a cleaned `obj/`, still
+   ends up with the exact file the recorded `/resource:` switch names. The composed mode never
+   populates `Resources`, so this is a no-op there. This dropped a `.resources`-vs-`.resx`
+   timestamp comparison that used to gate regeneration as well (conceptual-review.md 2.3): that
+   was a second rebuilder living next to the engine's -- the engine already decides whether this
+   recipe runs at all, from the `FileDep` `needFiles` puts on the resx, so `run` re-deciding with
+   its own mtime check was redundant and, worse, implied a staleness check the lock does not
+   actually make. **Gate semantics, stated plainly**: the engine decides *whether* a recipe runs
+   (dependency tracking, `needFiles`/`FileDep`); `run`'s hash and existence checks only decide
+   whether to *fail* a run that the engine already started -- they never trigger one. A swapped
+   file with an unchanged timestamp is still caught (the hash check runs every time `run` runs
+   for other reasons); a swapped file that also updates the timestamp is caught because the
+   timestamp change is what makes the engine run `run` in the first place.
+6. Verifies the SHA-256 of every hashed reference, analyzer, and the compiler itself against what
    is on disk. An empty recorded hash means "not checked" (the composed mode never records one,
    and neither does an unbuilt project reference). Any mismatch is collected and reported
    together, then fails the build when `FailOnError` is set (`XakeException`, message containing
    the path).
-6. `needFiles` on `CscArgs.inputs project.Args` -- every file any input switch names, plus the
+7. `needFiles` on `CscArgs.inputs project.Args` -- every file any input switch names, plus the
    sources. For the composed mode this now covers everything the args name, including the
    framework's global references, not only sources/refs/resources.
-7. Writes the arguments to a response file, with `Impl.escapeArgument`, and runs the compiler.
+8. Writes the arguments to a response file, with `Impl.escapeArgument`, and runs the compiler.
    `/noconfig` cannot go inside the rsp -- csc warns `CS2023` and ignores it there -- so it stays
    on the command line and everything else goes into `@<rspfile>`.
-8. Picks the compiler: `settings.CscPath` wins if set; otherwise, when the project's recorded
+9. Picks the compiler: `settings.CscPath` wins if set; otherwise, when the project's recorded
    compiler path ends in `.dll`, it runs through `dotnet <path>`; otherwise the path is run
    directly (a native launcher, e.g. the SDK's `csc` apphost).
 
@@ -245,6 +260,66 @@ mapped outputs, it only `needFiles` what the (already-mapped) args name.
 - A `Lock.Project` in memory has absolute paths throughout; `Lock.write` tokenizes them against
   known roots (project root, NuGet package cache, SDK) so the file on disk is portable and
   diffable, and `Lock.read`/`parse` expands them back on load.
+
+## Recording a lock from composed `csc` settings
+
+`Project.import` produces a `Lock.Project` from an msbuild project; `resolve` (private, above)
+produces one from composed `csc {}` settings, but only for `run`'s own use -- discarded once
+compiled. `lock-from-settings.md` (design note, recommendation 1b) asks for that value to be
+reachable, so a lock-recording rule can write it out the way an import rule already does. The
+smallest API for that:
+
+```fsharp
+module CscLock =
+    val resolve : CscSettingsType -> Recipe<Lock.Project>
+
+module Lock =
+    val rehash : Project -> Project
+    val diff : Project -> Project -> string list
+```
+
+**`CscLock.resolve settings`** runs `resolve` and cleans up its resx-compiled temp files itself
+(there is no compile step downstream to hand them to), returning just the `Lock.Project`. Not
+`Csc.resolve`: F# does not let a `module` and a `let`-bound function share one name in a
+namespace the way it lets a `type` and a `module` share one via
+`[<CompilationRepresentation(ModuleSuffix)>]` -- verified by compiling a minimal repro (`let Csc
+x = ...` next to `module Csc = ...` leaves `Csc.resolve` unresolved, `FS0039`, in either
+definition order). `Csc` stays the function it always was; the new module is `CscLock` instead.
+
+**Resx caveat.** `resolve` compiles `.resx` resources into temp files with random names before
+handing back the `/res:` args that name them; `CscLock.resolve` deletes those temps before
+returning. A lock recorded from settings that carry `.resx` resources is therefore **not
+compilable as is** -- its `/res:` arguments name files that no longer exist. This is a known gap,
+not a bug to route around at record time: fixing it means routing composed-mode resx through
+`Resources` (permanent `(resx, .resources)` outputs, the way `Project.import` already does),
+which is a tracker item ("Lock from composed `csc` settings" > prerequisite for projects with
+`.resx`), not something `CscLock.resolve` itself should paper over. A lock recorded from settings
+with no `.resx` resources has no such gap.
+
+**`Lock.rehash project`** fills `Sha256` for every `Hashed` entry (`References`, `Analyzers`,
+`Imports`) and for `Compiler`, from what is on disk right now (`Lock.sha256`, empty when the file
+does not exist). `resolve` never hashes -- hashing every reference on every composed compile
+would tax the common case for nothing -- so a lock-recording rule calls `rehash` itself, once,
+after `CscLock.resolve`; the cost is then paid only when that rule reruns, like everything else
+in Xake.
+
+**`Lock.diff a b`** is a pure, human-readable comparison of two locks of the same project: `[]`
+means identical. In order: `Args` as an ordered list (`+`/`-` lines from an LCS diff -- a moved
+argument shows as a removal at its old position and an addition at its new one, there being no
+separate "moved" marker in an ordered diff), `Compiler` (`Path`/`Sha256`/`Sdk`, one line per
+differing field), each hashed list (`References`, `Analyzers`, `Imports`) by path (added,
+removed, or `~ <label> <path>: <old> -> <new>` when both sides have a hash and they differ),
+`Generated`/`Resources` by key (added, removed, or `~ <label> <key>: content changed`), and
+`ProjectRefs` as a set (added/removed). This is the primitive `csc { locked "path" }` sugar and
+any `Policy` wiring would build on (`lock-from-settings.md` scenario 3); neither exists yet --
+`Lock.diff` is deliberately usable stand-alone (e.g. from an fsx-level "verify" rule) before
+either does.
+
+Tests: `src/tests/LockDiffTests.fs` (`rehash`, `diff` identical and with changes, pure, no
+msbuild/compiler needed); `src/tests/FromLockTests.fs`, `CscLock.resolve resolves composed
+settings into a hashable, round-trippable lock` (Integration: resolves a trivial library,
+asserts `Sources`/`Args`/`Compiler.Path`/empty reference hashes, then `Lock.rehash` and a
+`Lock.write`/`Lock.parse` round trip).
 
 ## Not yet
 

@@ -233,6 +233,19 @@ module Lock =
 
     let hashed path = { Path = path; Sha256 = sha256 path }
 
+    /// Fills `Sha256` for every hashed entry (`References`, `Analyzers`, `Imports`) and for
+    /// `Compiler`, from what is on disk right now; leaves `""` where the file does not exist
+    /// (`sha256` already does that per entry). For `resolve`'s composed-mode projects, which
+    /// leave every hash empty, this is the "record time" step `lock-from-settings.md`
+    /// recommendation 5 asks for -- run once by the lock-recording rule, not on every compile.
+    let rehash (project: Project) : Project =
+        let rehashOne (h: Hashed) = { h with Sha256 = sha256 h.Path }
+        { project with
+            References = project.References |> List.map rehashOne
+            Analyzers = project.Analyzers |> List.map rehashOne
+            Imports = project.Imports |> List.map rehashOne
+            Compiler = { project.Compiler with Sha256 = sha256 project.Compiler.Path } }
+
     /// Rewrites every path the project's command line, references, analyzers and generated
     /// files carry, through `f`. A build script uses this to point a project reference (the
     /// lock has it unhashed, at the referenced project's own `bin/Release/.../X.dll`) at the
@@ -250,6 +263,81 @@ module Lock =
             Analyzers = project.Analyzers |> List.map rewriteHashed
             Generated = project.Generated |> List.map (fun (path, content) -> f path, content)
             Resources = project.Resources |> List.map (fun (resx, resources) -> f resx, f resources) }
+
+    /// A plain ordered-list diff (Myers/LCS): `- x` for an element only on the left, `+ x` for
+    /// one only on the right. A moved element shows as both -- removed from its old position,
+    /// added at its new one -- there being no separate "moved" marker in an ordered diff.
+    let private diffList (a: string list) (b: string list) : string list =
+        let arrA, arrB = List.toArray a, List.toArray b
+        let la, lb = arrA.Length, arrB.Length
+        let lcs = Array2D.create (la + 1) (lb + 1) 0
+        for i in la - 1 .. -1 .. 0 do
+            for j in lb - 1 .. -1 .. 0 do
+                lcs.[i, j] <-
+                    if arrA.[i] = arrB.[j] then lcs.[i + 1, j + 1] + 1
+                    else max lcs.[i + 1, j] lcs.[i, j + 1]
+        let rec walk i j =
+            if i = la && j = lb then []
+            elif i = la then sprintf "+ %s" arrB.[j] :: walk i (j + 1)
+            elif j = lb then sprintf "- %s" arrA.[i] :: walk (i + 1) j
+            elif arrA.[i] = arrB.[j] then walk (i + 1) (j + 1)
+            elif lcs.[i + 1, j] >= lcs.[i, j + 1] then sprintf "- %s" arrA.[i] :: walk (i + 1) j
+            else sprintf "+ %s" arrB.[j] :: walk i (j + 1)
+        walk 0 0
+
+    /// `label`-prefixed added/removed/hash-changed lines for a `Hashed` list, keyed by path,
+    /// sorted for determinism. A hash-changed line is only reported when both sides have a
+    /// (non-empty) hash to compare -- an empty hash means "not computed", not "zero bytes".
+    let private diffHashed (label: string) (a: Hashed list) (b: Hashed list) : string list =
+        let ofList items = items |> List.map (fun (h: Hashed) -> h.Path, h.Sha256) |> Map.ofList
+        let mapA, mapB = ofList a, ofList b
+        let allPaths = (a |> List.map (fun h -> h.Path)) @ (b |> List.map (fun h -> h.Path)) |> List.distinct |> List.sort
+        allPaths |> List.choose (fun path ->
+            match Map.tryFind path mapA, Map.tryFind path mapB with
+            | Some _, None -> Some (sprintf "- %s %s" label path)
+            | None, Some _ -> Some (sprintf "+ %s %s" label path)
+            | Some shaA, Some shaB when shaA <> shaB && shaA <> "" && shaB <> "" ->
+                Some (sprintf "~ %s %s: %s -> %s" label path shaA shaB)
+            | _ -> None)
+
+    /// `label`-prefixed added/removed/content-changed lines for a `(path * content)` list
+    /// (`Generated`, `Resources`), keyed by the first element, sorted for determinism.
+    let private diffPairs (label: string) (a: (string * string) list) (b: (string * string) list) : string list =
+        let mapA, mapB = Map.ofList a, Map.ofList b
+        let allKeys = (a |> List.map fst) @ (b |> List.map fst) |> List.distinct |> List.sort
+        allKeys |> List.choose (fun key ->
+            match Map.tryFind key mapA, Map.tryFind key mapB with
+            | Some _, None -> Some (sprintf "- %s %s" label key)
+            | None, Some _ -> Some (sprintf "+ %s %s" label key)
+            | Some va, Some vb when va <> vb -> Some (sprintf "~ %s %s: content changed" label key)
+            | _ -> None)
+
+    /// `label`-prefixed added/removed lines for a plain string list compared as a set
+    /// (`ProjectRefs`), sorted for determinism.
+    let private diffStringSet (label: string) (a: string list) (b: string list) : string list =
+        let setA, setB = Set.ofList a, Set.ofList b
+        [ for p in Set.difference setA setB |> Set.toList |> List.sort -> sprintf "- %s %s" label p
+          for p in Set.difference setB setA |> Set.toList |> List.sort -> sprintf "+ %s %s" label p ]
+
+    let private diffCompiler (a: Compiler) (b: Compiler) : string list =
+        [ if a.Path <> b.Path then sprintf "~ Compiler.Path: %s -> %s" a.Path b.Path
+          if a.Sha256 <> b.Sha256 then sprintf "~ Compiler.Sha256: %s -> %s" a.Sha256 b.Sha256
+          if a.Sdk <> b.Sdk then sprintf "~ Compiler.Sdk: %s -> %s" a.Sdk b.Sdk ]
+
+    /// Human-readable differences between two locks of the same project: `Args` as an ordered
+    /// list (`diffList`, `+`/`-`), `Compiler` (path, hash, sdk), each hashed list
+    /// (`References`, `Analyzers`, `Imports`) by path, `Generated`/`Resources` by key,
+    /// `ProjectRefs` as a set. Empty list means identical. Pure, deterministic order (fixed
+    /// section order, sorted within each section save `Args`, which keeps its own order).
+    let diff (a: Project) (b: Project) : string list =
+        [ yield! diffList a.Args b.Args
+          yield! diffCompiler a.Compiler b.Compiler
+          yield! diffHashed "Reference" a.References b.References
+          yield! diffHashed "Analyzer" a.Analyzers b.Analyzers
+          yield! diffHashed "Import" a.Imports b.Imports
+          yield! diffPairs "Generated" a.Generated b.Generated
+          yield! diffPairs "Resources" a.Resources b.Resources
+          yield! diffStringSet "ProjectRef" a.ProjectRefs b.ProjectRefs ]
 
     open Fsproj.Json
 

@@ -1,0 +1,22 @@
+XAKE build tool 1.0.0.0
+
+[CMD] Started build as task 1
+[CMD] 1> Skipped /Users/olegz/.claude/jobs/506bc197/tmp/de/locks/netstandard2.0/MESCIUS.json (up to date)
+[CMD] 1> Started /Users/olegz/.claude/jobs/506bc197/tmp/de/src/DataEngine/obj/xake/netstandard2.0/MESCIUS/MESCIUS.ActiveReports.Core.Data.DataEngine.dll as task 2
+[CMD] 1> Started /Users/olegz/.claude/jobs/506bc197/tmp/de/src/ExpressionInfo/obj/xake/netstandard2.0/MESCIUS/MESCIUS.ActiveReports.Core.Data.ExpressionInfo.dll as task 4
+[CMD] 1> Started /Users/olegz/.claude/jobs/506bc197/tmp/de/src/VBFunctionLib/obj/xake/netstandard2.0/MESCIUS/MESCIUS.ActiveReports.Core.Data.VBFunctionLib.dll as task 3
+[CMD] 1> Completed /Users/olegz/.claude/jobs/506bc197/tmp/de/src/VBFunctionLib/obj/xake/netstandard2.0/MESCIUS/MESCIUS.ActiveReports.Core.Data.VBFunctionLib.dll in 376 ms (wait 230 ms)
+[CMD] 1> Completed /Users/olegz/.claude/jobs/506bc197/tmp/de/src/ExpressionInfo/obj/xake/netstandard2.0/MESCIUS/MESCIUS.ActiveReports.Core.Data.ExpressionInfo.dll in 460 ms (wait 1008 ms)
+[CMD] 1> Completed /Users/olegz/.claude/jobs/506bc197/tmp/de/src/DataEngine/obj/xake/netstandard2.0/MESCIUS/MESCIUS.ActiveReports.Core.Data.DataEngine.dll in 488 ms (wait 1813 ms)
+[CMD] 1> Skipped /Users/olegz/.claude/jobs/506bc197/tmp/de/locks/netstandard2.0/GCCN.json (up to date)
+[CMD] 1> Started /Users/olegz/.claude/jobs/506bc197/tmp/de/src/DataEngine/obj/xake/netstandard2.0/GCCN/GCCN.ActiveReports.Core.Data.DataEngine.dll as task 5
+[CMD] 1> Started /Users/olegz/.claude/jobs/506bc197/tmp/de/src/VBFunctionLib/obj/xake/netstandard2.0/GCCN/GCCN.ActiveReports.Core.Data.VBFunctionLib.dll as task 6
+[CMD] 1> Started /Users/olegz/.claude/jobs/506bc197/tmp/de/src/ExpressionInfo/obj/xake/netstandard2.0/GCCN/GCCN.ActiveReports.Core.Data.ExpressionInfo.dll as task 7
+[CMD] 1> Completed /Users/olegz/.claude/jobs/506bc197/tmp/de/src/VBFunctionLib/obj/xake/netstandard2.0/GCCN/GCCN.ActiveReports.Core.Data.VBFunctionLib.dll in 353 ms (wait 230 ms)
+[CMD] 1> Completed /Users/olegz/.claude/jobs/506bc197/tmp/de/src/ExpressionInfo/obj/xake/netstandard2.0/GCCN/GCCN.ActiveReports.Core.Data.ExpressionInfo.dll in 452 ms (wait 989 ms)
+[CMD] 1> Completed /Users/olegz/.claude/jobs/506bc197/tmp/de/src/DataEngine/obj/xake/netstandard2.0/GCCN/GCCN.ActiveReports.Core.Data.DataEngine.dll in 482 ms (wait 1781 ms)
+[CMD] Completed build in 17 ms (wait 4580 ms)
+[MSG] 
+
+    Build completed in 00:00:04.6121370
+

@@ -290,7 +290,7 @@ module DotNetFwk =
             | null | "" -> try System.Diagnostics.Process.GetCurrentProcess().MainModule.FileName with _ -> null
             | path -> path
 
-        let private dotnetRoot () =
+        let internal dotnetRoot () =
             let hostDir =
                 match dotnetHost () with
                 | null | "" -> None

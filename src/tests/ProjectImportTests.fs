@@ -1,0 +1,232 @@
+namespace Tests
+
+open System.IO
+open NUnit.Framework
+
+open Xake
+open Xake.Dotnet
+
+/// The pieces of `Project.import` that do not need msbuild: reading the compiler's command
+/// line, the lock's round trip, the import list of a preprocessed project.
+[<TestFixture>]
+type ``Project import``() =
+
+    let temp name = Path.Combine (Path.GetTempPath(), "xake-test-" + name)
+
+    [<Test>]
+    member x.``tells switches from sources``() =
+        Assert.That(CscArgs.parse "/noconfig", Is.EqualTo (CscArgs.Switch ("noconfig", "")))
+        Assert.That(CscArgs.parse "/optimize+", Is.EqualTo (CscArgs.Switch ("optimize+", "")))
+        Assert.That(CscArgs.parse "/reference:/pkgs/a.dll", Is.EqualTo (CscArgs.Switch ("reference", "/pkgs/a.dll")))
+        Assert.That(CscArgs.parse "/define:A;B", Is.EqualTo (CscArgs.Switch ("define", "A;B")))
+        // an absolute Unix path starts with '/' as well
+        Assert.That(CscArgs.parse "/Users/me/proj/A.cs", Is.EqualTo (CscArgs.Source "/Users/me/proj/A.cs"))
+        Assert.That(CscArgs.parse "Aggregates/Aggregate.cs", Is.EqualTo (CscArgs.Source "Aggregates/Aggregate.cs"))
+        Assert.That(CscArgs.parse @"C:\proj\A.cs", Is.EqualTo (CscArgs.Source @"C:\proj\A.cs"))
+
+    [<Test>]
+    member x.``knows which arguments name files``() =
+        let args =
+            [ "/noconfig"; "/nowarn:1701,1702"; "/define:TRACE;RELEASE"
+              "/reference:/pkgs/a.dll"; "/r:ext=/pkgs/b.dll,/pkgs/c.dll"
+              "/analyzer:/sdk/an.dll"; "/keyfile:/proj/key.snk"
+              "/resource:/proj/obj/X.resources,Ns.X.resources,public"
+              "/additionalfile:/proj/a.txt"; "/embed:/proj/obj/AssemblyInfo.cs"
+              "/analyzerconfig:/proj/.editorconfig"
+              "/out:/proj/obj/X.dll"; "/doc:/proj/obj/X.xml"; "/refout:/proj/obj/ref/X.dll"
+              "/errorlog:/proj/obj/log.sarif,version=2"
+              "/pathmap:/proj=/_/"
+              "A.cs"; "sub/B.cs" ]
+
+        Assert.That(CscArgs.sources args, Is.EqualTo ["A.cs"; "sub/B.cs"])
+        Assert.That(CscArgs.inputs args, Is.EqualTo [
+            "/pkgs/a.dll"; "/pkgs/b.dll"; "/pkgs/c.dll"; "/sdk/an.dll"; "/proj/key.snk"
+            "/proj/obj/X.resources"; "/proj/a.txt"; "/proj/obj/AssemblyInfo.cs"; "/proj/.editorconfig"
+            "A.cs"; "sub/B.cs" ])
+        Assert.That(CscArgs.outputs args, Is.EqualTo [
+            "/proj/obj/X.dll"; "/proj/obj/X.xml"; "/proj/obj/ref/X.dll"; "/proj/obj/log.sarif" ])
+        Assert.That(CscArgs.switchValues "reference" args, Is.EqualTo ["/pkgs/a.dll"; "/pkgs/b.dll"; "/pkgs/c.dll"])
+
+    [<Test>]
+    member x.``makes the paths absolute and leaves the rest alone``() =
+        let args =
+            [ "/nowarn:1701,1702"; "/define:TRACE;RELEASE"
+              "/r:ext=../pkgs/b.dll,/pkgs/c.dll"
+              "/resource:obj/X.resources,Ns.X.resources"
+              "/analyzer:/sdk/targets/../analyzers/an.dll"
+              "/out:obj/X.dll"; "/optimize+"; "A.cs"; "sub/B.cs" ]
+
+        Assert.That(CscArgs.absolutize "/proj/src" args, Is.EqualTo [
+            "/nowarn:1701,1702"; "/define:TRACE;RELEASE"
+            "/r:ext=/proj/pkgs/b.dll,/pkgs/c.dll"
+            "/resource:/proj/src/obj/X.resources,Ns.X.resources"
+            // `..` folded: two spellings of one file are one input
+            "/analyzer:/sdk/analyzers/an.dll"
+            "/out:/proj/src/obj/X.dll"; "/optimize+"; "/proj/src/A.cs"; "/proj/src/sub/B.cs" ])
+
+    [<Test>]
+    member x.``the lock reads back what was written, with roots tokenized``() =
+        let packages = Fsproj.roots () |> List.find (fst >> (=) "$(NuGetPackageRoot)") |> snd
+        let root = Directory.GetCurrentDirectory().Replace ('\\', '/')
+
+        let project : Lock.Project = {
+            Name = "Sample.Lib"
+            Project = root + "/src/Sample/Sample.csproj"
+            Directory = root + "/src/Sample"
+            Compiler = { Tool = "csc"; Path = "/dotnet/sdk/8.0.425/Roslyn/bincore/csc.dll"; Sha256 = "ab01"; Sdk = "8.0.425" }
+            Args =
+                [ "/noconfig"; "/define:TRACE;RELEASE"
+                  "/reference:" + packages + "/netstandard.library/2.0.3/build/netstandard2.0/ref/netstandard.dll"
+                  "/keyfile:" + root + "/.keys/sample.snk"
+                  sprintf "/pathmap:%s=/_/" root
+                  "/out:" + root + "/src/Sample/obj/xake/net8.0/Sample.Lib.dll"
+                  root + "/src/Sample/A.cs" ]
+            References = [ { Path = packages + "/netstandard.library/2.0.3/build/netstandard2.0/ref/netstandard.dll"; Sha256 = "cd02" }
+                           { Path = root + "/src/Other/bin/Release/Other.dll"; Sha256 = "" } ]
+            Analyzers = [ { Path = "/dotnet/sdk/8.0.425/Sdks/Microsoft.NET.Sdk/analyzers/an.dll"; Sha256 = "ef03" } ]
+            ProjectRefs = [ root + "/src/Other/Other.csproj" ]
+            Imports = [ { Path = root + "/Directory.Build.props"; Sha256 = "0a0b" } ]
+            Generated = [ root + "/src/Sample/obj/xake/net8.0/Sample.AssemblyInfo.cs", "// <autogenerated />\r\n[assembly: A(\"x\")]\n" ]
+            Properties = Map.ofList [ "AssemblyName", "Sample.Lib"; "TargetPath", root + "/src/Sample/bin/Sample.Lib.dll" ]
+        }
+        let lock : Lock.File = {
+            Framework = "net8.0"; Configuration = "Release"; Properties = [ "Brand", "X" ]; Projects = [ project ]
+        }
+
+        let text = Lock.write lock
+        Assert.That(Lock.parse text, Is.EqualTo lock)
+
+        // nothing machine-specific survives in the file: the checkout and the package cache
+        // are tokens, and a root inside a value (`/pathmap:`) is one too
+        Assert.That(text, Does.Not.Contain root)
+        Assert.That(text, Does.Not.Contain packages)
+        Assert.That(text, Does.Contain "/pathmap:$(ProjectRoot)=/_/")
+        Assert.That(text, Does.Contain "\"/keyfile:$(ProjectRoot)/.keys/sample.snk\"")
+        Assert.That(text, Does.Contain "$(NuGetPackageRoot)/netstandard.library/2.0.3")
+
+        // and the same text again from the parsed lock: the file is deterministic
+        Assert.That(Lock.parse text |> Lock.write, Is.EqualTo text)
+
+        Assert.That((Lock.project "Sample" lock).Name, Is.EqualTo "Sample.Lib")
+        Assert.That((Lock.project "Sample.Lib" lock).Sources, Is.EqualTo [ root + "/src/Sample/A.cs" ])
+        Assert.That((Lock.project "Sample.Lib" lock).Output, Is.EqualTo (Some (root + "/src/Sample/obj/xake/net8.0/Sample.Lib.dll")))
+
+    [<Test>]
+    member x.``lists the files a preprocessed project imported``() =
+        let preprocessed = """<!--
+============================================================================================================================================
+/repo/src/DataEngine/DataEngine.csproj
+============================================================================================================================================
+-->
+<Project ToolsVersion="15.0" DefaultTargets="Build">
+  <!--
+============================================================================================================================================
+  <Import Project="Sdk.props" Sdk="Microsoft.NET.Sdk">
+  This import was added implicitly because the Project element's Sdk attribute specified "Microsoft.NET.Sdk".
+
+/dotnet/sdk/8.0.425/Sdks/Microsoft.NET.Sdk/Sdk/Sdk.props
+============================================================================================================================================
+-->
+  <PropertyGroup>
+    <_Placeholder>========</_Placeholder>
+  </PropertyGroup>
+  <!--
+============================================================================================================================================
+  <Import Project="$(DirectoryBuildPropsPath)" Condition="'$(ImportDirectoryBuildProps)' == 'true' and exists('$(DirectoryBuildPropsPath)')">
+
+/repo/Directory.Build.props
+============================================================================================================================================
+-->
+  <!--
+============================================================================================================================================
+  <Import Project="$(Brand).props">
+
+/repo/src/MESCIUS.props
+============================================================================================================================================
+-->
+  <!--
+============================================================================================================================================
+  </Import>
+
+/repo/src/MESCIUS.props
+============================================================================================================================================
+-->
+</Project>
+"""
+        Assert.That(Project.parseImports preprocessed, Is.EqualTo [
+            "/repo/src/DataEngine/DataEngine.csproj"
+            "/dotnet/sdk/8.0.425/Sdks/Microsoft.NET.Sdk/Sdk/Sdk.props"
+            "/repo/Directory.Build.props"
+            "/repo/src/MESCIUS.props" ])
+
+    [<Test>]
+    member x.``builds the lock entry from what msbuild answered``() =
+        let dir = temp "import"
+        Directory.CreateDirectory (Path.Combine (dir, "obj", "xake", "net8.0", "X")) |> ignore
+        let generated = Path.Combine (dir, "obj", "xake", "net8.0", "X", "Sample.AssemblyInfo.cs")
+        File.WriteAllText (generated, "[assembly: A]")
+        let key = Path.Combine (dir, "key.snk")
+        File.WriteAllBytes (key, [| 1uy; 2uy; 3uy |])
+        let dirSlash = dir.Replace ('\\', '/')
+
+        let result = temp "import.msbuild"
+        File.WriteAllText (result, sprintf """{
+          "Properties": {
+            "AssemblyName": "Sample.Lib",
+            "MSBuildProjectFullPath": "%s/Sample.csproj",
+            "MSBuildProjectDirectory": "%s",
+            "IntermediateOutputPath": "obj/xake/net8.0/X/",
+            "CscToolPath": "",
+            "CscToolExe": "",
+            "RoslynTargetsPath": "/dotnet/sdk/8.0.425/Roslyn",
+            "NETCoreSdkVersion": "8.0.425",
+            "NetCoreRoot": "/dotnet/",
+            "LangVersion": "12"
+          },
+          "Items": {
+            "CscCommandLineArgs": [
+              { "Identity": "/noconfig" },
+              { "Identity": "/keyfile:%s" },
+              { "Identity": "/reference:/dotnet/packs/ref/netstandard.dll" },
+              { "Identity": "/reference:%s/../Other/bin/Other.dll" },
+              { "Identity": "/analyzer:/dotnet/sdk/8.0.425/Sdks/Microsoft.NET.Sdk/targets/../analyzers/an.dll" },
+              { "Identity": "/out:obj/xake/net8.0/X/Sample.Lib.dll" },
+              { "Identity": "obj/xake/net8.0/X/Sample.AssemblyInfo.cs" },
+              { "Identity": "A.cs" }
+            ],
+            "ProjectReference": [
+              { "Identity": "../Other/Other.csproj", "FullPath": "%s/../Other/Other.csproj" }
+            ]
+          }
+        }""" dirSlash dirSlash key dirSlash dirSlash)
+
+        let imports =
+            [ dirSlash + "/Sample.csproj"
+              "/dotnet/sdk/8.0.425/Sdks/Microsoft.NET.Sdk/Sdk/Sdk.props"
+              dirSlash + "/obj/Sample.csproj.nuget.g.props"
+              dirSlash + "/Directory.Build.props" ]
+        let entry = Project.parseImport result imports
+
+        Assert.That(entry.Name, Is.EqualTo "Sample.Lib")
+        Assert.That(entry.Directory, Is.EqualTo dirSlash)
+        Assert.That(entry.Compiler.Path, Is.EqualTo "/dotnet/sdk/8.0.425/Roslyn/bincore/csc.dll")
+        Assert.That(entry.Compiler.Sdk, Is.EqualTo "8.0.425")
+        // relative arguments resolved against the project directory, `..` folded
+        Assert.That(entry.Args, Is.EqualTo [
+            "/noconfig"
+            "/keyfile:" + key.Replace ('\\', '/')
+            "/reference:/dotnet/packs/ref/netstandard.dll"
+            "/reference:" + (Path.GetFullPath (Path.Combine (dir, "..", "Other", "bin", "Other.dll"))).Replace ('\\', '/')
+            "/analyzer:/dotnet/sdk/8.0.425/Sdks/Microsoft.NET.Sdk/analyzers/an.dll"
+            "/out:" + dirSlash + "/obj/xake/net8.0/X/Sample.Lib.dll"
+            dirSlash + "/obj/xake/net8.0/X/Sample.AssemblyInfo.cs"
+            dirSlash + "/A.cs" ])
+        Assert.That(entry.Sources, Is.EqualTo [ dirSlash + "/obj/xake/net8.0/X/Sample.AssemblyInfo.cs"; dirSlash + "/A.cs" ])
+        // a reference that does not exist yet (a project reference's output) has no hash
+        Assert.That(entry.References |> List.map (fun r -> r.Sha256 = ""), Is.EqualTo [ true; true ])
+        Assert.That(entry.ProjectRefs, Is.EqualTo [ dirSlash + "/../Other/Other.csproj" ])
+        // the SDK's own files are the SDK version; restore's are the import's own
+        Assert.That(entry.Imports |> List.map (fun i -> i.Path), Is.EqualTo [ dirSlash + "/Sample.csproj"; dirSlash + "/Directory.Build.props" ])
+        // what msbuild generated into obj travels with the lock
+        Assert.That(entry.Generated, Is.EqualTo [ dirSlash + "/obj/xake/net8.0/X/Sample.AssemblyInfo.cs", "[assembly: A]" ])
+        Assert.That(entry.Properties.["LangVersion"], Is.EqualTo "12")

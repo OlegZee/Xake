@@ -1,0 +1,114 @@
+XAKE build tool 1.0.0.0
+
+[CMD] Started locks as task 1
+[CMD] 1> Started /Users/olegz/.claude/jobs/506bc197/tmp/de/locks/netstandard2.0/GCCN.json as task 2
+[CMD] 1> Started /Users/olegz/.claude/jobs/506bc197/tmp/de/locks/netstandard2.0/MESCIUS.json as task 3
+[CMD] 1> Completed /Users/olegz/.claude/jobs/506bc197/tmp/de/locks/netstandard2.0/MESCIUS.json in 2896 ms (wait 31 ms)
+[CMD] 1> Completed /Users/olegz/.claude/jobs/506bc197/tmp/de/locks/netstandard2.0/GCCN.json in 2904 ms (wait 29 ms)
+[CMD] Completed locks in 3 ms (wait 2937 ms)
+[MSG] 
+
+    Build completed in 00:00:02.9578800
+
+---- SECOND RUN
+XAKE build tool 1.0.0.0
+
+[CMD] Started locks as task 1
+[CMD] 1> Skipped /Users/olegz/.claude/jobs/506bc197/tmp/de/locks/netstandard2.0/MESCIUS.json (up to date)
+[CMD] 1> Skipped /Users/olegz/.claude/jobs/506bc197/tmp/de/locks/netstandard2.0/GCCN.json (up to date)
+[CMD] Completed locks in 3 ms (wait 4 ms)
+[MSG] 
+
+    Build completed in 00:00:00.0232940
+
+---- SHOW
+XAKE build tool 1.0.0.0
+
+[CMD] Started show as task 1
+[MSG] 1> MESCIUS.ActiveReports.Core.Data.DataEngine (/Users/olegz/.claude/jobs/506bc197/tmp/de/src/DataEngine/DataEngine.csproj, sdk 8.0.425)
+[MSG] 1>   compiler   /usr/local/share/dotnet/sdk/8.0.425/Roslyn/bincore/csc.dll dfed5ed9061c
+[MSG] 1>   args       221, sources 80, out Some
+  "/Users/olegz/.claude/jobs/506bc197/tmp/de/src/DataEngine/obj/xake/netstandard2.0/MESCIUS/MESCIUS.ActiveReports.Core.Data.DataEngine.dll"
+[MSG] 1>   references 115 (2 unhashed), analyzers 2
+[MSG] 1>   imports    12: DataEngine.csproj, Directory.Build.props, Directory.Build.props, MESCIUS.props, SauceControl.InheritDoc.props, CycloneDX.MSBuild.props, Directory.Packages.props, SauceControl.InheritDoc.targets, NETStandard.Library.targets, CycloneDX.MSBuild.targets, Directory.Build.targets, CycloneDX.targets
+[MSG] 1>   generated  DataEngine.GeneratedMSBuildEditorConfig.editorconfig, .NETStandard,Version=v2.0.AssemblyAttributes.cs, DataEngine.AssemblyInfo.cs
+[MSG] 1> MESCIUS.ActiveReports.Core.Data.ExpressionInfo (/Users/olegz/.claude/jobs/506bc197/tmp/de/src/ExpressionInfo/ExpressionInfo.csproj, sdk 8.0.425)
+[MSG] 1>   compiler   /usr/local/share/dotnet/sdk/8.0.425/Roslyn/bincore/csc.dll dfed5ed9061c
+[MSG] 1>   args       259, sources 119, out Some
+  "/Users/olegz/.claude/jobs/506bc197/tmp/de/src/ExpressionInfo/obj/xake/netstandard2.0/MESCIUS/MESCIUS.ActiveReports.Core.Data.ExpressionInfo.dll"
+[MSG] 1>   references 114 (1 unhashed), analyzers 2
+[MSG] 1>   imports    12: ExpressionInfo.csproj, Directory.Build.props, Directory.Build.props, MESCIUS.props, SauceControl.InheritDoc.props, CycloneDX.MSBuild.props, Directory.Packages.props, SauceControl.InheritDoc.targets, NETStandard.Library.targets, CycloneDX.MSBuild.targets, Directory.Build.targets, CycloneDX.targets
+[MSG] 1>   generated  ExpressionInfo.GeneratedMSBuildEditorConfig.editorconfig, .NETStandard,Version=v2.0.AssemblyAttributes.cs, ExpressionInfo.AssemblyInfo.cs
+[MSG] 1> MESCIUS.ActiveReports.Core.Data.VBFunctionLib (/Users/olegz/.claude/jobs/506bc197/tmp/de/src/VBFunctionLib/VBFunctionLib.csproj, sdk 8.0.425)
+[MSG] 1>   compiler   /usr/local/share/dotnet/sdk/8.0.425/Roslyn/bincore/csc.dll dfed5ed9061c
+[MSG] 1>   args       153, sources 14, out Some
+  "/Users/olegz/.claude/jobs/506bc197/tmp/de/src/VBFunctionLib/obj/xake/netstandard2.0/MESCIUS/MESCIUS.ActiveReports.Core.Data.VBFunctionLib.dll"
+[MSG] 1>   references 113 (0 unhashed), analyzers 2
+[MSG] 1>   imports    12: VBFunctionLib.csproj, Directory.Build.props, Directory.Build.props, MESCIUS.props, SauceControl.InheritDoc.props, CycloneDX.MSBuild.props, Directory.Packages.props, SauceControl.InheritDoc.targets, NETStandard.Library.targets, CycloneDX.MSBuild.targets, Directory.Build.targets, CycloneDX.targets
+[MSG] 1>   generated  VBFunctionLib.GeneratedMSBuildEditorConfig.editorconfig, .NETStandard,Version=v2.0.AssemblyAttributes.cs, VBFunctionLib.AssemblyInfo.cs
+[CMD] Completed show in 14 ms (wait 0 ms)
+[MSG] 
+
+    Build completed in 00:00:00.0288410
+
+---- SHOW GCCN
+XAKE build tool 1.0.0.0
+
+[CMD] Started show as task 1
+[MSG] 1> MESCIUS.ActiveReports.Core.Data.DataEngine (/Users/olegz/.claude/jobs/506bc197/tmp/de/src/DataEngine/DataEngine.csproj, sdk 8.0.425)
+[MSG] 1>   compiler   /usr/local/share/dotnet/sdk/8.0.425/Roslyn/bincore/csc.dll dfed5ed9061c
+[MSG] 1>   args       221, sources 80, out Some
+  "/Users/olegz/.claude/jobs/506bc197/tmp/de/src/DataEngine/obj/xake/netstandard2.0/MESCIUS/MESCIUS.ActiveReports.Core.Data.DataEngine.dll"
+[MSG] 1>   references 115 (2 unhashed), analyzers 2
+[MSG] 1>   imports    12: DataEngine.csproj, Directory.Build.props, Directory.Build.props, MESCIUS.props, SauceControl.InheritDoc.props, CycloneDX.MSBuild.props, Directory.Packages.props, SauceControl.InheritDoc.targets, NETStandard.Library.targets, CycloneDX.MSBuild.targets, Directory.Build.targets, CycloneDX.targets
+[MSG] 1>   generated  DataEngine.GeneratedMSBuildEditorConfig.editorconfig, .NETStandard,Version=v2.0.AssemblyAttributes.cs, DataEngine.AssemblyInfo.cs
+[MSG] 1> MESCIUS.ActiveReports.Core.Data.ExpressionInfo (/Users/olegz/.claude/jobs/506bc197/tmp/de/src/ExpressionInfo/ExpressionInfo.csproj, sdk 8.0.425)
+[MSG] 1>   compiler   /usr/local/share/dotnet/sdk/8.0.425/Roslyn/bincore/csc.dll dfed5ed9061c
+[MSG] 1>   args       259, sources 119, out Some
+  "/Users/olegz/.claude/jobs/506bc197/tmp/de/src/ExpressionInfo/obj/xake/netstandard2.0/MESCIUS/MESCIUS.ActiveReports.Core.Data.ExpressionInfo.dll"
+[MSG] 1>   references 114 (1 unhashed), analyzers 2
+[MSG] 1>   imports    12: ExpressionInfo.csproj, Directory.Build.props, Directory.Build.props, MESCIUS.props, SauceControl.InheritDoc.props, CycloneDX.MSBuild.props, Directory.Packages.props, SauceControl.InheritDoc.targets, NETStandard.Library.targets, CycloneDX.MSBuild.targets, Directory.Build.targets, CycloneDX.targets
+[MSG] 1>   generated  ExpressionInfo.GeneratedMSBuildEditorConfig.editorconfig, .NETStandard,Version=v2.0.AssemblyAttributes.cs, ExpressionInfo.AssemblyInfo.cs
+[MSG] 1> MESCIUS.ActiveReports.Core.Data.VBFunctionLib (/Users/olegz/.claude/jobs/506bc197/tmp/de/src/VBFunctionLib/VBFunctionLib.csproj, sdk 8.0.425)
+[MSG] 1>   compiler   /usr/local/share/dotnet/sdk/8.0.425/Roslyn/bincore/csc.dll dfed5ed9061c
+[MSG] 1>   args       153, sources 14, out Some
+  "/Users/olegz/.claude/jobs/506bc197/tmp/de/src/VBFunctionLib/obj/xake/netstandard2.0/MESCIUS/MESCIUS.ActiveReports.Core.Data.VBFunctionLib.dll"
+[MSG] 1>   references 113 (0 unhashed), analyzers 2
+[MSG] 1>   imports    12: VBFunctionLib.csproj, Directory.Build.props, Directory.Build.props, MESCIUS.props, SauceControl.InheritDoc.props, CycloneDX.MSBuild.props, Directory.Packages.props, SauceControl.InheritDoc.targets, NETStandard.Library.targets, CycloneDX.MSBuild.targets, Directory.Build.targets, CycloneDX.targets
+[MSG] 1>   generated  VBFunctionLib.GeneratedMSBuildEditorConfig.editorconfig, .NETStandard,Version=v2.0.AssemblyAttributes.cs, VBFunctionLib.AssemblyInfo.cs
+[CMD] Completed show in 14 ms (wait 0 ms)
+[MSG] 
+
+    Build completed in 00:00:00.0307110
+
+
+=== show -d Lock=locks/netstandard2.0/GCCN.json
+XAKE build tool 1.0.0.0
+
+[CMD] Started show as task 1
+[MSG] 1> GCCN.ActiveReports.Core.Data.DataEngine (/Users/olegz/.claude/jobs/506bc197/tmp/de/src/DataEngine/DataEngine.csproj, sdk 8.0.425)
+[MSG] 1>   compiler   /usr/local/share/dotnet/sdk/8.0.425/Roslyn/bincore/csc.dll dfed5ed9061c
+[MSG] 1>   args       221, sources 80, out Some
+  "/Users/olegz/.claude/jobs/506bc197/tmp/de/src/DataEngine/obj/xake/netstandard2.0/GCCN/GCCN.ActiveReports.Core.Data.DataEngine.dll"
+[MSG] 1>   references 115 (2 unhashed), analyzers 2
+[MSG] 1>   imports    12: DataEngine.csproj, Directory.Build.props, Directory.Build.props, GCCN.props, SauceControl.InheritDoc.props, CycloneDX.MSBuild.props, Directory.Packages.props, SauceControl.InheritDoc.targets, NETStandard.Library.targets, CycloneDX.MSBuild.targets, Directory.Build.targets, CycloneDX.targets
+[MSG] 1>   generated  DataEngine.GeneratedMSBuildEditorConfig.editorconfig, .NETStandard,Version=v2.0.AssemblyAttributes.cs, DataEngine.AssemblyInfo.cs
+[MSG] 1> GCCN.ActiveReports.Core.Data.ExpressionInfo (/Users/olegz/.claude/jobs/506bc197/tmp/de/src/ExpressionInfo/ExpressionInfo.csproj, sdk 8.0.425)
+[MSG] 1>   compiler   /usr/local/share/dotnet/sdk/8.0.425/Roslyn/bincore/csc.dll dfed5ed9061c
+[MSG] 1>   args       259, sources 119, out Some
+  "/Users/olegz/.claude/jobs/506bc197/tmp/de/src/ExpressionInfo/obj/xake/netstandard2.0/GCCN/GCCN.ActiveReports.Core.Data.ExpressionInfo.dll"
+[MSG] 1>   references 114 (1 unhashed), analyzers 2
+[MSG] 1>   imports    12: ExpressionInfo.csproj, Directory.Build.props, Directory.Build.props, GCCN.props, SauceControl.InheritDoc.props, CycloneDX.MSBuild.props, Directory.Packages.props, SauceControl.InheritDoc.targets, NETStandard.Library.targets, CycloneDX.MSBuild.targets, Directory.Build.targets, CycloneDX.targets
+[MSG] 1>   generated  ExpressionInfo.GeneratedMSBuildEditorConfig.editorconfig, .NETStandard,Version=v2.0.AssemblyAttributes.cs, ExpressionInfo.AssemblyInfo.cs
+[MSG] 1> GCCN.ActiveReports.Core.Data.VBFunctionLib (/Users/olegz/.claude/jobs/506bc197/tmp/de/src/VBFunctionLib/VBFunctionLib.csproj, sdk 8.0.425)
+[MSG] 1>   compiler   /usr/local/share/dotnet/sdk/8.0.425/Roslyn/bincore/csc.dll dfed5ed9061c
+[MSG] 1>   args       153, sources 14, out Some
+  "/Users/olegz/.claude/jobs/506bc197/tmp/de/src/VBFunctionLib/obj/xake/netstandard2.0/GCCN/GCCN.ActiveReports.Core.Data.VBFunctionLib.dll"
+[MSG] 1>   references 113 (0 unhashed), analyzers 2
+[MSG] 1>   imports    12: VBFunctionLib.csproj, Directory.Build.props, Directory.Build.props, GCCN.props, SauceControl.InheritDoc.props, CycloneDX.MSBuild.props, Directory.Packages.props, SauceControl.InheritDoc.targets, NETStandard.Library.targets, CycloneDX.MSBuild.targets, Directory.Build.targets, CycloneDX.targets
+[MSG] 1>   generated  VBFunctionLib.GeneratedMSBuildEditorConfig.editorconfig, .NETStandard,Version=v2.0.AssemblyAttributes.cs, VBFunctionLib.AssemblyInfo.cs
+[CMD] Completed show in 15 ms (wait 0 ms)
+[MSG] 
+
+    Build completed in 00:00:00.0328390
+

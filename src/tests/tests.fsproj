@@ -27,6 +27,8 @@
     <Compile Include="DelegatedTests.fs" />
     <Compile Include="FlatScriptTests.fs" />
     <Compile Include="DotnetTasksTests.fs" />
+    <Compile Include="ProjectImportTests.fs" />
+    <Compile Include="CscInvocationTests.fs" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\core\Xake.fsproj" />

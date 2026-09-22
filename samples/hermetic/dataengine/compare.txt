@@ -1,0 +1,98 @@
+Comparison: hermetic build output vs `dotnet build` baseline
+==============================================================
+
+NOTE: an earlier version of this comparison was invalid. Its baseline was built with
+`dotnet build` from a *different* checkout (tmp/de-ref) than the hermetic build (tmp/de),
+so csc embedded different absolute source paths into the two builds' outputs -- every
+non-XML difference reported there was purely a directory-naming artifact, not a
+reproducibility issue. This comparison redoes the baseline **in the same directory**
+(tmp/de) that produced the hermetic build, so the two runs share identical absolute paths.
+
+Produced by:  dotnet fsi import.fsx -- -- build   (cwd = tmp/de)
+Baseline:     dotnet build src/DataEngine/DataEngine.csproj -c Release
+              -p:TargetFramework=netstandard2.0 -p:Brand=<B> -p:NuGetAudit=false
+              -p:IntermediateOutputPath=obj/xake/netstandard2.0/<B>/
+              run from the SAME checkout (tmp/de), same IntermediateOutputPath, for
+              both brands, overwriting the hermetic build's obj/xake outputs in place.
+              Xake's own outputs were saved beforehand to tmp/xake-out/<B>/<Proj>.{dll,pdb,xml}
+              and restored afterward.
+
+File                                cmp result   size (xake)  size (dotnet build)
+-----------------------------------------------------------------------------------
+MESCIUS/DataEngine.dll              IDENTICAL    392704       392704
+MESCIUS/DataEngine.pdb              IDENTICAL    111196       111196
+MESCIUS/DataEngine.xml              IDENTICAL    164198       164198
+MESCIUS/ExpressionInfo.dll          IDENTICAL    227840       227840
+MESCIUS/ExpressionInfo.pdb          IDENTICAL    87764        87764
+MESCIUS/ExpressionInfo.xml          IDENTICAL    148894       148894
+MESCIUS/VBFunctionLib.dll           IDENTICAL    70656        70656
+MESCIUS/VBFunctionLib.pdb           IDENTICAL    35900        35900
+MESCIUS/VBFunctionLib.xml           IDENTICAL    249427       249427
+GCCN/DataEngine.dll                 IDENTICAL    392704       392704
+GCCN/DataEngine.pdb                 IDENTICAL    111188       111188
+GCCN/DataEngine.xml                 IDENTICAL    164195       164195
+GCCN/ExpressionInfo.dll             IDENTICAL    228352       228352
+GCCN/ExpressionInfo.pdb             IDENTICAL    87756        87756
+GCCN/ExpressionInfo.xml             IDENTICAL    148891       148891
+GCCN/VBFunctionLib.dll              IDENTICAL    70656        70656
+GCCN/VBFunctionLib.pdb              IDENTICAL    35896        35896
+GCCN/VBFunctionLib.xml              IDENTICAL    249424       249424
+
+All 18 files (6 dll + 6 pdb + 6 xml, across both brands) are byte-for-byte identical
+between the hermetic (Xake) build and the `dotnet build` baseline run from the same
+checkout. `cmp -l a b | wc -l` is 0 for every pair -- no differing bytes anywhere, so
+there is nothing to report offsets for.
+
+Generated inputs comparison
+----------------------------
+Also compared: the generated `*.AssemblyInfo.cs` and
+`*.GeneratedMSBuildEditorConfig.editorconfig` files that `dotnet build` (re)wrote into
+`src/<Proj>/obj/xake/netstandard2.0/<B>/` against the copies captured from the hermetic
+build's import step at `samples/hermetic/dataengine/generated/<Proj>/<B>/`.
+
+All 12 matched pairs (3 projects x 2 brands x {AssemblyInfo.cs, .editorconfig}) are
+IDENTICAL, byte for byte. (The `.NETStandard,Version=v2.0.AssemblyAttributes.cs` file that
+`dotnet build` also writes into obj/xake has no counterpart in the samples copy -- it's a
+standard SDK-generated file unrelated to the DataEngine import step, not something Xake's
+import produces, so it was not expected to match anything and is not a discrepancy.)
+
+Conclusion
+----------
+With both builds run from the identical checkout path, the hermetic (Xake) build and a
+plain `dotnet build` produce byte-identical DataEngine/ExpressionInfo/VBFunctionLib
+outputs for both the MESCIUS and GCCN brands, on all three artifact types (dll, pdb, xml),
+and identical generated compiler inputs. This confirms the earlier "DIFFERENT" results
+were entirely explained by the differing absolute checkout paths (tmp/de vs tmp/de-ref)
+embedded by csc's deterministic PDB/PE output, and that the hermetic build is a faithful,
+byte-reproducible stand-in for the standard MSBuild/csc pipeline.
+
+Timings
+-------
+1st build (clean, both brands, 6 projects): Build completed in 00:00:04.6121370
+2nd build (no changes):                     Build completed in 00:00:00.0502340 -- every
+                                             target skipped (all 3 locks + 6 dlls, both
+                                             brands)
+3rd build (after touching
+  src/VBFunctionLib/CompilerService.cs):    Build completed in 00:00:04.9267430
+
+Recompiled on the 3rd build: VBFunctionLib, ExpressionInfo and DataEngine, for both brands
+(6 of 6 dll targets); both lock targets were skipped (locks did not need to be
+re-evaluated, only the compile rule reran). This matches the reference graph read from the
+locks' `ProjectRefs`:
+
+    DataEngine      -> ExpressionInfo, VBFunctionLib
+    ExpressionInfo  -> VBFunctionLib
+    VBFunctionLib   -> (none)
+
+Touching a VBFunctionLib source file correctly forced VBFunctionLib to recompile, and then
+propagated up through the `need [... referenced project's Output ...]` in the compile rule
+to also rebuild ExpressionInfo and DataEngine, which both reference VBFunctionLib's output.
+
+Note on compile.log
+--------------------
+`compile.log` in this folder is import.fsx's `filelog` output, which xake truncates and
+rewrites on every run. It was captured after the 3rd (touch) build rather than the 1st,
+because the log wasn't copied out before the 2nd and 3rd builds overwrote it. The 1st
+build's console output was preserved separately as `compile-console.txt` (tee'd to a file
+outside the repo before any further run), which shows the same content the 1st build's log
+would have (all 6 [csc] compiles, no errors).

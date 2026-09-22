@@ -206,6 +206,12 @@ module Lock =
         /// it derives from properties), by path, with their content: they depend on the
         /// commit and the properties, and are small
         Generated: (string * string) list
+        /// `.resx` files this project embeds, compiled by `PrepareResources`: (resx path,
+        /// `.resources` output path), both absolute. `run` regenerates the output from the
+        /// resx (via `Xake.Dotnet.Resx`) whenever it is missing or older than the resx, so a
+        /// machine with only the lock -- or a cleaned `obj/` -- can still reproduce the exact
+        /// input the recorded `/resource:` switch names.
+        Resources: (string * string) list
         Properties: Map<string, string>
     } with
         member this.Sources = CscArgs.sources this.Args
@@ -242,7 +248,8 @@ module Lock =
             Args = project.Args |> List.map (CscArgs.parse >> CscArgs.mapPaths f >> CscArgs.format)
             References = project.References |> List.map rewriteHashed
             Analyzers = project.Analyzers |> List.map rewriteHashed
-            Generated = project.Generated |> List.map (fun (path, content) -> f path, content) }
+            Generated = project.Generated |> List.map (fun (path, content) -> f path, content)
+            Resources = project.Resources |> List.map (fun (resx, resources) -> f resx, f resources) }
 
     open Fsproj.Json
 
@@ -280,20 +287,24 @@ module Lock =
           strings "ProjectRefs" project.ProjectRefs
           hashedList "Imports" project.Imports
           pairs "Generated" project.Generated
+          pairs "Resources" project.Resources
           pairs "Properties" (project.Properties |> Map.toList) ]
         |> String.concat ",\n" |> sprintf "    {\n%s\n    }"
 
-    /// The lock as text: paths tokenized against the package cache, the SDK and the project
-    /// root, one line per argument, so the file is the same on every machine and a diff of
-    /// two locks is the difference between two compilations.
-    let write (lock: File) =
-        let roots = Fsproj.roots ()
+    /// The lock as text: paths tokenized against the given roots, one line per argument, so the
+    /// file is the same on every machine and a diff of two locks is the difference between two
+    /// compilations. `roots` is the full list (built-in plus any extra a script declared, e.g.
+    /// via `Fsproj.withRoots`), longest root first.
+    let writeWith roots (lock: File) =
         [ sprintf "  \"Framework\": %s" (escape lock.Framework)
           sprintf "  \"Configuration\": %s" (escape lock.Configuration)
           sprintf "  \"Properties\": {\n%s\n  }"
             (lock.Properties |> List.map (fun (k, v) -> sprintf "    %s: %s" (escape k) (escape v)) |> String.concat ",\n")
           sprintf "  \"Projects\": [\n%s\n  ]" (lock.Projects |> List.map (writeProject roots) |> String.concat ",\n") ]
         |> String.concat ",\n" |> sprintf "{\n%s\n}\n"
+
+    /// `writeWith` against the built-in roots only (package cache, project root, SDK).
+    let write (lock: File) = writeWith (Fsproj.roots ()) lock
 
     let private readProject roots value =
         let expand = Fsproj.expand roots
@@ -321,12 +332,13 @@ module Lock =
             ProjectRefs = strings "ProjectRefs"
             Imports = hashedList "Imports"
             Generated = pairs "Generated"
+            Resources = pairs "Resources"
             Properties = pairs "Properties" |> Map.ofList
         }
 
-    /// Reads a lock `write` produced, paths expanded for this machine.
-    let parse (text: string) =
-        let roots = Fsproj.roots ()
+    /// Reads a lock `write`/`writeWith` produced, paths expanded for this machine. `roots` must
+    /// be the same list (or a superset) used to write it, or a token stays untranslated.
+    let parseWith roots (text: string) =
         let root = Fsproj.Json.parse text
         let str name = field name root |> Option.bind asString |> Option.defaultValue ""
         {
@@ -338,6 +350,11 @@ module Lock =
                 | _ -> []
             Projects = field "Projects" root |> Option.map asArray |> Option.defaultValue [] |> List.map (readProject roots)
         }
+
+    /// `parseWith` against the built-in roots only.
+    let parse (text: string) = parseWith (Fsproj.roots ()) text
+
+    let readWith roots (path: string) = System.IO.File.ReadAllText path |> parseWith roots
 
     let read (path: string) = System.IO.File.ReadAllText path |> parse
 
@@ -355,6 +372,49 @@ module Lock =
 /// compilation is reconstructed; what msbuild would have run is what the lock holds.
 module Project =
 
+    /// How a project's SDK is selected, from `global.json` searched upwards from the project's
+    /// directory the way the .NET host itself resolves it (`sdk.version` plus
+    /// `sdk.rollForward`, default `latestPatch` when a version is set and the policy is
+    /// absent). Only `Pinned` makes the SDK a fixed input: with anything else the exact SDK
+    /// `dotnet` picks depends on what is installed on the machine, and the compiler recorded
+    /// in the lock drifts with it.
+    type SdkPin =
+        | NoGlobalJson
+        | Pinned of version: string
+        | RollsForward of version: string * policy: string
+        | NoVersion of file: string
+
+    /// Walks up from `projectDir` looking for `global.json` and reads its `sdk.version` /
+    /// `sdk.rollForward`. Pure: no msbuild involved.
+    let sdkPin (projectDir: string) : SdkPin =
+        let rec findGlobalJson (dir: string) =
+            let path = Path.Combine (dir, "global.json")
+            if File.Exists path then Some path
+            else
+                match Path.GetDirectoryName (dir: string) with
+                | null | "" -> None
+                | parent when parent = dir -> None
+                | parent -> findGlobalJson parent
+        match findGlobalJson (Path.GetFullPath projectDir) with
+        | None -> NoGlobalJson
+        | Some file ->
+            let root = File.ReadAllText file |> Fsproj.Json.parse
+            let sdk = Fsproj.Json.field "sdk" root
+            match sdk |> Option.bind (Fsproj.Json.field "version") |> Option.bind Fsproj.Json.asString with
+            | None -> NoVersion file
+            | Some version ->
+                match sdk |> Option.bind (Fsproj.Json.field "rollForward") |> Option.bind Fsproj.Json.asString with
+                | Some "disable" -> Pinned version
+                | Some policy -> RollsForward (version, policy)
+                | None -> RollsForward (version, "latestPatch")
+
+    /// The pin, as recorded in the lock's `Properties.["SdkPin"]` and quoted in trace messages.
+    let internal sdkPinText = function
+        | NoGlobalJson -> "none"
+        | Pinned version -> "exact " + version
+        | RollsForward (version, policy) -> sprintf "%s rollForward:%s" version policy
+        | NoVersion file -> sprintf "no version (%s)" file
+
     type ImportOptions = {
         /// The project files. All of them land in one lock: what varies between projects of
         /// one framework and variant is small next to what they share
@@ -370,6 +430,12 @@ module Project =
         Variant: string
         /// The lock file to write
         Output: string
+        /// Extra roots to tokenize paths against, beyond the built-in three (`$(NuGetPackageRoot)`,
+        /// `$(ProjectRoot)`, `$(DotnetRoot)`) -- one token per sibling repository, e.g.
+        /// `["$(DataEngineRoot)", "/abs/path/to/dataengine"]` when a `Projects` entry or a
+        /// project reference resolves outside `$(ProjectRoot)` (the current directory). See
+        /// `Fsproj.withRoots`.
+        Roots: (string * string) list
     } with static member Default = {
             Projects = []
             Framework = ""
@@ -377,13 +443,14 @@ module Project =
             Properties = []
             Variant = ""
             Output = ""
+            Roots = []
         }
 
     /// `PrepareResources` runs resgen so the `/resource:` switches name real files;
     /// `Compile` (not `CoreCompile`) so that everything hooked before it -- generated
     /// assembly attributes, `BeforeCompile` extensions -- has run.
     let internal targets = "PrepareResources;Compile"
-    let internal items = "CscCommandLineArgs,ReferencePath,Analyzer,ProjectReference"
+    let internal items = "CscCommandLineArgs,ReferencePath,Analyzer,ProjectReference,EmbeddedResource"
     let internal wantedProperties =
         "AssemblyName,MSBuildProjectFullPath,MSBuildProjectDirectory,IntermediateOutputPath,BaseIntermediateOutputPath,TargetPath," +
         "CscToolPath,CscToolExe,CSharpCoreTargetsPath,RoslynTargetsPath,NETCoreSdkVersion,NetCoreRoot,NuGetPackageRoot,ProjectAssetsFile," +
@@ -401,8 +468,10 @@ module Project =
                 yield line ]
         |> List.distinct
 
-    /// Builds the lock entry from what msbuild wrote.
-    let internal parseImport (resultFile: string) (imports: string list) =
+    /// Builds the lock entry from what msbuild wrote. `pin` is the project's SDK pin (from
+    /// `sdkPin`, computed separately since this function stays pure/no file walking of its
+    /// own beyond the msbuild result and import list it is already given).
+    let internal parseImport (resultFile: string) (imports: string list) (pin: SdkPin) =
         let root = File.ReadAllText resultFile |> Fsproj.Json.parse
         let items name =
             Fsproj.Json.field "Items" root |> Option.bind (Fsproj.Json.field name)
@@ -410,6 +479,7 @@ module Project =
         let identity item = Fsproj.Json.field "Identity" item |> Option.bind Fsproj.Json.asString |> Option.defaultValue ""
         let fullPath item =
             Fsproj.Json.field "FullPath" item |> Option.bind Fsproj.Json.asString |> Option.defaultValue (identity item)
+        let metadata name item = Fsproj.Json.field name item |> Option.bind Fsproj.Json.asString |> Option.defaultValue ""
         let properties =
             match Fsproj.Json.field "Properties" root with
             | Some (Fsproj.Json.JObject members) ->
@@ -451,9 +521,45 @@ module Project =
         let intermediate = prop "IntermediateOutputPath" |> absoluteDir
         // where restore writes its props and targets
         let baseIntermediate = (match prop "BaseIntermediateOutputPath" with | "" -> "obj/" | dir -> dir) |> absoluteDir
+
+        // `PrepareResources` compiles every resx `EmbeddedResource` and records where: prefer
+        // `OutputResource` (`GenerateResource`'s own, exact, relative to the project directory)
+        // and fall back to `IntermediateOutputPath + ManifestResourceName + ".resources"` for
+        // an older SDK that does not set it. Non-resx embedded resources are passed as plain
+        // files on the `/resource:` switch and need nothing recorded here.
+        let resources =
+            items "EmbeddedResource"
+            |> List.filter (fun item -> (identity item).ToLowerInvariant().EndsWith ".resx")
+            |> List.map (fun item ->
+                // `FullPath`, a well-known item metadata, is unreliable here under the msbuild
+                // CLI's `-getItem`: seen live on an `<EmbeddedResource Update="...">` item
+                // (page's `Properties\Resources.resx`, resolved via the SDK's default-items
+                // glob), its `FullPath` came back resolved against this *process's* current
+                // directory instead of the project's own directory -- `RootDir` and `Directory`
+                // in the same metadata bag were equally off. `Identity` combined with
+                // `directory` (a *property*, not well-known item metadata, and not subject to
+                // this) is reliable, the same combine `OutputResource` already gets below.
+                let identityPath = identity item |> slash
+                let resx =
+                    if Path.IsPathRooted identityPath then identityPath
+                    else Path.GetFullPath (Path.Combine (directory, identityPath)) |> slash
+                let output =
+                    match metadata "OutputResource" item with
+                    | "" -> intermediate + metadata "ManifestResourceName" item + ".resources"
+                    | outputResource ->
+                        let outputResource = slash outputResource
+                        if Path.IsPathRooted outputResource then outputResource
+                        else Path.GetFullPath (Path.Combine (directory, outputResource)) |> slash
+                resx, output)
+        let resourceOutputs = resources |> List.map snd |> Set.ofList
+
+        // msbuild-generated *text* inputs (assembly attributes, the derived .editorconfig):
+        // the compiled .resources files are binary and already tracked, separately, in
+        // `resources` -- reading one with `File.ReadAllText` here would corrupt it (and `run`
+        // would then write the mangled text back over the real file).
         let generated =
             CscArgs.inputs args
-            |> List.filter (fun path -> path.StartsWith intermediate && File.Exists path)
+            |> List.filter (fun path -> path.StartsWith intermediate && File.Exists path && not (resourceOutputs.Contains path))
             |> List.map (fun path -> path, File.ReadAllText path)
 
         // an import under the SDK is the SDK version, recorded with the compiler; one under
@@ -476,10 +582,13 @@ module Project =
             ProjectRefs = items "ProjectReference" |> List.map (fullPath >> slash)
             Imports = imports |> List.map Lock.hashed
             Generated = generated
+            Resources = resources
             Properties =
                 properties |> Map.filter (fun name _ ->
                     List.contains name [ "AssemblyName"; "TargetFrameworkMoniker"; "LangVersion"; "Version"; "InformationalVersion"
-                                         "SignAssembly"; "AssemblyOriginatorKeyFile"; "Deterministic"; "TargetPath"; "IntermediateOutputPath" ])
+                                         "SignAssembly"; "AssemblyOriginatorKeyFile"; "Deterministic"; "TargetPath"; "IntermediateOutputPath"
+                                         "NETCoreSdkVersion" ])
+                |> Map.add "SdkPin" (sdkPinText pin)
         }
         entry
 
@@ -546,13 +655,28 @@ module Project =
                 do! msbuild ([ project; "-nologo" ] @ switches @ [ sprintf "-pp:%s" preprocessed ]) project
 
                 let imports = File.ReadAllText preprocessed |> parseImports
-                let entry = parseImport dump imports
+                let pin = sdkPin (Path.GetDirectoryName (Path.GetFullPath project))
+                let entry = parseImport dump imports pin
                 File.Delete dump
                 File.Delete preprocessed
+
+                match pin with
+                | Pinned v when entry.Compiler.Sdk <> "" && entry.Compiler.Sdk <> v ->
+                    do! trace Warning "'%s': the SDK is pinned to %s but msbuild ran %s -- the pinned SDK is not installed on this machine" entry.Name v entry.Compiler.Sdk
+                | Pinned _ -> ()
+                | other ->
+                    do! trace Warning "'%s': the SDK is not pinned (%s) -- the lock's Compiler section (%s) will drift with every SDK the machine picks; pin it with global.json { sdk: { version, rollForward: \"disable\" } }" entry.Name (sdkPinText other) entry.Compiler.Sdk
 
                 // the evaluation's inputs, so that a Directory.Build.props edit re-imports
                 // and nothing else does
                 do! needFiles (Filelist (entry.Imports |> List.map (fun (h: Lock.Hashed) -> File.make h.Path)))
+
+                // every resx output has to be named by a /resource: switch, or `run` would
+                // regenerate a file the compiler never reads
+                let resourceInputs = CscArgs.switchValues "resource" entry.Args
+                for (resx, resourcesFile) in entry.Resources do
+                    if not (List.contains resourcesFile resourceInputs) then
+                        do! trace Warning "'%s' compiles to '%s' but no /resource: switch names that path" resx resourcesFile
 
                 projects.Add entry
 
@@ -562,5 +686,5 @@ module Project =
                 Properties = options.Properties
                 Projects = List.ofSeq projects
             }
-            File.WriteAllText (options.Output, Lock.write lock)
+            File.WriteAllText (options.Output, Lock.writeWith (Fsproj.withRoots options.Roots) lock)
         }

@@ -104,6 +104,18 @@ module CscImpl =
                 let dir = Path.GetDirectoryName path
                 if not (Impl.isEmpty dir) then Directory.CreateDirectory dir |> ignore
 
+            // a resx `PrepareResources` compiled is named by a `/resource:` switch as the
+            // `.resources` file it produced, not the resx itself -- that file has to exist
+            // (and be current) before the hash check and the `needFiles` below see it. A resx
+            // edit still has to rebuild the dll, so the resx is `needFiles`d too.
+            do! needFiles (Filelist (project.Resources |> List.map (fst >> File.make)))
+            for (resx, resourcesFile) in project.Resources do
+                let upToDate =
+                    File.Exists resourcesFile &&
+                    File.GetLastWriteTimeUtc resourcesFile >= File.GetLastWriteTimeUtc resx
+                if not upToDate then
+                    Resx.compile resx resourcesFile
+
             // everything that carries a hash has to be exactly what was imported, or the
             // compilation is not the one the project describes
             let mismatches =
@@ -169,6 +181,17 @@ module CscImpl =
                         cmd cscTool
                         args (Seq.append extraArgs commandLineArgs)
                         envs envVars
+                        // `dotnet build` runs csc with cwd = the project's directory; some
+                        // compiler inputs are resolved against it rather than against an
+                        // argument on the command line -- an XML-doc `<include file='../..'>`
+                        // path is resolved relative to the *compiler's* working directory, not
+                        // per source file. `project.Directory` records exactly that (see its
+                        // doc comment on `Lock.Project`); without it, a project compiled from a
+                        // different cwd than its own directory can fail with CS1589 even though
+                        // every file the args name is absolute and present. Args, `/out:` etc.
+                        // are already absolute, so this only affects paths that never made it
+                        // onto the command line.
+                        workdir project.Directory
                         logprefix "[csc]"
                         stdoutlevel (Impl.levelFromString Level.Verbose)
                         erroutlevel (Impl.levelFromString Level.Verbose)
@@ -303,6 +326,7 @@ module CscImpl =
                 ProjectRefs = []
                 Imports = []
                 Generated = []
+                Resources = []
                 Properties = Map.empty
             }
 

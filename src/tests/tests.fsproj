@@ -30,6 +30,7 @@
     <Compile Include="ProjectImportTests.fs" />
     <Compile Include="FromLockTests.fs" />
     <Compile Include="ToolsetTests.fs" />
+    <Compile Include="ResxTests.fs" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\core\Xake.fsproj" />

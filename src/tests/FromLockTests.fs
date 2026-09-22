@@ -54,6 +54,7 @@ type ``Csc fromlock``() =
             ProjectRefs = []
             Imports = []
             Generated = [ assemblyInfoCs, assemblyInfoContent ]
+            Resources = []
             Properties = Map.empty
         }
         project, outDll, assemblyInfoCs, assemblyInfoContent
@@ -114,6 +115,7 @@ type ``Csc fromlock``() =
             ProjectRefs = []
             Imports = []
             Generated = []
+            Resources = []
             Properties = Map.empty
         }
 

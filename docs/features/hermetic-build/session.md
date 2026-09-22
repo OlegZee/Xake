@@ -1,6 +1,6 @@
 # Session state: hermetic-build
 
-Updated 2026-09-23 (Toolset compiler source; before that: import, fromlock mode, one runner, byte-identical proof).
+Updated 2026-09-23 night (page run, extra roots; earlier: Toolset compiler source, resgen, SDK pin check; before that: import, fromlock mode, one runner, byte-identical proof).
 
 `brief.md` next to this file (committed by the user on 2026-09-22, together with the
 `samples/hermetic/dataengine/` inspection artifacts) is the working brief:
@@ -24,16 +24,74 @@ fields -- the lock's shape is the file format. Two behaviour changes for the com
 both intended: it creates the output directory (before, `samples/fullframework.fsx` needed
 `samples/temp/` to exist), and it `needFiles` the framework references too. Trap: `samples/*.fsx`
 load Xake from `out/`, so run `dotnet fsi build.fsx -- -- build` before judging them; a stale
-`out/` made the refactor look like it had not fixed the directory issue. **Toolset compiler source landed (2026-09-23)**, see "What landed" below. **Next step**: the
-resgen recipe (dataengine has no `.resx`, page does; also the prerequisite for locks from
-composed settings, see `lock-from-settings.md` §9), then page with `-p:LocalBuild=true`
-(cross-repo project references; `$(ProjectRoot)` is cwd, so the sibling repo will not tokenize
-— decide on a `$(Root)` covering both). Fixture as before:
+`out/` made the refactor look like it had not fixed the directory issue. **Slice 1 is essentially closed (2026-09-23 night)**, see "What landed" below; the page run
+left three open items in tracker.md (page dll near-miss, concurrent import race, `..` targets).
+The user is asleep and authorized autonomous work with a commit per stage; the queue is in the
+tracker order: the near-miss root cause, `fromlock` restoring a missing toolset, `Csc.resolve`/
+`Lock.rehash`/`Lock.diff`, sha tokenization on a live checkout, the conceptual review, then
+slice 2. **Not** touched without the user: lock split/structure, release, lock update mechanism. Fixture as before:
 `git archive origin/develop` of `~/Projects-work/ar/ar-net-core-dataengine` into the job tmp dir
 (its checkout is on a broken feature branch), then `ar-net-core-page`. Always
 `-p:NuGetAudit=false` (the import sets it) or load the feed token with `cd <ar project dir> &&
 source ~/set-secrets.sh` (never print it). Xake stays referenced via `#r` on `.bootstrap/` — no
 release.
+
+### What landed (2026-09-23, night): page with `LocalBuild=true`, extra roots
+
+- **Extra roots, explicit**: `ImportOptions.Roots` (token → absolute path) and
+  `Lock.writeWith/parseWith/readWith roots`; `Fsproj.withRoots` validates the token shape and
+  keeps longest-root-first. Decision (user): one token per sibling repository, no shared parent
+  root — `$(DataEngineRoot)` for page.
+- **`import-page.fsx`**: cwd = the page copy, 15 projects per lock so the cross-repo project
+  references resolve inside the lock; a second, absolute-path rule for dataengine's outputs
+  because **file targets with `..` do not match** (engine gap, tracker). Locks ~1 MB each,
+  16 s per brand, `build` of 30 outputs 42–47 s. The private feed needed no token (cached
+  credentials); `NuGetAudit=false` sufficed.
+- **Two bugs found live**: `-getItem`'s `FullPath` for an `<EmbeddedResource Update=...>` item
+  resolves against the *process* cwd, not the project dir — `parseImport` now combines
+  `Identity` with the project directory; and the csc runner had no working directory, so a
+  relative `<include>` in doc comments failed (CS1589) — `run` now sets `workdir
+  project.Directory`.
+- **Result**: dataengine's 18 files identical again; page's xml identical; page's dll identical
+  in size and differing only in the deterministic-hash fields (timestamp, checksum, MVID,
+  strong-name signature, PDB GUID), pdb differing more. Some input differs from msbuild's.
+  Root cause open — first item of the autonomous queue.
+- **Race**: two brands importing one project concurrently share `obj/project.assets.json`;
+  with brand-dependent package ids the wrong reference was recorded once. Locks were then built
+  one target at a time. `BaseIntermediateOutputPath` per variant broke ResxTests and was
+  reverted. Open, tracker.
+- Artifacts in `samples/hermetic/page/`.
+
+### What landed (2026-09-23, later): the SDK pin check
+
+`Project.sdkPin projectDir` → `NoGlobalJson | Pinned v | RollsForward (v, policy) | NoVersion file`
+(walks up for `global.json`; absent `rollForward` is `latestPatch`; only `disable` counts as
+pinned). `parseImport` takes it and records `Properties["SdkPin"]` and `["NETCoreSdkVersion"]` —
+free map, no lock format change. `import` warns per project when not pinned, or pinned but a
+different SDK ran. dataengine: `8.0.100 rollForward:latestFeature`, ran 8.0.425 — six warnings.
+Suite: 257 passed, 1 skipped. Five pure tests in `ProjectImportTests.fs`.
+
+### What landed (2026-09-23, later): resgen for `fromlock`
+
+- **`Resx.fs`** (compiled right after `ResourceFileset.fs`, because `Impl.compileResx` in
+  `DotnetTasks.fs` uses it): `Resx.read` parses string entries in document order with
+  `XmlDocument`, keeping `xml:space="preserve"` whitespace; `Resx.compile` writes them with
+  `System.Resources.ResourceWriter`. No `#if`: netstandard2.0 has both. Typed entries
+  (`type=`/`mimetype=`) and `ResXFileRef` are refused with the entry name — the real resx files
+  (page's four) are strings only; the `Color1`/`Bitmap1`/`Icon1` hits in them are the standard
+  header *comment*. Output is **byte-identical to msbuild's GenerateResource** (test with
+  multi-line, unicode incl. emoji, empty value). The `resgen` task and `Impl.compileResx` no
+  longer fail on netstandard for string resx.
+- **`Lock.Project.Resources: (resx * .resources) list`**, from `EmbeddedResource` items: after
+  `PrepareResources` msbuild exposes `OutputResource` (exact path), `ManifestResourceName`,
+  `Type`, `WithCulture` — `parseImport` prefers `OutputResource`. `run` gets a step before the
+  hash check: `needFiles` each resx, regenerate the `.resources` when missing or older.
+- **Bug caught by the fixture**: `parseImport`'s `Generated` filter took every input under the
+  intermediate dir that existed, which after `PrepareResources` includes the binary `.resources`
+  — read as text, written back mangled by `run`. Resources are now computed first and excluded
+  from `Generated`. dataengine never showed it (no resx).
+- Tests: `ResxTests.fs` (3, one Integration that runs `dotnet build` for the baseline). Suite:
+  252 passed, 1 skipped. dataengine still 18/18 identical, locks regenerated with `Resources`.
 
 ### What landed (2026-09-23): the Toolset compiler source
 
@@ -151,8 +209,11 @@ developer under `latestFeature`), and — on a real checkout — every commit, b
 sources, dependencies, framework apart); decided to **defer** until locks are diffed for real,
 since the in-memory `Lock.Project` stays the unit and only `write`/`parse` would change. The
 sha tokenization is due when the script first runs on a live repository. Items in tracker.md.
-Two more decisions from the same discussion: `global.json` pins the exact SDK unconditionally, so
-the `Compiler` section changing is a deliberate, reviewed event, not noise; and when the split
+Two more decisions from the same discussion (the first reworded 2026-09-23): a well-formed project
+pins the SDK exactly with `global.json`, and then a `Compiler` change is a deliberate, reviewed
+event -- but that is a *recommendation* the tool checks and warns about, not something it relies
+on; without the pin (or with `rollForward: latestFeature`, dataengine's case) the `Compiler`
+section drifts per SDK patch and per developer. And when the split
 happens the lock should become **structured** (fields for sources, references, defines,
 options) rather than the raw `csc` argument list — §8c's "do not reconstruct" stays honoured by
 a round-trip check at import: the command line rebuilt from the structure must equal msbuild's.

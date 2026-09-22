@@ -1,0 +1,16 @@
+XAKE build tool 1.0.0.0
+
+[CMD] Started /Users/olegz/.claude/jobs/506bc197/tmp/ar/ar-net-core-page/locks/netstandard2.0/MESCIUS.json as task 1
+[CMD] Completed /Users/olegz/.claude/jobs/506bc197/tmp/ar/ar-net-core-page/locks/netstandard2.0/MESCIUS.json in 15680 ms (wait 500 ms)
+[MSG] 
+
+    Build completed in 00:00:16.2006690
+
+XAKE build tool 1.0.0.0
+
+[CMD] Started /Users/olegz/.claude/jobs/506bc197/tmp/ar/ar-net-core-page/locks/netstandard2.0/GCCN.json as task 1
+[CMD] Completed /Users/olegz/.claude/jobs/506bc197/tmp/ar/ar-net-core-page/locks/netstandard2.0/GCCN.json in 15549 ms (wait 499 ms)
+[MSG] 
+
+    Build completed in 00:00:16.0684870
+

@@ -88,6 +88,14 @@ worth knowing before touching it again:
 - `build.fsx` builds `netstandard2.0` only; the `net462` asset comes from `dotnet build` /
   `dotnet pack`.
 
+## Trap: rule patterns with `..` never matched
+
+A file rule such as `"../sibling/(x:*).dll"` failed with "neither rule nor file is found":
+`File.make` normalizes `..` out of a target path, but `Path.matchGroups` combined the project
+root and the pattern with `Path.Combine` and kept the literal `..`, so the two could never
+agree. The literal prefix before the first wildcard or group is now normalized
+(`impl.normalizeLiteralPrefix`, `src/core/Path.fs`). Covered by `ParentDirTargetTests.fs`.
+
 ## How to verify changes here
 
 ```bash

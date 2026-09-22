@@ -164,6 +164,11 @@ module CscImpl =
             // fail with a clear reason -- before the hash check below even looks at it
             do! ensureCompilerAvailable settings project
 
+            // the compiler is hashed (below) but was never a tracked dependency, so an SDK or
+            // toolset update that changes csc.dll's bytes left the target looking up to date
+            // and the hash check never ran (conceptual-review.md 2.4)
+            do! needFiles (Filelist [File.make project.Compiler.Path])
+
             // the resolved project is the source of truth for what msbuild (or the composed
             // front end) generated (assembly attributes, TFM defines): write it back whenever
             // it is missing or someone touched it
@@ -180,14 +185,14 @@ module CscImpl =
 
             // a resx `PrepareResources` compiled is named by a `/resource:` switch as the
             // `.resources` file it produced, not the resx itself -- that file has to exist
-            // (and be current) before the hash check and the `needFiles` below see it. A resx
-            // edit still has to rebuild the dll, so the resx is `needFiles`d too.
+            // before the hash check and the `needFiles` below see it. The resx is `needFiles`d
+            // so the engine decides whether an edit reruns this recipe; regenerating only when
+            // the `.resources` output is missing (not on a timestamp comparison) keeps `run`
+            // from being a second rebuilder next to the engine's (conceptual-review.md 2.3) --
+            // the gate is "does it exist", staleness is the engine's call, not this recipe's.
             do! needFiles (Filelist (project.Resources |> List.map (fst >> File.make)))
             for (resx, resourcesFile) in project.Resources do
-                let upToDate =
-                    File.Exists resourcesFile &&
-                    File.GetLastWriteTimeUtc resourcesFile >= File.GetLastWriteTimeUtc resx
-                if not upToDate then
+                if not (File.Exists resourcesFile) then
                     Resx.compile resx resourcesFile
 
             // everything that carries a hash has to be exactly what was imported, or the
@@ -401,6 +406,34 @@ module CscImpl =
 
             return project, fwkInfo.EnvVars, tempFiles
         }
+
+    /// <summary>
+    /// Resolves composed `csc {}` settings into a `Lock.Project` without compiling -- the
+    /// smallest piece `lock-from-settings.md` recommends (1b) so a lock-recording rule can
+    /// write out what a compilation would look like, the way `Project.import` does for an
+    /// msbuild project. Both feed `Csc { fromlock = Some project }`.
+    ///
+    /// Cleans up the resx-compiled temp files `resolve` creates before returning, since there
+    /// is nothing here to run the compiler against them for. Consequence: when the settings
+    /// carry `.resx` resources, the returned project's `/res:` arguments name files that no
+    /// longer exist -- it is NOT compilable as is (recording/diffing only) until `resolve`
+    /// routes resx through `Resources` with permanent outputs (tracker: "Lock from composed
+    /// csc settings" / lock-from-settings.md scenario 9's common trap). Does not change the
+    /// private `resolve`'s own behaviour, or how `Csc` uses it.
+    ///
+    /// Named `CscLock.resolve`, not `Csc.resolve`: F# does not let a module and a `let`-bound
+    /// function share one name in a namespace the way it lets a `type` and a `module` share
+    /// one (`[&lt;CompilationRepresentation(ModuleSuffix)&gt;]`) -- verified by compiling a
+    /// minimal repro (`let Csc x = ...` alongside `module Csc = ...` leaves `Csc.resolve`
+    /// unresolved, FS0039, in both definition orders). `Csc` stays the function it always was.
+    /// </summary>
+    module CscLock =
+        let resolve (settings: CscSettingsType) =
+            recipe {
+                let! project, _, tempFiles = resolve settings
+                tempFiles |> List.iter (fun file -> try System.IO.File.Delete file with _ -> ())
+                return project
+            }
 
     /// <summary>
     /// C# compiler task. Compiles the source fileset into the target assembly.

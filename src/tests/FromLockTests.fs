@@ -228,3 +228,53 @@ type ``Csc fromlock``() =
         Assert.That(mapped.Args, Is.EqualTo [ "/reference:/b/New.dll"; "/a/A.cs" ])
         let expected : Lock.Hashed list = [ { Path = "/b/New.dll"; Sha256 = "" } ]
         Assert.That(mapped.References, Is.EqualTo expected)
+
+    /// `CscLock.resolve` (the public entry point `lock-from-settings.md` recommendation 1b
+    /// asks for, named `CscLock.resolve` rather than `Csc.resolve` -- see its doc comment in
+    /// `Dotnet.csc.fs`) resolving composed settings for a trivial library, without compiling;
+    /// then `Lock.rehash` and a `writeWith`/`parse` round trip over the result.
+    [<Test; Category("Integration")>]
+    member x.``CscLock.resolve resolves composed settings into a hashable, round-trippable lock``() =
+
+        let dir = Directory.GetCurrentDirectory()
+        let helloCs = Path.Combine (dir, "HelloResolve.cs")
+        File.WriteAllText (helloCs, "public class HelloResolve {}\n")
+
+        let mutable resolved : Lock.Project option = None
+
+        do xake {x.TestOptions with FileLog="csc-resolve.log"; ThrowOnError = true} {
+            wantOverride (["hello-resolve"])
+
+            rules [
+                "hello-resolve" => recipe {
+                    let! project =
+                        CscLock.resolve {
+                            CscSettingsType.Default with
+                                Src = !!"HelloResolve.cs"
+                                Out = File.make "HelloResolve.dll"
+                                Target = Library
+                                TargetFramework = "netstandard2.0"
+                        }
+                    resolved <- Some project
+                }
+            ]
+        }
+
+        let project = resolved.Value
+
+        Assert.That(project.Sources |> List.exists (fun p -> p.EndsWith "HelloResolve.cs"), Is.True)
+        Assert.That(project.Args, Contains.Item "/target:library")
+        Assert.That(project.Compiler.Path, Is.Not.Empty)
+        Assert.That(project.References, Is.Not.Empty)
+        Assert.That(project.References |> List.forall (fun r -> r.Sha256 = ""), Is.True,
+            "resolve leaves reference hashes empty; hashing is a record-time step (Lock.rehash), not resolve's")
+
+        let rehashed = Lock.rehash project
+        Assert.That(rehashed.References |> List.forall (fun r -> r.Sha256 <> ""), Is.True)
+
+        let lockFile : Lock.File = { Framework = "netstandard2.0"; Configuration = ""; Properties = []; Projects = [rehashed] }
+        let roundtripped = Lock.write lockFile |> Lock.parse
+        let readBack = Lock.project rehashed.Name roundtripped
+
+        Assert.That(readBack.Args, Is.EqualTo rehashed.Args)
+        Assert.That(readBack.References |> List.map (fun r -> r.Sha256), Is.EqualTo (rehashed.References |> List.map (fun r -> r.Sha256)))

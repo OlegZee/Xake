@@ -29,6 +29,7 @@
     <Compile Include="FlatScriptTests.fs" />
     <Compile Include="DotnetTasksTests.fs" />
     <Compile Include="ProjectImportTests.fs" />
+    <Compile Include="LockDiffTests.fs" />
     <Compile Include="FromLockTests.fs" />
     <Compile Include="ToolsetTests.fs" />
     <Compile Include="ResxTests.fs" />

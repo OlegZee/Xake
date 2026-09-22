@@ -14,6 +14,7 @@ details live in brief.md (section refs) or session.md.
 - [x] `Project.import`: design-time msbuild, per-brand `IntermediateOutputPath`, `-pp` imports list — `src/dotnet/Project.fs`, proven on dataengine develop (both brands) with `import.fsx`
 - [x] `Lock` write/read: one file per (TFM, brand), tokenized paths, SHA-256 for libraries and compiler; generated inputs stored inline
 - [x] `csc {}` verbatim `invocation` mode: inputs from args, `needFiles`, hash check, generated files written back, `/noconfig` kept out of the rsp — `compileFromLock` in `Dotnet.csc.fs`, `Lock.mapPaths` for project references
+- [x] **one resolved form for `csc`** (2026-09-22): `resolve` turns the composed settings into a `Lock.Project` (same args, same order, compiler from `DotNetFwk`, empty hashes); `run` is the only runner, taking the framework env vars and the resx temp files as parameters, not lock fields. Side effect: the composed mode now creates its output directory and `needFiles` everything the args name. `samples/fullframework.fsx` and both integration tests pass; dataengine still 18/18 identical
 - [ ] `csc {}` compiler source: SDK or `Microsoft.Net.Compilers.Toolset`, recorded in the lock
 - [ ] resgen recipe producing the `.resources` the imported command line expects
 - [x] fsx over dataengine develop copy: `cmp` identical with `dotnet build` output — 18/18 files (dll, pdb, xml; 3 projects × 2 brands), `import.fsx build`, results in `samples/hermetic/dataengine/compare.txt`
@@ -25,6 +26,12 @@ details live in brief.md (section refs) or session.md.
 - [ ] `Generated` content: tokenize the commit sha (`$(SourceRevisionId)` in `AssemblyInfo.cs`, `sourcelink.json`) — without it the lock changes on every commit on a real checkout. Do when `import.fsx` first runs against a live repository instead of a `git archive` copy
 - [x] SDK policy — decided 2026-09-22: `global.json` with the exact SDK is always in use, so a change in the `Compiler` section means "we updated the compiler" and is a reviewed diff. Nothing to build
 - [ ] when splitting, also make the content structured instead of the raw tool output: sources, references, defines, options as fields, not a verbatim `csc` argument list. Keep §8c's fidelity by round-tripping at import: the command line rebuilt from the structure must equal msbuild's, or the import fails
+
+## Lock from composed `csc` settings (design note `lock-from-settings.md`, 2026-09-22)
+- [ ] `Csc.resolve` public as `Recipe<Lock.Project>` (cleans its temp files itself), `Lock.rehash`, `Lock.diff` — the smallest API; `Project.import` and `Csc.resolve` both feed `invocation`
+- [ ] migration path A: `lock "path"` operation on `csc {}` with locked-mode semantics (record when absent, diff + hash-verify when present); path B: `cscSettings {}` builder returning the settings value
+- [ ] **think first**: how a lock is updated — `-d UPDATE_LOCKS` rejected (global tool behaviour for a narrow case). Find what is idiomatic for Xake (locks as targets, no engine mode) and familiar to npm users (`npm install` follows the manifest, `npm ci` is the strict opt-in)
+- [ ] prerequisite for projects with `.resx`: resgen as a rule with permanent outputs, otherwise `/res:` temp paths make the lock invalid
 
 ## Slice 2 — SBOM and verification (brief §8e, §11)
 - [ ] `Nuget.readAssets` / `readCache` (sha512, source, license, supplier)

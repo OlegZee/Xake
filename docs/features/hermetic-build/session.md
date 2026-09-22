@@ -6,9 +6,24 @@ Updated 2026-09-22 (late: import, invocation mode, byte-identical proof).
 positioning, decisions, the design of the library surface (§11), and the day-zero results on
 the two ActiveReports repositories (§8j). Everything decided so far is there; do not re-litigate.
 
+`lock-from-settings.md` analyses how a lock is obtained from composed `csc {}` settings (nine
+scenarios; migration of an existing tuned block is §9; the update mechanism is an open question,
+a global `UPDATE_LOCKS` variable was rejected). `csc-syntax.md` documents the `csc {}` task as it stands on this branch: composed settings,
+`invocation` from a lock, one runner.
+
 State: **slice 1's core is done and proven** — `Project.import`, `Lock`, `csc { invocation }`,
 and `import.fsx build` compiles dataengine develop (3 projects × 2 brands) **byte-identical to
-`dotnet build`**, 18/18 files (dll, pdb, xml). All uncommitted. **Next step**: the remaining
+`dotnet build`**, 18/18 files (dll, pdb, xml). All uncommitted. The **one-resolved-form refactor of `csc` is done** (2026-09-22, late):
+`Dotnet.csc.fs` is now `run` (the only runner: generated files, output dirs, hash check,
+`needFiles` on `CscArgs.inputs`, rsp with `/noconfig` outside, compiler selection, `shell`),
+`resolve` (the composed settings turned into a `Lock.Project` with the exact argument list the
+old code produced, `/noconfig` first when the target framework asks for it), and `Csc` choosing
+between `Invocation` and `resolve`. Env vars and resx temp files are `run` parameters, not lock
+fields -- the lock's shape is the file format. Two behaviour changes for the composed mode,
+both intended: it creates the output directory (before, `samples/fullframework.fsx` needed
+`samples/temp/` to exist), and it `needFiles` the framework references too. Trap: `samples/*.fsx`
+load Xake from `out/`, so run `dotnet fsi build.fsx -- -- build` before judging them; a stale
+`out/` made the refactor look like it had not fixed the directory issue. **Next step**: the remaining
 slice-1 items — the `Microsoft.Net.Compilers.Toolset` compiler source (today the lock names the
 SDK's `csc.dll`; a project pinning the toolset package needs `CscToolPath`/`CscToolExe` honoured,
 the import already reads them), the resgen recipe (dataengine has no `.resx`, page does), then

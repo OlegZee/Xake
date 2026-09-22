@@ -1,4 +1,4 @@
-﻿namespace Xake.Dotnet
+namespace Xake.Dotnet
 
 [<AutoOpen>]
 module CscImpl =
@@ -34,10 +34,10 @@ module CscImpl =
         FailOnError: bool
         /// Path to csc executable
         CscPath: string option
-        /// A project imported by `Project.import`: when set, the task replays that project's
-        /// command line verbatim instead of composing one from `Src`/`Ref`/`Define`/... (those
-        /// and `Target`/`Platform`/`Out`/`TargetFramework` are ignored in this mode). See
-        /// `compileFromLock`.
+        /// A project imported by `Project.import`, or resolved by a previous `csc {}` run: when
+        /// set, the task replays that project's command line verbatim instead of composing one
+        /// from `Src`/`Ref`/`Define`/... (those and `Target`/`Platform`/`Out`/`TargetFramework`
+        /// are ignored in this mode). See `resolve` and `run`.
         Invocation: Lock.Project option
     } with static member Default = {
             Platform = AnyCpu
@@ -60,21 +60,33 @@ module CscImpl =
     let CscSettings = CscSettingsType.Default
 
     /// <summary>
-    /// Compiles a project imported by `Project.import`, replaying its command line exactly as
-    /// msbuild would have run it. Nothing is composed: the sources, references, defines and
-    /// output are whatever `project.Args` says. Before running the compiler this:
-    /// writes back any `Generated` file that is missing or whose content changed (the lock is
-    /// the source of truth for msbuild-generated inputs like AssemblyInfo.cs), creates the
-    /// output directories, and verifies the SHA-256 of every hashed reference/analyzer and of
-    /// the compiler itself against what is on disk -- a mismatch fails the build rather than
-    /// silently compiling against something other than what was imported.
+    /// Runs the compiler over an already-resolved compilation: `project` is exactly what would
+    /// go into a lock file, whether it came from `Project.import`, from a hand-built
+    /// `Lock.Project`, or from `resolve` composing one from `Src`/`Ref`/... at recipe time. This
+    /// is the only place that shells out to csc; both `csc { invocation ... }` and the composed
+    /// `csc { src ... }` end up here.
+    ///
+    /// Before running the compiler this: writes back any `Generated` file that is missing or
+    /// whose content changed (the lock/resolved project is the source of truth for
+    /// msbuild-generated inputs like AssemblyInfo.cs -- for the composed mode there simply are
+    /// none), creates the output directories, and verifies the SHA-256 of every hashed
+    /// reference/analyzer and of the compiler itself against what is on disk -- a mismatch fails
+    /// the build rather than silently compiling against something other than what was imported.
+    /// An empty hash (the composed mode never records one) skips that check.
+    ///
+    /// `envVars` carries the environment the compiler needs to run (e.g. the framework's,
+    /// resolved via `DotNetFwk`) -- `Lock.Project` is serialized as the lock file format and has
+    /// no room for it, so it travels alongside instead. `extraTempFiles` are deleted together
+    /// with the response file once the compiler exits, whatever the outcome -- the composed
+    /// mode's resx-compiled temporaries.
     /// </summary>
-    let private compileFromLock (settings: CscSettingsType) (project: Lock.Project) =
+    let private run (settings: CscSettingsType) (project: Lock.Project) (envVars: (string * string) list) (extraTempFiles: string list) =
         recipe {
-            do! trace Info "compiling '%s' from the lock (%s %s)" project.Name project.Compiler.Tool project.Compiler.Sdk
+            do! trace Info "compiling '%s' (%s %s)" project.Name project.Compiler.Tool project.Compiler.Sdk
 
-            // the lock is the source of truth for what msbuild generated (assembly attributes,
-            // TFM defines): write it back whenever it is missing or someone touched it
+            // the resolved project is the source of truth for what msbuild (or the composed
+            // front end) generated (assembly attributes, TFM defines): write it back whenever
+            // it is missing or someone touched it
             for (path, content) in project.Generated do
                 let upToDate = File.Exists path && File.ReadAllText path = content
                 if not upToDate then
@@ -87,7 +99,7 @@ module CscImpl =
                 if not (Impl.isEmpty dir) then Directory.CreateDirectory dir |> ignore
 
             // everything that carries a hash has to be exactly what was imported, or the
-            // compilation is not the one the lock describes
+            // compilation is not the one the project describes
             let mismatches =
                 let check (path: string) (expected: string) =
                     if expected = "" then None
@@ -108,7 +120,10 @@ module CscImpl =
                 if settings.FailOnError then
                     failwithf "('%s') hash mismatch:\n%s" project.Name detail
 
-            // the generated files have to exist before the inputs are demanded
+            // the generated files have to exist before the inputs are demanded. Note: for the
+            // composed mode this now needs everything the args name -- including the
+            // framework's global references (mscorlib.dll etc) -- rather than only the sources,
+            // refs and resource files it used to `needFiles` directly. That is intended.
             do! needFiles (Filelist (CscArgs.inputs project.Args |> List.map File.make))
 
             // csc warns CS2023 and ignores /noconfig when it is inside the response file, so
@@ -125,11 +140,17 @@ module CscImpl =
                     yield "@" + rspFile
                 }
 
-            let deleteTempFiles () = try System.IO.File.Delete rspFile with _ -> ()
+            // the response file and any temporary the front end produced (the composed mode's
+            // resx-compiled resources) have to go regardless of how the compilation ends
+            let tempFiles = rspFile :: extraTempFiles
+            let deleteTempFiles () =
+                tempFiles |> List.iter (fun file -> try System.IO.File.Delete file with _ -> ())
 
             let cscTool, extraArgs =
                 match settings.CscPath with
                 | Some tool -> tool, []
+                // the compiler path from `DotNetFwk` may be a native launcher rather than a
+                // managed dll (the "run directly" branch below covers that case too)
                 | None when Impl.endsWith ".dll" project.Compiler.Path -> "dotnet", [project.Compiler.Path]
                 | None -> project.Compiler.Path, []
 
@@ -141,6 +162,7 @@ module CscImpl =
                     shell {
                         cmd cscTool
                         args (Seq.append extraArgs commandLineArgs)
+                        envs envVars
                         logprefix "[csc]"
                         stdoutlevel (Impl.levelFromString Level.Verbose)
                         erroutlevel (Impl.levelFromString Level.Verbose)
@@ -152,19 +174,20 @@ module CscImpl =
         }
 
     /// <summary>
-    /// C# compiler task. Compiles the source fileset into the target assembly.
+    /// Composes a `Lock.Project` from `Src`/`Ref`/`RefGlobal`/`Resources`/`Define`/`Target`/
+    /// `Platform`/`Unsafe`/`TargetFramework`/`CommandArgs` at recipe time -- the same work the
+    /// composed mode always did, just stopping short of running the compiler. The argument list
+    /// it produces is identical, in the same order, to what the old composed mode ran: `/noconfig`
+    /// (first, when the target framework requires it), `/nologo`, `/target:`, `/platform:`,
+    /// `/unsafe`, `/nostdlib+`, `/out:`, `/define:`, sources, `/r:` refs, global refs, `/res:`,
+    /// `CommandArgs`.
+    ///
+    /// Returns the resolved project together with the framework's environment variables (see
+    /// `run`) and the resx-compiled temporary files the caller has to delete once the
+    /// compilation is done.
     /// </summary>
-    /// <param name="settings">Compiler settings</param>
-    /// <returns>Recipe compiling the target</returns>
-    let Csc (settings:CscSettingsType) =
-
-      match settings.Invocation with
-      | Some project -> compileFromLock settings project
-      | None ->
-
+    let private resolve (settings: CscSettingsType) =
         recipe {
-            do! trace Level.Debug "Csc: settings=%A" settings
-
             let! options = getCtxOptions()
             let getFiles = toFileList options.ProjectRoot
 
@@ -176,6 +199,7 @@ module CscImpl =
 
             let resinfos = settings.Resources |> List.collect (Impl.collectResInfo options.ProjectRoot) |> List.map Impl.compileResxFiles
             let resfiles = resinfos |> List.choose (fun (_, file, istemp) -> if istemp then None else Some file)
+            let tempFiles = resinfos |> List.choose (fun (_, file, istemp) -> if istemp then Some file.FullName else None)
 
             let (Filelist src)  = settings.Src |> getFiles
             let (Filelist refs) = settings.Ref |> getFiles
@@ -189,21 +213,23 @@ module CscImpl =
                 | _, Some s when s <> "" -> s
                 | _ -> null
 
-            let (globalRefs,nostdlib,noconfig) =
+            let (globalRefPaths, nostdlib, noconfig) =
                 match targetFramework with
                 | null ->
-                    let mapfn = (+) "/r:"
                     // TODO provide an option for user to explicitly specify all grefs (currently csc.rsp is used)
-                    (settings.RefGlobal |> List.map mapfn), false, false
+                    settings.RefGlobal, false, false
                 | tgt ->
                     let fwk = Some tgt |> DotNetFwk.locateFramework in
                     let lookup = DotNetFwk.locateAssembly fwk
-                    let mapfn = lookup >> ((+) "/r:")
+                    (("mscorlib.dll" :: settings.RefGlobal) |> List.map lookup), true, true
 
-                    ("mscorlib.dll" :: settings.RefGlobal |> List.map mapfn), true, true
+            let globalRefs = globalRefPaths |> List.map ((+) "/r:")
 
             let args =
                 seq {
+                    if noconfig then
+                        yield "/noconfig"
+
                     yield "/nologo"
 
                     yield "/target:" + Impl.targetStr outFile.Name settings.Target
@@ -228,48 +254,54 @@ module CscImpl =
 
                     yield! resinfos |> List.map (fun(name,file,_) -> sprintf "/res:%s,%s" file.FullName name)
                     yield! settings.CommandArgs
-                }
+                } |> List.ofSeq
 
             let! netfxVar = getVar "NETFX"
             // the compiler is taken from the framework being targeted, unless NETFX says otherwise
             let dotnetFwk = match netfxVar with | Some _ -> netfxVar | None -> Option.ofObj targetFramework
             let fwkInfo = DotNetFwk.locateFramework dotnetFwk
 
-// TODO for short args this is ok, otherwise use rsp file --    let commandLine = args |> escapeAndJoinArgs
-            let rspFile = Path.GetTempFileName()
-            File.WriteAllLines(rspFile, args |> Seq.map Impl.escapeArgument |> List.ofSeq)
-            let commandLineArgs =
-                seq {
-                    if noconfig then
-                        yield "/noconfig"
-                    yield "@" + rspFile
-                    }
-            let cscTool = settings.CscPath |> function | Some v -> v | _ -> fwkInfo.CscTool
+            let references =
+                (refs |> List.map (fun f -> f.FullName)) @ globalRefPaths
+                |> List.map (fun path -> { Lock.Path = path; Lock.Sha256 = "" })
 
-            // the response file and the resx files compiled to a temporary location have to go
-            // regardless of how the compilation ends
-            let tempFiles =
-                rspFile :: (resinfos |> List.choose (fun (_, file, istemp) -> if istemp then Some file.FullName else None))
-            let deleteTempFiles () =
-                tempFiles |> List.iter (fun file -> try System.IO.File.Delete file with _ -> ())
+            let project : Lock.Project = {
+                Name = Path.GetFileNameWithoutExtension outFile.Name
+                Project = ""
+                Directory = options.ProjectRoot
+                Compiler = { Tool = "csc"; Path = fwkInfo.CscTool; Sha256 = ""; Sdk = fwkInfo.Version }
+                Args = args
+                References = references
+                Analyzers = []
+                ProjectRefs = []
+                Imports = []
+                Generated = []
+                Properties = Map.empty
+            }
 
-            do! trace Info "compiling '%s' using framework '%s'" outFile.Name fwkInfo.Version
-            do! trace Debug "Command line: '%s %s'" cscTool (args |> Seq.map Impl.escapeArgument |> String.concat "\r\n\t")
+            return project, fwkInfo.EnvVars, tempFiles
+        }
 
-            try
-                let! exitCode =
-                    shell {
-                        cmd cscTool
-                        args commandLineArgs
-                        envs fwkInfo.EnvVars
-                        logprefix "[csc]"
-                        stdoutlevel (Impl.levelFromString Level.Verbose)
-                        erroutlevel (Impl.levelFromString Level.Verbose)
-                    }
+    /// <summary>
+    /// C# compiler task. Compiles the source fileset into the target assembly.
+    ///
+    /// With `invocation` set, replays that `Lock.Project`'s command line exactly (see `run`).
+    /// Otherwise composes one from the settings (see `resolve`) and runs it the same way. Either
+    /// way there is one resolved form -- a `Lock.Project` -- and one runner: settings are intent,
+    /// `Lock.Project` is the resolved compilation.
+    /// </summary>
+    /// <param name="settings">Compiler settings</param>
+    /// <returns>Recipe compiling the target</returns>
+    let Csc (settings:CscSettingsType) =
 
-                do! Impl.failOnExitCode settings.FailOnError outFile.Name exitCode
-            finally
-                deleteTempFiles ()
+      match settings.Invocation with
+      | Some project -> run settings project [] []
+      | None ->
+
+        recipe {
+            do! trace Level.Debug "Csc: settings=%A" settings
+            let! (project, envVars, tempFiles) = resolve settings
+            do! run settings project envVars tempFiles
         }
 
     /// Computation expression builder for the csc task.
@@ -292,7 +324,8 @@ module CscImpl =
         [<CustomOperation("define")>]    member __.Define(s:CscSettingsType, value) =      {s with Define = value}
         [<CustomOperation("unsafe")>]    member __.Unsafe(s:CscSettingsType, value) =      {s with Unsafe = value}
         [<CustomOperation("cscpath")>]       member __.CscPath(s:CscSettingsType, value) =   {s with CscPath = Some value}
-        /// <summary>Replays a project imported by `Project.import` verbatim; see `Invocation`</summary>
+        /// <summary>Replays a project imported by `Project.import` (or resolved by an earlier
+        /// `csc {}`) verbatim; see `Invocation`</summary>
         [<CustomOperation("invocation")>]    member __.Invocation(s:CscSettingsType, project) = {s with Invocation = Some project}
 
         /// <summary>Passes custom arguments to the compiler</summary>

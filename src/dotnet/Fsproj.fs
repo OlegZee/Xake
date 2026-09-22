@@ -187,6 +187,27 @@ module Fsproj =
         |> List.map (fun (token, path) -> token, path.Replace('\\', '/').TrimEnd '/')
         |> List.sortByDescending (snd >> String.length)
 
+    let internal builtinRootTokens = [ "$(NuGetPackageRoot)"; "$(ProjectRoot)"; "$(DotnetRoot)" ]
+
+    /// Combines the three built-in roots (see `roots ()`) with extra ones a script declares
+    /// explicitly -- one token per sibling repository, no shared parent root, so that importing
+    /// a project from a second checkout (e.g. a cross-repo `ProjectReference`) still tokenizes.
+    /// Each extra token must look like `$(Name)`, must not be one of the built-in three, and its
+    /// path must be absolute: fails early rather than tokenizing nothing, or the wrong thing,
+    /// silently. Longest root first is kept, same as `roots ()` alone. Public: a script needs
+    /// this same full list to call `Lock.writeWith`/`parseWith`/`readWith` with the roots its
+    /// `Project.import` used.
+    let withRoots (extra: (string * string) list) =
+        for (token, path) in extra do
+            if not (System.Text.RegularExpressions.Regex.IsMatch (token, @"^\$\([A-Za-z_][A-Za-z0-9_]*\)$")) then
+                failwithf "'%s' is not a valid root token: expected the form $(Name)" token
+            if List.contains token builtinRootTokens then
+                failwithf "'%s' is a built-in root token and cannot be redeclared" token
+            if not (Path.IsPathRooted path) then
+                failwithf "root '%s' must be an absolute path, got '%s'" token path
+        (roots () @ (extra |> List.map (fun (token, path) -> token, path.Replace('\\', '/').TrimEnd '/')))
+        |> List.sortByDescending (snd >> String.length)
+
     /// Paths are written with '/' whatever the platform: a kept evaluation is a file people
     /// read and diff, and fsc takes forward slashes everywhere.
     let internal tokenize roots (path: string) =

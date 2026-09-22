@@ -54,10 +54,12 @@ module ResgenImpl =
 
             rcfile
 #else
-            // ResXResourceReader ships with the full framework only; writing the file without
-            // reading the resx would silently produce an empty resource set
-            ignore rcfile
-            failwith "ERROR: resx compilation is not supported under netstandard target"
+            // ResXResourceReader ships with the full framework only; netstandard2.0 supports
+            // plain string resources via Xake.Dotnet.Resx, which reads the resx itself and
+            // writes with System.Resources.ResourceWriter (typed values and ResXFileRef are
+            // not supported there).
+            Xake.Dotnet.Resx.compile resxfile rcfile
+            rcfile
 #endif
 
         recipe {

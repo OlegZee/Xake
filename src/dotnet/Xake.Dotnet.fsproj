@@ -36,6 +36,10 @@
   <ItemGroup>
     <Compile Include="DotNetFwk.fs" />
     <Compile Include="ResourceFileset.fs" />
+    <!-- Resx has no dependency on Fsproj/DotnetTasks; it is compiled here (ahead of
+         DotnetTasks.fs) because DotnetTasks.fs's Impl.compileResx calls into it on
+         netstandard2.0. -->
+    <Compile Include="Resx.fs" />
 
     <Compile Include="DotnetTasks.fs" />
     <Compile Include="Fsproj.fs" />

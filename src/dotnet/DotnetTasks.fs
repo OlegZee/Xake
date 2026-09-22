@@ -111,6 +111,7 @@ module internal Impl =
             l |> List.map mapFile
 
     let compileResx (resxfile:File) (rcfile:File) =
+#if NETFRAMEWORK
         use writer = new ResourceWriter (rcfile.FullName)
 
         // TODO here we have deal with types somehow because we are running conversion under framework 4.5 but target could be 2.0
@@ -118,17 +119,20 @@ module internal Impl =
             fun(t:System.Type) ->
                 t.AssemblyQualifiedName.Replace("4.0.0.0", "2.0.0.0")
 
-#if NETFRAMEWORK
         use resxreader = new System.Resources.ResXResourceReader (resxfile.FullName)
         resxreader.BasePath <- File.getDirName resxfile
 
         let reader = resxreader.GetEnumerator()
         while reader.MoveNext() do
             writer.AddResource (reader.Key :?> string, reader.Value)
-#else
-        failwith "ERROR: resx compilation is not supported under netstandard target"
-#endif
         writer.Generate()
+#else
+        // netstandard2.0 has no ResXResourceReader (System.Windows.Forms, full framework
+        // only) but supports plain string resources via Xake.Dotnet.Resx, which reads the
+        // resx itself and writes with System.Resources.ResourceWriter -- typed values and
+        // ResXFileRef are not supported there.
+        Xake.Dotnet.Resx.compile resxfile.FullName rcfile.FullName
+#endif
 
     let compileResxFiles = function
         | (res,(file:File)) when file |> File.getFileName |> endsWith ".resx" ->

@@ -18,6 +18,7 @@
     <Compile Include="FileTasksCopy.fs" />
     <Compile Include="FileTasksTests.fs" />
     <Compile Include="FileTasksRm.fs" />
+    <Compile Include="ParentDirTargetTests.fs" />
     <Compile Include="ProgressTests.fs" />
     <Compile Include="CommandLineTests.fs" />
     <Compile Include="SystemTaskTests.fs" />

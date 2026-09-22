@@ -178,8 +178,12 @@ module Fsproj =
                 System.Environment.GetFolderPath System.Environment.SpecialFolder.UserProfile
                     </> ".nuget" </> "packages"
             | dir -> dir
-        [ "$(NuGetPackageRoot)", nuget
-          "$(ProjectRoot)", Directory.GetCurrentDirectory() ]
+        [ yield "$(NuGetPackageRoot)", nuget
+          yield "$(ProjectRoot)", Directory.GetCurrentDirectory()
+          // the SDK: compilers, analyzers, reference packs
+          match DotNetFwk.sdkImpl.dotnetRoot () with
+          | Some root -> yield "$(DotnetRoot)", root
+          | None -> () ]
         |> List.map (fun (token, path) -> token, path.Replace('\\', '/').TrimEnd '/')
         |> List.sortByDescending (snd >> String.length)
 

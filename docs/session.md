@@ -1,105 +1,11 @@
 # Session notes
 
-## Hermetic build script (branch `feature/hermetic-build`)
+Cross-feature facts only: engine behaviour, release decisions, traps. Feature state lives in
+`docs/features/<name>/` (see CLAUDE.md).
 
-`build.fsx` is untouched and still the build of record. Next to it, `build.fsc.fsx` compiles both
-assemblies with the `fsc` task — msbuild compiles nothing — and is meant to replace it after the
-next release.
+## Release 3.3.0 facts (PR #16, merged): `Xake.Dotnet` inside the `Xake` package
 
-**The division of labour**: msbuild is the only thing that reads a project file correctly, so it
-is asked, once per project, what to compile, what to reference and what to define; the answer is
-cached in a file rule; the compilation itself is the `fsc` task's, driven by explicit arguments.
-
-- **`Fsproj.evaluate`** (`src/dotnet/Fsproj.fs`) runs
-  `dotnet msbuild -restore -t:PrepareForBuild;GenerateAssemblyInfo;ResolveReferences` with
-  `-getItem`/`-getProperty` and writes msbuild's json to a file. Every part of that target list
-  earns its place: `PrepareForBuild` triggers `AddImplicitDefineConstants` (that is where
-  `NETSTANDARD2_0` and the `_OR_GREATER` chain come from), `GenerateAssemblyInfo` writes the
-  attributes file, `ResolveReferences` produces the reference list. `BuildProjectReferences=false`
-  is not optional: without it msbuild builds the referenced project, which is the thing being
-  avoided.
-  What msbuild writes is *dumped*, not kept: every metadata field of every item, 200 KB and 3600
-  lines per project of which one field is read. `evaluate` rewrites it into the ~15 KB of lists
-  the build actually consumes (`Fsproj.write`), with paths written against `$(NuGetPackageRoot)`
-  and `$(ProjectRoot)`.
-- **`Fsproj.parse`** reads that kept form (`parseEvaluation` reads msbuild's own). Sources are `CompileBefore @ Compile @ CompileAfter` — for
-  F# the SDK puts the generated `AssemblyInfo.fs` in **`CompileBefore`** (see
-  `FSharp/Microsoft.FSharp.Overrides.NetSdk.targets`), not `Compile`, so it lands first, which is
-  what makes `InternalsVisibleTo("Xake.Dotnet")` reach the compiler. The json parser is
-  hand-written: `System.Text.Json` is a package dependency on netstandard2.0 and would land on
-  every consumer of Xake.
-- **The kept evaluation is tracked in git** (`projects/<fwk>/<lib>.json`) and behaves as a
-  lockfile for the compilation: because of the tokens, a regeneration on another machine is
-  byte-identical, so a diff there means the project really changed. It is produced by a plain
-  file rule that depends on the `.fsproj` and (through the recipe) on the `Version` var. Second
-  build: 38 ms, msbuild not started. Touch a source file: recompiled, msbuild still not started.
-  `clean` does not touch it.
-- **`ReferencePath` points a project reference at that project's own `bin/`**, so the script
-  filters those out and substitutes its own `out/<fwk>/<name>.dll`. It does *not* `need` them:
-  the `fsc` task already `needFiles` everything it references, and asking once is the way to
-  write it. Back when a second request rebuilt the target, that one redundant `need` cost 3 of
-  the 7 seconds a clean build took — which is what uncovered the engine bug below.
-- **The `fsc` task stayed thin** — the whole diff against `dev` is `doc`, netstandard targeting
-  (`DotNetFwk.sdkImpl`, see docs/dotnet-build.md) and a `define` fix: fsc reads `--define:A;B` as
-  one symbol named `A;B`, so the task emits one switch per symbol.
-- **One target, one execution per run** (`WorkerPool.fs`). A target asked for a second time
-  after the first request had finished used to be built again, and it took two mechanisms to
-  get there: the pool deduped only *in-flight* requests (dropping the entry on completion), and
-  the "does it need rebuilding" verdict is memoized for the whole run
-  (`getChangeReasons ctx |> memoizeRec`, `ExecCore.fs`) — that memo is how the recursive graph
-  analysis ties its knot, not an optimization one can drop — so the second request never asked
-  the database again and got the pre-build "Not built yet" answer.
-
-  The pool now keeps two maps: `running`, shared by whoever asks whenever they ask, and
-  `finished`, which serves the rest of the run and is emptied when the next one starts.
-  `Scheduler.newRun` marks that boundary and is posted exactly where the memo is created — in
-  `runBuild.runTargets` (a target group) and in `demandTarget` (one `Demand`). So within a run a
-  target executes once; across runs the database decides again, which is what makes a second
-  `Demand` notice a changed variable; and a task already going when a run begins still serves
-  it, as it always did for concurrent demands. A run-numbered variant was tried first and
-  dropped: same size, more to explain. Covered by `builds a target requested twice in one run
-  only once` and `builds a file needed and then needFiled only once`.
-
-Where the time goes, measured with everything cold (`obj/`, `bin/`, `out/`, `.xake` removed):
-
-| | `build.fsx` (dotnet build) | `build.fsc.fsx` |
-|---|---|---|
-| everything cold | 4.6 s | 4.9 s |
-| only `out/` removed | 2.1 s — msbuild's `obj/` is still warm, so it copies rather than compiles | 4.9 s — it has no such cache, it recompiles |
-| nothing changed | 0.7 s | 0.7 s |
-| a source file touched | — | 4.0 s, no msbuild run |
-| a `.fsproj` touched | — | 4.5 s, one msbuild run, `projects/` unchanged |
-
-The middle row is the whole of the difference: msbuild keeps its own incremental state in `obj/`
-and `bin/`, and `dotnet build --output out` then degenerates into a copy. Comparing that against
-a real compilation is what made the fsc build look twice as slow.
-
-Traps worth remembering:
-
-- A list expression that mixes literals with a `for` comprehension turns the literals into
-  statements and **silently drops them** (`FS0020`); the msbuild command line lost every flag
-  that way. Use `@` between lists, or `yield` on every element.
-- A triple-quoted string whose closing `"""` sits left of the enclosing offside line breaks the
-  parse of everything after it (`FS0010: Unexpected identifier in member definition`). Indent the
-  literal into the block.
-
-**Bootstrapping it** needs a *frozen copy* of the assemblies — the script overwrites `out/`, and
-overwriting an assembly fsi has loaded kills the run with a `BadImageFormatException`:
-
-```bash
-dotnet fsi build.fsx -- -- build
-mkdir -p .bootstrap && cp out/netstandard2.0/*.dll .bootstrap/
-dotnet fsi build.fsc.fsx -- -- build test
-```
-
-After the release both `#r` lines become `#r "nuget: Xake, <version>"` and the staging goes away.
-`dotnet test` and `dotnet pack` still shell out to the SDK: the test project is msbuild's, and the
-nupkg carries a `net462` asset fsc cannot produce here (see the limitation below).
-
-## Release prep (branch `feature/rulesless-syntax`)
-
-Preparing the first release that ships `Xake.Dotnet` inside the `Xake` package. What was
-touched, so it is not re-litigated:
+What was decided for that release, so it is not re-litigated:
 
 - [`docs/dotnet-build.md`](dotnet-build.md) is the reference for toolchain discovery: the three
   providers (`sdkImpl`, `msImpl`, `monoFwkImpl`), the fallback chain, framework-name
@@ -164,8 +70,8 @@ worth knowing before touching it again:
   drags in a `netstandard` facade that the net4x reference-assembly packages do not carry.
   Hence there is no `fsc` end-to-end test; `samples/features.fsx` works around it by
   referencing an `FSharp.Core.dll` of its own.
-- ~~A target requested twice in one recipe is built twice~~ — fixed on this branch, see
-  "One target, one execution per run" above. The csc test still asserts on its output file
+- ~~A target requested twice in one recipe is built twice~~ — fixed on `feature/hermetic-build`
+  (see `docs/features/hermetic-build/session.md`, "One target, one execution per run"). The csc test still asserts on its output file
   rather than an execution count.
 - `build.fsx` builds `netstandard2.0` only; the `net462` asset comes from `dotnet pack`. An
   fsc-built net462 leg would need an FSharp.Core with a net4x assembly, which the pinned
@@ -179,14 +85,10 @@ dotnet test src/tests -c Release                                         # 237 p
 dotnet test src/tests --filter 'Category=Integration'                    # real csc and fsc runs
 dotnet fsi build.fsx -- -- build test                                    # self-hosting, dotnet build
 dotnet fsi samples/fullframework.fsx                                     # end-to-end csc
-
-# and the fsc build, which needs its bootstrap staged first
-mkdir -p .bootstrap && cp out/netstandard2.0/*.dll .bootstrap/
-rm -rf out .xake && dotnet fsi build.fsc.fsx -- -- build test
-dotnet fsi build.fsc.fsx -- -- build                                     # no-op, no msbuild run
 ```
 
 `samples/*.fsx` reference `out/netstandard2.0/*.dll`, so run the self-hosting build first.
+The fsc-based build (`build.fsc.fsx`) and its bootstrap live in `docs/features/hermetic-build/`.
 
 ## Earlier work: delegated execution (merged, PR #15)
 

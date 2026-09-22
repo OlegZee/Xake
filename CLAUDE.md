@@ -6,6 +6,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Always read `docs/session.md` at the start of every session, unconditionally.
 
+Then read the **feature folder** for the current branch: for a branch `feature/<name>` (or
+`bugfix/<name>`), the folder is `docs/features/<name>/`. It holds the working state of that
+feature and is the context to load:
+
+- `session.md` — where things stand and the exact next step; update it before ending a session
+- `tracker.md` — one-line work items with status; keep it current as work lands
+- `brief.md` (optional) — the design/product brief; decisions live here, do not re-litigate them
+
+If the folder does not exist for a feature branch, create it at the first session on that
+branch. `docs/session.md` keeps only what is cross-feature (engine facts, release notes, traps).
+
 ## Project Overview
 
 Xake is an F# build utility inspired by Shake. It uses F# as a full programming language to define build rules with dependency tracking, incremental builds, and parallel execution. Xake is self-hosting — it builds itself using its own build script (`build.fsx`).

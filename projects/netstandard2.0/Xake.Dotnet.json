@@ -13,6 +13,7 @@
     "$(ProjectRoot)/src/dotnet/ResourceFileset.fs",
     "$(ProjectRoot)/src/dotnet/DotnetTasks.fs",
     "$(ProjectRoot)/src/dotnet/Fsproj.fs",
+    "$(ProjectRoot)/src/dotnet/Project.fs",
     "$(ProjectRoot)/src/dotnet/Dotnet.csc.fs",
     "$(ProjectRoot)/src/dotnet/Dotnet.fsc.fs",
     "$(ProjectRoot)/src/dotnet/Dotnet.resgen.fs",

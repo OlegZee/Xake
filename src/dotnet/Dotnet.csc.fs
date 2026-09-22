@@ -34,6 +34,11 @@ module CscImpl =
         FailOnError: bool
         /// Path to csc executable
         CscPath: string option
+        /// A project imported by `Project.import`: when set, the task replays that project's
+        /// command line verbatim instead of composing one from `Src`/`Ref`/`Define`/... (those
+        /// and `Target`/`Platform`/`Out`/`TargetFramework` are ignored in this mode). See
+        /// `compileFromLock`.
+        Invocation: Lock.Project option
     } with static member Default = {
             Platform = AnyCpu
             Target = Auto    // try to resolve the type from name etc
@@ -48,10 +53,103 @@ module CscImpl =
             CommandArgs = []
             FailOnError = true
             CscPath = None
+            Invocation = None
         }
 
     /// Default settings for the CSC task, so that you could only override required settings.
     let CscSettings = CscSettingsType.Default
+
+    /// <summary>
+    /// Compiles a project imported by `Project.import`, replaying its command line exactly as
+    /// msbuild would have run it. Nothing is composed: the sources, references, defines and
+    /// output are whatever `project.Args` says. Before running the compiler this:
+    /// writes back any `Generated` file that is missing or whose content changed (the lock is
+    /// the source of truth for msbuild-generated inputs like AssemblyInfo.cs), creates the
+    /// output directories, and verifies the SHA-256 of every hashed reference/analyzer and of
+    /// the compiler itself against what is on disk -- a mismatch fails the build rather than
+    /// silently compiling against something other than what was imported.
+    /// </summary>
+    let private compileFromLock (settings: CscSettingsType) (project: Lock.Project) =
+        recipe {
+            do! trace Info "compiling '%s' from the lock (%s %s)" project.Name project.Compiler.Tool project.Compiler.Sdk
+
+            // the lock is the source of truth for what msbuild generated (assembly attributes,
+            // TFM defines): write it back whenever it is missing or someone touched it
+            for (path, content) in project.Generated do
+                let upToDate = File.Exists path && File.ReadAllText path = content
+                if not upToDate then
+                    let dir = Path.GetDirectoryName path
+                    if not (Impl.isEmpty dir) then Directory.CreateDirectory dir |> ignore
+                    File.WriteAllText (path, content)
+
+            for path in CscArgs.outputs project.Args do
+                let dir = Path.GetDirectoryName path
+                if not (Impl.isEmpty dir) then Directory.CreateDirectory dir |> ignore
+
+            // everything that carries a hash has to be exactly what was imported, or the
+            // compilation is not the one the lock describes
+            let mismatches =
+                let check (path: string) (expected: string) =
+                    if expected = "" then None
+                    else
+                        let actual = if File.Exists path then Lock.sha256 path else "missing"
+                        if actual = expected then None else Some (path, expected, actual)
+                [ for r in project.References do yield check r.Path r.Sha256
+                  for a in project.Analyzers do yield check a.Path a.Sha256
+                  yield check project.Compiler.Path project.Compiler.Sha256 ]
+                |> List.choose id
+
+            if not (List.isEmpty mismatches) then
+                let detail =
+                    mismatches
+                    |> List.map (fun (path, expected, actual) -> sprintf "%s: expected %s, got %s" path expected actual)
+                    |> String.concat "\n"
+                do! trace Error "('%s') hash mismatch:\n%s" project.Name detail
+                if settings.FailOnError then
+                    failwithf "('%s') hash mismatch:\n%s" project.Name detail
+
+            // the generated files have to exist before the inputs are demanded
+            do! needFiles (Filelist (CscArgs.inputs project.Args |> List.map File.make))
+
+            // csc warns CS2023 and ignores /noconfig when it is inside the response file, so
+            // it has to stay on the command line and everything else goes into the rsp
+            let args = project.Args
+            let noconfig = args |> List.contains "/noconfig"
+            let rspArgs = args |> List.filter ((<>) "/noconfig")
+
+            let rspFile = Path.GetTempFileName()
+            File.WriteAllLines (rspFile, rspArgs |> List.map Impl.escapeArgument)
+            let commandLineArgs =
+                seq {
+                    if noconfig then yield "/noconfig"
+                    yield "@" + rspFile
+                }
+
+            let deleteTempFiles () = try System.IO.File.Delete rspFile with _ -> ()
+
+            let cscTool, extraArgs =
+                match settings.CscPath with
+                | Some tool -> tool, []
+                | None when Impl.endsWith ".dll" project.Compiler.Path -> "dotnet", [project.Compiler.Path]
+                | None -> project.Compiler.Path, []
+
+            do! trace Debug "Command line: '%s %s'" cscTool
+                    ((extraArgs @ List.ofSeq commandLineArgs) |> String.concat " ")
+
+            try
+                let! exitCode =
+                    shell {
+                        cmd cscTool
+                        args (Seq.append extraArgs commandLineArgs)
+                        logprefix "[csc]"
+                        stdoutlevel (Impl.levelFromString Level.Verbose)
+                        erroutlevel (Impl.levelFromString Level.Verbose)
+                    }
+
+                do! Impl.failOnExitCode settings.FailOnError project.Name exitCode
+            finally
+                deleteTempFiles ()
+        }
 
     /// <summary>
     /// C# compiler task. Compiles the source fileset into the target assembly.
@@ -59,6 +157,10 @@ module CscImpl =
     /// <param name="settings">Compiler settings</param>
     /// <returns>Recipe compiling the target</returns>
     let Csc (settings:CscSettingsType) =
+
+      match settings.Invocation with
+      | Some project -> compileFromLock settings project
+      | None ->
 
         recipe {
             do! trace Level.Debug "Csc: settings=%A" settings
@@ -190,6 +292,8 @@ module CscImpl =
         [<CustomOperation("define")>]    member __.Define(s:CscSettingsType, value) =      {s with Define = value}
         [<CustomOperation("unsafe")>]    member __.Unsafe(s:CscSettingsType, value) =      {s with Unsafe = value}
         [<CustomOperation("cscpath")>]       member __.CscPath(s:CscSettingsType, value) =   {s with CscPath = Some value}
+        /// <summary>Replays a project imported by `Project.import` verbatim; see `Invocation`</summary>
+        [<CustomOperation("invocation")>]    member __.Invocation(s:CscSettingsType, project) = {s with Invocation = Some project}
 
         /// <summary>Passes custom arguments to the compiler</summary>
         [<CustomOperation("args")>]       member __.Args(s:CscSettingsType, args) =   {s with CommandArgs = args}

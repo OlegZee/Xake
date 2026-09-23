@@ -6,7 +6,7 @@ details live in brief.md (section refs) or session.md.
 ## Day zero (brief §8h/§8i/§8j)
 - [x] E1 reproducibility of dataengine with stock `dotnet build` — green on origin/develop
 - [x] E2 design-time import: DataEngine and page/Rdl (LocalBuild), both brands — complete
-- [ ] E3 `packages.lock.json` stability and floating versions
+- [x] E3 `packages.lock.json` stability and floating versions — `e3-restore-stability.md` (2026-09-24): no lock files in either repo, but no floating versions either; two independent restores of the same commit give identical sha512 for every package; `<clear/>` + `packageSourceMapping` present. Top drift vector: SDK-implicit packages (`NETStandard.Library` 2.0.3, `Microsoft.NETFramework.ReferenceAssemblies` 1.0.3) move with the SDK feature band under `latestFeature`; second: no transitive pinning (latent). Recommendations recorded
 - [x] E4 Babel `--randomseed` — deterministic except PE timestamp/checksum (+ eval expiry)
 - [x] E5 reproduce shipped `MESCIUS.ActiveReports.Core.*` nupkg vs local tag build — `e5-shipped-vs-local.md`, `verify-shipped.fsx` (2026-09-24): nuget.org 5.4.0 vs tag `5.4.0` built here; same commit sha embedded, no Babel traces, size gap = the Authenticode certificate table; but Authenticode hashes differ: 140 scattered 1–7 byte `Content` ranges — a toolchain/path difference (compiler build, absolute paths without `/pathmap`), not a different source. Outcome (b). Next: rebuild with their exact SDK and `/pathmap` to isolate
 
@@ -37,7 +37,7 @@ details live in brief.md (section refs) or session.md.
 - [ ] `Csc.resolve` public as `Recipe<Lock.Project>` (cleans its temp files itself), `Lock.rehash`, `Lock.diff` — the smallest API; `Project.import` and `Csc.resolve` both feed `fromlock`
 - [ ] migration path A: `lock "path"` operation on `csc {}` with locked-mode semantics (record when absent, diff + hash-verify when present); path B: `cscSettings {}` builder returning the settings value
 - [ ] **think first**: how a lock is updated — `-d UPDATE_LOCKS` rejected (global tool behaviour for a narrow case). Find what is idiomatic for Xake (locks as targets, no engine mode) and familiar to npm users (`npm install` follows the manifest, `npm ci` is the strict opt-in)
-- [ ] prerequisite for projects with `.resx`: `Resx.compile` exists now; `resolve` still emits temp `/res:` paths for composed settings — route them through `Resources` with permanent outputs before recording a lock from composed settings
+- [x] prerequisite for projects with `.resx` (2026-09-23): `resolve` now records a `.resx` resource as a permanent `(resx, .resources)` pair in `Resources` — `<ProjectRoot>/obj/xake/<assembly name>/<manifestName>` — and emits `/res:<path>,<manifestName>`; `run`'s existing resource step compiles it when missing, exactly as for an imported project. `resolve` no longer produces any temp files; `CscLock.resolve`'s return type dropped the temp-file list. `DotnetTasksTests.fs` (composed mode, no-op second build), `FromLockTests.fs` (`CscLock.resolve` on a resx, compiles through `fromlock`)
 
 ## Slice 2 — SBOM and verification (brief §8e, §11)
 - [x] `Nuget.readAssets` / `readCache` / `packageOf` (sha512, source, license, supplier, repository, commit) — `Nuget.fs`, `NugetTests.fs` (8), `nuget-sbom.md`

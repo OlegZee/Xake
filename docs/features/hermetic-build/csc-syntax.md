@@ -44,6 +44,8 @@ references are now spelled `/reference:` rather than `/r:` -- and passes it to t
 | `lock` | `string` | records this compilation in a lock file at that path (project-root-relative or absolute) and, once it exists, refuses to compile anything that differs from it; see "Locking composed settings" below | `None` |
 | `args` | `string list` | raw extra switches, appended last (`CommandArgs`) | `[]` |
 | `nofailonerror` | (none) | do not fail the build on a compile error | `FailOnError = true` |
+| `noserver` | (none) | compile in a fresh csc process instead of through the Roslyn compiler server (`VBCSCompiler`); see [csc-server.md](csc-server.md) | `Server = Shared None` (env `XAKE_CSC_SERVER=0` turns it off) |
+| `keepalive` | `int` (seconds) | idle time after which a compiler server this build starts exits (`/keepalive`) | Roslyn's own default, 600 |
 
 `out`, `platform`, `unsafe`, `nostdlib` (from `targetfwk`) and `define` are composition
 settings; replaying a lock (`CscLock.compile`, below) does not go through them at all. The
@@ -119,8 +121,9 @@ and no temp files: the project's own `Args` is the whole compilation. It is an e
 its own, not a mode of `csc {}` (changed 2026-09-24, conceptual-review.md 2.2): as a `fromlock`
 setting inside the record it made `csc { fromlock p; src !!"*.cs" }` compile while silently
 ignoring `src` and every other composition setting, and the type said nothing about it. What
-does apply to both entry points is `RunOptions = { FailOnError; CscPath }` -- how the runner
-behaves, not what it compiles; `Csc` builds one from the settings' own `FailOnError`/`CscPath`,
+does apply to both entry points is `RunOptions = { FailOnError; CscPath; Restore; Server }` -- how the runner
+behaves, not what it compiles (`Server` is whether csc runs as a thin client of the Roslyn
+compiler server, [csc-server.md](csc-server.md)); `Csc` builds one from the settings' own `FailOnError`/`CscPath`,
 and `CscLock.compile` uses `RunOptions.Default` (`compileWith` takes them explicitly). The
 module is `CscLock`, not `Csc`, because F# will not let a module and the `let`-bound function
 `Csc` share a name (see the doc comment on `CscLock.resolve`).
@@ -199,6 +202,13 @@ The runner (`run` in `Dotnet.csc.fs`, shared by both entry points) does, in orde
 10. Picks the compiler: `settings.CscPath` wins if set; otherwise, when the project's recorded
     compiler path ends in `.dll`, it runs through `dotnet <path>`; otherwise the path is run
     directly (a native launcher, e.g. the SDK's `csc` apphost).
+11. Adds the compiler-server switches (2026-09-23, [csc-server.md](csc-server.md)) -- `/shared`,
+    plus `/keepalive:<s>` when `RunOptions.Server` names one -- on the command line, next to
+    `/noconfig`, never in the rsp and never in the lock: csc parses them out on the client side
+    before anything reaches `VBCSCompiler`, so `Entry.Args` is unchanged by them. Only when a
+    `VBCSCompiler.dll` sits next to the compiler file about to run (the SDK's `Roslyn/bincore`,
+    a toolset package's) and the runner sets no env vars (`serverArgs`); the legacy `csc.exe`,
+    `mcs`, an arbitrary `cscpath` and a mono/registry toolchain compile in-process as before.
 
 The rsp file is deleted once the compiler exits, success or failure -- the only temp file `run`
 produces now that the composed mode's `.resx` resources are permanent outputs (see above),

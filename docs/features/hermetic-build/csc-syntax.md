@@ -116,17 +116,28 @@ The runner (`run` in `Dotnet.csc.fs`, shared by both modes) does, in order:
    - anywhere else -- `'<name>': the compiler <path> named by the lock does not exist`.
 
    Every failure here goes through the same `trace Error` + `FailOnError`-gated `failwith` shape
-   as the hash-mismatch check (step 4) and `Impl.failOnExitCode`.
-2. Writes back every `Generated` file that is missing or whose content differs from what is on
+   as the hash-mismatch check (step 6) and `Impl.failOnExitCode`.
+2. **Resolves `$(SourceRevisionId)`** (raised 2026-09-23, "Lock stability"): the lock never
+   carries a commit sha itself (see `Generated` and `Project.tokenizeRevision` below) -- when
+   `Generated`'s content or `Args` carries the literal token `$(SourceRevisionId)`, it is
+   replaced here with `Git.headSha project.Directory` (walking up from the project's own
+   directory for a `.git`; no `git` executable). No token anywhere -- nothing happens, the
+   composed mode included, since it never populates `Generated`. A token present but no
+   repository found (or `HEAD` unresolvable) fails with `'<name>': the lock needs
+   $(SourceRevisionId) but no git repository was found at or above '<dir>' -- a lock that needs
+   a revision must be compiled in a repository`, the same `trace Error` + `FailOnError` shape as
+   the other checks here.
+3. Writes back every `Generated` file that is missing or whose content differs from what is on
    disk -- the resolved project is the source of truth for msbuild-generated inputs like
-   `AssemblyInfo.cs`. The composed mode never populates `Generated`, so this is a no-op there.
-3. Creates the output directories, for every path `CscArgs.outputs project.Args` names.
-4. `needFiles` the compiler itself (raised 2026-09-23, conceptual-review.md 2.4): the hash check
-   in step 5 covers `project.Compiler.Path`, but nothing before this made it a tracked
+   `AssemblyInfo.cs` (and, now, `sourcelink.json` with its token already resolved by step 2). The
+   composed mode never populates `Generated`, so this is a no-op there.
+4. Creates the output directories, for every path `CscArgs.outputs project.Args` names.
+5. `needFiles` the compiler itself (raised 2026-09-23, conceptual-review.md 2.4): the hash check
+   in step 7 covers `project.Compiler.Path`, but nothing before this made it a tracked
    dependency, so an SDK or toolset update that changed `csc.dll`'s bytes left the target looking
    up to date and the hash check never ran. `needFiles [project.Compiler.Path]`, right after
    `ensureCompilerAvailable`, closes that.
-5. `needFiles` every resx in `project.Resources` (so a resx edit rebuilds the dll) and, for each
+6. `needFiles` every resx in `project.Resources` (so a resx edit rebuilds the dll) and, for each
    `(resx, resources)` pair, compiles the resx to that `.resources` path with `Xake.Dotnet.Resx`
    when the output is **missing** -- so a machine with only the lock, or a cleaned `obj/`, still
    ends up with the exact file the recorded `/resource:` switch names. The composed mode never
@@ -141,20 +152,20 @@ The runner (`run` in `Dotnet.csc.fs`, shared by both modes) does, in order:
    file with an unchanged timestamp is still caught (the hash check runs every time `run` runs
    for other reasons); a swapped file that also updates the timestamp is caught because the
    timestamp change is what makes the engine run `run` in the first place.
-6. Verifies the SHA-256 of every hashed reference, analyzer, and the compiler itself against what
+7. Verifies the SHA-256 of every hashed reference, analyzer, and the compiler itself against what
    is on disk. An empty recorded hash means "not checked" (the composed mode never records one,
    and neither does an unbuilt project reference). Any mismatch is collected and reported
    together, then fails the build when `FailOnError` is set (`XakeException`, message containing
    the path).
-7. `needFiles` on `CscArgs.inputs project.Args` -- every file any input switch names, plus the
+8. `needFiles` on `CscArgs.inputs project.Args` -- every file any input switch names, plus the
    sources. For the composed mode this now covers everything the args name, including the
    framework's global references, not only sources/refs/resources.
-8. Writes the arguments to a response file, with `Impl.escapeArgument`, and runs the compiler.
+9. Writes the arguments to a response file, with `Impl.escapeArgument`, and runs the compiler.
    `/noconfig` cannot go inside the rsp -- csc warns `CS2023` and ignores it there -- so it stays
    on the command line and everything else goes into `@<rspfile>`.
-9. Picks the compiler: `settings.CscPath` wins if set; otherwise, when the project's recorded
-   compiler path ends in `.dll`, it runs through `dotnet <path>`; otherwise the path is run
-   directly (a native launcher, e.g. the SDK's `csc` apphost).
+10. Picks the compiler: `settings.CscPath` wins if set; otherwise, when the project's recorded
+    compiler path ends in `.dll`, it runs through `dotnet <path>`; otherwise the path is run
+    directly (a native launcher, e.g. the SDK's `csc` apphost).
 
 The rsp file and any extra temp files (the composed mode's resx-compiled resources) are deleted
 once the compiler exits, success or failure.
@@ -202,9 +213,10 @@ the built-in three only, unchanged.
 - `ProjectRefs` -- `ProjectReference` items, as project files
 - `Imports` -- the msbuild files (outside the SDK) whose evaluation produced this entry, hashed
 - `Generated` -- msbuild-written *text* compiler inputs, by path, with content (assembly
-  attributes, the derived `.editorconfig`); a compiled `.resources` file, though also a
-  `/resource:` input under the intermediate directory, is excluded here and tracked in
-  `Resources` instead, since it is binary and `File.ReadAllText`ing it would corrupt it
+  attributes, the derived `.editorconfig`, SourceLink's `sourcelink.json` -- `sourcelink` is one
+  of `CscArgs.inputSwitches` since it names a file the compiler reads); a compiled `.resources`
+  file, though also a `/resource:` input under the intermediate directory, is excluded here and
+  tracked in `Resources` instead, since it is binary and `File.ReadAllText`ing it would corrupt it
 - `Resources` -- `.resx` files this project embeds: `(resx path, .resources output path)` pairs,
   both absolute; `run` regenerates the output from the resx (byte-identical to msbuild's) when it
   is missing or older than the resx, so a machine with only the lock can still reproduce it
@@ -213,6 +225,40 @@ the built-in three only, unchanged.
 
 `Lock.read path` parses a lock file (paths expanded for this machine); `Lock.project name lock`
 looks an entry up by assembly name or project file name.
+
+**`$(SourceRevisionId)` and the commit sha (raised 2026-09-23, "Lock stability").** The SDK's
+built-in SourceLink writes `sourcelink.json` (a Bitbucket/GitHub-shaped URL template with the
+commit sha in it) and passes it on `/sourcelink:<path>` -- `sourcelink` is one of
+`CscArgs.inputSwitches`, so that file lands in `Generated` like any other msbuild-written text
+input. Left as is, its content would carry the commit sha, and so the lock's content -- and the
+lock file itself -- would change on every commit even though the compilation did not change.
+`parseImport` asks msbuild for the `SourceRevisionId` property (in `wantedProperties`) and, when
+it is non-empty, calls the pure `Project.tokenizeRevision sha entry : Lock.Project`: every
+occurrence of `sha` in `Generated` content, `Args`, and `Properties` values is replaced with the
+literal token `$(SourceRevisionId)`. The sha itself is **not** recorded anywhere in the lock --
+`SourceRevisionId` is asked from msbuild only to drive this substitution, never added to the
+`Properties` whitelist. `run` (`Dotnet.csc.fs`, step 2 of the runner) resolves the token back at
+compile time, from the project's own repository (`Git.headSha project.Directory`) -- see below.
+
+`Project.import` also `needFiles`s `Git.headFiles (project's directory)` -- `.git/HEAD` and the
+ref file (or `packed-refs`) it resolves through -- for every project, whether or not it uses the
+token: a token in the lock's *content* is commit-independent by design, so nothing else tracked
+by the import changes on a new commit, and without this the lock would go stale (compile with an
+out-of-date resolved sha) instead of re-importing.
+
+**`Git` (`Xake.Dotnet.Git`, in `Project.fs`).** Reads `.git` directly, no `git` executable:
+`Git.headSha dir : string option` and `Git.headFiles dir : string list` both walk up from `dir`
+for a `.git` entry (stopping at the filesystem root) -- a **directory** (an ordinary checkout:
+`HEAD` lives there, and refs resolve against the same directory unless a `commondir` file says
+otherwise) or a **file** (a linked worktree: `gitdir: <path>` names the worktree's own private
+git directory, which holds its own `HEAD` but a `commondir` file pointing at the main
+repository's `.git`, where `refs/` and `packed-refs` actually live). `HEAD` is either symbolic
+(`ref: refs/heads/<name>\n`, resolved against a loose ref file under the common directory, or a
+`packed-refs` line `<sha> <refname>` when there is no loose file) or detached (the sha directly).
+`headFiles` returns exactly the files that change when the commit does -- `HEAD` alone for a
+detached HEAD, `HEAD` plus the loose ref or `packed-refs` for a symbolic one -- so `import` can
+`needFiles` them; `headSha` returns the sha itself, for `run`. Both return `[]`/`None` when `dir`
+is not inside a repository.
 
 **SDK pin check.** `Project.sdkPin` (pure) walks up from each project's directory for a
 `global.json` and reads `sdk.version`/`sdk.rollForward`, producing a `SdkPin`: `NoGlobalJson`,

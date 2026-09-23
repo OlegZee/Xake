@@ -278,3 +278,80 @@ type ``Csc fromlock``() =
 
         Assert.That(readBack.Args, Is.EqualTo rehashed.Args)
         Assert.That(readBack.References |> List.map (fun r -> r.Sha256), Is.EqualTo (rehashed.References |> List.map (fun r -> r.Sha256)))
+
+    /// `$(SourceRevisionId)` (`Project.tokenizeRevision`, resolved back in `run`): a lock whose
+    /// `Generated` (and the `/sourcelink:` argument naming it) carries the token compiles, in a
+    /// project directory that is itself a (fake) git checkout, with the token replaced by the
+    /// checkout's actual commit -- and not left in the written file.
+    [<Test; Category("Integration")>]
+    member x.``resolves $(SourceRevisionId) from the project's own git repository into the written sourcelink.json``() =
+
+        let dir = Path.Combine (Path.GetTempPath(), "xake-test-git-sourcelink-" + System.Guid.NewGuid().ToString("N"))
+        Directory.CreateDirectory dir |> ignore
+        try
+            let project, outDll, _, _ = makeLock dir
+            let sourcelinkPath = Path.Combine (dir, "obj", "sourcelink.json")
+            let sourcelinkContent = "{\"documents\":{\"/x/*\":\"https://h/src/$(SourceRevisionId)/*\"}}"
+            let project =
+                { project with
+                    // `/sourcelink:` is only accepted when a PDB is emitted
+                    Args = project.Args @ [ "/debug:portable"; "/sourcelink:" + sourcelinkPath ]
+                    Generated = project.Generated @ [ sourcelinkPath, sourcelinkContent ] }
+
+            // a fake repository at the project's own directory: HEAD symbolic -> a loose ref
+            let gitDir = Path.Combine (dir, ".git")
+            Directory.CreateDirectory (Path.Combine (gitDir, "refs", "heads")) |> ignore
+            let sha = "0123456789abcdef0123456789abcdef01234567"
+            File.WriteAllText (Path.Combine (gitDir, "HEAD"), "ref: refs/heads/main\n")
+            File.WriteAllText (Path.Combine (gitDir, "refs", "heads", "main"), sha + "\n")
+
+            do xake {x.TestOptions with FileLog="csc-fromlock-sourcelink.log"; ThrowOnError = true} {
+                wantOverride (["hello-sourcelink"])
+
+                rules [
+                    "hello-sourcelink" => recipe {
+                        do! Csc {CscSettingsType.Default with FromLock = Some project}
+                    }
+                ]
+            }
+
+            Assert.That(File.Exists outDll, Is.True, "csc did not produce Hello.dll")
+            let written = File.ReadAllText sourcelinkPath
+            Assert.That(written, Does.Contain sha)
+            Assert.That(written, Does.Not.Contain "$(SourceRevisionId)")
+        finally
+            try Directory.Delete (dir, true) with _ -> ()
+
+    /// The other side of the same feature: without a repository at all, the token cannot be
+    /// resolved and the build fails, naming the project and the token rather than silently
+    /// leaving it in the generated file.
+    [<Test; Category("Integration")>]
+    member x.``fails clearly when $(SourceRevisionId) cannot be resolved because there is no git repository``() =
+
+        let dir = Path.Combine (Path.GetTempPath(), "xake-test-git-sourcelink-none-" + System.Guid.NewGuid().ToString("N"))
+        Directory.CreateDirectory dir |> ignore
+        try
+            let project, _, _, _ = makeLock dir
+            let sourcelinkPath = Path.Combine (dir, "obj", "sourcelink.json")
+            let sourcelinkContent = "{\"documents\":{\"/x/*\":\"https://h/src/$(SourceRevisionId)/*\"}}"
+            let project =
+                { project with
+                    Args = project.Args @ [ "/sourcelink:" + sourcelinkPath ]
+                    Generated = project.Generated @ [ sourcelinkPath, sourcelinkContent ] }
+
+            let build () =
+                xake {x.TestOptions with FileLog="csc-fromlock-sourcelink-missing.log"; ThrowOnError = true} {
+                    wantOverride (["hello-sourcelink-missing"])
+
+                    rules [
+                        "hello-sourcelink-missing" => recipe {
+                            do! Csc {CscSettingsType.Default with FromLock = Some project}
+                        }
+                    ]
+                }
+
+            let ex = Assert.Throws<XakeException> (fun () -> build () |> ignore)
+            Assert.That(ex.Data0, Does.Contain project.Name)
+            Assert.That(ex.Data0, Does.Contain "$(SourceRevisionId)")
+        finally
+            try Directory.Delete (dir, true) with _ -> ()

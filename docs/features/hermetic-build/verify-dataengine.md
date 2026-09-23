@@ -324,3 +324,70 @@ no-op (0.09 s).
   baseline builds fail with `MSB3577: two output file names resolved to the same output path`.
   The comparison recipe in `samples/hermetic/page/compare.txt` is the one that has been
   proven; change it only with evidence.
+
+## 9. 2026-09-23: with the compiler server (`/shared`)
+
+Re-run of `verify-dataengine.sh` after `da16369` made `csc` go through Roslyn's `VBCSCompiler`
+by default (`csc-server.md`; opt-out `XAKE_CSC_SERVER=0`). Same macOS box, same fixture
+(`origin/develop` `2db7eac`); host SDK 10.0.401, and inside the fixture `global.json`
+(`8.0.100 rollForward:latestFeature`) selects **8.0.425** — the §1–§8 numbers above were taken
+with 8.0.423.
+
+```
+  byte-identical vs dotnet build : 36/36
+  deterministic across runs      : 36/36
+  deterministic SBOMs            : 12/12
+  identical from a fresh package folder : 36/36
+```
+
+No `DIFFERENT` line anywhere: the server changes nothing about the bytes, as
+`CscServerTests` claims for one library and this now shows for twelve. `/shared` was in use —
+all 12 traced `csc` command lines in the run's `verify.log` (`filelog … Verbosity.Diag`) read
+`dotnet …/sdk/8.0.425/Roslyn/bincore/csc.dll /shared …`, and a
+`VBCSCompiler.dll -pipename:9Wnsbh…` from that same `bincore` was running afterwards (none was
+before: `dotnet build-server shutdown` precedes the run). The phase logs on stdout are not
+verbose enough to show a command line; `verify.log` is.
+
+| phase | wall | note |
+|---|---|---|
+| **Xake** | | |
+| `locks`, cold, concurrent | **8.64 s** | 2 locks, 12/12 entries with a 4-package graph |
+| `build`, cold outputs | **3.86 s** | 12 assemblies, 0 msbuild |
+| `build`, nothing changed | **0.77 s** | |
+| `build`, one source touched | **3.83 s** | 12/12 recompiled, 0 locks re-imported |
+| `build` from committed locks (fresh `obj`) | **3.07 s** | 2/2 locks skipped |
+| `sbom`, 12 CycloneDX files | **0.76 s** | regenerated: 12/12 identical (0.79 s) |
+| `restore` into an empty folder | **2.09 s** | 153 MB, 2 packages |
+| `build` against that folder, warm | **3.16 s** | |
+| `build` against an *empty* folder | **4.01 s** | restores once, then 12 assemblies; 36/36 identical |
+| **stock .NET** | | |
+| `dotnet restore`, first ever | **0.86 s** | 153 MB, 4 packages |
+| `dotnet restore`, no-op | **0.43 s** | |
+| `dotnet build -c Release -p:Brand=X`, clean `obj` | **1.00 / 0.96 s** | 6 assemblies per brand |
+| `dotnet build`, nothing changed | **0.65 s** | |
+| `dotnet build`, one source touched | **0.98 s** | |
+| `dotnet build -t:Rebuild`, one (framework, brand) | **3.70–9.65 s** | first one pays the cold msbuild/server start |
+
+### A/B on the build phase alone
+
+`cd <work>/de`, `rm -rf src/*/obj/xake` before each, alternating, nothing discarded.
+`dotnet build-server shutdown` ran before the first, so **server #1 includes the cold server
+start**. Wall clock, including ~0.7 s of `dotnet fsi` startup.
+
+| run | `/shared` (default) | `XAKE_CSC_SERVER=0` |
+|---|---|---|
+| #1 | **3.80 s** (cold server start) | 4.44 s |
+| #2 | **3.43 s** | 4.44 s |
+| #3 | **3.08 s** | 4.35 s |
+| median | **3.43 s** | **4.44 s** |
+
+Engine time (the figure the run prints, without `fsi` startup) on one further pair:
+**2.44 s** with the server against **3.66 s** without — 1.5×. Per assembly, from `verify.log`:
+**0.13–0.18 s** served against **0.42–0.71 s** in-process, ~3× — the fixed cost of a fresh
+`dotnet csc.dll` per assembly, which is what §4 predicted would go.
+
+The whole machine reads faster this run than in §4 (msbuild's own clean build is 1.0 s against
+2.3 s there), so the absolute numbers are not comparable across the two runs and the A/B table
+is the measurement that counts: the compiler server takes ~25 % off the wall clock of a
+12-assembly build and ~1/3 off the engine time, and the per-assembly gap to msbuild that §4
+blamed on the missing `/shared` is now closed — both talk to the same warm `VBCSCompiler`.

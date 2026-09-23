@@ -17,9 +17,13 @@ Where things stand: `feature/hermetic-build` at the merge of `wt/sbom-scope`; su
   only, locks unchanged, byte-identical proven, 2–4x on small compiles. Verified on macOS only.
 - **R4** `overview-ru.md` — the branch in Russian and a staged-release recommendation.
 
+`verify-dataengine.sh` re-run with the server on (SDK 8.0.425): 36/36 byte-identical, 36/36
+deterministic, 12/12 SBOMs; `/shared` in all 12 traced command lines; build phase 3.43 s vs
+4.44 s in-process (`verify-dataengine.md` §9). `.bootstrap/` is staged from commit 894229a.
+
 **Exact next step**: the user reads `overview-ru.md` and answers the six SBOM questions; then
-either re-run the dataengine/page proofs with `/shared` on (the `verify-dataengine.sh` route) or
-start the release staging. Worktrees `.claude/worktrees/{sbom-scope,csc-shared}` were removed
+start the release staging (the page proof with `/shared` is the other option, but see the
+MSB3577 item — it needs a pristine page copy). Worktrees `.claude/worktrees/{sbom-scope,csc-shared}` were removed
 after the merge.
 
 

@@ -1,5 +1,9 @@
 # Signing as a delegated rule (brief §8f ring 3, §11 `Sign` row)
 
+**Status: skeleton landed (2026-09-23)** — `src/dotnet/Sign.fs` + `src/tests/SignTests.fs`
+(six tests, one per acceptance criterion in §5). Where the code and this note disagreed, the note
+has been corrected below and the deviation marked *(landed)*.
+
 Decision (user, 2026-09-24): **design signing now as a delegated rule, land a skeleton and a
 test against a fake signer.** The real tool — Windows `signtool`, `dotnet sign` against Azure
 Trusted Signing, or an HSM agent — is not available in this repository and is not a
@@ -58,10 +62,13 @@ module Sign =
         | TrustedSigning of account: string * profile: string
         | KeyId of string                             // an HSM label or agent-side alias
 
+    /// What is signed: decided from the extension by `kindOf`.
+    type Kind = PeImage | Nupkg
+
     /// What is handed to the signer, and what the identity key is computed from.
     type Request = {
         File: string                                  // the file to sign (the rule's input)
-        Kind: PeImage | Nupkg
+        Kind: Kind
         Certificate: Certificate
         TimestampServer: string option                // RFC 3161 URL; None = no countersignature
         Hash: Algorithm
@@ -85,14 +92,30 @@ module Sign =
         Description: string option }
 
     val Settings.Default : Settings
-    val sign : SignSettingsBuilder                    // sign { target ...; input ...; certificate ...; timestamp ...; hashalg ... }
+    val sign : SignSettingsBuilder                    // Sign.sign { target ...; input ...; certificate ...; timestamp ...; hashalg ...; description ... }
 
+    val kindOf     : string -> Kind                   // by extension: .nupkg -> Nupkg, else PeImage
+    val imageHash  : string -> string                 // authenticodeHash for a PE, sha256 for a nupkg
+    val request    : Settings -> string -> Request    // settings -> input path -> what the signer gets
     val identity   : Settings -> string -> string     // settings -> input path -> identity key
+    val isSigned   : string -> bool                   // cert table / .signature.p7s present (section 3)
+    val verifySameImage : string -> string -> bool    // input -> signed -> the section 3 check
     val rule       : Settings -> Signer -> ExecContext Rule           // the plain, local rule
     val executor   : Settings -> Signer -> Store -> Resource -> DelegatedExecutor<ExecContext>
     val directoryStore : string -> Store              // a directory as the shared store
     val fakeSigner : Signer                           // tests and dry runs; section 5
 ```
+
+*(landed)* Three naming facts the F# compiler settled, not the design:
+
+- **the builder is `Sign.sign`, never a bare `sign`** — `FSharp.Core` already defines `sign`
+  (the sign of a number), and an unqualified `sign { ... }` binds to that and fails to compile;
+- the cases are likewise qualified in a script — `Sign.Thumbprint`, `Sign.Sha256`, `Sign.KeyId`.
+  Putting them in an `[<AutoOpen>]` module the way `csc`'s settings types are was tried and
+  reverted: `Sha256`/`Request`/`Kind` are common enough names that auto-opening them broke an
+  unrelated test file. A script that wants the short names writes `open Xake.Dotnet.Sign`;
+- `Description` is **not** part of the identity key — it is cosmetic metadata, and including it
+  would re-sign every artifact on a description edit. Everything else the note lists is.
 
 `Settings.Input` is a function, not a path, because the rule is a mask: the signed target
 `signed/X.dll` has to name its unsigned source `out/X.dll`, and that mapping is the script's,
@@ -126,12 +149,12 @@ the library):
 
 ```fsharp
 let signing =
-    sign {
+    Sign.sign {
         target "signed/(name:*).(ext:dll|exe|nupkg)"
         input (fun t -> "out" </> Path.GetFileName t)
-        certificate (Thumbprint "cc4967777c49a3ff...")
+        certificate (Sign.Thumbprint "cc4967777c49a3ff...")
         timestamp "http://timestamp.digicert.com"
-        hashalg Sha256
+        hashalg Sign.Sha256
     }
 
 let signer = Sign.fakeSigner                                  // the real one on the signing agent
@@ -169,19 +192,29 @@ Three checks, all already available, none of which needs a certificate or the ne
    reproducible build of tag X under lock L").
 2. **A certificate table is present.** `Verify.layout` reports `CertTable = Some (offset,
    size)` for a signed PE; for a nupkg, `Pack.entries` lists `.signature.p7s`. `layout` is
-   `internal`, so this is a test-level assertion today; a public `Verify.isSigned : string ->
-   bool` is the small addition if a script needs it.
+   `internal`, so a script cannot ask it directly. *(landed)* This is `Sign.isSigned : string ->
+   bool` rather than the `Verify.isSigned` the note first proposed — one function covering both
+   kinds, next to the `kindOf` that decides which is which, instead of a PE-only predicate in
+   `Verify` plus a second one for packages. (1) + (2) together are `Sign.verifySameImage input
+   signed`, the check a `verify-signed` gate calls.
 3. **`Verify.compare input signed |> Verify.verdict`.** Expected labels: `CheckSum` (the
    signer refreshes it) and `CertificateTable`.
 
-Trap found while designing this: **`Verify.compare` cannot express signed-vs-unsigned cleanly
-today.** The certificate table is *appended*, so the two files differ in length, and `compare`
-reports a size mismatch as one trailing range labelled `"Content"` — `verdict` then says
-"content differs" for a correctly signed file. The labels come from file `a`'s layout, and
-file `a` (unsigned) has no certificate table to label the tail with. Fix, when it matters:
-label the trailing range from file `b`'s layout when it falls inside `b`'s certificate table.
-Until then the sign check is (1) + (2), not `verdict`. This belongs with the existing open
-`Verify.verdict` item in the tracker.
+Trap found while designing this, now **half fixed**: the certificate table is *appended*, so
+the two files differ in length, and `compare` used to report the whole size mismatch as one
+trailing range labelled `"Content"` — `verdict` then said "content differs" for a correctly
+signed file, because the labels come from file `a`'s layout and file `a` (unsigned) has no
+certificate table to name the tail with. `compare` now labels the trailing range from file `b`'s
+own layout when `b` is the longer file, so a signed-vs-unsigned pair reads `identical except:
+CheckSum, CertificateTable`.
+
+*(landed)* What remains: a certificate table has to start 8-byte aligned, so when the unsigned
+file's length is not already a multiple of 8 the signer inserts padding *between* the two, and
+that padding is a short unlabelled `"Content"` range which flips `verdict` back to "content
+differs". PE files are file-aligned (512 bytes) in practice, so this does not bite the real
+pipeline; `SignTests` asserts the exact label list only when the input is already aligned. The
+general fix — label the gap between `a`'s end and `b`'s certificate table as part of
+`CertificateTable` — stays with the open `Verify.verdict` item in the tracker.
 
 **SBOM.** §8f's "two hashes" holds unchanged: the component hash in the SBOM is the raw
 SHA-256 of the file that **ships** (signed), and the attestation additionally records the
@@ -223,8 +256,13 @@ cryptography is not.
   (offset + size); recompute `CheckSum` with `StrongName.checksum`. This is exactly the patch
   `VerifyTests.fs` already applies by hand to test `authenticodeHash`, promoted to a function —
   which is the evidence that `Verify` sees it as a certificate table.
-- Nupkg: read with `Pack.entries`, rewrite with `Pack.zip` plus a `.signature.p7s` entry
-  carrying the same JSON, under `Pack.defaultOptions` so the unsigned bytes stay deterministic.
+- Nupkg: rewrite with `Pack.zip` plus a `.signature.p7s` entry carrying the same JSON, under
+  `Pack.defaultOptions` so the unsigned bytes stay deterministic. *(landed)* Not "read with
+  `Pack.entries`" as this note first said: `Pack.entries` lists the central directory (name,
+  size, crc, timestamp) and cannot hand back an entry's *bytes*, which is what re-zipping needs.
+  The signer explodes the package into a temp directory with `System.IO.Compression`'s
+  `ZipArchive` (read-only, already used by `PackTests`) and feeds those files to `Pack.zip`.
+  `Pack.entries` is what the *test* compares with, entry by entry.
 
 It is not a valid signature and the module says so in one line: nothing verifies it, it exists
 so the rule, the executor, the store and the verification step can be exercised end to end.
@@ -240,11 +278,20 @@ so the rule, the executor, the store and the verification step can be exercised 
 3. A second `xake` run in the same folder re-serves both from the store with zero signer calls.
 4. The dispatch `Resource` caps concurrent signer calls below the number of targets while the
    run is *not* bounded by `Threads` (the `delegated-tests.fsx` shape: `THREADS=2`, budget 4,
-   8 targets, peak signer concurrency 4).
+   8 targets, peak signer concurrency 4). *(landed)* One trap when writing this as a test: each
+   entry of `ExecOptions.Targets` is a target *group*, and groups run one after another
+   (`ScriptRunner.targetLists`), so the eight targets go in as one `";"`-joined entry —
+   otherwise the run is serial and the peak is 1, which says nothing about the budget.
 5. Nupkg path: `Pack.entries` on the signed package lists `.signature.p7s`, every other entry
    is byte-identical to the unsigned package, and two signings of the same nupkg produce the
    same identity key.
 6. `Sign.identity` changes when the certificate, the timestamp server or the hash algorithm
    changes, and does not change when only the output's wall-clock time would.
+
+*(landed)* All six are `src/tests/SignTests.fs`, fixture `Sign delegated`, one test each. The
+signer under test is `Sign.fakeSigner` wrapped in a call counter (and, for criterion 4, the
+concurrency meter `DelegatedTests` uses). The executor records the input as a `FileDep` and
+never runs the body, so — as `docs/delegated.md` requires of any delegated body — whatever
+builds the unsigned input must be `need`ed by the *enclosing* rule, not by the signing rule.
 
 Tracker: this replaces the `sign as delegated rule (later)` line in slice 3.

@@ -39,6 +39,7 @@
     <Compile Include="VerifyTests.fs" />
     <Compile Include="StrongNameTests.fs" />
     <Compile Include="PackTests.fs" />
+    <Compile Include="SignTests.fs" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\core\Xake.fsproj" />

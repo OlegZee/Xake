@@ -57,6 +57,9 @@
     <Compile Include="Verify.fs" />
     <Compile Include="StrongName.fs" />
     <Compile Include="Pack.fs" />
+    <!-- Signing is the one delegated rule in the pipeline (signing.md); it uses Verify,
+         StrongName and Pack, so it compiles after all three. -->
+    <Compile Include="Sign.fs" />
     <Compile Include="Dotnet.csc.fs" />
     <Compile Include="Dotnet.fsc.fs" />
     <Compile Include="Dotnet.resgen.fs" />

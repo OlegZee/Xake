@@ -1,92 +1,178 @@
+Byte comparison: Xake's `import-page.fsx build` output vs a clean `dotnet build -t:Rebuild`
+reference, both brands, page's 12 shipped projects + dataengine's 3 (netstandard2.0), 90 files
+(dll/pdb/xml) total.
+
+Preamble -- why this replaces the previous table
+--------------------------------------------------
+An earlier comparison here reported page's dlls differing from `dotnet build` in the
+deterministic-hash fields. Root cause: that comparison ran `dotnet build` (not `-t:Rebuild`)
+sharing Xake's own `obj/xake/...` intermediate folder, so `dotnet build`'s incremental caches
+(`*.Up2Date`, `CoreCompileInputs.cache`) reused stale project-reference outputs left over from
+a previous Xake run instead of rebuilding from the sources Xake actually compiled. The fix for
+*this* comparison: `dotnet build -t:Rebuild`, run in place at the exact same
+`-p:IntermediateOutputPath=obj/xake/netstandard2.0/<Brand>/` Xake itself used, so both builds
+consume the identical restore/design-time-build inputs and there is nothing left over to hide
+a real difference or manufacture a fake one.
+
+Result: 90/90 files byte-identical (dll, pdb, xml; 12 page + 3 dataengine projects x 2 brands).
+
+Method
+------
+1. Clean tree (`locks`, `.xake`, `import.log`, all `obj`/`bin` under page and dataengine sources).
+2. `dotnet fsi import-page.fsx -- -- locks` (both brands concurrently) -- see locks-console.txt.
+3. `dotnet fsi import-page.fsx -- -- build` (both brands, all 30 outputs) -- see build-console.txt.
+   Saved every dll/pdb/xml from Xake's `obj/xake/netstandard2.0/<Brand>/` to a side directory.
+4. For each of the 12 page csproj + 3 dataengine csproj, both brands (30 builds):
+   `dotnet build <csproj> -c Release -t:Rebuild -p:TargetFramework=netstandard2.0 -p:Brand=<B>
+    -p:LocalBuild=true -p:NuGetAudit=false "-p:IntermediateOutputPath=obj/xake/netstandard2.0/<B>/"
+    -nologo -v:m` -- in place, same intermediate path Xake used, so `-t:Rebuild` cleans and
+   rebuilds from the identical inputs.
+5. `cmp` every one of the 90 saved files against what step 4 produced in the same location.
+
+Timings
+-------
+locks (both brands, concurrent):  ~17.5-19.8 s (three from-clean runs; see below)
+build (both brands, 30 outputs):  46.4 s
+dotnet build -t:Rebuild reference (30 sequential builds, both brands): 472 s (~7.9 min)
+
+MSBuildProjectExtensionsPath experiment (tracker: concurrent-import race)
+--------------------------------------------------------------------------
+Candidate fix for the known race (two brands importing the same project concurrently share
+one `obj/project.assets.json`, and with brand-dependent package ids the wrong reference can get
+recorded): add `"MSBuildProjectExtensionsPath", $"obj/xake/{framework}/{brand}/ext/"` to the
+import's `Properties`.
+
+Tried, and REVERTED -- it does not work. It does separate `project.assets.json` and
+`<Project>.csproj.nuget.g.props/targets` per brand (confirmed: they land under
+`obj/xake/netstandard2.0/<Brand>/ext/`), and it did stop the specific race the grep test
+targets (ran `locks` from clean 3x with both brands concurrent: GCCN always recorded `gcdocs.*`
+and 0 `ds.documents.*`; MESCIUS always the reverse -- see grep results below). But it broke
+reference resolution for every project in the design-time build: with it in place, captured
+`/reference` counts dropped from 113-134 per project (the implicit NETStandard.Library facade
+set) down to 0-21 (only direct PackageReferences/ProjectReferences); the smallest project
+(VBFunctionLib, which has no direct references of its own) then got a lock entry with *zero*
+references and failed to compile with "Predefined type 'System.String' is not defined or
+imported" for every file. Confirmed by A/B against the same clean tree with only that one
+property differing. `nuget.g.props`/`nuget.g.targets` did NOT show up in any lock's `Imports`
+either with or without the property (checked while it was in place). Left for the library
+owner; not shipped in `import-page.fsx`.
+
+Race-test grep results (all three from-clean concurrent `locks` runs, WITH the property in
+place):
+  Run 1: GCCN ds.documents=0, GCCN gcdocs=20, MESCIUS ds.documents=20, MESCIUS gcdocs=0
+  Run 2: GCCN ds.documents=0, GCCN gcdocs=20, MESCIUS ds.documents=20, MESCIUS gcdocs=0
+  Run 3: GCCN ds.documents=0, GCCN gcdocs=20, MESCIUS ds.documents=20, MESCIUS gcdocs=0
+A fourth run, from clean, WITHOUT the property (the shipped state) also came back clean:
+  GCCN ds.documents=0, GCCN gcdocs=20, MESCIUS ds.documents=20, MESCIUS gcdocs=0
+(the race did not reproduce in this environment even unfixed -- it is timing-dependent; the
+grep check is still worth keeping in the script's test loop for whoever chases it further.)
+
+`..`-rule
+---------
+The former workaround -- a second, absolute-path file rule for dataengine's own compile
+outputs, needed because a `..`-prefixed `target` pattern did not match -- is gone. With the
+engine fix now in `.bootstrap/Xake.dll`, one relative rule handles both repositories' outputs:
+
+    target "../ar-net-core-dataengine/src/(proj:*)/obj/xake/(fwk:*)/(brand:*)/(name:*).dll" { ... }
+
+alongside the existing in-repo rule `target "src/(proj:**)/obj/xake/(fwk:*)/(brand:*)/(name:*).dll"`.
+The two could not be folded into one pattern (different literal prefixes), but the absolute-path
+workaround rule is removed. Verified: `build` produces all 30 outputs (12 page + 3 dataengine x
+2 brands), zero errors.
+
+Full comparison table
+----------------------
 == Brand MESCIUS ==
-MESCIUS.ActiveReports.Core.Data.DataEngine.dll: IDENTICAL
-MESCIUS.ActiveReports.Core.Data.DataEngine.pdb: IDENTICAL
-MESCIUS.ActiveReports.Core.Data.DataEngine.xml: IDENTICAL
-MESCIUS.ActiveReports.Core.Data.ExpressionInfo.dll: IDENTICAL
-MESCIUS.ActiveReports.Core.Data.ExpressionInfo.pdb: IDENTICAL
-MESCIUS.ActiveReports.Core.Data.ExpressionInfo.xml: IDENTICAL
-MESCIUS.ActiveReports.Core.Data.VBFunctionLib.dll: IDENTICAL
-MESCIUS.ActiveReports.Core.Data.VBFunctionLib.pdb: IDENTICAL
-MESCIUS.ActiveReports.Core.Data.VBFunctionLib.xml: IDENTICAL
-MESCIUS.ActiveReports.Core.Drawing.Gc.dll: DIFFERENT (202 bytes differ, sizes 63488 vs 63488)
-MESCIUS.ActiveReports.Core.Drawing.Gc.pdb: DIFFERENT (14208 bytes differ, sizes 27364 vs 27348)
-MESCIUS.ActiveReports.Core.Drawing.Gc.xml: IDENTICAL
-MESCIUS.ActiveReports.Core.Drawing.Gdi.dll: DIFFERENT (199 bytes differ, sizes 46592 vs 46592)
-MESCIUS.ActiveReports.Core.Drawing.Gdi.pdb: DIFFERENT (80 bytes differ, sizes 24712 vs 24712)
-MESCIUS.ActiveReports.Core.Drawing.Gdi.xml: IDENTICAL
-MESCIUS.ActiveReports.Core.Export.Excel.Page.dll: DIFFERENT (202 bytes differ, sizes 1001984 vs 1001984)
-MESCIUS.ActiveReports.Core.Export.Excel.Page.pdb: DIFFERENT (60 bytes differ, sizes 489164 vs 489164)
-MESCIUS.ActiveReports.Core.Export.Excel.Page.xml: IDENTICAL
-MESCIUS.ActiveReports.Core.Export.Html.Page.dll: DIFFERENT (202 bytes differ, sizes 171008 vs 171008)
-MESCIUS.ActiveReports.Core.Export.Html.Page.pdb: DIFFERENT (60 bytes differ, sizes 69896 vs 69896)
-MESCIUS.ActiveReports.Core.Export.Html.Page.xml: IDENTICAL
-MESCIUS.ActiveReports.Core.Export.Image.Page.dll: DIFFERENT (202 bytes differ, sizes 27136 vs 27136)
-MESCIUS.ActiveReports.Core.Export.Image.Page.pdb: DIFFERENT (80 bytes differ, sizes 15324 vs 15324)
-MESCIUS.ActiveReports.Core.Export.Image.Page.xml: IDENTICAL
-MESCIUS.ActiveReports.Core.Export.Pdf.Page.dll: DIFFERENT (201 bytes differ, sizes 130560 vs 130560)
-MESCIUS.ActiveReports.Core.Export.Pdf.Page.pdb: DIFFERENT (80 bytes differ, sizes 36280 vs 36280)
-MESCIUS.ActiveReports.Core.Export.Pdf.Page.xml: IDENTICAL
-MESCIUS.ActiveReports.Core.Export.Svg.Page.dll: DIFFERENT (202 bytes differ, sizes 45568 vs 45568)
-MESCIUS.ActiveReports.Core.Export.Svg.Page.pdb: DIFFERENT (80 bytes differ, sizes 23212 vs 23212)
-MESCIUS.ActiveReports.Core.Export.Svg.Page.xml: IDENTICAL
-MESCIUS.ActiveReports.Core.Export.Text.Page.dll: DIFFERENT (202 bytes differ, sizes 112128 vs 112128)
-MESCIUS.ActiveReports.Core.Export.Text.Page.pdb: DIFFERENT (60 bytes differ, sizes 44300 vs 44300)
-MESCIUS.ActiveReports.Core.Export.Text.Page.xml: IDENTICAL
-MESCIUS.ActiveReports.Core.Export.Word.Page.dll: DIFFERENT (202 bytes differ, sizes 276480 vs 276480)
-MESCIUS.ActiveReports.Core.Export.Word.Page.pdb: DIFFERENT (60 bytes differ, sizes 73696 vs 73696)
-MESCIUS.ActiveReports.Core.Export.Word.Page.xml: IDENTICAL
-MESCIUS.ActiveReports.Core.Rdl.dll: DIFFERENT (202 bytes differ, sizes 2949632 vs 2949632)
-MESCIUS.ActiveReports.Core.Rdl.pdb: DIFFERENT (144123 bytes differ, sizes 417256 vs 417240)
-MESCIUS.ActiveReports.Core.Rdl.xml: IDENTICAL
-MESCIUS.ActiveReports.Core.Rendering.dll: DIFFERENT (201 bytes differ, sizes 3627008 vs 3627008)
-MESCIUS.ActiveReports.Core.Rendering.pdb: DIFFERENT (40 bytes differ, sizes 1319036 vs 1319036)
-MESCIUS.ActiveReports.Core.Rendering.xml: IDENTICAL
-MESCIUS.ActiveReports.Core.Scripting.dll: DIFFERENT (202 bytes differ, sizes 29696 vs 29696)
-MESCIUS.ActiveReports.Core.Scripting.pdb: DIFFERENT (60 bytes differ, sizes 15656 vs 15656)
-MESCIUS.ActiveReports.Core.Scripting.xml: IDENTICAL
+MESCIUS.Rdl.dll: IDENTICAL
+MESCIUS.Rdl.pdb: IDENTICAL
+MESCIUS.Rdl.xml: IDENTICAL
+MESCIUS.Rendering.dll: IDENTICAL
+MESCIUS.Rendering.pdb: IDENTICAL
+MESCIUS.Rendering.xml: IDENTICAL
+MESCIUS.Scripting.dll: IDENTICAL
+MESCIUS.Scripting.pdb: IDENTICAL
+MESCIUS.Scripting.xml: IDENTICAL
+MESCIUS.Drawing.Gc.dll: IDENTICAL
+MESCIUS.Drawing.Gc.pdb: IDENTICAL
+MESCIUS.Drawing.Gc.xml: IDENTICAL
+MESCIUS.Drawing.Gdi.dll: IDENTICAL
+MESCIUS.Drawing.Gdi.pdb: IDENTICAL
+MESCIUS.Drawing.Gdi.xml: IDENTICAL
+MESCIUS.Export.Excel.Page.dll: IDENTICAL
+MESCIUS.Export.Excel.Page.pdb: IDENTICAL
+MESCIUS.Export.Excel.Page.xml: IDENTICAL
+MESCIUS.Export.Html.Page.dll: IDENTICAL
+MESCIUS.Export.Html.Page.pdb: IDENTICAL
+MESCIUS.Export.Html.Page.xml: IDENTICAL
+MESCIUS.Export.Image.Page.dll: IDENTICAL
+MESCIUS.Export.Image.Page.pdb: IDENTICAL
+MESCIUS.Export.Image.Page.xml: IDENTICAL
+MESCIUS.Export.Pdf.Page.dll: IDENTICAL
+MESCIUS.Export.Pdf.Page.pdb: IDENTICAL
+MESCIUS.Export.Pdf.Page.xml: IDENTICAL
+MESCIUS.Export.Svg.Page.dll: IDENTICAL
+MESCIUS.Export.Svg.Page.pdb: IDENTICAL
+MESCIUS.Export.Svg.Page.xml: IDENTICAL
+MESCIUS.Export.Text.Page.dll: IDENTICAL
+MESCIUS.Export.Text.Page.pdb: IDENTICAL
+MESCIUS.Export.Text.Page.xml: IDENTICAL
+MESCIUS.Export.Word.Page.dll: IDENTICAL
+MESCIUS.Export.Word.Page.pdb: IDENTICAL
+MESCIUS.Export.Word.Page.xml: IDENTICAL
+MESCIUS.DataEngine.dll: IDENTICAL
+MESCIUS.DataEngine.pdb: IDENTICAL
+MESCIUS.DataEngine.xml: IDENTICAL
+MESCIUS.ExpressionInfo.dll: IDENTICAL
+MESCIUS.ExpressionInfo.pdb: IDENTICAL
+MESCIUS.ExpressionInfo.xml: IDENTICAL
+MESCIUS.VBFunctionLib.dll: IDENTICAL
+MESCIUS.VBFunctionLib.pdb: IDENTICAL
+MESCIUS.VBFunctionLib.xml: IDENTICAL
 == Brand GCCN ==
-GCCN.ActiveReports.Core.Data.DataEngine.dll: IDENTICAL
-GCCN.ActiveReports.Core.Data.DataEngine.pdb: IDENTICAL
-GCCN.ActiveReports.Core.Data.DataEngine.xml: IDENTICAL
-GCCN.ActiveReports.Core.Data.ExpressionInfo.dll: IDENTICAL
-GCCN.ActiveReports.Core.Data.ExpressionInfo.pdb: IDENTICAL
-GCCN.ActiveReports.Core.Data.ExpressionInfo.xml: IDENTICAL
-GCCN.ActiveReports.Core.Data.VBFunctionLib.dll: IDENTICAL
-GCCN.ActiveReports.Core.Data.VBFunctionLib.pdb: IDENTICAL
-GCCN.ActiveReports.Core.Data.VBFunctionLib.xml: IDENTICAL
-GCCN.ActiveReports.Core.Drawing.Gc.dll: DIFFERENT (201 bytes differ, sizes 63488 vs 63488)
-GCCN.ActiveReports.Core.Drawing.Gc.pdb: DIFFERENT (14183 bytes differ, sizes 27340 vs 27324)
-GCCN.ActiveReports.Core.Drawing.Gc.xml: IDENTICAL
-GCCN.ActiveReports.Core.Drawing.Gdi.dll: DIFFERENT (203 bytes differ, sizes 46592 vs 46592)
-GCCN.ActiveReports.Core.Drawing.Gdi.pdb: DIFFERENT (80 bytes differ, sizes 24672 vs 24672)
-GCCN.ActiveReports.Core.Drawing.Gdi.xml: IDENTICAL
-GCCN.ActiveReports.Core.Export.Excel.Page.dll: DIFFERENT (202 bytes differ, sizes 1001984 vs 1001984)
-GCCN.ActiveReports.Core.Export.Excel.Page.pdb: DIFFERENT (60 bytes differ, sizes 489148 vs 489148)
-GCCN.ActiveReports.Core.Export.Excel.Page.xml: IDENTICAL
-GCCN.ActiveReports.Core.Export.Html.Page.dll: DIFFERENT (198 bytes differ, sizes 171008 vs 171008)
-GCCN.ActiveReports.Core.Export.Html.Page.pdb: DIFFERENT (59 bytes differ, sizes 69848 vs 69848)
-GCCN.ActiveReports.Core.Export.Html.Page.xml: IDENTICAL
-GCCN.ActiveReports.Core.Export.Image.Page.dll: DIFFERENT (202 bytes differ, sizes 26624 vs 26624)
-GCCN.ActiveReports.Core.Export.Image.Page.pdb: DIFFERENT (80 bytes differ, sizes 15284 vs 15284)
-GCCN.ActiveReports.Core.Export.Image.Page.xml: IDENTICAL
-GCCN.ActiveReports.Core.Export.Pdf.Page.dll: DIFFERENT (201 bytes differ, sizes 130560 vs 130560)
-GCCN.ActiveReports.Core.Export.Pdf.Page.pdb: DIFFERENT (80 bytes differ, sizes 36248 vs 36248)
-GCCN.ActiveReports.Core.Export.Pdf.Page.xml: IDENTICAL
-GCCN.ActiveReports.Core.Export.Svg.Page.dll: DIFFERENT (199 bytes differ, sizes 45568 vs 45568)
-GCCN.ActiveReports.Core.Export.Svg.Page.pdb: DIFFERENT (79 bytes differ, sizes 23184 vs 23184)
-GCCN.ActiveReports.Core.Export.Svg.Page.xml: IDENTICAL
-GCCN.ActiveReports.Core.Export.Text.Page.dll: DIFFERENT (201 bytes differ, sizes 112128 vs 112128)
-GCCN.ActiveReports.Core.Export.Text.Page.pdb: DIFFERENT (60 bytes differ, sizes 44284 vs 44284)
-GCCN.ActiveReports.Core.Export.Text.Page.xml: IDENTICAL
-GCCN.ActiveReports.Core.Export.Word.Page.dll: DIFFERENT (203 bytes differ, sizes 276480 vs 276480)
-GCCN.ActiveReports.Core.Export.Word.Page.pdb: DIFFERENT (60 bytes differ, sizes 73680 vs 73680)
-GCCN.ActiveReports.Core.Export.Word.Page.xml: IDENTICAL
-GCCN.ActiveReports.Core.Rdl.dll: DIFFERENT (202 bytes differ, sizes 2949632 vs 2949632)
-GCCN.ActiveReports.Core.Rdl.pdb: DIFFERENT (144121 bytes differ, sizes 417248 vs 417232)
-GCCN.ActiveReports.Core.Rdl.xml: IDENTICAL
-GCCN.ActiveReports.Core.Rendering.dll: DIFFERENT (201 bytes differ, sizes 3627008 vs 3627008)
-GCCN.ActiveReports.Core.Rendering.pdb: DIFFERENT (40 bytes differ, sizes 1319016 vs 1319016)
-GCCN.ActiveReports.Core.Rendering.xml: IDENTICAL
-GCCN.ActiveReports.Core.Scripting.dll: DIFFERENT (203 bytes differ, sizes 29696 vs 29696)
-GCCN.ActiveReports.Core.Scripting.pdb: DIFFERENT (60 bytes differ, sizes 15640 vs 15640)
-GCCN.ActiveReports.Core.Scripting.xml: IDENTICAL
+GCCN.Rdl.dll: IDENTICAL
+GCCN.Rdl.pdb: IDENTICAL
+GCCN.Rdl.xml: IDENTICAL
+GCCN.Rendering.dll: IDENTICAL
+GCCN.Rendering.pdb: IDENTICAL
+GCCN.Rendering.xml: IDENTICAL
+GCCN.Scripting.dll: IDENTICAL
+GCCN.Scripting.pdb: IDENTICAL
+GCCN.Scripting.xml: IDENTICAL
+GCCN.Drawing.Gc.dll: IDENTICAL
+GCCN.Drawing.Gc.pdb: IDENTICAL
+GCCN.Drawing.Gc.xml: IDENTICAL
+GCCN.Drawing.Gdi.dll: IDENTICAL
+GCCN.Drawing.Gdi.pdb: IDENTICAL
+GCCN.Drawing.Gdi.xml: IDENTICAL
+GCCN.Export.Excel.Page.dll: IDENTICAL
+GCCN.Export.Excel.Page.pdb: IDENTICAL
+GCCN.Export.Excel.Page.xml: IDENTICAL
+GCCN.Export.Html.Page.dll: IDENTICAL
+GCCN.Export.Html.Page.pdb: IDENTICAL
+GCCN.Export.Html.Page.xml: IDENTICAL
+GCCN.Export.Image.Page.dll: IDENTICAL
+GCCN.Export.Image.Page.pdb: IDENTICAL
+GCCN.Export.Image.Page.xml: IDENTICAL
+GCCN.Export.Pdf.Page.dll: IDENTICAL
+GCCN.Export.Pdf.Page.pdb: IDENTICAL
+GCCN.Export.Pdf.Page.xml: IDENTICAL
+GCCN.Export.Svg.Page.dll: IDENTICAL
+GCCN.Export.Svg.Page.pdb: IDENTICAL
+GCCN.Export.Svg.Page.xml: IDENTICAL
+GCCN.Export.Text.Page.dll: IDENTICAL
+GCCN.Export.Text.Page.pdb: IDENTICAL
+GCCN.Export.Text.Page.xml: IDENTICAL
+GCCN.Export.Word.Page.dll: IDENTICAL
+GCCN.Export.Word.Page.pdb: IDENTICAL
+GCCN.Export.Word.Page.xml: IDENTICAL
+GCCN.DataEngine.dll: IDENTICAL
+GCCN.DataEngine.pdb: IDENTICAL
+GCCN.DataEngine.xml: IDENTICAL
+GCCN.ExpressionInfo.dll: IDENTICAL
+GCCN.ExpressionInfo.pdb: IDENTICAL
+GCCN.ExpressionInfo.xml: IDENTICAL
+GCCN.VBFunctionLib.dll: IDENTICAL
+GCCN.VBFunctionLib.pdb: IDENTICAL
+GCCN.VBFunctionLib.xml: IDENTICAL
+
+Totals: 90/90 identical

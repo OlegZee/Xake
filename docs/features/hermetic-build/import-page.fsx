@@ -26,23 +26,17 @@
 //
 // `..`-targets. dataengine's own compile outputs sit outside `$(ProjectRoot)` (this script's
 // cwd), e.g. `../ar-net-core-dataengine/src/ExpressionInfo/obj/xake/netstandard2.0/MESCIUS/
-// ExpressionInfo.dll`. A `target` pattern spelled with a leading `..` does NOT match: rule
-// matching (`ExecCore.locateRule`, `FileRule` case) compares a target's *normalized* absolute
-// path (`File.make` wraps `System.IO.FileInfo`, which resolves `..` away) against
-// `Path.matchGroups pattern projectRoot`, whose pattern-to-regex step (`Path.maskToRegex`) does
-// NOT collapse `..` -- it keeps the literal two dots and requires the matched string to
-// literally contain them. `Path.Combine($(ProjectRoot), "../dataengine/...")` and
-// `FileInfo("../dataengine/...").FullName` normalize to the same folder, but the first keeps
-// the literal `..` in the regex source and the second has already thrown it away: they never
-// match, and Xake reports "neither rule nor file is found" for every such target. Confirmed by
-// direct repro against `Xake.dll` (see the library-gap note in this feature's session.md).
-// The fix used below: a *second* file rule, with an absolute pattern
-// (`<dataEngineRoot>/src/(proj:**)/obj/xake/(fwk:*)/(brand:*)/(name:*).dll`) -- `Path.Combine`
-// leaves an already-rooted pattern alone, so the regex is built from the same normalized
-// absolute string the target carries, and it matches. `need`/`getTargetFile` accept an
-// absolute path just as well as a `$(ProjectRoot)`-relative one (`makeTarget` combines with
-// `ProjectRoot` via `Path.Combine`, which also leaves an absolute argument alone), so every
-// `need` call in this script passes dataengine's outputs as absolute paths, unchanged.
+// ExpressionInfo.dll`. A `target` pattern spelled with a leading `..` used to not match (engine
+// gap, now fixed in `.bootstrap/Xake.dll`: rule matching resolves the literal `..` in the
+// pattern the same way `File.make` resolves it away from the target's normalized absolute
+// path, so the two compare equal). The rule below is now a single relative pattern,
+// `../ar-net-core-dataengine/src/(proj:*)/obj/xake/(fwk:*)/(brand:*)/(name:*).dll`, matching
+// this script's own cwd-relative spelling of the sibling checkout -- no absolute-path
+// workaround rule needed any more. `need`/`getTargetFile` still accept an absolute path just as
+// well as a `$(ProjectRoot)`-relative one (`makeTarget` combines with `ProjectRoot` via
+// `Path.Combine`, which leaves an absolute argument alone), so every `need` call in this script
+// keeps passing dataengine's outputs as absolute paths (as expanded from the lock via
+// `$(DataEngineRoot)`), unchanged.
 #r "../../../.bootstrap/Xake.dll"
 #r "../../../.bootstrap/Xake.Dotnet.dll"
 
@@ -96,9 +90,9 @@ let brands = [ "MESCIUS"; "GCCN" ]
 
 let lockFile framework brand = $"locks/%s{framework}/%s{brand}.json"
 
-/// The pattern for dataengine's own compile outputs: absolute, because a `..`-relative one does
-/// not match (see the header note).
-let dataEngineObjPattern = dataEngineDir + "/src/(proj:**)/obj/xake/(fwk:*)/(brand:*)/(name:*).dll"
+/// The pattern for dataengine's own compile outputs: relative, cwd-anchored (see the header
+/// note -- `..`-prefixed patterns now match, so no absolute-path workaround is needed).
+let dataEngineObjPattern = "../ar-net-core-dataengine/src/(proj:*)/obj/xake/(fwk:*)/(brand:*)/(name:*).dll"
 
 do xakeScript {
     filelog "import.log" Verbosity.Diag
@@ -123,6 +117,17 @@ do xakeScript {
                     // into the sibling checkout; NetCoreOnly narrows page's own
                     // TargetFrameworks (netstandard2.0;net472) down to netstandard2.0 alone --
                     // the same switch the real Cake build passes (scripts/build.cake)
+                    // Tried and reverted: adding `MSBuildProjectExtensionsPath` to brand-variant
+                    // restore outputs (candidate fix for the brand-dependent-package-id race,
+                    // tracker) does separate `project.assets.json`/`nuget.g.props` per brand and
+                    // does stop the race, but it breaks reference resolution project-wide -- the
+                    // design-time build's captured references drop from 113-134 (with the
+                    // NETStandard.Library facade set) to 0-21 (direct PackageReferences/
+                    // ProjectReferences only), and the smallest project (VBFunctionLib, which
+                    // has no direct references of its own) then compiles with zero /reference
+                    // args at all and fails on "Predefined type 'System.String' is not defined
+                    // or imported". Confirmed by A/B: same script, same clean tree, only this
+                    // property differs. Left for the library owner; not a fix to ship.
                     Properties = [ "Brand", brand; "LocalBuild", "true"; "NetCoreOnly", "true" ]
                     Variant = brand
                     Output = result.FullName

@@ -1,0 +1,70 @@
+XAKE build tool 1.0.0.0
+
+[CMD] Started build as task 1
+[CMD] 1> Skipped /Users/olegz/.claude/jobs/506bc197/tmp/ar/ar-net-core-page/locks/netstandard2.0/MESCIUS.json (up to date)
+[CMD] 1> Started /Users/olegz/.claude/jobs/506bc197/tmp/ar/ar-net-core-page/src/Drawing.Gc/obj/xake/netstandard2.0/MESCIUS/MESCIUS.ActiveReports.Core.Drawing.Gc.dll as task 2
+[CMD] 1> Started /Users/olegz/.claude/jobs/506bc197/tmp/ar/ar-net-core-page/src/Rdl/obj/xake/netstandard2.0/MESCIUS/MESCIUS.ActiveReports.Core.Rdl.dll as task 3
+[CMD] 1> Started /Users/olegz/.claude/jobs/506bc197/tmp/ar/ar-net-core-page/src/Exports/Html.Page/obj/xake/netstandard2.0/MESCIUS/MESCIUS.ActiveReports.Core.Export.Html.Page.dll as task 4
+[CMD] 1> Started /Users/olegz/.claude/jobs/506bc197/tmp/ar/ar-net-core-page/src/Scripting/obj/xake/netstandard2.0/MESCIUS/MESCIUS.ActiveReports.Core.Scripting.dll as task 5
+[CMD] 1> Started /Users/olegz/.claude/jobs/506bc197/tmp/ar/ar-net-core-page/src/Drawing.Gdi/obj/xake/netstandard2.0/MESCIUS/MESCIUS.ActiveReports.Core.Drawing.Gdi.dll as task 6
+[CMD] 1> Started /Users/olegz/.claude/jobs/506bc197/tmp/ar/ar-net-core-page/src/Exports/Excel.Page/obj/xake/netstandard2.0/MESCIUS/MESCIUS.ActiveReports.Core.Export.Excel.Page.dll as task 7
+[CMD] 1> Started /Users/olegz/.claude/jobs/506bc197/tmp/ar/ar-net-core-page/src/Exports/Image/obj/xake/netstandard2.0/MESCIUS/MESCIUS.ActiveReports.Core.Export.Image.Page.dll as task 8
+[CMD] 1> Started /Users/olegz/.claude/jobs/506bc197/tmp/ar/ar-net-core-page/src/Rendering/obj/xake/netstandard2.0/MESCIUS/MESCIUS.ActiveReports.Core.Rendering.dll as task 9
+[CMD] 1> Started /Users/olegz/.claude/jobs/506bc197/tmp/ar/ar-net-core-page/src/Exports/Svg/obj/xake/netstandard2.0/MESCIUS/MESCIUS.ActiveReports.Core.Export.Svg.Page.dll as task 10
+[CMD] 1> Started /Users/olegz/.claude/jobs/506bc197/tmp/ar/ar-net-core-page/src/Exports/Pdf/obj/xake/netstandard2.0/MESCIUS/MESCIUS.ActiveReports.Core.Export.Pdf.Page.dll as task 11
+[CMD] 1> Started /Users/olegz/.claude/jobs/506bc197/tmp/ar/ar-net-core-page/src/Exports/Word.Page/obj/xake/netstandard2.0/MESCIUS/MESCIUS.ActiveReports.Core.Export.Word.Page.dll as task 12
+[CMD] 1> Started /Users/olegz/.claude/jobs/506bc197/tmp/ar/ar-net-core-page/src/Exports/Text/obj/xake/netstandard2.0/MESCIUS/MESCIUS.ActiveReports.Core.Export.Text.Page.dll as task 13
+[CMD] 1> Started /Users/olegz/.claude/jobs/506bc197/tmp/ar/ar-net-core-dataengine/src/DataEngine/obj/xake/netstandard2.0/MESCIUS/MESCIUS.ActiveReports.Core.Data.DataEngine.dll as task 14
+[CMD] 1> Started /Users/olegz/.claude/jobs/506bc197/tmp/ar/ar-net-core-dataengine/src/ExpressionInfo/obj/xake/netstandard2.0/MESCIUS/MESCIUS.ActiveReports.Core.Data.ExpressionInfo.dll as task 15
+[CMD] 1> Started /Users/olegz/.claude/jobs/506bc197/tmp/ar/ar-net-core-dataengine/src/VBFunctionLib/obj/xake/netstandard2.0/MESCIUS/MESCIUS.ActiveReports.Core.Data.VBFunctionLib.dll as task 16
+[CMD] 1> Completed /Users/olegz/.claude/jobs/506bc197/tmp/ar/ar-net-core-dataengine/src/VBFunctionLib/obj/xake/netstandard2.0/MESCIUS/MESCIUS.ActiveReports.Core.Data.VBFunctionLib.dll in 383 ms (wait 404 ms)
+[CMD] 1> Completed /Users/olegz/.claude/jobs/506bc197/tmp/ar/ar-net-core-dataengine/src/ExpressionInfo/obj/xake/netstandard2.0/MESCIUS/MESCIUS.ActiveReports.Core.Data.ExpressionInfo.dll in 472 ms (wait 1515 ms)
+[CMD] 1> Completed /Users/olegz/.claude/jobs/506bc197/tmp/ar/ar-net-core-dataengine/src/DataEngine/obj/xake/netstandard2.0/MESCIUS/MESCIUS.ActiveReports.Core.Data.DataEngine.dll in 515 ms (wait 2574 ms)
+[CMD] 1> Completed /Users/olegz/.claude/jobs/506bc197/tmp/ar/ar-net-core-page/src/Rdl/obj/xake/netstandard2.0/MESCIUS/MESCIUS.ActiveReports.Core.Rdl.dll in 858 ms (wait 4395 ms)
+[CMD] 1> Completed /Users/olegz/.claude/jobs/506bc197/tmp/ar/ar-net-core-page/src/Rendering/obj/xake/netstandard2.0/MESCIUS/MESCIUS.ActiveReports.Core.Rendering.dll in 3636 ms (wait 10248 ms)
+[CMD] 1> Completed /Users/olegz/.claude/jobs/506bc197/tmp/ar/ar-net-core-page/src/Exports/Text/obj/xake/netstandard2.0/MESCIUS/MESCIUS.ActiveReports.Core.Export.Text.Page.dll in 427 ms (wait 14492 ms)
+[CMD] 1> Completed /Users/olegz/.claude/jobs/506bc197/tmp/ar/ar-net-core-page/src/Exports/Html.Page/obj/xake/netstandard2.0/MESCIUS/MESCIUS.ActiveReports.Core.Export.Html.Page.dll in 465 ms (wait 15243 ms)
+[CMD] 1> Completed /Users/olegz/.claude/jobs/506bc197/tmp/ar/ar-net-core-page/src/Scripting/obj/xake/netstandard2.0/MESCIUS/MESCIUS.ActiveReports.Core.Scripting.dll in 424 ms (wait 15863 ms)
+[CMD] 1> Completed /Users/olegz/.claude/jobs/506bc197/tmp/ar/ar-net-core-page/src/Drawing.Gc/obj/xake/netstandard2.0/MESCIUS/MESCIUS.ActiveReports.Core.Drawing.Gc.dll in 450 ms (wait 16448 ms)
+[CMD] 1> Completed /Users/olegz/.claude/jobs/506bc197/tmp/ar/ar-net-core-page/src/Exports/Word.Page/obj/xake/netstandard2.0/MESCIUS/MESCIUS.ActiveReports.Core.Export.Word.Page.dll in 479 ms (wait 17359 ms)
+[CMD] 1> Completed /Users/olegz/.claude/jobs/506bc197/tmp/ar/ar-net-core-page/src/Exports/Pdf/obj/xake/netstandard2.0/MESCIUS/MESCIUS.ActiveReports.Core.Export.Pdf.Page.dll in 442 ms (wait 18129 ms)
+[CMD] 1> Completed /Users/olegz/.claude/jobs/506bc197/tmp/ar/ar-net-core-page/src/Exports/Svg/obj/xake/netstandard2.0/MESCIUS/MESCIUS.ActiveReports.Core.Export.Svg.Page.dll in 412 ms (wait 18896 ms)
+[CMD] 1> Completed /Users/olegz/.claude/jobs/506bc197/tmp/ar/ar-net-core-page/src/Drawing.Gdi/obj/xake/netstandard2.0/MESCIUS/MESCIUS.ActiveReports.Core.Drawing.Gdi.dll in 422 ms (wait 19611 ms)
+[CMD] 1> Completed /Users/olegz/.claude/jobs/506bc197/tmp/ar/ar-net-core-page/src/Exports/Image/obj/xake/netstandard2.0/MESCIUS/MESCIUS.ActiveReports.Core.Export.Image.Page.dll in 488 ms (wait 20361 ms)
+[CMD] 1> Completed /Users/olegz/.claude/jobs/506bc197/tmp/ar/ar-net-core-page/src/Exports/Excel.Page/obj/xake/netstandard2.0/MESCIUS/MESCIUS.ActiveReports.Core.Export.Excel.Page.dll in 825 ms (wait 20253 ms)
+[CMD] 1> Skipped /Users/olegz/.claude/jobs/506bc197/tmp/ar/ar-net-core-page/locks/netstandard2.0/GCCN.json (up to date)
+[CMD] 1> Started /Users/olegz/.claude/jobs/506bc197/tmp/ar/ar-net-core-page/src/Rdl/obj/xake/netstandard2.0/GCCN/GCCN.ActiveReports.Core.Rdl.dll as task 17
+[CMD] 1> Started /Users/olegz/.claude/jobs/506bc197/tmp/ar/ar-net-core-page/src/Scripting/obj/xake/netstandard2.0/GCCN/GCCN.ActiveReports.Core.Scripting.dll as task 18
+[CMD] 1> Started /Users/olegz/.claude/jobs/506bc197/tmp/ar/ar-net-core-page/src/Exports/Html.Page/obj/xake/netstandard2.0/GCCN/GCCN.ActiveReports.Core.Export.Html.Page.dll as task 19
+[CMD] 1> Started /Users/olegz/.claude/jobs/506bc197/tmp/ar/ar-net-core-page/src/Drawing.Gdi/obj/xake/netstandard2.0/GCCN/GCCN.ActiveReports.Core.Drawing.Gdi.dll as task 20
+[CMD] 1> Started /Users/olegz/.claude/jobs/506bc197/tmp/ar/ar-net-core-page/src/Exports/Excel.Page/obj/xake/netstandard2.0/GCCN/GCCN.ActiveReports.Core.Export.Excel.Page.dll as task 21
+[CMD] 1> Started /Users/olegz/.claude/jobs/506bc197/tmp/ar/ar-net-core-page/src/Drawing.Gc/obj/xake/netstandard2.0/GCCN/GCCN.ActiveReports.Core.Drawing.Gc.dll as task 22
+[CMD] 1> Started /Users/olegz/.claude/jobs/506bc197/tmp/ar/ar-net-core-page/src/Exports/Image/obj/xake/netstandard2.0/GCCN/GCCN.ActiveReports.Core.Export.Image.Page.dll as task 24
+[CMD] 1> Started /Users/olegz/.claude/jobs/506bc197/tmp/ar/ar-net-core-dataengine/src/DataEngine/obj/xake/netstandard2.0/GCCN/GCCN.ActiveReports.Core.Data.DataEngine.dll as task 23
+[CMD] 1> Started /Users/olegz/.claude/jobs/506bc197/tmp/ar/ar-net-core-page/src/Exports/Pdf/obj/xake/netstandard2.0/GCCN/GCCN.ActiveReports.Core.Export.Pdf.Page.dll as task 26
+[CMD] 1> Started /Users/olegz/.claude/jobs/506bc197/tmp/ar/ar-net-core-page/src/Exports/Svg/obj/xake/netstandard2.0/GCCN/GCCN.ActiveReports.Core.Export.Svg.Page.dll as task 25
+[CMD] 1> Started /Users/olegz/.claude/jobs/506bc197/tmp/ar/ar-net-core-page/src/Exports/Text/obj/xake/netstandard2.0/GCCN/GCCN.ActiveReports.Core.Export.Text.Page.dll as task 27
+[CMD] 1> Started /Users/olegz/.claude/jobs/506bc197/tmp/ar/ar-net-core-page/src/Exports/Word.Page/obj/xake/netstandard2.0/GCCN/GCCN.ActiveReports.Core.Export.Word.Page.dll as task 28
+[CMD] 1> Started /Users/olegz/.claude/jobs/506bc197/tmp/ar/ar-net-core-page/src/Rendering/obj/xake/netstandard2.0/GCCN/GCCN.ActiveReports.Core.Rendering.dll as task 29
+[CMD] 1> Started /Users/olegz/.claude/jobs/506bc197/tmp/ar/ar-net-core-dataengine/src/VBFunctionLib/obj/xake/netstandard2.0/GCCN/GCCN.ActiveReports.Core.Data.VBFunctionLib.dll as task 30
+[CMD] 1> Started /Users/olegz/.claude/jobs/506bc197/tmp/ar/ar-net-core-dataengine/src/ExpressionInfo/obj/xake/netstandard2.0/GCCN/GCCN.ActiveReports.Core.Data.ExpressionInfo.dll as task 31
+[CMD] 1> Completed /Users/olegz/.claude/jobs/506bc197/tmp/ar/ar-net-core-dataengine/src/VBFunctionLib/obj/xake/netstandard2.0/GCCN/GCCN.ActiveReports.Core.Data.VBFunctionLib.dll in 381 ms (wait 638 ms)
+[CMD] 1> Completed /Users/olegz/.claude/jobs/506bc197/tmp/ar/ar-net-core-dataengine/src/ExpressionInfo/obj/xake/netstandard2.0/GCCN/GCCN.ActiveReports.Core.Data.ExpressionInfo.dll in 486 ms (wait 1957 ms)
+[CMD] 1> Completed /Users/olegz/.claude/jobs/506bc197/tmp/ar/ar-net-core-dataengine/src/DataEngine/obj/xake/netstandard2.0/GCCN/GCCN.ActiveReports.Core.Data.DataEngine.dll in 580 ms (wait 3456 ms)
+[CMD] 1> Completed /Users/olegz/.claude/jobs/506bc197/tmp/ar/ar-net-core-page/src/Rdl/obj/xake/netstandard2.0/GCCN/GCCN.ActiveReports.Core.Rdl.dll in 911 ms (wait 5138 ms)
+[CMD] 1> Completed /Users/olegz/.claude/jobs/506bc197/tmp/ar/ar-net-core-page/src/Rendering/obj/xake/netstandard2.0/GCCN/GCCN.ActiveReports.Core.Rendering.dll in 3428 ms (wait 12453 ms)
+[CMD] 1> Completed /Users/olegz/.claude/jobs/506bc197/tmp/ar/ar-net-core-page/src/Drawing.Gc/obj/xake/netstandard2.0/GCCN/GCCN.ActiveReports.Core.Drawing.Gc.dll in 438 ms (wait 16689 ms)
+[CMD] 1> Completed /Users/olegz/.claude/jobs/506bc197/tmp/ar/ar-net-core-page/src/Scripting/obj/xake/netstandard2.0/GCCN/GCCN.ActiveReports.Core.Scripting.dll in 453 ms (wait 17626 ms)
+[CMD] 1> Completed /Users/olegz/.claude/jobs/506bc197/tmp/ar/ar-net-core-page/src/Exports/Text/obj/xake/netstandard2.0/GCCN/GCCN.ActiveReports.Core.Export.Text.Page.dll in 468 ms (wait 18715 ms)
+[CMD] 1> Completed /Users/olegz/.claude/jobs/506bc197/tmp/ar/ar-net-core-page/src/Exports/Word.Page/obj/xake/netstandard2.0/GCCN/GCCN.ActiveReports.Core.Export.Word.Page.dll in 507 ms (wait 19978 ms)
+[CMD] 1> Completed /Users/olegz/.claude/jobs/506bc197/tmp/ar/ar-net-core-page/src/Drawing.Gdi/obj/xake/netstandard2.0/GCCN/GCCN.ActiveReports.Core.Drawing.Gdi.dll in 512 ms (wait 20966 ms)
+[CMD] 1> Completed /Users/olegz/.claude/jobs/506bc197/tmp/ar/ar-net-core-page/src/Exports/Excel.Page/obj/xake/netstandard2.0/GCCN/GCCN.ActiveReports.Core.Export.Excel.Page.dll in 859 ms (wait 20813 ms)
+[CMD] 1> Completed /Users/olegz/.claude/jobs/506bc197/tmp/ar/ar-net-core-page/src/Exports/Html.Page/obj/xake/netstandard2.0/GCCN/GCCN.ActiveReports.Core.Export.Html.Page.dll in 474 ms (wait 22101 ms)
+[CMD] 1> Completed /Users/olegz/.claude/jobs/506bc197/tmp/ar/ar-net-core-page/src/Exports/Svg/obj/xake/netstandard2.0/GCCN/GCCN.ActiveReports.Core.Export.Svg.Page.dll in 429 ms (wait 22950 ms)
+[CMD] 1> Completed /Users/olegz/.claude/jobs/506bc197/tmp/ar/ar-net-core-page/src/Exports/Pdf/obj/xake/netstandard2.0/GCCN/GCCN.ActiveReports.Core.Export.Pdf.Page.dll in 479 ms (wait 23873 ms)
+[CMD] 1> Completed /Users/olegz/.claude/jobs/506bc197/tmp/ar/ar-net-core-page/src/Exports/Image/obj/xake/netstandard2.0/GCCN/GCCN.ActiveReports.Core.Export.Image.Page.dll in 447 ms (wait 24716 ms)
+[CMD] Completed build in 38 ms (wait 46335 ms)
+[MSG] 
+
+    Build completed in 00:00:46.3874830
+

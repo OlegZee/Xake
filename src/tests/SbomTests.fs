@@ -521,3 +521,57 @@ type ``Sbom package scope``() =
         Assert.That (findings |> List.exists (fun f -> f.StartsWith "3.1" && f.Contains "Transitive.Pkg"), Is.True)
         Assert.That (findings |> List.exists (fun f -> f.StartsWith "3.4" && f.Contains "tier-2"), Is.True)
         Assert.That (findings |> List.filter (fun f -> f.StartsWith "3.4" && f.Contains "composition") |> List.length, Is.EqualTo 2)
+
+    [<Test>]
+    member x.``options override how content is collected and dependencies classified``() =
+        let nupkg, asmBom, _ = x.Fixture ()
+        let registry (path: string) : Component list =
+            if path.EndsWith "MyAsm.dll" then
+                [ { Type = "library"; BomRef = "vendored:Tiny.Json@1.0"; Name = "Tiny.Json"; Version = "1.0"; Supplier = ""; Purl = "pkg:nuget/Tiny.Json@1.0"
+                    Hashes = []; License = "MIT"; Scope = ""; Components = []; Properties = [ { Name = "xake:pedigree"; Value = "merged" } ] } ]
+            else []
+        let options =
+            { Sbom.defaultPackageScope with
+                // `.props` are not content here; `ref/` facades are
+                IsPlumbing = fun path -> Sbom.PackageScope.plumbing path || path.EndsWith ".props"
+                IsShipped = fun tfm path -> Sbom.PackageScope.shippedFor tfm path || path.StartsWith ("ref/" + tfm + "/")
+                // Foo.* is our own; nothing is tooling
+                IsInternal = Sbom.PackageScope.idPrefixes [ "Foo." ]
+                IsTooling = fun _ -> false
+                Subcomponents = registry
+                DeclaredRangeProperty = "acme:range"
+                RootProperties = [ { Name = "acme:brand"; Value = "Blue" } ]
+                BoundaryText = "depth 1 only"
+                AnnotationTimestamp = "2026-01-01T00:00:00Z"
+                KeepFormulation = true }
+        let bom = Sbom.forPackageScopedWith options nupkg "netstandard2.0" [ asmBom ]
+
+        let paths = bom.Root.Components |> List.map (fun c -> c.Properties |> List.find (fun p -> p.Name = Sbom.pathProperty) |> fun p -> p.Value)
+        Assert.That (paths, Is.EquivalentTo [ "lib/netstandard2.0/MyAsm.dll"; "lib/netstandard2.0/de/MyAsm.resources.dll"; "runtimes/win-x64/native/native.dll"; "ref/netstandard2.0/MyAsm.dll" ])
+        let own = bom.Root.Components |> List.find (fun c -> c.BomRef = "nupkg:MyPkg.1.0.0/lib/netstandard2.0/MyAsm.dll")
+        Assert.That (own.Components |> List.map (fun c -> c.Name), Is.EqualTo [ "Tiny.Json" ])
+
+        Assert.That (bom.Components |> List.map (fun c -> c.Name), Is.EquivalentTo [ "Foo.Bar"; "DS.Internal"; "CycloneDX.Core"; "Unresolved.Pkg" ])
+        let foo = bom.Components |> List.find (fun c -> c.Name = "Foo.Bar")
+        Assert.That (foo.Supplier, Is.EqualTo "")
+        Assert.That (foo.Properties, Is.EqualTo [ { Name = "acme:range"; Value = "[1.2.3, )" } ])
+        let internalPkg = bom.Components |> List.find (fun c -> c.Name = "DS.Internal")
+        Assert.That (internalPkg.Supplier, Is.EqualTo "Acme")
+
+        Assert.That (bom.Root.Properties, Is.EqualTo [ { Name = "xake:nuget:targetFramework"; Value = "netstandard2.0" }; { Name = "acme:brand"; Value = "Blue" } ])
+        Assert.That ((bom.Annotations |> List.exactlyOne).Text, Is.EqualTo "depth 1 only")
+        Assert.That ((bom.Annotations |> List.exactlyOne).Timestamp, Is.EqualTo "2026-01-01T00:00:00Z")
+        Assert.That (bom.Formulation |> List.exists (fun c -> c.BomRef = "tool:csc"), Is.True)
+
+        // the verifier applies the same options -- and the default rule would reject this document
+        Assert.That (Verify.sbomPackageScopeWith options nupkg "netstandard2.0" bom, Is.Empty)
+        Assert.That (Verify.sbomPackageScope nupkg "netstandard2.0" bom, Is.Not.Empty)
+
+    [<Test>]
+    member x.``no boundary text means no annotation, and the verifier says so``() =
+        let nupkg, asmBom, _ = x.Fixture ()
+        let options = { Sbom.defaultPackageScope with BoundaryText = "" }
+        let bom = Sbom.forPackageScopedWith options nupkg "netstandard2.0" [ asmBom ]
+        Assert.That (bom.Annotations, Is.Empty)
+        Assert.That (Sbom.cycloneDx bom, Does.Not.Contain "annotations")
+        Assert.That (Verify.sbomPackageScopeWith options nupkg "netstandard2.0" bom |> List.exists (fun f -> f.Contains "annotation"), Is.True)

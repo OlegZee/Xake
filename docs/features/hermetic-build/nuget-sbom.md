@@ -278,19 +278,19 @@ supplier/license/hash of that package, what our assembly directly used), never w
 | tier 3 | nothing. A package the restore graph carries but the nuspec does not declare -- transitive, SDK pack, analyzer -- does not appear anywhere |
 | `dependencies[]` | root -> its own shipped assemblies + every tier-2 component; each own assembly (matched by hash) -> the tier-2 components its restore-scope BOM had it depend on *directly*, matched by package id. No entry has a tier-2 ref |
 | `compositions[]` | `complete` / `assemblies: [root]`; `incomplete` / `dependencies: [root; own assemblies]` |
-| `annotations[]` | one, subject the root, `Sbom.boundaryAnnotationText`, annotator Xake |
+| `annotations[]` | one, subject the root, `Sbom.PackageScope.boundaryText`, annotator Xake |
 | `formulation` | none -- compiler, SDK and analyzers are not what the customer receives |
 
 **Determinism, and the one timestamp the schema forces.** CycloneDX 1.6 requires
 `annotations[].timestamp`. It is set the way `Pack` sets zip entry times: `SOURCE_DATE_EPOCH`
-when present, else `1980-01-01T00:00:00Z` (`Sbom.annotationTimestamp`). Everything else is as
+when present, else `1980-01-01T00:00:00Z` (`Sbom.PackageScope.timestamp`). Everything else is as
 before: no `metadata.timestamp`, content-derived serial, every list sorted by ref -- two calls
 on the same nupkg and evidence render byte-identical.
 
 **Verifier.** `Verify.sbomPackageScope nupkgPath framework bom : string list` runs the RFC's
 acceptance checks 3.1-3.4 mechanically (nupkg <-> SBOM <-> nuspec) and returns one line per
 finding, prefixed by the check number; `[]` is a pass. It shares the inventory rule with the
-producer (`Sbom.shippedPaths`, `Sbom.isBinaryPath`, `Sbom.isToolingId`), so the two cannot
+producer (`Sbom.shippedPaths` and the same `PackageScopeOptions`, see below), so the two cannot
 drift apart -- and it does catch a hand-edited document (`SbomTests`, "catches tampering").
 
 **Flow.** Pack the nupkg (`Pack.nupkg`) -> `forPackageScoped` per TFM -> add each
@@ -314,3 +314,61 @@ implemented; a signer wraps the `cycloneDx` string before it is packed.
   purl without a version. Fail instead?
 - *The root's hash*: none, by construction (see the table). If the RFC insists on one, the
   document has to be produced *after* packing and shipped next to the nupkg, not inside it.
+
+## `PackageScopeOptions`: what varies, and how to vary it
+
+The RFC fixes the *shape* of the document; what it leaves to each supplier -- which nupkg
+folders are content, which ids are internal, what the annotation says -- is an options record
+in the style of `Pack.Options` and `Restore.Options`: pure functions and values, sensible
+defaults, `{ defaultPackageScope with ... }` to override, no global state.
+
+```fsharp
+type Sbom.PackageScopeOptions = {
+    IsPlumbing: string -> bool                   // nupkg path -> never a component
+    IsShipped: string -> string -> bool          // framework -> path -> shipped for it (tier 1)
+    IsAssembly: string -> bool                   // shipped path -> `library`, hashed (3.2)
+    IsNative: string -> bool                     // shipped path -> native binary, hashed (3.2)
+    IsInternal: string -> bool                   // package id -> one line in tier 2
+    IsTooling: string -> bool                    // package id -> dropped from tier 2
+    Subcomponents: string -> Component list      // shipped path -> registry subcomponents to nest
+    DeclaredRangeProperty: string                // "dt:nuget:declaredVersionRange"
+    RootProperties: Property list                // extra `properties[]` on the root
+    BoundaryText: string                         // the annotation; "" emits none
+    AnnotationTimestamp: string                  // ISO 8601; `PackageScope.timestamp ()`
+    KeepFormulation: bool                        // carry compiler/SDK/analyzers over; off
+}
+val Sbom.defaultPackageScope : PackageScopeOptions
+val Sbom.forPackageScopedWith : PackageScopeOptions -> nupkgPath: string -> framework: string -> Bom list -> Bom
+val Verify.sbomPackageScopeWith : PackageScopeOptions -> nupkgPath: string -> framework: string -> Bom -> string list
+```
+
+`forPackageScoped` / `Verify.sbomPackageScope` are the two applied to `defaultPackageScope`.
+The defaults are assembled from `Sbom.PackageScope`'s named predicates -- `plumbing`,
+`shippedFor`, `assembly`, `native`, `internalIds`, `toolingIds`, `idPrefixes [...]`,
+`boundaryText`, `timestamp` -- so an override usually *wraps* one rather than restating it:
+
+```fsharp
+open Xake.Dotnet
+
+let acme =
+    { Sbom.defaultPackageScope with
+        // props/targets are build glue for us, not shipped content
+        IsPlumbing = fun path -> Sbom.PackageScope.plumbing path || path.EndsWith ".props"
+        // our own id prefixes
+        IsInternal = Sbom.PackageScope.idPrefixes [ "DS."; "MESCIUS."; "GrapeCity."; "Acme." ]
+        // the vendored-code registry, once it exists: nupkg path -> what was merged into it
+        Subcomponents = fun path -> Registry.mergedInto path
+        RootProperties = [ { Name = "acme:brand"; Value = brand } ]
+        AnnotationTimestamp = "2026-09-23T00:00:00Z" }
+
+let bom = Sbom.forPackageScopedWith acme nupkg "netstandard2.0" [ asmBom ]
+match Verify.sbomPackageScopeWith acme nupkg "netstandard2.0" bom with
+| [] -> do! writeText (Sbom.cycloneDx bom)
+| findings -> failwithf "SBOM does not pass its own checks:\n%s" (String.concat "\n" findings)
+```
+
+Two things are deliberately **not** options: the tier-1 join key `xake:nuget:path`
+(`Sbom.pathProperty`) -- the verifier needs one fixed name to look a component's bytes up by --
+and the bom-ref scheme (`nupkg:<file>`, `nupkg:<file>/<path>`, purls for tier 2). The verifier
+takes the same record as the producer, so a customised document is checked against the rule that
+produced it, and `defaultPackageScope` against a customised document fails on purpose (tested).

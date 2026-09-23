@@ -50,7 +50,7 @@ details live in brief.md (section refs) or session.md.
 - [x] `Verify`: sha256, Authenticode PE hash (checksum and certificate table excluded, PE32/PE32+), `compare` with byte ranges labelled TimeDateStamp/CheckSum/CertificateTable/PDB id/StrongNameSignature/Content, `verdict` — `Verify.fs`, `VerifyTests.fs` (4), `verify.md`
 
 ## Slice 3 — ring 2/3 (brief §8f, §8g)
-- [ ] Babel recipe with seed; PE timestamp normalisation + strong-name re-sign, or vendor option
+- [~] Babel recipe with seed; PE timestamp normalisation + strong-name re-sign, or vendor option — **the re-sign half is done**: `StrongName.fs` (`stamp`, `checksum`, `sign`/`verify`, `normalise`; reproduces csc's own signature byte for byte — the hashed content is the PE header without its alignment padding with CheckSum and the certificate-table entry zeroed, then all sections with the signature blob excluded, as in `System.Reflection.Metadata.PEBuilder.GetContentToSign`), `StrongNameTests.fs` (5), `strongname.md`. The Babel recipe itself needs the tool from the private feed and a licence — waits for the user
 - [x] deterministic pack — `Pack.fs` (hand-rolled zip writer: sorted entries, fixed DOS time or `SOURCE_DATE_EPOCH`, no extra fields; `Pack.nupkg` with OPC parts and a content-derived psmdcp GUID, no creation date; `Pack.entries` reader with CRC-32 — `ZipArchive` exposes no `Crc32` on netstandard2.0), `PackTests.fs` (4), `pack.md`
 - [ ] sign as delegated rule (later)
 

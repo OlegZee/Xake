@@ -7,8 +7,8 @@ open Xake
 open Xake.Tasks
 open Xake.Dotnet
 
-/// The `CscLock.compile project` mode: the compiler runs exactly the command line a
-/// `Lock.Project` carries, with no composition. The lock is built by hand here, the way
+/// The `CscLock.compile entry` mode: the compiler runs exactly the command line a
+/// `Lock.Entry` carries, with no composition. The lock is built by hand here, the way
 /// `Project.import` would have produced it for a trivial project, so the tests do not need
 /// msbuild -- only the compiler the lock names.
 [<TestFixture>]
@@ -38,24 +38,22 @@ type ``Csc fromlock``() =
 
         let assemblyInfoContent = "[assembly: System.Reflection.AssemblyTitleAttribute(\"Hello\")]\n"
 
-        let project : Lock.Project = {
-            Name = "Hello"
-            Project = Path.Combine (dir, "Hello.csproj")
-            Directory = dir
-            Compiler = { Tool = "csc"; Path = cscDll; Sha256 = Lock.sha256 cscDll; Sdk = fwk.Version }
-            Args =
+        let compilation, references, analyzers =
+            Lock.Compilation.ofArgs
                 [ "/noconfig"; "/nostdlib+"; "/target:library"; "/deterministic+"
                   "/reference:" + netstandardDll
                   "/out:" + outDll
                   assemblyInfoCs
                   helloCs ]
-            References = [ Lock.hashed netstandardDll ]
-            Analyzers = []
-            ProjectRefs = []
-            Imports = []
-            Generated = [ assemblyInfoCs, assemblyInfoContent ]
-            Resources = []
-            Properties = Map.empty
+        let project : Lock.Entry = {
+            Name = "Hello"
+            Evaluation = { Project = Path.Combine (dir, "Hello.csproj"); ProjectRefs = []; Imports = []; Sdk = fwk.Version; SdkPin = None; Properties = Map.empty }
+            Compilation = { compilation with Directory = dir; Generated = [ assemblyInfoCs, assemblyInfoContent ] }
+            Dependencies =
+                { Compiler = { Tool = "csc"; Path = cscDll; Sha256 = Lock.sha256 cscDll; Version = Lock.compilerVersion cscDll }
+                  References = references |> List.map (fun r -> { r with Sha256 = Lock.sha256 r.Path })
+                  Analyzers = analyzers
+                  Packages = [] }
         }
         project, outDll, assemblyInfoCs, assemblyInfoContent
 
@@ -85,7 +83,10 @@ type ``Csc fromlock``() =
         let dir = Directory.GetCurrentDirectory()
         let project, _, _, _ = makeLock dir
         let tampered =
-            { project with References = project.References |> List.map (fun r -> { r with Sha256 = "0000000000000000000000000000000000000000000000000000000000000000" }) }
+            { project with
+                Dependencies =
+                    { project.Dependencies with
+                        References = project.Dependencies.References |> List.map (fun r -> { r with Sha256 = "0000000000000000000000000000000000000000000000000000000000000000" }) } }
 
         let build () =
             xake {x.TestOptions with FileLog="csc-fromlock-tamper.log"; ThrowOnError = true} {
@@ -99,7 +100,7 @@ type ``Csc fromlock``() =
             }
 
         let ex = Assert.Throws<XakeException> (fun () -> build () |> ignore)
-        Assert.That(ex.Data0, Does.Contain (Path.GetFileName (tampered.References.Head.Path)))
+        Assert.That(ex.Data0, Does.Contain (Path.GetFileName (tampered.Dependencies.References.Head.Path)))
 
     /// "make the compiler available" (`ensureCompilerAvailable` in `Dotnet.csc.fs`), exercised
     /// through the public `CscLock.compile` entry point rather than calling the private
@@ -137,7 +138,7 @@ type ``Csc fromlock``() =
             let scratchCscDll = Path.Combine (scratchNuget, "microsoft.net.compilers.toolset", version, "tasks", "netcore", "bincore", "csc.dll")
             let project =
                 { project with
-                    Compiler = { project.Compiler with Path = scratchCscDll; Sha256 = Lock.sha256 userCscDll } }
+                    Dependencies = { project.Dependencies with Compiler = { project.Dependencies.Compiler with Path = scratchCscDll; Sha256 = Lock.sha256 userCscDll } } }
 
             Assert.That(File.Exists scratchCscDll, Is.False, "the scratch NuGet cache already has the package -- test setup is wrong")
 
@@ -167,7 +168,7 @@ type ``Csc fromlock``() =
             | Some root -> root
             | None -> Assert.Ignore("no .NET SDK root found on this machine"); failwith "unreachable"
         let sdkCompilerPath = Path.Combine (dotnetRoot, "sdk", "0.0.1", "Roslyn", "bincore", "csc.dll")
-        let project = { project with Compiler = { project.Compiler with Path = sdkCompilerPath; Sha256 = "" } }
+        let project = { project with Dependencies = { project.Dependencies with Compiler = { project.Dependencies.Compiler with Path = sdkCompilerPath; Sha256 = "" } } }
 
         let build () =
             xake {x.TestOptions with FileLog="csc-fromlock-missing-sdk.log"; ThrowOnError = true} {
@@ -189,7 +190,7 @@ type ``Csc fromlock``() =
         let dir = Directory.GetCurrentDirectory()
         let project, _, _, _ = makeLock dir
         let nowhere = if Env.isUnix then "/nonexistent/csc.dll" else "C:\\nonexistent\\csc.dll"
-        let project = { project with Compiler = { project.Compiler with Path = nowhere; Sha256 = "" } }
+        let project = { project with Dependencies = { project.Dependencies with Compiler = { project.Dependencies.Compiler with Path = nowhere; Sha256 = "" } } }
 
         let build () =
             xake {x.TestOptions with FileLog="csc-fromlock-missing-anywhere.log"; ThrowOnError = true} {
@@ -208,26 +209,25 @@ type ``Csc fromlock``() =
     [<Test>]
     member x.``Lock.mapPaths rewrites a reference and drops its hash``() =
 
-        let project : Lock.Project = {
+        let compilation, references, analyzers = Lock.Compilation.ofArgs [ "/reference:/a/Old.dll"; "/out:/a/Old.dll.out"; "/a/A.cs" ]
+        let project : Lock.Entry = {
             Name = "Sample"
-            Project = "/a/Sample.csproj"
-            Directory = "/a"
-            Compiler = { Tool = "csc"; Path = "/dotnet/csc.dll"; Sha256 = ""; Sdk = "8.0.0" }
-            Args = [ "/reference:/a/Old.dll"; "/a/A.cs" ]
-            References = [ { Path = "/a/Old.dll"; Sha256 = "ab" } ]
-            Analyzers = []
-            ProjectRefs = []
-            Imports = []
-            Generated = []
-            Resources = []
-            Properties = Map.empty
+            Evaluation = { Project = "/a/Sample.csproj"; ProjectRefs = []; Imports = []; Sdk = "8.0.0"; SdkPin = None; Properties = Map.empty }
+            Compilation = { compilation with Directory = "/a" }
+            Dependencies =
+                { Compiler = { Tool = "csc"; Path = "/dotnet/csc.dll"; Sha256 = ""; Version = "" }
+                  References = references |> List.map (fun r -> { r with Sha256 = "ab" })
+                  Analyzers = analyzers
+                  Packages = [] }
         }
 
         let mapped = project |> Lock.mapPaths (fun p -> if p = "/a/Old.dll" then "/b/New.dll" else p)
 
-        Assert.That(mapped.Args, Is.EqualTo [ "/reference:/b/New.dll"; "/a/A.cs" ])
-        let expected : Lock.Hashed list = [ { Path = "/b/New.dll"; Sha256 = "" } ]
-        Assert.That(mapped.References, Is.EqualTo expected)
+        Assert.That(mapped.Args, Is.EqualTo [ "/reference:/b/New.dll"; "/out:/a/Old.dll.out"; "/a/A.cs" ])
+        let expected : Lock.Reference list = [ { Path = "/b/New.dll"; Sha256 = ""; Alias = "" } ]
+        Assert.That(mapped.Dependencies.References, Is.EqualTo expected)
+        // the markers are not paths and stay in place
+        Assert.That(mapped.Compilation.Options, Is.EqualTo [ "@References"; "/out:/a/Old.dll.out"; "@Sources" ])
 
     /// `CscLock.resolve` (the public entry point `lock-from-settings.md` recommendation 1b
     /// asks for, named `CscLock.resolve` rather than `Csc.resolve` -- see its doc comment in
@@ -240,7 +240,7 @@ type ``Csc fromlock``() =
         let helloCs = Path.Combine (dir, "HelloResolve.cs")
         File.WriteAllText (helloCs, "public class HelloResolve {}\n")
 
-        let mutable resolved : Lock.Project option = None
+        let mutable resolved : Lock.Entry option = None
 
         do xake {x.TestOptions with FileLog="csc-resolve.log"; ThrowOnError = true} {
             wantOverride (["hello-resolve"])
@@ -264,21 +264,26 @@ type ``Csc fromlock``() =
 
         Assert.That(project.Sources |> List.exists (fun p -> p.EndsWith "HelloResolve.cs"), Is.True)
         Assert.That(project.Args, Contains.Item "/target:library")
-        Assert.That(project.Compiler.Path, Is.Not.Empty)
-        Assert.That(project.References, Is.Not.Empty)
-        Assert.That(project.References |> List.forall (fun r -> r.Sha256 = ""), Is.True,
+        Assert.That(project.Dependencies.Compiler.Path, Is.Not.Empty)
+        Assert.That(project.Dependencies.Compiler.Version, Is.Not.Empty, "resolve reads the compiler's own version")
+        Assert.That(project.Dependencies.References, Is.Not.Empty)
+        Assert.That(project.Dependencies.References |> List.forall (fun r -> r.Sha256 = ""), Is.True,
             "resolve leaves reference hashes empty; hashing is a record-time step (Lock.rehash), not resolve's")
+        // a composed compilation has no evaluation behind it
+        Assert.That(project.Evaluation.Project, Is.EqualTo "")
+        Assert.That(project.Evaluation.SdkPin, Is.EqualTo None)
+        Assert.That(project.Args |> List.exists (fun a -> a.StartsWith "/reference:"), Is.True)
 
         let rehashed = Lock.rehash project
-        Assert.That(rehashed.References |> List.forall (fun r -> r.Sha256 <> ""), Is.True)
+        Assert.That(rehashed.Dependencies.References |> List.forall (fun r -> r.Sha256 <> ""), Is.True)
 
-        let lockFile : Lock.File = { Framework = "netstandard2.0"; Configuration = ""; Properties = []; Projects = [rehashed] }
+        let lockFile : Lock.Document = { Framework = "netstandard2.0"; Configuration = ""; Properties = []; Entries = [rehashed] }
         let roots = Roots.builtin (Directory.GetCurrentDirectory())
         let roundtripped = Lock.writeWith roots lockFile |> Lock.parseWith roots
-        let readBack = Lock.project rehashed.Name roundtripped
+        let readBack = Lock.entry rehashed.Name roundtripped
 
+        Assert.That(readBack, Is.EqualTo rehashed)
         Assert.That(readBack.Args, Is.EqualTo rehashed.Args)
-        Assert.That(readBack.References |> List.map (fun r -> r.Sha256), Is.EqualTo (rehashed.References |> List.map (fun r -> r.Sha256)))
 
     /// `CscLock.resolve` on settings that carry a `.resx` resource: it must record a
     /// `Resources` pair with a permanent output path (not a temp file `resolve` deletes on
@@ -298,7 +303,7 @@ type ``Csc fromlock``() =
             "</root>\n"
         File.WriteAllText (Path.Combine (dir, "HelloResxStrings.resx"), resx)
 
-        let mutable resolved : Lock.Project option = None
+        let mutable resolved : Lock.Entry option = None
 
         do xake {x.TestOptions with FileLog="csc-resolve-resx.log"; ThrowOnError = true} {
             wantOverride (["hello-resolve-resx"])
@@ -327,8 +332,8 @@ type ``Csc fromlock``() =
 
         let project = resolved.Value
 
-        Assert.That(project.Resources, Has.Length.EqualTo 1)
-        let resxPath, resourcesPath = project.Resources.Head
+        Assert.That(project.Compilation.Resources, Has.Length.EqualTo 1)
+        let resxPath, resourcesPath = project.Compilation.Resources.Head
         Assert.That(resxPath, Does.EndWith "HelloResxStrings.resx")
         Assert.That(resourcesPath, Does.EndWith "Sample.Application.HelloResxStrings.resources")
         Assert.That(resourcesPath, Does.Contain ((Path.Combine ("obj", "xake", "HelloResx")).Replace('\\', '/')),
@@ -365,9 +370,11 @@ type ``Csc fromlock``() =
             let sourcelinkContent = "{\"documents\":{\"/x/*\":\"https://h/src/$(SourceRevisionId)/*\"}}"
             let project =
                 { project with
-                    // `/sourcelink:` is only accepted when a PDB is emitted
-                    Args = project.Args @ [ "/debug:portable"; "/sourcelink:" + sourcelinkPath ]
-                    Generated = project.Generated @ [ sourcelinkPath, sourcelinkContent ] }
+                    Compilation =
+                        { project.Compilation with
+                            // `/sourcelink:` is only accepted when a PDB is emitted
+                            Options = project.Compilation.Options @ [ "/debug:portable"; "/sourcelink:" + sourcelinkPath ]
+                            Generated = project.Compilation.Generated @ [ sourcelinkPath, sourcelinkContent ] } }
 
             // a fake repository at the project's own directory: HEAD symbolic -> a loose ref
             let gitDir = Path.Combine (dir, ".git")
@@ -407,8 +414,10 @@ type ``Csc fromlock``() =
             let sourcelinkContent = "{\"documents\":{\"/x/*\":\"https://h/src/$(SourceRevisionId)/*\"}}"
             let project =
                 { project with
-                    Args = project.Args @ [ "/sourcelink:" + sourcelinkPath ]
-                    Generated = project.Generated @ [ sourcelinkPath, sourcelinkContent ] }
+                    Compilation =
+                        { project.Compilation with
+                            Options = project.Compilation.Options @ [ "/sourcelink:" + sourcelinkPath ]
+                            Generated = project.Compilation.Generated @ [ sourcelinkPath, sourcelinkContent ] } }
 
             let build () =
                 xake {x.TestOptions with FileLog="csc-fromlock-sourcelink-missing.log"; ThrowOnError = true} {

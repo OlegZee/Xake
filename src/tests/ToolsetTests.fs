@@ -12,7 +12,7 @@ open Xake.Dotnet
 /// compiler with a `Microsoft.Net.Compilers.Toolset` `PackageReference` (plus
 /// `RoslynCompilerType=Toolset`, without which the SDK silently reverts to its own compiler --
 /// see the comment on `Project.parseImport`'s `compilerPath`). These tests exercise both ways
-/// `Lock.Project.Compiler.Path` can end up naming that package: the import reading it out of
+/// `Lock.Entry`'s `Dependencies.Compiler.Path` can end up naming that package: the import reading it out of
 /// the project (`CSharpCoreTargetsPath`, since the package never sets `CscToolPath`), and the
 /// composed `csc {}` mode taking it directly via the `toolset` operation. The project and its
 /// source are written into this fixture's own sandbox so the tests do not depend on `samples/`.
@@ -77,12 +77,12 @@ type ``Toolset compiler``() =
         }
 
         let lock = Lock.readWith (Roots.builtin (Directory.GetCurrentDirectory())) lockFile
-        let project = Lock.project "Toolset" lock
+        let project = Lock.entry "Toolset" lock
 
-        Assert.That(project.Compiler.Path, Does.Contain "/microsoft.net.compilers.toolset/")
-        Assert.That(project.Compiler.Path, Does.EndWith "csc.dll")
-        Assert.That(project.Compiler.Sha256, Has.Length.EqualTo 64)
-        Assert.That(project.Compiler.Sha256, Does.Match "^[0-9a-f]{64}$")
+        Assert.That(project.Dependencies.Compiler.Path, Does.Contain "/microsoft.net.compilers.toolset/")
+        Assert.That(project.Dependencies.Compiler.Path, Does.EndWith "csc.dll")
+        Assert.That(project.Dependencies.Compiler.Sha256, Has.Length.EqualTo 64)
+        Assert.That(project.Dependencies.Compiler.Sha256, Does.Match "^[0-9a-f]{64}$")
 
         let text = File.ReadAllText lockFile
         Assert.That(text, Does.Contain "$(NuGetPackageRoot)/microsoft.net.compilers.toolset/")
@@ -107,14 +107,14 @@ type ``Toolset compiler``() =
                             Output = lockFile
                     }
                     let! lock = Lock.load lockFile
-                    let project = Lock.project "Toolset" lock
+                    let project = Lock.entry "Toolset" lock
                     do! CscLock.compile project
                 }
             ]
         }
 
         let lock = Lock.readWith (Roots.builtin (Directory.GetCurrentDirectory())) lockFile
-        let project = Lock.project "Toolset" lock
+        let project = Lock.entry "Toolset" lock
         let outDll = project.Output |> Option.defaultWith (fun () -> failwith "the lock's project has no /out:")
 
         Assert.That(File.Exists outDll, Is.True, "csc did not produce the toolset-compiled dll")

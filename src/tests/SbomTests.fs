@@ -10,8 +10,9 @@ open Xake.Dotnet
 open Xake.Dotnet.Sbom
 
 /// `Sbom.cycloneDx` (pure JSON rendering) and `Sbom.forAssembly` (the join between a compile's
-/// lock and what the restore graph/cache know about its packages) -- both exercised with
-/// hand-built fixtures, no restore or compile involved.
+/// lock entry -- references and the package graph recorded at import -- and what the cache
+/// knows about its packages) -- both exercised with hand-built fixtures, no restore or compile
+/// involved.
 [<TestFixture>]
 type ``Sbom cycloneDx``() =
     inherit XakeTestBase("sbom")
@@ -46,6 +47,18 @@ type ``Sbom cycloneDx``() =
 
     let fooBarMetadata = """{ "version": 2, "contentHash": "AAAA", "source": "https://api.nuget.org/v3/index.json" }"""
     let refOnlyMetadata = """{ "version": 2, "contentHash": "AAAA", "source": "https://api.nuget.org/v3/index.json" }"""
+
+    /// A lock entry with just what `forAssembly` reads: references, analyzers, packages, the
+    /// compiler and the version property.
+    let entryOf name (references: Lock.Hashed list) (analyzers: Lock.Hashed list) (packages: Lock.Package list) : Lock.Entry =
+        { Name = name
+          Evaluation = { Project = ""; ProjectRefs = []; Imports = []; Sdk = "8.0.100"; SdkPin = None; Properties = Map.ofList [ "Version", "1.0.0" ] }
+          Compilation = { Directory = ""; Options = []; Defines = []; Sources = []; Generated = []; Resources = [] }
+          Dependencies =
+            { Compiler = { Tool = "csc"; Path = ""; Sha256 = ""; Version = "4.11.0" }
+              References = references |> List.map (fun r -> { Path = r.Path; Sha256 = r.Sha256; Alias = "" })
+              Analyzers = analyzers
+              Packages = packages } }
 
     let sampleBom hashContent : Bom =
         let root = { Type = "library"; BomRef = "asm:MyAssembly"; Name = "MyAssembly"; Version = "1.0.0"
@@ -128,31 +141,18 @@ type ``Sbom cycloneDx``() =
         let noShipDir = cacheRoot </> "excluded.noship" </> "3.0.0"
         Directory.CreateDirectory noShipDir |> ignore
 
-        let assets : Nuget.Assets = {
-            // mixed-case ids, as `project.assets.json` spells them -- the cache directories
-            // above stay lowercase, as the real NuGet cache always does.
-            Packages = [ "Foo.Bar", "1.2.3"; "Ref.Only", "1.0.0"; "Runtime.Only", "2.0.0"; "Excluded.NoShip", "3.0.0" ]
-            Graph = [ ("Foo.Bar", "1.2.3"), ("Ref.Only", "1.0.0"); ("Foo.Bar", "1.2.3"), ("Runtime.Only", "2.0.0") ]
-            Direct = [ "Foo.Bar" ]
-            Framework = "netstandard2.0"
-        }
+        // mixed-case ids, as `project.assets.json` spells them -- the cache directories above
+        // stay lowercase, as the real NuGet cache always does. The graph is the lock's own
+        // (`Project.packages` at import), sha512 included.
+        let packages : Lock.Package list =
+            [ { Id = "Foo.Bar"; Version = "1.2.3"; Sha512 = "AAAA"; Direct = true; DependsOn = [ "Ref.Only"; "Runtime.Only" ] }
+              { Id = "Ref.Only"; Version = "1.0.0"; Sha512 = "AAAA"; Direct = false; DependsOn = [] }
+              { Id = "Runtime.Only"; Version = "2.0.0"; Sha512 = ""; Direct = false; DependsOn = [] }
+              { Id = "Excluded.NoShip"; Version = "3.0.0"; Sha512 = ""; Direct = false; DependsOn = [] } ]
 
-        let lock : Lock.Project = {
-            Name = "MyAssembly"
-            Project = ""
-            Directory = ""
-            Compiler = { Tool = "csc"; Path = ""; Sha256 = ""; Sdk = "8.0.100" }
-            Args = []
-            References = [ Lock.hashed fooDll; Lock.hashed refDll; { Path = projectRefDll; Sha256 = "" } ]
-            Analyzers = [ Lock.hashed analyzerFile ]
-            ProjectRefs = []
-            Imports = []
-            Generated = []
-            Resources = []
-            Properties = Map.ofList [ "Version", "1.0.0" ]
-        }
+        let lock = entryOf "MyAssembly" [ Lock.hashed fooDll; Lock.hashed refDll; { Path = projectRefDll; Sha256 = "" } ] [ Lock.hashed analyzerFile ] packages
 
-        let bom = Sbom.forAssembly cacheRoot assets lock assemblyFile
+        let bom = Sbom.forAssembly cacheRoot lock assemblyFile
 
         Assert.That (bom.Root.BomRef, Is.EqualTo "asm:MyAssembly")
         Assert.That (bom.Root.Hashes, Is.EqualTo [ { Alg = "SHA-256"; Content = Lock.sha256 assemblyFile } ])
@@ -191,7 +191,8 @@ type ``Sbom cycloneDx``() =
             Is.EquivalentTo [ "pkg:nuget/Ref.Only@1.0.0"; "pkg:nuget/Runtime.Only@2.0.0" ])
 
         Assert.That (bom.Formulation |> List.exists (fun c -> c.BomRef = "file:" + analyzerFile && c.Scope = "excluded"), Is.True)
-        Assert.That (bom.Formulation |> List.exists (fun c -> c.BomRef = "tool:csc"), Is.True)
+        Assert.That (bom.Formulation |> List.exists (fun c -> c.BomRef = "tool:csc" && c.Version = "4.11.0"), Is.True)
+        Assert.That (bom.Formulation |> List.exists (fun c -> c.BomRef = "tool:dotnet-sdk" && c.Version = "8.0.100"), Is.True)
 
     [<Test>]
     member x.``the emitted json parses``() =
@@ -231,17 +232,11 @@ type ``Sbom cycloneDx``() =
         File.WriteAllText (assemblyADll, "assembly A")
         File.WriteAllText (assemblyBDll, "assembly B")
 
-        let assets : Nuget.Assets =
-            { Packages = [ "Common.Pkg", "1.0.0" ]; Graph = []; Direct = [ "Common.Pkg" ]; Framework = "netstandard2.0" }
+        let packages : Lock.Package list = [ { Id = "Common.Pkg"; Version = "1.0.0"; Sha512 = "AAAA"; Direct = true; DependsOn = [] } ]
+        let lockFor name refDll = entryOf name [ Lock.hashed refDll ] [] packages
 
-        let lockFor name refDll : Lock.Project =
-            { Name = name; Project = ""; Directory = ""
-              Compiler = { Tool = "csc"; Path = ""; Sha256 = ""; Sdk = "8.0.100" }
-              Args = []; References = [ Lock.hashed refDll ]; Analyzers = []; ProjectRefs = []
-              Imports = []; Generated = []; Resources = []; Properties = Map.ofList [ "Version", "1.0.0" ] }
-
-        let bomA = Sbom.forAssembly cacheRoot assets (lockFor "A" compADll) assemblyADll
-        let bomB = Sbom.forAssembly cacheRoot assets (lockFor "B" compBDll) assemblyBDll
+        let bomA = Sbom.forAssembly cacheRoot (lockFor "A" compADll) assemblyADll
+        let bomB = Sbom.forAssembly cacheRoot (lockFor "B" compBDll) assemblyBDll
 
         // the nupkg itself: a `test.nuspec` at the zip root plus one shipped file, built with
         // `ZipArchive` the way `Sbom.forPackage` reads it back.

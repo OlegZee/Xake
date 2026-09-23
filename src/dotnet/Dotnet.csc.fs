@@ -61,7 +61,7 @@ module CscImpl =
 
     /// What the runner itself needs, as opposed to what is being compiled: how to react to a
     /// compile error, and which executable to run. Everything else about a compilation lives in
-    /// the `Lock.Project` handed to the runner. Kept apart from `CscSettingsType` so that
+    /// the `Lock.Entry` handed to the runner. Kept apart from `CscSettingsType` so that
     /// replaying a lock does not go through a settings record whose other fields would be
     /// silently ignored (conceptual-review.md 2.2).
     type RunOptions = {
@@ -75,9 +75,9 @@ module CscImpl =
         }
 
     /// <summary>
-    /// Runs the compiler over an already-resolved compilation: `project` is exactly what would
+    /// Runs the compiler over an already-resolved compilation: `entry` is exactly what would
     /// go into a lock file, whether it came from `Project.import`, from a hand-built
-    /// `Lock.Project`, or from `resolve` composing one from `Src`/`Ref`/... at recipe time. This
+    /// `Lock.Entry`, or from `resolve` composing one from `Src`/`Ref`/... at recipe time. This
     /// is the only place that shells out to csc; both `CscLock.compile` and the composed
     /// `csc { src ... }` end up here.
     ///
@@ -90,7 +90,7 @@ module CscImpl =
     /// An empty hash (the composed mode never records one) skips that check.
     ///
     /// `envVars` carries the environment the compiler needs to run (e.g. the framework's,
-    /// resolved via `DotNetFwk`) -- `Lock.Project` is serialized as the lock file format and has
+    /// resolved via `DotNetFwk`) -- `Lock.Entry` is serialized as the lock file format and has
     /// no room for it, so it travels alongside instead.
     /// </summary>
     /// The path `csc.dll` would have under a `Microsoft.Net.Compilers.Toolset`-shaped package
@@ -115,7 +115,7 @@ module CscImpl =
             if options.FailOnError then failwith msg
         }
 
-    /// Makes `project.Compiler.Path` available on this machine before the hash check runs,
+    /// Makes the entry's compiler available on this machine before the hash check runs,
     /// for a lock imported (or resolved) somewhere else:
     ///  - already on disk: nothing to do.
     ///  - under `$(NuGetPackageRoot)`: the compiler is a `Microsoft.Net.Compilers.Toolset`-shaped
@@ -125,12 +125,13 @@ module CscImpl =
     ///  - under `$(DotnetRoot)/sdk/<version>/`: an SDK this machine does not have; nothing to
     ///    restore, so this fails immediately naming the SDK version.
     ///  - anywhere else: the path simply does not exist.
-    let private ensureCompilerAvailable (options: RunOptions) (project: Lock.Project) =
+    let private ensureCompilerAvailable (options: RunOptions) (entry: Lock.Entry) =
         recipe {
-            if File.Exists project.Compiler.Path then
+            let compiler = entry.Dependencies.Compiler
+            if File.Exists compiler.Path then
                 ()
             else
-                let path = project.Compiler.Path.Replace('\\', '/')
+                let path = compiler.Path.Replace('\\', '/')
                 let comparer = if Env.isUnix then System.StringComparison.Ordinal else System.StringComparison.OrdinalIgnoreCase
                 let normalize (r: string) = r.Replace('\\', '/').TrimEnd '/'
                 let under (r: string) = path.StartsWith(r + "/", comparer)
@@ -141,10 +142,10 @@ module CscImpl =
                     let packageId, version = rest.[0], rest.[1]
                     do! trace Info "restoring compiler package %s %s" packageId version
                     restoreToolsetCompiler packageId version |> ignore
-                    if not (File.Exists project.Compiler.Path) then
+                    if not (File.Exists compiler.Path) then
                         do! failStep options
                                 (sprintf "'%s': the compiler %s is not available and restoring %s %s did not provide it"
-                                    project.Name project.Compiler.Path packageId version)
+                                    entry.Name compiler.Path packageId version)
                 | None ->
                     match Roots.dotnetRoot () |> Option.map normalize |> Option.filter under with
                     | Some dotnetRoot ->
@@ -153,68 +154,71 @@ module CscImpl =
                             if path.StartsWith(sdkPrefix, comparer) then
                                 let version = path.Substring(sdkPrefix.Length).Split('/').[0]
                                 sprintf "'%s': the lock names the compiler of SDK %s (%s), which is not installed; install that SDK or re-import with the installed one"
-                                    project.Name version project.Compiler.Path
+                                    entry.Name version compiler.Path
                             else
-                                sprintf "'%s': the compiler %s named by the lock is not installed" project.Name project.Compiler.Path
+                                sprintf "'%s': the compiler %s named by the lock is not installed" entry.Name compiler.Path
                         do! failStep options msg
                     | None ->
                         do! failStep options
-                                (sprintf "'%s': the compiler %s named by the lock does not exist" project.Name project.Compiler.Path)
+                                (sprintf "'%s': the compiler %s named by the lock does not exist" entry.Name compiler.Path)
         }
 
-    let private run (options: RunOptions) (project: Lock.Project) (envVars: (string * string) list) =
+    let private run (options: RunOptions) (entry: Lock.Entry) (envVars: (string * string) list) =
         recipe {
-            do! trace Info "compiling '%s' (%s %s)" project.Name project.Compiler.Tool project.Compiler.Sdk
+            let compiler = entry.Dependencies.Compiler
+            do! trace Info "compiling '%s' (%s %s)" entry.Name compiler.Tool compiler.Version
 
             // a lock built on another machine may name a compiler this one does not have yet
             // (a toolset package not restored, an SDK not installed): make it available -- or
             // fail with a clear reason -- before the hash check below even looks at it
-            do! ensureCompilerAvailable options project
+            do! ensureCompilerAvailable options entry
 
             // the compiler is hashed (below) but was never a tracked dependency, so an SDK or
             // toolset update that changes csc.dll's bytes left the target looking up to date
             // and the hash check never ran (conceptual-review.md 2.4)
-            do! needFiles (Filelist [File.make project.Compiler.Path])
+            do! needFiles (Filelist [File.make compiler.Path])
 
             // the lock never carries the commit sha itself (`Project.tokenizeRevision`): when
-            // `Generated` or `Args` carries the token `$(SourceRevisionId)` (from a project
-            // whose SourceLink writes it into `sourcelink.json`), resolve it here, from the
-            // project's own repository, right before it is used -- a lock that needs a
-            // revision has to be compiled in a repository, or this fails with a clear message
+            // `Generated`, `Options` or `Defines` carries the token `$(SourceRevisionId)` (from
+            // a project whose SourceLink writes it into `sourcelink.json`), resolve it here,
+            // from the project's own repository, right before it is used -- a lock that needs
+            // a revision has to be compiled in a repository, or this fails with a clear message
             let sourceRevisionToken = "$(SourceRevisionId)"
             let containsToken (s: string) = s.Contains sourceRevisionToken
-            let! project =
-                if not ((project.Generated |> List.exists (snd >> containsToken)) || (project.Args |> List.exists containsToken)) then
-                    recipe.Return project
+            let needsRevision =
+                (entry.Compilation.Generated |> List.exists (snd >> containsToken))
+                || (entry.Args |> List.exists containsToken)
+            let! entry =
+                if not needsRevision then
+                    recipe.Return entry
                 else
-                    match Git.headSha project.Directory with
+                    match Git.headSha entry.Compilation.Directory with
                     | Some sha ->
-                        let expand (s: string) = if containsToken s then s.Replace (sourceRevisionToken, sha) else s
-                        recipe.Return
-                            { project with
-                                Generated = project.Generated |> List.map (fun (path, content) -> path, expand content)
-                                Args = project.Args |> List.map expand }
+                        recipe.Return (entry |> Lock.mapText (fun s -> if containsToken s then s.Replace (sourceRevisionToken, sha) else s))
                     | None ->
                         recipe {
                             let msg =
                                 sprintf "'%s': the lock needs %s but no git repository was found at or above '%s' -- a lock that needs a revision must be compiled in a repository"
-                                    project.Name sourceRevisionToken project.Directory
+                                    entry.Name sourceRevisionToken entry.Compilation.Directory
                             do! trace Error "%s" msg
                             if options.FailOnError then failwith msg
-                            return project
+                            return entry
                         }
 
-            // the resolved project is the source of truth for what msbuild (or the composed
+            let compilation = entry.Compilation
+            let args = entry.Args
+
+            // the resolved entry is the source of truth for what msbuild (or the composed
             // front end) generated (assembly attributes, TFM defines): write it back whenever
             // it is missing or someone touched it
-            for (path, content) in project.Generated do
+            for (path, content) in compilation.Generated do
                 let upToDate = File.Exists path && File.ReadAllText path = content
                 if not upToDate then
                     let dir = Path.GetDirectoryName path
                     if not (Impl.isEmpty dir) then Directory.CreateDirectory dir |> ignore
                     File.WriteAllText (path, content)
 
-            for path in CscArgs.outputs project.Args do
+            for path in CscArgs.outputs args do
                 let dir = Path.GetDirectoryName path
                 if not (Impl.isEmpty dir) then Directory.CreateDirectory dir |> ignore
 
@@ -228,8 +232,8 @@ module CscImpl =
             // This is the same step for both modes now: the composed mode's `resolve` records
             // its `.resx` resources here too, at a permanent path under `obj/xake/<name>/`,
             // instead of compiling them itself into a temp file at recipe time.
-            do! needFiles (Filelist (project.Resources |> List.map (fst >> File.make)))
-            for (resx, resourcesFile) in project.Resources do
+            do! needFiles (Filelist (compilation.Resources |> List.map (fst >> File.make)))
+            for (resx, resourcesFile) in compilation.Resources do
                 if not (File.Exists resourcesFile) then
                     Resx.compile resx resourcesFile
 
@@ -241,9 +245,9 @@ module CscImpl =
                     else
                         let actual = if File.Exists path then Lock.sha256 path else "missing"
                         if actual = expected then None else Some (path, expected, actual)
-                [ for r in project.References do yield check r.Path r.Sha256
-                  for a in project.Analyzers do yield check a.Path a.Sha256
-                  yield check project.Compiler.Path project.Compiler.Sha256 ]
+                [ for r in entry.Dependencies.References do yield check r.Path r.Sha256
+                  for a in entry.Dependencies.Analyzers do yield check a.Path a.Sha256
+                  yield check compiler.Path compiler.Sha256 ]
                 |> List.choose id
 
             if not (List.isEmpty mismatches) then
@@ -251,19 +255,18 @@ module CscImpl =
                     mismatches
                     |> List.map (fun (path, expected, actual) -> sprintf "%s: expected %s, got %s" path expected actual)
                     |> String.concat "\n"
-                do! trace Error "('%s') hash mismatch:\n%s" project.Name detail
+                do! trace Error "('%s') hash mismatch:\n%s" entry.Name detail
                 if options.FailOnError then
-                    failwithf "('%s') hash mismatch:\n%s" project.Name detail
+                    failwithf "('%s') hash mismatch:\n%s" entry.Name detail
 
             // the generated files have to exist before the inputs are demanded. Note: for the
             // composed mode this now needs everything the args name -- including the
             // framework's global references (mscorlib.dll etc) -- rather than only the sources,
             // refs and resource files it used to `needFiles` directly. That is intended.
-            do! needFiles (Filelist (CscArgs.inputs project.Args |> List.map File.make))
+            do! needFiles (Filelist (CscArgs.inputs args |> List.map File.make))
 
             // csc warns CS2023 and ignores /noconfig when it is inside the response file, so
             // it has to stay on the command line and everything else goes into the rsp
-            let args = project.Args
             let noconfig = args |> List.contains "/noconfig"
             let rspArgs = args |> List.filter ((<>) "/noconfig")
 
@@ -284,8 +287,8 @@ module CscImpl =
                 | Some tool -> tool, []
                 // the compiler path from `DotNetFwk` may be a native launcher rather than a
                 // managed dll (the "run directly" branch below covers that case too)
-                | None when Impl.endsWith ".dll" project.Compiler.Path -> "dotnet", [project.Compiler.Path]
-                | None -> project.Compiler.Path, []
+                | None when Impl.endsWith ".dll" compiler.Path -> "dotnet", [compiler.Path]
+                | None -> compiler.Path, []
 
             do! trace Debug "Command line: '%s %s'" cscTool
                     ((extraArgs @ List.ofSeq commandLineArgs) |> String.concat " ")
@@ -300,35 +303,35 @@ module CscImpl =
                         // compiler inputs are resolved against it rather than against an
                         // argument on the command line -- an XML-doc `<include file='../..'>`
                         // path is resolved relative to the *compiler's* working directory, not
-                        // per source file. `project.Directory` records exactly that (see its
-                        // doc comment on `Lock.Project`); without it, a project compiled from a
+                        // per source file. `Compilation.Directory` records exactly that (see its
+                        // doc comment on `Lock.Compilation`); without it, a project compiled from a
                         // different cwd than its own directory can fail with CS1589 even though
                         // every file the args name is absolute and present. Args, `/out:` etc.
                         // are already absolute, so this only affects paths that never made it
                         // onto the command line.
-                        workdir project.Directory
+                        workdir compilation.Directory
                         logprefix "[csc]"
                         stdoutlevel (Impl.levelFromString Level.Verbose)
                         erroutlevel (Impl.levelFromString Level.Verbose)
                     }
 
-                do! Impl.failOnExitCode options.FailOnError project.Name exitCode
+                do! Impl.failOnExitCode options.FailOnError entry.Name exitCode
             finally
                 deleteTempFiles ()
         }
 
     /// <summary>
-    /// Composes a `Lock.Project` from `Src`/`Ref`/`RefGlobal`/`Resources`/`Define`/`Target`/
+    /// Composes a `Lock.Entry` from `Src`/`Ref`/`RefGlobal`/`Resources`/`Define`/`Target`/
     /// `Platform`/`Unsafe`/`TargetFramework`/`CommandArgs` at recipe time -- the same work the
     /// composed mode always did, just stopping short of running the compiler. The argument list
-    /// it produces is identical, in the same order, to what the old composed mode ran: `/noconfig`
-    /// (first, when the target framework requires it), `/nologo`, `/target:`, `/platform:`,
-    /// `/unsafe`, `/nostdlib+`, `/out:`, `/define:`, sources, `/r:` refs, global refs, `/res:`,
-    /// `CommandArgs`.
+    /// it produces is, in order: `/noconfig` (first, when the target framework requires it),
+    /// `/nologo`, `/target:`, `/platform:`, `/unsafe`, `/nostdlib+`, `/out:`, `/define:`,
+    /// sources, `/reference:` refs (one per reference; was `/r:` before the structured lock),
+    /// global refs, `/res:`, `CommandArgs`. The list goes through `Lock.Compilation.ofArgs`
+    /// like an imported one and gets the same round-trip check.
     ///
-    /// Returns the resolved project together with the framework's environment variables (see
-    /// `run`) and the resx-compiled temporary files the caller has to delete once the
-    /// compilation is done.
+    /// Returns the resolved entry together with the framework's environment variables (see
+    /// `run`).
     /// </summary>
     let private resolve (settings: CscSettingsType) =
         recipe {
@@ -392,7 +395,7 @@ module CscImpl =
                     let lookup = DotNetFwk.locateAssembly fwk
                     (("mscorlib.dll" :: settings.RefGlobal) |> List.map lookup), true, true
 
-            let globalRefs = globalRefPaths |> List.map ((+) "/r:")
+            let globalRefs = globalRefPaths |> List.map ((+) "/reference:")
 
             let args =
                 seq {
@@ -418,7 +421,7 @@ module CscImpl =
 
                     yield! src |> List.map (fun f -> f.FullName)
 
-                    yield! refs |> List.map ((fun f -> f.FullName) >> (+) "/r:")
+                    yield! refs |> List.map ((fun f -> f.FullName) >> (+) "/reference:")
                     yield! globalRefs
 
                     yield! resArgs |> List.map (fun (name, path) -> sprintf "/res:%s,%s" path name)
@@ -443,33 +446,30 @@ module CscImpl =
                         failwithf "compiler package Microsoft.Net.Compilers.Toolset %s could not be restored (expected '%s')" version cscDll
                     cscDll
 
-            let references =
-                (refs |> List.map (fun f -> f.FullName)) @ globalRefPaths
-                |> List.map (fun path -> { Lock.Path = path; Lock.Sha256 = "" })
-
-            let project : Lock.Project = {
+            let compilation, references, analyzers = Lock.Compilation.ofArgs args
+            let entry : Lock.Entry = {
                 Name = Path.GetFileNameWithoutExtension outFile.Name
-                Project = ""
-                Directory = options.ProjectRoot
-                // `Sdk` names the reference-assembly framework, as everywhere else in this
-                // record -- the package version (when `Toolset` is set) is in `Path` instead,
-                // there being nowhere else in `Compiler` for it
-                Compiler = { Tool = "csc"; Path = compilerPath; Sha256 = ""; Sdk = fwkInfo.Version }
-                Args = args
-                References = references
-                Analyzers = []
-                ProjectRefs = []
-                Imports = []
-                Generated = []
-                Resources = resources
-                Properties = Map.empty
+                // no msbuild evaluation behind a composed compilation: no project, no imports,
+                // no SDK, no pin
+                Evaluation = { Project = ""; ProjectRefs = []; Imports = []; Sdk = ""; SdkPin = None; Properties = Map.empty }
+                Compilation = { compilation with Directory = options.ProjectRoot; Resources = resources }
+                Dependencies =
+                    { Compiler = { Tool = "csc"; Path = compilerPath; Sha256 = ""; Version = Lock.compilerVersion compilerPath }
+                      References = references
+                      Analyzers = analyzers
+                      Packages = [] }
             }
+            // the same fidelity check the import makes: one item per switch here, so it holds
+            let rebuilt = entry.Args
+            if rebuilt <> args then
+                failwithf "'%s': the command line rebuilt from the resolved entry differs from the composed one:\n%s"
+                    entry.Name (Lock.diffList args rebuilt |> String.concat "\n")
 
-            return project, fwkInfo.EnvVars
+            return entry, fwkInfo.EnvVars
         }
 
     /// <summary>
-    /// Resolves composed `csc {}` settings into a `Lock.Project` without compiling -- the
+    /// Resolves composed `csc {}` settings into a `Lock.Entry` without compiling -- the
     /// smallest piece `lock-from-settings.md` recommends (1b) so a lock-recording rule can
     /// write out what a compilation would look like, the way `Project.import` does for an
     /// msbuild project. Both feed `CscLock.compile`.
@@ -488,26 +488,26 @@ module CscImpl =
     module CscLock =
         let resolve (settings: CscSettingsType) =
             recipe {
-                let! project, _ = resolve settings
-                return project
+                let! entry, _ = resolve settings
+                return entry
             }
 
         /// <summary>
         /// Replays a resolved compilation -- one imported by `Project.import`, read back from a
-        /// lock, or produced by `resolve` -- exactly as recorded: the project's own `Args` is
+        /// lock, or produced by `resolve` -- exactly as recorded: the entry's own `Args` is
         /// the whole compilation (see `run`). This is the replay entry point; it is not a mode
         /// of `csc {}`, because a settings record carrying a lock would let every other setting
         /// on it be silently ignored (conceptual-review.md 2.2).
         /// </summary>
-        let compile (project: Lock.Project) = run RunOptions.Default project []
+        let compile (entry: Lock.Entry) = run RunOptions.Default entry []
 
         /// `compile` with the runner's own options (fail-on-error, an overriding `cscpath`).
-        let compileWith (options: RunOptions) (project: Lock.Project) = run options project []
+        let compileWith (options: RunOptions) (entry: Lock.Entry) = run options entry []
 
     /// <summary>
     /// C# compiler task. Compiles the source fileset into the target assembly: `resolve` turns
-    /// the settings into a `Lock.Project` and the one runner compiles it. To replay a lock
-    /// instead, call `CscLock.compile` -- there is one resolved form, a `Lock.Project`, and one
+    /// the settings into a `Lock.Entry` and the one runner compiles it. To replay a lock
+    /// instead, call `CscLock.compile` -- there is one resolved form, a `Lock.Entry`, and one
     /// runner; settings are intent.
     /// </summary>
     /// <param name="settings">Compiler settings</param>
@@ -516,8 +516,8 @@ module CscImpl =
 
         recipe {
             do! trace Level.Debug "Csc: settings=%A" settings
-            let! (project, envVars) = resolve settings
-            do! run { FailOnError = settings.FailOnError; CscPath = settings.CscPath } project envVars
+            let! (entry, envVars) = resolve settings
+            do! run { FailOnError = settings.FailOnError; CscPath = settings.CscPath } entry envVars
         }
 
     /// Computation expression builder for the csc task.

@@ -67,7 +67,7 @@ type ``Dotnet tasks tests``() =
     // temp file (deleted after the compile, and unusable if the settings were instead
     // recorded as a lock -- see `CscLock.resolve` in Dotnet.csc.fs and the csc-syntax.md
     // "composed mode resx" paragraph). It records a permanent `(resx, .resources)` pair in
-    // `Lock.Project.Resources` and `run`'s existing resource step compiles it, exactly as it
+    // `Lock.Compilation.Resources` and `run`'s existing resource step compiles it, exactly as it
     // already does for an imported project.
     [<Test; Category("Integration")>]
     member x.``runs csc task with a composed resx resource``() =

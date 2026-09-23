@@ -96,6 +96,35 @@ type ``Nuget assets``() =
         // the project reference's own dependency shows up as an edge even though it is excluded from Packages
         Assert.That (assets.Graph, Contains.Item (("MyProj", "1.0.0"), ("Baz.Qux", "4.5.6")))
 
+    /// A single-`TargetFramework` project: NuGet keys `targets` by the full framework name,
+    /// not the alias (dataengine's `project.assets.json` has `.NETStandard,Version=v2.0`).
+    [<Test>]
+    member x.``finds the target keyed by the full framework name of a single-target project``() =
+        let assetsFile = Directory.GetCurrentDirectory() </> "project.assets.single.json"
+        File.WriteAllText (assetsFile, """
+            {
+              "targets": {
+                ".NETStandard,Version=v2.0": {
+                  "Foo.Bar/1.2.3": { "type": "package", "dependencies": { "Baz.Qux": "[4.5.6, )" } },
+                  "Baz.Qux/4.5.6": { "type": "package" }
+                }
+              },
+              "project": {
+                "frameworks": {
+                  "netstandard2.0": { "targetAlias": "netstandard2.0", "dependencies": { "Foo.Bar": { "target": "Package", "version": "[1.2.3, )" } } }
+                }
+              }
+            }
+            """)
+        let assets = Nuget.readAssets assetsFile "netstandard2.0"
+        Assert.That (assets.Packages |> List.sort, Is.EqualTo (["Baz.Qux", "4.5.6"; "Foo.Bar", "1.2.3"] |> List.sort))
+        Assert.That (assets.Direct, Is.EqualTo ["Foo.Bar"])
+
+        Assert.That (Nuget.frameworkFullName "netstandard2.0", Is.EqualTo ".NETStandard,Version=v2.0")
+        Assert.That (Nuget.frameworkFullName "net472", Is.EqualTo ".NETFramework,Version=v4.7.2")
+        Assert.That (Nuget.frameworkFullName "netcoreapp3.1", Is.EqualTo ".NETCoreApp,Version=v3.1")
+        Assert.That (Nuget.frameworkFullName "net8.0", Is.EqualTo "net8.0")
+
     [<Test>]
     member x.``picks the rid-less net8_0 entry over net8_0-win-x64``() =
         let assetsFile = Directory.GetCurrentDirectory() </> "project.assets.net8.json"

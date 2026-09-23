@@ -48,8 +48,11 @@
     <Compile Include="Json.fs" />
     <Compile Include="Roots.fs" />
     <Compile Include="Fsproj.fs" />
-    <Compile Include="Project.fs" />
+    <!-- Nuget reads restore's outputs (project.assets.json, the package cache) and depends on
+         Json only; it compiles ahead of Project.fs because the import folds the package graph
+         into the lock (Lock.Package) at import time. -->
     <Compile Include="Nuget.fs" />
+    <Compile Include="Project.fs" />
     <Compile Include="Sbom.fs" />
     <Compile Include="Verify.fs" />
     <Compile Include="StrongName.fs" />

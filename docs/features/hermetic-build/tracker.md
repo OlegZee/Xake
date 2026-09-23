@@ -43,7 +43,7 @@ details live in brief.md (section refs) or session.md.
 - [x] `Nuget.readAssets` / `readCache` / `packageOf` (sha512, source, license, supplier, repository, commit) — `Nuget.fs`, `NugetTests.fs` (8), `nuget-sbom.md`
 - [~] `Sbom.cycloneDx` deterministic (no timestamp, content-derived serial), `Sbom.forAssembly` (packages by purl with nested file evidence, `ref/`-only packages `excluded`, dependencies from the restore graph, `formulation` with compiler/SDK/analyzers) — `Sbom.fs`, `SbomTests.fs` (3). Per package (`forPackage`) pending
 - [ ] compare with page's existing CycloneDX output (`GenerateSbom=true`)
-- [ ] `Verify`: sha256, Authenticode PE hash, compare
+- [x] `Verify`: sha256, Authenticode PE hash (checksum and certificate table excluded, PE32/PE32+), `compare` with byte ranges labelled TimeDateStamp/CheckSum/CertificateTable/PDB id/StrongNameSignature/Content, `verdict` — `Verify.fs`, `VerifyTests.fs` (4), `verify.md`
 
 ## Slice 3 — ring 2/3 (brief §8f, §8g)
 - [ ] Babel recipe with seed; PE timestamp normalisation + strong-name re-sign, or vendor option

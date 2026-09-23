@@ -190,7 +190,11 @@ module Verify =
     /// What differs between two PE files, for the audit report: byte-compares them, merges
     /// adjacent differing bytes (gaps under 4 bytes bridged) into ranges, and labels each range
     /// using file `a`'s layout. `[]` when the files are identical. A trailing size mismatch is
-    /// reported as one final "Content" range.
+    /// reported as one or more final ranges: when `b` is the longer file, the extra bytes exist
+    /// only in `b`, so they (and any recognised field inside, typically an appended
+    /// `CertificateTable`) are labelled from file `b`'s own layout instead -- a signed copy
+    /// appends its certificate table after everything `a`'s layout can name. Every other size
+    /// mismatch (including `a` the longer file) keeps the old single trailing "Content" range.
     let compare (a: string) (b: string) : Difference list =
         let ba = File.ReadAllBytes a
         let bb = File.ReadAllBytes b
@@ -210,18 +214,47 @@ module Verify =
 
         let labelled = ranges |> List.map (fun (o, len) -> { Offset = o; Length = len; Field = fieldAt la o })
 
-        if ba.Length <> bb.Length then
-            labelled @ [ { Offset = minLen; Length = (max ba.Length bb.Length) - minLen; Field = "Content" } ]
-        else
+        if ba.Length = bb.Length then
             labelled
+        elif bb.Length > ba.Length then
+            let lb = layout bb
+            let tailOffsets = [ minLen .. bb.Length - 1 ]
+            let tailRanges =
+                (([]: (int * int * string) list), tailOffsets)
+                ||> List.fold (fun acc off ->
+                    let f = fieldAt lb off
+                    match acc with
+                    | (start, last, lf) :: rest when lf = f && off = last + 1 -> (start, off, f) :: rest
+                    | _ -> (off, off, f) :: acc)
+                |> List.rev
+                |> List.map (fun (start, last, f) -> { Offset = start; Length = last - start + 1; Field = f })
+            labelled @ tailRanges
+        else
+            labelled @ [ { Offset = minLen; Length = (max ba.Length bb.Length) - minLen; Field = "Content" } ]
 
-    /// A one-line verdict from `compare`'s result.
+    /// Space-grouped thousands, e.g. `148213 -> "148 213"` -- readable byte counts in `verdict`.
+    let private formatThousands (n: int) : string =
+        let s = string n
+        let len = s.Length
+        if len <= 3 then s
+        else
+            let firstLen = match len % 3 with 0 -> 3 | r -> r
+            [ s.Substring(0, firstLen) ] @ [ for i in firstLen .. 3 .. len - 3 -> s.Substring(i, 3) ]
+            |> String.concat " "
+
+    /// A one-line verdict from `compare`'s result: the field list (or range count) plus how much
+    /// actually differs -- the total differing bytes across all ranges, and, when unlabelled
+    /// content is involved, the single largest range (its field, offset and length), so a big
+    /// block does not hide behind a range count.
     let verdict (diffs: Difference list) : string =
         match diffs with
         | [] -> "identical"
         | _ ->
             let fields = diffs |> List.map (fun d -> d.Field) |> List.distinct
+            let totalBytes = diffs |> List.sumBy (fun d -> d.Length)
             if List.contains "Content" fields then
-                sprintf "content differs (%d ranges)" (List.length diffs)
+                let largest = diffs |> List.maxBy (fun d -> d.Length)
+                sprintf "content differs: %d ranges, %s bytes, largest %s bytes at 0x%x (%s)"
+                    (List.length diffs) (formatThousands totalBytes) (formatThousands largest.Length) largest.Offset largest.Field
             else
-                "identical except: " + String.concat ", " fields
+                sprintf "identical except: %s, %s bytes" (String.concat ", " fields) (formatThousands totalBytes)

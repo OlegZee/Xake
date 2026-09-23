@@ -2,6 +2,7 @@ namespace Tests
 
 open System
 open System.IO
+open System.IO.Compression
 open NUnit.Framework
 
 open Xake
@@ -115,10 +116,24 @@ type ``Sbom cycloneDx``() =
         let assemblyFile = Directory.GetCurrentDirectory() </> "MyAssembly.dll"
         File.WriteAllText (assemblyFile, "the shipped assembly")
 
+        // no compiled reference was ever attributed to this one (nothing in `lock.References`
+        // points into its cache entry) but it ships a runtime asset and is reachable from a
+        // direct dependency through the graph -- `Nuget.ships` should still call it `required`.
+        let runtimeDir = cacheRoot </> "runtime.only" </> "2.0.0"
+        Directory.CreateDirectory (runtimeDir </> "runtimes" </> "win" </> "lib" </> "net6.0") |> ignore
+        File.WriteAllText (runtimeDir </> "runtimes" </> "win" </> "lib" </> "net6.0" </> "x.dll", "runtime asset")
+
+        // present in the restore graph, no compiled reference, and nothing in its cache entry
+        // ships (and it is not reachable from a direct dependency either) -- `excluded`.
+        let noShipDir = cacheRoot </> "excluded.noship" </> "3.0.0"
+        Directory.CreateDirectory noShipDir |> ignore
+
         let assets : Nuget.Assets = {
-            Packages = [ "foo.bar", "1.2.3"; "ref.only", "1.0.0" ]
-            Graph = [ ("foo.bar", "1.2.3"), ("ref.only", "1.0.0") ]
-            Direct = [ "foo.bar" ]
+            // mixed-case ids, as `project.assets.json` spells them -- the cache directories
+            // above stay lowercase, as the real NuGet cache always does.
+            Packages = [ "Foo.Bar", "1.2.3"; "Ref.Only", "1.0.0"; "Runtime.Only", "2.0.0"; "Excluded.NoShip", "3.0.0" ]
+            Graph = [ ("Foo.Bar", "1.2.3"), ("Ref.Only", "1.0.0"); ("Foo.Bar", "1.2.3"), ("Runtime.Only", "2.0.0") ]
+            Direct = [ "Foo.Bar" ]
             Framework = "netstandard2.0"
         }
 
@@ -143,23 +158,37 @@ type ``Sbom cycloneDx``() =
         Assert.That (bom.Root.Hashes, Is.EqualTo [ { Alg = "SHA-256"; Content = Lock.sha256 assemblyFile } ])
         Assert.That (bom.Root.Version, Is.EqualTo "1.0.0")
 
-        let fooComponent = bom.Components |> List.find (fun c -> c.BomRef = "pkg:nuget/foo.bar@1.2.3")
+        let fooComponent = bom.Components |> List.find (fun c -> c.BomRef = "pkg:nuget/Foo.Bar@1.2.3")
         Assert.That (fooComponent.Scope, Is.EqualTo "required")
         Assert.That (fooComponent.Supplier, Is.EqualTo "Acme Corp")
         Assert.That (fooComponent.License, Is.EqualTo "MIT")
         Assert.That (fooComponent.Hashes, Is.EqualTo [ { Alg = "SHA-512"; Content = "000000" } ])
         Assert.That (fooComponent.Components |> List.map (fun f -> f.Hashes), Is.EqualTo [ [ { Alg = "SHA-256"; Content = Lock.sha256 fooDll } ] ])
 
-        let refComponent = bom.Components |> List.find (fun c -> c.BomRef = "pkg:nuget/ref.only@1.0.0")
+        let refComponent = bom.Components |> List.find (fun c -> c.BomRef = "pkg:nuget/Ref.Only@1.0.0")
         Assert.That (refComponent.Scope, Is.EqualTo "excluded")
+
+        // no referenced file, but reachable from the direct dependency and ships a `runtimes/`
+        // asset -- required, with no nested file evidence (nothing was ever referenced).
+        let runtimeComponent = bom.Components |> List.find (fun c -> c.BomRef = "pkg:nuget/Runtime.Only@2.0.0")
+        Assert.That (runtimeComponent.Scope, Is.EqualTo "required")
+        Assert.That (runtimeComponent.Components, Is.Empty)
+
+        // no referenced file, not reachable from any direct dependency, nothing in its cache
+        // entry ships -- excluded.
+        let noShipComponent = bom.Components |> List.find (fun c -> c.BomRef = "pkg:nuget/Excluded.NoShip@3.0.0")
+        Assert.That (noShipComponent.Scope, Is.EqualTo "excluded")
+        Assert.That (noShipComponent.Components, Is.Empty)
 
         let projectRefComponent = bom.Components |> List.find (fun c -> c.BomRef = "file:" + projectRefDll)
         Assert.That (projectRefComponent.Type, Is.EqualTo "file")
         Assert.That (projectRefComponent.Scope, Is.EqualTo "required")
         Assert.That (projectRefComponent.Hashes, Is.EqualTo (List.empty<Hash>))
 
-        Assert.That (bom.Dependencies |> List.find (fun (r, _) -> r = "asm:MyAssembly") |> snd, Is.EqualTo [ "pkg:nuget/foo.bar@1.2.3" ])
-        Assert.That (bom.Dependencies |> List.find (fun (r, _) -> r = "pkg:nuget/foo.bar@1.2.3") |> snd, Is.EqualTo [ "pkg:nuget/ref.only@1.0.0" ])
+        Assert.That (bom.Dependencies |> List.find (fun (r, _) -> r = "asm:MyAssembly") |> snd, Is.EqualTo [ "pkg:nuget/Foo.Bar@1.2.3" ])
+        Assert.That (
+            bom.Dependencies |> List.find (fun (r, _) -> r = "pkg:nuget/Foo.Bar@1.2.3") |> snd,
+            Is.EquivalentTo [ "pkg:nuget/Ref.Only@1.0.0"; "pkg:nuget/Runtime.Only@2.0.0" ])
 
         Assert.That (bom.Formulation |> List.exists (fun c -> c.BomRef = "file:" + analyzerFile && c.Scope = "excluded"), Is.True)
         Assert.That (bom.Formulation |> List.exists (fun c -> c.BomRef = "tool:csc"), Is.True)
@@ -176,3 +205,87 @@ type ``Sbom cycloneDx``() =
             | None -> 0
 
         Assert.That (componentsCount, Is.EqualTo 1)
+
+    [<Test>]
+    member x.``forPackage builds the bom of a nupkg from its assemblies' boms``() =
+        let cacheRoot = Directory.GetCurrentDirectory() </> "pkgsForPackage"
+
+        // one package shared by both assemblies, each referencing a different file out of it --
+        // exercises the "files merged under their package" part of the merge.
+        let commonPkgNuspec = """<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2013/05/nuspec.xsd">
+  <metadata minClientVersion="2.12"><id>Common.Pkg</id><version>1.0.0</version><authors>Acme</authors></metadata>
+</package>
+"""
+        let commonDir = cacheRoot </> "common.pkg" </> "1.0.0"
+        Directory.CreateDirectory (commonDir </> "lib" </> "netstandard2.0") |> ignore
+        File.WriteAllText (commonDir </> ".nupkg.metadata", fooBarMetadata)
+        File.WriteAllText (commonDir </> "common.pkg.nuspec", commonPkgNuspec)
+        let compADll = commonDir </> "lib" </> "netstandard2.0" </> "CompA.dll"
+        let compBDll = commonDir </> "lib" </> "netstandard2.0" </> "CompB.dll"
+        File.WriteAllText (compADll, "component seen by assembly A")
+        File.WriteAllText (compBDll, "component seen by assembly B")
+
+        let assemblyADll = Directory.GetCurrentDirectory() </> "A.dll"
+        let assemblyBDll = Directory.GetCurrentDirectory() </> "B.dll"
+        File.WriteAllText (assemblyADll, "assembly A")
+        File.WriteAllText (assemblyBDll, "assembly B")
+
+        let assets : Nuget.Assets =
+            { Packages = [ "Common.Pkg", "1.0.0" ]; Graph = []; Direct = [ "Common.Pkg" ]; Framework = "netstandard2.0" }
+
+        let lockFor name refDll : Lock.Project =
+            { Name = name; Project = ""; Directory = ""
+              Compiler = { Tool = "csc"; Path = ""; Sha256 = ""; Sdk = "8.0.100" }
+              Args = []; References = [ Lock.hashed refDll ]; Analyzers = []; ProjectRefs = []
+              Imports = []; Generated = []; Resources = []; Properties = Map.ofList [ "Version", "1.0.0" ] }
+
+        let bomA = Sbom.forAssembly cacheRoot assets (lockFor "A" compADll) assemblyADll
+        let bomB = Sbom.forAssembly cacheRoot assets (lockFor "B" compBDll) assemblyBDll
+
+        // the nupkg itself: a `test.nuspec` at the zip root plus one shipped file, built with
+        // `ZipArchive` the way `Sbom.forPackage` reads it back.
+        let myPkgNuspec = """<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2013/05/nuspec.xsd">
+  <metadata minClientVersion="2.12"><id>MyPkg</id><version>1.0.0</version><authors>Acme</authors></metadata>
+</package>
+"""
+        let nupkgPath = Directory.GetCurrentDirectory() </> "MyPkg.1.0.0.nupkg"
+        do
+            use fs = File.Create nupkgPath
+            use archive = new ZipArchive (fs, ZipArchiveMode.Create)
+            let writeEntry (name: string) (content: string) =
+                let entry = archive.CreateEntry name
+                use writer = new StreamWriter (entry.Open ())
+                writer.Write content
+            writeEntry "test.nuspec" myPkgNuspec
+            writeEntry "lib/netstandard2.0/A.dll" "the shipped dll"
+
+        let bom = Sbom.forPackage nupkgPath [ bomA; bomB ]
+
+        Assert.That (bom.Root.BomRef, Is.EqualTo "nupkg:MyPkg.1.0.0")
+        Assert.That (bom.Root.Name, Is.EqualTo "MyPkg")
+        Assert.That (bom.Root.Version, Is.EqualTo "1.0.0")
+
+        let nupkgBytes = File.ReadAllBytes nupkgPath
+        let expectedSha256 =
+            use a = System.Security.Cryptography.SHA256.Create ()
+            a.ComputeHash nupkgBytes |> Array.map (sprintf "%02x") |> String.concat ""
+        let expectedSha512 =
+            use a = System.Security.Cryptography.SHA512.Create ()
+            a.ComputeHash nupkgBytes |> Array.map (sprintf "%02x") |> String.concat ""
+        Assert.That (bom.Root.Hashes, Is.EquivalentTo [ { Alg = "SHA-256"; Content = expectedSha256 }; { Alg = "SHA-512"; Content = expectedSha512 } ])
+
+        // both assembly roots nested under the package root, hashes carried, no further nesting
+        Assert.That (bom.Root.Components |> List.map (fun c -> c.BomRef), Is.EquivalentTo [ "asm:A"; "asm:B" ])
+        Assert.That ((bom.Root.Components |> List.find (fun c -> c.BomRef = "asm:A")).Hashes, Is.EqualTo bomA.Root.Hashes)
+        Assert.That (bom.Root.Components |> List.forall (fun c -> c.Components.IsEmpty), Is.True)
+
+        // the shared package appears once at the top level, with both files nested under it
+        let mergedPkg = bom.Components |> List.find (fun c -> c.BomRef = "pkg:nuget/Common.Pkg@1.0.0")
+        Assert.That (bom.Components |> List.length, Is.EqualTo 1)
+        Assert.That (mergedPkg.Components |> List.map (fun f -> f.Name), Is.EquivalentTo [ "CompA.dll"; "CompB.dll" ])
+
+        Assert.That (bom.Dependencies |> List.find (fun (r, _) -> r = "nupkg:MyPkg.1.0.0") |> snd, Is.EquivalentTo [ "asm:A"; "asm:B" ])
+        Assert.That (bom.Dependencies |> List.find (fun (r, _) -> r = "asm:A") |> snd, Is.EqualTo [ "pkg:nuget/Common.Pkg@1.0.0" ])
+        Assert.That (bom.Dependencies |> List.find (fun (r, _) -> r = "asm:B") |> snd, Is.EqualTo [ "pkg:nuget/Common.Pkg@1.0.0" ])

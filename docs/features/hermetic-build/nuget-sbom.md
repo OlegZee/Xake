@@ -93,26 +93,53 @@ tests can drive with a hand-built `Bom` and no lock at all.
 |---|---|
 | `metadata.component` (root) | the shipped assembly: `Name = lock.Name`; `Version` from `lock.Properties.["Version"]`, falling back to `InformationalVersion`; one SHA-256 hash of the assembly file (`Lock.sha256`) |
 | `metadata.tools.components[0]` | `{ type: application, name: "Xake", version }`, version from `Xake.Dotnet`'s own assembly version |
-| `components[].purl` | `pkg:nuget/<Id>@<Version>`, one component per package found via `Nuget.packageOf cacheRoot` on `lock.References`, grouped |
-| `components[].supplier`, `.licenses` | `Nuget.readCache`'s `Supplier`/`License` |
+| `components[].purl` | `pkg:nuget/<Id>@<Version>`, one component per package in `assets.Packages` -- every package the restore graph carries, not just the ones a compiled reference happens to be attributed to; `<Id>`/`<Version>` keep `project.assets.json`'s own casing |
+| `components[].supplier`, `.licenses` | `Nuget.readCache`'s `Supplier`/`License` -- matched to the package's cache directory case-insensitively (the cache always lowercases `id`/`version`, `assets.Packages` usually does not) |
 | `components[].hashes` (package) | `Nuget.readCache`'s `Sha512` (`.nupkg.metadata`'s base64 `contentHash`), converted to hex -- CycloneDX hashes are hex, NuGet's cache stores base64 |
 | `components[].components[]` (nested) | the package's own referenced files, `type: file`, SHA-256 from the matching `lock.References` entry; only files with a non-empty hash are listed |
 | top-level `components[]` (non-nested `file`) | `lock.References` entries `Nuget.packageOf` cannot place under `cacheRoot` -- a project reference, or an SDK reference pack under `$(DotnetRoot)` -- `scope: "required"`, hash omitted when the lock has none yet |
 | `dependencies[]` | root depends on every *direct* (`assets.Direct`), *`scope: required`* package; package-to-package edges come from `assets.Graph`, kept only where both ends are packages already in the BOM |
 | `formulation[0].components[]` | one `file` per `lock.Analyzers` entry, one `application` for the compiler (`csc`, `lock.Compiler.Sha256`), one for the SDK (`.NET SDK`, `lock.Compiler.Sdk`) -- all `scope: "excluded"` |
 
-### `ref/` vs `lib/` scope
+### Scope: every restore-graph package is a component
 
-A package can ship both a compile-time reference assembly (under a `ref/<tfm>/` folder --
-a facade with no method bodies, used only to compile against) and the real implementation
-(`lib/<tfm>/`, or a runtime-specific `runtimes/<rid>/lib/`). Only what a project actually
-*references* shows up in `lock.References`, so the rule is per package, from what was
-referenced: if **every** file `Nuget.packageOf` places under that package came from a `ref/`
-folder, the whole package component is `scope: "excluded"` -- it never shipped, so a scanner
-should not flag it as a runtime dependency. If **any** referenced file is under `lib/` (or
-anywhere else), the package is `scope: "required"`. The match is on `ref` as a whole path
-segment, case-insensitively, not a substring test -- a package id or file name that merely
-contains "ref" does not trip it.
+`forAssembly` no longer starts from `lock.References` and works backwards to the packages it
+can attribute a file to -- it starts from `assets.Packages`, the *whole* restore graph, and
+attaches referenced files where `Nuget.packageOf` finds them. A scanner wants the graph, not
+just what happened to get linked (brief.md §8e): a package nobody referenced but that the
+restore still pulled in (a platform/reference-assembly pack, a runtime-only package) is still a
+component, just `scope: "excluded"` rather than dropped.
+
+Two cases, by whether any file was ever attributed to the package:
+
+- **Has a referenced file** (`Nuget.packageOf` placed at least one `lock.References` entry
+  under it): a package can ship both a compile-time reference assembly (under a `ref/<tfm>/`
+  folder -- a facade with no method bodies, used only to compile against) and the real
+  implementation (`lib/<tfm>/`, or a runtime-specific `runtimes/<rid>/lib/`). If **every**
+  referenced file is under `ref/`, the component is `scope: "excluded"` -- it never shipped. If
+  **any** referenced file is under `lib/` (or anywhere else), `scope: "required"`. The `ref/`
+  match is on a whole path segment, case-insensitively, not a substring test -- a package id or
+  file name that merely contains "ref" does not trip it. Nested `file` components carry those
+  referenced dlls.
+- **No referenced file at all** (nothing in `lock.References` maps to it -- true of every
+  package `dotnet cyclonedx`'s own SBOM lists that ours previously dropped, e.g.
+  `Microsoft.NETCore.Platforms`, a `*.ReferenceAssemblies.*` pack, `System.ValueTuple`): `scope:
+  "required"`, with no nested files, when the package is reachable from a direct dependency
+  (`assets.Direct`) by following `assets.Graph` edges *and* `Nuget.ships` finds a `lib/` or
+  `runtimes/` directory with files in its cache entry -- a runtime-only package that ships
+  without ever being `/reference`d. Otherwise `scope: "excluded"` -- unreachable, or a pure
+  reference-assembly pack with nothing that actually ships.
+
+### Ids: the restore graph's own casing, matched case-insensitively against the cache
+
+`project.assets.json` spells package ids the way the `PackageReference` (or a dependency's own
+metadata) spelled them -- `Foo.Bar`, not `foo.bar`. `bom-ref`/`purl` use that casing verbatim, so
+`pkg:nuget/Foo.Bar@1.2.3` matches what `dotnet cyclonedx` and other scanners emit for the same
+package (the comparison in `sbom-compare.txt` found ours all-lowercase, theirs original-cased --
+this closes that gap). `Nuget.packageOf` still returns the cache's own lowercase directory
+names, so referenced files are joined to `assets.Packages` entries via a case-insensitive key
+(`id.ToLowerInvariant(), version.ToLowerInvariant()`), never by requiring the two to already
+agree on case.
 
 ### Determinism
 
@@ -128,10 +155,32 @@ lock diff and a BOM diff tell the same story. A later option can set `metadata.t
 `SOURCE_DATE_EPOCH` for a build system that wants a real date without losing byte-identity
 across a rebuild of the same commit -- not wired up yet.
 
-### What `forPackage` will add later
+### `forPackage`: one BOM per shipped nupkg
 
-`forAssembly` answers "what is in this dll". `Sbom.forPackage` (not built yet) is the per-nupkg
-BOM brief.md §8e asks for: the union of its assemblies' `forAssembly` BOMs, with the nupkg's own
-hash as `metadata.component`, so a customer who takes a package rather than individual dlls
-still gets one document that covers everything inside it -- the assembly-level BOMs stay
-available underneath for anyone who took the dlls directly (installer users).
+`forAssembly` answers "what is in this dll". `Sbom.forPackage (nupkgPath: string) (assemblies:
+Bom list) : Bom` is the per-nupkg BOM brief.md §8e asks for: the union of its assemblies'
+`forAssembly` BOMs, with the nupkg's own identity and hash as `metadata.component`, so a
+customer who takes a package rather than individual dlls still gets one document that covers
+everything inside it -- the assembly-level BOMs stay available underneath for anyone who took
+the dlls directly (installer users).
+
+- **Root**: `bom-ref = "nupkg:" + <nupkg file name without extension>`; `name`/`version` read
+  from the `.nuspec` entry inside the nupkg (`System.IO.Compression.ZipFile`/`ZipArchive` --
+  checked to compile and resolve on **both** `net462` and `netstandard2.0` from the SDK's own
+  framework reference assemblies, no `<Reference Include="System.IO.Compression" />` needed in
+  the fsproj, so `forPackage` has one implementation, not an `#if NETFRAMEWORK` split);
+  `hashes` = SHA-256 and SHA-512 of the nupkg file itself.
+- **Root's `components[]`** (nested): each input `Bom.Root` (the assembly roots), as `library`
+  components carrying their own hashes, with no further nesting -- their evidence is already
+  surfaced at the top level below, so it is not duplicated here.
+- **`Components`** (top level): the union, by `bom-ref`, of every assembly BOM's `Components` --
+  a package referenced by two of the nupkg's assemblies appears once, with its nested `file`
+  evidence merged (the union of both assemblies' referenced files under it); `scope` widens to
+  `"required"` if either assembly saw it that way.
+- **`Dependencies`**: the nupkg root depends on each assembly's own root, plus the union of the
+  assemblies' own dependency edges (merged by `ref`, `dependsOn` unioned).
+- **`Formulation`**: the union, by `bom-ref`, of the assemblies' formulations (analyzers, `csc`,
+  the SDK).
+
+Every list is sorted by its ref before being returned, matching `cycloneDx`'s own determinism:
+two calls with the same inputs produce the same `Bom`, and rendering it is byte-identical.

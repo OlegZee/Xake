@@ -47,6 +47,8 @@
     <Compile Include="Nuget.fs" />
     <Compile Include="Sbom.fs" />
     <Compile Include="Verify.fs" />
+    <Compile Include="StrongName.fs" />
+    <Compile Include="Pack.fs" />
     <Compile Include="Dotnet.csc.fs" />
     <Compile Include="Dotnet.fsc.fs" />
     <Compile Include="Dotnet.resgen.fs" />

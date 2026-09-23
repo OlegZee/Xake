@@ -190,36 +190,75 @@ module Sbom =
 
     let private keyOf (id: string) (version: string) = id.ToLowerInvariant (), version.ToLowerInvariant ()
 
-    /// The bill of materials for one compiled assembly: `Root` is the assembly itself; every
-    /// reference under the NuGet cache (`Nuget.packageOf`) becomes one `library` component per
-    /// package -- `purl`, identity and license from `Nuget.readCache`, the sha512 content hash
-    /// (hex, from the cache's base64) when known, nested `file` components for the referenced
-    /// dlls with their sha256 from the lock -- `scope: "excluded"` when every referenced file is
-    /// under that package's `ref/` folder (a compile-time facade), `"required"` when any is under
-    /// `lib/`. References outside the cache (a project reference, an SDK reference pack under
+    /// The bill of materials for one compiled assembly: `Root` is the assembly itself.
+    ///
+    /// **Every package in the restore graph (`assets.Packages`) is a component** -- not just
+    /// the ones a compiled reference happens to be attributed to -- because a scanner wants the
+    /// graph, not just what got linked (brief.md §8e). `id`/`version` keep `project.assets.json`'s
+    /// own casing for the `bom-ref`/`purl`; `Nuget.readCache`/`Nuget.packageOf` are matched
+    /// case-insensitively against it (the cache's directory names are always lowercase). Scope:
+    /// - a package with at least one referenced file (`Nuget.packageOf` attributes it): `excluded`
+    ///   when every referenced file is under its `ref/` folder (a compile-time facade),
+    ///   `required` when any is under `lib/` (or anywhere else that is not `ref/`) -- nested
+    ///   `file` components carry those referenced dlls with their sha256 from the lock.
+    /// - a package with **no** referenced file: `required`, with no nested files, when it is
+    ///   reachable from a direct dependency (`assets.Direct`) by following `assets.Graph` edges
+    ///   and `Nuget.ships` finds `lib/` or `runtimes/` content in the cache for it (a
+    ///   runtime-only package that ships without ever being `/reference`d); `excluded` otherwise
+    ///   (unreachable, or nothing in the cache that ships -- e.g. a pure reference-assembly pack
+    ///   like `Microsoft.NETFramework.ReferenceAssemblies.*`).
+    ///
+    /// References outside the cache entirely (a project reference, an SDK reference pack under
     /// `$(DotnetRoot)`) become top-level `file` components, `scope: "required"`, hash omitted
     /// when the lock has none (a project reference not yet built). `Dependencies` has the root
-    /// depending on every *direct*, *required* package (`assets.Direct`), plus every
-    /// package-to-package edge from `assets.Graph` whose two ends are both packages in this BOM.
-    /// `Formulation` records what compiled it but did not ship: the analyzers, `csc` and the SDK,
-    /// all `scope: "excluded"`.
+    /// depending on every *direct*, *required* package, plus every package-to-package edge from
+    /// `assets.Graph` whose two ends are both packages in this BOM. `Formulation` records what
+    /// compiled it but did not ship: the analyzers, `csc` and the SDK, all `scope: "excluded"`.
     let forAssembly (cacheRoot: string) (assets: Nuget.Assets) (lock: Lock.Project) (assemblyPath: string) : Bom =
         let refsWithPackage = lock.References |> List.map (fun r -> r, Nuget.packageOf cacheRoot r.Path)
-
-        let packageGroups =
-            refsWithPackage
-            |> List.choose (fun (r, pkg) -> pkg |> Option.map (fun p -> p, r))
-            |> List.groupBy fst
-            |> List.map (fun (idVer, items) -> idVer, items |> List.map snd)
-
         let nonPackageRefs = refsWithPackage |> List.choose (fun (r, pkg) -> if pkg.IsNone then Some r else None)
 
+        // referenced files, grouped by the (id, version) key `packageOf` found for them --
+        // case-insensitive, so it lines up with `assets.Packages`'s own-cased entries below.
+        let refsByKey =
+            refsWithPackage
+            |> List.choose (fun (r, pkg) -> pkg |> Option.map (fun (id, version) -> keyOf id version, r))
+            |> List.groupBy fst
+            |> List.map (fun (k, items) -> k, items |> List.map snd)
+            |> Map.ofList
+
+        // reachability from a direct dependency, following the restore graph -- for the
+        // "no referenced file" packages, where evidence alone cannot tell required from excluded.
+        let graphEdgesByKey =
+            assets.Graph |> List.map (fun ((fromId, fromVer), (toId, toVer)) -> keyOf fromId fromVer, keyOf toId toVer)
+        let directSet = assets.Direct |> List.map (fun s -> s.ToLowerInvariant ()) |> Set.ofList
+        let directKeys =
+            assets.Packages
+            |> List.filter (fun (id, _) -> directSet.Contains (id.ToLowerInvariant ()))
+            |> List.map (fun (id, version) -> keyOf id version)
+            |> Set.ofList
+        let reachable =
+            let rec bfs (frontier: Set<string * string>) (visited: Set<string * string>) =
+                if Set.isEmpty frontier then visited else
+                let next =
+                    graphEdgesByKey
+                    |> List.choose (fun (f, t) -> if frontier.Contains f && not (visited.Contains t) then Some t else None)
+                    |> Set.ofList
+                bfs next (Set.union visited next)
+            bfs directKeys directKeys
+
         let packageComponents =
-            packageGroups
-            |> List.map (fun ((id, version), refs) ->
+            assets.Packages
+            |> List.map (fun (id, version) ->
+                let key = keyOf id version
+                let refs = refsByKey |> Map.tryFind key |> Option.defaultValue []
                 let pkg = Nuget.readCache cacheRoot id version
                 let purl = sprintf "pkg:nuget/%s@%s" id version
-                let scope = if refs |> List.forall (fun r -> underRefFolder r.Path) then "excluded" else "required"
+                let scope =
+                    if not refs.IsEmpty then
+                        if refs |> List.forall (fun r -> underRefFolder r.Path) then "excluded" else "required"
+                    elif reachable.Contains key && Nuget.ships cacheRoot id version then "required"
+                    else "excluded"
                 let hashes =
                     match base64ToHex pkg.Sha512 with
                     | "" -> []
@@ -227,7 +266,7 @@ module Sbom =
                 let files =
                     refs |> List.filter (fun r -> r.Sha256 <> "")
                     |> List.map (fileComponent "") |> List.sortBy (fun f -> f.Name)
-                { Type = "library"; BomRef = purl; Name = pkg.Id; Version = pkg.Version
+                { Type = "library"; BomRef = purl; Name = id; Version = version
                   Supplier = pkg.Supplier; Purl = purl; Hashes = hashes; License = pkg.License
                   Scope = scope; Components = files })
 
@@ -246,20 +285,19 @@ module Sbom =
             { Type = "library"; BomRef = rootBomRef; Name = lock.Name; Version = version
               Supplier = ""; Purl = ""; Hashes = rootHash; License = ""; Scope = ""; Components = [] }
 
-        // (id, version), case-insensitive -> the package's own bom-ref (== its purl), so the
-        // restore graph's ids (whatever case `project.assets.json` used) line up with the
-        // packages actually found in the cache.
+        // (id, version), case-insensitive -> the package's own bom-ref (== its purl, with
+        // `assets.Packages`'s own casing), so the restore graph's edges line up regardless of
+        // what case each side happens to spell the id in.
         let refMap =
-            packageGroups
-            |> List.map (fun ((id, version), _) -> keyOf id version, sprintf "pkg:nuget/%s@%s" id version)
+            assets.Packages
+            |> List.map (fun (id, version) -> keyOf id version, sprintf "pkg:nuget/%s@%s" id version)
             |> Map.ofList
         let scopeOf =
             packageComponents |> List.map (fun c -> c.BomRef, c.Scope) |> Map.ofList
-        let directSet = assets.Direct |> List.map (fun s -> s.ToLowerInvariant ()) |> Set.ofList
 
         let rootDeps =
-            packageGroups
-            |> List.choose (fun ((id, version), _) ->
+            assets.Packages
+            |> List.choose (fun (id, version) ->
                 let bomRef = refMap.[keyOf id version]
                 if scopeOf.[bomRef] = "required" && directSet.Contains (id.ToLowerInvariant ()) then Some bomRef else None)
 
@@ -289,3 +327,102 @@ module Sbom =
           Components = packageComponents @ nonPackageComponents
           Dependencies = dependencies
           Formulation = analyzerComponents @ [ compilerComponent; sdkComponent ] }
+
+    /// Reads a nupkg's own `id`/`version` off the `.nuspec` entry inside it (the file at the
+    /// zip root ending in `.nuspec` -- nupkgs carry exactly one). `System.IO.Compression.ZipFile`
+    /// opens the nupkg as an ordinary zip; nuspec parsing mirrors `Nuget.readCache`'s
+    /// (namespace-agnostic, local-name matching). Checked: `ZipArchive`/`ZipFile` compile and
+    /// resolve on net462 too, from the SDK's own framework reference assemblies -- no
+    /// `<Reference Include="System.IO.Compression" />` needed in the fsproj -- so this is one
+    /// implementation for both target frameworks, no `#if NETFRAMEWORK`.
+    let private readNuspecFromNupkg (nupkgPath: string) : string * string =
+        use archive = System.IO.Compression.ZipFile.OpenRead nupkgPath
+        let entry =
+            archive.Entries
+            |> Seq.find (fun e ->
+                e.FullName.EndsWith (".nuspec", StringComparison.OrdinalIgnoreCase)
+                && not (e.FullName.Contains "/") && not (e.FullName.Contains "\\"))
+        let xml =
+            use stream = entry.Open ()
+            use reader = new StreamReader (stream)
+            reader.ReadToEnd ()
+        let doc = System.Xml.XmlDocument ()
+        doc.LoadXml xml
+        let child (name: string) (el: System.Xml.XmlElement) =
+            el.ChildNodes |> Seq.cast<System.Xml.XmlNode>
+            |> Seq.tryPick (function :? System.Xml.XmlElement as e when e.LocalName = name -> Some e | _ -> None)
+        let text (el: System.Xml.XmlElement option) = el |> Option.map (fun e -> e.InnerText.Trim ()) |> Option.defaultValue ""
+        match doc.DocumentElement |> child "metadata" with
+        | None -> "", ""
+        | Some metadata -> text (metadata |> child "id"), text (metadata |> child "version")
+
+    let private hashBytes (algo: unit -> HashAlgorithm) (bytes: byte[]) =
+        use a = algo ()
+        a.ComputeHash bytes |> Array.map (sprintf "%02x") |> String.concat ""
+
+    /// Merges two components that share a `bom-ref`: nested `Components` (file evidence) union
+    /// by their own `bom-ref` (recursively); `Scope` widens to `required` if either side is;
+    /// the first non-empty value wins for the fields that should not vary between sightings of
+    /// the same package (`Hashes`, `License`, `Supplier`).
+    let rec private mergeComponent (a: Component) (b: Component) : Component =
+        let mergedChildren =
+            (a.Components @ b.Components)
+            |> List.groupBy (fun c -> c.BomRef)
+            |> List.map (fun (_, cs) -> cs |> List.reduce mergeComponent)
+            |> List.sortBy (fun c -> c.BomRef)
+        { a with
+            Components = mergedChildren
+            Hashes = if a.Hashes.IsEmpty then b.Hashes else a.Hashes
+            License = if a.License <> "" then a.License else b.License
+            Supplier = if a.Supplier <> "" then a.Supplier else b.Supplier
+            Scope = if a.Scope = "required" || b.Scope = "required" then "required" else a.Scope }
+
+    /// Unions a list of components by `bom-ref`, merging duplicates with `mergeComponent`.
+    let private mergeComponents (comps: Component list) : Component list =
+        comps |> List.groupBy (fun c -> c.BomRef) |> List.map (fun (_, cs) -> cs |> List.reduce mergeComponent)
+
+    /// Unions a `Dependencies` list by `ref`, merging `dependsOn` sets.
+    let private mergeDependencies (deps: (string * string list) list) : (string * string list) list =
+        deps
+        |> List.groupBy fst
+        |> List.map (fun (r, ds) -> r, ds |> List.collect snd |> List.distinct |> List.sort)
+
+    /// The bill of materials for one shipped nupkg: `Root` is the package itself (identity from
+    /// the nuspec inside the nupkg, hashes of the nupkg file, SHA-256 and SHA-512), with the
+    /// given assemblies' own `Root`s nested under it as `library` components (their hashes, no
+    /// further nesting -- their own evidence is already surfaced at the top level below).
+    /// `Components` is the union, by `bom-ref`, of every assembly BOM's `Components` -- so a
+    /// package referenced by two of the nupkg's assemblies appears once, its nested file
+    /// evidence merged. `Dependencies` has the nupkg root depending on each assembly's root,
+    /// plus the union of the assemblies' own dependency edges. `Formulation` is the union, by
+    /// `bom-ref`, of the assemblies' formulations. Deterministic: every list sorted by its ref.
+    let forPackage (nupkgPath: string) (assemblies: Bom list) : Bom =
+        let id, version = readNuspecFromNupkg nupkgPath
+        let bytes = File.ReadAllBytes nupkgPath
+        let bomRef = "nupkg:" + Path.GetFileNameWithoutExtension nupkgPath
+
+        let assemblyRootComponents =
+            assemblies
+            |> List.map (fun b -> { b.Root with Components = [] })
+            |> List.sortBy (fun c -> c.BomRef)
+
+        let root =
+            { Type = "library"; BomRef = bomRef; Name = id; Version = version
+              Supplier = ""; Purl = ""
+              Hashes =
+                [ { Alg = "SHA-256"; Content = hashBytes (fun () -> SHA256.Create () :> HashAlgorithm) bytes }
+                  { Alg = "SHA-512"; Content = hashBytes (fun () -> SHA512.Create () :> HashAlgorithm) bytes } ]
+              License = ""; Scope = ""; Components = assemblyRootComponents }
+
+        let components =
+            assemblies |> List.collect (fun b -> b.Components) |> mergeComponents |> List.sortBy (fun c -> c.BomRef)
+
+        let rootDeps = bomRef, assemblies |> List.map (fun b -> b.Root.BomRef) |> List.sort
+        let dependencies =
+            rootDeps :: (assemblies |> List.collect (fun b -> b.Dependencies))
+            |> mergeDependencies |> List.sortBy fst
+
+        let formulation =
+            assemblies |> List.collect (fun b -> b.Formulation) |> mergeComponents |> List.sortBy (fun c -> c.BomRef)
+
+        { Root = root; Components = components; Dependencies = dependencies; Formulation = formulation }

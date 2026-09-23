@@ -179,6 +179,22 @@ module Nuget =
           License = license; Supplier = supplier; Repository = repository; Commit = commit
           Directory = dir }
 
+    /// Whether a package's cache entry has anything that ships -- a `lib/` or `runtimes/`
+    /// directory with at least one file underneath. Used for a package the restore graph
+    /// carries (`Assets.Packages`) but that no compiled reference was ever attributed to
+    /// (`packageOf` found nothing for it): a runtime-only package (native assets under
+    /// `runtimes/`, or a `lib/` the compiler never referenced) still ships and belongs in the
+    /// SBOM as `required`; a pure reference-assembly-only or metadata-only package (nothing
+    /// under `lib/` or `runtimes/`, or missing from the cache entirely) does not.
+    let ships (cacheRoot: string) (id: string) (version: string) : bool =
+        let dir = cacheRoot </> id.ToLowerInvariant () </> version.ToLowerInvariant ()
+        if not (Directory.Exists dir) then false else
+        [ "lib"; "runtimes" ]
+        |> List.exists (fun sub ->
+            let subDir = dir </> sub
+            Directory.Exists subDir
+            && Directory.EnumerateFiles (subDir, "*", SearchOption.AllDirectories) |> Seq.isEmpty |> not)
+
     /// The (id, version) a file under the package cache belongs to, from the first two path
     /// segments below `cacheRoot`; `None` when `path` is not under `cacheRoot` at all.
     let packageOf (cacheRoot: string) (path: string) : (string * string) option =

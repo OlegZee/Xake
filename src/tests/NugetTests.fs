@@ -157,6 +157,33 @@ type ``Nuget assets``() =
         Assert.That (Nuget.packageOf root "/cache/root/foo.bar/1.2.3/lib/netstandard2.0/Foo.Bar.dll", Is.EqualTo (Some ("foo.bar", "1.2.3")))
 
     [<Test>]
+    member x.``ships is true for a package with files under lib or runtimes``() =
+        let cacheRoot = Directory.GetCurrentDirectory() </> "pkgsShipsLib"
+        Directory.CreateDirectory (cacheRoot </> "foo.bar" </> "1.2.3" </> "lib" </> "netstandard2.0") |> ignore
+        File.WriteAllText (cacheRoot </> "foo.bar" </> "1.2.3" </> "lib" </> "netstandard2.0" </> "Foo.Bar.dll", "x")
+        Assert.That (Nuget.ships cacheRoot "Foo.Bar" "1.2.3", Is.True)
+
+        let cacheRoot2 = Directory.GetCurrentDirectory() </> "pkgsShipsRuntimes"
+        Directory.CreateDirectory (cacheRoot2 </> "runtime.only" </> "2.0.0" </> "runtimes" </> "win" </> "lib" </> "net6.0") |> ignore
+        File.WriteAllText (cacheRoot2 </> "runtime.only" </> "2.0.0" </> "runtimes" </> "win" </> "lib" </> "net6.0" </> "x.dll", "x")
+        Assert.That (Nuget.ships cacheRoot2 "Runtime.Only" "2.0.0", Is.True)
+
+    [<Test>]
+    member x.``ships is false when the package is missing, empty, or has no lib or runtimes files``() =
+        let cacheRoot = Directory.GetCurrentDirectory() </> "pkgsNoShip"
+        Assert.That (Nuget.ships cacheRoot "Nowhere.Package" "9.9.9", Is.False, "missing from the cache entirely")
+
+        Directory.CreateDirectory (cacheRoot </> "empty.package" </> "1.0.0") |> ignore
+        Assert.That (Nuget.ships cacheRoot "Empty.Package" "1.0.0", Is.False, "cache entry with nothing in it")
+
+        Directory.CreateDirectory (cacheRoot </> "ref.only" </> "1.0.0" </> "ref" </> "netstandard2.0") |> ignore
+        File.WriteAllText (cacheRoot </> "ref.only" </> "1.0.0" </> "ref" </> "netstandard2.0" </> "Ref.dll", "x")
+        Assert.That (Nuget.ships cacheRoot "Ref.Only" "1.0.0", Is.False, "only a ref/ folder, no lib or runtimes")
+
+        Directory.CreateDirectory (cacheRoot </> "empty.lib" </> "1.0.0" </> "lib" </> "netstandard2.0") |> ignore
+        Assert.That (Nuget.ships cacheRoot "Empty.Lib" "1.0.0", Is.False, "lib/ folder present but no files in it")
+
+    [<Test>]
     member x.``packageOf returns None for a path outside the cache root``() =
         let root = "/cache/root"
         Assert.That (Nuget.packageOf root "/somewhere/else/foo.bar/1.2.3/Foo.Bar.dll", Is.EqualTo None)

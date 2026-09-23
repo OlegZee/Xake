@@ -645,6 +645,47 @@ module Project =
             Roots = []
         }
 
+    /// Serializes msbuild runs of one project file: two concurrent imports (different lock
+    /// outputs, e.g. one rule per (framework, brand)) of the *same* project both `-restore`
+    /// into that project's shared `obj/project.assets.json` (and `obj/*.nuget.g.*`) -- only
+    /// `IntermediateOutputPath` is per-variant above, not `BaseIntermediateOutputPath` -- so
+    /// when the package set depends on a property like `Brand`, one import can read the
+    /// other's restore output and record the wrong references. A process-wide `Resource` of
+    /// quantity 1 per normalized project path serializes the two msbuild runs of that project
+    /// (`-restore` design-time build, then `-pp`); a different project path gets its own
+    /// `Resource`, so unrelated projects still import in parallel. This is `Resource` /
+    /// `withResource` (`docs/delegated.md`) used exactly as documented for a script -- a
+    /// `Resource` is just a value and `withResource` is the recipe-level bracket, so a library
+    /// recipe can create and use one without any script-side declaration. The wait yields the
+    /// CPU slot (`withResource` does this already), so a blocked import never pins a worker
+    /// thread.
+    module private ProjectLocks =
+        let private comparer = if Env.isUnix then System.StringComparer.Ordinal else System.StringComparer.OrdinalIgnoreCase
+        let private locks = System.Collections.Concurrent.ConcurrentDictionary<string, Resource> (comparer)
+        let private key (project: string) = (Path.GetFullPath project).Replace ('\\', '/')
+        let resourceFor (project: string) : Resource =
+            locks.GetOrAdd (key project, fun k -> Resource.newResource k 1)
+
+    /// Runs `body` exclusively with respect to every other import of the same project file
+    /// (by full path, OS-appropriate comparison); a different project file imports
+    /// concurrently. `internal` so `ProjectImportTests.fs` can drive it directly, without a
+    /// real msbuild, through a small `xake {}` engine.
+    let internal withProjectLock (project: string) (body: Recipe<ExecContext, 'a>) : Recipe<ExecContext, 'a> =
+        withResource (ProjectLocks.resourceFor project) 1 body
+
+    /// The `ProjectAssetsFile` property from a design-time build's result dump (the
+    /// `-getResultOutputFile` json `wantedProperties` already asks for it into), read directly
+    /// rather than through `parseImport`'s full parse -- needed early, inside the project
+    /// lock, right after the design-time build, so the per-variant copy can be taken before a
+    /// concurrent import of the same project (once the lock is released) restores over the
+    /// shared `obj/project.assets.json`.
+    let internal readAssetsFile (dumpFile: string) : string option =
+        let root = File.ReadAllText dumpFile |> Fsproj.Json.parse
+        Fsproj.Json.field "Properties" root
+        |> Option.bind (Fsproj.Json.field "ProjectAssetsFile")
+        |> Option.bind Fsproj.Json.asString
+        |> Option.filter ((<>) "")
+
     /// `PrepareResources` runs resgen so the `/resource:` switches name real files;
     /// `Compile` (not `CoreCompile`) so that everything hooked before it -- generated
     /// assembly attributes, `BeforeCompile` extensions -- has run.
@@ -862,22 +903,44 @@ module Project =
 
                 let dump = options.Output + "." + Path.GetFileNameWithoutExtension project + ".msbuild"
                 let preprocessed = dump + ".pp"
+                // mirrors the per-variant `IntermediateOutputPath` above: where this import's
+                // own copy of the project's (otherwise shared) restore output lands
+                let assetsCopy =
+                    Path.GetDirectoryName (Path.GetFullPath project) </> "obj" </> "xake" </> options.Framework </> variantDir </> "project.assets.json"
 
-                // the design-time build; the compiler's command line comes back as an item list
-                do! msbuild
-                        ([ project; "-restore"; "-nologo"; "-verbosity:quiet" ] @ switches
-                         @ [ sprintf "-t:%s" targets
-                             sprintf "-getItem:%s" items
-                             sprintf "-getProperty:%s" wantedProperties
-                             sprintf "-getResultOutputFile:%s" dump ]) project
+                do! withProjectLock project (recipe {
+                    // the design-time build; the compiler's command line comes back as an item list
+                    do! msbuild
+                            ([ project; "-restore"; "-nologo"; "-verbosity:quiet" ] @ switches
+                             @ [ sprintf "-t:%s" targets
+                                 sprintf "-getItem:%s" items
+                                 sprintf "-getProperty:%s" wantedProperties
+                                 sprintf "-getResultOutputFile:%s" dump ]) project
 
-                // the files that took part in the evaluation; MSBuildAllProjects no longer
-                // tells, the preprocessed project does
-                do! msbuild ([ project; "-nologo" ] @ switches @ [ sprintf "-pp:%s" preprocessed ]) project
+                    // `-restore` just wrote (or overwrote) the project's shared
+                    // obj/project.assets.json; copy the one *this* import saw before a
+                    // concurrent import of the same project (a different variant, next in line
+                    // for the lock) restores over it
+                    match readAssetsFile dump with
+                    | Some assetsFile when File.Exists assetsFile ->
+                        Directory.CreateDirectory (Path.GetDirectoryName assetsCopy) |> ignore
+                        File.Copy (assetsFile, assetsCopy, true)
+                    | _ -> ()
+
+                    // the files that took part in the evaluation; MSBuildAllProjects no longer
+                    // tells, the preprocessed project does
+                    do! msbuild ([ project; "-nologo" ] @ switches @ [ sprintf "-pp:%s" preprocessed ]) project
+                })
 
                 let imports = File.ReadAllText preprocessed |> parseImports
                 let pin = sdkPin (Path.GetDirectoryName (Path.GetFullPath project))
                 let entry = parseImport dump imports pin
+                // point the lock at *this* import's own copy of the assets file, not the
+                // project's shared (and possibly since-overwritten) obj/project.assets.json
+                let entry =
+                    match readAssetsFile dump with
+                    | Some _ -> { entry with Properties = entry.Properties |> Map.add "ProjectAssetsFile" assetsCopy }
+                    | None -> entry
                 File.Delete dump
                 File.Delete preprocessed
 

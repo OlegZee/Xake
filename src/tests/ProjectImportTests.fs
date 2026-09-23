@@ -33,6 +33,7 @@ type ``Project import``() =
               "/resource:/proj/obj/X.resources,Ns.X.resources,public"
               "/additionalfile:/proj/a.txt"; "/embed:/proj/obj/AssemblyInfo.cs"
               "/analyzerconfig:/proj/.editorconfig"
+              "/sourcelink:/proj/obj/sourcelink.json"
               "/out:/proj/obj/X.dll"; "/doc:/proj/obj/X.xml"; "/refout:/proj/obj/ref/X.dll"
               "/errorlog:/proj/obj/log.sarif,version=2"
               "/pathmap:/proj=/_/"
@@ -42,6 +43,7 @@ type ``Project import``() =
         Assert.That(CscArgs.inputs args, Is.EqualTo [
             "/pkgs/a.dll"; "/pkgs/b.dll"; "/pkgs/c.dll"; "/sdk/an.dll"; "/proj/key.snk"
             "/proj/obj/X.resources"; "/proj/a.txt"; "/proj/obj/AssemblyInfo.cs"; "/proj/.editorconfig"
+            "/proj/obj/sourcelink.json"
             "A.cs"; "sub/B.cs" ])
         Assert.That(CscArgs.outputs args, Is.EqualTo [
             "/proj/obj/X.dll"; "/proj/obj/X.xml"; "/proj/obj/ref/X.dll"; "/proj/obj/log.sarif" ])
@@ -321,4 +323,112 @@ type ``Project import``() =
             match Project.sdkPin dir with
             | Project.NoVersion _ -> ()
             | other -> Assert.Fail (sprintf "expected NoVersion, got %A" other)
+        finally Directory.Delete (dir, true)
+
+    [<Test>]
+    member x.``tokenizeRevision replaces the sha in Generated content, Args and Properties, and leaves other text``() =
+        let sha = "abc123def456abc123def456abc123def456abc"
+        let project : Lock.Project = {
+            Name = "Sample"
+            Project = "/a/Sample.csproj"
+            Directory = "/a"
+            Compiler = { Tool = "csc"; Path = "/dotnet/csc.dll"; Sha256 = ""; Sdk = "8.0.0" }
+            Args = [ "/sourcelink:/a/obj/sourcelink.json"; sprintf "/define:VERSION_%s" sha ]
+            References = []
+            Analyzers = []
+            ProjectRefs = []
+            Imports = []
+            Generated = [ "/a/obj/sourcelink.json", sprintf "{\"documents\":{\"/x/*\":\"https://h/src/%s/*\"}}" sha ]
+            Resources = []
+            Properties = Map.ofList [ "Version", sprintf "1.0.0+%s" sha; "AssemblyName", "Sample" ]
+        }
+
+        let tokenized = Project.tokenizeRevision sha project
+
+        Assert.That(tokenized.Generated, Is.EqualTo [
+            "/a/obj/sourcelink.json", "{\"documents\":{\"/x/*\":\"https://h/src/$(SourceRevisionId)/*\"}}" ])
+        Assert.That(tokenized.Args, Is.EqualTo [ "/sourcelink:/a/obj/sourcelink.json"; "/define:VERSION_$(SourceRevisionId)" ])
+        Assert.That(tokenized.Properties.["Version"], Is.EqualTo "1.0.0+$(SourceRevisionId)")
+        Assert.That(tokenized.Properties.["AssemblyName"], Is.EqualTo "Sample")
+
+    [<Test>]
+    member x.``tokenizeRevision is a no-op when the sha is empty``() =
+        let project : Lock.Project = {
+            Name = "Sample"; Project = "/a/Sample.csproj"; Directory = "/a"
+            Compiler = { Tool = "csc"; Path = "/dotnet/csc.dll"; Sha256 = ""; Sdk = "8.0.0" }
+            Args = [ "/define:X" ]; References = []; Analyzers = []; ProjectRefs = []
+            Imports = []; Generated = []; Resources = []; Properties = Map.ofList [ "Version", "1.0.0" ]
+        }
+        Assert.That(Project.tokenizeRevision "" project, Is.EqualTo project)
+
+    [<Test>]
+    member x.``Git headSha resolves a symbolic HEAD via a loose ref``() =
+        let dir = temp "git-loose"
+        let gitDir = Path.Combine (dir, ".git")
+        Directory.CreateDirectory (Path.Combine (gitDir, "refs", "heads")) |> ignore
+        File.WriteAllText (Path.Combine (gitDir, "HEAD"), "ref: refs/heads/main\n")
+        let sha = "1111111111111111111111111111111111111111"
+        File.WriteAllText (Path.Combine (gitDir, "refs", "heads", "main"), sha + "\n")
+        try
+            Assert.That(Git.headSha dir, Is.EqualTo (Some sha))
+            Assert.That(Git.headFiles dir, Is.EquivalentTo [
+                Path.Combine (gitDir, "HEAD"); Path.Combine (gitDir, "refs", "heads", "main") ])
+        finally Directory.Delete (dir, true)
+
+    [<Test>]
+    member x.``Git headSha resolves a symbolic HEAD via packed-refs when there is no loose ref``() =
+        let dir = temp "git-packed"
+        let gitDir = Path.Combine (dir, ".git")
+        Directory.CreateDirectory gitDir |> ignore
+        File.WriteAllText (Path.Combine (gitDir, "HEAD"), "ref: refs/heads/main\n")
+        let sha = "2222222222222222222222222222222222222222"
+        File.WriteAllText (Path.Combine (gitDir, "packed-refs"),
+            sprintf "# pack-refs with: peeled fully-peeled sorted\n%s refs/heads/main\n" sha)
+        try
+            Assert.That(Git.headSha dir, Is.EqualTo (Some sha))
+            Assert.That(Git.headFiles dir, Is.EquivalentTo [
+                Path.Combine (gitDir, "HEAD"); Path.Combine (gitDir, "packed-refs") ])
+        finally Directory.Delete (dir, true)
+
+    [<Test>]
+    member x.``Git headSha reads a detached HEAD directly``() =
+        let dir = temp "git-detached"
+        let gitDir = Path.Combine (dir, ".git")
+        Directory.CreateDirectory gitDir |> ignore
+        let sha = "3333333333333333333333333333333333333333"
+        File.WriteAllText (Path.Combine (gitDir, "HEAD"), sha + "\n")
+        try
+            Assert.That(Git.headSha dir, Is.EqualTo (Some sha))
+            Assert.That(Git.headFiles dir, Is.EqualTo [ Path.Combine (gitDir, "HEAD") ])
+        finally Directory.Delete (dir, true)
+
+    [<Test>]
+    member x.``Git headSha resolves a linked worktree's .git file``() =
+        let repo = temp "git-worktree-main"
+        let wtCheckout = temp "git-worktree-checkout"
+        let mainGitDir = Path.Combine (repo, ".git")
+        let wtGitDir = Path.Combine (mainGitDir, "worktrees", "wt")
+        Directory.CreateDirectory (Path.Combine (mainGitDir, "refs", "heads")) |> ignore
+        Directory.CreateDirectory wtGitDir |> ignore
+        Directory.CreateDirectory wtCheckout |> ignore
+        let sha = "4444444444444444444444444444444444444444"
+        File.WriteAllText (Path.Combine (mainGitDir, "refs", "heads", "main"), sha + "\n")
+        File.WriteAllText (Path.Combine (wtGitDir, "HEAD"), "ref: refs/heads/main\n")
+        File.WriteAllText (Path.Combine (wtGitDir, "commondir"), "../..\n")
+        File.WriteAllText (Path.Combine (wtCheckout, ".git"), sprintf "gitdir: %s\n" wtGitDir)
+        try
+            Assert.That(Git.headSha wtCheckout, Is.EqualTo (Some sha))
+            Assert.That(Git.headFiles wtCheckout, Is.EquivalentTo [
+                Path.Combine (wtGitDir, "HEAD"); Path.Combine (mainGitDir, "refs", "heads", "main") ])
+        finally
+            Directory.Delete (repo, true)
+            Directory.Delete (wtCheckout, true)
+
+    [<Test>]
+    member x.``Git headSha and headFiles find nothing outside a repository``() =
+        let dir = temp "git-none"
+        Directory.CreateDirectory dir |> ignore
+        try
+            Assert.That(Git.headSha dir, Is.EqualTo None)
+            Assert.That(Git.headFiles dir, Is.Empty)
         finally Directory.Delete (dir, true)

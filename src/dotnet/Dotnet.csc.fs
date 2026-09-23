@@ -169,6 +169,34 @@ module CscImpl =
             // and the hash check never ran (conceptual-review.md 2.4)
             do! needFiles (Filelist [File.make project.Compiler.Path])
 
+            // the lock never carries the commit sha itself (`Project.tokenizeRevision`): when
+            // `Generated` or `Args` carries the token `$(SourceRevisionId)` (from a project
+            // whose SourceLink writes it into `sourcelink.json`), resolve it here, from the
+            // project's own repository, right before it is used -- a lock that needs a
+            // revision has to be compiled in a repository, or this fails with a clear message
+            let sourceRevisionToken = "$(SourceRevisionId)"
+            let containsToken (s: string) = s.Contains sourceRevisionToken
+            let! project =
+                if not ((project.Generated |> List.exists (snd >> containsToken)) || (project.Args |> List.exists containsToken)) then
+                    recipe.Return project
+                else
+                    match Git.headSha project.Directory with
+                    | Some sha ->
+                        let expand (s: string) = if containsToken s then s.Replace (sourceRevisionToken, sha) else s
+                        recipe.Return
+                            { project with
+                                Generated = project.Generated |> List.map (fun (path, content) -> path, expand content)
+                                Args = project.Args |> List.map expand }
+                    | None ->
+                        recipe {
+                            let msg =
+                                sprintf "'%s': the lock needs %s but no git repository was found at or above '%s' -- a lock that needs a revision must be compiled in a repository"
+                                    project.Name sourceRevisionToken project.Directory
+                            do! trace Error "%s" msg
+                            if settings.FailOnError then failwith msg
+                            return project
+                        }
+
             // the resolved project is the source of truth for what msbuild (or the composed
             // front end) generated (assembly attributes, TFM defines): write it back whenever
             // it is missing or someone touched it

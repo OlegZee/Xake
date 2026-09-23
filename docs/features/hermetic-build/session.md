@@ -1,5 +1,28 @@
 # Session state: hermetic-build
 
+## 2026-09-23 — the R1–R4 run (four subagents, merged)
+
+Where things stand: `feature/hermetic-build` at the merge of `wt/sbom-scope`; suite **358 passed,
+1 skipped**, both libraries 0 warnings. What landed today:
+
+- **R1** `conceptual-review.md` §0 status table + inline notes. Core files touched by the branch
+  are four (`ExecCore`, `WorkerPool`, `Path`, `Database`), all bug fixes. Still open from the
+  review: `Generated`/`.resources` as engine targets (the MSB3577 interop item is its trigger),
+  the duplicate `needFiles` in `resolve` (`Dotnet.csc.fs:404`), no lock runner for `fsc`.
+- **R2** package-scope SBOM (`Sbom.forPackageScoped`, `Nuget.parseNuspec`,
+  `Verify.sbomPackageScope`) and `Sbom.PackageScopeOptions` — `nuget-sbom.md` has the rules and
+  **six questions the user must answer** ("Left for a human decision"). Restore-scope
+  `forAssembly` output is byte-unchanged; scripts still call it.
+- **R3** `csc` through the Roslyn compiler server (`csc-server.md`): `/shared` appended by `run`
+  only, locks unchanged, byte-identical proven, 2–4x on small compiles. Verified on macOS only.
+- **R4** `overview-ru.md` — the branch in Russian and a staged-release recommendation.
+
+**Exact next step**: the user reads `overview-ru.md` and answers the six SBOM questions; then
+either re-run the dataengine/page proofs with `/shared` on (the `verify-dataengine.sh` route) or
+start the release staging. Worktrees `.claude/worktrees/{sbom-scope,csc-shared}` were removed
+after the merge.
+
+
 Updated 2026-09-24 late night (the `Sign` skeleton and its six tests; before that the
 `ProjectRefs` fix, the page re-proof, Stage C `csc { lock }`; before that Stage B, the lock
 split; before that: stages A1/A2, the autonomous night run, page run, extra roots, Toolset

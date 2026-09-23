@@ -282,3 +282,68 @@ type ``Nuget assets``() =
         Assert.That (package.Sha512, Is.Not.EqualTo "")
         Assert.That (package.License, Is.EqualTo "MIT")
         Assert.That (package.Supplier, Is.EqualTo "James Newton-King")
+
+/// `Nuget.parseNuspec` and the per-framework group selection the package-scope SBOM (tier 2)
+/// reads its declared dependencies from.
+[<TestFixture>]
+type ``Nuget nuspec``() =
+
+    let nuspec = """<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2013/05/nuspec.xsd">
+  <metadata>
+    <id>My.Pkg</id>
+    <version>2.1.0</version>
+    <authors>Acme Corp</authors>
+    <license type="expression">MIT</license>
+    <dependencies>
+      <group targetFramework=".NETStandard2.0">
+        <dependency id="Foo.Bar" version="[1.2.3, )" exclude="Build,Analyzers" />
+        <dependency id="DS.Internal" version="2.0.0" />
+      </group>
+      <group targetFramework="net8.0">
+        <dependency id="Only.Net8" version="(, 3.0)" />
+      </group>
+      <group targetFramework="net462" />
+    </dependencies>
+  </metadata>
+</package>
+"""
+
+    [<Test>]
+    member x.``reads identity and dependency groups verbatim``() =
+        let parsed = Nuget.parseNuspec nuspec
+        Assert.That (parsed.Id, Is.EqualTo "My.Pkg")
+        Assert.That (parsed.Version, Is.EqualTo "2.1.0")
+        Assert.That (parsed.Authors, Is.EqualTo "Acme Corp")
+        Assert.That (parsed.License, Is.EqualTo "MIT")
+        Assert.That (parsed.Groups |> List.map (fun g -> g.TargetFramework), Is.EqualTo [ ".NETStandard2.0"; "net8.0"; "net462" ])
+        let expected : Nuget.NuspecDependency list = [ { Id = "Foo.Bar"; Range = "[1.2.3, )" }; { Id = "DS.Internal"; Range = "2.0.0" } ]
+        Assert.That (parsed.Groups.Head.Dependencies, Is.EqualTo expected)
+
+    [<Test>]
+    member x.``selects the group by alias or by the nuspec spelling of the full name``() =
+        let parsed = Nuget.parseNuspec nuspec
+        Assert.That (Nuget.nuspecDependenciesFor "netstandard2.0" parsed |> List.map (fun d -> d.Id), Is.EqualTo [ "Foo.Bar"; "DS.Internal" ])
+        Assert.That (Nuget.nuspecDependenciesFor "NET8.0" parsed |> List.map (fun d -> d.Id), Is.EqualTo [ "Only.Net8" ])
+        // an empty group is a declaration too: no dependencies for that framework
+        Assert.That (Nuget.nuspecDependenciesFor "net462" parsed, Is.Empty)
+        // no group, no fallback: nothing -- never the nearest compatible one
+        Assert.That (Nuget.nuspecDependenciesFor "net6.0" parsed, Is.Empty)
+
+    [<Test>]
+    member x.``ungrouped dependencies apply to every framework``() =
+        let flat = """<package><metadata><id>Flat</id><version>1.0</version>
+<dependencies><dependency id="A" version="1.0" /></dependencies></metadata></package>"""
+        let parsed = Nuget.parseNuspec flat
+        Assert.That (parsed.Groups |> List.map (fun g -> g.TargetFramework), Is.EqualTo [ "" ])
+        Assert.That (Nuget.nuspecDependenciesFor "net472" parsed |> List.map (fun d -> d.Id), Is.EqualTo [ "A" ])
+        Assert.That ((Nuget.parseNuspec "<package><metadata><id>X</id></metadata></package>").Groups, Is.Empty)
+
+    [<Test>]
+    member x.``framework spellings``() =
+        Assert.That (Nuget.nuspecFrameworkMatches "netstandard2.0" ".NETStandard2.0", Is.True)
+        Assert.That (Nuget.nuspecFrameworkMatches "net462" ".NETFramework4.6.2", Is.True)
+        Assert.That (Nuget.nuspecFrameworkMatches "netcoreapp3.1" ".NETCoreApp3.1", Is.True)
+        Assert.That (Nuget.nuspecFrameworkMatches "net8.0" "net8.0", Is.True)
+        Assert.That (Nuget.nuspecFrameworkMatches "net8.0" "", Is.True)
+        Assert.That (Nuget.nuspecFrameworkMatches "net8.0" ".NETStandard2.0", Is.False)

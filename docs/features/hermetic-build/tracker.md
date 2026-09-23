@@ -8,7 +8,7 @@ details live in brief.md (section refs) or session.md.
 - [x] E2 design-time import: DataEngine and page/Rdl (LocalBuild), both brands — complete
 - [ ] E3 `packages.lock.json` stability and floating versions
 - [x] E4 Babel `--randomseed` — deterministic except PE timestamp/checksum (+ eval expiry)
-- [ ] E5 reproduce shipped `MESCIUS.ActiveReports.Core.*` nupkg vs local tag build
+- [x] E5 reproduce shipped `MESCIUS.ActiveReports.Core.*` nupkg vs local tag build — `e5-shipped-vs-local.md`, `verify-shipped.fsx` (2026-09-24): nuget.org 5.4.0 vs tag `5.4.0` built here; same commit sha embedded, no Babel traces, size gap = the Authenticode certificate table; but Authenticode hashes differ: 140 scattered 1–7 byte `Content` ranges — a toolchain/path difference (compiler build, absolute paths without `/pathmap`), not a different source. Outcome (b). Next: rebuild with their exact SDK and `/pathmap` to isolate
 
 ## Library slice 1 — import and compile (brief §11, §8j traps 1–7)
 - [x] `Project.import`: design-time msbuild, per-brand `IntermediateOutputPath`, `-pp` imports list — `src/dotnet/Project.fs`, proven on dataengine develop (both brands) with `import.fsx`

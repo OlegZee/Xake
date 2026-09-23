@@ -31,6 +31,7 @@
     <Compile Include="ProjectImportTests.fs" />
     <Compile Include="LockDiffTests.fs" />
     <Compile Include="FromLockTests.fs" />
+    <Compile Include="CscLockTests.fs" />
     <Compile Include="ToolsetTests.fs" />
     <Compile Include="ResxTests.fs" />
     <Compile Include="NugetTests.fs" />

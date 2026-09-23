@@ -41,6 +41,7 @@ references are now spelled `/reference:` rather than `/r:` -- and passes it to t
 | `unsafe` | `bool` | `/unsafe` | `false` |
 | `cscpath` | `string` | compiler executable, bypassing framework discovery entirely | `None` |
 | `toolset` | `string` (package version) | compiler from `Microsoft.Net.Compilers.Toolset/<version>` in the NuGet cache instead of the SDK's; see below | `None` |
+| `lock` | `string` | records this compilation in a lock file at that path (project-root-relative or absolute) and, once it exists, refuses to compile anything that differs from it; see "Locking composed settings" below | `None` |
 | `args` | `string list` | raw extra switches, appended last (`CommandArgs`) | `[]` |
 | `nofailonerror` | (none) | do not fail the build on a compile error | `FailOnError = true` |
 
@@ -485,6 +486,90 @@ msbuild/compiler needed); `src/tests/FromLockTests.fs`, `CscLock.resolve resolve
 settings into a hashable, round-trippable lock` (Integration: resolves a trivial library,
 asserts `Sources`/`Args`/`Compiler.Path`/empty reference hashes, then `Lock.rehash` and a
 `Lock.writeWith`/`Lock.parseWith` round trip).
+
+## Locking composed settings: `lock`
+
+```fsharp
+let settings = { CscSettings with
+                    Src = !!"src/*.cs"
+                    RefGlobal = ["System.dll"]
+                    TargetFramework = "net-4.6.2"
+                    Out = File.make "out/app.dll"
+                    Lock = Some "locks/app.json" }
+
+"out/app.dll" ..> Csc settings
+"update-locks" => recipe { do! CscLock.record "locks/app.json" settings }
+```
+
+`lock "<path>"` (`CscSettingsType.Lock: string option`) is migration path A of
+`lock-from-settings.md` §9: a tuned `csc { }` block stays where it is and gains a lock. The
+path is relative to the project root, like every other target path, or absolute.
+
+**The semantics are strict, and an update is always explicit** (the user's decision,
+2026-09-24 -- no engine mode, no global variable, no "follow the settings and warn" default).
+`resolve` runs as it always does, so the settings remain the source of truth for *what* is
+compiled; the lock decides whether this is the compilation that was recorded:
+
+1. **No lock file yet** -- `Lock.rehash` the resolved entry, write it as a one-entry
+   `Lock.Document` (`Framework` = the settings' `targetfwk` or "", `Configuration` "",
+   `Properties` []) with `Lock.save`, and compile *that* entry. The hashes `run` verifies were
+   taken a moment earlier, so the check is trivially true -- it is the next build it is for.
+2. **Lock present, and the resolved settings match it** (`Lock.diff recorded resolved` empty)
+   -- compile the **recorded** entry, not the resolved one. That is the whole point: the
+   recorded entry carries hashes, and `run`'s hash check (step 7 above) then gates the build,
+   so a reference swapped on disk after recording fails even though the settings did not move.
+3. **Lock present and different** -- the build **fails**, printing the diff and naming the two
+   ways to update:
+
+   ```
+   'app': the resolved compilation differs from the lock 'locks/app.json':
+   + /repo/src/Extra.cs
+   Update the lock deliberately: delete 'locks/app.json', or run the target that calls
+   CscLock.record "locks/app.json".
+   ```
+
+   `nofailonerror` (`FailOnError = false`) turns that failure into a warning and compiles from
+   the **resolved** entry -- the settings are the source of truth, and nothing is written.
+
+The comparison is structural, not hash-based: the resolved side never hashes anything
+(hashing every reference on every compile would tax the common case), and both `diffHashed`
+and `diffCompiler` skip a hash that is empty on either side -- an empty hash means "not
+computed", not "zero bytes". So `Lock.diff recorded resolved` reports what the settings and the
+filesets say: sources, options, defines, reference/analyzer paths, the compiler path.
+
+**Updating.**
+
+| Way | What it is |
+|---|---|
+| `dotnet fsi build.fsx -- -- update-locks` | the script's own phony target calling `CscLock.record`; the normal way |
+| `rm locks/app.json` | a missing lock means "record it" -- the same rule as any missing target |
+
+`CscLock.record : string -> CscSettingsType -> Recipe<unit>` resolves, rehashes and overwrites
+the lock, compiling nothing. `CscLock.verify : string -> CscSettingsType -> Recipe<string list>`
+returns the same diff `lock` fails on (an empty list means the lock is current), writing nothing and compiling
+nothing -- `lock-from-settings.md` scenario 3 as a stand-alone check, e.g. a `check-locks`
+target in CI. `CscLock.compile` remains the entry point for a lock that came from
+`Project.import`.
+
+**The lock file is not a target of the engine on this path.** It is written from inside the
+compile recipe, which is what lets the `csc { }` block stay in place; the engine neither
+`need`s it nor rebuilds it, and the update target is an ordinary phony action of the script's
+own. Recommendation 1b of `lock-from-settings.md` (the lock as a real file target, built by a
+rule of its own from `CscLock.resolve`) still stands for scripts that want it and needs nothing
+new. As before, one lock file per compilation: two `csc` calls sharing one path would
+read-modify-write the same file and is an authoring error, not something the library guards.
+
+**Sharing the settings.** `csc { ... }`'s `Run` returns the compile recipe, not the settings,
+so a block cannot be handed to `CscLock.record` as it stands; the settings have to be a value,
+which in practice means record syntax (`{ CscSettings with ... }`, as above). Path B of
+§9 -- a second builder `cscSettings { ... }` whose `Run` returns the `CscSettingsType`, so a
+tuned block moves over unchanged -- is **not built**: ~15 lines whenever a real block asks for
+it.
+
+Tests: `src/tests/CscLockTests.fs` (6, Integration) -- first build records and compiles, second
+build leaves the lock byte-identical, an added source fails with the diff, `CscLock.record`
+overwrites and the next build passes, a reference tampered after recording fails the hash check,
+and `CscLock.verify` reports the difference without writing or compiling.
 
 ## Not yet
 

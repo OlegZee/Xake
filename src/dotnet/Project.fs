@@ -661,9 +661,13 @@ module Lock =
         [ for p in Set.difference setA setB |> Set.toList |> List.sort -> sprintf "- %s %s" label p
           for p in Set.difference setB setA |> Set.toList |> List.sort -> sprintf "+ %s %s" label p ]
 
+    /// `Sha256` follows the same rule as `diffHashed`: an empty hash means "not computed"
+    /// (`resolve` never hashes), not "zero bytes", so it is only compared when both sides
+    /// carry one -- otherwise diffing a recorded lock against freshly resolved settings would
+    /// report the missing hash as a difference on every build.
     let private diffCompiler (a: Compiler) (b: Compiler) : string list =
         [ if a.Path <> b.Path then sprintf "~ Compiler.Path: %s -> %s" a.Path b.Path
-          if a.Sha256 <> b.Sha256 then sprintf "~ Compiler.Sha256: %s -> %s" a.Sha256 b.Sha256
+          if a.Sha256 <> b.Sha256 && a.Sha256 <> "" && b.Sha256 <> "" then sprintf "~ Compiler.Sha256: %s -> %s" a.Sha256 b.Sha256
           if a.Version <> b.Version then sprintf "~ Compiler.Version: %s -> %s" a.Version b.Version ]
 
     /// Packages by id (case-insensitive): added, removed, version changed, or -- same version

@@ -93,6 +93,45 @@ explicit, no engine mode, no global variable.** Built as migration path A of
   tuple pattern fails to typecheck. And `recipe` has no `ReturnFrom`, so `return!` does not
   compile: bind and return.
 
+### Page re-proof after the lock split (2026-09-24)
+
+The page fixture -- 12 page projects + 3 dataengine, netstandard2.0, brands MESCIUS/GCCN,
+`LocalBuild=true`, multi-target projects with reference aliases -- had not been re-run since
+stage B. Re-run from clean (`rm -rf locks out .xake import.log`, all `obj/xake` in both
+repositories): `import-page.fsx build` **77.4 s** wall (both locks imported concurrently,
+16.3 s each, then 30 compiles), `sbom` **0.9 s** for 30 `cdx.json`. Baseline exactly as
+`compare.txt` records it -- in place, `-t:Rebuild`, same `IntermediateOutputPath`,
+`-p:NuGetAudit=false`, per brand, 30 sequential builds, 472 s -- then `cmp` on every
+dll/pdb/xml: **90/90 byte-identical**, unchanged from before the split. Locks are 858 KB /
+6682 lines per brand (were 1.03 MB / 8015 lines flat). Every one of the 15 entries in both
+locks has a non-empty package graph, dataengine's three single-`TargetFramework` projects
+included (`packages 4 (3 direct)` each) -- the `Nuget.frameworkFullName` fix holds on this
+fixture too. SBOMs: all 30 have non-empty components with purls; regenerating the whole `out/`
+tree a second time is **30/30 byte-identical**. The purl count of each project now equals its
+lock entry's `packages N` -- the SBOM is a straight projection of the lock's graph. Two
+comparison-visible changes: package ids keep their original NuGet casing (they come from the
+restore graph, not the cache's lowercase directory names), so the old casing difference against
+CycloneDX.MSBuild is gone; and Rdl/MESCIUS went 9 -> 12 purls, which moves
+`Microsoft.NETCore.Platforms` into the common set and adds the two build-time-only packages
+`CycloneDX.MSBuild` / `SauceControl.InheritDoc` (scope `excluded`) to the ours-only list. The
+remaining theirs-only entries (`Microsoft.NETFramework.ReferenceAssemblies.net472`,
+`System.ValueTuple`) are in the *net472* leg of `project.assets.json`, which the
+`NetCoreOnly=true` import never evaluates -- verified in the assets file. One pre-existing defect surfaced while checking the new locks (not a regression -- 52
+occurrences per lock, byte-identical spellings before and after the split): `Evaluation.ProjectRefs`
+records `<ProjectReference>` paths resolved against the *process* cwd instead of the referencing
+project's directory, so they point at files that do not exist and are therefore un-tokenized
+absolute paths. Same class as the `<EmbeddedResource Update=...>` bug `parseImport` already
+fixes; the fix was never applied to `ProjectRefs`. Nothing reads `ProjectRefs` (the compile
+replays `Dependencies.References`), so builds and SBOMs are unaffected -- tracker item, not a
+blocker. Race check clean:
+MESCIUS lock 35 `ds.documents` / 0 `gcdocs`, GCCN the reverse. One fixture artifact worth
+knowing: dataengine's `bin/Release` outputs were left on disk, so the import hashed the two
+project-reference entries and this run's SBOMs carry SHA-256 on those file components where
+the previous run's had none -- evidence-at-import-time, not a rule change. Artifacts replaced
+in `samples/hermetic/page/`: `MESCIUS.json`, `GCCN.json`, `compare.txt`, `sbom-compare.txt`,
+`Rdl-MESCIUS-ours.cdx.json`. CycloneDX.MSBuild (Part 2) was not re-run; the stored
+`Rdl-MESCIUS-theirs.cdx.json` from 2026-09-23 is what the purl diff uses.
+
 ### What landed (2026-09-24, evening): stage B -- the lock split
 
 Decisions were the user's (2026-09-24); the shape is in `csc-syntax.md` ("Where a `Lock.Entry`

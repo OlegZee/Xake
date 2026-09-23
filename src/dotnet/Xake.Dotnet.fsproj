@@ -45,6 +45,8 @@
     <Compile Include="Fsproj.fs" />
     <Compile Include="Project.fs" />
     <Compile Include="Nuget.fs" />
+    <Compile Include="Sbom.fs" />
+    <Compile Include="Verify.fs" />
     <Compile Include="Dotnet.csc.fs" />
     <Compile Include="Dotnet.fsc.fs" />
     <Compile Include="Dotnet.resgen.fs" />

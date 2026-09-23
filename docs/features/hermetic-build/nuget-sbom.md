@@ -77,3 +77,61 @@ This is the join `Sbom.forAssembly` needs: for every hashed reference in a compi
 lock, `packageOf` gives the package it belongs to, and `readCache` gives that package's identity
 and license -- nested `file` components under a `purl`-identified package component, per §8e's
 design ("the hash of each dll actually linked -- the from-evidence layer").
+
+## Sbom
+
+`Xake.Dotnet.Sbom` (`src/dotnet/Sbom.fs`) turns `Nuget.Assets` and a `Lock.Project` into a
+CycloneDX 1.6 bill of materials. Pure: `Sbom.cycloneDx` only renders a `Bom` to a string, and
+`Sbom.forAssembly` only reads the assembly file it hashes -- no restore, no cache writes, no
+network. Two-piece split for the same reason `Nuget` and `Project` are separate: `forAssembly`
+is the join (what evidence says about what got compiled), `cycloneDx` is pure formatting that
+tests can drive with a hand-built `Bom` and no lock at all.
+
+### Lock/restore-graph fields to CycloneDX
+
+| BOM field | Source |
+|---|---|
+| `metadata.component` (root) | the shipped assembly: `Name = lock.Name`; `Version` from `lock.Properties.["Version"]`, falling back to `InformationalVersion`; one SHA-256 hash of the assembly file (`Lock.sha256`) |
+| `metadata.tools.components[0]` | `{ type: application, name: "Xake", version }`, version from `Xake.Dotnet`'s own assembly version |
+| `components[].purl` | `pkg:nuget/<Id>@<Version>`, one component per package found via `Nuget.packageOf cacheRoot` on `lock.References`, grouped |
+| `components[].supplier`, `.licenses` | `Nuget.readCache`'s `Supplier`/`License` |
+| `components[].hashes` (package) | `Nuget.readCache`'s `Sha512` (`.nupkg.metadata`'s base64 `contentHash`), converted to hex -- CycloneDX hashes are hex, NuGet's cache stores base64 |
+| `components[].components[]` (nested) | the package's own referenced files, `type: file`, SHA-256 from the matching `lock.References` entry; only files with a non-empty hash are listed |
+| top-level `components[]` (non-nested `file`) | `lock.References` entries `Nuget.packageOf` cannot place under `cacheRoot` -- a project reference, or an SDK reference pack under `$(DotnetRoot)` -- `scope: "required"`, hash omitted when the lock has none yet |
+| `dependencies[]` | root depends on every *direct* (`assets.Direct`), *`scope: required`* package; package-to-package edges come from `assets.Graph`, kept only where both ends are packages already in the BOM |
+| `formulation[0].components[]` | one `file` per `lock.Analyzers` entry, one `application` for the compiler (`csc`, `lock.Compiler.Sha256`), one for the SDK (`.NET SDK`, `lock.Compiler.Sdk`) -- all `scope: "excluded"` |
+
+### `ref/` vs `lib/` scope
+
+A package can ship both a compile-time reference assembly (under a `ref/<tfm>/` folder --
+a facade with no method bodies, used only to compile against) and the real implementation
+(`lib/<tfm>/`, or a runtime-specific `runtimes/<rid>/lib/`). Only what a project actually
+*references* shows up in `lock.References`, so the rule is per package, from what was
+referenced: if **every** file `Nuget.packageOf` places under that package came from a `ref/`
+folder, the whole package component is `scope: "excluded"` -- it never shipped, so a scanner
+should not flag it as a runtime dependency. If **any** referenced file is under `lib/` (or
+anywhere else), the package is `scope: "required"`. The match is on `ref` as a whole path
+segment, case-insensitively, not a substring test -- a package id or file name that merely
+contains "ref" does not trip it.
+
+### Determinism
+
+`cycloneDx` never writes `metadata.timestamp` -- two builds of the same tag produce the same
+document. `serialNumber` is computed from the document's own content instead of a random GUID:
+the JSON is rendered once with a placeholder serial, SHA-256'd, and the first 16 bytes of that
+hash become a UUID (version nibble and variant bits forced, the rest is hash bytes) written
+back in as the real `serialNumber`. Two calls on the same `Bom` byte-for-byte match; changing
+one hash anywhere in the document changes the serial, since it changes the hashed content.
+Every array that CycloneDX does not itself order is sorted before rendering (`components` by
+`bom-ref`, nested file components by name, `dependsOn` lists sorted and de-duplicated) so a
+lock diff and a BOM diff tell the same story. A later option can set `metadata.timestamp` from
+`SOURCE_DATE_EPOCH` for a build system that wants a real date without losing byte-identity
+across a rebuild of the same commit -- not wired up yet.
+
+### What `forPackage` will add later
+
+`forAssembly` answers "what is in this dll". `Sbom.forPackage` (not built yet) is the per-nupkg
+BOM brief.md §8e asks for: the union of its assemblies' `forAssembly` BOMs, with the nupkg's own
+hash as `metadata.component`, so a customer who takes a package rather than individual dlls
+still gets one document that covers everything inside it -- the assembly-level BOMs stay
+available underneath for anyone who took the dlls directly (installer users).

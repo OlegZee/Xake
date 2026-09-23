@@ -56,7 +56,7 @@ module Sbom =
         Formulation: Component list
     }
 
-    let private jstring (s: string) = Fsproj.Json.escape s
+    let private jstring (s: string) = Json.escape s
 
     let private indent (s: string) =
         if s = "" then s else

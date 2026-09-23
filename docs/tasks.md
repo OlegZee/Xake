@@ -182,7 +182,7 @@ file changes:
 }
 
 // ... and the compile, which only reads the result
-let project = Fsproj.parse (evaluated name framework)
+let! project = Fsproj.load (evaluated name framework)
 do! fsc {
     targetfwk framework
     out (File.make outputPath)
@@ -200,7 +200,9 @@ that dump goes to a scratch file and what is kept is only what gets consumed: a 
 plain lists, readable and diffable. Paths in it are written against `$(NuGetPackageRoot)` and
 `$(ProjectRoot)` and expanded again on read, so the file is byte-identical on every machine and
 belongs in the repository — a lockfile for the compilation, whose diff shows what a project
-change did. `Fsproj.parse` turns it back into a record:
+change did. The roots are the build's own: `$(ProjectRoot)` is the engine's
+`ExecOptions.ProjectRoot`, not the process's current directory (see the `Roots` module).
+`Fsproj.load` — a recipe, so that it can take those roots — turns the file back into a record:
 
 | Field | What is in it |
 |---|---|

@@ -198,10 +198,10 @@ type ``Sbom cycloneDx``() =
         let bom = sampleBom "112233"
         let json = cycloneDx bom
 
-        let parsed = Fsproj.Json.parse json
+        let parsed = Json.parse json
         let componentsCount =
-            match Fsproj.Json.field "components" parsed with
-            | Some v -> (Fsproj.Json.asArray v).Length
+            match Json.field "components" parsed with
+            | Some v -> (Json.asArray v).Length
             | None -> 0
 
         Assert.That (componentsCount, Is.EqualTo 1)

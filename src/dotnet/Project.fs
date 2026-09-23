@@ -450,19 +450,10 @@ module Lock =
           yield! diffPairs "Resources" a.Resources b.Resources
           yield! diffStringSet "ProjectRef" a.ProjectRefs b.ProjectRefs ]
 
-    open Fsproj.Json
-
-    /// Replaces a root anywhere in the string, not only as a prefix: `/pathmap:<root>=/_/`
-    /// carries one in the middle.
-    let internal tokenizeAll roots (text: string) =
-        let text = text.Replace ('\\', '/')
-        roots |> List.fold (fun (text: string) (token: string, root: string) ->
-            // the root followed by a separator or the end, not a longer name with that prefix
-            System.Text.RegularExpressions.Regex.Replace (
-                text, System.Text.RegularExpressions.Regex.Escape root + "(?=[/=,;]|$)", token.Replace ("$", "$$"))) text
+    open Json
 
     let private writeProject roots (project: Project) =
-        let str = tokenizeAll roots >> escape
+        let str = Roots.tokenizeAll roots >> escape
         let strings name (items: string list) =
             items |> List.map (str >> sprintf "        %s") |> String.concat ",\n"
             |> sprintf "      %s: [\n%s\n      ]" (escape name)
@@ -493,7 +484,7 @@ module Lock =
     /// The lock as text: paths tokenized against the given roots, one line per argument, so the
     /// file is the same on every machine and a diff of two locks is the difference between two
     /// compilations. `roots` is the full list (built-in plus any extra a script declared, e.g.
-    /// via `Fsproj.withRoots`), longest root first.
+    /// via `Roots.withExtra`), longest root first.
     let writeWith roots (lock: File) =
         [ sprintf "  \"Framework\": %s" (escape lock.Framework)
           sprintf "  \"Configuration\": %s" (escape lock.Configuration)
@@ -502,11 +493,9 @@ module Lock =
           sprintf "  \"Projects\": [\n%s\n  ]" (lock.Projects |> List.map (writeProject roots) |> String.concat ",\n") ]
         |> String.concat ",\n" |> sprintf "{\n%s\n}\n"
 
-    /// `writeWith` against the built-in roots only (package cache, project root, SDK).
-    let write (lock: File) = writeWith (Fsproj.roots ()) lock
 
     let private readProject roots value =
-        let expand = Fsproj.expand roots
+        let expand = Roots.expand roots
         let str name = field name value |> Option.bind asString |> Option.defaultValue ""
         let strings name = field name value |> Option.map asArray |> Option.defaultValue [] |> List.choose asString |> List.map expand
         let hashedList name =
@@ -538,7 +527,7 @@ module Lock =
     /// Reads a lock `write`/`writeWith` produced, paths expanded for this machine. `roots` must
     /// be the same list (or a superset) used to write it, or a token stays untranslated.
     let parseWith roots (text: string) =
-        let root = Fsproj.Json.parse text
+        let root = Json.parse text
         let str name = field name root |> Option.bind asString |> Option.defaultValue ""
         {
             Framework = str "Framework"
@@ -550,12 +539,38 @@ module Lock =
             Projects = field "Projects" root |> Option.map asArray |> Option.defaultValue [] |> List.map (readProject roots)
         }
 
-    /// `parseWith` against the built-in roots only.
-    let parse (text: string) = parseWith (Fsproj.roots ()) text
-
     let readWith roots (path: string) = System.IO.File.ReadAllText path |> parseWith roots
 
-    let read (path: string) = System.IO.File.ReadAllText path |> parse
+    /// Reads a lock against the roots of this build: the built-in three, with the project root
+    /// taken from the engine (`ExecOptions.ProjectRoot`) rather than from the process's current
+    /// directory -- which is why this is a recipe and `readWith` is not.
+    let load (path: string) : Recipe<ExecContext, File> =
+        recipe {
+            let! roots = Roots.current
+            return readWith roots path
+        }
+
+    /// `load` with extra roots declared by the script (the ones its `Project.import` used, see
+    /// `ImportOptions.Roots`).
+    let loadWith (extraRoots: (string * string) list) (path: string) : Recipe<ExecContext, File> =
+        recipe {
+            let! roots = Roots.currentWith extraRoots
+            return readWith roots path
+        }
+
+    /// Writes a lock against this build's roots (see `load`).
+    let save (path: string) (lock: File) : Recipe<ExecContext, unit> =
+        recipe {
+            let! roots = Roots.current
+            System.IO.File.WriteAllText (path, writeWith roots lock)
+        }
+
+    /// `save` with extra roots declared by the script.
+    let saveWith (extraRoots: (string * string) list) (path: string) (lock: File) : Recipe<ExecContext, unit> =
+        recipe {
+            let! roots = Roots.currentWith extraRoots
+            System.IO.File.WriteAllText (path, writeWith roots lock)
+        }
 
     /// The entry for one project, by assembly name or by project file name.
     let project (name: string) (lock: File) =
@@ -597,12 +612,12 @@ module Project =
         match findGlobalJson (Path.GetFullPath projectDir) with
         | None -> NoGlobalJson
         | Some file ->
-            let root = File.ReadAllText file |> Fsproj.Json.parse
-            let sdk = Fsproj.Json.field "sdk" root
-            match sdk |> Option.bind (Fsproj.Json.field "version") |> Option.bind Fsproj.Json.asString with
+            let root = File.ReadAllText file |> Json.parse
+            let sdk = Json.field "sdk" root
+            match sdk |> Option.bind (Json.field "version") |> Option.bind Json.asString with
             | None -> NoVersion file
             | Some version ->
-                match sdk |> Option.bind (Fsproj.Json.field "rollForward") |> Option.bind Fsproj.Json.asString with
+                match sdk |> Option.bind (Json.field "rollForward") |> Option.bind Json.asString with
                 | Some "disable" -> Pinned version
                 | Some policy -> RollsForward (version, policy)
                 | None -> RollsForward (version, "latestPatch")
@@ -633,7 +648,7 @@ module Project =
         /// `$(ProjectRoot)`, `$(DotnetRoot)`) -- one token per sibling repository, e.g.
         /// `["$(DataEngineRoot)", "/abs/path/to/dataengine"]` when a `Projects` entry or a
         /// project reference resolves outside `$(ProjectRoot)` (the current directory). See
-        /// `Fsproj.withRoots`.
+        /// `Roots.withExtra`.
         Roots: (string * string) list
     } with static member Default = {
             Projects = []
@@ -680,10 +695,10 @@ module Project =
     /// concurrent import of the same project (once the lock is released) restores over the
     /// shared `obj/project.assets.json`.
     let internal readAssetsFile (dumpFile: string) : string option =
-        let root = File.ReadAllText dumpFile |> Fsproj.Json.parse
-        Fsproj.Json.field "Properties" root
-        |> Option.bind (Fsproj.Json.field "ProjectAssetsFile")
-        |> Option.bind Fsproj.Json.asString
+        let root = File.ReadAllText dumpFile |> Json.parse
+        Json.field "Properties" root
+        |> Option.bind (Json.field "ProjectAssetsFile")
+        |> Option.bind Json.asString
         |> Option.filter ((<>) "")
 
     /// `PrepareResources` runs resgen so the `/resource:` switches name real files;
@@ -729,18 +744,18 @@ module Project =
     /// `sdkPin`, computed separately since this function stays pure/no file walking of its
     /// own beyond the msbuild result and import list it is already given).
     let internal parseImport (resultFile: string) (imports: string list) (pin: SdkPin) =
-        let root = File.ReadAllText resultFile |> Fsproj.Json.parse
+        let root = File.ReadAllText resultFile |> Json.parse
         let items name =
-            Fsproj.Json.field "Items" root |> Option.bind (Fsproj.Json.field name)
-            |> Option.map Fsproj.Json.asArray |> Option.defaultValue []
-        let identity item = Fsproj.Json.field "Identity" item |> Option.bind Fsproj.Json.asString |> Option.defaultValue ""
+            Json.field "Items" root |> Option.bind (Json.field name)
+            |> Option.map Json.asArray |> Option.defaultValue []
+        let identity item = Json.field "Identity" item |> Option.bind Json.asString |> Option.defaultValue ""
         let fullPath item =
-            Fsproj.Json.field "FullPath" item |> Option.bind Fsproj.Json.asString |> Option.defaultValue (identity item)
-        let metadata name item = Fsproj.Json.field name item |> Option.bind Fsproj.Json.asString |> Option.defaultValue ""
+            Json.field "FullPath" item |> Option.bind Json.asString |> Option.defaultValue (identity item)
+        let metadata name item = Json.field name item |> Option.bind Json.asString |> Option.defaultValue ""
         let properties =
-            match Fsproj.Json.field "Properties" root with
-            | Some (Fsproj.Json.JObject members) ->
-                members |> List.choose (fun (name, value) -> Fsproj.Json.asString value |> Option.map (fun v -> name, v)) |> Map.ofList
+            match Json.field "Properties" root with
+            | Some (Json.JObject members) ->
+                members |> List.choose (fun (name, value) -> Json.asString value |> Option.map (fun v -> name, v)) |> Map.ofList
             | _ -> Map.empty
         let prop name = properties |> Map.tryFind name |> Option.defaultValue ""
 
@@ -985,5 +1000,6 @@ module Project =
                 Properties = options.Properties
                 Projects = List.ofSeq projects
             }
-            File.WriteAllText (options.Output, Lock.writeWith (Fsproj.withRoots options.Roots) lock)
+            let! roots = Roots.currentWith options.Roots
+            File.WriteAllText (options.Output, Lock.writeWith roots lock)
         }

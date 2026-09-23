@@ -12,115 +12,6 @@ open Xake.Tasks
 /// included.
 module Fsproj =
 
-    /// Just enough JSON for what msbuild's `-getItem`/`-getProperty` writes. A parser of our
-    /// own rather than System.Text.Json, which is a package dependency on netstandard2.0 and
-    /// would land on every consumer of Xake.
-    module internal Json =
-
-        type Value =
-            | JString of string
-            | JObject of (string * Value) list
-            | JArray of Value list
-            /// numbers, booleans and null -- msbuild writes none of them, kept so that an
-            /// unexpected value does not fail the whole parse
-            | JOther of string
-
-        let parse (text: string) =
-            let mutable pos = 0
-            let fail message = failwithf "malformed json at %d: %s" pos message
-            let skipWs () = while pos < text.Length && System.Char.IsWhiteSpace text.[pos] do pos <- pos + 1
-            let expect (c: char) =
-                skipWs ()
-                if pos >= text.Length || text.[pos] <> c then fail (sprintf "expected '%c'" c)
-                pos <- pos + 1
-
-            let parseString () =
-                expect '"'
-                let value = System.Text.StringBuilder()
-                let mutable closed = false
-                while not closed do
-                    if pos >= text.Length then fail "unterminated string"
-                    let c = text.[pos]
-                    pos <- pos + 1
-                    match c with
-                    | '"' -> closed <- true
-                    | '\\' ->
-                        let escaped = text.[pos]
-                        pos <- pos + 1
-                        match escaped with
-                        | 'n' -> value.Append '\n' |> ignore
-                        | 't' -> value.Append '\t' |> ignore
-                        | 'r' -> value.Append '\r' |> ignore
-                        | 'b' -> value.Append '\b' |> ignore
-                        | 'f' -> value.Append '\012' |> ignore
-                        | 'u' ->
-                            value.Append (char (System.Convert.ToInt32 (text.Substring (pos, 4), 16))) |> ignore
-                            pos <- pos + 4
-                        | c -> value.Append c |> ignore
-                    | c -> value.Append c |> ignore
-                value.ToString()
-
-            // defined ahead of parseValue and taking the item parser as an argument: inside a
-            // `let rec ... and ...` group it would be pinned to one item type
-            let parseSequence closing (parseItem: unit -> 'item) : 'item list =
-                pos <- pos + 1
-                let items = ResizeArray()
-                skipWs ()
-                if text.[pos] = closing then pos <- pos + 1
-                else
-                    let mutable more = true
-                    while more do
-                        items.Add (parseItem ())
-                        skipWs ()
-                        match text.[pos] with
-                        | ',' -> pos <- pos + 1
-                        | c when c = closing -> pos <- pos + 1; more <- false
-                        | c -> fail (sprintf "unexpected '%c'" c)
-                List.ofSeq items
-
-            let rec parseValue () =
-                skipWs ()
-                if pos >= text.Length then fail "unexpected end of input"
-                match text.[pos] with
-                | '"' -> JString (parseString ())
-                | '{' -> JObject (parseSequence '}' (fun () ->
-                            skipWs ()
-                            let name = parseString ()
-                            expect ':'
-                            name, parseValue ()))
-                | '[' -> JArray (parseSequence ']' parseValue)
-                | _ ->
-                    let start = pos
-                    while pos < text.Length && text.[pos] <> ',' && text.[pos] <> '}' && text.[pos] <> ']'
-                          && not (System.Char.IsWhiteSpace text.[pos]) do
-                        pos <- pos + 1
-                    JOther (text.Substring (start, pos - start))
-
-            let value = parseValue ()
-            skipWs ()
-            value
-
-        /// Escapes a string as a json literal.
-        let escape (value: string) =
-            let escaped = System.Text.StringBuilder()
-            for c in value do
-                match c with
-                | '"' -> escaped.Append "\\\"" |> ignore
-                | '\\' -> escaped.Append "\\\\" |> ignore
-                | '\n' -> escaped.Append "\\n" |> ignore
-                | '\r' -> escaped.Append "\\r" |> ignore
-                | '\t' -> escaped.Append "\\t" |> ignore
-                | c when c < ' ' -> escaped.AppendFormat ("\\u{0:x4}", int c) |> ignore
-                | c -> escaped.Append c |> ignore
-            sprintf "\"%s\"" (escaped.ToString())
-
-        let field name = function
-            | JObject members -> members |> List.tryPick (fun (n, v) -> if n = name then Some v else None)
-            | _ -> None
-
-        let asString = function | JString s -> Some s | _ -> None
-        let asArray = function | JArray items -> items | _ -> []
-
     /// What a project file says about one target framework.
     type ProjectInfo = {
         /// The assembly it produces
@@ -167,59 +58,6 @@ module Fsproj =
     let internal items = "CompileBefore,Compile,CompileAfter,ReferencePath,ProjectReference"
     let internal wantedProperties = "AssemblyName,DefineConstants,Optimize,DebugType,NoWarn,OtherFlags"
 
-    /// Roots replaced by a token when an evaluation is kept, and expanded back when it is
-    /// read: what a build links against sits under a package cache and a checkout, and neither
-    /// is in the same place on the next machine. Longest root first, so the more specific one
-    /// wins.
-    let internal roots () =
-        let nuget =
-            match System.Environment.GetEnvironmentVariable "NUGET_PACKAGES" with
-            | null | "" ->
-                System.Environment.GetFolderPath System.Environment.SpecialFolder.UserProfile
-                    </> ".nuget" </> "packages"
-            | dir -> dir
-        [ yield "$(NuGetPackageRoot)", nuget
-          yield "$(ProjectRoot)", Directory.GetCurrentDirectory()
-          // the SDK: compilers, analyzers, reference packs
-          match DotNetFwk.sdkImpl.dotnetRoot () with
-          | Some root -> yield "$(DotnetRoot)", root
-          | None -> () ]
-        |> List.map (fun (token, path) -> token, path.Replace('\\', '/').TrimEnd '/')
-        |> List.sortByDescending (snd >> String.length)
-
-    let internal builtinRootTokens = [ "$(NuGetPackageRoot)"; "$(ProjectRoot)"; "$(DotnetRoot)" ]
-
-    /// Combines the three built-in roots (see `roots ()`) with extra ones a script declares
-    /// explicitly -- one token per sibling repository, no shared parent root, so that importing
-    /// a project from a second checkout (e.g. a cross-repo `ProjectReference`) still tokenizes.
-    /// Each extra token must look like `$(Name)`, must not be one of the built-in three, and its
-    /// path must be absolute: fails early rather than tokenizing nothing, or the wrong thing,
-    /// silently. Longest root first is kept, same as `roots ()` alone. Public: a script needs
-    /// this same full list to call `Lock.writeWith`/`parseWith`/`readWith` with the roots its
-    /// `Project.import` used.
-    let withRoots (extra: (string * string) list) =
-        for (token, path) in extra do
-            if not (System.Text.RegularExpressions.Regex.IsMatch (token, @"^\$\([A-Za-z_][A-Za-z0-9_]*\)$")) then
-                failwithf "'%s' is not a valid root token: expected the form $(Name)" token
-            if List.contains token builtinRootTokens then
-                failwithf "'%s' is a built-in root token and cannot be redeclared" token
-            if not (Path.IsPathRooted path) then
-                failwithf "root '%s' must be an absolute path, got '%s'" token path
-        (roots () @ (extra |> List.map (fun (token, path) -> token, path.Replace('\\', '/').TrimEnd '/')))
-        |> List.sortByDescending (snd >> String.length)
-
-    /// Paths are written with '/' whatever the platform: a kept evaluation is a file people
-    /// read and diff, and fsc takes forward slashes everywhere.
-    let internal tokenize roots (path: string) =
-        let path = path.Replace('\\', '/')
-        roots
-        |> List.tryPick (fun (token: string, root: string) ->
-            if path.StartsWith (root + "/") then Some (token + path.Substring root.Length) else None)
-        |> Option.defaultValue path
-
-    let internal expand roots (path: string) =
-        roots |> List.fold (fun (path: string) (token: string, root: string) -> path.Replace(token, root)) path
-
     let private defines (properties: Map<string, string>) =
         properties |> Map.tryFind "DefineConstants" |> Option.defaultValue ""
         |> fun value -> value.Split(';') |> List.ofArray |> List.filter (System.String.IsNullOrWhiteSpace >> not)
@@ -258,11 +96,11 @@ module Fsproj =
     /// The project as this build reads it. msbuild answers with every metadata field of every
     /// item -- a couple of hundred kilobytes of which two fields are ever looked at -- so what
     /// gets kept is this: readable, diffable, and about a twentieth of the size.
-    let internal write (project: ProjectInfo) =
-        let roots = roots ()
+    /// `roots` is the list paths are tokenized against (see `Roots`).
+    let internal writeWith roots (project: ProjectInfo) =
         let list name items =
             items
-            |> List.map (tokenize roots >> Json.escape >> sprintf "    %s")
+            |> List.map (Roots.tokenize roots >> Json.escape >> sprintf "    %s")
             |> String.concat ",\n"
             |> sprintf "  %s: [\n%s\n  ]" (Json.escape name)
 
@@ -328,21 +166,23 @@ module Fsproj =
 
             do! Impl.failOnExitCode true options.Project exitCode
 
-            File.WriteAllText (options.Output, parseEvaluation dump |> write)
+            let! roots = Roots.current
+            File.WriteAllText (options.Output, parseEvaluation dump |> writeWith roots)
             File.Delete dump
         }
 
     /// <summary>
-    /// Reads the file `evaluate` wrote.
+    /// Reads the file `evaluate` wrote, expanding its tokens against `roots` (see `Roots`).
+    /// Inside a recipe use `load`, which takes the build's own project root.
     /// </summary>
+    /// <param name="roots">The roots the file was written against</param>
     /// <param name="resultFile">The file the evaluation was written to</param>
-    let parse (resultFile: string) =
+    let parseWith roots (resultFile: string) =
         let root = File.ReadAllText resultFile |> Json.parse
-        let roots = roots ()
 
         let strings name =
             Json.field name root |> Option.map Json.asArray |> Option.defaultValue []
-            |> List.choose Json.asString |> List.map (expand roots)
+            |> List.choose Json.asString |> List.map (Roots.expand roots)
 
         let properties =
             match Json.field "Properties" root with
@@ -359,4 +199,15 @@ module Fsproj =
             ProjectRefs = strings "ProjectRefs"
             Defines = defines properties
             Properties = properties
+        }
+
+    /// <summary>
+    /// Reads the file `evaluate` wrote, against the roots of this build -- the engine's
+    /// project root, not the process's current directory.
+    /// </summary>
+    /// <param name="resultFile">The file the evaluation was written to</param>
+    let load (resultFile: string) : Recipe<ExecContext, ProjectInfo> =
+        recipe {
+            let! roots = Roots.current
+            return parseWith roots resultFile
         }

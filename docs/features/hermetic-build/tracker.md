@@ -65,7 +65,9 @@ mechanism, release. Details: session.md, README.md.
 
 ## Conceptual review (requested 2026-09-23, after the page run)
 - [x] step back and audit what slice 1 produced — `conceptual-review.md` (2026-09-23). Verdict: no drift of the engine (two core files changed, both the one-execution-per-run fix); two blurred seams — `Lock.Project` mixes evaluation provenance, compile manifest and dependency evidence; `FromLock` is a mode flag inside the settings record
-- [x] review follow-ups (cheap): compiler is `needFiles`'d; the `.resources` mtime test is gone (regenerate only when missing, the engine decides staleness); gate semantics documented in `csc-syntax.md`. **User decisions remain**: a separate `Csc.fromLock project` instead of `fromlock` inside `csc {}`; `Fsproj.roots ()` from `ExecOptions.ProjectRoot` instead of cwd; move `Json`/roots helpers out of `Fsproj`; renames (`Lock.Project`, `Lock.File`, `Compiler.Sdk`, `Properties` as an untyped bag)
+- [x] review follow-ups (cheap): compiler is `needFiles`'d; the `.resources` mtime test is gone (regenerate only when missing, the engine decides staleness); gate semantics documented in `csc-syntax.md`
+- [x] **stage A1** (§2.5, approved 2026-09-24): `Json.fs` and `Roots.fs` compiled before `Fsproj.fs` — `Fsproj` is the F# evaluation again; `$(ProjectRoot)` is the engine's `ExecOptions.ProjectRoot`, not the process cwd, so the entry points that need it are recipes: `Roots.current`/`currentWith`, `Lock.load`/`loadWith`/`save`/`saveWith`, `Fsproj.load`. Pure `writeWith`/`parseWith`/`readWith` and `Roots.builtin`/`withExtra` take the roots (or the root) explicitly; the cwd-based `Fsproj.roots`/`withRoots`/`write`/`parse` and `Lock.write`/`parse`/`read` are gone
+- **Renames still open for the user**: `Lock.Project`, `Lock.File`, `Compiler.Sdk`, `Properties` as an untyped bag — due with the lock split
 
 ## Housekeeping
 - [ ] release of `feature/hermetic-build` — deferred by the user; `#r` on `.bootstrap/` for now

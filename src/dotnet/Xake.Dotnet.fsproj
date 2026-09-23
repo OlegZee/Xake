@@ -42,6 +42,11 @@
     <Compile Include="Resx.fs" />
 
     <Compile Include="DotnetTasks.fs" />
+    <!-- Shared infrastructure the lock, the import and the evaluation all use: the
+         dependency-free json reader, and the root tokens paths are written against. Both
+         are compiled ahead of Fsproj.fs, which used to hold them. -->
+    <Compile Include="Json.fs" />
+    <Compile Include="Roots.fs" />
     <Compile Include="Fsproj.fs" />
     <Compile Include="Project.fs" />
     <Compile Include="Nuget.fs" />

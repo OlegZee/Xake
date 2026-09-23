@@ -69,7 +69,7 @@ do xakeScript {
             let relative (p: string) = Path.GetRelativePath (options.ProjectRoot, p)
 
             do! need [lockFile fwk brand]
-            let lock = Lock.read (lockFile fwk brand)
+            let! lock = Lock.load (lockFile fwk brand)
             let project = Lock.project name lock
 
             // the referenced projects' own outputs, as this run of the lock will build them
@@ -94,7 +94,7 @@ do xakeScript {
             for f in frameworks do
                 for b in brands do
                     do! need [lockFile f b]
-                    let lock = Lock.read (lockFile f b)
+                    let! lock = Lock.load (lockFile f b)
                     do! need
                             [ for project in lock.Projects do
                                 match project.Output with
@@ -104,7 +104,7 @@ do xakeScript {
 
         command "show" {
             let! lockPath = vars.Lock
-            let lock = Lock.read (lockPath |> Option.defaultValue (lockFile "netstandard2.0" "MESCIUS"))
+            let! lock = Lock.load (lockPath |> Option.defaultValue (lockFile "netstandard2.0" "MESCIUS"))
             for project in lock.Projects do
                 do! trace Message "%s (%s, sdk %s)" project.Name project.Project project.Compiler.Sdk
                 do! trace Message "  compiler   %s %s" project.Compiler.Path (project.Compiler.Sha256.Substring(0, 12))

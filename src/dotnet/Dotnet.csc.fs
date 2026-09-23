@@ -123,10 +123,10 @@ module CscImpl =
             else
                 let path = project.Compiler.Path.Replace('\\', '/')
                 let comparer = if Env.isUnix then System.StringComparison.Ordinal else System.StringComparison.OrdinalIgnoreCase
-                let root token = Fsproj.roots () |> List.tryFind (fst >> (=) token) |> Option.map snd
+                let normalize (r: string) = r.Replace('\\', '/').TrimEnd '/'
                 let under (r: string) = path.StartsWith(r + "/", comparer)
 
-                match root "$(NuGetPackageRoot)" |> Option.filter under with
+                match Roots.nugetRoot () |> normalize |> Some |> Option.filter under with
                 | Some nugetRoot ->
                     let rest = path.Substring(nugetRoot.Length + 1).Split('/')
                     let packageId, version = rest.[0], rest.[1]
@@ -137,7 +137,7 @@ module CscImpl =
                                 (sprintf "'%s': the compiler %s is not available and restoring %s %s did not provide it"
                                     project.Name project.Compiler.Path packageId version)
                 | None ->
-                    match root "$(DotnetRoot)" |> Option.filter under with
+                    match Roots.dotnetRoot () |> Option.map normalize |> Option.filter under with
                     | Some dotnetRoot ->
                         let sdkPrefix = dotnetRoot + "/sdk/"
                         let msg =

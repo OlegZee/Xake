@@ -96,8 +96,9 @@ type ``Project import``() =
 
     [<Test>]
     member x.``the lock reads back what was written, with roots tokenized``() =
-        let packages = Fsproj.roots () |> List.find (fst >> (=) "$(NuGetPackageRoot)") |> snd
+        let packages = (Roots.nugetRoot()).Replace('\\', '/').TrimEnd '/'
         let root = Directory.GetCurrentDirectory().Replace ('\\', '/')
+        let roots = Roots.builtin (Directory.GetCurrentDirectory())
 
         let project : Lock.Project = {
             Name = "Sample.Lib"
@@ -124,8 +125,8 @@ type ``Project import``() =
             Framework = "net8.0"; Configuration = "Release"; Properties = [ "Brand", "X" ]; Projects = [ project ]
         }
 
-        let text = Lock.write lock
-        Assert.That(Lock.parse text, Is.EqualTo lock)
+        let text = Lock.writeWith roots lock
+        Assert.That(Lock.parseWith roots text, Is.EqualTo lock)
 
         // nothing machine-specific survives in the file: the checkout and the package cache
         // are tokens, and a root inside a value (`/pathmap:`) is one too
@@ -136,7 +137,7 @@ type ``Project import``() =
         Assert.That(text, Does.Contain "$(NuGetPackageRoot)/netstandard.library/2.0.3")
 
         // and the same text again from the parsed lock: the file is deterministic
-        Assert.That(Lock.parse text |> Lock.write, Is.EqualTo text)
+        Assert.That(Lock.parseWith roots text |> Lock.writeWith roots, Is.EqualTo text)
 
         Assert.That((Lock.project "Sample" lock).Name, Is.EqualTo "Sample.Lib")
         Assert.That((Lock.project "Sample.Lib" lock).Sources, Is.EqualTo [ root + "/src/Sample/A.cs" ])
@@ -146,7 +147,7 @@ type ``Project import``() =
     member x.``an extra root tokenizes a sibling repository's paths and round-trips``() =
         let root = Directory.GetCurrentDirectory().Replace ('\\', '/')
         let extraRoots = [ "$(DataEngineRoot)", "/x/dataengine" ]
-        let roots = Fsproj.withRoots extraRoots
+        let roots = Roots.withExtra (Directory.GetCurrentDirectory()) extraRoots
 
         let project : Lock.Project = {
             Name = "Sample.Lib"
@@ -175,9 +176,10 @@ type ``Project import``() =
 
     [<Test>]
     member x.``a declared root must be a well-formed, non-built-in, absolute token``() =
-        Assert.Throws<System.Exception>(fun () -> Fsproj.withRoots [ "DataEngineRoot", "/x/dataengine" ] |> ignore) |> ignore
-        Assert.Throws<System.Exception>(fun () -> Fsproj.withRoots [ "$(ProjectRoot)", "/x/dataengine" ] |> ignore) |> ignore
-        Assert.Throws<System.Exception>(fun () -> Fsproj.withRoots [ "$(DataEngineRoot)", "relative/dataengine" ] |> ignore) |> ignore
+        let cwd = Directory.GetCurrentDirectory()
+        Assert.Throws<System.Exception>(fun () -> Roots.withExtra cwd [ "DataEngineRoot", "/x/dataengine" ] |> ignore) |> ignore
+        Assert.Throws<System.Exception>(fun () -> Roots.withExtra cwd [ "$(ProjectRoot)", "/x/dataengine" ] |> ignore) |> ignore
+        Assert.Throws<System.Exception>(fun () -> Roots.withExtra cwd [ "$(DataEngineRoot)", "relative/dataengine" ] |> ignore) |> ignore
 
     [<Test>]
     member x.``lists the files a preprocessed project imported``() =

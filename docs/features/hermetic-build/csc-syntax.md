@@ -207,21 +207,30 @@ instead of running -- and writes one lock file per (framework, variant). `Import
 | `Output` | the lock file to write |
 | `Roots` | extra `(token, absolute path)` roots to tokenize against, beyond the built-in three; default `[]` |
 
-**Extra roots.** The three built-in roots (`$(NuGetPackageRoot)`, `$(ProjectRoot)` = the current
-directory, `$(DotnetRoot)`) tokenize everything under the package cache, the checkout being
+**Extra roots.** The three built-in roots (`$(NuGetPackageRoot)`, `$(ProjectRoot)` = the
+build's project root, `$(DotnetRoot)`) tokenize everything under the package cache, the checkout being
 imported, and the SDK -- but a cross-repo `ProjectReference` (page's `LocalBuild=true` pointing
 at a sibling `ar-net-core-dataengine` checkout) resolves to paths under neither, and would
 otherwise land in the lock untokenized and machine-specific. `ImportOptions.Roots` declares one
 extra token per sibling repository (the decision: no shared parent root, since siblings can move
 independently and a shared root would tokenize more than intended) -- e.g. `Roots = [
 "$(DataEngineRoot)", "/abs/path/to/ar-net-core-dataengine" ]`. `Project.import` combines them
-with the built-in three via `Fsproj.withRoots`, which validates each token is well-formed
+with the built-in three via `Roots.withExtra`, which validates each token is well-formed
 (`$(Name)`), is not one of the built-ins, and that its path is absolute -- failing early rather
 than writing a lock that silently didn't tokenize -- and keeps the longest-root-first order
-`Fsproj.roots ()` already relies on. A script reading such a lock back (`Lock.readWith`/
-`parseWith`, or `Lock.mapPaths` before that) must pass the same roots, e.g. `Lock.readWith
-(Fsproj.withRoots roots) path`; `Lock.read`/`parse`/`write` keep expanding/tokenizing against
-the built-in three only, unchanged.
+`Roots.builtin` already relies on. A script reading such a lock back must pass the same roots:
+`Lock.loadWith extraRoots path` inside a recipe, or `Lock.readWith (Roots.withExtra projectRoot
+extra) path` outside one. `Lock.load`/`save` use the built-in three only.
+
+**Where the project root comes from (review §2.5).** `$(ProjectRoot)` is the engine's
+`ExecOptions.ProjectRoot` -- what `need`, `getFiles` and rule matching already resolve against --
+not the process's current directory. The `Roots` module holds the whole thing: `nugetRoot ()`,
+`dotnetRoot ()`, `builtinTokens`, the pure `builtin projectRoot` / `withExtra projectRoot extra`,
+and the recipes `current` / `currentWith extra` that read the root from `getCtxOptions()`. The
+recipe-level lock and evaluation entry points (`Lock.load`/`loadWith`/`save`/`saveWith`,
+`Fsproj.load`) are recipes for exactly this reason; the pure `writeWith`/`parseWith`/`readWith`
+still take a roots list. The json reader lives in its own `Json` module. Neither is under
+`Fsproj` any more, which is again just the F# project evaluation it is named for.
 
 `Lock.Project`, one entry per project:
 
@@ -244,8 +253,8 @@ the built-in three only, unchanged.
 - `Properties` -- a small whitelist (`AssemblyName`, `TargetFrameworkMoniker`, ...)
 - `Sources`/`Output` -- computed from `Args` via `CscArgs`, not stored twice
 
-`Lock.read path` parses a lock file (paths expanded for this machine); `Lock.project name lock`
-looks an entry up by assembly name or project file name.
+`Lock.load path` (a recipe) parses a lock file, paths expanded for this machine;
+`Lock.project name lock` looks an entry up by assembly name or project file name.
 
 **`$(SourceRevisionId)` and the commit sha (raised 2026-09-23, "Lock stability").** The SDK's
 built-in SourceLink writes `sourcelink.json` (a Bitbucket/GitHub-shaped URL template with the
@@ -324,9 +333,9 @@ mapped outputs, it only `needFiles` what the (already-mapped) args name.
   `CS2023` and ignores it.
 - A hash mismatch reports every mismatching path at once, `"<path>: expected <hash>, got
   <hash-or-\"missing\">"`, one line per path, and fails when `FailOnError` is set.
-- A `Lock.Project` in memory has absolute paths throughout; `Lock.write` tokenizes them against
-  known roots (project root, NuGet package cache, SDK) so the file on disk is portable and
-  diffable, and `Lock.read`/`parse` expands them back on load.
+- A `Lock.Project` in memory has absolute paths throughout; `Lock.save`/`writeWith` tokenizes
+  them against known roots (project root, NuGet package cache, SDK) so the file on disk is
+  portable and diffable, and `Lock.load`/`parseWith` expands them back on load.
 
 ## Recording a lock from composed `csc` settings
 
@@ -377,7 +386,7 @@ Tests: `src/tests/LockDiffTests.fs` (`rehash`, `diff` identical and with changes
 msbuild/compiler needed); `src/tests/FromLockTests.fs`, `CscLock.resolve resolves composed
 settings into a hashable, round-trippable lock` (Integration: resolves a trivial library,
 asserts `Sources`/`Args`/`Compiler.Path`/empty reference hashes, then `Lock.rehash` and a
-`Lock.write`/`Lock.parse` round trip).
+`Lock.writeWith`/`Lock.parseWith` round trip).
 
 ## Not yet
 

@@ -15,14 +15,14 @@
 // Xake comes from `.bootstrap/` next to the Xake checkout (see build.fsc.fsx), not from a
 // released package: this branch is not released.
 //
-// Cross-repo roots. `$(ProjectRoot)` (one of the three built-in roots `Fsproj.roots ()` always
-// tokenizes against) is the current directory -- the page copy. dataengine's paths, and the
+// Cross-repo roots. `$(ProjectRoot)` (one of the three built-in roots `Roots.builtin` always
+// tokenizes against) is the build's project root -- the page copy. dataengine's paths, and the
 // "unbuilt" project-reference outputs the import records for the two page->dataengine
 // `ProjectReference`s, live under a different tree entirely and would otherwise land in the
 // lock as raw, machine-specific absolute paths. `Project.ImportOptions.Roots` (this branch,
 // Part 1) declares one extra token for the sibling: `$(DataEngineRoot)`. Anything reading the
 // lock back -- this script's compile rule and `build` command -- must expand with the same
-// roots, via `Lock.readWith (Fsproj.withRoots roots)` rather than the plain `Lock.read`.
+// roots, via `Lock.loadWith extraRoots` rather than the plain `Lock.load`.
 //
 // `..`-targets. dataengine's own compile outputs sit outside `$(ProjectRoot)` (this script's
 // cwd), e.g. `../ar-net-core-dataengine/src/ExpressionInfo/obj/xake/netstandard2.0/MESCIUS/
@@ -83,7 +83,6 @@ let projects = pageProjects @ dataEngineProjects
 
 /// The one extra root this cross-repo import needs (Part 1): one token per sibling repository.
 let extraRoots = [ "$(DataEngineRoot)", dataEngineDir ]
-let allRoots () = Fsproj.withRoots extraRoots
 
 let frameworks = [ "netstandard2.0" ]
 let brands = [ "MESCIUS"; "GCCN" ]
@@ -142,7 +141,7 @@ do xakeScript {
         // because the lock's project entries do
         let compileFromLock fwk brand name = recipe {
             do! need [lockFile fwk brand]
-            let lock = Lock.readWith (allRoots ()) (lockFile fwk brand)
+            let! lock = Lock.loadWith extraRoots (lockFile fwk brand)
             let project = Lock.project name lock
 
             let outputOf refPath =
@@ -174,9 +173,8 @@ do xakeScript {
         }
 
         // the NuGet package cache root -- the same `$(NuGetPackageRoot)` token `Project.import`
-        // and the lock tokenize against (Part 1). Read back out of `Fsproj.withRoots` (public)
-        // rather than the internal `Fsproj.roots ()`.
-        let cacheRoot = allRoots () |> List.find (fun (token, _) -> token = "$(NuGetPackageRoot)") |> snd
+        // and the lock tokenize against (Part 1).
+        let cacheRoot = Roots.nugetRoot ()
 
         // one CycloneDX SBOM per compiled project (Part 1): needs the lock and the built
         // assembly (the compile rules above), reads the restore graph from *that project's own*
@@ -190,7 +188,7 @@ do xakeScript {
             let! name = getRuleMatch "name"
 
             do! need [lockFile fwk brand]
-            let lock = Lock.readWith (allRoots ()) (lockFile fwk brand)
+            let! lock = Lock.loadWith extraRoots (lockFile fwk brand)
             let project = Lock.project name lock
             let output =
                 project.Output
@@ -208,7 +206,7 @@ do xakeScript {
             for f in frameworks do
                 for b in brands do
                     do! need [lockFile f b]
-                    let lock = Lock.readWith (allRoots ()) (lockFile f b)
+                    let! lock = Lock.loadWith extraRoots (lockFile f b)
                     do! need [ for project in lock.Projects -> $"out/%s{f}/%s{b}/%s{project.Name}.cdx.json" ]
         }
 
@@ -218,7 +216,7 @@ do xakeScript {
             for f in frameworks do
                 for b in brands do
                     do! need [lockFile f b]
-                    let lock = Lock.readWith (allRoots ()) (lockFile f b)
+                    let! lock = Lock.loadWith extraRoots (lockFile f b)
                     do! need
                             [ for project in lock.Projects do
                                 match project.Output with
@@ -228,7 +226,7 @@ do xakeScript {
 
         command "show" {
             let! lockPath = vars.Lock
-            let lock = Lock.readWith (allRoots ()) (lockPath |> Option.defaultValue (lockFile "netstandard2.0" "MESCIUS"))
+            let! lock = Lock.loadWith extraRoots (lockPath |> Option.defaultValue (lockFile "netstandard2.0" "MESCIUS"))
             for project in lock.Projects do
                 do! trace Message "%s (%s, sdk %s)" project.Name project.Project project.Compiler.Sdk
                 do! trace Message "  compiler   %s %s" project.Compiler.Path (project.Compiler.Sha256.Substring(0, 12))

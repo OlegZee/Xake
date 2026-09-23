@@ -144,7 +144,7 @@ type ``Resx resources``() =
             ]
         }
 
-        let lock = Lock.read lockFile
+        let lock = Lock.readWith (Roots.builtin (Directory.GetCurrentDirectory())) lockFile
         let project = Lock.project "Sample" lock
 
         Assert.That(project.Resources, Has.Length.EqualTo 1, "expected exactly one resx recorded in the lock")

@@ -51,7 +51,7 @@ details live in brief.md (section refs) or session.md.
 
 ## Slice 3 — ring 2/3 (brief §8f, §8g)
 - [ ] Babel recipe with seed; PE timestamp normalisation + strong-name re-sign, or vendor option
-- [ ] deterministic pack
+- [x] deterministic pack — `Pack.fs` (hand-rolled zip writer: sorted entries, fixed DOS time or `SOURCE_DATE_EPOCH`, no extra fields; `Pack.nupkg` with OPC parts and a content-derived psmdcp GUID, no creation date; `Pack.entries` reader with CRC-32 — `ZipArchive` exposes no `Crc32` on netstandard2.0), `PackTests.fs` (4), `pack.md`
 - [ ] sign as delegated rule (later)
 
 ## Conceptual review (requested 2026-09-23, after the page run)

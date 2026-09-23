@@ -35,6 +35,7 @@
     <Compile Include="ToolsetTests.fs" />
     <Compile Include="ResxTests.fs" />
     <Compile Include="NugetTests.fs" />
+    <Compile Include="RestoreTests.fs" />
     <Compile Include="SbomTests.fs" />
     <Compile Include="VerifyTests.fs" />
     <Compile Include="StrongNameTests.fs" />

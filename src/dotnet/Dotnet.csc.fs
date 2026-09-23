@@ -76,9 +76,14 @@ module CscImpl =
         FailOnError: bool
         /// Path to the csc executable, overriding the compiler the project names.
         CscPath: string option
+        /// Where the packages the entry names live, and whether one that is missing may be
+        /// fetched. The default is the machine's own NuGet cache with restore on -- what the
+        /// compiler restore has always done, now for references and analyzers too.
+        Restore: Restore.Options
     } with static member Default = {
             FailOnError = true
             CscPath = None
+            Restore = Restore.Options.Default
         }
 
     /// <summary>
@@ -101,18 +106,20 @@ module CscImpl =
     /// no room for it, so it travels alongside instead.
     /// </summary>
     /// The path `csc.dll` would have under a `Microsoft.Net.Compilers.Toolset`-shaped package
-    /// (`<nugetRoot>/<packageId>/<version>/tasks/netcore/bincore/csc.dll`), restoring the
-    /// package into the NuGet cache first when it is not there yet. Shared by `resolve`'s
-    /// `toolset` operation (composing a lock) and `run`'s "make the compiler available" step
-    /// (replaying a lock that names a package not yet restored on this machine).
-    let private restoreToolsetCompiler (packageId: string) (version: string) =
-        let dir =
-            DotNetFwk.sdkImpl.nugetRoot () </> packageId.ToLowerInvariant() </> version
-            </> "tasks" </> "netcore" </> "bincore"
-        let cscDll = dir </> "csc.dll"
-        if not (File.Exists cscDll) then
-            DotNetFwk.sdkImpl.restorePackage packageId version
-        cscDll
+    /// (`<packageRoot>/<packageId>/<version>/tasks/netcore/bincore/csc.dll`), fetching the
+    /// package into the folder first when it is not there yet. This is `resolve`'s `toolset`
+    /// operation, which composes a lock and therefore has no lock to read the package out of.
+    /// Replaying a lock does not come here: `run`'s restore step treats the compiler as one
+    /// package among the entry's others (`Restore.ensure`).
+    let private restoreToolsetCompiler (options: Restore.Options) (packageId: string) (version: string) =
+        recipe {
+            let cscDll =
+                Restore.packageRoot options </> packageId.ToLowerInvariant() </> version
+                </> "tasks" </> "netcore" </> "bincore" </> "csc.dll"
+            if not (File.Exists cscDll) then
+                do! Restore.download options [ packageId, version ]
+            return cscDll
+        }
 
     /// Traces `msg` as an error and, when the options say so, fails the build with it -- the
     /// same shape as `Impl.failOnExitCode` and the hash-mismatch check below.
@@ -122,13 +129,17 @@ module CscImpl =
             if options.FailOnError then failwith msg
         }
 
-    /// Makes the entry's compiler available on this machine before the hash check runs,
-    /// for a lock imported (or resolved) somewhere else:
+    /// Accounts for a compiler the lock names that this machine still does not have, once the
+    /// restore step (`Restore.ensure`, which treats the compiler as one package among the
+    /// entry's references and analyzers) has had its chance. It used to restore the compiler
+    /// itself; that was the one case of the general mechanism this module implemented on its
+    /// own, and all that is left here is the part that is specific to the compiler -- saying
+    /// what went wrong:
     ///  - already on disk: nothing to do.
-    ///  - under `$(NuGetPackageRoot)`: the compiler is a `Microsoft.Net.Compilers.Toolset`-shaped
-    ///    package (see `resolve`'s `toolset`) that simply is not restored yet on this machine --
-    ///    restore it, the same way `toolset` does. A hash mismatch after a successful restore is
-    ///    still a hard error (a different package build), left to the check that follows.
+    ///  - under the package folder: a `Microsoft.Net.Compilers.Toolset`-shaped package (see
+    ///    `resolve`'s `toolset`) that the restore did not, or was not allowed to, provide. A
+    ///    hash mismatch after a successful restore is a different package build, not a missing
+    ///    one, and is left to the check that follows.
     ///  - under `$(DotnetRoot)/sdk/<version>/`: an SDK this machine does not have; nothing to
     ///    restore, so this fails immediately naming the SDK version.
     ///  - anywhere else: the path simply does not exist.
@@ -143,16 +154,13 @@ module CscImpl =
                 let normalize (r: string) = r.Replace('\\', '/').TrimEnd '/'
                 let under (r: string) = path.StartsWith(r + "/", comparer)
 
-                match Roots.nugetRoot () |> normalize |> Some |> Option.filter under with
-                | Some nugetRoot ->
-                    let rest = path.Substring(nugetRoot.Length + 1).Split('/')
+                match Restore.packageRoot options.Restore |> normalize |> Some |> Option.filter under with
+                | Some packageRoot ->
+                    let rest = path.Substring(packageRoot.Length + 1).Split('/')
                     let packageId, version = rest.[0], rest.[1]
-                    do! trace Info "restoring compiler package %s %s" packageId version
-                    restoreToolsetCompiler packageId version |> ignore
-                    if not (File.Exists compiler.Path) then
-                        do! failStep options
-                                (sprintf "'%s': the compiler %s is not available and restoring %s %s did not provide it"
-                                    entry.Name compiler.Path packageId version)
+                    do! failStep options
+                            (sprintf "'%s': the compiler %s is not available and restoring %s %s did not provide it"
+                                entry.Name compiler.Path packageId version)
                 | None ->
                     match Roots.dotnetRoot () |> Option.map normalize |> Option.filter under with
                     | Some dotnetRoot ->
@@ -175,9 +183,19 @@ module CscImpl =
             let compiler = entry.Dependencies.Compiler
             do! trace Info "compiling '%s' (%s %s)" entry.Name compiler.Tool compiler.Version
 
-            // a lock built on another machine may name a compiler this one does not have yet
-            // (a toolset package not restored, an SDK not installed): make it available -- or
-            // fail with a clear reason -- before the hash check below even looks at it
+            // a lock built on another machine names packages this one may not have yet -- a
+            // compiler in a toolset package, and every reference and analyzer under the
+            // package folder. Fetch the whole missing set in one restore before the hash
+            // check below looks at any of it; with nothing missing (the normal case) this is
+            // a `File.Exists` per path and no process at all.
+            let! restoreProblems = Restore.ensure options.Restore [entry]
+            if not (List.isEmpty restoreProblems) then
+                do! failStep options
+                        (sprintf "('%s') restoring the packages the lock names failed:\n%s"
+                            entry.Name (restoreProblems |> String.concat "\n"))
+
+            // whatever the restore could not provide, the compiler's own absence is worth an
+            // explanation of its own (an SDK that is not installed is not a package)
             do! ensureCompilerAvailable options entry
 
             // the compiler is hashed (below) but was never a tracked dependency, so an SDK or
@@ -441,17 +459,20 @@ module CscImpl =
             let fwkInfo = DotNetFwk.locateFramework dotnetFwk
 
             // references and env vars always come from the targeted framework -- `toolset`
-            // only replaces the compiler executable, restoring the package into the NuGet
-            // cache first when it is not there yet (the same mechanism `DotNetFwk.sdkImpl`
-            // uses for the reference-assemblies packages)
-            let compilerPath =
+            // only replaces the compiler executable, fetching the package into the package
+            // folder first when it is not there yet. Composed settings name no package folder
+            // of their own (a lock does, through `RunOptions.Restore`), so this is the
+            // machine's cache.
+            let! compilerPath =
                 match settings.Toolset with
-                | None -> fwkInfo.CscTool
+                | None -> recipe { return fwkInfo.CscTool }
                 | Some version ->
-                    let cscDll = restoreToolsetCompiler "Microsoft.Net.Compilers.Toolset" version
-                    if not (File.Exists cscDll) then
-                        failwithf "compiler package Microsoft.Net.Compilers.Toolset %s could not be restored (expected '%s')" version cscDll
-                    cscDll
+                    recipe {
+                        let! cscDll = restoreToolsetCompiler Restore.Options.Default "Microsoft.Net.Compilers.Toolset" version
+                        if not (File.Exists cscDll) then
+                            failwithf "compiler package Microsoft.Net.Compilers.Toolset %s could not be restored (expected '%s')" version cscDll
+                        return cscDll
+                    }
 
             let compilation, references, analyzers = Lock.Compilation.ofArgs args
             let entry : Lock.Entry = {
@@ -591,7 +612,7 @@ module CscImpl =
         recipe {
             do! trace Level.Debug "Csc: settings=%A" settings
             let! (entry, envVars) = resolve settings
-            let options = { FailOnError = settings.FailOnError; CscPath = settings.CscPath }
+            let options = { RunOptions.Default with FailOnError = settings.FailOnError; CscPath = settings.CscPath }
 
             // `lock "path"`: settings stay the source of truth (resolve has already run), the
             // lock decides whether this compilation is the one that was recorded. Strict by

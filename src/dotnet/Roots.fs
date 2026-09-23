@@ -23,8 +23,18 @@ module Roots =
     /// reference packs live under it.
     let dotnetRoot () = DotNetFwk.sdkImpl.dotnetRoot ()
 
-    /// The tokens `builtin` always provides; an extra root may not redeclare one of them.
-    let builtinTokens = [ "$(NuGetPackageRoot)"; "$(ProjectRoot)"; "$(DotnetRoot)" ]
+    /// The token the package folder is written against.
+    let nugetPackageRootToken = "$(NuGetPackageRoot)"
+
+    /// The tokens `builtin` always provides. An extra root of the same name replaces the
+    /// built-in one (see `withExtra`).
+    let builtinTokens = [ nugetPackageRootToken; "$(ProjectRoot)"; "$(DotnetRoot)" ]
+
+    /// The extra-root list that points `$(NuGetPackageRoot)` at a folder of the build's own,
+    /// for `Lock.loadWith` / `saveWith`: a lock is read against the same folder the build
+    /// restores into (`Restore.Options.PackageRoot`), or the two disagree about where the
+    /// packages are. `Lock.loadWith (Roots.packageRootOverride "./.packages") "locks/app.json"`.
+    let packageRootOverride (dir: string) = [ nugetPackageRootToken, dir ]
 
     let private normalize (path: string) = path.Replace('\\', '/').TrimEnd '/'
 
@@ -46,18 +56,32 @@ module Roots =
     /// Combines the built-in roots with extra ones a script declares explicitly -- one token
     /// per sibling repository, no shared parent root, so that importing a project from a second
     /// checkout (e.g. a cross-repo `ProjectReference`) still tokenizes. Each extra token must
-    /// look like `$(Name)`, must not be one of the built-in three, and its path must be
-    /// absolute: fails early rather than tokenizing nothing, or the wrong thing, silently.
-    /// Longest root first is kept, same as `builtin` alone.
+    /// look like `$(Name)`: fails early rather than tokenizing nothing, or the wrong thing,
+    /// silently. Longest root first is kept, same as `builtin` alone.
+    ///
+    /// An extra root *replaces* the built-in of the same name rather than being refused (it
+    /// used to be refused): that is how a build declares a package folder of its own --
+    /// `withExtra root (Roots.packageRootOverride dir)` reads and writes
+    /// `$(NuGetPackageRoot)/...` against `dir` instead of the machine's cache, so a lock can
+    /// be resolved against the same folder `Restore` fills.
+    ///
+    /// A relative path is taken against `projectRoot`, like every other path a script writes,
+    /// and not against the process's current directory -- `Path.GetFullPath` in a script would
+    /// silently reintroduce exactly the cwd dependency the project root exists to avoid. The
+    /// function stays pure in its two arguments either way.
     let withExtra (projectRoot: string) (extra: (string * string) list) =
-        for (token, path) in extra do
-            if not (System.Text.RegularExpressions.Regex.IsMatch (token, @"^\$\([A-Za-z_][A-Za-z0-9_]*\)$")) then
-                failwithf "'%s' is not a valid root token: expected the form $(Name)" token
-            if List.contains token builtinTokens then
-                failwithf "'%s' is a built-in root token and cannot be redeclared" token
-            if not (Path.IsPathRooted path) then
-                failwithf "root '%s' must be an absolute path, got '%s'" token path
-        (builtin projectRoot @ (extra |> List.map (fun (token, path) -> token, normalize path)))
+        let baseDir =
+            match projectRoot with
+            | null | "" -> Directory.GetCurrentDirectory()
+            | dir -> Path.GetFullPath dir
+        let extra =
+            extra |> List.map (fun (token, path) ->
+                if not (System.Text.RegularExpressions.Regex.IsMatch (token, @"^\$\([A-Za-z_][A-Za-z0-9_]*\)$")) then
+                    failwithf "'%s' is not a valid root token: expected the form $(Name)" token
+                let full = if Path.IsPathRooted path then Path.GetFullPath path else Path.GetFullPath (baseDir </> path)
+                token, normalize full)
+        let overridden = extra |> List.map fst |> Set.ofList
+        ((builtin projectRoot |> List.filter (fst >> overridden.Contains >> not)) @ extra)
         |> List.sortByDescending (snd >> String.length)
 
     /// Paths are written with '/' whatever the platform: these files are read and diffed by

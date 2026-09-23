@@ -27,11 +27,20 @@ network, no signing tool -- it measures, it does not sign or validate a signatur
   each labelled by the structure it falls in (per file `a`'s layout): `"TimeDateStamp"`,
   `"CheckSum"`, `"CertificateTable"`, `"DebugDirectory/PDB id (MVID/GUID)"`,
   `"StrongNameSignature"`, or `"Content"` for anything else. `[]` means identical. A size
-  mismatch is reported as one trailing `"Content"` range.
+  mismatch is reported as one or more trailing ranges: when `b` is the longer file, the extra
+  bytes exist only in `b`, so that tail -- and any recognised field inside it -- is labelled
+  from file `b`'s own layout instead of `a`'s; this is what makes a signed-vs-unsigned
+  comparison read as an appended `"CertificateTable"` instead of `"Content"` (`a`, unsigned, has
+  no certificate table to name the tail with, but `b` does). Every other size mismatch,
+  including `a` the longer file, keeps the old single trailing `"Content"` range.
 
 - **`Verify.verdict : Difference list -> string`** -- one line: `"identical"`, or
-  `"identical except: <fields>"` when every range is a known, non-content field, or
-  `"content differs (N ranges)"` when at least one range is unlabelled content.
+  `"identical except: <fields>, <N> bytes"` when every range is a known, non-content field, or
+  `"content differs: <N> ranges, <N> bytes, largest <N> bytes at 0x<hex offset> (<field>)"` when
+  at least one range is unlabelled content. `<N> bytes` is always the sum of every differing
+  range's length, formatted with a space every three digits (e.g. `148 213`); the `largest`
+  clause names the single biggest range so it cannot hide behind a range count -- e.g.
+  `content differs: 143 ranges, 148 213 bytes, largest 145 408 bytes at 0x2a40 (Content)`.
 
 ## Reading the field labels
 
@@ -59,8 +68,9 @@ network, no signing tool -- it measures, it does not sign or validate a signatur
   actually matches the hash. That is `signtool verify` or `osslsigncode verify`'s job --
   reach for one of those when the question is "is this signature trustworthy," not "did the
   bits change."
-- `compare`'s field labels come from file `a`'s layout; if the two files disagree sharply on
-  section layout (e.g. comparing across very different SDK versions), a label can be
+- `compare`'s field labels come from file `a`'s layout, except a trailing tail that only exists
+  in a longer `b` (labelled from `b`'s layout, see above); if the two files disagree sharply on
+  section layout otherwise (e.g. comparing across very different SDK versions), a label can be
   approximate near a boundary.
 - Everything is read fully into memory (`File.ReadAllBytes`) -- fine for assemblies, not
   meant for arbitrary large binaries.

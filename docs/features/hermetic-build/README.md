@@ -21,6 +21,7 @@ Read `session.md` first (where things stand, the next step), then `tracker.md` (
 | `verify.md` | `Verify`: Authenticode PE hash, labelled byte differences |
 | `strongname.md` | `StrongName`: PE stamp, checksum, strong-name re-sign reproducing csc |
 | `pack.md` | `Pack`: deterministic zip and nupkg |
+| `signing.md` | `Sign`: Authenticode/nupkg signing as a delegated rule, identity key, the fake-signer skeleton |
 | `e3-restore-stability.md` | day-zero E3: is restore reproducible from the repository alone |
 | `e5-shipped-vs-local.md` | day-zero E5: the shipped DataEngine 5.4.0 against the tag built here |
 

@@ -477,6 +477,7 @@ module CscImpl =
             let compilation, references, analyzers = Lock.Compilation.ofArgs args
             let entry : Lock.Entry = {
                 Name = Path.GetFileNameWithoutExtension outFile.Name
+                Framework = (match targetFramework with null -> "" | fwk -> fwk)
                 // no msbuild evaluation behind a composed compilation: no project, no imports,
                 // no SDK, no pin
                 Evaluation = { Project = ""; ProjectRefs = []; Imports = []; Sdk = ""; SdkPin = None; Properties = Map.empty }
@@ -504,12 +505,12 @@ module CscImpl =
             return if Path.IsPathRooted path then path else options.ProjectRoot </> path
         }
 
-    /// The document a composed compilation is recorded in: one entry, and the framework the
-    /// settings named (there is no msbuild configuration or property set behind composed
-    /// settings, so those two stay empty).
-    let private lockDocument (settings: CscSettingsType) (entry: Lock.Entry) : Lock.Document =
-        { Framework = (match settings.TargetFramework with null -> "" | fwk -> fwk)
-          Configuration = ""
+    /// The document a composed compilation is recorded in: one entry, which carries the
+    /// framework itself (`resolve` sets `Entry.Framework` from `targetfwk`/`NETFX-TARGET`).
+    /// There is no msbuild configuration or property set behind composed settings, so those
+    /// two stay empty.
+    let private lockDocument (entry: Lock.Entry) : Lock.Document =
+        { Configuration = ""
           Properties = []
           Entries = [ entry ] }
 
@@ -518,13 +519,13 @@ module CscImpl =
     /// what was written. The lock file is not a target of the engine on this path: it is
     /// written from inside the recipe that compiles, which is what lets `lock "path"` keep a
     /// tuned `csc { }` block in place (`lock-from-settings.md` §9, migration path A).
-    let private recordLock (settings: CscSettingsType) (path: string) (entry: Lock.Entry) =
+    let private recordLock (path: string) (entry: Lock.Entry) =
         recipe {
             let! full = lockPath path
             let dir = Path.GetDirectoryName full
             if dir <> "" then Directory.CreateDirectory dir |> ignore
             let rehashed = Lock.rehash entry
-            do! Lock.save full (lockDocument settings rehashed)
+            do! Lock.save full (lockDocument rehashed)
             return rehashed
         }
 
@@ -580,7 +581,7 @@ module CscImpl =
                 // `resolve` here is `CscLock.resolve` above (the entry alone), not the outer
                 // private one that also returns the framework's env vars -- nothing is run.
                 let! entry = resolve settings
-                let! _ = recordLock settings path entry
+                let! _ = recordLock path entry
                 return ()
             }
 
@@ -628,7 +629,7 @@ module CscImpl =
                         if not (File.Exists full) then
                             // no lock yet: record what was just resolved and compile that --
                             // the hashes `run` verifies are the ones taken a moment ago
-                            let! recorded = recordLock settings path entry
+                            let! recorded = recordLock path entry
                             return recorded
                         else
                             let! doc = Lock.load full

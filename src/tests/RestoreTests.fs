@@ -55,6 +55,7 @@ type ``Restore``() =
                   helloCs ]
         let entry : Lock.Entry = {
             Name = "Hello"
+            Framework = "netstandard2.0"
             Evaluation = { Project = Path.Combine (dir, "Hello.csproj"); ProjectRefs = []; Imports = []; Sdk = fwk.Version; SdkPin = None; Properties = Map.empty }
             Compilation = { compilation with Directory = dir }
             Dependencies =

@@ -57,7 +57,7 @@ type ``Csc lock``() =
 
         let doc = readLock lockPath
         Assert.That(doc.Entries, Has.Length.EqualTo 1)
-        Assert.That(doc.Framework, Is.EqualTo "net-4.6.2")
+        Assert.That(doc.Entries.Head.Framework, Is.EqualTo "net-4.6.2")
         let entry = doc.Entries.Head
         Assert.That(entry.Name, Is.EqualTo "LockA")
         Assert.That(entry.Sources |> List.exists (fun s -> s.EndsWith "LockA.cs"), Is.True)

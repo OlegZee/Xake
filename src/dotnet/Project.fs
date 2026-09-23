@@ -1058,8 +1058,6 @@ module Project =
             Json.field "Items" root |> Option.bind (Json.field name)
             |> Option.map Json.asArray |> Option.defaultValue []
         let identity item = Json.field "Identity" item |> Option.bind Json.asString |> Option.defaultValue ""
-        let fullPath item =
-            Json.field "FullPath" item |> Option.bind Json.asString |> Option.defaultValue (identity item)
         let metadata name item = Json.field name item |> Option.bind Json.asString |> Option.defaultValue ""
         let properties =
             match Json.field "Properties" root with
@@ -1105,6 +1103,19 @@ module Project =
         // where restore writes its props and targets
         let baseIntermediate = (match prop "BaseIntermediateOutputPath" with | "" -> "obj/" | dir -> dir) |> absoluteDir
 
+        // `FullPath`, a well-known item metadata, is unreliable here under the msbuild CLI's
+        // `-getItem`: seen live on an `<EmbeddedResource Update="...">` item (page's
+        // `Properties\Resources.resx`, resolved via the SDK's default-items glob) and on a
+        // relative `<ProjectReference Include="..\..\X\X.csproj">`, its `FullPath` came back
+        // resolved against this *process's* current directory instead of the project's own
+        // directory -- `RootDir` and `Directory` in the same metadata bag were equally off.
+        // `Identity` combined with `directory` (a *property*, not well-known item metadata, and
+        // not subject to this) is reliable.
+        let resolveAgainstProject (path: string) =
+            let path = slash path
+            if Path.IsPathRooted path then path
+            else Path.GetFullPath (Path.Combine (directory, path)) |> slash
+
         // `PrepareResources` compiles every resx `EmbeddedResource` and records where: prefer
         // `OutputResource` (`GenerateResource`'s own, exact, relative to the project directory)
         // and fall back to `IntermediateOutputPath + ManifestResourceName + ".resources"` for
@@ -1114,18 +1125,7 @@ module Project =
             items "EmbeddedResource"
             |> List.filter (fun item -> (identity item).ToLowerInvariant().EndsWith ".resx")
             |> List.map (fun item ->
-                // `FullPath`, a well-known item metadata, is unreliable here under the msbuild
-                // CLI's `-getItem`: seen live on an `<EmbeddedResource Update="...">` item
-                // (page's `Properties\Resources.resx`, resolved via the SDK's default-items
-                // glob), its `FullPath` came back resolved against this *process's* current
-                // directory instead of the project's own directory -- `RootDir` and `Directory`
-                // in the same metadata bag were equally off. `Identity` combined with
-                // `directory` (a *property*, not well-known item metadata, and not subject to
-                // this) is reliable, the same combine `OutputResource` already gets below.
-                let identityPath = identity item |> slash
-                let resx =
-                    if Path.IsPathRooted identityPath then identityPath
-                    else Path.GetFullPath (Path.Combine (directory, identityPath)) |> slash
+                let resx = identity item |> resolveAgainstProject
                 let output =
                     match metadata "OutputResource" item with
                     | "" -> intermediate + metadata "ManifestResourceName" item + ".resources"
@@ -1158,7 +1158,7 @@ module Project =
             Name = prop "AssemblyName"
             Evaluation =
                 { Project = prop "MSBuildProjectFullPath" |> slash
-                  ProjectRefs = items "ProjectReference" |> List.map (fullPath >> slash)
+                  ProjectRefs = items "ProjectReference" |> List.map (identity >> resolveAgainstProject)
                   Imports = imports |> List.map Lock.hashed
                   Sdk = prop "NETCoreSdkVersion"
                   SdkPin = Some pin

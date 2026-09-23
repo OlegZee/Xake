@@ -38,10 +38,14 @@ process, so a process-wide lock is sufficient.
 
 Serializing stops corruption mid-restore, but the *last* import to run still leaves its
 `obj/project.assets.json` for the next to read -- whichever brand imports last "wins" the
-shared file, and `Nuget.readAssets` would later read the wrong brand's assets. Fix: right
-after the design-time build, still inside the lock, copy `obj/project.assets.json` (from the
-`ProjectAssetsFile` property the build already reports) to `obj/xake/<fwk>/<variant>/project.assets.json`,
-and overwrite `Lock.Project.Properties["ProjectAssetsFile"]` with that copy's path. No lock format change.
+shared file, and anything reading it later (the SBOM step did) would read the wrong brand's
+graph. The stopgap was a per-variant copy of the assets file under `obj/xake/<fwk>/<variant>/`
+with `Properties["ProjectAssetsFile"]` pointing at it. **Gone with Stage B (2026-09-24)**: the
+import now *reads* the graph right after the design-time build, still inside the lock, and
+records it in the lock entry itself (`Dependencies.Packages`, see nuget-sbom.md "The graph lives
+in the lock"). Nothing reads `obj/project.assets.json` after the import any more, so the file
+being overwritten by the next brand's restore is harmless -- the lock carries what this import
+saw.
 
 ## Tests
 

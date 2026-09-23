@@ -9,11 +9,11 @@ what do we know about each one from the cache.
 
 | Source file | What it holds | Read by |
 |---|---|---|
-| `obj/project.assets.json` | the restore graph for every target framework: which packages, which depend on which, and the project's own direct `PackageReference`s | `Nuget.readAssets` |
+| `obj/project.assets.json` | the restore graph for every target framework: which packages, which depend on which, and the project's own direct `PackageReference`s | `Nuget.readAssets`, at **import time** (`Project.import` folds the graph into the lock as `Dependencies.Packages`, see below) |
 | `<cache>/<id>/<version>/.nupkg.metadata` | the package's content hash (sha512, base64) and the feed it came from | `Nuget.readCache` |
 | `<cache>/<id>/<version>/<id>.nuspec` | authors, license, repository url/commit | `Nuget.readCache` |
 
-Both files are parsed with the existing `Fsproj.Json` module (a hand-written JSON parser --
+Both files are parsed with the existing `Json` module (a hand-written JSON parser --
 `parse`, `field`, `asString`, `asArray`), not `System.Text.Json`: the assembly stays
 dependency-free on netstandard2.0, same reasoning as `Fsproj.fs`. The nuspec is XML; it is read
 with `System.Xml.XmlDocument`, matching elements by local name only, because nuspec schema
@@ -21,9 +21,13 @@ versions use different namespace URIs for the same element.
 
 ## `readAssets`
 
-`project.assets.json`'s `targets` section keys on `"<TFM>"` or `"<TFM>/<rid>"`. `readAssets`
-picks the entry whose key equals the framework alias exactly (falling back to a mere prefix
-match if that ever fails) -- the rid-qualified entries are for a self-contained publish, not the
+`project.assets.json`'s `targets` section keys on `"<framework>"` or `"<framework>/<rid>"`,
+where `<framework>` is the alias (`netstandard2.0`) for a project with `TargetFrameworks` and the
+**full framework name** (`.NETStandard,Version=v2.0`) for one with a single `TargetFramework` --
+dataengine's, found when the import first read its assets (2026-09-24; page's multi-target
+projects had hidden it). `readAssets` tries the alias and `Nuget.frameworkFullName alias`
+(`netstandard*`, `netcoreapp*`, `net4xx` folded; `net5.0`+ is its own full name), exact match
+first, then a prefix match -- the rid-qualified entries are for a self-contained publish, not the
 compile. Each entry there is `"<Id>/<Version>": { type: "package" | "project", dependencies: {
 "<Id>": "<range>" } }`; a dependency's resolved version is found by looking up its id among the
 *same* target's entries -- a range like `[8.0.0, )` is never parsed, only matched by id, because
@@ -62,9 +66,24 @@ feed (`dotnet list package --vulnerable`, GitHub Advisory Database, OSV) and is 
 of this module's scope, same conclusion as brief.md §8e: the build produces the SBOM, VEX and
 vulnerability matching are downstream of it (Dependency-Track or similar, by purl).
 
-## From `Lock.Project.References` to a package
+## The graph lives in the lock (Stage B, 2026-09-24)
 
-`Lock.Project.References` (`src/dotnet/Project.fs`) is the list of files the compiler was
+`Nuget.readAssets` is an import-time reader now. `Project.import` calls it right after the
+design-time build, inside the per-project lock (import-race.md), and records the result as
+`Lock.Package list` in the entry's `Dependencies.Packages` via `Project.packages cacheRoot
+assets`: per package `Id` and `Version` (the assets file's own casing), `Sha512` (the cache's
+`.nupkg.metadata` `contentHash`, base64, "" when the cache lacks it), `Direct` (a
+`PackageReference` of the project's framework section) and `DependsOn` (the ids of its assets
+`dependencies`). `type: project` entries are not packages and are dropped, edges included. The
+SBOM step (`Sbom.forAssembly`) reads the lock only -- `obj/project.assets.json` is a restore
+output and no longer a hidden input of the SBOM; the per-variant assets copy that
+import-race.md's stopgap kept is gone. `readCache`, `ships` and `packageOf` stay public and are
+still what the SBOM consults for supplier, license and the "does it ship" test -- the lock does
+not carry those.
+
+## From `Dependencies.References` to a package
+
+`Lock.Entry`'s `Dependencies.References` (`src/dotnet/Project.fs`) is the list of files the compiler was
 actually given, as absolute paths under the package cache, each already hashed at import time.
 `Nuget.packageOf cacheRoot path` maps one such path back to the `(id, version)` it came from, by
 its first two path segments below the cache root -- the same shape `readCache` writes to.
@@ -80,8 +99,9 @@ design ("the hash of each dll actually linked -- the from-evidence layer").
 
 ## Sbom
 
-`Xake.Dotnet.Sbom` (`src/dotnet/Sbom.fs`) turns `Nuget.Assets` and a `Lock.Project` into a
-CycloneDX 1.6 bill of materials. Pure: `Sbom.cycloneDx` only renders a `Bom` to a string, and
+`Xake.Dotnet.Sbom` (`src/dotnet/Sbom.fs`) turns a `Lock.Entry` -- its references and its
+package graph -- into a CycloneDX 1.6 bill of materials: `Sbom.forAssembly cacheRoot entry
+assemblyPath`. Pure: `Sbom.cycloneDx` only renders a `Bom` to a string, and
 `Sbom.forAssembly` only reads the assembly file it hashes -- no restore, no cache writes, no
 network. Two-piece split for the same reason `Nuget` and `Project` are separate: `forAssembly`
 is the join (what evidence says about what got compiled), `cycloneDx` is pure formatting that
@@ -91,20 +111,20 @@ tests can drive with a hand-built `Bom` and no lock at all.
 
 | BOM field | Source |
 |---|---|
-| `metadata.component` (root) | the shipped assembly: `Name = lock.Name`; `Version` from `lock.Properties.["Version"]`, falling back to `InformationalVersion`; one SHA-256 hash of the assembly file (`Lock.sha256`) |
+| `metadata.component` (root) | the shipped assembly: `Name = entry.Name`; `Version` from `entry.Evaluation.Properties.["Version"]`, falling back to `InformationalVersion`; one SHA-256 hash of the assembly file (`Lock.sha256`) |
 | `metadata.tools.components[0]` | `{ type: application, name: "Xake", version }`, version from `Xake.Dotnet`'s own assembly version |
-| `components[].purl` | `pkg:nuget/<Id>@<Version>`, one component per package in `assets.Packages` -- every package the restore graph carries, not just the ones a compiled reference happens to be attributed to; `<Id>`/`<Version>` keep `project.assets.json`'s own casing |
-| `components[].supplier`, `.licenses` | `Nuget.readCache`'s `Supplier`/`License` -- matched to the package's cache directory case-insensitively (the cache always lowercases `id`/`version`, `assets.Packages` usually does not) |
-| `components[].hashes` (package) | `Nuget.readCache`'s `Sha512` (`.nupkg.metadata`'s base64 `contentHash`), converted to hex -- CycloneDX hashes are hex, NuGet's cache stores base64 |
-| `components[].components[]` (nested) | the package's own referenced files, `type: file`, SHA-256 from the matching `lock.References` entry; only files with a non-empty hash are listed |
-| top-level `components[]` (non-nested `file`) | `lock.References` entries `Nuget.packageOf` cannot place under `cacheRoot` -- a project reference, or an SDK reference pack under `$(DotnetRoot)` -- `scope: "required"`, hash omitted when the lock has none yet |
-| `dependencies[]` | root depends on every *direct* (`assets.Direct`), *`scope: required`* package; package-to-package edges come from `assets.Graph`, kept only where both ends are packages already in the BOM |
-| `formulation[0].components[]` | one `file` per `lock.Analyzers` entry, one `application` for the compiler (`csc`, `lock.Compiler.Sha256`), one for the SDK (`.NET SDK`, `lock.Compiler.Sdk`) -- all `scope: "excluded"` |
+| `components[].purl` | `pkg:nuget/<Id>@<Version>`, one component per package in `entry.Dependencies.Packages` -- every package the restore graph carried at import, not just the ones a compiled reference happens to be attributed to; `<Id>`/`<Version>` keep `project.assets.json`'s own casing |
+| `components[].supplier`, `.licenses` | `Nuget.readCache`'s `Supplier`/`License` -- matched to the package's cache directory case-insensitively (the cache always lowercases `id`/`version`, the lock usually does not) |
+| `components[].hashes` (package) | the lock's `Package.Sha512` (recorded at import from `.nupkg.metadata`'s base64 `contentHash`), converted to hex -- CycloneDX hashes are hex, NuGet's cache stores base64; empty in the lock means no hash, the cache is deliberately not consulted again |
+| `components[].components[]` (nested) | the package's own referenced files, `type: file`, SHA-256 from the matching `Dependencies.References` entry; only files with a non-empty hash are listed |
+| top-level `components[]` (non-nested `file`) | `Dependencies.References` entries `Nuget.packageOf` cannot place under `cacheRoot` -- a project reference, or an SDK reference pack under `$(DotnetRoot)` -- `scope: "required"`, hash omitted when the lock has none yet |
+| `dependencies[]` | root depends on every *direct* (`Package.Direct`), *`scope: required`* package; package-to-package edges come from `Package.DependsOn` (a dependency's version resolved by id within the same `Packages` list), kept only where both ends are packages already in the BOM |
+| `formulation[0].components[]` | one `file` per `Dependencies.Analyzers` entry, one `application` for the compiler (`csc`, `Compiler.Sha256`, version `Compiler.Version`), one for the SDK (`.NET SDK`, `Evaluation.Sdk`) -- all `scope: "excluded"` |
 
 ### Scope: every restore-graph package is a component
 
-`forAssembly` no longer starts from `lock.References` and works backwards to the packages it
-can attribute a file to -- it starts from `assets.Packages`, the *whole* restore graph, and
+`forAssembly` no longer starts from the references and works backwards to the packages it
+can attribute a file to -- it starts from `entry.Dependencies.Packages`, the *whole* restore graph, and
 attaches referenced files where `Nuget.packageOf` finds them. A scanner wants the graph, not
 just what happened to get linked (brief.md §8e): a package nobody referenced but that the
 restore still pulled in (a platform/reference-assembly pack, a runtime-only package) is still a
@@ -112,7 +132,7 @@ component, just `scope: "excluded"` rather than dropped.
 
 Two cases, by whether any file was ever attributed to the package:
 
-- **Has a referenced file** (`Nuget.packageOf` placed at least one `lock.References` entry
+- **Has a referenced file** (`Nuget.packageOf` placed at least one `Dependencies.References` entry
   under it): a package can ship both a compile-time reference assembly (under a `ref/<tfm>/`
   folder -- a facade with no method bodies, used only to compile against) and the real
   implementation (`lib/<tfm>/`, or a runtime-specific `runtimes/<rid>/lib/`). If **every**
@@ -121,11 +141,11 @@ Two cases, by whether any file was ever attributed to the package:
   match is on a whole path segment, case-insensitively, not a substring test -- a package id or
   file name that merely contains "ref" does not trip it. Nested `file` components carry those
   referenced dlls.
-- **No referenced file at all** (nothing in `lock.References` maps to it -- true of every
+- **No referenced file at all** (nothing in `Dependencies.References` maps to it -- true of every
   package `dotnet cyclonedx`'s own SBOM lists that ours previously dropped, e.g.
   `Microsoft.NETCore.Platforms`, a `*.ReferenceAssemblies.*` pack, `System.ValueTuple`): `scope:
   "required"`, with no nested files, when the package is reachable from a direct dependency
-  (`assets.Direct`) by following `assets.Graph` edges *and* `Nuget.ships` finds a `lib/` or
+  (`Package.Direct`) by following `DependsOn` edges *and* `Nuget.ships` finds a `lib/` or
   `runtimes/` directory with files in its cache entry -- a runtime-only package that ships
   without ever being `/reference`d. Otherwise `scope: "excluded"` -- unreachable, or a pure
   reference-assembly pack with nothing that actually ships.
@@ -137,7 +157,7 @@ metadata) spelled them -- `Foo.Bar`, not `foo.bar`. `bom-ref`/`purl` use that ca
 `pkg:nuget/Foo.Bar@1.2.3` matches what `dotnet cyclonedx` and other scanners emit for the same
 package (the comparison in `sbom-compare.txt` found ours all-lowercase, theirs original-cased --
 this closes that gap). `Nuget.packageOf` still returns the cache's own lowercase directory
-names, so referenced files are joined to `assets.Packages` entries via a case-insensitive key
+names, so referenced files are joined to the lock's package entries via a case-insensitive key
 (`id.ToLowerInvariant(), version.ToLowerInvariant()`), never by requiring the two to already
 agree on case.
 

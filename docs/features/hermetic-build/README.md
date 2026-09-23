@@ -13,11 +13,11 @@ Read `session.md` first (where things stand, the next step), then `tracker.md` (
 ## Design notes (one topic each)
 | File | Topic |
 |---|---|
-| `csc-syntax.md` | the `csc {}` task today: composed settings, `CscLock.compile`, one runner; `Project.import`; `Lock`; compiler sources; recording a lock from settings |
+| `csc-syntax.md` | the `csc {}` task today: composed settings, `CscLock.compile`, one runner; `Project.import`; `Lock.Entry` (Evaluation / Compilation / Dependencies, section markers, the round-trip check, packages); compiler sources; recording a lock from settings |
 | `lock-from-settings.md` | how a lock is obtained from composed settings: nine scenarios, migration (§9), the open update-mechanism question |
 | `conceptual-review.md` | audit of slice 1 against Xake's model: no engine drift; two blurred seams |
-| `import-race.md` | two brands importing one project concurrently: the race, the dead ends, the `Resource` fix |
-| `nuget-sbom.md` | `Nuget` (assets graph, cache metadata) and `Sbom` (CycloneDX 1.6, deterministic, per assembly and per package) |
+| `import-race.md` | two brands importing one project concurrently: the race, the dead ends, the `Resource` fix; the assets copy stopgap, gone with the lock split |
+| `nuget-sbom.md` | `Nuget` (assets graph read at import into the lock, cache metadata) and `Sbom` (CycloneDX 1.6 from the lock entry, deterministic, per assembly and per package) |
 | `verify.md` | `Verify`: Authenticode PE hash, labelled byte differences |
 | `strongname.md` | `StrongName`: PE stamp, checksum, strong-name re-sign reproducing csc |
 | `pack.md` | `Pack`: deterministic zip and nupkg |

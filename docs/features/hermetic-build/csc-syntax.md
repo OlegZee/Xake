@@ -1,10 +1,11 @@
 # `csc {}` as it stands
 
-`csc {}` is the C# compiler task. It builds one `Lock.Project` -- a project's exact compiler
+`csc {}` is the C# compiler task. It builds one `Lock.Entry` -- a project's exact compiler
 command line, plus what it references and how to check it -- and hands that to a single runner.
-Settings are intent, `Lock.Project` is the resolved compilation: there are two ways to arrive
-at a `Lock.Project` (compose one from settings, or bring one in from a lock) but only one thing
-that ever shells out to the compiler.
+Settings are intent, `Lock.Entry` is the resolved compilation: there are two ways to arrive
+at a `Lock.Entry` (compose one from settings, or bring one in from a lock) but only one thing
+that ever shells out to the compiler. (Before Stage B, 2026-09-24, the entry was `Lock.Project`
+and the lock file `Lock.File`; the format then was a flat record with a verbatim `Args` list.)
 
 ## Composed mode
 
@@ -20,8 +21,8 @@ that ever shells out to the compiler.
 the same shape with `out`, `Src`, `TargetFramework`, `RefGlobal` set directly on the record.)
 
 `Csc` calls `resolve`, which turns the settings below into a
-`Lock.Project` at recipe time -- same argument order the task has always produced -- and passes
-it to the runner. Every custom operation of `CscSettingsBuilder`:
+`Lock.Entry` at recipe time -- same argument order the task has always produced, save that
+references are now spelled `/reference:` rather than `/r:` -- and passes it to the runner. Every custom operation of `CscSettingsBuilder`:
 
 | Keyword | Argument | Does | Default |
 |---|---|---|---|
@@ -47,8 +48,10 @@ it to the runner. Every custom operation of `CscSettingsBuilder`:
 settings; replaying a lock (`CscLock.compile`, below) does not go through them at all. The
 argument list `resolve` builds is,
 in order: `/noconfig` (when the target framework requires it), `/nologo`, `/target:`,
-`/platform:`, `/unsafe`, `/nostdlib+`, `/out:`, `/define:`, sources, `/r:` refs, global refs,
-`/res:`, then `CommandArgs`.
+`/platform:`, `/unsafe`, `/nostdlib+`, `/out:`, `/define:`, sources, `/reference:` refs, global
+refs, `/res:`, then `CommandArgs`. The list then goes through `Lock.Compilation.ofArgs` exactly
+like an imported one (below) and gets the same round-trip check; it always passes, there being
+one item per switch.
 
 **Composed-mode `.resx` resources (2026-09-23).** A `resources`/`resourceslist` fileset entry
 that names a `.resx` file is not compiled by `resolve` itself -- unlike an ordinary
@@ -57,7 +60,7 @@ embedded-resource file (already the file the compiler reads), a `.resx` needs tu
 deleted once the compile was done. That left nothing for `CscLock.resolve` to hand back: a lock
 recorded from settings with `.resx` resources had `/res:` arguments naming files that no longer
 existed. Instead `resolve` records a permanent
-`(resx, .resources)` pair in `Lock.Project.Resources` --
+`(resx, .resources)` pair in `Lock.Compilation.Resources` --
 `<ProjectRoot>/obj/xake/<assembly name>/<manifestName>` where `manifestName` is the `/res:`
 logical name `Impl.makeResourceName` computes (e.g. `Sample.Application.Strings.resources`) --
 and emits `/res:<resourcesPath>,<manifestName>`, exactly the shape `Project.import` already
@@ -79,9 +82,12 @@ temp files of its own; the only temp file `run` still cleans up is its own respo
 
 - `toolset` replaces only the compiler. References, defines and environment variables still
   come from the targeted framework.
-- The lock records what ran in `Lock.Project.Compiler`: `Path` and `Sha256` name the compiler
-  file; `Sdk` is always the framework's version from `DotNetFwk.locateFramework`, not the
-  toolset package's -- that version is part of `Path`.
+- The lock records what ran in `Dependencies.Compiler`: `Path` and `Sha256` name the compiler
+  file, `Version` is the compiler's own product version read from the file (`4.12.0-3.24572.7`
+  for the toolset package, `4.11.0-3.25569.22` for SDK 8.0.425's; for the SDK's native `csc`
+  launcher the `csc.dll` next to it is read). The SDK that evaluated the project is
+  `Evaluation.Sdk`, empty for a composed compilation -- the two used to share one overloaded
+  `Compiler.Sdk` field.
 - `CscLock.compile` restores a toolset package the lock names when it is not on this machine yet
   (`ensureCompilerAvailable`, see below) -- the same restore mechanism as `toolset` above, just
   triggered by replaying a lock instead of by the `toolset` operation.
@@ -103,7 +109,7 @@ temp files of its own; the only temp file `run` still cleans up is its own respo
 ## Replaying a lock: `CscLock.compile`
 
 ```fsharp
-do! CscLock.compile mapped                          // mapped : Lock.Project
+do! CscLock.compile mapped                          // mapped : Lock.Entry
 do! CscLock.compileWith { RunOptions.Default with FailOnError = false } mapped
 ```
 
@@ -122,7 +128,7 @@ The runner (`run` in `Dotnet.csc.fs`, shared by both entry points) does, in orde
 
 1. **Makes the compiler available** (`ensureCompilerAvailable`, raised 2026-09-23), before
    anything else touches it, so the hash check below has something to check:
-   - already on disk (`project.Compiler.Path` exists) -- nothing to do.
+   - already on disk (`Dependencies.Compiler.Path` exists) -- nothing to do.
    - under `$(NuGetPackageRoot)` -- the path names a `Microsoft.Net.Compilers.Toolset`-shaped
      package (`<root>/<packageId>/<version>/...`) that just is not restored yet on this
      machine: `trace Info "restoring compiler package %s %s"` and restore it, the same
@@ -142,8 +148,8 @@ The runner (`run` in `Dotnet.csc.fs`, shared by both entry points) does, in orde
    as the hash-mismatch check (step 6) and `Impl.failOnExitCode`.
 2. **Resolves `$(SourceRevisionId)`** (raised 2026-09-23, "Lock stability"): the lock never
    carries a commit sha itself (see `Generated` and `Project.tokenizeRevision` below) -- when
-   `Generated`'s content or `Args` carries the literal token `$(SourceRevisionId)`, it is
-   replaced here with `Git.headSha project.Directory` (walking up from the project's own
+   `Generated`'s content, `Options` or `Defines` carries the literal token `$(SourceRevisionId)`,
+   it is replaced here (`Lock.mapText`) with `Git.headSha compilation.Directory` (walking up from the project's own
    directory for a `.git`; no `git` executable). No token anywhere -- nothing happens, the
    composed mode included, since it never populates `Generated`. A token present but no
    repository found (or `HEAD` unresolvable) fails with `'<name>': the lock needs
@@ -154,13 +160,13 @@ The runner (`run` in `Dotnet.csc.fs`, shared by both entry points) does, in orde
    disk -- the resolved project is the source of truth for msbuild-generated inputs like
    `AssemblyInfo.cs` (and, now, `sourcelink.json` with its token already resolved by step 2). The
    composed mode never populates `Generated`, so this is a no-op there.
-4. Creates the output directories, for every path `CscArgs.outputs project.Args` names.
+4. Creates the output directories, for every path `CscArgs.outputs entry.Args` names.
 5. `needFiles` the compiler itself (raised 2026-09-23, conceptual-review.md 2.4): the hash check
-   in step 7 covers `project.Compiler.Path`, but nothing before this made it a tracked
+   in step 7 covers the compiler's path, but nothing before this made it a tracked
    dependency, so an SDK or toolset update that changed `csc.dll`'s bytes left the target looking
-   up to date and the hash check never ran. `needFiles [project.Compiler.Path]`, right after
+   up to date and the hash check never ran. `needFiles [compiler.Path]`, right after
    `ensureCompilerAvailable`, closes that.
-6. `needFiles` every resx in `project.Resources` (so a resx edit rebuilds the dll) and, for each
+6. `needFiles` every resx in `Compilation.Resources` (so a resx edit rebuilds the dll) and, for each
    `(resx, resources)` pair, compiles the resx to that `.resources` path with `Xake.Dotnet.Resx`
    when the output is **missing** -- so a machine with only the lock, or a cleaned `obj/`, still
    ends up with the exact file the recorded `/resource:` switch names. This is the same step for
@@ -183,7 +189,7 @@ The runner (`run` in `Dotnet.csc.fs`, shared by both entry points) does, in orde
    and neither does an unbuilt project reference). Any mismatch is collected and reported
    together, then fails the build when `FailOnError` is set (`XakeException`, message containing
    the path).
-8. `needFiles` on `CscArgs.inputs project.Args` -- every file any input switch names, plus the
+8. `needFiles` on `CscArgs.inputs entry.Args` -- every file any input switch names, plus the
    sources. For the composed mode this now covers everything the args name, including the
    framework's global references, not only sources/refs/resources.
 9. Writes the arguments to a response file, with `Impl.escapeArgument`, and runs the compiler.
@@ -197,7 +203,7 @@ The rsp file is deleted once the compiler exits, success or failure -- the only 
 produces now that the composed mode's `.resx` resources are permanent outputs (see above),
 not temp files.
 
-## Where a `Lock.Project` comes from
+## Where a `Lock.Entry` comes from
 
 `Project.import` (`src/dotnet/Project.fs`) runs an msbuild design-time build per project --
 `ProvideCommandLineArgs`/`SkipCompilerExecution`, so the compiler reports its command line
@@ -238,29 +244,114 @@ recipe-level lock and evaluation entry points (`Lock.load`/`loadWith`/`save`/`sa
 still take a roots list. The json reader lives in its own `Json` module. Neither is under
 `Fsproj` any more, which is again just the F# project evaluation it is named for.
 
-`Lock.Project`, one entry per project:
+`Lock.Entry`, one per project, is three records (conceptual-review.md 2.1, Stage B 2026-09-24):
 
 - `Name` -- `AssemblyName`
-- `Project` -- the project file path
-- `Directory` -- the compiler's working directory
-- `Compiler` -- `{ Tool; Path; Sha256; Sdk }`
-- `Args` -- the verbatim command line, paths absolute
-- `References`, `Analyzers` -- `{ Path; Sha256 }` lists
-- `ProjectRefs` -- `ProjectReference` items, as project files
-- `Imports` -- the msbuild files (outside the SDK) whose evaluation produced this entry, hashed
-- `Generated` -- msbuild-written *text* compiler inputs, by path, with content (assembly
-  attributes, the derived `.editorconfig`, SourceLink's `sourcelink.json` -- `sourcelink` is one
-  of `CscArgs.inputSwitches` since it names a file the compiler reads); a compiled `.resources`
-  file, though also a `/resource:` input under the intermediate directory, is excluded here and
-  tracked in `Resources` instead, since it is binary and `File.ReadAllText`ing it would corrupt it
-- `Resources` -- `.resx` files this project embeds: `(resx path, .resources output path)` pairs,
-  both absolute; `run` regenerates the output from the resx (byte-identical to msbuild's) when it
-  is missing or older than the resx, so a machine with only the lock can still reproduce it
-- `Properties` -- a small whitelist (`AssemblyName`, `TargetFrameworkMoniker`, ...)
-- `Sources`/`Output` -- computed from `Args` via `CscArgs`, not stored twice
+- `Evaluation` -- where the answer came from; `run` never reads it, and every field is empty
+  for a compilation composed from `csc {}` settings:
+  - `Project` -- the project file path ("" when composed)
+  - `ProjectRefs` -- `ProjectReference` items, as project files
+  - `Imports` -- the msbuild files (outside the SDK) whose evaluation produced this entry, hashed
+  - `Sdk` -- `NETCoreSdkVersion`, the SDK that evaluated the project
+  - `SdkPin` -- `Lock.SdkPin option`, typed (`NoGlobalJson | Pinned v | RollsForward (v, policy)
+    | NoVersion file`); written as `"none"`, `"exact <v>"`, `"<v> rollForward:<policy>"`, `"no
+    version (<file>)"` and `""` for `None`
+  - `Properties` -- a small whitelist (`AssemblyName`, `TargetFrameworkMoniker`, `LangVersion`,
+    `Version`, `InformationalVersion`, `SignAssembly`, `AssemblyOriginatorKeyFile`,
+    `Deterministic`, `TargetPath`, `IntermediateOutputPath`); `SdkPin` and `NETCoreSdkVersion`
+    have their own fields now and are no longer in it
+- `Compilation` -- what is compiled; changes with every PR:
+  - `Directory` -- the compiler's working directory
+  - `Options` -- every argument that is not a source, a reference, an analyzer or a define, in
+    msbuild's order, with the four **section markers** in place (below)
+  - `Defines` -- the `/define:` symbols, split on `;`
+  - `Sources` -- the source files, absolute
+  - `Generated` -- msbuild-written *text* compiler inputs, by path, with content (assembly
+    attributes, the derived `.editorconfig`, SourceLink's `sourcelink.json` -- `sourcelink` is
+    one of `CscArgs.inputSwitches` since it names a file the compiler reads); a compiled
+    `.resources` file, though also a `/resource:` input under the intermediate directory, is
+    excluded here and tracked in `Resources` instead, since it is binary and
+    `File.ReadAllText`ing it would corrupt it
+  - `Resources` -- `.resx` files this project embeds: `(resx path, .resources output path)`
+    pairs, both absolute; `run` regenerates the output from the resx (byte-identical to
+    msbuild's) when it is missing, so a machine with only the lock can still reproduce it
+- `Dependencies` -- what it is compiled with and against, hashed; changes rarely and is
+  reviewed when it does:
+  - `Compiler` -- `{ Tool; Path; Sha256; Version }`, `Version` the compiler's own product version
+  - `References` -- `{ Path; Sha256; Alias }` in command-line order; `Alias` is the `alias=`
+    prefix of an `extern alias` reference and "" otherwise (written to the file only when set)
+  - `Analyzers` -- `{ Path; Sha256 }`
+  - `Packages` -- the restore graph, `{ Id; Version; Sha512; Direct; DependsOn }` per package
+    (below)
+- `Args` (member) -- the exact command line, rebuilt from `Compilation` and `Dependencies`;
+  `Sources` and `Output` (from `/out:` in `Options`) are members too, nothing is stored twice
 
-`Lock.load path` (a recipe) parses a lock file, paths expanded for this machine;
-`Lock.project name lock` looks an entry up by assembly name or project file name.
+**Structured `Options` and the four section markers.** `Compilation.Options` holds every
+argument except the four factored sections, in msbuild's original order, with a marker string
+at the position each section occupied: `"@Sources"`, `"@References"`, `"@Analyzers"`,
+`"@Defines"`. `Entry.Args` rebuilds the list by expanding each marker: `@References` to one
+`/reference:<alias=>path` per entry (a path containing a comma re-quoted, as msbuild quotes
+it -- `CscArgs.quoteIfNeeded`), `@Analyzers` to one `/analyzer:path` per entry, `@Defines` to one
+`/define:A;B`, `@Sources` to the sources. `Lock.Compilation.ofArgs : string list -> Compilation *
+Reference list * Hashed list` does the factoring: a `/reference:`/`/r:` switch with exactly one
+item goes to the references (alias split with the quote-aware `CscArgs` logic), `/analyzer:`/`/a:`
+with one item to the analyzers, every `/define:`/`/d:` to `Defines` (concatenated, one marker at
+the first), every source to `Sources` (one marker at the first source). A contiguous block
+collapses to one marker; should msbuild ever emit two non-contiguous blocks of one kind, the
+marker stays at the first and the round-trip check decides. A leading `@` in `Options` is
+always a marker and never a csc response-file reference: msbuild never puts one on the compiler's
+command line (the rsp is `run`'s own, written around the whole list).
+
+*Why markers and not a canonical order.* The real locks are the argument: dataengine's have
+`/warnaserror+:NU1605` **after** the sources, and the relative order of the reference, analyzer
+and source blocks differs between Roslyn versions. A canonical order would have rebuilt a
+different command line on a new SDK and failed every import there; markers keep msbuild's own
+order without storing the flat list, so the structured form and the verbatim one are the same
+information.
+
+**The round-trip check (brief §8c's fidelity guarantee).** `parseImport` builds the entry
+through `ofArgs`, then requires `entry.Args = msbuild's absolute args` -- otherwise it fails,
+naming the project and printing `Lock.diffList` of the two lists (`- <msbuild's>` / `+
+<rebuilt>`), and nothing is written. So the lock never describes a compilation other than the
+one msbuild reported: "do not reconstruct" is checked at import rather than trusted. `resolve`
+(composed mode) goes through the same `ofArgs` and the same check. Two `/define:` switches
+would be the one case that fails by design (they fold into one section) -- msbuild emits one.
+
+**Packages: the restore graph in the lock (decided 2026-09-24).** Right after the design-time
+build, still inside `withProjectLock`, `import` reads `project.assets.json` (the
+`ProjectAssetsFile` property from the same result dump) with `Nuget.readAssets` for the import's
+framework and builds `Dependencies.Packages` with `Project.packages cacheRoot assets`, the cache
+being the `NuGetPackageRoot` property (fallback `Roots.nugetRoot ()`): per package `Id`,
+`Version` (the assets file's casing), `Sha512` (base64 `contentHash` from the cache's
+`.nupkg.metadata`, "" when the cache lacks it), `Direct` (a `PackageReference` of the project's
+own framework section) and `DependsOn` (the ids this package's assets entry depends on).
+`type: project` entries are not packages and do not appear. Reading inside the lock is what
+closes import-race.md's second half: the per-variant assets copy and the `ProjectAssetsFile`
+property hack are gone -- the lock carries the graph, and `Sbom.forAssembly` reads the lock only.
+Trap found here: a single-`TargetFramework` project's assets keys `targets` by the *full*
+framework name (`.NETStandard,Version=v2.0`), only a multi-target project uses the alias;
+`Nuget.readAssets` tries both (`Nuget.frameworkFullName`).
+
+**File format.** One entry is `{ "Name", "Evaluation": {...}, "Compilation": {...},
+"Dependencies": {...} }` under `"Entries"`; tokenization (`Roots.tokenizeAll`) and the
+one-line-per-item style are unchanged, the file is deterministic (write, parse, write again is
+byte-identical -- tested). A lock in the old flat format (`"Projects"` with `"Args"`) is refused
+by `parseWith` with "lock written by an older Xake; re-import" -- nothing released used it, so
+there is no reader for it. `samples/hermetic/dataengine/locks/` shows the shape on the real
+fixture: 889 lines per brand, 27 `Options` (`@Defines`, `@References`, `@Analyzers`, `@Sources`
+in msbuild's positions), 12 `Defines`, 113-115 `References`, 4 `Packages`.
+
+`Lock.diff a b` covers every section: `Options` and `Sources` as ordered lists, `Defines`,
+`ProjectRefs` as sets, `Compiler` incl. `Version`, `Evaluation.Sdk`, the hashed lists,
+`Generated`/`Resources` pairs, `Packages` (added, removed, version changed, sha512 changed).
+`Lock.mapPaths f` rewrites `Options` (markers left alone), `Sources`, `References` (dropping the
+hash when the path changed), `Analyzers`, `Generated` keys and `Resources`; `Lock.mapText f`
+applies `f` to `Generated` content, `Options`, `Defines` and the evaluation's property values
+(`tokenizeRevision` and `run`'s resolution of `$(SourceRevisionId)` both use it).
+
+`Lock.load path` (a recipe) parses a lock file (`Lock.Document`: `Framework`, `Configuration`,
+`Properties`, `Entries`), paths expanded for this machine; `Lock.entry name lock` looks an entry
+up by assembly name or project file name.
 
 **`$(SourceRevisionId)` and the commit sha (raised 2026-09-23, "Lock stability").** The SDK's
 built-in SourceLink writes `sourcelink.json` (a Bitbucket/GitHub-shaped URL template with the
@@ -269,9 +360,9 @@ commit sha in it) and passes it on `/sourcelink:<path>` -- `sourcelink` is one o
 input. Left as is, its content would carry the commit sha, and so the lock's content -- and the
 lock file itself -- would change on every commit even though the compilation did not change.
 `parseImport` asks msbuild for the `SourceRevisionId` property (in `wantedProperties`) and, when
-it is non-empty, calls the pure `Project.tokenizeRevision sha entry : Lock.Project`: every
-occurrence of `sha` in `Generated` content, `Args`, and `Properties` values is replaced with the
-literal token `$(SourceRevisionId)`. The sha itself is **not** recorded anywhere in the lock --
+it is non-empty, calls the pure `Project.tokenizeRevision sha entry : Lock.Entry`: every
+occurrence of `sha` in `Generated` content, `Options`, `Defines` and the evaluation's `Properties`
+values is replaced with the literal token `$(SourceRevisionId)`. The sha itself is **not** recorded anywhere in the lock --
 `SourceRevisionId` is asked from msbuild only to drive this substitution, never added to the
 `Properties` whitelist. `run` (`Dotnet.csc.fs`, step 2 of the runner) resolves the token back at
 compile time, from the project's own repository (`Git.headSha project.Directory`) -- see below.
@@ -297,15 +388,14 @@ detached HEAD, `HEAD` plus the loose ref or `packed-refs` for a symbolic one -- 
 is not inside a repository.
 
 **SDK pin check.** `Project.sdkPin` (pure) walks up from each project's directory for a
-`global.json` and reads `sdk.version`/`sdk.rollForward`, producing a `SdkPin`: `NoGlobalJson`,
-`Pinned version` (only `rollForward: "disable"` counts as pinned), `RollsForward (version,
-policy)` (any other policy, or the absent-policy default `latestPatch`), or `NoVersion file`
-(a `global.json` with no `sdk.version`). `import` computes it per project before calling
-`parseImport`, which records it in the lock's `Properties.["SdkPin"]` as `"none"`, `"exact
-<version>"`, `"<version> rollForward:<policy>"`, or `"no version (<file>)"`, alongside
-`NETCoreSdkVersion` (already asked from msbuild) under its own key. When the pin is anything but
-`Pinned`, `import` warns once per project: `"'<name>': the SDK is not pinned (<pin>) -- the
-lock's Compiler section (<sdk>) will drift with every SDK the machine picks; pin it with
+`global.json` and reads `sdk.version`/`sdk.rollForward`, producing a `Lock.SdkPin`:
+`NoGlobalJson`, `Pinned version` (only `rollForward: "disable"` counts as pinned), `RollsForward
+(version, policy)` (any other policy, or the absent-policy default `latestPatch`), or `NoVersion
+file` (a `global.json` with no `sdk.version`). `import` computes it per project before calling
+`parseImport`, which records it typed in `Evaluation.SdkPin` (written as `Lock.sdkPinText`, read
+back with `Lock.parseSdkPin`), next to `Evaluation.Sdk`. When the pin is anything but `Pinned`,
+`import` warns once per project: `"'<name>': the SDK is not pinned (<pin>) -- the lock's
+compiler (<version>, SDK <sdk>) will drift with every SDK the machine picks; pin it with
 global.json { sdk: { version, rollForward: "disable" } }"`. When it is `Pinned v` but msbuild's
 `NETCoreSdkVersion` differs from `v` -- the pinned SDK is not installed and a different one ran
 -- it warns separately with both versions named.
@@ -313,7 +403,7 @@ global.json { sdk: { version, rollForward: "disable" } }"`. When it is `Pinned v
 The project-reference pattern, from `import.fsx`:
 
 ```fsharp
-let unbuilt = project.References |> List.filter (fun r -> r.Sha256 = "") |> List.map (fun r -> r.Path) |> Set.ofList
+let unbuilt = project.Dependencies.References |> List.filter (fun r -> r.Sha256 = "") |> List.map (fun r -> r.Path) |> Set.ofList
 let mapped = project |> Lock.mapPaths (fun p -> if unbuilt.Contains p then outputOf p else p)
 
 do! need (unbuilt |> Set.toList |> List.map (outputOf >> relative))
@@ -321,8 +411,8 @@ do! CscLock.compile mapped
 ```
 
 A project reference in the lock is unhashed and points at the referenced project's own build
-output (not built yet at import time). `Lock.mapPaths f project` rewrites every path the
-project's `Args`, `References`, `Analyzers`, `Generated` and `Resources` keys carry through `f`;
+output (not built yet at import time). `Lock.mapPaths f entry` rewrites every path the
+entry's `Options`, `Sources`, `References`, `Analyzers`, `Generated` and `Resources` keys carry through `f`;
 a rewritten
 `Hashed` entry loses its hash, since the recorded hash was computed for the old path. The script
 maps those references to the path its own rule will produce them at, `need`s those targets
@@ -339,13 +429,13 @@ mapped outputs, it only `needFiles` what the (already-mapped) args name.
   `CS2023` and ignores it.
 - A hash mismatch reports every mismatching path at once, `"<path>: expected <hash>, got
   <hash-or-\"missing\">"`, one line per path, and fails when `FailOnError` is set.
-- A `Lock.Project` in memory has absolute paths throughout; `Lock.save`/`writeWith` tokenizes
+- A `Lock.Entry` in memory has absolute paths throughout; `Lock.save`/`writeWith` tokenizes
   them against known roots (project root, NuGet package cache, SDK) so the file on disk is
   portable and diffable, and `Lock.load`/`parseWith` expands them back on load.
 
 ## Recording a lock from composed `csc` settings
 
-`Project.import` produces a `Lock.Project` from an msbuild project; `resolve` (private, above)
+`Project.import` produces a `Lock.Entry` from an msbuild project; `resolve` (private, above)
 produces one from composed `csc {}` settings, but only for `run`'s own use -- discarded once
 compiled. `lock-from-settings.md` (design note, recommendation 1b) asks for that value to be
 reachable, so a lock-recording rule can write it out the way an import rule already does. The
@@ -353,14 +443,14 @@ smallest API for that:
 
 ```fsharp
 module CscLock =
-    val resolve : CscSettingsType -> Recipe<Lock.Project>
+    val resolve : CscSettingsType -> Recipe<Lock.Entry>
 
 module Lock =
-    val rehash : Project -> Project
-    val diff : Project -> Project -> string list
+    val rehash : Entry -> Entry
+    val diff : Entry -> Entry -> string list
 ```
 
-**`CscLock.resolve settings`** runs `resolve` and returns just the `Lock.Project` -- `resolve`
+**`CscLock.resolve settings`** runs `resolve` and returns just the `Lock.Entry` -- `resolve`
 produces no temp files of its own to clean up (see the composed-mode resx paragraph above), so a
 lock it returns, `.resx` resources included, is compilable and recordable as is. Not
 `Csc.resolve`: F# does not let a `module` and a `let`-bound function share one name in a
@@ -369,21 +459,23 @@ namespace the way it lets a `type` and a `module` share one via
 x = ...` next to `module Csc = ...` leaves `Csc.resolve` unresolved, `FS0039`, in either
 definition order). `Csc` stays the function it always was; the new module is `CscLock` instead.
 
-**`Lock.rehash project`** fills `Sha256` for every `Hashed` entry (`References`, `Analyzers`,
-`Imports`) and for `Compiler`, from what is on disk right now (`Lock.sha256`, empty when the file
-does not exist). `resolve` never hashes -- hashing every reference on every composed compile
+**`Lock.rehash entry`** fills `Sha256` for every hashed entry (`References`, `Analyzers`,
+`Imports`) and for `Compiler` (its `Version` too, when empty), from what is on disk right now
+(`Lock.sha256`, empty when the file does not exist). `resolve` never hashes -- hashing every reference on every composed compile
 would tax the common case for nothing -- so a lock-recording rule calls `rehash` itself, once,
 after `CscLock.resolve`; the cost is then paid only when that rule reruns, like everything else
 in Xake.
 
-**`Lock.diff a b`** is a pure, human-readable comparison of two locks of the same project: `[]`
-means identical. In order: `Args` as an ordered list (`+`/`-` lines from an LCS diff -- a moved
-argument shows as a removal at its old position and an addition at its new one, there being no
-separate "moved" marker in an ordered diff), `Compiler` (`Path`/`Sha256`/`Sdk`, one line per
-differing field), each hashed list (`References`, `Analyzers`, `Imports`) by path (added,
-removed, or `~ <label> <path>: <old> -> <new>` when both sides have a hash and they differ),
-`Generated`/`Resources` by key (added, removed, or `~ <label> <key>: content changed`), and
-`ProjectRefs` as a set (added/removed). This is the primitive `csc { locked "path" }` sugar and
+**`Lock.diff a b`** is a pure, human-readable comparison of two lock entries of the same
+project: `[]` means identical. In order: `Options` and `Sources` as ordered lists (bare `+`/`-`
+lines from an LCS diff -- a moved argument shows as a removal at its old position and an
+addition at its new one, there being no separate "moved" marker in an ordered diff), `Defines`
+as a set, `Compiler` (`Path`/`Sha256`/`Version`, one line per differing field), `Evaluation.Sdk`,
+each hashed list (`References`, `Analyzers`, `Imports`) by path (added, removed, or `~ <label>
+<path>: <old> -> <new>` when both sides have a hash and they differ), `Generated`/`Resources` by
+key (added, removed, or `~ <label> <key>: content changed`), `ProjectRefs` as a set
+(added/removed), and `Packages` by id (`+ Package Id@Version`, `- Package Id@Version`, `~ Package
+Id: <old> -> <new>` for a version change, `~ Package Id@Version: sha512 changed`). This is the primitive `csc { locked "path" }` sugar and
 any `Policy` wiring would build on (`lock-from-settings.md` scenario 3); neither exists yet --
 `Lock.diff` is deliberately usable stand-alone (e.g. from an fsx-level "verify" rule) before
 either does.
@@ -396,7 +488,7 @@ asserts `Sources`/`Args`/`Compiler.Path`/empty reference hashes, then `Lock.reha
 
 ## Not yet
 
-- Running `fsc` through the same `Lock.Project`/runner pair -- today only `csc` does. See
+- Running `fsc` through the same `Lock.Entry`/runner pair -- today only `csc` does. See
   `tracker.md`.
 - `Resx.read`/`compile` only support plain string entries (`<data name="X"><value>...</value></data>`).
   A typed value (a `type` attribute) or a `ResXFileRef`/binary value (`mimetype`) fails with a

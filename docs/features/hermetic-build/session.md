@@ -1,6 +1,6 @@
 # Session state: hermetic-build
 
-Updated 2026-09-24 morning (end of the autonomous night run; before that: page run, extra roots, Toolset compiler source, resgen, SDK pin check; before that: import, fromlock mode, one runner, byte-identical proof).
+Updated 2026-09-24 evening (Stage B, the lock split; before that: stages A1/A2, the autonomous night run, page run, extra roots, Toolset compiler source, resgen, SDK pin check, import, fromlock mode, one runner, byte-identical proof).
 
 `brief.md` next to this file (committed by the user on 2026-09-22, together with the
 `samples/hermetic/dataengine/` inspection artifacts) is the working brief:
@@ -11,6 +11,9 @@ the two ActiveReports repositories (§8j). Everything decided so far is there; d
 scenarios; migration of an existing tuned block is §9; the update mechanism is an open question,
 a global `UPDATE_LOCKS` variable was rejected). `csc-syntax.md` documents the `csc {}` task as it stands on this branch: composed settings,
 `fromlock` from a lock, one runner.
+
+State (2026-09-24 evening): **the lock split is done** -- see "stage B" below; the older
+state paragraph follows for history.
 
 State: **slice 1's core is done and proven** — `Project.import`, `Lock`, `csc { fromlock }`,
 and `import.fsx build` compiles dataengine develop (3 projects × 2 brands) **byte-identical to
@@ -34,11 +37,10 @@ csc, `Pack` deterministic nupkg; Babel and delegated signing need the user); day
 (CoreCompile forced, race serialized, sourcelink captured, sha tokenized, SDK pin check).
 `README.md` in this folder indexes the notes.
 
-**Morning queue -- decisions only the user can make** (nothing else is blocked):
-1. Lock split into dependencies/compilation parts and the structured format (tracker "Lock
-   stability") -- now including the decision (2026-09-24) to fold the package graph from
-   `project.assets.json` into the lock at import, so the SBOM reads the lock only; the conceptual review's API decisions: `Csc.fromLock` vs `fromlock`,
-   `Fsproj.roots ()` from `ProjectRoot`, helper placement, renames.
+**Queue -- decisions only the user can make** (nothing else is blocked):
+1. ~~Lock split~~ -- decided 2026-09-24 and done the same day (Stage B, below); the renames
+   with it. Left from the conceptual review: item 8 (`Generated`/`.resources` as targets via
+   a rule factory), only if a second consumer appears.
 2. The lock update mechanism for locks recorded from composed settings (`lock-from-settings.md`
    §9; `UPDATE_LOCKS` rejected).
 3. Babel recipe (tool from the private feed, licence) and signing as a delegated rule.
@@ -54,6 +56,58 @@ brief §8c) -- or start the lock split once decided. Fixture as before:
 `-p:NuGetAudit=false` (the import sets it) or load the feed token with `cd <ar project dir> &&
 source ~/set-secrets.sh` (never print it). Xake stays referenced via `#r` on `.bootstrap/` — no
 release.
+
+### What landed (2026-09-24, evening): stage B -- the lock split
+
+Decisions were the user's (2026-09-24); the shape is in `csc-syntax.md` ("Where a `Lock.Entry`
+comes from"). Commits `aa5ddc8` (library + tests), `94f8087` (scripts, fixtures, proof), then
+the docs.
+
+- **`Lock.Entry = { Name; Evaluation; Compilation; Dependencies }`**, `Lock.Document` with
+  `Entries`, `Lock.entry name doc`. `Evaluation`: `Project`, `ProjectRefs`, `Imports`, `Sdk`,
+  typed `SdkPin option` (the DU moved from `Project` into `Lock`; `Lock.sdkPinText`/`parseSdkPin`
+  keep the old text form in the file), `Properties` without `SdkPin`/`NETCoreSdkVersion`.
+  `Compilation`: `Directory`, `Options`, `Defines`, `Sources`, `Generated`, `Resources`.
+  `Dependencies`: `Compiler { Tool; Path; Sha256; Version }`, `References { Path; Sha256; Alias }`,
+  `Analyzers`, `Packages`. `Args`/`Sources`/`Output` are members. A composed (`resolve`) entry
+  has an empty-valued `Evaluation` and `SdkPin = None`.
+- **Structured `Options` with section markers** (`@Sources`, `@References`, `@Analyzers`,
+  `@Defines` at the position each block had). `Lock.Compilation.ofArgs` factors, `Entry.Args`
+  rebuilds, and `parseImport` **fails with a `Lock.diffList`** when the rebuilt list is not
+  msbuild's. Markers rather than a canonical order because the real locks have
+  `/warnaserror+:NU1605` after the sources and block order differs between Roslyn versions.
+  `resolve` goes through the same path and now spells `/reference:` (was `/r:`).
+- **`Compiler.Version`** is the compiler's own product version (`FileVersionInfo`, cut at `+`);
+  for the SDK's native `csc` launcher (what `locateFramework` returns on macOS) the `csc.dll`
+  next to it is read -- the launcher itself has no version resource, which is how the first
+  test run caught it.
+- **Package graph in the lock**: `Project.packages cacheRoot assets` inside `withProjectLock`
+  right after the design-time build; `Lock.Package = { Id; Version; Sha512; Direct; DependsOn }`.
+  The assets copy and the `ProjectAssetsFile` property hack (import-race.md) are gone.
+  `Sbom.forAssembly cacheRoot entry assemblyPath` reads the lock only (supplier/license still
+  from the cache; the package hash is the lock's, the cache is not re-consulted). `Nuget.fs`
+  compiles before `Project.fs`.
+- **Bug found on the fixture**: dataengine's first Stage B lock had `packages 0` -- a
+  single-`TargetFramework` project's `project.assets.json` keys `targets` by the full framework
+  name (`.NETStandard,Version=v2.0`), and `Nuget.readAssets` only matched the alias (page's
+  multi-target projects use the alias, which is why the page SBOM had worked). `Nuget.frameworkFullName`
+  + a test. So the page SBOM comparison never exercised a single-target assets file; dataengine's
+  SBOM would have had no packages.
+- **Proof**: clean fixture (`rm -rf locks src/*/obj .xake`), `import.fsx build` 9.5 s both
+  brands, round-trip check held on all 6 entries; in-place `dotnet build -t:Rebuild` baseline
+  per brand; **18/18 byte-identical**. Locks 889 lines / 113 KB per brand (were 1135 / 153 KB
+  flat), `samples/hermetic/dataengine/` replaced (locks, `brand-diff.txt` 152 lines,
+  `compare.txt`).
+- **Tests**: 318 passed, 1 skipped (was 309). New pure tests: `ofArgs`/`Args` round trip on a
+  realistic list (alias, quoted comma path, `/define:`, a switch after the sources), the
+  round-trip failure diff (two `/define:` switches), packages from an assets fixture, `diff` on
+  packages, `SdkPin` text round trip, flat-lock refusal, single-target assets key. Both projects
+  0 warnings, `build.fsc.fsx build test` green on the re-staged `.bootstrap/`.
+- **Format**: `"Entries"` (was `"Projects"`); a flat lock is refused with "lock written by an
+  older Xake; re-import". `Alias` is written only when non-empty; `SdkPin` is `""` for `None`.
+- Traps: `base` is an F# keyword (a test binding named `base` fails to parse); a python splice
+  anchored on doc text that also appears in the new module cut the wrong region -- anchor on
+  the `module X =` header.
 
 ### What landed (2026-09-24): stage A2 -- the lock is not a setting
 

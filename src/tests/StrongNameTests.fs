@@ -20,7 +20,7 @@ type ``Strong name``() =
     /// Compiles a one-class library with csc, signed with `snkPath`, `/deterministic+` so two
     /// compiles of the same sources differ only in what E4 is about. Mirrors
     /// `FromLockTests.fs`'s `makeLock`: the SDK's own csc.dll, run via `dotnet <csc.dll>` the
-    /// way `Csc`'s fromlock mode does, against netstandard's reference assembly.
+    /// way `CscLock.compile` does, against netstandard's reference assembly.
     let compile (dir: string) (snkPath: string) : string =
         let fwk = DotNetFwk.locateFramework (Some "netstandard2.0")
         let cscDll =

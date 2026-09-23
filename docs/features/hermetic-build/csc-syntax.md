@@ -19,7 +19,7 @@ that ever shells out to the compiler.
 (`samples/fullframework.fsx`; `src/tests/DotnetTasksTests.fs`, `runs csc task (full test)`, shows
 the same shape with `out`, `Src`, `TargetFramework`, `RefGlobal` set directly on the record.)
 
-Without `fromlock`, `Csc` calls `resolve`, which turns the settings below into a
+`Csc` calls `resolve`, which turns the settings below into a
 `Lock.Project` at recipe time -- same argument order the task has always produced -- and passes
 it to the runner. Every custom operation of `CscSettingsBuilder`:
 
@@ -40,12 +40,12 @@ it to the runner. Every custom operation of `CscSettingsBuilder`:
 | `unsafe` | `bool` | `/unsafe` | `false` |
 | `cscpath` | `string` | compiler executable, bypassing framework discovery entirely | `None` |
 | `toolset` | `string` (package version) | compiler from `Microsoft.Net.Compilers.Toolset/<version>` in the NuGet cache instead of the SDK's; see below | `None` |
-| `fromlock` | `Lock.Project` | switches to `fromlock` mode, see below | `None` |
 | `args` | `string list` | raw extra switches, appended last (`CommandArgs`) | `[]` |
 | `nofailonerror` | (none) | do not fail the build on a compile error | `FailOnError = true` |
 
-`out`, `platform`, `unsafe`, `nostdlib` (from `targetfwk`) and `define` are only meaningful in
-composed mode -- `fromlock` mode ignores them (see below). The argument list `resolve` builds is,
+`out`, `platform`, `unsafe`, `nostdlib` (from `targetfwk`) and `define` are composition
+settings; replaying a lock (`CscLock.compile`, below) does not go through them at all. The
+argument list `resolve` builds is,
 in order: `/noconfig` (when the target framework requires it), `/nologo`, `/target:`,
 `/platform:`, `/unsafe`, `/nostdlib+`, `/out:`, `/define:`, sources, `/r:` refs, global refs,
 `/res:`, then `CommandArgs`.
@@ -82,7 +82,7 @@ temp files of its own; the only temp file `run` still cleans up is its own respo
 - The lock records what ran in `Lock.Project.Compiler`: `Path` and `Sha256` name the compiler
   file; `Sdk` is always the framework's version from `DotNetFwk.locateFramework`, not the
   toolset package's -- that version is part of `Path`.
-- `fromlock` restores a toolset package the lock names when it is not on this machine yet
+- `CscLock.compile` restores a toolset package the lock names when it is not on this machine yet
   (`ensureCompilerAvailable`, see below) -- the same restore mechanism as `toolset` above, just
   triggered by replaying a lock instead of by the `toolset` operation.
 
@@ -100,19 +100,25 @@ temp files of its own; the only temp file `run` still cleans up is its own respo
   (csproj or `-p:`). Without it, on SDK 9 and later, `Microsoft.NET.Sdk.BeforeCommon.targets`
   silently sets `CSharpCoreTargetsPath` back to the SDK's, and the package has no effect.
 
-## `fromlock` mode
+## Replaying a lock: `CscLock.compile`
 
 ```fsharp
-do! csc { fromlock mapped }   // mapped : Lock.Project
+do! CscLock.compile mapped                          // mapped : Lock.Project
+do! CscLock.compileWith { RunOptions.Default with FailOnError = false } mapped
 ```
 
-`fromlock` sets `CscSettingsType.FromLock`; when it is `Some project`, `Csc` skips `resolve`
-entirely and calls the runner on `project` with no extra env vars and no temp files. Every other
-setting on the record (`Src`, `Ref`, `Target`, `Platform`, `Out`, `TargetFramework`, ...) is
-ignored -- the project's own `Args` is the whole compilation. Only `FailOnError` and `CscPath`
-still apply, because they govern how the runner behaves, not what it compiles.
+`CscLock.compile` hands a resolved compilation straight to the runner, with no extra env vars
+and no temp files: the project's own `Args` is the whole compilation. It is an entry point of
+its own, not a mode of `csc {}` (changed 2026-09-24, conceptual-review.md 2.2): as a `fromlock`
+setting inside the record it made `csc { fromlock p; src !!"*.cs" }` compile while silently
+ignoring `src` and every other composition setting, and the type said nothing about it. What
+does apply to both entry points is `RunOptions = { FailOnError; CscPath }` -- how the runner
+behaves, not what it compiles; `Csc` builds one from the settings' own `FailOnError`/`CscPath`,
+and `CscLock.compile` uses `RunOptions.Default` (`compileWith` takes them explicitly). The
+module is `CscLock`, not `Csc`, because F# will not let a module and the `let`-bound function
+`Csc` share a name (see the doc comment on `CscLock.resolve`).
 
-The runner (`run` in `Dotnet.csc.fs`, shared by both modes) does, in order:
+The runner (`run` in `Dotnet.csc.fs`, shared by both entry points) does, in order:
 
 1. **Makes the compiler available** (`ensureCompilerAvailable`, raised 2026-09-23), before
    anything else touches it, so the hash check below has something to check:
@@ -311,7 +317,7 @@ let unbuilt = project.References |> List.filter (fun r -> r.Sha256 = "") |> List
 let mapped = project |> Lock.mapPaths (fun p -> if unbuilt.Contains p then outputOf p else p)
 
 do! need (unbuilt |> Set.toList |> List.map (outputOf >> relative))
-do! csc { fromlock mapped }
+do! CscLock.compile mapped
 ```
 
 A project reference in the lock is unhashed and points at the referenced project's own build
@@ -320,7 +326,7 @@ project's `Args`, `References`, `Analyzers`, `Generated` and `Resources` keys ca
 a rewritten
 `Hashed` entry loses its hash, since the recorded hash was computed for the old path. The script
 maps those references to the path its own rule will produce them at, `need`s those targets
-first, and only then runs `csc { fromlock mapped }` -- the runner itself does not `need` the
+first, and only then runs `CscLock.compile mapped` -- the runner itself does not `need` the
 mapped outputs, it only `needFiles` what the (already-mapped) args name.
 
 ## Behaviour notes

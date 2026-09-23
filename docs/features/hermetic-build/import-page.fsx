@@ -155,7 +155,7 @@ do xakeScript {
             // absolute argument to `Path.Combine` with `ProjectRoot` wins), whether the output
             // is page's own or dataengine's
             do! need (unbuilt |> Set.toList |> List.map outputOf)
-            do! csc { fromlock mapped }
+            do! CscLock.compile mapped
         }
 
         target "src/(proj:**)/obj/xake/(fwk:*)/(brand:*)/(name:*).dll" {

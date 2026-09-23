@@ -108,7 +108,7 @@ type ``Toolset compiler``() =
                     }
                     let! lock = Lock.load lockFile
                     let project = Lock.project "Toolset" lock
-                    do! csc { fromlock project }
+                    do! CscLock.compile project
                 }
             ]
         }

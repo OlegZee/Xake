@@ -6,7 +6,7 @@ details live in brief.md (section refs) or session.md.
 **Status 2026-09-24:** day zero closed · slice 1 (import, lock, `fromlock`, one runner, page and
 dataengine byte-identical) closed · slice 2 (Nuget, Sbom, Verify) closed but for one report
 tweak · slice 3 half done (StrongName, Pack; Babel and delegated signing wait for the user) ·
-open decisions for the user: lock split and structured format, `fromlock` API shape, lock update
+open decisions for the user: lock split and structured format, lock update
 mechanism, release. Details: session.md, README.md.
 
 ## Day zero (brief §8h/§8i/§8j)
@@ -44,7 +44,7 @@ mechanism, release. Details: session.md, README.md.
 - [ ] **package graph into the lock at import** (decided 2026-09-24): `project.assets.json` is a restore output in `obj`, a hidden input the SBOM step reads today (the per-variant copy in `obj/xake/<fwk>/<variant>/` is a stopgap). At import, fold it into the lock as the dependencies part: per package id, version, sha512 (`.nupkg.metadata`), direct or transitive, `dependsOn`; `Nuget.readAssets` becomes an import-time reader, `Sbom.forAssembly` and later `Policy`/restore-from-lock read the lock only. The lock and the assets file are not equivalent -- assets has the graph and the runtime-only/native packages csc never sees, the lock has what was compiled and its hashes; after this the lock has both
 
 ## Lock from composed `csc` settings (design note `lock-from-settings.md`, 2026-09-22)
-- [x] `CscLock.resolve` public as `Recipe<Lock.Project>` (F# refuses a module named like the `Csc` function), `Lock.rehash`, `Lock.diff` — the smallest API; `Project.import` and `CscLock.resolve` both feed `fromlock`. `LockDiffTests.fs`
+- [x] `CscLock.resolve` public as `Recipe<Lock.Project>` (F# refuses a module named like the `Csc` function), `Lock.rehash`, `Lock.diff` — the smallest API; `Project.import` and `CscLock.resolve` both feed `CscLock.compile`. `LockDiffTests.fs`
 - [ ] migration path A: `lock "path"` operation on `csc {}` with locked-mode semantics (record when absent, diff + hash-verify when present); path B: `cscSettings {}` builder returning the settings value
 - [ ] **think first**: how a lock is updated — `-d UPDATE_LOCKS` rejected (global tool behaviour for a narrow case). Find what is idiomatic for Xake (locks as targets, no engine mode) and familiar to npm users (`npm install` follows the manifest, `npm ci` is the strict opt-in)
 - [x] prerequisite for projects with `.resx` (2026-09-23): `resolve` now records a `.resx` resource as a permanent `(resx, .resources)` pair in `Resources` — `<ProjectRoot>/obj/xake/<assembly name>/<manifestName>` — and emits `/res:<path>,<manifestName>`; `run`'s existing resource step compiles it when missing, exactly as for an imported project. `resolve` no longer produces any temp files; `CscLock.resolve`'s return type dropped the temp-file list. `DotnetTasksTests.fs` (composed mode, no-op second build), `FromLockTests.fs` (`CscLock.resolve` on a resx, compiles through `fromlock`)
@@ -67,6 +67,7 @@ mechanism, release. Details: session.md, README.md.
 - [x] step back and audit what slice 1 produced — `conceptual-review.md` (2026-09-23). Verdict: no drift of the engine (two core files changed, both the one-execution-per-run fix); two blurred seams — `Lock.Project` mixes evaluation provenance, compile manifest and dependency evidence; `FromLock` is a mode flag inside the settings record
 - [x] review follow-ups (cheap): compiler is `needFiles`'d; the `.resources` mtime test is gone (regenerate only when missing, the engine decides staleness); gate semantics documented in `csc-syntax.md`
 - [x] **stage A1** (§2.5, approved 2026-09-24): `Json.fs` and `Roots.fs` compiled before `Fsproj.fs` — `Fsproj` is the F# evaluation again; `$(ProjectRoot)` is the engine's `ExecOptions.ProjectRoot`, not the process cwd, so the entry points that need it are recipes: `Roots.current`/`currentWith`, `Lock.load`/`loadWith`/`save`/`saveWith`, `Fsproj.load`. Pure `writeWith`/`parseWith`/`readWith` and `Roots.builtin`/`withExtra` take the roots (or the root) explicitly; the cwd-based `Fsproj.roots`/`withRoots`/`write`/`parse` and `Lock.write`/`parse`/`read` are gone
+- [x] **stage A2** (§2.2, approved 2026-09-24): `RunOptions = { FailOnError; CscPath }` is what the runner takes; `CscSettingsType.FromLock` and the `fromlock` operation are gone, replaced by `CscLock.compile project` / `compileWith options project` next to `CscLock.resolve`. `Csc settings` is now one path: resolve, then run with the settings' own runner options
 - **Renames still open for the user**: `Lock.Project`, `Lock.File`, `Compiler.Sdk`, `Properties` as an untyped bag — due with the lock split
 
 ## Housekeeping

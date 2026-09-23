@@ -1,6 +1,6 @@
 # Session state: hermetic-build
 
-Updated 2026-09-24 early (autonomous night run; before that: page run, extra roots, Toolset compiler source, resgen, SDK pin check; before that: import, fromlock mode, one runner, byte-identical proof).
+Updated 2026-09-24 morning (end of the autonomous night run; before that: page run, extra roots, Toolset compiler source, resgen, SDK pin check; before that: import, fromlock mode, one runner, byte-identical proof).
 
 `brief.md` next to this file (committed by the user on 2026-09-22, together with the
 `samples/hermetic/dataengine/` inspection artifacts) is the working brief:
@@ -24,19 +24,30 @@ fields -- the lock's shape is the file format. Two behaviour changes for the com
 both intended: it creates the output directory (before, `samples/fullframework.fsx` needed
 `samples/temp/` to exist), and it `needFiles` the framework references too. Trap: `samples/*.fsx`
 load Xake from `out/`, so run `dotnet fsi build.fsx -- -- build` before judging them; a stale
-`out/` made the refactor look like it had not fixed the directory issue. **Slice 1 is closed, slice 2 has started (night of 2026-09-23, autonomous run with a commit per
-stage).** Landed overnight, each its own commit (see `git log` from `f2c5a2c`): page 90/90
-byte-identical against a clean `-t:Rebuild` baseline (the earlier near-miss was the comparison
-reusing msbuild's incremental caches); engine fix for file targets with `..`; `fromlock` restores
-a missing toolset compiler and explains a missing SDK; `CscLock.resolve`/`Lock.rehash`/
-`Lock.diff`; `sourcelink.json` captured and the commit sha tokenized as `$(SourceRevisionId)`,
-resolved from the repository at compile time, `.git/HEAD` a dependency of the import; the
-conceptual review (`conceptual-review.md`); `Nuget` module. In flight or next: `Sbom`
-(CycloneDX 1.6, deterministic), `Verify` (Authenticode PE hash, labelled byte differences),
-composed-mode resx through `Resources`. **Waiting for the user**: lock split and structured
-format; a separate `Csc.fromLock` instead of the `fromlock` operation; `Fsproj.roots ()` from
-`ProjectRoot`; renames; the lock update mechanism; release. Open technical item without a fix
-yet: the concurrent import race (tracker). Fixture as before:
+`out/` made the refactor look like it had not fixed the directory issue. **State at the end of the autonomous night run (2026-09-24 morning).** 24 commits since
+`f2c5a2c`, one per stage, each green (0 warnings both TFMs; suite 309 passed, 1 skipped;
+dataengine 18/18 and page 90/90 byte-identical from clean locks on the final assemblies).
+Slice 1 closed; slice 2 done (`Nuget`, `Sbom` with `forAssembly`/`forPackage`, `Verify`,
+E2E SBOM on page compared with theirs); slice 3 half done (`StrongName` re-sign reproducing
+csc, `Pack` deterministic nupkg; Babel and delegated signing need the user); day zero closed
+(E3, E5 with two follow-ups); engine fixes (`..` targets, database open retry); import fixes
+(CoreCompile forced, race serialized, sourcelink captured, sha tokenized, SDK pin check).
+`README.md` in this folder indexes the notes.
+
+**Morning queue -- decisions only the user can make** (nothing else is blocked):
+1. Lock split into dependencies/compilation parts and the structured format (tracker "Lock
+   stability"); the conceptual review's API decisions: `Csc.fromLock` vs `fromlock`,
+   `Fsproj.roots ()` from `ProjectRoot`, helper placement, renames.
+2. The lock update mechanism for locks recorded from composed settings (`lock-from-settings.md`
+   §9; `UPDATE_LOCKS` rejected).
+3. Babel recipe (tool from the private feed, licence) and signing as a delegated rule.
+4. Release of the branch (`.bootstrap/` staging until then).
+Also worth a look: `conceptual-review.md`, `e5-shipped-vs-local.md` (a shipped dll cannot be
+reproduced here -- different compiler build), `import-race.md`.
+
+**Next step if none of the above is decided**: `Verify.verdict` reporting bytes and the largest
+range (tracker), then a generated fsx over the types for the third consumer (the CLI tool of
+brief §8c) -- or start the lock split once decided. Fixture as before:
 `git archive origin/develop` of `~/Projects-work/ar/ar-net-core-dataengine` into the job tmp dir
 (its checkout is on a broken feature branch), then `ar-net-core-page`. Always
 `-p:NuGetAudit=false` (the import sets it) or load the feed token with `cd <ar project dir> &&

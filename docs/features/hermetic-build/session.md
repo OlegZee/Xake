@@ -1,6 +1,9 @@
 # Session state: hermetic-build
 
-Updated 2026-09-24 night (Stage C, `csc { lock }`; before that Stage B, the lock split; before that: stages A1/A2, the autonomous night run, page run, extra roots, Toolset compiler source, resgen, SDK pin check, import, fromlock mode, one runner, byte-identical proof).
+Updated 2026-09-24 late night (the `Sign` skeleton and its six tests; before that the
+`ProjectRefs` fix, the page re-proof, Stage C `csc { lock }`; before that Stage B, the lock
+split; before that: stages A1/A2, the autonomous night run, page run, extra roots, Toolset
+compiler source, resgen, SDK pin check, import, fromlock mode, one runner, byte-identical proof).
 
 `brief.md` next to this file (committed by the user on 2026-09-22, together with the
 `samples/hermetic/dataengine/` inspection artifacts) is the working brief:
@@ -9,8 +12,15 @@ the two ActiveReports repositories (§8j). Everything decided so far is there; d
 
 `lock-from-settings.md` analyses how a lock is obtained from composed `csc {}` settings (nine
 scenarios; migration of an existing tuned block is §9; the update mechanism is an open question,
-a global `UPDATE_LOCKS` variable was rejected). `csc-syntax.md` documents the `csc {}` task as it stands on this branch: composed settings,
-`fromlock` from a lock, one runner.
+a global `UPDATE_LOCKS` variable was rejected). `csc-syntax.md` documents the `csc {}` task as
+it stands on this branch: composed settings, `CscLock.compile` replaying an imported lock,
+`lock "path"` locking composed settings, one runner.
+
+State (2026-09-24, end of day): **slice 1 and slice 2 are closed; slice 3 is StrongName + Pack +
+Sign-skeleton done, and Babel (the tool and its licence) is the only piece left waiting on the
+user.** Suite **331 passed, 1 skipped**. `dataengine` is still 18/18 and `page` still 90/90
+byte-identical on the split locks (`Lock.Entry` in three sections); page's 30 SBOMs regenerate
+**30/30 byte-identical**. The older state paragraphs follow for history.
 
 State (2026-09-23, evening): the **SBOM package-scope RFC** from SDP
 (`SDP/.memory-bank/framework/docs/6-release/sbom-package-scope-nuget.md`, PDR-0010 draft,
@@ -61,19 +71,32 @@ csc, `Pack` deterministic nupkg; Babel and delegated signing need the user); day
 2. ~~The lock update mechanism for locks recorded from composed settings~~ -- decided
    2026-09-24 and built the same night (Stage C, below): strict by default, the update an
    explicit target of the script's own.
-3. Babel recipe (tool from the private feed, licence) and signing as a delegated rule.
-4. Release of the branch (`.bootstrap/` staging until then).
+3. ~~Signing as a delegated rule~~ -- decided 2026-09-24: design it now, land a skeleton against
+   a fake signer (`signing.md`, `src/dotnet/Sign.fs`, `src/tests/SignTests.fs`, 6 tests). What
+   is left is not a design question: a real `Signer` (signtool / Trusted Signing / HSM), a
+   certificate, and the agent that holds the key -- all the user's to supply.
+4. Babel recipe (tool from the private feed, licence).
+5. Release of the branch (`.bootstrap/` staging until then).
 Also worth a look: `conceptual-review.md`, `e5-shipped-vs-local.md` (a shipped dll cannot be
-reproduced here -- different compiler build), `import-race.md`.
+reproduced here -- different compiler build), `import-race.md`, `signing.md`.
 
-**Next step if none of the above is decided**: `Verify.verdict` reporting bytes and the largest
-range (tracker), then a generated fsx over the types for the third consumer (the CLI tool of
-brief §8c) -- or start the lock split once decided. Fixture as before:
-`git archive origin/develop` of `~/Projects-work/ar/ar-net-core-dataengine` into the job tmp dir
-(its checkout is on a broken feature branch), then `ar-net-core-page`. Always
-`-p:NuGetAudit=false` (the import sets it) or load the feed token with `cd <ar project dir> &&
-source ~/set-secrets.sh` (never print it). Xake stays referenced via `#r` on `.bootstrap/` — no
-release.
+**Next step if nothing else is decided**: no single item is next by necessity; candidates,
+roughly in reach order --
+(a) the third consumer brief §8c asks for: a generated fsx (or a small CLI) driven off the
+`Lock`/`CscLock` types, now that the lock's shape (`Lock.Entry`, structured `Options`) is settled
+by the split;
+(b) `fsc` through the same `Lock.Entry`/`run` shape `csc {}` uses, retiring `Fsproj.evaluate`
+(conceptual-review.md §2.6 -- `fsc` has no runner over a lock yet, which is the one thing
+keeping `build.fsc.fsx` on its own path);
+(c) the alignment-padding label in `Verify.compare` (tracker, signing.md §3): a short unlabelled
+`"Content"` range appears when the signed input's length is not already 8-byte aligned;
+(d) migrating `build.fsc.fsx` to `Project.import` once (b) gives `fsc` a runner, retiring the
+`Fsproj.evaluate` special case for good.
+Fixture as before: `git archive origin/develop` of `~/Projects-work/ar/ar-net-core-dataengine`
+into the job tmp dir (its checkout is on a broken feature branch), then `ar-net-core-page`.
+Always `-p:NuGetAudit=false` (the import sets it) or load the feed token with `cd <ar project
+dir> && source ~/set-secrets.sh` (never print it). Xake stays referenced via `#r` on
+`.bootstrap/` — no release.
 
 ### What landed (2026-09-23, later): one lock per variant, and the lock restores its own packages
 

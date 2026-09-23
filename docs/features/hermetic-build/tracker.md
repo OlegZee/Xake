@@ -3,6 +3,11 @@
 Status: `[ ]` todo · `[~]` in progress · `[x]` done · `[-]` dropped. Keep entries one line;
 details live in brief.md (section refs) or session.md.
 
+**Status 2026-09-24 (late night):** slice 1–2 closed · slice 3 = StrongName + Pack + Sign
+skeleton done, Babel waits for the user · decisions made today: lock split (done), the
+structured lock API (done), the lock update mechanism (done), Babel deferred, release deferred.
+Suite 331 passed, 1 skipped.
+
 **Status 2026-09-24 (night):** Stage C landed — `csc { lock "path" }` with strict semantics,
 `CscLock.record`/`verify`; the lock-update decision is closed. Suite 324 passed, 1 skipped.
 
@@ -43,6 +48,7 @@ mechanism, release. Details: session.md, README.md.
 - [x] **two frameworks of one multi-targeted project could not be imported concurrently** (found and fixed 2026-09-23, by the dataengine two-TFM matrix): the design-time build passes a global `-p:TargetFramework=X`, so restore writes an `obj/project.assets.json` holding only X's target, and `-restore` walks the project *graph*, rewriting the referenced projects' assets files too -- which `withProjectLock` (per project) does not cover. The other framework's import then fails with `NETSDK1005 ... doesn't have a target for '<fwk>'` or, worse, `Nuget.readAssets` returns an empty graph and the entry is recorded with `packages 0` and no warning (silently incomplete SBOM). Fixed by the one-lock-per-variant import: restore once per project *without* `TargetFramework` (every target lands in the assets file) with `-p:RestoreRecursive=false` (verified by hand: the referenced projects' `obj/` are not even created), then a design-time build per framework with no `-restore`. `Nuget.readAssets` now fails loudly when the framework has no target instead of returning an empty graph. Proven: 6 cold concurrent imports, 0 `NETSDK1005`, every entry with its package graph, the lock byte-identical between independent cold imports. `verify-dataengine.md` §6
 - [x] **verification matrix, both TFMs** (2026-09-23): `verify-dataengine.fsx` / `.sh` / `.md` -- dataengine netstandard2.0 + net472 x MESCIUS + GCCN, **36/36 byte-identical** to `dotnet build -t:Rebuild`, 36/36 deterministic across runs, 12/12 deterministic SBOMs, timings against the stock restore+build scenario. net472 had never been exercised before
 - [x] **design-time build skipping CoreCompile** (found 2026-09-24 re-importing dataengine with the previous build's dll still in `obj/xake`): msbuild judged `CoreCompile` up to date and reported an empty `CscCommandLineArgs`, and the import wrote a project entry with zero args. Fix: `-p:NonExistentFile=__NonExistentSubDir__/__NonExistentFile__` (the property `CoreCompile` lists among its Outputs, Visual Studio's own design-time trick) and `parseImport` fails on an empty command line instead of recording it
+- [x] **Import: ProjectRefs resolved from Identity + project directory (msbuild FullPath is cwd-resolved)** — found on the page fixture: 52 `ProjectReference` paths per lock pointed at `<page>/../X/X.csproj`, files that do not exist, because `-getItem`'s `FullPath` resolves against the *process* cwd, not the referencing project's directory. Same class as the `EmbeddedResource Update` fix; `Evaluation.ProjectRefs` is not read by the compile (which replays `Dependencies.References`), so builds and SBOMs were unaffected — commit 88c5e4c
 
 ## Lock stability (raised 2026-09-22; decided and done 2026-09-24, Stage B)
 - [x] split the lock file: dependencies (references, analyzers, compiler, imports — rare, reviewed) apart from compilation (args, sources, generated — every PR); framework/SDK its own section — done as `Lock.Entry = { Name; Evaluation; Compilation; Dependencies }` (`Imports`, `Sdk` and the typed `SdkPin` in `Evaluation`; `Compiler` with its own `Version` in `Dependencies`), `Lock.Document` with `Entries`; `Lock.diff`/`mapPaths`/`rehash` per section. commits aa5ddc8, 94f8087
@@ -64,12 +70,23 @@ mechanism, release. Details: session.md, README.md.
 - [x] Sbom follow-ups: every restore-graph package is a component (scope from evidence: `lib/` referenced → required; `ref/`-only → excluded; no referenced file → required when reachable from a direct dependency and the package ships `lib/`/`runtimes/` content, `Nuget.ships`); ids with the assets casing; `Sbom.forPackage` per nupkg (nuspec read from the zip, sha256+sha512 of the nupkg, assembly BOMs merged by bom-ref)
 - [x] `Verify`: sha256, Authenticode PE hash (checksum and certificate table excluded, PE32/PE32+), `compare` with byte ranges labelled TimeDateStamp/CheckSum/CertificateTable/PDB id/StrongNameSignature/Content, `verdict` — `Verify.fs`, `VerifyTests.fs` (4), `verify.md`
 
-- [ ] `Verify.verdict` should report total differing bytes and the largest range, not only the range count — the count hid a 145 KB block behind "143 ranges"
+- [x] `Verify.verdict` reports total differing bytes and the largest range, not only the range count — the count hid a 145 KB block behind "143 ranges"; `Verify.compare` labels a signed copy's appended certificate table from its own (the longer file's) layout instead of `a`'s, so a signed-vs-unsigned pair reads `identical except: CheckSum, CertificateTable` rather than "content differs" — `Verify.fs`, `verify.md`, `VerifyTests.fs`
 
 ## Slice 3 — ring 2/3 (brief §8f, §8g)
 - [~] Babel recipe with seed; PE timestamp normalisation + strong-name re-sign, or vendor option — **the re-sign half is done**: `StrongName.fs` (`stamp`, `checksum`, `sign`/`verify`, `normalise`; reproduces csc's own signature byte for byte — the hashed content is the PE header without its alignment padding with CheckSum and the certificate-table entry zeroed, then all sections with the signature blob excluded, as in `System.Reflection.Metadata.PEBuilder.GetContentToSign`), `StrongNameTests.fs` (5), `strongname.md`. The Babel recipe itself needs the tool from the private feed and a licence — waits for the user
 - [x] deterministic pack — `Pack.fs` (hand-rolled zip writer: sorted entries, fixed DOS time or `SOURCE_DATE_EPOCH`, no extra fields; `Pack.nupkg` with OPC parts and a content-derived psmdcp GUID, no creation date; `Pack.entries` reader with CRC-32 — `ZipArchive` exposes no `Crc32` on netstandard2.0), `PackTests.fs` (4), `pack.md`
-- [ ] sign as delegated rule (later)
+- [x] **sign as delegated rule — skeleton landed** (2026-09-23): `Sign` module
+  (`src/dotnet/Sign.fs`) after `Pack.fs`; `Sign.rule`/`Sign.executor`/`Sign.fakeSigner`,
+  identity keyed on the Authenticode (or, for a nupkg, sha256) hash of the input plus
+  certificate/timestamp/hash-algorithm, dedup + store lookup under one dispatch `Resource`,
+  the executor never runs the rule body. `SignTests.fs` (6, one per acceptance criterion);
+  `signing.md`. What remains is not design work — a real `Signer` (signtool / Trusted Signing /
+  HSM), a certificate, and the agent that holds the key — and waits for the user
+  - [ ] open sub-item (signing.md §3): the 8-byte alignment padding a signer inserts before an
+    appended certificate table shows as a short, unlabelled `"Content"` range in
+    `Verify.compare` when the input's length is not already a multiple of 8 — PE files are
+    512-byte file-aligned in practice, so this does not bite the real pipeline; folds into the
+    `Verify.verdict`/`Verify.compare` labelling above
 
 ## Conceptual review (requested 2026-09-23, after the page run)
 - [x] step back and audit what slice 1 produced — `conceptual-review.md` (2026-09-23). Verdict: no drift of the engine (two core files changed, both the one-execution-per-run fix); two blurred seams — `Lock.Project` mixes evaluation provenance, compile manifest and dependency evidence; `FromLock` is a mode flag inside the settings record

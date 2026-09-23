@@ -70,14 +70,14 @@ do xakeScript {
 
             do! need [lockFile fwk brand]
             let! lock = Lock.load (lockFile fwk brand)
-            let project = Lock.project name lock
+            let project = Lock.entry name lock
 
             // the referenced projects' own outputs, as this run of the lock will build them
             let outputOf refPath =
-                (Lock.project (Path.GetFileNameWithoutExtension (refPath: string)) lock).Output
+                (Lock.entry (Path.GetFileNameWithoutExtension (refPath: string)) lock).Output
                 |> Option.defaultWith (fun () -> failwithf "project reference '%s' has no /out: in its own lock entry" refPath)
 
-            let unbuilt = project.References |> List.filter (fun r -> r.Sha256 = "") |> List.map (fun r -> r.Path) |> Set.ofList
+            let unbuilt = project.Dependencies.References |> List.filter (fun r -> r.Sha256 = "") |> List.map (fun r -> r.Path) |> Set.ofList
             let mapped = project |> Lock.mapPaths (fun p -> if unbuilt.Contains p then outputOf p else p)
 
             do! need (unbuilt |> Set.toList |> List.map (outputOf >> relative))
@@ -96,8 +96,8 @@ do xakeScript {
                     do! need [lockFile f b]
                     let! lock = Lock.load (lockFile f b)
                     do! need
-                            [ for project in lock.Projects do
-                                match project.Output with
+                            [ for entry in lock.Entries do
+                                match entry.Output with
                                 | Some out -> yield relative out
                                 | None -> () ]
         }
@@ -105,15 +105,18 @@ do xakeScript {
         command "show" {
             let! lockPath = vars.Lock
             let! lock = Lock.load (lockPath |> Option.defaultValue (lockFile "netstandard2.0" "MESCIUS"))
-            for project in lock.Projects do
-                do! trace Message "%s (%s, sdk %s)" project.Name project.Project project.Compiler.Sdk
-                do! trace Message "  compiler   %s %s" project.Compiler.Path (project.Compiler.Sha256.Substring(0, 12))
-                do! trace Message "  args       %d, sources %d, out %A" project.Args.Length project.Sources.Length project.Output
-                do! trace Message "  references %d (%d unhashed), analyzers %d" project.References.Length
-                        (project.References |> List.filter (fun r -> r.Sha256 = "") |> List.length) project.Analyzers.Length
-                do! trace Message "  imports    %d: %s" project.Imports.Length
-                        (project.Imports |> List.map (fun i -> Path.GetFileName i.Path) |> String.concat ", ")
-                do! trace Message "  generated  %s" (project.Generated |> List.map (fst >> Path.GetFileName) |> String.concat ", ")
+            for entry in lock.Entries do
+                let e, c, d = entry.Evaluation, entry.Compilation, entry.Dependencies
+                do! trace Message "%s (%s)" entry.Name e.Project
+                do! trace Message "  evaluation   sdk %s, pin %s, imports %d: %s" e.Sdk
+                        (e.SdkPin |> Option.map Lock.sdkPinText |> Option.defaultValue "-") e.Imports.Length
+                        (e.Imports |> List.map (fun i -> Path.GetFileName i.Path) |> String.concat ", ")
+                do! trace Message "  compilation  options %d, defines %d, sources %d, out %A" c.Options.Length c.Defines.Length c.Sources.Length entry.Output
+                do! trace Message "               generated %s" (c.Generated |> List.map (fst >> Path.GetFileName) |> String.concat ", ")
+                do! trace Message "  dependencies compiler %s %s %s" d.Compiler.Version d.Compiler.Path (d.Compiler.Sha256.Substring(0, 12))
+                do! trace Message "               references %d (%d unhashed), analyzers %d, packages %d (%d direct)" d.References.Length
+                        (d.References |> List.filter (fun r -> r.Sha256 = "") |> List.length) d.Analyzers.Length
+                        d.Packages.Length (d.Packages |> List.filter (fun p -> p.Direct) |> List.length)
         }
     ]
 }

@@ -202,14 +202,17 @@ cannot parallelize -- chosen deliberately (one lock per TFM and brand) and, give
 
 ## 4. Order
 
-Now, cheap, before more code depends on it:
+Now, cheap, before more code depends on it (1-5 all **done**, stages A1/A2, 2026-09-24):
 
-1. `Csc.fromLock` and `RunOptions`; drop `FromLock`/`fromlock` from the settings (2.2).
-2. `needFiles` the compiler in `run` (2.4); drop `resolve`'s duplicate `needFiles`.
-3. Drop the `.resources` timestamp test in `run` -- regenerate when the recipe runs (2.3).
-4. `roots` from `ExecOptions.ProjectRoot`, not cwd; move `Json` and the roots functions out
-   of `Fsproj` (2.5).
-5. State the gate semantics in `csc-syntax.md`: the lock fails builds, the engine triggers them.
+1. **Done** (stage A2): `CscLock.compile`/`compileWith` and `RunOptions`; `FromLock` and the
+   `fromlock` operation are gone from the settings (2.2).
+2. **Done**: `needFiles` the compiler in `run` (2.4).
+3. **Done**: the `.resources` timestamp test in `run` is gone (2.3).
+4. **Done** (stage A1): roots from `ExecOptions.ProjectRoot`, not cwd (`Roots.current`/
+   `currentWith`, `Lock.load`/`save`, `Fsproj.load`); `Json` and the roots functions moved out
+   of `Fsproj` into `Json.fs` and `Roots.fs` (2.5).
+5. **Done**: the gate semantics are stated in `csc-syntax.md` -- the lock fails builds, the
+   engine triggers them.
 
 With the planned lock split:
 

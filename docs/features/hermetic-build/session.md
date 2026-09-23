@@ -55,6 +55,13 @@ brief §8c) -- or start the lock split once decided. Fixture as before:
 source ~/set-secrets.sh` (never print it). Xake stays referenced via `#r` on `.bootstrap/` — no
 release.
 
+### What landed (2026-09-24): stage A2 -- the lock is not a setting
+
+- `run` takes `RunOptions = { FailOnError; CscPath }` instead of the whole settings record;
+  `CscSettingsType.FromLock` and the `fromlock` operation are gone, replaced by the replay
+  entry point `CscLock.compile project` (and `compileWith options project`) next to
+  `CscLock.resolve`. `Csc settings` is one path again: resolve, then run.
+
 ### What landed (2026-09-24): stage A1 -- helpers out of `Fsproj`, project root from the engine
 
 - `src/dotnet/Json.fs` (`module internal Json`) and `src/dotnet/Roots.fs` (`Roots.nugetRoot`/

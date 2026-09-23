@@ -7,7 +7,7 @@ open Xake
 open Xake.Tasks
 open Xake.Dotnet
 
-/// The `csc { fromlock project }` mode: the compiler runs exactly the command line a
+/// The `CscLock.compile project` mode: the compiler runs exactly the command line a
 /// `Lock.Project` carries, with no composition. The lock is built by hand here, the way
 /// `Project.import` would have produced it for a trivial project, so the tests do not need
 /// msbuild -- only the compiler the lock names.
@@ -70,7 +70,7 @@ type ``Csc fromlock``() =
 
             rules [
                 "hello" => recipe {
-                    do! Csc {CscSettingsType.Default with FromLock = Some project}
+                    do! CscLock.compile project
                 }
             ]
         }
@@ -93,7 +93,7 @@ type ``Csc fromlock``() =
 
                 rules [
                     "hello-tamper" => recipe {
-                        do! Csc {CscSettingsType.Default with FromLock = Some tampered}
+                        do! CscLock.compile tampered
                     }
                 ]
             }
@@ -102,7 +102,7 @@ type ``Csc fromlock``() =
         Assert.That(ex.Data0, Does.Contain (Path.GetFileName (tampered.References.Head.Path)))
 
     /// "make the compiler available" (`ensureCompilerAvailable` in `Dotnet.csc.fs`), exercised
-    /// through the public `Csc { fromlock ... }` entry point rather than calling the private
+    /// through the public `CscLock.compile` entry point rather than calling the private
     /// helper directly.
     [<Test; Category("Integration")>]
     member x.``restores the toolset compiler named by the lock``() =
@@ -146,7 +146,7 @@ type ``Csc fromlock``() =
 
                 rules [
                     "hello-restore" => recipe {
-                        do! Csc {CscSettingsType.Default with FromLock = Some project}
+                        do! CscLock.compile project
                     }
                 ]
             }
@@ -175,7 +175,7 @@ type ``Csc fromlock``() =
 
                 rules [
                     "hello-missing-sdk" => recipe {
-                        do! Csc {CscSettingsType.Default with FromLock = Some project}
+                        do! CscLock.compile project
                     }
                 ]
             }
@@ -197,7 +197,7 @@ type ``Csc fromlock``() =
 
                 rules [
                     "hello-missing-anywhere" => recipe {
-                        do! Csc {CscSettingsType.Default with FromLock = Some project}
+                        do! CscLock.compile project
                     }
                 ]
             }
@@ -284,7 +284,7 @@ type ``Csc fromlock``() =
     /// `Resources` pair with a permanent output path (not a temp file `resolve` deletes on
     /// return -- see the csc-syntax.md "composed mode resx" paragraph and Dotnet.csc.fs
     /// `resolve`), and the resulting lock has to be genuinely compilable through
-    /// `csc { fromlock }`, `.resx` included.
+    /// `CscLock.compile`, `.resx` included.
     [<Test; Category("Integration")>]
     member x.``CscLock.resolve on settings with a resx records a compilable Resources pair``() =
 
@@ -342,7 +342,7 @@ type ``Csc fromlock``() =
 
             rules [
                 "hello-fromlock-resx" => recipe {
-                    do! Csc {CscSettingsType.Default with FromLock = Some project}
+                    do! CscLock.compile project
                 }
             ]
         }
@@ -381,7 +381,7 @@ type ``Csc fromlock``() =
 
                 rules [
                     "hello-sourcelink" => recipe {
-                        do! Csc {CscSettingsType.Default with FromLock = Some project}
+                        do! CscLock.compile project
                     }
                 ]
             }
@@ -416,7 +416,7 @@ type ``Csc fromlock``() =
 
                     rules [
                         "hello-sourcelink-missing" => recipe {
-                            do! Csc {CscSettingsType.Default with FromLock = Some project}
+                            do! CscLock.compile project
                         }
                     ]
                 }

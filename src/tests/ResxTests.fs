@@ -161,7 +161,7 @@ type ``Resx resources``() =
 
             rules [
                 "compile" => recipe {
-                    do! csc { fromlock project }
+                    do! CscLock.compile project
                 }
             ]
         }

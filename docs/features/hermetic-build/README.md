@@ -17,8 +17,10 @@ Read `session.md` first (where things stand, the next step), then `tracker.md` (
 | `lock-from-settings.md` | how a lock is obtained from composed settings: nine scenarios, migration (§9), the open update-mechanism question |
 | `conceptual-review.md` | audit of slice 1 against Xake's model: no engine drift; two blurred seams |
 | `import-race.md` | two brands importing one project concurrently: the race, the dead ends, the `Resource` fix; the assets copy stopgap, gone with the lock split |
+| `restore.md` | `Restore`: the packages a lock names, one `dotnet restore` via `PackageDownload`, into a folder the build chooses (a build agent's cache) |
 | `nuget-sbom.md` | `Nuget` (assets graph read at import into the lock, cache metadata) and `Sbom` (CycloneDX 1.6 from the lock entry, deterministic, per assembly and per package) |
 | `verify.md` | `Verify`: Authenticode PE hash, labelled byte differences |
+| `verify-dataengine.md` | the self-verification scenario on dataengine: 2 brands x 2 TFMs, 36/36 byte-identical, timings against stock restore+build, the concurrent-import defect, restoring packages from the lock |
 | `strongname.md` | `StrongName`: PE stamp, checksum, strong-name re-sign reproducing csc |
 | `pack.md` | `Pack`: deterministic zip and nupkg |
 | `e3-restore-stability.md` | day-zero E3: is restore reproducible from the repository alone |
@@ -30,6 +32,8 @@ Read `session.md` first (where things stand, the next step), then `tracker.md` (
 | `import.fsx` | dataengine: locks per brand, `build` from the locks, `show` |
 | `import-page.fsx` | page + dataengine as siblings: 15 projects per lock, `build`, `sbom` |
 | `verify-shipped.fsx` | `Verify` of two assemblies from the command line |
+| `verify-dataengine.fsx` | dataengine across both TFMs and both brands: `locks`, `build`, `sbom`, `show` |
+| `verify-dataengine.sh` | the whole scenario of `verify-dataengine.md` end to end, with timings |
 
 Inspection artifacts (locks, comparisons, SBOMs) live in `samples/hermetic/{dataengine,page}/`;
 `samples/hermetic/toolset/` is the fixture pinning the compiler via a package.

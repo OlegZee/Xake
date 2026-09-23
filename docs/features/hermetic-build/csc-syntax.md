@@ -206,19 +206,60 @@ not temp files.
 
 ## Where a `Lock.Entry` comes from
 
-`Project.import` (`src/dotnet/Project.fs`) runs an msbuild design-time build per project --
-`ProvideCommandLineArgs`/`SkipCompilerExecution`, so the compiler reports its command line
-instead of running -- and writes one lock file per (framework, variant). `ImportOptions`:
+`Project.import` (`src/dotnet/Project.fs`) runs an msbuild design-time build per project and
+target framework -- `ProvideCommandLineArgs`/`SkipCompilerExecution`, so the compiler reports
+its command line instead of running -- and writes **one lock file per variant, holding every
+framework**. `ImportOptions`:
 
 | Field | Meaning |
 |---|---|
 | `Projects` | project files; all land in one lock |
-| `Framework` | target framework the import runs for |
+| `Frameworks` | the target frameworks to import each project for; all of them land in that same lock, one `Lock.Entry` per (project, framework). A project gets entries only for the ones it declares -- see below |
 | `Configuration` | msbuild `Configuration`, default `Release` |
 | `Properties` | extra `-p:` properties, e.g. `["Brand", "MESCIUS"]` |
 | `Variant` | names the `obj/xake/<framework>/<variant>/` subtree; keeps distinct property sets from overwriting each other's generated files |
 | `Output` | the lock file to write |
 | `Roots` | extra `(token, absolute path)` roots to tokenize against, beyond the built-in three; default `[]` |
+
+**One restore, then a design-time build per framework (2026-09-23).** Three msbuild phases per
+project, all of them inside that project's `withProjectLock`:
+
+1. **`-t:Restore`, with no `TargetFramework` and with `-p:RestoreRecursive=false`.** Without
+   `TargetFramework` NuGet resolves *every* target of a multi-targeted project into the one
+   `obj/project.assets.json`; with `RestoreRecursive=false` it stops walking the project graph,
+   so a project's restore no longer rewrites the assets files of the projects it references.
+2. **A design-time build per framework**, `-p:TargetFramework=<f>` and **no** `-restore` -- the
+   restore above already produced everything it reads. `IntermediateOutputPath` stays
+   per (framework, variant).
+3. **A `-pp` preprocess per framework**, for the evaluation's import list.
+
+`Frameworks` is the matrix asked for, not a claim that every project has every leg of it, and
+a repository rarely multi-targets all its projects the same way. The restore run -- the one
+msbuild phase here that is not per framework -- therefore also reports the project's own
+`TargetFrameworks` (or single `TargetFramework`), and the import builds only the intersection
+(`Project.frameworksToImport`, pure and unit-tested), tracing each framework it skips. Asking
+msbuild for a leg the project never declared would build one that was never configured,
+against a restore that has no target for it -- the same `NETSDK1005` this design exists to
+remove. A project reporting no framework list at all is "msbuild said nothing", not "nothing
+declared": everything requested is kept.
+
+*Why.* One lock per (framework, variant) meant the same multi-targeted project was imported
+once per framework, each pass passing a global `-p:TargetFramework=X` on a `-restore`; NuGet
+then wrote an assets file with only X's target, and `-restore`'s walk of the project graph
+rewrote the *referenced* projects' assets files too -- which a per-project lock cannot cover.
+Concurrent imports failed with `NETSDK1005 ... doesn't have a target for '<fwk>'` or silently
+recorded an entry with `packages 0` (verify-dataengine.md §6). The fix is structural: the
+framework matrix of one variant is one import, so the two frameworks cannot race at all, and
+`RestoreRecursive=false` keeps one project's restore out of another's obj. Both were verified
+by hand on the dataengine fixture -- a restore without `TargetFramework` yields
+`['.NETFramework,Version=v4.7.2', '.NETStandard,Version=v2.0']` where one with it yields a
+single target, and with `RestoreRecursive=false` only the restored project's own assets file
+appears. The `withProjectLock` `Resource` stays, now held for the whole project (restore plus
+every framework's build), because two *brands* still restore into the same
+`obj/project.assets.json`; what it no longer has to cover is the cross-project rewrite.
+`Nuget.readAssets` now **fails** when the assets file has no target for the framework asked
+for, rather than returning an empty graph -- an SBOM without its package components and
+nothing saying so was the worst half of that defect.
 
 **Extra roots.** The three built-in roots (`$(NuGetPackageRoot)`, `$(ProjectRoot)` = the
 build's project root, `$(DotnetRoot)`) tokenize everything under the package cache, the checkout being
@@ -248,6 +289,11 @@ still take a roots list. The json reader lives in its own `Json` module. Neither
 `Lock.Entry`, one per project, is three records (conceptual-review.md 2.1, Stage B 2026-09-24):
 
 - `Name` -- `AssemblyName`
+- `Framework` -- the target framework this compilation is for. With every framework in one
+  lock, `(Name, Framework)` and not `Name` is what identifies an entry. It sits next to `Name`
+  rather than in `Evaluation` because it is identity, not evidence: it is what a script looks
+  an entry up by, and a composed `csc {}` compilation (whose `Evaluation` is empty by
+  contract) still has one, from `targetfwk`
 - `Evaluation` -- where the answer came from; `run` never reads it, and every field is empty
   for a compilation composed from `csc {}` settings:
   - `Project` -- the project file path ("" when composed)
@@ -333,8 +379,11 @@ Trap found here: a single-`TargetFramework` project's assets keys `targets` by t
 framework name (`.NETStandard,Version=v2.0`), only a multi-target project uses the alias;
 `Nuget.readAssets` tries both (`Nuget.frameworkFullName`).
 
-**File format.** One entry is `{ "Name", "Evaluation": {...}, "Compilation": {...},
-"Dependencies": {...} }` under `"Entries"`; tokenization (`Roots.tokenizeAll`) and the
+**File format.** One entry is `{ "Name", "Framework", "Evaluation": {...}, "Compilation": {...},
+"Dependencies": {...} }` under `"Entries"`; the document itself carries only `"Configuration"`,
+`"Properties"` and `"Entries"`. A lock written when the framework was a property of the *file*
+(a document-level `"Framework"`) still reads -- the value is distributed into every entry that
+has none of its own -- and is always written back in the new shape; tokenization (`Roots.tokenizeAll`) and the
 one-line-per-item style are unchanged, the file is deterministic (write, parse, write again is
 byte-identical -- tested). A lock in the old flat format (`"Projects"` with `"Args"`) is refused
 by `parseWith` with "lock written by an older Xake; re-import" -- nothing released used it, so
@@ -342,7 +391,7 @@ there is no reader for it. `samples/hermetic/dataengine/locks/` shows the shape 
 fixture: 889 lines per brand, 27 `Options` (`@Defines`, `@References`, `@Analyzers`, `@Sources`
 in msbuild's positions), 12 `Defines`, 113-115 `References`, 4 `Packages`.
 
-`Lock.diff a b` covers every section: `Options` and `Sources` as ordered lists, `Defines`,
+`Lock.diff a b` covers every section: `Framework`, `Options` and `Sources` as ordered lists, `Defines`,
 `ProjectRefs` as sets, `Compiler` incl. `Version`, `Evaluation.Sdk`, the hashed lists,
 `Generated`/`Resources` pairs, `Packages` (added, removed, version changed, sha512 changed).
 `Lock.mapPaths f` rewrites `Options` (markers left alone), `Sources`, `References` (dropping the
@@ -350,9 +399,21 @@ hash when the path changed), `Analyzers`, `Generated` keys and `Resources`; `Loc
 applies `f` to `Generated` content, `Options`, `Defines` and the evaluation's property values
 (`tokenizeRevision` and `run`'s resolution of `$(SourceRevisionId)` both use it).
 
-`Lock.load path` (a recipe) parses a lock file (`Lock.Document`: `Framework`, `Configuration`,
-`Properties`, `Entries`), paths expanded for this machine; `Lock.entry name lock` looks an entry
-up by assembly name or project file name.
+`Lock.load path` (a recipe) parses a lock file (`Lock.Document`: `Configuration`, `Properties`,
+`Entries` -- the framework is on the entry), paths expanded for this machine. **`load` and
+`loadWith` `needFiles` the lock themselves**: reading a lock is depending on it, so a recipe
+that reads one records the `FileDep` and, when a rule produces the lock, builds it first. The
+`do! need [lockFile ...]` that used to precede every `Lock.load` in a script is gone -- it was
+easy to forget and impossible to notice the absence of. `save`/`saveWith` deliberately do not:
+writing a file is not depending on it, and a `need` there would be wrong in both of their uses
+(a rule writing the lock as its own target would depend on itself, and `csc { lock }` writes
+its lock from inside the compile recipe, where the lock is not a target at all). Both `load`
+and `save` resolve a relative path against `ExecOptions.ProjectRoot`, the way a target path is
+resolved.
+
+`Lock.entry name lock` looks an entry up by assembly name or project file name and now fails,
+naming the frameworks, when the name matches more than one entry; `Lock.entryFor framework name
+lock` is the unambiguous lookup and the one a rule that carries the framework should use.
 
 **`$(SourceRevisionId)` and the commit sha (raised 2026-09-23, "Lock stability").** The SDK's
 built-in SourceLink writes `sourcelink.json` (a Bitbucket/GitHub-shaped URL template with the
@@ -511,8 +572,8 @@ path is relative to the project root, like every other target path, or absolute.
 compiled; the lock decides whether this is the compilation that was recorded:
 
 1. **No lock file yet** -- `Lock.rehash` the resolved entry, write it as a one-entry
-   `Lock.Document` (`Framework` = the settings' `targetfwk` or "", `Configuration` "",
-   `Properties` []) with `Lock.save`, and compile *that* entry. The hashes `run` verifies were
+   `Lock.Document` (`Configuration` "", `Properties` []; the entry's own `Framework` is the
+   settings' `targetfwk` or "") with `Lock.save`, and compile *that* entry. The hashes `run` verifies were
    taken a moment earlier, so the check is trivially true -- it is the next build it is for.
 2. **Lock present, and the resolved settings match it** (`Lock.diff recorded resolved` empty)
    -- compile the **recorded** entry, not the resolved one. That is the whole point: the

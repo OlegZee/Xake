@@ -12,6 +12,23 @@ scenarios; migration of an existing tuned block is §9; the update mechanism is 
 a global `UPDATE_LOCKS` variable was rejected). `csc-syntax.md` documents the `csc {}` task as it stands on this branch: composed settings,
 `fromlock` from a lock, one runner.
 
+State (2026-09-23, evening): the **SBOM package-scope RFC** from SDP
+(`SDP/.memory-bank/framework/docs/6-release/sbom-package-scope-nuget.md`, PDR-0010 draft,
+comments to 2026-10-07) says a package SBOM must describe what the customer receives, not the
+restore graph -- which is what `Sbom.forAssembly` emits. Summary and principles in
+`nuget-sbom.md` ("Package scope"), nine items in tracker.md. Our two advantages there: the lock
+records what the compiler was actually handed (so merged/vendored code is a reference we know,
+which is the registry's hardest input), and `Pack.entries` reads a built nupkg back (so the
+physical inventory is verifiable, not asserted).
+
+State (2026-09-23, later): one lock per variant with every framework inside, and `Restore` --
+the lock now obtains the packages it names, into a folder the build chooses. 36/36
+byte-identical, 36/36 also when built against a freshly restored package folder.
+
+State (2026-09-23): the **two-framework verification matrix** on dataengine is green --
+netstandard2.0 + net472 x MESCIUS + GCCN, 36/36 byte-identical, and it found one defect
+(concurrent import of one project for two frameworks, tracker). `verify-dataengine.{fsx,sh,md}`.
+
 State (2026-09-24 evening): **the lock split is done** -- see "stage B" below; the older
 state paragraph follows for history.
 
@@ -57,6 +74,127 @@ brief §8c) -- or start the lock split once decided. Fixture as before:
 `-p:NuGetAudit=false` (the import sets it) or load the feed token with `cd <ar project dir> &&
 source ~/set-secrets.sh` (never print it). Xake stays referenced via `#r` on `.bootstrap/` — no
 release.
+
+### What landed (2026-09-23, later): one lock per variant, and the lock restores its own packages
+
+Two workstreams run in parallel and merged here. Both were re-verified in this session, not
+taken on report; the numbers below are from `verify-dataengine.sh` on a clean fixture with the
+merged code. Suite **338 passed, 1 skipped**, 0 warnings on both TFMs.
+
+**1. One lock per variant, every framework inside** (`Lock.Entry.Framework` next to `Name`,
+`Lock.Document.Framework` gone, `ImportOptions.Frameworks: string list`,
+`Lock.entryFor framework name doc`; `Lock.entry` still works while the name is unique and
+fails naming the frameworks when it is not). An old document-level `"Framework"` is read and
+distributed into the entries; the new shape is always what gets written. dataengine: 2 locks
+of 166 KB instead of 4 of 113/52 KB.
+
+The import is now three msbuild phases per project, all inside that project's
+`withProjectLock`: **`-t:Restore` with no `TargetFramework` and `-p:RestoreRecursive=false`**,
+then a design-time build per framework with **no `-restore`**, then `-pp` per framework.
+That removes the concurrent-import defect by construction: without `TargetFramework` the
+assets file holds every target, and without the recursive walk a project's restore stops
+rewriting the assets files of the projects it references (verified by hand -- with the flag
+the referenced projects' `obj/` are not even created). Six cold concurrent imports: no
+`NETSDK1005`, every entry with its package graph, and the lock **byte-identical** between
+independent cold imports. `Nuget.readAssets` now fails loudly when the framework has no target
+instead of returning an empty graph -- that silence was what produced `packages 0` entries.
+
+Added on top: **a project only gets entries for the frameworks it declares.** `Frameworks` is
+the matrix asked for, not a claim that every project has every leg of it; the restore run --
+the one phase that is not per framework -- also reports the project's `TargetFrameworks`, and
+the import takes the intersection (`Project.frameworksToImport`, pure, unit-tested), tracing
+what it skips. Without it, a repository that multi-targets its projects differently walks
+into the very `NETSDK1005` this design removes.
+
+**2. `Restore`** (`src/dotnet/Restore.fs`, design note `restore.md`). The lock was a complete
+description of what a compilation reads but only a partial source for obtaining it. Now a
+missing reference names its own package (the path under the package folder is
+`<root>/<id>/<version>/...`), and **one `dotnet restore` of a synthesized project with one
+`PackageDownload` per missing package** fetches the whole set -- exact version, no dependency
+walk, no framework-compatibility check. Guards: a process-wide memo written after a restore
+completes, plus a `Resource` per package folder with a re-check inside. On by default with an
+explicit `Enabled = false` opt-out that reproduces the old failure exactly.
+
+**The package folder is the build's to choose** (`Restore.into ".packages"`,
+`Roots.packageRootOverride`, `RunOptions.Restore`): the same folder expands
+`$(NuGetPackageRoot)` when the lock is read and receives the download, so a build agent caches
+one directory next to the checkout. `Roots.withExtra` accordingly lets an extra root replace a
+built-in token and resolves a relative root against the project root.
+
+**Measured** (dataengine, 2 brands x netstandard2.0 + net472 = 12 assemblies):
+
+| | |
+|---|---|
+| byte-identical to `dotnet build -t:Rebuild` | **36/36** |
+| deterministic on recompile | **36/36** |
+| **identical when built against a freshly restored package folder** | **36/36** |
+| SBOMs regenerated | **12/12** |
+| import, cold, concurrent | 13.4 s wall / 12.2 s engine (was 18.0 s and needed `-t 1`) |
+| build from the locks | 7.3 s; no-op 0.12 s; one source touched 7.6 s |
+| `restore` into an empty folder | 2.0 s, 153 MB, compiles nothing |
+| build against an empty folder | 9.5 s (one restore, then 12 assemblies) |
+| stock .NET for comparison | restore 0.8 s + `dotnet build` 2.5 s per brand |
+
+**Trap that cost an hour, now in `verify-dataengine.md` §8.** A leftover `bin/Release` in the
+fixture makes the import *hash* the project-reference paths (they exist), and a script that
+decides "this one is mine to rebuild" by "the recorded hash is empty" then compiles against
+that stale artifact. Only the projects that have project references differ from the baseline,
+which reads exactly like a regression in the compiler path and is not one. The script now
+decides by name. Second trap: the page baseline must be the recipe recorded in
+`samples/hermetic/page/compare.txt`, property for property -- adding `-p:NetCoreOnly=true` to
+it (a property the *import* passes) fails 24 of 30 baseline builds with `MSB3577`.
+
+**page was re-checked, partly.** On the new one-lock-per-variant format the page fixture (12
+page projects + 3 dataengine, `LocalBuild=true`, two brands) imports in 48 s into 15 entries
+per lock, every entry with its package graph, and builds all 30 outputs in 88 s. Its
+**byte-identity was not re-established**: in a tree Xake has built in, the recorded baseline
+recipe fails for 12 of 15 projects with `MSB3577` naming a `.resources`. A pristine copy runs
+the recipe fine, and deleting the `.resources` Xake writes into the intermediate directory
+rescues a single project but not the full sequence -- not fully diagnosed, tracker item, and
+interop rather than test hygiene. Page's last byte proof stays the 90/90 of 2026-09-24.
+
+**Merge note**: the two workstreams overlapped in `Dotnet.csc.fs` (adding
+`Lock.Entry.Framework` breaks its record constructions) and `ProjectImportTests.fs`; both
+three-way merged without conflicts. `RestoreTests.fs` needed the new field.
+
+### What landed (2026-09-23): the two-framework verification matrix on dataengine
+
+The first run of the matrix the customer actually ships: **both brands x both legs of
+`<TargetFrameworks>netstandard2.0;net472</TargetFrameworks>`**, 12 assemblies. net472 had never
+been imported or compiled by this branch before. New files: `verify-dataengine.fsx` (4 locks,
+12 compiles, 12 SBOMs), `verify-dataengine.sh` (the scenario end to end with timings),
+`verify-dataengine.md` (the write-up; §6 the defect, §7 the restore question).
+
+- **36/36 byte-identical** to `dotnet build -c Release -t:Rebuild` per (framework, brand) in
+  the same directory with the same `IntermediateOutputPath` -- dll, pdb and xml of 3 projects
+  x 2 brands x 2 frameworks. **36/36 deterministic** when the same locks are compiled again,
+  **12/12** SBOMs byte-identical when regenerated.
+- The two frameworks differ in the lock exactly where they should: 113-115 references
+  (`netstandard.library` 2.0.3) and 12 defines against 10-12 references
+  (`Microsoft.NETFramework.ReferenceAssemblies.net472` 1.0.3) and 17 defines; same sources,
+  same compiler, 4 packages each. Locks 113 KB (netstandard) / 52 KB (net472) per brand.
+- **Timings** (one run, 8-core macOS): import cold 18.0 s (`-t 1`; ~9 s concurrent), build from
+  locks 8.2 s with zero msbuild and zero restore, no-op 0.15 s (engine), touch-a-source 8.3 s
+  (12/12 recompile -- VBFunctionLib is at the bottom of the graph), 12 SBOMs 0.23 s. Stock
+  .NET on the same fixture: first restore 5.6 s / 156 MB / 6 packages, warm restore 0.7 s,
+  `dotnet build` per brand (both frameworks, clean obj) 2.4-2.5 s, no-op 1.0 s, touch 2.3 s.
+  For the same 12 assemblies: ~6.4 s of stock restore+build (warm) against 9.2 s from
+  committed locks with no msbuild, no restore and no network -- and a SHA-256 check of every
+  referenced file. Per assembly Xake is ~1.7x slower for one reason: no `/shared`, so every
+  compile is a fresh `dotnet csc.dll` process while msbuild reuses `VBCSCompiler`.
+- **Defect (tracker)**: two frameworks of one multi-targeted project cannot be imported
+  concurrently. The global `-p:TargetFramework=X` makes restore write an assets file with only
+  X's target, and `-restore` walks the project graph, so a project's assets file is rewritten
+  by its *dependents'* imports -- which `withProjectLock` (per project) does not cover. Every
+  concurrent run inspected showed it: two failed with `NETSDK1005 ... doesn't have a target
+  for '<fwk>'`, two silently recorded an entry with `packages 0` (an SBOM missing its package
+  components, with no warning). `-t 1` is the workaround; three candidate fixes are in the
+  tracker. `Nuget.readAssets` returning an empty graph instead of failing is the second half.
+- **Restore from the lock** (the open question it raises): an empty `NUGET_PACKAGES` fails
+  cleanly before the compiler runs, 256 x `expected <sha256>, got missing`. The compiler is
+  restored when it is a package; references are not, although the lock carries
+  `Dependencies.Packages` with id/version/sha512 and reference paths that spell id and version,
+  and `DotNetFwk.sdkImpl.restorePackage` already exists. Tracker item.
 
 ### What landed (2026-09-24, night): stage C -- `csc { lock "path" }`
 

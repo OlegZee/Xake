@@ -47,6 +47,32 @@ in the lock"). Nothing reads `obj/project.assets.json` after the import any more
 being overwritten by the next brand's restore is harmless -- the lock carries what this import
 saw.
 
+## The other half again: restore walking the project graph (fixed 2026-09-23)
+
+The per-project lock never covered one thing: `-restore` walks the project *graph*, so
+DataEngine's import rewrote ExpressionInfo's and VBFunctionLib's `obj/project.assets.json`
+too -- a write to a file `withProjectLock` was not holding. Together with the global
+`-p:TargetFramework=X` (which made NuGet write an assets file with only X's target), that made
+two frameworks of one multi-targeted project impossible to import concurrently:
+`NETSDK1005 ... doesn't have a target for '<fwk>'`, or a lock entry silently recorded with
+`packages 0`. Full write-up and evidence: `verify-dataengine.md` §6.
+
+Fixed by restructuring the import rather than by widening the lock:
+
+- `ImportOptions.Frameworks: string list` -- the whole framework matrix of one variant is one
+  import writing one lock, so two frameworks of a project are never two concurrent imports.
+- One `-t:Restore` per project **without** `TargetFramework` (every target lands in the assets
+  file), and the design-time builds per framework with no `-restore` at all.
+- `-p:RestoreRecursive=false` on that restore, so it writes that project's assets file and
+  nobody else's -- verified on the fixture: a clean-`obj` restore of `DataEngine.csproj` leaves
+  the two referenced projects' `obj/` absent.
+
+`withProjectLock` stays and is now held for the *whole* project -- restore plus every
+framework's design-time build and `-pp`, and the assets read in between -- because two brands
+still restore into the same `obj/project.assets.json`. The wider fallbacks considered (hold the
+locks of the project and everything it references, or one process-wide import `Resource` of
+quantity 1) were not needed.
+
 ## Tests
 
 `ProjectImportTests.fs`: four unit tests drive `withProjectLock` through a small long-lived

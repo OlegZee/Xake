@@ -7,6 +7,30 @@ module CscImpl =
     open Xake
     open Xake.Tasks
 
+    /// Whether the runner compiles through the Roslyn compiler server (`VBCSCompiler`) or in
+    /// a fresh compiler process each time. A client-side matter only: `/shared` and
+    /// `/keepalive` are parsed out by `csc` itself before anything reaches the server, so
+    /// neither ever enters a lock's argument list (`Entry.Args`) -- like the framework's env
+    /// vars, they are parameters of `run`, not of the compilation.
+    type CompilerServer =
+        /// `/shared` (and `/keepalive:<seconds>` when given): csc.dll acts as a thin client
+        /// that connects to, or starts, the `VBCSCompiler` sitting next to it, and compiles
+        /// in-process when no server can be reached. The keepalive is honoured only by a
+        /// server this client starts; `None` leaves Roslyn's own default (10 minutes idle).
+        | Shared of keepAlive: int option
+        /// A fresh compiler process per compilation -- what the runner always did.
+        | InProcess
+
+    module CompilerServer =
+        /// The default for a fresh `RunOptions`/`CscSettingsType`: the server, unless
+        /// `XAKE_CSC_SERVER` says `0`, `false` or `off` -- the CI switch for a box where a
+        /// lingering `VBCSCompiler` is unwelcome.
+        let fromEnvironment () =
+            match System.Environment.GetEnvironmentVariable "XAKE_CSC_SERVER" with
+            | null -> Shared None
+            | v when List.contains (v.Trim().ToLowerInvariant()) ["0"; "false"; "off"; "no"] -> InProcess
+            | _ -> Shared None
+
     type CscSettingsType = {
         /// Limits which platforms this code can run on. The default is anycpu.
         Platform: TargetPlatform
@@ -45,6 +69,9 @@ module CscImpl =
         /// recorded entry, whose hashes then gate the build. Updating is explicit: delete the
         /// file, or call `CscLock.record` from a target of the script's own.
         Lock: string option
+        /// Compiler server use; see `CompilerServer`. Default: `Shared None`, unless the
+        /// environment variable `XAKE_CSC_SERVER` is `0`, `false` or `off`.
+        Server: CompilerServer
     } with static member Default = {
             Platform = AnyCpu
             Target = Auto    // try to resolve the type from name etc
@@ -61,6 +88,7 @@ module CscImpl =
             CscPath = None
             Toolset = None
             Lock = None
+            Server = CompilerServer.fromEnvironment ()
         }
 
     /// Default settings for the CSC task, so that you could only override required settings.
@@ -80,11 +108,54 @@ module CscImpl =
         /// fetched. The default is the machine's own NuGet cache with restore on -- what the
         /// compiler restore has always done, now for references and analyzers too.
         Restore: Restore.Options
+        /// Compiler server use; see `CompilerServer`. Default: `Shared None`, unless the
+        /// environment variable `XAKE_CSC_SERVER` is `0`, `false` or `off`.
+        Server: CompilerServer
     } with static member Default = {
             FailOnError = true
             CscPath = None
             Restore = Restore.Options.Default
+            Server = CompilerServer.fromEnvironment ()
         }
+
+    /// The client-side switches `options.Server` asks for, given the compiler file about to
+    /// be run and the env vars it is run with -- `[]` whenever the server is not safe to use:
+    ///  - only a Roslyn client can be a client: the test is a `VBCSCompiler.dll` next to the
+    ///    compiler file (the SDK's `Roslyn/bincore`, a `Microsoft.Net.Compilers.Toolset`
+    ///    package). The legacy full-framework `csc.exe`, mono's `mcs` and an arbitrary
+    ///    `cscpath` have none and would reject `/shared` as an unknown switch (or, worse,
+    ///    treat it as a source file), so they compile in-process as before.
+    ///  - the server the client connects to (or starts) is that very `VBCSCompiler` -- Roslyn
+    ///    resolves it relative to the client's own directory and derives the default pipe name
+    ///    from `user.isAdmin.lowercase(clientDirectory)`, so a compiler at another path (another
+    ///    SDK, another toolset version) gets a pipe, and a server, of its own; and the request
+    ///    carries the client's commit hash, which the server checks before compiling
+    ///    (`IncorrectHashBuildResponse` falls back to in-process). The `csc.dll` the lock hashes
+    ///    and the server that compiles are therefore the same build of Roslyn.
+    ///  - env vars: the client passes its working directory, temp directory and `LIB` to the
+    ///    server explicitly; anything else in the client's environment reaches the server only
+    ///    if this client is the one starting it. The env vars the runner sets are the
+    ///    framework's (`DotNetFwk.FrameworkInfo.EnvVars`) -- empty for the SDK path, whose
+    ///    references are all absolute `/reference:` arguments -- so a non-empty list means a
+    ///    toolchain whose compiler needs its environment (mono's PATH, the registry
+    ///    `COMPLUS_VERSION`), and the server is skipped rather than risk compiling with a
+    ///    server started under another environment.
+    ///  - a compiler under the temp directory -- a package restored into a throwaway package
+    ///    root, as the tests do -- is not one to keep a server for: the server would outlive
+    ///    the folder by its whole keepalive, holding a directory that is gone. In-process.
+    let internal serverArgs (options: RunOptions) (compilerFile: string) (envVars: (string * string) list) =
+        match options.Server with
+        | InProcess -> []
+        | Shared _ when not (List.isEmpty envVars) -> []
+        | Shared keepAlive ->
+            let dir = Path.GetDirectoryName compilerFile
+            let comparer = if Env.isUnix then System.StringComparison.Ordinal else System.StringComparison.OrdinalIgnoreCase
+            let underTemp =
+                let temp = Path.GetFullPath(Path.GetTempPath()).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+                Path.GetFullPath(compilerFile).StartsWith(temp + string Path.DirectorySeparatorChar, comparer)
+            if Impl.isEmpty dir || underTemp || not (File.Exists (dir </> "VBCSCompiler.dll")) then []
+            else
+                "/shared" :: (keepAlive |> Option.map (sprintf "/keepalive:%d") |> Option.toList)
 
     /// <summary>
     /// Runs the compiler over an already-resolved compilation: `entry` is exactly what would
@@ -307,13 +378,22 @@ module CscImpl =
             let deleteTempFiles () =
                 try System.IO.File.Delete rspFile with _ -> ()
 
-            let cscTool, extraArgs =
+            let cscTool, compilerFile, extraArgs =
                 match options.CscPath with
-                | Some tool -> tool, []
+                | Some tool -> tool, tool, []
                 // the compiler path from `DotNetFwk` may be a native launcher rather than a
                 // managed dll (the "run directly" branch below covers that case too)
-                | None when Impl.endsWith ".dll" compiler.Path -> "dotnet", [compiler.Path]
-                | None -> compiler.Path, []
+                | None when Impl.endsWith ".dll" compiler.Path -> "dotnet", compiler.Path, [compiler.Path]
+                | None -> compiler.Path, compiler.Path, []
+
+            // client-side switches, on the command line and never in the rsp or the lock: the
+            // client strips them before the arguments reach the server (`serverArgs` says when
+            // they are safe to add)
+            let serverSwitches = serverArgs options compilerFile envVars
+            match options.Server, serverSwitches with
+            | Shared _, [] -> do! trace Debug "compiler server not used for '%s' (no VBCSCompiler next to it, under the temp directory, or env vars in play)" compilerFile
+            | _ -> ()
+            let commandLineArgs = Seq.append serverSwitches commandLineArgs
 
             do! trace Debug "Command line: '%s %s'" cscTool
                     ((extraArgs @ List.ofSeq commandLineArgs) |> String.concat " ")
@@ -613,7 +693,7 @@ module CscImpl =
         recipe {
             do! trace Level.Debug "Csc: settings=%A" settings
             let! (entry, envVars) = resolve settings
-            let options = { RunOptions.Default with FailOnError = settings.FailOnError; CscPath = settings.CscPath }
+            let options = { RunOptions.Default with FailOnError = settings.FailOnError; CscPath = settings.CscPath; Server = settings.Server }
 
             // `lock "path"`: settings stay the source of truth (resolve has already run), the
             // lock decides whether this compilation is the one that was recorded. Strict by
@@ -683,6 +763,13 @@ module CscImpl =
         /// disk. To update it, delete the file or call `CscLock.record` from a target of the
         /// script's own.</summary>
         [<CustomOperation("lock")>]       member __.Lock(s:CscSettingsType, path: string) = {s with Lock = Some path}
+
+        /// <summary>Compiles in a fresh compiler process instead of through the Roslyn compiler
+        /// server (`VBCSCompiler`); see `CompilerServer`.</summary>
+        [<CustomOperation("noserver")>]   member __.NoServer(s:CscSettingsType) = {s with Server = InProcess}
+        /// <summary>Seconds of idle time after which a compiler server this build starts exits
+        /// (`/keepalive`); Roslyn's own default is 600.</summary>
+        [<CustomOperation("keepalive")>]  member __.KeepAlive(s:CscSettingsType, seconds: int) = {s with Server = Shared (Some seconds)}
 
         /// <summary>Passes custom arguments to the compiler</summary>
         [<CustomOperation("args")>]       member __.Args(s:CscSettingsType, args) =   {s with CommandArgs = args}

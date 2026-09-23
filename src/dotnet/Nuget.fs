@@ -205,6 +205,81 @@ module Nuget =
           License = license; Supplier = supplier; Repository = repository; Commit = commit
           Directory = dir }
 
+    /// One `<dependency>` of a nuspec, verbatim: the id as spelled, the version *range* as
+    /// written (`[1.2.3, )`, `1.2.3`, `(, 2.0)`), never resolved to a single version.
+    type NuspecDependency = { Id: string; Range: string }
+
+    /// One `<group>` of a nuspec's `<dependencies>`: `TargetFramework` is the group's own
+    /// spelling (`.NETStandard2.0`, `net6.0`; "" for the ungrouped/fallback group that applies
+    /// to every framework) and `Dependencies` are its entries in document order.
+    type NuspecGroup = { TargetFramework: string; Dependencies: NuspecDependency list }
+
+    /// What a nuspec declares about the package it describes -- identity, provenance, and the
+    /// dependencies per target framework group.
+    type Nuspec = {
+        Id: string
+        Version: string
+        Authors: string
+        /// SPDX expression / license file name / legacy `licenseUrl`, same rule as `readCache`
+        License: string
+        Groups: NuspecGroup list
+    }
+
+    /// Parses a nuspec document (the XML text). Namespace-agnostic, by local name, the same
+    /// way `readCache` reads a cached nuspec. Ungrouped `<dependency>` children directly under
+    /// `<dependencies>` become one group with `TargetFramework = ""`. Never throws on missing
+    /// elements: every absent field is `""` or `[]`.
+    let parseNuspec (xml: string) : Nuspec =
+        let doc = XmlDocument ()
+        doc.LoadXml xml
+        let empty = { Id = ""; Version = ""; Authors = ""; License = ""; Groups = [] }
+        match doc.DocumentElement |> child "metadata" with
+        | None -> empty
+        | Some metadata ->
+            let elements (name: string) (el: XmlElement) =
+                el.ChildNodes |> Seq.cast<XmlNode>
+                |> Seq.choose (function :? XmlElement as e when e.LocalName = name -> Some e | _ -> None)
+                |> List.ofSeq
+            let dependencyOf (el: XmlElement) =
+                { Id = el.GetAttribute "id"; Range = el.GetAttribute "version" }
+            let groups =
+                match metadata |> child "dependencies" with
+                | None -> []
+                | Some deps ->
+                    let ungrouped = deps |> elements "dependency" |> List.map dependencyOf
+                    let grouped =
+                        deps |> elements "group"
+                        |> List.map (fun g -> { TargetFramework = g.GetAttribute "targetFramework"; Dependencies = g |> elements "dependency" |> List.map dependencyOf })
+                    (if ungrouped.IsEmpty then [] else [ { TargetFramework = ""; Dependencies = ungrouped } ]) @ grouped
+            let license =
+                match metadata |> child "license" with
+                | Some licenseEl -> text (Some licenseEl)
+                | None -> text (metadata |> child "licenseUrl")
+            { Id = text (metadata |> child "id"); Version = text (metadata |> child "version")
+              Authors = text (metadata |> child "authors"); License = license; Groups = groups }
+
+    /// Whether a nuspec `<group targetFramework="...">` spelling names the framework `alias`
+    /// (`netstandard2.0`, `net462`, `net8.0`): the two agree when equal ignoring case, or when
+    /// the group spells the full framework name the nuspec way -- `.NETStandard2.0`,
+    /// `.NETFramework4.6.2`, `.NETCoreApp3.1` -- which is `frameworkFullName` with `,Version=v`
+    /// removed. A group with no `targetFramework` matches every alias.
+    let nuspecFrameworkMatches (alias: string) (groupFramework: string) : bool =
+        groupFramework = ""
+        || System.String.Equals (alias, groupFramework, ic)
+        || System.String.Equals ((frameworkFullName alias).Replace (",Version=v", ""), groupFramework, ic)
+
+    /// The nuspec dependencies that apply to `framework`: the group naming it (see
+    /// `nuspecFrameworkMatches`) when there is one, else the ungrouped/`targetFramework`-less
+    /// group, else none. NuGet itself picks the *nearest compatible* group (`net6.0` falls back
+    /// to `netstandard2.0`); this deliberately does not -- a package SBOM per TFM should show
+    /// the group the nuspec wrote for that TFM, and a nupkg built for `framework` has one.
+    let nuspecDependenciesFor (framework: string) (nuspec: Nuspec) : NuspecDependency list =
+        let exact = nuspec.Groups |> List.tryFind (fun g -> g.TargetFramework <> "" && nuspecFrameworkMatches framework g.TargetFramework)
+        let fallback = nuspec.Groups |> List.tryFind (fun g -> g.TargetFramework = "")
+        match exact |> Option.orElse fallback with
+        | Some g -> g.Dependencies
+        | None -> []
+
     /// Whether a package's cache entry has anything that ships -- a `lib/` or `runtimes/`
     /// directory with at least one file underneath. Used for a package the restore graph
     /// carries (`Assets.Packages`) but that no compiled reference was ever attributed to

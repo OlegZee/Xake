@@ -103,7 +103,24 @@ module Storage =
                   ScriptDate = System.DateTime.Now }
             Persist.dbHeader.pickle h w
         
-        let openDatabaseFile dbpath (logger : ILogger) = 
+        // Retries `openFile` briefly on a transient sharing violation before giving up.
+        // A just-closed handle (this process's own previous run, or another tool briefly
+        // touching the file) can take the OS a moment to fully release after Dispose()
+        // returns (seen back-to-back across quick test runs); without this a perfectly
+        // good database gets mistaken for a corrupt one and thrown away, which in turn
+        // makes the next build think nothing was ever built.
+        let openWithRetry (openFile: unit -> #Stream) =
+            let maxAttempts = 5
+            let rec attempt n =
+                try
+                    openFile ()
+                with :? IOException when n < maxAttempts ->
+                    System.Threading.Thread.Sleep(20)
+                    attempt (n + 1)
+            attempt 1
+        let openReadWithRetry (path: string) = openWithRetry (fun () -> File.OpenRead(path))
+
+        let openDatabaseFile dbpath (logger : ILogger) =
             let log = logger.Log
             let resultPU = Persist.result
             let bkpath = makeBkpath dbpath
@@ -120,7 +137,7 @@ module Storage =
             // read database
             if File.Exists(dbpath) then 
                 try 
-                    use reader = new BinaryReader(File.OpenRead(dbpath))
+                    use reader = new BinaryReader(openReadWithRetry dbpath)
                     let stream = reader.BaseStream
                     let header = Persist.dbHeader.unpickle reader
                     if header.XakeVer < XakeDbVersion then 
@@ -139,16 +156,16 @@ module Storage =
             if !recordCount > (!db).Status.Count * 5 then 
                 log Level.Message "Compacting database"
                 File.Move(dbpath, bkpath)
-                use writer = 
-                    new BinaryWriter(File.Open(dbpath, FileMode.CreateNew))
+                use writer =
+                    new BinaryWriter(openWithRetry (fun () -> File.Open(dbpath, FileMode.CreateNew) :> Stream))
                 writeHeader writer
                 (!db).Status
                 |> Map.toSeq
                 |> Seq.map snd
                 |> Seq.iter (fun r -> resultPU.pickle r writer)
                 File.Delete(bkpath)
-            let dbwriter = 
-                new BinaryWriter(File.Open (dbpath, FileMode.Append, FileAccess.Write))
+            let dbwriter =
+                new BinaryWriter(openWithRetry (fun () -> File.Open (dbpath, FileMode.Append, FileAccess.Write) :> Stream))
             if dbwriter.BaseStream.Position = 0L then writeHeader dbwriter
             db, dbwriter
     

@@ -96,6 +96,17 @@ root and the pattern with `Path.Combine` and kept the literal `..`, so the two c
 agree. The literal prefix before the first wildcard or group is now normalized
 (`impl.normalizeLiteralPrefix`, `src/core/Path.fs`). Covered by `ParentDirTargetTests.fs`.
 
+## Trap: a transient sharing violation on the `.xake` database looked like corruption
+
+Closing a database and reopening it moments later (a second `xake {}` run in the same folder,
+which the tests do constantly) occasionally threw `IOException: being used by another process`
+even after `Dispose()` had returned. `Storage.impl.openDatabaseFile` treated every exception as
+a corrupt file, deleted it and started over -- so the next build saw "Not built yet" and re-ran
+a rule it should have skipped (the flaky `executes need only once`). The three
+file opens now retry an `IOException` up to five times with a 20 ms backoff; real corruption still
+goes to the recreate path. The `EndOfStreamException` warning in test runs is deliberate: the
+`handles broken database` and storage tests write garbage on purpose.
+
 ## How to verify changes here
 
 ```bash

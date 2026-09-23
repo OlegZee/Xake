@@ -1,6 +1,6 @@
 # Session state: hermetic-build
 
-Updated 2026-09-24 evening (Stage B, the lock split; before that: stages A1/A2, the autonomous night run, page run, extra roots, Toolset compiler source, resgen, SDK pin check, import, fromlock mode, one runner, byte-identical proof).
+Updated 2026-09-24 night (Stage C, `csc { lock }`; before that Stage B, the lock split; before that: stages A1/A2, the autonomous night run, page run, extra roots, Toolset compiler source, resgen, SDK pin check, import, fromlock mode, one runner, byte-identical proof).
 
 `brief.md` next to this file (committed by the user on 2026-09-22, together with the
 `samples/hermetic/dataengine/` inspection artifacts) is the working brief:
@@ -41,8 +41,9 @@ csc, `Pack` deterministic nupkg; Babel and delegated signing need the user); day
 1. ~~Lock split~~ -- decided 2026-09-24 and done the same day (Stage B, below); the renames
    with it. Left from the conceptual review: item 8 (`Generated`/`.resources` as targets via
    a rule factory), only if a second consumer appears.
-2. The lock update mechanism for locks recorded from composed settings (`lock-from-settings.md`
-   §9; `UPDATE_LOCKS` rejected).
+2. ~~The lock update mechanism for locks recorded from composed settings~~ -- decided
+   2026-09-24 and built the same night (Stage C, below): strict by default, the update an
+   explicit target of the script's own.
 3. Babel recipe (tool from the private feed, licence) and signing as a delegated rule.
 4. Release of the branch (`.bootstrap/` staging until then).
 Also worth a look: `conceptual-review.md`, `e5-shipped-vs-local.md` (a shipped dll cannot be
@@ -56,6 +57,41 @@ brief §8c) -- or start the lock split once decided. Fixture as before:
 `-p:NuGetAudit=false` (the import sets it) or load the feed token with `cd <ar project dir> &&
 source ~/set-secrets.sh` (never print it). Xake stays referenced via `#r` on `.bootstrap/` — no
 release.
+
+### What landed (2026-09-24, night): stage C -- `csc { lock "path" }`
+
+The user's decision on the open update question (2026-09-24): **strict by default, the update
+explicit, no engine mode, no global variable.** Built as migration path A of
+`lock-from-settings.md` §9; the semantics and the script pattern are in `csc-syntax.md`,
+"Locking composed settings: `lock`".
+
+- **`CscSettingsType.Lock: string option`**, custom operation `lock "path"` (project-root
+  relative like any target path, or absolute). `Csc` resolves as always, then: no lock file --
+  `Lock.rehash` and `Lock.save` a one-entry `Lock.Document` (`Framework` = the settings'
+  `targetfwk` or "", `Configuration` "", `Properties` []), compile the *rehashed* entry;
+  lock present and `Lock.diff recorded resolved` empty -- compile the **recorded** entry, so
+  its hashes gate the build; different -- fail with the diff and the two update routes named.
+  `nofailonerror` downgrades the failure to a warning and compiles the resolved entry.
+- **`CscLock.record path settings`** (resolve, rehash, overwrite; what an `update-locks` phony
+  calls) and **`CscLock.verify path settings : Recipe<string list>`** (the diff alone, nothing
+  written, nothing compiled -- scenario 3). `CscLock.compile` still serves imported locks.
+- **The lock is not an engine target on this path** -- written from inside the compile recipe,
+  which is what lets a tuned `csc { }` block stay in place. 1b (lock as a file target) is
+  unchanged for scripts that prefer it. **Path B (`cscSettings {}`) is not built.**
+- **One library change outside the task**: `Lock.diff`'s `diffCompiler` now skips `Sha256` when
+  either side is empty, the rule `diffHashed` already followed (empty means "not computed").
+  Without it every diff of a recorded lock against freshly resolved settings reported the
+  compiler hash as a difference, and the strict path could never have matched.
+- **Tests**: `src/tests/CscLockTests.fs` (6, Integration) -- record + compile, second build
+  leaves the lock byte-identical (bytes and mtime), an added source fails with the path and the
+  word "lock" in the message, `CscLock.record` overwrites and the next build passes, a
+  reference built by the test itself and tampered after recording fails the hash check
+  ("expected ... got ..."), `verify` reports the difference without writing. Suite **324
+  passed, 1 skipped** (was 318/1); both projects 0 warnings on both TFMs.
+- Trap: inside `module CscLock`, `resolve` is the module's own (the entry alone), not the outer
+  private one that also returns the framework env vars -- the shadowing is silent until the
+  tuple pattern fails to typecheck. And `recipe` has no `ReturnFrom`, so `return!` does not
+  compile: bind and return.
 
 ### What landed (2026-09-24, evening): stage B -- the lock split
 

@@ -214,14 +214,26 @@ error.
 scenario 1b applies (`Csc.resolve settings` in the lock rule, `fromlock` in the build rule).
 ~15 lines.
 
-**Open: how the lock gets updated.** A script variable such as `-d UPDATE_LOCKS=true` was
-proposed and **rejected by the user** (2026-09-22): a global switch on the whole tool for what
-is, so far, a narrow case. Needs more thought before either path is built -- what is idiomatic
-for Xake (everything is a target: a lock as a file target that one rebuilds by name, or removes
-and rebuilds; a phony `update-locks` the script itself declares; no engine-level mode) and what
-npm users expect (`npm install` moves the lock to follow the manifest by default, `npm ci`
-refuses to when they disagree -- strictness is the opt-in, not the update). Whether the default
-should be "follow the settings, warn" or "fail" is part of the same question.
+**How the lock gets updated -- decided (user, 2026-09-24), and path A is built.** A script
+variable such as `-d UPDATE_LOCKS=true` was proposed and rejected on 2026-09-22 (a global
+switch on the whole tool for what is, so far, a narrow case); the decision that replaced it is:
+
+- **strict by default** -- a lock that disagrees with the resolved settings fails the build,
+  printing the diff. Not "follow the settings and warn": the npm split is inverted here on
+  purpose, since a lock exists to be authoritative and the compilation it guards is the
+  reproducibility claim. `nofailonerror` still downgrades it to a warning (and then compiles
+  from the settings).
+- **the update is explicit and is a target of the script's own** -- `CscLock.record path
+  settings` in a phony the script declares (`"update-locks" => recipe { ... }`), or simply
+  deleting the lock file, a missing target already meaning "produce it". No engine-level mode,
+  no global variable, nothing that updates a lock as a side effect of building.
+- **the lock file is not a target of the engine** on this path: `lock "path"` writes it from
+  inside the compile recipe, which is what lets a tuned `csc { }` block stay where it is.
+  Recommendation 1b (the lock as a real file target) still stands for scripts that prefer it.
+
+Built 2026-09-24 as `csc { lock "path" }` plus `CscLock.record` and `CscLock.verify`; the
+semantics, the failure message and the script pattern are in `csc-syntax.md`, "Locking composed
+settings: `lock`". Path B (`cscSettings { }`) is not built.
 
 **Common trap of both paths, resolved (2026-09-23)**: `resolve` now records a `.resx` resource as
 a permanent `(resx, .resources)` pair in `Resources`, not a temp file with a random name in

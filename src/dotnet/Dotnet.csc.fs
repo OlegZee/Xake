@@ -39,6 +39,12 @@ module CscImpl =
         /// the compiler is a pinned, hashed dependency in the lock rather than whatever the
         /// SDK happens to ship. `CscPath` still overrides everything, this included.
         Toolset: string option
+        /// Lock file recording this compilation, relative to the project root (or absolute).
+        /// Strict, `npm ci`-like semantics: missing -- record it and compile; present -- the
+        /// resolved settings must match it or the build fails; matching -- compile from the
+        /// recorded entry, whose hashes then gate the build. Updating is explicit: delete the
+        /// file, or call `CscLock.record` from a target of the script's own.
+        Lock: string option
     } with static member Default = {
             Platform = AnyCpu
             Target = Auto    // try to resolve the type from name etc
@@ -54,6 +60,7 @@ module CscImpl =
             FailOnError = true
             CscPath = None
             Toolset = None
+            Lock = None
         }
 
     /// Default settings for the CSC task, so that you could only override required settings.
@@ -468,6 +475,38 @@ module CscImpl =
             return entry, fwkInfo.EnvVars
         }
 
+    /// A lock path as written in a script: relative to the build's project root, like every
+    /// other target path, or absolute.
+    let private lockPath (path: string) =
+        recipe {
+            let! options = getCtxOptions()
+            return if Path.IsPathRooted path then path else options.ProjectRoot </> path
+        }
+
+    /// The document a composed compilation is recorded in: one entry, and the framework the
+    /// settings named (there is no msbuild configuration or property set behind composed
+    /// settings, so those two stay empty).
+    let private lockDocument (settings: CscSettingsType) (entry: Lock.Entry) : Lock.Document =
+        { Framework = (match settings.TargetFramework with null -> "" | fwk -> fwk)
+          Configuration = ""
+          Properties = []
+          Entries = [ entry ] }
+
+    /// Hashes the resolved entry (`Lock.rehash` -- the record-time step, see
+    /// `lock-from-settings.md` recommendation 5) and writes it as a one-entry lock, returning
+    /// what was written. The lock file is not a target of the engine on this path: it is
+    /// written from inside the recipe that compiles, which is what lets `lock "path"` keep a
+    /// tuned `csc { }` block in place (`lock-from-settings.md` §9, migration path A).
+    let private recordLock (settings: CscSettingsType) (path: string) (entry: Lock.Entry) =
+        recipe {
+            let! full = lockPath path
+            let dir = Path.GetDirectoryName full
+            if dir <> "" then Directory.CreateDirectory dir |> ignore
+            let rehashed = Lock.rehash entry
+            do! Lock.save full (lockDocument settings rehashed)
+            return rehashed
+        }
+
     /// <summary>
     /// Resolves composed `csc {}` settings into a `Lock.Entry` without compiling -- the
     /// smallest piece `lock-from-settings.md` recommends (1b) so a lock-recording rule can
@@ -504,6 +543,41 @@ module CscImpl =
         /// `compile` with the runner's own options (fail-on-error, an overriding `cscpath`).
         let compileWith (options: RunOptions) (entry: Lock.Entry) = run options entry []
 
+        /// <summary>
+        /// Resolves `settings`, hashes the result and writes (overwriting) the one-entry lock
+        /// at `path` -- the deliberate update step `csc { lock "path" }` refuses to take on
+        /// its own. A script declares it as a target of its own:
+        /// <code>
+        /// "update-locks" => recipe { do! CscLock.record "locks/app.json" settings }
+        /// </code>
+        /// with `settings` shared in record syntax (`{ CscSettings with Src = ...; Lock =
+        /// Some "locks/app.json" }`) between that target and the rule that compiles.
+        /// Nothing is compiled here.
+        /// </summary>
+        let record (path: string) (settings: CscSettingsType) =
+            recipe {
+                // `resolve` here is `CscLock.resolve` above (the entry alone), not the outer
+                // private one that also returns the framework's env vars -- nothing is run.
+                let! entry = resolve settings
+                let! _ = recordLock settings path entry
+                return ()
+            }
+
+        /// <summary>
+        /// The differences between the lock at `path` and what `settings` resolve to right
+        /// now -- `[]` means the lock is current. This is what `csc { lock "path" }` fails on,
+        /// without compiling and without writing anything (`lock-from-settings.md` scenario 3).
+        /// Hashes are not compared (the resolved side has none); the recorded hashes are
+        /// verified against disk by the runner when a lock is actually compiled.
+        /// </summary>
+        let verify (path: string) (settings: CscSettingsType) =
+            recipe {
+                let! entry = resolve settings
+                let! full = lockPath path
+                let! doc = Lock.load full
+                return Lock.diff (Lock.entry entry.Name doc) entry
+            }
+
     /// <summary>
     /// C# compiler task. Compiles the source fileset into the target assembly: `resolve` turns
     /// the settings into a `Lock.Entry` and the one runner compiles it. To replay a lock
@@ -517,7 +591,42 @@ module CscImpl =
         recipe {
             do! trace Level.Debug "Csc: settings=%A" settings
             let! (entry, envVars) = resolve settings
-            do! run { FailOnError = settings.FailOnError; CscPath = settings.CscPath } entry envVars
+            let options = { FailOnError = settings.FailOnError; CscPath = settings.CscPath }
+
+            // `lock "path"`: settings stay the source of truth (resolve has already run), the
+            // lock decides whether this compilation is the one that was recorded. Strict by
+            // default, like `npm ci` -- an update is an explicit act, never a side effect of
+            // building (the user's decision, 2026-09-24; there is no engine mode and no
+            // global variable).
+            let! toCompile =
+                match settings.Lock with
+                | None -> entry |> recipe.Return
+                | Some path ->
+                    recipe {
+                        let! full = lockPath path
+                        if not (File.Exists full) then
+                            // no lock yet: record what was just resolved and compile that --
+                            // the hashes `run` verifies are the ones taken a moment ago
+                            let! recorded = recordLock settings path entry
+                            return recorded
+                        else
+                            let! doc = Lock.load full
+                            let recorded = Lock.entry entry.Name doc
+                            match Lock.diff recorded entry with
+                            | [] ->
+                                // compile the recorded entry, not the resolved one: its
+                                // hashes are what gate the build
+                                return recorded
+                            | differences ->
+                                do! failStep options
+                                        (sprintf "'%s': the resolved compilation differs from the lock '%s':\n%s\nUpdate the lock deliberately: delete '%s', or run the target that calls CscLock.record \"%s\"."
+                                            entry.Name path (differences |> String.concat "\n") path path)
+                                // FailOnError = false turned the failure into a warning: the
+                                // settings are the source of truth, so compile what they say
+                                return entry
+                    }
+
+            do! run options toCompile envVars
         }
 
     /// Computation expression builder for the csc task.
@@ -544,6 +653,14 @@ module CscImpl =
         /// NuGet cache (restoring the package if it is missing) instead of the SDK's own, so the
         /// compiler is a pinned, hashed dependency in the lock. `cscpath` still overrides this.</summary>
         [<CustomOperation("toolset")>]       member __.Toolset(s:CscSettingsType, version: string) = {s with Toolset = Some version}
+
+        /// <summary>Records this compilation in the lock file at the given path (relative to the
+        /// project root, or absolute) and, once it exists, refuses to compile anything else:
+        /// the resolved settings must match the lock, or the build fails with the differences.
+        /// A matching lock is what gets compiled, so its recorded hashes are verified against
+        /// disk. To update it, delete the file or call `CscLock.record` from a target of the
+        /// script's own.</summary>
+        [<CustomOperation("lock")>]       member __.Lock(s:CscSettingsType, path: string) = {s with Lock = Some path}
 
         /// <summary>Passes custom arguments to the compiler</summary>
         [<CustomOperation("args")>]       member __.Args(s:CscSettingsType, args) =   {s with CommandArgs = args}

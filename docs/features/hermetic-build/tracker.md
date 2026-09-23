@@ -3,6 +3,9 @@
 Status: `[ ]` todo · `[~]` in progress · `[x]` done · `[-]` dropped. Keep entries one line;
 details live in brief.md (section refs) or session.md.
 
+**Status 2026-09-24 (night):** Stage C landed — `csc { lock "path" }` with strict semantics,
+`CscLock.record`/`verify`; the lock-update decision is closed. Suite 324 passed, 1 skipped.
+
 **Status 2026-09-24 (evening):** day zero closed · slice 1 (import, lock, `fromlock`, one runner,
 page and dataengine byte-identical) closed · slice 2 (Nuget, Sbom, Verify) closed · slice 3 half
 done (StrongName, Pack; Babel and delegated signing wait for the user) · **lock split done
@@ -46,8 +49,8 @@ mechanism, release. Details: session.md, README.md.
 
 ## Lock from composed `csc` settings (design note `lock-from-settings.md`, 2026-09-22)
 - [x] `CscLock.resolve` public as `Recipe<Lock.Project>` (F# refuses a module named like the `Csc` function), `Lock.rehash`, `Lock.diff` — the smallest API; `Project.import` and `CscLock.resolve` both feed `CscLock.compile`. `LockDiffTests.fs`
-- [ ] migration path A: `lock "path"` operation on `csc {}` with locked-mode semantics (record when absent, diff + hash-verify when present); path B: `cscSettings {}` builder returning the settings value
-- [ ] **think first**: how a lock is updated — `-d UPDATE_LOCKS` rejected (global tool behaviour for a narrow case). Find what is idiomatic for Xake (locks as targets, no engine mode) and familiar to npm users (`npm install` follows the manifest, `npm ci` is the strict opt-in)
+- [x] **migration path A** (Stage C, 2026-09-24): `lock "path"` on `csc {}` — `CscSettingsType.Lock`, absent → rehash + `Lock.save` + compile the rehashed entry, present → `Lock.diff recorded resolved`, empty → compile the **recorded** entry (its hashes gate the build), non-empty → fail with the diff and the two update routes (`nofailonerror` downgrades to a warning and compiles the resolved entry). Plus `CscLock.record` (the `update-locks` target) and `CscLock.verify` (the diff alone). `CscLockTests.fs` (6). **Path B (`cscSettings {}`) not built** — ~15 lines when a real tuned block asks for it
+- [x] **think first**: how a lock is updated — decided by the user 2026-09-24: **strict by default** (a disagreeing lock fails, npm's split inverted on purpose), **update explicit and a target of the script's own** (`CscLock.record` in a phony, or delete the file), no engine mode, no global variable. The lock is not an engine target on path A (written inside the compile recipe). `lock-from-settings.md` §9, `csc-syntax.md` "Locking composed settings: `lock`"
 - [x] prerequisite for projects with `.resx` (2026-09-23): `resolve` now records a `.resx` resource as a permanent `(resx, .resources)` pair in `Resources` — `<ProjectRoot>/obj/xake/<assembly name>/<manifestName>` — and emits `/res:<path>,<manifestName>`; `run`'s existing resource step compiles it when missing, exactly as for an imported project. `resolve` no longer produces any temp files; `CscLock.resolve`'s return type dropped the temp-file list. `DotnetTasksTests.fs` (composed mode, no-op second build), `FromLockTests.fs` (`CscLock.resolve` on a resx, compiles through `fromlock`)
 
 ## Slice 2 — SBOM and verification (brief §8e, §11)

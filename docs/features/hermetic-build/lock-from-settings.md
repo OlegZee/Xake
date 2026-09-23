@@ -223,10 +223,10 @@ npm users expect (`npm install` moves the lock to follow the manifest by default
 refuses to when they disagree -- strictness is the opt-in, not the update). Whether the default
 should be "follow the settings, warn" or "fail" is part of the same question.
 
-**Common trap of both paths**: `.resx` resources. `resolve` compiles them into temp files with
-random names that land in `/res:`; such a lock is invalid and a diff on it would always fail.
-Recording a lock from settings with resources needs resgen as a rule with permanent outputs
-(tracker, slice 1) -- a prerequisite for projects with resources; projects without work at once.
+**Common trap of both paths, resolved (2026-09-23)**: `resolve` now records a `.resx` resource as
+a permanent `(resx, .resources)` pair in `Resources`, not a temp file with a random name in
+`/res:` -- a lock recorded from settings with `.resx` resources is compilable and diffable as is;
+see `csc-syntax.md`'s composed-mode resx paragraph.
 
 ## Recommendation
 

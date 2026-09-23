@@ -50,6 +50,23 @@ in order: `/noconfig` (when the target framework requires it), `/nologo`, `/targ
 `/platform:`, `/unsafe`, `/nostdlib+`, `/out:`, `/define:`, sources, `/r:` refs, global refs,
 `/res:`, then `CommandArgs`.
 
+**Composed-mode `.resx` resources (2026-09-23).** A `resources`/`resourceslist` fileset entry
+that names a `.resx` file is not compiled by `resolve` itself -- unlike an ordinary
+embedded-resource file (already the file the compiler reads), a `.resx` needs turning into a
+`.resources` first, and `resolve` used to do that eagerly into a temp file with a random name,
+deleted once the compile was done. That left nothing for `CscLock.resolve` to hand back: a lock
+recorded from settings with `.resx` resources had `/res:` arguments naming files that no longer
+existed. Instead `resolve` records a permanent
+`(resx, .resources)` pair in `Lock.Project.Resources` --
+`<ProjectRoot>/obj/xake/<assembly name>/<manifestName>` where `manifestName` is the `/res:`
+logical name `Impl.makeResourceName` computes (e.g. `Sample.Application.Strings.resources`) --
+and emits `/res:<resourcesPath>,<manifestName>`, exactly the shape `Project.import` already
+produces for an imported project's resx. `run`'s existing resource step (see below) then compiles
+it when the output is missing and `needFiles` the resx itself, so the engine decides when a resx
+edit reruns the compile, not `resolve`. Non-resx resources are unaffected -- they were already
+the file the compiler reads and stay a plain `/res:` file input. `resolve` no longer produces any
+temp files of its own; the only temp file `run` still cleans up is its own response file.
+
 ## Compiler sources
 
 ### Composed mode: three sources, first match wins
@@ -140,8 +157,11 @@ The runner (`run` in `Dotnet.csc.fs`, shared by both modes) does, in order:
 6. `needFiles` every resx in `project.Resources` (so a resx edit rebuilds the dll) and, for each
    `(resx, resources)` pair, compiles the resx to that `.resources` path with `Xake.Dotnet.Resx`
    when the output is **missing** -- so a machine with only the lock, or a cleaned `obj/`, still
-   ends up with the exact file the recorded `/resource:` switch names. The composed mode never
-   populates `Resources`, so this is a no-op there. This dropped a `.resources`-vs-`.resx`
+   ends up with the exact file the recorded `/resource:` switch names. This is the same step for
+   both modes now (2026-09-23): the composed mode's `resolve` records its own `.resx` resources
+   here too (see the composed-mode resx paragraph above), at a permanent path under
+   `obj/xake/<name>/`, instead of compiling them itself into a temp file at recipe time. This
+   dropped a `.resources`-vs-`.resx`
    timestamp comparison that used to gate regeneration as well (conceptual-review.md 2.3): that
    was a second rebuilder living next to the engine's -- the engine already decides whether this
    recipe runs at all, from the `FileDep` `needFiles` puts on the resx, so `run` re-deciding with
@@ -167,8 +187,9 @@ The runner (`run` in `Dotnet.csc.fs`, shared by both modes) does, in order:
     compiler path ends in `.dll`, it runs through `dotnet <path>`; otherwise the path is run
     directly (a native launcher, e.g. the SDK's `csc` apphost).
 
-The rsp file and any extra temp files (the composed mode's resx-compiled resources) are deleted
-once the compiler exits, success or failure.
+The rsp file is deleted once the compiler exits, success or failure -- the only temp file `run`
+produces now that the composed mode's `.resx` resources are permanent outputs (see above),
+not temp files.
 
 ## Where a `Lock.Project` comes from
 
@@ -324,23 +345,14 @@ module Lock =
     val diff : Project -> Project -> string list
 ```
 
-**`CscLock.resolve settings`** runs `resolve` and cleans up its resx-compiled temp files itself
-(there is no compile step downstream to hand them to), returning just the `Lock.Project`. Not
+**`CscLock.resolve settings`** runs `resolve` and returns just the `Lock.Project` -- `resolve`
+produces no temp files of its own to clean up (see the composed-mode resx paragraph above), so a
+lock it returns, `.resx` resources included, is compilable and recordable as is. Not
 `Csc.resolve`: F# does not let a `module` and a `let`-bound function share one name in a
 namespace the way it lets a `type` and a `module` share one via
 `[<CompilationRepresentation(ModuleSuffix)>]` -- verified by compiling a minimal repro (`let Csc
 x = ...` next to `module Csc = ...` leaves `Csc.resolve` unresolved, `FS0039`, in either
 definition order). `Csc` stays the function it always was; the new module is `CscLock` instead.
-
-**Resx caveat.** `resolve` compiles `.resx` resources into temp files with random names before
-handing back the `/res:` args that name them; `CscLock.resolve` deletes those temps before
-returning. A lock recorded from settings that carry `.resx` resources is therefore **not
-compilable as is** -- its `/res:` arguments name files that no longer exist. This is a known gap,
-not a bug to route around at record time: fixing it means routing composed-mode resx through
-`Resources` (permanent `(resx, .resources)` outputs, the way `Project.import` already does),
-which is a tracker item ("Lock from composed `csc` settings" > prerequisite for projects with
-`.resx`), not something `CscLock.resolve` itself should paper over. A lock recorded from settings
-with no `.resx` resources has no such gap.
 
 **`Lock.rehash project`** fills `Sha256` for every `Hashed` entry (`References`, `Analyzers`,
 `Imports`) and for `Compiler`, from what is on disk right now (`Lock.sha256`, empty when the file

@@ -82,9 +82,7 @@ module CscImpl =
     ///
     /// `envVars` carries the environment the compiler needs to run (e.g. the framework's,
     /// resolved via `DotNetFwk`) -- `Lock.Project` is serialized as the lock file format and has
-    /// no room for it, so it travels alongside instead. `extraTempFiles` are deleted together
-    /// with the response file once the compiler exits, whatever the outcome -- the composed
-    /// mode's resx-compiled temporaries.
+    /// no room for it, so it travels alongside instead.
     /// </summary>
     /// The path `csc.dll` would have under a `Microsoft.Net.Compilers.Toolset`-shaped package
     /// (`<nugetRoot>/<packageId>/<version>/tasks/netcore/bincore/csc.dll`), restoring the
@@ -155,7 +153,7 @@ module CscImpl =
                                 (sprintf "'%s': the compiler %s named by the lock does not exist" project.Name project.Compiler.Path)
         }
 
-    let private run (settings: CscSettingsType) (project: Lock.Project) (envVars: (string * string) list) (extraTempFiles: string list) =
+    let private run (settings: CscSettingsType) (project: Lock.Project) (envVars: (string * string) list) =
         recipe {
             do! trace Info "compiling '%s' (%s %s)" project.Name project.Compiler.Tool project.Compiler.Sdk
 
@@ -218,6 +216,9 @@ module CscImpl =
             // the `.resources` output is missing (not on a timestamp comparison) keeps `run`
             // from being a second rebuilder next to the engine's (conceptual-review.md 2.3) --
             // the gate is "does it exist", staleness is the engine's call, not this recipe's.
+            // This is the same step for both modes now: the composed mode's `resolve` records
+            // its `.resx` resources here too, at a permanent path under `obj/xake/<name>/`,
+            // instead of compiling them itself into a temp file at recipe time.
             do! needFiles (Filelist (project.Resources |> List.map (fst >> File.make)))
             for (resx, resourcesFile) in project.Resources do
                 if not (File.Exists resourcesFile) then
@@ -265,11 +266,9 @@ module CscImpl =
                     yield "@" + rspFile
                 }
 
-            // the response file and any temporary the front end produced (the composed mode's
-            // resx-compiled resources) have to go regardless of how the compilation ends
-            let tempFiles = rspFile :: extraTempFiles
+            // the response file has to go regardless of how the compilation ends
             let deleteTempFiles () =
-                tempFiles |> List.iter (fun file -> try System.IO.File.Delete file with _ -> ())
+                try System.IO.File.Delete rspFile with _ -> ()
 
             let cscTool, extraArgs =
                 match settings.CscPath with
@@ -333,9 +332,34 @@ module CscImpl =
                 else
                     settings.Out |> recipe.Return
 
-            let resinfos = settings.Resources |> List.collect (Impl.collectResInfo options.ProjectRoot) |> List.map Impl.compileResxFiles
-            let resfiles = resinfos |> List.choose (fun (_, file, istemp) -> if istemp then None else Some file)
-            let tempFiles = resinfos |> List.choose (fun (_, file, istemp) -> if istemp then Some file.FullName else None)
+            // a `.resx` resource is not compiled here: unlike an ordinary embedded-resource
+            // file (already the file the compiler reads), a resx needs turning into a
+            // `.resources` first, and doing that eagerly into a random temp file left nothing
+            // for a lock recorded from these settings (`CscLock.resolve`) to compile against
+            // once resolve's caller deleted it. Instead this records a permanent
+            // `(resx, .resources)` pair in `Resources`, the same shape `Project.import`
+            // already produces for an imported project -- `run`'s existing resource step
+            // compiles it when the output is missing and `needFiles` the resx itself, so the
+            // engine (not this recipe) decides when a resx edit reruns the compile.
+            let resNames = settings.Resources |> List.collect (Impl.collectResInfo options.ProjectRoot)
+            let isResx (_, file: File) = file |> File.getFileName |> Impl.endsWith ".resx"
+            let resxEntries, plainEntries = resNames |> List.partition isResx
+
+            let assemblyName = Path.GetFileNameWithoutExtension outFile.Name
+            let resxResources =
+                resxEntries
+                |> List.map (fun (resname, file) ->
+                    let manifestName = Path.ChangeExtension(resname, ".resources")
+                    let resourcesPath =
+                        (options.ProjectRoot </> "obj" </> "xake" </> assemblyName </> manifestName).Replace('\\', '/')
+                    manifestName, file.FullName, resourcesPath)
+
+            let resArgs =
+                (plainEntries |> List.map (fun (name, file: File) -> name, file.FullName))
+                @ (resxResources |> List.map (fun (manifestName, _, resourcesPath) -> manifestName, resourcesPath))
+            let resources = resxResources |> List.map (fun (_, resx, resourcesPath) -> resx, resourcesPath)
+
+            let resfiles = plainEntries |> List.map snd
 
             let (Filelist src)  = settings.Src |> getFiles
             let (Filelist refs) = settings.Ref |> getFiles
@@ -388,7 +412,7 @@ module CscImpl =
                     yield! refs |> List.map ((fun f -> f.FullName) >> (+) "/r:")
                     yield! globalRefs
 
-                    yield! resinfos |> List.map (fun(name,file,_) -> sprintf "/res:%s,%s" file.FullName name)
+                    yield! resArgs |> List.map (fun (name, path) -> sprintf "/res:%s,%s" path name)
                     yield! settings.CommandArgs
                 } |> List.ofSeq
 
@@ -428,11 +452,11 @@ module CscImpl =
                 ProjectRefs = []
                 Imports = []
                 Generated = []
-                Resources = []
+                Resources = resources
                 Properties = Map.empty
             }
 
-            return project, fwkInfo.EnvVars, tempFiles
+            return project, fwkInfo.EnvVars
         }
 
     /// <summary>
@@ -441,13 +465,10 @@ module CscImpl =
     /// write out what a compilation would look like, the way `Project.import` does for an
     /// msbuild project. Both feed `Csc { fromlock = Some project }`.
     ///
-    /// Cleans up the resx-compiled temp files `resolve` creates before returning, since there
-    /// is nothing here to run the compiler against them for. Consequence: when the settings
-    /// carry `.resx` resources, the returned project's `/res:` arguments name files that no
-    /// longer exist -- it is NOT compilable as is (recording/diffing only) until `resolve`
-    /// routes resx through `Resources` with permanent outputs (tracker: "Lock from composed
-    /// csc settings" / lock-from-settings.md scenario 9's common trap). Does not change the
-    /// private `resolve`'s own behaviour, or how `Csc` uses it.
+    /// `resolve` no longer produces any temp files of its own -- a `.resx` resource is now
+    /// recorded as a permanent `(resx, .resources)` pair in `Resources`, compiled by `run`'s
+    /// resource step the same way an imported project's is, so the returned project is
+    /// compilable and recordable as is, `.resx` resources included.
     ///
     /// Named `CscLock.resolve`, not `Csc.resolve`: F# does not let a module and a `let`-bound
     /// function share one name in a namespace the way it lets a `type` and a `module` share
@@ -458,8 +479,7 @@ module CscImpl =
     module CscLock =
         let resolve (settings: CscSettingsType) =
             recipe {
-                let! project, _, tempFiles = resolve settings
-                tempFiles |> List.iter (fun file -> try System.IO.File.Delete file with _ -> ())
+                let! project, _ = resolve settings
                 return project
             }
 
@@ -476,13 +496,13 @@ module CscImpl =
     let Csc (settings:CscSettingsType) =
 
       match settings.FromLock with
-      | Some project -> run settings project [] []
+      | Some project -> run settings project []
       | None ->
 
         recipe {
             do! trace Level.Debug "Csc: settings=%A" settings
-            let! (project, envVars, tempFiles) = resolve settings
-            do! run settings project envVars tempFiles
+            let! (project, envVars) = resolve settings
+            do! run settings project envVars
         }
 
     /// Computation expression builder for the csc task.

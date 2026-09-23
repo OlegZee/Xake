@@ -279,6 +279,76 @@ type ``Csc fromlock``() =
         Assert.That(readBack.Args, Is.EqualTo rehashed.Args)
         Assert.That(readBack.References |> List.map (fun r -> r.Sha256), Is.EqualTo (rehashed.References |> List.map (fun r -> r.Sha256)))
 
+    /// `CscLock.resolve` on settings that carry a `.resx` resource: it must record a
+    /// `Resources` pair with a permanent output path (not a temp file `resolve` deletes on
+    /// return -- see the csc-syntax.md "composed mode resx" paragraph and Dotnet.csc.fs
+    /// `resolve`), and the resulting lock has to be genuinely compilable through
+    /// `csc { fromlock }`, `.resx` included.
+    [<Test; Category("Integration")>]
+    member x.``CscLock.resolve on settings with a resx records a compilable Resources pair``() =
+
+        let dir = Directory.GetCurrentDirectory()
+        let helloCs = Path.Combine (dir, "HelloResx.cs")
+        File.WriteAllText (helloCs, "public class HelloResx {}\n")
+        let resx =
+            "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n" +
+            "<root>\n" +
+            "  <data name=\"Greeting\" xml:space=\"preserve\"><value>Hello, resx!</value></data>\n" +
+            "</root>\n"
+        File.WriteAllText (Path.Combine (dir, "HelloResxStrings.resx"), resx)
+
+        let mutable resolved : Lock.Project option = None
+
+        do xake {x.TestOptions with FileLog="csc-resolve-resx.log"; ThrowOnError = true} {
+            wantOverride (["hello-resolve-resx"])
+
+            rules [
+                "hello-resolve-resx" => recipe {
+                    let! project =
+                        CscLock.resolve {
+                            CscSettingsType.Default with
+                                Src = !!"HelloResx.cs"
+                                Out = File.make "HelloResx.dll"
+                                Target = Library
+                                TargetFramework = "net-4.6.2"
+                                RefGlobal = ["System.dll"]
+                                Resources = [
+                                    resourceset {
+                                        prefix "Sample.Application"
+                                        files (fileset { includes "HelloResxStrings.resx" })
+                                    }
+                                ]
+                        }
+                    resolved <- Some project
+                }
+            ]
+        }
+
+        let project = resolved.Value
+
+        Assert.That(project.Resources, Has.Length.EqualTo 1)
+        let resxPath, resourcesPath = project.Resources.Head
+        Assert.That(resxPath, Does.EndWith "HelloResxStrings.resx")
+        Assert.That(resourcesPath, Does.EndWith "Sample.Application.HelloResxStrings.resources")
+        Assert.That(resourcesPath, Does.Contain ((Path.Combine ("obj", "xake", "HelloResx")).Replace('\\', '/')),
+            "the .resources output has to live under obj/xake/<assembly name>/")
+        // the temp-file trap `resolve` used to fall into: the /res: argument has to name a
+        // path that still exists once `CscLock.resolve` has returned, not a deleted temp file
+        Assert.That(project.Args, Has.Some.Matches<string> (fun a -> a = "/res:" + resourcesPath + ",Sample.Application.HelloResxStrings.resources"))
+
+        do xake {x.TestOptions with FileLog="csc-resolve-resx-compile.log"; ThrowOnError = true} {
+            wantOverride (["hello-fromlock-resx"])
+
+            rules [
+                "hello-fromlock-resx" => recipe {
+                    do! Csc {CscSettingsType.Default with FromLock = Some project}
+                }
+            ]
+        }
+
+        Assert.That(File.Exists resourcesPath, Is.True, "the .resources file was not compiled")
+        Assert.That(File.Exists "HelloResx.dll", Is.True, "csc did not produce HelloResx.dll from the resolved lock")
+
     /// `$(SourceRevisionId)` (`Project.tokenizeRevision`, resolved back in `run`): a lock whose
     /// `Generated` (and the `/sourcelink:` argument naming it) carries the token compiles, in a
     /// project directory that is itself a (fake) git checkout, with the token replaced by the

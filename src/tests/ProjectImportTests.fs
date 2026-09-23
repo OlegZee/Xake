@@ -371,14 +371,14 @@ type ``Project import``() =
               { "Identity": "A.cs" }
             ],
             "ProjectReference": [
-              { "Identity": "../Other/Other.csproj", "FullPath": "%s/../Other/Other.csproj" }
+              { "Identity": "../Other/Other.csproj", "FullPath": "/cwd/Other/Other.csproj" }
             ],
             "EmbeddedResource": [
               { "Identity": "Strings.resx", "FullPath": "%s/Strings.resx", "OutputResource": "obj/xake/net8.0/X/Sample.Strings.resources", "ManifestResourceName": "Sample.Strings" },
               { "Identity": "logo.png", "FullPath": "%s/logo.png" }
             ]
           }
-        }""" dirSlash dirSlash key dirSlash dirSlash dirSlash dirSlash)
+        }""" dirSlash dirSlash key dirSlash dirSlash dirSlash)
 
         let imports =
             [ dirSlash + "/Sample.csproj"
@@ -420,7 +420,10 @@ type ``Project import``() =
         Assert.That(entry.Dependencies.References |> List.map (fun r -> r.Sha256 = ""), Is.EqualTo [ true; true ])
         Assert.That(entry.Dependencies.Analyzers |> List.map (fun a -> a.Path), Is.EqualTo [ "/dotnet/sdk/8.0.425/Sdks/Microsoft.NET.Sdk/analyzers/an.dll" ])
         Assert.That(entry.Dependencies.Packages, Is.EqualTo packages)
-        Assert.That(entry.Evaluation.ProjectRefs, Is.EqualTo [ dirSlash + "/../Other/Other.csproj" ])
+        // `FullPath` is deliberately the wrong (cwd-resolved) spelling: `Identity` combined with
+        // the project directory wins, `..` folded -- the same fix already applied to resx above
+        Assert.That(entry.Evaluation.ProjectRefs,
+                    Is.EqualTo [ (Path.GetFullPath (Path.Combine (dir, "..", "Other", "Other.csproj"))).Replace ('\\', '/') ])
         // the SDK's own files are the SDK version; restore's are the import's own
         Assert.That(entry.Evaluation.Imports |> List.map (fun i -> i.Path), Is.EqualTo [ dirSlash + "/Sample.csproj"; dirSlash + "/Directory.Build.props" ])
         // what msbuild generated into obj travels with the lock
@@ -434,6 +437,40 @@ type ``Project import``() =
         Assert.That(entry.Evaluation.SdkPin, Is.EqualTo (Some (Lock.Pinned "8.0.425")))
         Assert.That(entry.Evaluation.Properties.ContainsKey "SdkPin", Is.False)
         Assert.That(entry.Evaluation.Properties.ContainsKey "NETCoreSdkVersion", Is.False)
+
+    [<Test>]
+    member x.``ProjectReference is resolved from Identity, not the cwd-resolved FullPath``() =
+        let dir = temp "import-projectref"
+        Directory.CreateDirectory (Path.Combine (dir, "obj", "xake", "net8.0", "X")) |> ignore
+        let dirSlash = dir.Replace ('\\', '/')
+
+        let result = temp "import-projectref.msbuild"
+        File.WriteAllText (result, sprintf """{
+          "Properties": {
+            "AssemblyName": "Sample.Lib",
+            "MSBuildProjectFullPath": "%s/Sample.csproj",
+            "MSBuildProjectDirectory": "%s",
+            "IntermediateOutputPath": "obj/xake/net8.0/X/",
+            "NETCoreSdkVersion": "8.0.425",
+            "NetCoreRoot": "/dotnet/"
+          },
+          "Items": {
+            "CscCommandLineArgs": [
+              { "Identity": "/noconfig" },
+              { "Identity": "/out:obj/xake/net8.0/X/Sample.Lib.dll" }
+            ],
+            "ProjectReference": [
+              { "Identity": "../../Rendering/Rendering.csproj", "FullPath": "/wherever/the/process/cwd/put/it/Rendering.csproj" }
+            ]
+          }
+        }""" dirSlash dirSlash)
+
+        let entry = Project.parseImport result [] (Lock.Pinned "8.0.425") []
+
+        // `FullPath` here is the wrong, cwd-resolved spelling -- `Identity` combined with the
+        // project directory must win, `..` folded
+        Assert.That(entry.Evaluation.ProjectRefs,
+                    Is.EqualTo [ (Path.GetFullPath (Path.Combine (dir, "..", "..", "Rendering", "Rendering.csproj"))).Replace ('\\', '/') ])
 
     [<Test>]
     member x.``sdkPin finds no global.json``() =

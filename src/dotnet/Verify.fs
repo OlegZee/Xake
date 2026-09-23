@@ -266,22 +266,24 @@ module Verify =
     /// - 3.1 every component traces to something: each of the root's nested components names
     ///   a file shipped for the TFM (`xake:nuget:path`) whose bytes hash to the recorded
     ///   SHA-256/SHA-512; each top-level component is a nuspec dependency of that TFM's group
-    /// - 3.2 every shipped assembly and native (`Sbom.isBinaryPath`) has a nested component
-    ///   with both hashes
-    /// - 3.3 tier-2 names and `dt:nuget:declaredVersionRange` equal the nuspec text (ordinal),
-    ///   and every declared dependency the rule keeps (`Sbom.isToolingId` drops tooling) is present
+    /// - 3.2 every shipped assembly and native (`IsAssembly` / `IsNative`) has a nested
+    ///   component with both hashes
+    /// - 3.3 tier-2 names and the `DeclaredRangeProperty` equal the nuspec text (ordinal), and
+    ///   every declared dependency the rule keeps (`IsTooling` drops tooling) is present
     /// - 3.4 the boundary is declared: a `complete` composition over `assemblies` naming the
     ///   root, an `incomplete` one over `dependencies` naming it, an annotation with the root as
     ///   subject; `dependencies[]` has no entry whose `ref` is a tier-2 component, and every
     ///   `ref`/`dependsOn` names a component the document has
-    let sbomPackageScope (nupkgPath: string) (framework: string) (bom: Sbom.Bom) : string list =
+    ///
+    /// `options` must be the record the document was produced with (`Sbom.forPackageScopedWith`).
+    let sbomPackageScopeWith (options: Sbom.PackageScopeOptions) (nupkgPath: string) (framework: string) (bom: Sbom.Bom) : string list =
         let entries = Sbom.nupkgEntries nupkgPath
         let nuspec = Sbom.nuspecOfEntries entries
-        let shipped = Sbom.shippedPaths framework entries
+        let shipped = Sbom.shippedPaths options framework entries
         let bytesOf = entries |> Map.ofList
         let hex (algo: HashAlgorithm) (bytes: byte[]) = algo.ComputeHash bytes |> Array.map (sprintf "%02x") |> String.concat ""
         let pathOf (c: Sbom.Component) =
-            c.Properties |> List.tryPick (fun p -> if p.Name = "xake:nuget:path" then Some p.Value else None)
+            c.Properties |> List.tryPick (fun p -> if p.Name = Sbom.pathProperty then Some p.Value else None)
         let findings = ResizeArray<string> ()
         let fail (check: string) (message: string) = findings.Add (sprintf "%s: %s" check message)
 
@@ -302,21 +304,21 @@ module Verify =
                 expect "SHA-512" (fun () -> SHA512.Create () :> HashAlgorithm)
 
         // 3.1 / 3.3 tier 2 traces to the nuspec, textually
-        let declared = Nuget.nuspecDependenciesFor framework nuspec |> List.filter (fun d -> not (Sbom.isToolingId d.Id))
+        let declared = Nuget.nuspecDependenciesFor framework nuspec |> List.filter (fun d -> not (options.IsTooling d.Id))
         for c in bom.Components do
             match declared |> List.tryFind (fun d -> d.Id = c.Name) with
             | None -> fail "3.1" (sprintf "component '%s' is not a nuspec dependency of %s" c.BomRef framework)
             | Some d ->
-                match c.Properties |> List.tryPick (fun p -> if p.Name = "dt:nuget:declaredVersionRange" then Some p.Value else None) with
+                match c.Properties |> List.tryPick (fun p -> if p.Name = options.DeclaredRangeProperty then Some p.Value else None) with
                 | Some range when range = d.Range -> ()
                 | Some range -> fail "3.3" (sprintf "'%s' declares range '%s', the nuspec says '%s'" c.Name range d.Range)
-                | None -> fail "3.3" (sprintf "'%s' carries no dt:nuget:declaredVersionRange" c.Name)
+                | None -> fail "3.3" (sprintf "'%s' carries no %s" c.Name options.DeclaredRangeProperty)
         for d in declared do
             if not (bom.Components |> List.exists (fun c -> c.Name = d.Id)) then
                 fail "3.3" (sprintf "nuspec dependency '%s' has no component" d.Id)
 
         // 3.2 every shipped binary has a hashed component
-        for path in shipped |> List.filter Sbom.isBinaryPath do
+        for path in shipped |> List.filter (fun p -> options.IsAssembly p || options.IsNative p) do
             match bom.Root.Components |> List.tryFind (fun c -> pathOf c = Some path) with
             | None -> fail "3.2" (sprintf "shipped binary '%s' has no component" path)
             | Some c when c.Hashes |> List.exists (fun h -> h.Alg = "SHA-256") |> not -> fail "3.2" (sprintf "shipped binary '%s' has no SHA-256" path)
@@ -339,3 +341,7 @@ module Verify =
                 if not (known.Contains d) then fail "3.4" (sprintf "'%s' dependsOn '%s', which is not a component of this document" r d)
 
         List.ofSeq findings
+
+    /// `sbomPackageScopeWith Sbom.defaultPackageScope`.
+    let sbomPackageScope (nupkgPath: string) (framework: string) (bom: Sbom.Bom) : string list =
+        sbomPackageScopeWith Sbom.defaultPackageScope nupkgPath framework bom

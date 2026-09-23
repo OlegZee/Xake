@@ -36,7 +36,8 @@ csc, `Pack` deterministic nupkg; Babel and delegated signing need the user); day
 
 **Morning queue -- decisions only the user can make** (nothing else is blocked):
 1. Lock split into dependencies/compilation parts and the structured format (tracker "Lock
-   stability"); the conceptual review's API decisions: `Csc.fromLock` vs `fromlock`,
+   stability") -- now including the decision (2026-09-24) to fold the package graph from
+   `project.assets.json` into the lock at import, so the SBOM reads the lock only; the conceptual review's API decisions: `Csc.fromLock` vs `fromlock`,
    `Fsproj.roots ()` from `ProjectRoot`, helper placement, renames.
 2. The lock update mechanism for locks recorded from composed settings (`lock-from-settings.md`
    §9; `UPDATE_LOCKS` rejected).

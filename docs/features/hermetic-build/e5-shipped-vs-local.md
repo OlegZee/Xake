@@ -84,3 +84,57 @@ To make an exact match possible, the build needs to record and pin, per release:
 
 With those four pieces, `Verify.authenticodeHash` becomes the auditor's one-line check: build
 from the tag, hash, compare to the number MESCIUS publishes alongside the release.
+
+## Follow-up: isolating the 140 differences (2026-09-24)
+
+Fresh worktree at tag `5.4.0` (`de-tag2`), netstandard2.0, `-p:Brand=MESCIUS`, all builds clean.
+
+**Embedded paths -- none to read.** The shipped dll has no CodeView/PDB debug directory entry
+at all (`RSDS` signature absent) and `strings -n 4` finds zero `.cs`, `.pdb`, backslash, or
+`/_/`-style paths anywhere in it -- only DigiCert CRL/OCSP URLs from the signature. So there is
+no literal build-root string to read off the shipped binary or to pathmap against; the shipped
+build emits no debug info into the DLL, embedded or referenced. This doesn't rule out source
+paths still feeding the deterministic hash (Roslyn folds resolved source paths into the
+checksum even with no `/debug` output), it just means hypothesis 1 can't be confirmed by
+inspection -- only by matching build flags blind.
+
+| Build | Flags (on top of the plain build) | vs shipped: ranges | notes |
+|---|---|---|---|
+| A | none (SDK 8.0.425 via `global.json` rollForward) | 143 (140 Content + TimeDateStamp + CheckSum + CertificateTable) | baseline, reproduces prior result exactly |
+| B | `-p:ContinuousIntegrationBuild=true` | 143, same shape | **no change** vs shipped |
+| D | `global.json` pinned to SDK 10.0.401 (no rollForward) | 202 | *worse*, not better |
+
+Pairwise, to calibrate what each knob actually moves:
+- **A vs B** (CI-build flag on/off, same compiler): 18 ranges, concentrated at
+  `DebugDirectory/PDB id (MVID/GUID)` and a contiguous ~180+23+41+25-byte block right after the
+  strong-name signature (the embedded PDB-checksum/path debug-directory record itself) plus one
+  `StrongNameSignature` range. So `ContinuousIntegrationBuild=true` does exactly what it's
+  documented to do -- it changes the deterministic MVID/PDB-checksum path-dependent bytes -- but
+  that change doesn't move the count vs shipped at all, meaning **the shipped build's 143-range
+  signature isn't explained by a bare/CI-path difference** in isolation.
+- **A vs D** (SDK 8.0.425 vs 10.0.401, same source, same flags): **2783 ranges**, including
+  contiguous blocks of 1582 and 1150 bytes -- a completely different magnitude and shape from
+  the 140 scattered 1-7 byte ranges seen against shipped. A different Roslyn generation moves
+  large contiguous regions (method bodies, attribute blobs), not a handful of isolated bytes.
+
+**Conclusion.** The shipped dll's diff signature (140 small, scattered, 1-7 byte `Content`
+ranges at constant size) does not match what a different compiler generation produces (A vs D:
+large contiguous blocks, 2783 ranges) and is not fixed by toggling `ContinuousIntegrationBuild`
+alone (B: same 143 vs shipped). That leaves **the same compiler generation as ours (8.0.425-era
+Roslyn, not 10.0.401-era) but a different, unrecorded build root/pathmap state** as the best
+remaining explanation for the 140 -- consistent with the original hypothesis, just not
+independently provable here because the shipped dll carries no debug directory to read the
+actual root back out of.
+
+**What a customer would need from MESCIUS** to actually close this gap: (1) the SDK/Roslyn
+version pinned for the release build (a `global.json` without `rollForward`, or the exact SDK
+docker tag/CI image), since even being one feature band off changes thousands of bytes; (2)
+whether `ContinuousIntegrationBuild=true`/`Deterministic=true` was set, and (3) the pathmap
+value or build-root convention used (e.g. a fixed CI checkout path), since neither is
+recoverable from the shipped artifact itself -- it ships with no PDB and no embedded path to
+reverse-engineer from.
+
+Cleanup: worktree `de-tag2` removed (`worktree remove --force` + `prune`), source repo
+`~/Projects-work/ar/ar-net-core-dataengine` worktree list back to just the primary checkout.
+Xake checkout (`git status --short`) was clean before and after this session's worktree/build
+commands.

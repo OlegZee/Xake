@@ -3,13 +3,18 @@
 Status: `[ ]` todo · `[~]` in progress · `[x]` done · `[-]` dropped. Keep entries one line;
 details live in brief.md (section refs) or session.md.
 
+**Status 2026-09-24:** day zero closed · slice 1 (import, lock, `fromlock`, one runner, page and
+dataengine byte-identical) closed · slice 2 (Nuget, Sbom, Verify) closed but for one report
+tweak · slice 3 half done (StrongName, Pack; Babel and delegated signing wait for the user) ·
+open decisions for the user: lock split and structured format, `fromlock` API shape, lock update
+mechanism, release. Details: session.md, README.md.
+
 ## Day zero (brief §8h/§8i/§8j)
 - [x] E1 reproducibility of dataengine with stock `dotnet build` — green on origin/develop
 - [x] E2 design-time import: DataEngine and page/Rdl (LocalBuild), both brands — complete
 - [x] E3 `packages.lock.json` stability and floating versions — `e3-restore-stability.md` (2026-09-24): no lock files in either repo, but no floating versions either; two independent restores of the same commit give identical sha512 for every package; `<clear/>` + `packageSourceMapping` present. Top drift vector: SDK-implicit packages (`NETStandard.Library` 2.0.3, `Microsoft.NETFramework.ReferenceAssemblies` 1.0.3) move with the SDK feature band under `latestFeature`; second: no transitive pinning (latent). Recommendations recorded
 - [x] E4 Babel `--randomseed` — deterministic except PE timestamp/checksum (+ eval expiry)
 - [x] E5 reproduce shipped `MESCIUS.ActiveReports.Core.*` nupkg vs local tag build — `e5-shipped-vs-local.md` + two follow-ups (2026-09-24): nuget.org 5.4.0 vs tag `5.4.0` built here: same commit sha embedded, no Babel traces, shipped has no debug directory. **Outcome (b), and the gap is large**: after the header, contiguous content blocks up to 145 KB differ — a different Roslyn/SDK build, not paths (`DebugType=none`, `ContinuousIntegrationBuild`, `PathMap` change nothing; SDK 10 vs 8 shows the same large-block signature). The first follow-up's "140 small ranges" was an artifact of `verify-shipped.fsx` printing only 20 ranges. To reproduce a shipped dll a customer needs MESCIUS's exact SDK/Roslyn build
-- [ ] `Verify.verdict` should report total differing bytes and the largest range, not only the range count — the count hid a 145 KB block behind "143 ranges"
 
 ## Library slice 1 — import and compile (brief §11, §8j traps 1–7)
 - [x] `Project.import`: design-time msbuild, per-brand `IntermediateOutputPath`, `-pp` imports list — `src/dotnet/Project.fs`, proven on dataengine develop (both brands) with `import.fsx`
@@ -38,7 +43,7 @@ details live in brief.md (section refs) or session.md.
 - [ ] when splitting, also make the content structured instead of the raw tool output: sources, references, defines, options as fields, not a verbatim `csc` argument list. Keep §8c's fidelity by round-tripping at import: the command line rebuilt from the structure must equal msbuild's, or the import fails
 
 ## Lock from composed `csc` settings (design note `lock-from-settings.md`, 2026-09-22)
-- [ ] `Csc.resolve` public as `Recipe<Lock.Project>` (cleans its temp files itself), `Lock.rehash`, `Lock.diff` — the smallest API; `Project.import` and `Csc.resolve` both feed `fromlock`
+- [x] `CscLock.resolve` public as `Recipe<Lock.Project>` (F# refuses a module named like the `Csc` function), `Lock.rehash`, `Lock.diff` — the smallest API; `Project.import` and `CscLock.resolve` both feed `fromlock`. `LockDiffTests.fs`
 - [ ] migration path A: `lock "path"` operation on `csc {}` with locked-mode semantics (record when absent, diff + hash-verify when present); path B: `cscSettings {}` builder returning the settings value
 - [ ] **think first**: how a lock is updated — `-d UPDATE_LOCKS` rejected (global tool behaviour for a narrow case). Find what is idiomatic for Xake (locks as targets, no engine mode) and familiar to npm users (`npm install` follows the manifest, `npm ci` is the strict opt-in)
 - [x] prerequisite for projects with `.resx` (2026-09-23): `resolve` now records a `.resx` resource as a permanent `(resx, .resources)` pair in `Resources` — `<ProjectRoot>/obj/xake/<assembly name>/<manifestName>` — and emits `/res:<path>,<manifestName>`; `run`'s existing resource step compiles it when missing, exactly as for an imported project. `resolve` no longer produces any temp files; `CscLock.resolve`'s return type dropped the temp-file list. `DotnetTasksTests.fs` (composed mode, no-op second build), `FromLockTests.fs` (`CscLock.resolve` on a resx, compiles through `fromlock`)
@@ -49,6 +54,8 @@ details live in brief.md (section refs) or session.md.
 - [x] compare with page's existing CycloneDX output (`GenerateSbom=true`) — `import-page.fsx sbom` writes 30 `out/<fwk>/<brand>/<asm>.cdx.json` (57 s), deterministic (regenerate → `cmp` identical); theirs changes `serialNumber` and `metadata.timestamp` every run. Rdl: 8 purls common; ours adds `netstandard.library` (ref-only, excluded); theirs adds 3 restore-graph packages with no compiled file (`microsoft.netcore.platforms`, `microsoft.netframework.referenceassemblies.net472`, `system.valuetuple`); theirs has sha512 per package but no per-file evidence and no `formulation`. `samples/hermetic/page/sbom-compare.txt`
 - [x] Sbom follow-ups: every restore-graph package is a component (scope from evidence: `lib/` referenced → required; `ref/`-only → excluded; no referenced file → required when reachable from a direct dependency and the package ships `lib/`/`runtimes/` content, `Nuget.ships`); ids with the assets casing; `Sbom.forPackage` per nupkg (nuspec read from the zip, sha256+sha512 of the nupkg, assembly BOMs merged by bom-ref)
 - [x] `Verify`: sha256, Authenticode PE hash (checksum and certificate table excluded, PE32/PE32+), `compare` with byte ranges labelled TimeDateStamp/CheckSum/CertificateTable/PDB id/StrongNameSignature/Content, `verdict` — `Verify.fs`, `VerifyTests.fs` (4), `verify.md`
+
+- [ ] `Verify.verdict` should report total differing bytes and the largest range, not only the range count — the count hid a 145 KB block behind "143 ranges"
 
 ## Slice 3 — ring 2/3 (brief §8f, §8g)
 - [~] Babel recipe with seed; PE timestamp normalisation + strong-name re-sign, or vendor option — **the re-sign half is done**: `StrongName.fs` (`stamp`, `checksum`, `sign`/`verify`, `normalise`; reproduces csc's own signature byte for byte — the hashed content is the PE header without its alignment padding with CheckSum and the certificate-table entry zeroed, then all sections with the signature blob excluded, as in `System.Reflection.Metadata.PEBuilder.GetContentToSign`), `StrongNameTests.fs` (5), `strongname.md`. The Babel recipe itself needs the tool from the private feed and a licence — waits for the user

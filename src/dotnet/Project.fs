@@ -746,6 +746,8 @@ module Project =
 
         let directory = (prop "MSBuildProjectDirectory").Replace ('\\', '/')
         let args = items "CscCommandLineArgs" |> List.map identity |> CscArgs.absolutize directory
+        if List.isEmpty args then
+            failwithf "'%s': the design-time build reported no compiler command line -- CoreCompile did not run (skipped as up to date, or the project has no C# compile step)" (prop "MSBuildProjectFullPath")
         let slash (p: string) = p.Replace ('\\', '/')
 
         // A project that pins the compiler via the `Microsoft.Net.Compilers.Toolset` package
@@ -876,7 +878,12 @@ module Project =
                   "IntermediateOutputPath", sprintf "obj/xake/%s/%s" options.Framework variantDir
                   // the audit talks to the feeds and its warnings turn fatal under
                   // TreatWarningsAsErrors; it is not the import's business
-                  "NuGetAudit", "false" ]
+                  "NuGetAudit", "false"
+                  // CoreCompile lists this property among its Outputs (Visual Studio's own
+                  // design-time trick): a file that never exists keeps the target from being
+                  // skipped as up to date when the assembly in obj/xake is newer than the
+                  // sources -- skipped, it reports no command line at all
+                  "NonExistentFile", "__NonExistentSubDir__/__NonExistentFile__" ]
                 @ options.Properties
 
             let switches = [for name, value in properties -> sprintf "-p:%s=%s" name value]

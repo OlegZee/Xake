@@ -108,3 +108,4 @@ module internal Json =
 
     let asString = function | JString s -> Some s | _ -> None
     let asArray = function | JArray items -> items | _ -> []
+    let asBool = function | JOther "true" -> Some true | JOther "false" -> Some false | _ -> None

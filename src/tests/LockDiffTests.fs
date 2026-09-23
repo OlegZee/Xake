@@ -13,19 +13,17 @@ open Xake.Dotnet
 [<TestFixture>]
 type ``Lock rehash and diff``() =
 
-    let sampleProject () : Lock.Project =
+    let sampleEntry () : Lock.Entry =
+        let compilation, references, analyzers =
+            Lock.Compilation.ofArgs [ "/target:library"; "/define:TRACE"; "/out:/proj/obj/Sample.dll"; "/reference:/pkgs/a.dll"; "A.cs" ]
         { Name = "Sample"
-          Project = "/proj/Sample.csproj"
-          Directory = "/proj"
-          Compiler = { Tool = "csc"; Path = "/sdk/csc.dll"; Sha256 = ""; Sdk = "8.0.100" }
-          Args = [ "/target:library"; "/out:/proj/obj/Sample.dll"; "A.cs" ]
-          References = [ { Path = "/pkgs/a.dll"; Sha256 = "hash-a" } ]
-          Analyzers = []
-          ProjectRefs = []
-          Imports = []
-          Generated = [ "/proj/obj/AssemblyInfo.cs", "// v1" ]
-          Resources = []
-          Properties = Map.empty }
+          Evaluation = { Project = "/proj/Sample.csproj"; ProjectRefs = []; Imports = []; Sdk = "8.0.100"; SdkPin = None; Properties = Map.empty }
+          Compilation = { compilation with Directory = "/proj"; Generated = [ "/proj/obj/AssemblyInfo.cs", "// v1" ] }
+          Dependencies =
+            { Compiler = { Tool = "csc"; Path = "/sdk/csc.dll"; Sha256 = ""; Version = "4.11.0" }
+              References = references |> List.map (fun r -> { r with Sha256 = "hash-a" })
+              Analyzers = analyzers
+              Packages = [ { Id = "Foo.Bar"; Version = "1.2.3"; Sha512 = "AAAA"; Direct = true; DependsOn = [] } ] } }
 
     [<Test>]
     member x.``rehash fills hashes for files that exist, leaves missing ones empty``() =
@@ -36,42 +34,71 @@ type ``Lock rehash and diff``() =
             File.WriteAllText (existing, "hello")
             let missing = Path.Combine (dir, "missing.dll")
 
-            let project =
-                { sampleProject () with
-                    References = [ { Path = existing; Sha256 = "" } ]
-                    Analyzers = [ { Path = missing; Sha256 = "" } ]
-                    Imports = [ { Path = existing; Sha256 = "" } ]
-                    Compiler = { Tool = "csc"; Path = existing; Sha256 = ""; Sdk = "8.0.100" } }
+            let entry =
+                { sampleEntry () with
+                    Evaluation = { (sampleEntry ()).Evaluation with Imports = [ { Path = existing; Sha256 = "" } ] }
+                    Dependencies =
+                        { References = [ { Path = existing; Sha256 = ""; Alias = "" } ]
+                          Analyzers = [ { Path = missing; Sha256 = "" } ]
+                          Compiler = { Tool = "csc"; Path = existing; Sha256 = ""; Version = "" }
+                          Packages = [] } }
 
-            let rehashed = Lock.rehash project
+            let rehashed = Lock.rehash entry
 
-            Assert.That(rehashed.References.[0].Sha256, Is.EqualTo (Lock.sha256 existing))
-            Assert.That(rehashed.References.[0].Sha256, Is.Not.Empty)
-            Assert.That(rehashed.Analyzers.[0].Sha256, Is.EqualTo "")
-            Assert.That(rehashed.Imports.[0].Sha256, Is.EqualTo (Lock.sha256 existing))
-            Assert.That(rehashed.Compiler.Sha256, Is.EqualTo (Lock.sha256 existing))
+            Assert.That(rehashed.Dependencies.References.[0].Sha256, Is.EqualTo (Lock.sha256 existing))
+            Assert.That(rehashed.Dependencies.References.[0].Sha256, Is.Not.Empty)
+            Assert.That(rehashed.Dependencies.Analyzers.[0].Sha256, Is.EqualTo "")
+            Assert.That(rehashed.Evaluation.Imports.[0].Sha256, Is.EqualTo (Lock.sha256 existing))
+            Assert.That(rehashed.Dependencies.Compiler.Sha256, Is.EqualTo (Lock.sha256 existing))
         finally
             Directory.Delete (dir, true)
 
     [<Test>]
     member x.``diff of a lock against itself is empty``() =
-        let project = sampleProject ()
-        Assert.That(Lock.diff project project, Is.Empty)
+        let entry = sampleEntry ()
+        Assert.That(Lock.diff entry entry, Is.Empty)
 
     [<Test>]
-    member x.``diff reports a changed arg, a changed reference hash, and a changed generated file``() =
-        let a = sampleProject ()
+    member x.``diff reports a changed source, a changed define, a changed reference hash, and a changed generated file``() =
+        let a = sampleEntry ()
         let b =
             { a with
-                Args = [ "/target:library"; "/out:/proj/obj/Sample.dll"; "B.cs" ]
-                References = [ { Path = "/pkgs/a.dll"; Sha256 = "hash-b" } ]
-                Generated = [ "/proj/obj/AssemblyInfo.cs", "// v2" ] }
+                Compilation =
+                    { a.Compilation with
+                        Sources = [ "B.cs" ]
+                        Defines = [ "DEBUG" ]
+                        Generated = [ "/proj/obj/AssemblyInfo.cs", "// v2" ] }
+                Dependencies =
+                    { a.Dependencies with
+                        References = [ { Path = "/pkgs/a.dll"; Sha256 = "hash-b"; Alias = "" } ]
+                        Compiler = { a.Dependencies.Compiler with Version = "4.12.0" } } }
 
         let lines = Lock.diff a b
 
-        Assert.That(List.length lines, Is.EqualTo 4)
         Assert.That(lines, Is.EqualTo [
             "- A.cs"
             "+ B.cs"
+            "- Define TRACE"
+            "+ Define DEBUG"
+            "~ Compiler.Version: 4.11.0 -> 4.12.0"
             "~ Reference /pkgs/a.dll: hash-a -> hash-b"
             "~ Generated /proj/obj/AssemblyInfo.cs: content changed" ])
+
+    [<Test>]
+    member x.``diff reports packages added, removed, upgraded, and re-hashed``() =
+        let a = sampleEntry ()
+        let packagesA : Lock.Package list =
+            [ { Id = "Foo.Bar"; Version = "1.2.3"; Sha512 = "AAAA"; Direct = true; DependsOn = [] }
+              { Id = "Gone"; Version = "1.0.0"; Sha512 = ""; Direct = false; DependsOn = [] }
+              { Id = "Same"; Version = "2.0.0"; Sha512 = "S1"; Direct = false; DependsOn = [] } ]
+        let packagesB : Lock.Package list =
+            [ { Id = "Foo.Bar"; Version = "1.3.0"; Sha512 = "BBBB"; Direct = true; DependsOn = [] }
+              { Id = "New"; Version = "0.1.0"; Sha512 = ""; Direct = false; DependsOn = [] }
+              { Id = "Same"; Version = "2.0.0"; Sha512 = "S2"; Direct = false; DependsOn = [] } ]
+        let withPackages ps = { a with Dependencies = { a.Dependencies with Packages = ps } }
+
+        Assert.That(Lock.diff (withPackages packagesA) (withPackages packagesB), Is.EqualTo [
+            "~ Package Foo.Bar: 1.2.3 -> 1.3.0"
+            "- Package Gone@1.0.0"
+            "+ Package New@0.1.0"
+            "~ Package Same@2.0.0: sha512 changed" ])

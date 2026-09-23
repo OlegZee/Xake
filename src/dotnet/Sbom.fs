@@ -7,8 +7,8 @@ open System.Text
 
 open Xake
 
-/// Turns what the engine already knows about a compile -- the restore graph (`Nuget`) and the
-/// exact files the compiler was handed (`Lock.Project`) -- into a CycloneDX bill of materials.
+/// Turns what the lock already knows about a compile -- the restore graph (`Lock.Package`) and
+/// the exact files the compiler was handed (`Lock.Entry`) -- into a CycloneDX bill of materials.
 /// Pure: no file writes, no network, nothing but the data it is given plus reading the assembly
 /// file itself to hash it. `Sbom` is the "what did we ship and what is it made of" half of
 /// brief.md's hermetic-build pitch (docs/features/hermetic-build/brief.md §8e, §11): NuGet
@@ -192,34 +192,41 @@ module Sbom =
 
     /// The bill of materials for one compiled assembly: `Root` is the assembly itself.
     ///
-    /// **Every package in the restore graph (`assets.Packages`) is a component** -- not just
-    /// the ones a compiled reference happens to be attributed to -- because a scanner wants the
-    /// graph, not just what got linked (brief.md §8e). `id`/`version` keep `project.assets.json`'s
-    /// own casing for the `bom-ref`/`purl`; `Nuget.readCache`/`Nuget.packageOf` are matched
-    /// case-insensitively against it (the cache's directory names are always lowercase). Scope:
+    /// **Every package in the lock's restore graph (`entry.Dependencies.Packages`) is a
+    /// component** -- not just the ones a compiled reference happens to be attributed to --
+    /// because a scanner wants the graph, not just what got linked (brief.md §8e). `Id`/`Version`
+    /// keep `project.assets.json`'s own casing for the `bom-ref`/`purl`; `Nuget.readCache`/
+    /// `Nuget.packageOf` are matched case-insensitively against it (the cache's directory names
+    /// are always lowercase). Scope:
     /// - a package with at least one referenced file (`Nuget.packageOf` attributes it): `excluded`
     ///   when every referenced file is under its `ref/` folder (a compile-time facade),
     ///   `required` when any is under `lib/` (or anywhere else that is not `ref/`) -- nested
     ///   `file` components carry those referenced dlls with their sha256 from the lock.
     /// - a package with **no** referenced file: `required`, with no nested files, when it is
-    ///   reachable from a direct dependency (`assets.Direct`) by following `assets.Graph` edges
+    ///   reachable from a direct dependency (`Package.Direct`) by following `DependsOn` edges
     ///   and `Nuget.ships` finds `lib/` or `runtimes/` content in the cache for it (a
     ///   runtime-only package that ships without ever being `/reference`d); `excluded` otherwise
     ///   (unreachable, or nothing in the cache that ships -- e.g. a pure reference-assembly pack
     ///   like `Microsoft.NETFramework.ReferenceAssemblies.*`).
     ///
-    /// References outside the cache entirely (a project reference, an SDK reference pack under
-    /// `$(DotnetRoot)`) become top-level `file` components, `scope: "required"`, hash omitted
-    /// when the lock has none (a project reference not yet built). `Dependencies` has the root
-    /// depending on every *direct*, *required* package, plus every package-to-package edge from
-    /// `assets.Graph` whose two ends are both packages in this BOM. `Formulation` records what
-    /// compiled it but did not ship: the analyzers, `csc` and the SDK, all `scope: "excluded"`.
-    let forAssembly (cacheRoot: string) (assets: Nuget.Assets) (lock: Lock.Project) (assemblyPath: string) : Bom =
-        let refsWithPackage = lock.References |> List.map (fun r -> r, Nuget.packageOf cacheRoot r.Path)
+    /// The package hash is the lock's own `Sha512` (recorded at import from `.nupkg.metadata`);
+    /// supplier and license still come from the cache's nuspec (`Nuget.readCache`), the lock
+    /// does not carry them. References outside the cache entirely (a project reference, an SDK
+    /// reference pack under `$(DotnetRoot)`) become top-level `file` components, `scope:
+    /// "required"`, hash omitted when the lock has none (a project reference not yet built).
+    /// `Dependencies` has the root depending on every *direct*, *required* package, plus every
+    /// package-to-package edge from `DependsOn` whose two ends are both packages in this BOM
+    /// (a dependency's version is resolved by id within the same graph). `Formulation` records
+    /// what compiled it but did not ship: the analyzers, `csc` (its own `Compiler.Version`) and
+    /// the SDK (`Evaluation.Sdk`), all `scope: "excluded"`.
+    let forAssembly (cacheRoot: string) (entry: Lock.Entry) (assemblyPath: string) : Bom =
+        let packages = entry.Dependencies.Packages
+        let references = entry.Dependencies.References |> List.map (fun r -> { Lock.Path = r.Path; Lock.Sha256 = r.Sha256 })
+        let refsWithPackage = references |> List.map (fun r -> r, Nuget.packageOf cacheRoot r.Path)
         let nonPackageRefs = refsWithPackage |> List.choose (fun (r, pkg) -> if pkg.IsNone then Some r else None)
 
         // referenced files, grouped by the (id, version) key `packageOf` found for them --
-        // case-insensitive, so it lines up with `assets.Packages`'s own-cased entries below.
+        // case-insensitive, so it lines up with the lock's own-cased package entries below.
         let refsByKey =
             refsWithPackage
             |> List.choose (fun (r, pkg) -> pkg |> Option.map (fun (id, version) -> keyOf id version, r))
@@ -227,16 +234,17 @@ module Sbom =
             |> List.map (fun (k, items) -> k, items |> List.map snd)
             |> Map.ofList
 
+        // a dependency names an id only; its version is whatever the same graph resolved
+        let versionOf (id: string) =
+            packages |> List.tryPick (fun p -> if String.Equals (p.Id, id, StringComparison.OrdinalIgnoreCase) then Some p.Version else None)
+        let graphEdgesByKey =
+            packages |> List.collect (fun p ->
+                p.DependsOn |> List.choose (fun depId ->
+                    versionOf depId |> Option.map (fun v -> keyOf p.Id p.Version, keyOf depId v)))
+        let directKeys =
+            packages |> List.filter (fun p -> p.Direct) |> List.map (fun p -> keyOf p.Id p.Version) |> Set.ofList
         // reachability from a direct dependency, following the restore graph -- for the
         // "no referenced file" packages, where evidence alone cannot tell required from excluded.
-        let graphEdgesByKey =
-            assets.Graph |> List.map (fun ((fromId, fromVer), (toId, toVer)) -> keyOf fromId fromVer, keyOf toId toVer)
-        let directSet = assets.Direct |> List.map (fun s -> s.ToLowerInvariant ()) |> Set.ofList
-        let directKeys =
-            assets.Packages
-            |> List.filter (fun (id, _) -> directSet.Contains (id.ToLowerInvariant ()))
-            |> List.map (fun (id, version) -> keyOf id version)
-            |> Set.ofList
         let reachable =
             let rec bfs (frontier: Set<string * string>) (visited: Set<string * string>) =
                 if Set.isEmpty frontier then visited else
@@ -247,27 +255,29 @@ module Sbom =
                 bfs next (Set.union visited next)
             bfs directKeys directKeys
 
+        let purlOf (p: Lock.Package) = sprintf "pkg:nuget/%s@%s" p.Id p.Version
+
         let packageComponents =
-            assets.Packages
-            |> List.map (fun (id, version) ->
-                let key = keyOf id version
+            packages
+            |> List.map (fun p ->
+                let key = keyOf p.Id p.Version
                 let refs = refsByKey |> Map.tryFind key |> Option.defaultValue []
-                let pkg = Nuget.readCache cacheRoot id version
-                let purl = sprintf "pkg:nuget/%s@%s" id version
+                let cached = Nuget.readCache cacheRoot p.Id p.Version
+                let purl = purlOf p
                 let scope =
                     if not refs.IsEmpty then
                         if refs |> List.forall (fun r -> underRefFolder r.Path) then "excluded" else "required"
-                    elif reachable.Contains key && Nuget.ships cacheRoot id version then "required"
+                    elif reachable.Contains key && Nuget.ships cacheRoot p.Id p.Version then "required"
                     else "excluded"
                 let hashes =
-                    match base64ToHex pkg.Sha512 with
+                    match base64ToHex p.Sha512 with
                     | "" -> []
                     | hex -> [ { Alg = "SHA-512"; Content = hex } ]
                 let files =
                     refs |> List.filter (fun r -> r.Sha256 <> "")
                     |> List.map (fileComponent "") |> List.sortBy (fun f -> f.Name)
-                { Type = "library"; BomRef = purl; Name = id; Version = version
-                  Supplier = pkg.Supplier; Purl = purl; Hashes = hashes; License = pkg.License
+                { Type = "library"; BomRef = purl; Name = p.Id; Version = p.Version
+                  Supplier = cached.Supplier; Purl = purl; Hashes = hashes; License = cached.License
                   Scope = scope; Components = files })
 
         let nonPackageComponents = nonPackageRefs |> List.map (fileComponent "required")
@@ -278,33 +288,29 @@ module Sbom =
             | h -> [ { Alg = "SHA-256"; Content = h } ]
         let version =
             [ "Version"; "InformationalVersion" ]
-            |> List.tryPick (fun k -> lock.Properties |> Map.tryFind k |> Option.filter ((<>) ""))
+            |> List.tryPick (fun k -> entry.Evaluation.Properties |> Map.tryFind k |> Option.filter ((<>) ""))
             |> Option.defaultValue ""
-        let rootBomRef = "asm:" + lock.Name
+        let rootBomRef = "asm:" + entry.Name
         let root =
-            { Type = "library"; BomRef = rootBomRef; Name = lock.Name; Version = version
+            { Type = "library"; BomRef = rootBomRef; Name = entry.Name; Version = version
               Supplier = ""; Purl = ""; Hashes = rootHash; License = ""; Scope = ""; Components = [] }
 
-        // (id, version), case-insensitive -> the package's own bom-ref (== its purl, with
-        // `assets.Packages`'s own casing), so the restore graph's edges line up regardless of
-        // what case each side happens to spell the id in.
-        let refMap =
-            assets.Packages
-            |> List.map (fun (id, version) -> keyOf id version, sprintf "pkg:nuget/%s@%s" id version)
-            |> Map.ofList
-        let scopeOf =
-            packageComponents |> List.map (fun c -> c.BomRef, c.Scope) |> Map.ofList
+        // (id, version), case-insensitive -> the package's own bom-ref (== its purl, with the
+        // lock's own casing), so the graph's edges line up regardless of what case each side
+        // happens to spell the id in.
+        let refMap = packages |> List.map (fun p -> keyOf p.Id p.Version, purlOf p) |> Map.ofList
+        let scopeOf = packageComponents |> List.map (fun c -> c.BomRef, c.Scope) |> Map.ofList
 
         let rootDeps =
-            assets.Packages
-            |> List.choose (fun (id, version) ->
-                let bomRef = refMap.[keyOf id version]
-                if scopeOf.[bomRef] = "required" && directSet.Contains (id.ToLowerInvariant ()) then Some bomRef else None)
+            packages
+            |> List.choose (fun p ->
+                let bomRef = refMap.[keyOf p.Id p.Version]
+                if scopeOf.[bomRef] = "required" && p.Direct then Some bomRef else None)
 
         let graphEdges =
-            assets.Graph
-            |> List.choose (fun ((fromId, fromVer), (toId, toVer)) ->
-                match Map.tryFind (keyOf fromId fromVer) refMap, Map.tryFind (keyOf toId toVer) refMap with
+            graphEdgesByKey
+            |> List.choose (fun (f, t) ->
+                match Map.tryFind f refMap, Map.tryFind t refMap with
                 | Some f, Some t -> Some (f, t)
                 | _ -> None)
 
@@ -312,15 +318,16 @@ module Sbom =
             (rootBomRef, rootDeps)
             :: (graphEdges |> List.groupBy fst |> List.map (fun (f, edges) -> f, edges |> List.map snd))
 
+        let compiler = entry.Dependencies.Compiler
         let analyzerComponents =
-            lock.Analyzers |> List.map (fileComponent "excluded")
+            entry.Dependencies.Analyzers |> List.map (fileComponent "excluded")
         let compilerComponent =
-            { Type = "application"; BomRef = "tool:csc"; Name = "csc"; Version = lock.Compiler.Sdk
+            { Type = "application"; BomRef = "tool:csc"; Name = "csc"; Version = compiler.Version
               Supplier = ""; Purl = ""
-              Hashes = (if lock.Compiler.Sha256 = "" then [] else [ { Alg = "SHA-256"; Content = lock.Compiler.Sha256 } ])
+              Hashes = (if compiler.Sha256 = "" then [] else [ { Alg = "SHA-256"; Content = compiler.Sha256 } ])
               License = ""; Scope = "excluded"; Components = [] }
         let sdkComponent =
-            { Type = "application"; BomRef = "tool:dotnet-sdk"; Name = ".NET SDK"; Version = lock.Compiler.Sdk
+            { Type = "application"; BomRef = "tool:dotnet-sdk"; Name = ".NET SDK"; Version = entry.Evaluation.Sdk
               Supplier = ""; Purl = ""; Hashes = []; License = ""; Scope = "excluded"; Components = [] }
 
         { Root = root

@@ -56,14 +56,31 @@ module Nuget =
         | -1 -> key, ""
         | i -> key.Substring (0, i), key.Substring (i + 1)
 
-    /// Picks the `targets` entry for `framework`: the key is either the framework alias alone
-    /// (no rid), or the alias followed by "/<rid>" -- so "starts with the framework and has no
-    /// rid" means the key equals the alias exactly. Falls back to any key that merely starts
-    /// with the alias, in case a restore ever wrote something else there.
+    /// The full framework name NuGet writes as a `targets` key when a project has a single
+    /// `TargetFramework` (a multi-target project's keys are the aliases): `netstandard2.0` ->
+    /// `.NETStandard,Version=v2.0`, `net472` -> `.NETFramework,Version=v4.7.2`, `netcoreapp3.1`
+    /// -> `.NETCoreApp,Version=v3.1`; `net5.0` and later are their own full name. Anything else
+    /// is returned unchanged.
+    let internal frameworkFullName (alias: string) =
+        let a = alias.ToLowerInvariant ()
+        let dotted (digits: string) =
+            if digits.Contains "." then digits else digits |> Seq.map string |> String.concat "."
+        let version (prefix: string) = a.Substring prefix.Length |> fun v -> (match v.IndexOf '-' with | -1 -> v | i -> v.Substring (0, i))
+        if a.StartsWith "netstandard" then sprintf ".NETStandard,Version=v%s" (version "netstandard")
+        elif a.StartsWith "netcoreapp" then sprintf ".NETCoreApp,Version=v%s" (version "netcoreapp")
+        elif System.Text.RegularExpressions.Regex.IsMatch (a, @"^net[1-4]\d*$") then sprintf ".NETFramework,Version=v%s" (dotted (a.Substring 3))
+        else alias
+
+    /// Picks the `targets` entry for `framework`: the key is the framework alone (no rid) or
+    /// the framework followed by "/<rid>" (a self-contained publish, not the compile). The key
+    /// is the alias for a multi-target project and the full framework name
+    /// (`frameworkFullName`) for a single-target one -- both are tried, exact first; then a key
+    /// merely starting with either, in case a restore ever wrote something else there.
     let private selectTarget (framework: string) (targets: (string * Json.Value) list) =
-        targets
-        |> List.tryFind (fun (key, _) -> System.String.Equals (key, framework, ic))
-        |> Option.orElseWith (fun () -> targets |> List.tryFind (fun (key, _) -> key.StartsWith (framework, ic)))
+        let candidates = [ framework; frameworkFullName framework ] |> List.distinct
+        candidates |> List.tryPick (fun name -> targets |> List.tryFind (fun (key, _) -> System.String.Equals (key, name, ic)))
+        |> Option.orElseWith (fun () ->
+            candidates |> List.tryPick (fun name -> targets |> List.tryFind (fun (key, _) -> key.StartsWith (name, ic))))
 
     /// Reads `project.assets.json` and builds the restore graph for one target framework.
     let readAssets (assetsFile: string) (framework: string) : Assets =

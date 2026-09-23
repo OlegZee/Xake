@@ -214,13 +214,15 @@ Now, cheap, before more code depends on it (1-5 all **done**, stages A1/A2, 2026
 5. **Done**: the gate semantics are stated in `csc-syntax.md` -- the lock fails builds, the
    engine triggers them.
 
-With the planned lock split:
+With the lock split (Stage B, **done** 2026-09-24, commits aa5ddc8/94f8087):
 
-6. Three sections (evaluation, compilation, dependencies); `Args` built from the dependency
-   entries, not duplicating their paths; `Compiler.Version` distinct from the SDK; `SdkPin`
-   typed (2.1, 2.7).
-7. Rename `Lock.Project`/`Lock.File` (2.7) in the same change -- one migration of the fixtures.
-8. Decide then whether `Generated` and `.resources` become targets via a rule factory (2.3);
+6. **Done**: three sections (`Evaluation`, `Compilation`, `Dependencies`); `Args` is a member
+   rebuilt from `Compilation.Options` (with section markers) and the dependency entries, no
+   path stored twice; `Compiler.Version` distinct from `Evaluation.Sdk`; `SdkPin` typed (2.1,
+   2.7). The import verifies the rebuilt command line equals msbuild's.
+7. **Done**: `Lock.Project` -> `Lock.Entry`, `Lock.File` -> `Lock.Document`, `Lock.project` ->
+   `Lock.entry` (2.7), fixtures migrated in the same change.
+8. Open: whether `Generated` and `.resources` become targets via a rule factory (2.3);
    yes if anything besides the one csc call will consume them.
 
 Leave:

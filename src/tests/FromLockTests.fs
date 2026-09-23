@@ -109,8 +109,8 @@ type ``Csc fromlock``() =
 
         // exercises the restore path for real, without touching the user's own NuGet cache:
         // point NUGET_PACKAGES at a scratch directory for the duration of this test.
-        // `Fsproj.roots ()` and `DotNetFwk.sdkImpl.nugetRoot ()` both read it directly (see
-        // Fsproj.fs / DotNetFwk.fs), and `restorePackage` shells out to `dotnet restore`, which
+        // `Roots.nugetRoot ()` (and `DotNetFwk.sdkImpl.nugetRoot ()`, which it delegates to)
+        // reads it directly, and `restorePackage` shells out to `dotnet restore`, which
         // inherits it like any other environment variable -- confirmed against this package
         // before writing the test.
         let originalNugetPackages = System.Environment.GetEnvironmentVariable "NUGET_PACKAGES"
@@ -273,7 +273,8 @@ type ``Csc fromlock``() =
         Assert.That(rehashed.References |> List.forall (fun r -> r.Sha256 <> ""), Is.True)
 
         let lockFile : Lock.File = { Framework = "netstandard2.0"; Configuration = ""; Properties = []; Projects = [rehashed] }
-        let roundtripped = Lock.write lockFile |> Lock.parse
+        let roots = Roots.builtin (Directory.GetCurrentDirectory())
+        let roundtripped = Lock.writeWith roots lockFile |> Lock.parseWith roots
         let readBack = Lock.project rehashed.Name roundtripped
 
         Assert.That(readBack.Args, Is.EqualTo rehashed.Args)

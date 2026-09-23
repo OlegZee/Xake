@@ -124,7 +124,7 @@ do xakeScript {
             let! name = getRuleMatch "lib"
 
             do! need [evaluated name framework]
-            let project = Fsproj.parse (evaluated name framework)
+            let! project = Fsproj.load (evaluated name framework)
 
             // msbuild points a project reference at that project's own bin/; this build has
             // its own layout, so those references are swapped for the artifacts it produces.

@@ -55,6 +55,14 @@ brief §8c) -- or start the lock split once decided. Fixture as before:
 source ~/set-secrets.sh` (never print it). Xake stays referenced via `#r` on `.bootstrap/` — no
 release.
 
+### What landed (2026-09-24): stage A1 -- helpers out of `Fsproj`, project root from the engine
+
+- `src/dotnet/Json.fs` (`module internal Json`) and `src/dotnet/Roots.fs` (`Roots.nugetRoot`/
+  `dotnetRoot`/`builtinTokens`/`builtin`/`withExtra`/`tokenize`/`tokenizeAll`/`expand`, plus the
+  recipes `current`/`currentWith`) compile before `Fsproj.fs`; `$(ProjectRoot)` now comes from
+  `ExecOptions.ProjectRoot`, so `Lock.load`/`loadWith`/`save`/`saveWith` and `Fsproj.load`
+  replace the cwd-based `Lock.read`/`write`/`parse` and `Fsproj.roots`/`withRoots`/`write`/`parse`.
+
 ### What landed (2026-09-23, night): page with `LocalBuild=true`, extra roots
 
 - **Extra roots, explicit**: `ImportOptions.Roots` (token → absolute path) and

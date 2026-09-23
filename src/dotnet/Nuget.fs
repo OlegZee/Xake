@@ -60,24 +60,24 @@ module Nuget =
     /// (no rid), or the alias followed by "/<rid>" -- so "starts with the framework and has no
     /// rid" means the key equals the alias exactly. Falls back to any key that merely starts
     /// with the alias, in case a restore ever wrote something else there.
-    let private selectTarget (framework: string) (targets: (string * Fsproj.Json.Value) list) =
+    let private selectTarget (framework: string) (targets: (string * Json.Value) list) =
         targets
         |> List.tryFind (fun (key, _) -> System.String.Equals (key, framework, ic))
         |> Option.orElseWith (fun () -> targets |> List.tryFind (fun (key, _) -> key.StartsWith (framework, ic)))
 
     /// Reads `project.assets.json` and builds the restore graph for one target framework.
     let readAssets (assetsFile: string) (framework: string) : Assets =
-        let root = File.ReadAllText assetsFile |> Fsproj.Json.parse
+        let root = File.ReadAllText assetsFile |> Json.parse
 
         let targets =
-            Fsproj.Json.field "targets" root
+            Json.field "targets" root
             |> function
-                | Some (Fsproj.Json.JObject members) -> members
+                | Some (Json.JObject members) -> members
                 | _ -> []
 
         let entries =
             match selectTarget framework targets with
-            | Some (_, Fsproj.Json.JObject members) -> members
+            | Some (_, Json.JObject members) -> members
             | _ -> []
 
         // id -> version, for resolving a dependency's version range to what was actually
@@ -92,12 +92,12 @@ module Nuget =
             |> List.tryPick (fun (id, version) -> if System.String.Equals (id, depId, ic) then Some version else None)
             |> Option.defaultValue ""
 
-        let isProject entry = Fsproj.Json.field "type" entry |> Option.bind Fsproj.Json.asString = Some "project"
+        let isProject entry = Json.field "type" entry |> Option.bind Json.asString = Some "project"
 
         let dependenciesOf entry =
-            Fsproj.Json.field "dependencies" entry
+            Json.field "dependencies" entry
             |> function
-                | Some (Fsproj.Json.JObject members) -> members |> List.map fst
+                | Some (Json.JObject members) -> members |> List.map fst
                 | _ -> []
 
         let packages =
@@ -111,17 +111,17 @@ module Nuget =
                 dependenciesOf entry |> List.map (fun depId -> self, (depId, resolveVersion depId)))
 
         let direct =
-            Fsproj.Json.field "project" root
-            |> Option.bind (Fsproj.Json.field "frameworks")
+            Json.field "project" root
+            |> Option.bind (Json.field "frameworks")
             |> function
-                | Some (Fsproj.Json.JObject frameworks) ->
+                | Some (Json.JObject frameworks) ->
                     frameworks
                     |> List.tryFind (fun (alias, _) -> System.String.Equals (alias, framework, ic))
                     |> Option.map snd
                 | _ -> None
-            |> Option.bind (Fsproj.Json.field "dependencies")
+            |> Option.bind (Json.field "dependencies")
             |> function
-                | Some (Fsproj.Json.JObject members) -> members |> List.map fst
+                | Some (Json.JObject members) -> members |> List.map fst
                 | _ -> []
 
         { Packages = packages; Graph = graph; Direct = direct; Framework = framework }
@@ -153,9 +153,9 @@ module Nuget =
         let metadataFile = dir </> ".nupkg.metadata"
         let sha512, source =
             if not (File.Exists metadataFile) then "", "" else
-            let root = File.ReadAllText metadataFile |> Fsproj.Json.parse
-            (Fsproj.Json.field "contentHash" root |> Option.bind Fsproj.Json.asString |> Option.defaultValue ""),
-            (Fsproj.Json.field "source" root |> Option.bind Fsproj.Json.asString |> Option.defaultValue "")
+            let root = File.ReadAllText metadataFile |> Json.parse
+            (Json.field "contentHash" root |> Option.bind Json.asString |> Option.defaultValue ""),
+            (Json.field "source" root |> Option.bind Json.asString |> Option.defaultValue "")
 
         let nuspecFile = dir </> (id.ToLowerInvariant () + ".nuspec")
         let supplier, license, repository, commit =

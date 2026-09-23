@@ -258,3 +258,84 @@ module Verify =
                     (List.length diffs) (formatThousands totalBytes) (formatThousands largest.Length) largest.Offset largest.Field
             else
                 sprintf "identical except: %s, %s bytes" (String.concat ", " fields) (formatThousands totalBytes)
+
+    /// The RFC's acceptance checks for a package-scope SBOM (nuget-sbom.md "Package scope",
+    /// tracker "acceptance checks 3.1-3.4"), run against the nupkg the document describes.
+    /// Returns one line per finding; `[]` means the document passes. Mechanical diffs only --
+    /// nupkg <-> SBOM <-> nuspec -- no policy:
+    /// - 3.1 every component traces to something: each of the root's nested components names
+    ///   a file shipped for the TFM (`xake:nuget:path`) whose bytes hash to the recorded
+    ///   SHA-256/SHA-512; each top-level component is a nuspec dependency of that TFM's group
+    /// - 3.2 every shipped assembly and native (`Sbom.isBinaryPath`) has a nested component
+    ///   with both hashes
+    /// - 3.3 tier-2 names and `dt:nuget:declaredVersionRange` equal the nuspec text (ordinal),
+    ///   and every declared dependency the rule keeps (`Sbom.isToolingId` drops tooling) is present
+    /// - 3.4 the boundary is declared: a `complete` composition over `assemblies` naming the
+    ///   root, an `incomplete` one over `dependencies` naming it, an annotation with the root as
+    ///   subject; `dependencies[]` has no entry whose `ref` is a tier-2 component, and every
+    ///   `ref`/`dependsOn` names a component the document has
+    let sbomPackageScope (nupkgPath: string) (framework: string) (bom: Sbom.Bom) : string list =
+        let entries = Sbom.nupkgEntries nupkgPath
+        let nuspec = Sbom.nuspecOfEntries entries
+        let shipped = Sbom.shippedPaths framework entries
+        let bytesOf = entries |> Map.ofList
+        let hex (algo: HashAlgorithm) (bytes: byte[]) = algo.ComputeHash bytes |> Array.map (sprintf "%02x") |> String.concat ""
+        let pathOf (c: Sbom.Component) =
+            c.Properties |> List.tryPick (fun p -> if p.Name = "xake:nuget:path" then Some p.Value else None)
+        let findings = ResizeArray<string> ()
+        let fail (check: string) (message: string) = findings.Add (sprintf "%s: %s" check message)
+
+        // 3.1 tier 1 traces to shipped bytes
+        for c in bom.Root.Components do
+            match pathOf c with
+            | None -> fail "3.1" (sprintf "component '%s' names no shipped file" c.BomRef)
+            | Some path when not (List.contains path shipped) -> fail "3.1" (sprintf "component '%s' names '%s', which is not shipped for %s" c.BomRef path framework)
+            | Some path ->
+                let bytes = bytesOf.[path]
+                let expect alg (algo: unit -> HashAlgorithm) =
+                    match c.Hashes |> List.tryFind (fun h -> h.Alg = alg) with
+                    | None -> fail "3.1" (sprintf "'%s' has no %s hash" path alg)
+                    | Some h ->
+                        use a = algo ()
+                        if h.Content <> hex a bytes then fail "3.1" (sprintf "'%s' %s does not match the shipped bytes" path alg)
+                expect "SHA-256" (fun () -> SHA256.Create () :> HashAlgorithm)
+                expect "SHA-512" (fun () -> SHA512.Create () :> HashAlgorithm)
+
+        // 3.1 / 3.3 tier 2 traces to the nuspec, textually
+        let declared = Nuget.nuspecDependenciesFor framework nuspec |> List.filter (fun d -> not (Sbom.isToolingId d.Id))
+        for c in bom.Components do
+            match declared |> List.tryFind (fun d -> d.Id = c.Name) with
+            | None -> fail "3.1" (sprintf "component '%s' is not a nuspec dependency of %s" c.BomRef framework)
+            | Some d ->
+                match c.Properties |> List.tryPick (fun p -> if p.Name = "dt:nuget:declaredVersionRange" then Some p.Value else None) with
+                | Some range when range = d.Range -> ()
+                | Some range -> fail "3.3" (sprintf "'%s' declares range '%s', the nuspec says '%s'" c.Name range d.Range)
+                | None -> fail "3.3" (sprintf "'%s' carries no dt:nuget:declaredVersionRange" c.Name)
+        for d in declared do
+            if not (bom.Components |> List.exists (fun c -> c.Name = d.Id)) then
+                fail "3.3" (sprintf "nuspec dependency '%s' has no component" d.Id)
+
+        // 3.2 every shipped binary has a hashed component
+        for path in shipped |> List.filter Sbom.isBinaryPath do
+            match bom.Root.Components |> List.tryFind (fun c -> pathOf c = Some path) with
+            | None -> fail "3.2" (sprintf "shipped binary '%s' has no component" path)
+            | Some c when c.Hashes |> List.exists (fun h -> h.Alg = "SHA-256") |> not -> fail "3.2" (sprintf "shipped binary '%s' has no SHA-256" path)
+            | Some _ -> ()
+
+        // 3.4 the boundary
+        let rootRef = bom.Root.BomRef
+        if not (bom.Compositions |> List.exists (fun c -> c.Aggregate = "complete" && List.contains rootRef c.Assemblies)) then
+            fail "3.4" "no 'complete' composition over assemblies naming the root"
+        if not (bom.Compositions |> List.exists (fun c -> c.Aggregate = "incomplete" && List.contains rootRef c.Dependencies)) then
+            fail "3.4" "no 'incomplete' composition over dependencies naming the root"
+        if not (bom.Annotations |> List.exists (fun a -> List.contains rootRef a.Subjects && a.Text <> "")) then
+            fail "3.4" "no boundary annotation on the root"
+        let tier2Refs = bom.Components |> List.map (fun c -> c.BomRef) |> Set.ofList
+        let known = Set.union tier2Refs (bom.Root.Components |> List.map (fun c -> c.BomRef) |> Set.ofList) |> Set.add rootRef
+        for (r, dependsOn) in bom.Dependencies do
+            if tier2Refs.Contains r then fail "3.4" (sprintf "dependencies[] carries tier-2 component '%s' as a ref" r)
+            elif not (known.Contains r) then fail "3.4" (sprintf "dependencies[] ref '%s' is not a component of this document" r)
+            for d in dependsOn do
+                if not (known.Contains d) then fail "3.4" (sprintf "'%s' dependsOn '%s', which is not a component of this document" r d)
+
+        List.ofSeq findings

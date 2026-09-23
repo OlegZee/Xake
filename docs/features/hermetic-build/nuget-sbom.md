@@ -261,3 +261,56 @@ tracker.md; two things are worth saying about our position:
   hardest input, and we already have half of it.
 - `Pack` already writes the nupkg deterministically and `Pack.entries` reads one back, so the
   physical inventory of step 1 is a file listing we can produce and verify, not a promise.
+
+## `forPackageScoped`: the package-scope document (2026-09-23)
+
+`Sbom.forPackageScoped (nupkgPath: string) (framework: string) (assemblies: Bom list) : Bom`
+implements the principles above -- one document per (package × TFM), what the customer
+receives. `forAssembly` and `forPackage` are unchanged and stay available: the restore-scope
+BOMs are the *evidence* `forPackageScoped` consults (which version a nuspec range resolved to,
+supplier/license/hash of that package, what our assembly directly used), never what it emits.
+
+| BOM field | Source |
+|---|---|
+| `metadata.component` (root) | the nupkg: `bom-ref = "nupkg:<file name>"`, `name`/`version`/`supplier`/`licenses`/`purl` from the nuspec inside it; property `xake:nuget:targetFramework`; **no hash of the nupkg** -- the document is packed *into* it at `Sbom.packageSbomPath tfm` = `sbom/<tfm>/bom.cdx.json`, so the nupkg bytes are not final when it is produced |
+| `metadata.component.components[]` (tier 1) | one per shipped file for the TFM: `lib/<tfm>/**` (satellites included), `runtimes/*/lib/<tfm>/**`, `runtimes/*/native/**`, `contentFiles/*/<tfm>\|any/**`, `analyzers/**`, `build*/[<tfm>/]**`, `tools/**`. `bom-ref = "<root ref>/<path>"`, property `xake:nuget:path`, SHA-256 **and** SHA-512 of the bytes in the zip. `.dll`/`.exe` are `library`, else `file`. A file whose SHA-256 equals an input BOM's root hash is one of ours: it takes that root's `name`/`version`. Not listed: `_rels/`, `[Content_Types].xml`, `package/`, the nuspec, `.signature.p7s`, `sbom/`, root-level icon/readme/license, `.xml` docs, `ref/`, any other TFM's folders |
+| `components[]` (tier 2) | the nuspec `<group>` for the TFM (`Nuget.nuspecDependenciesFor`: alias or `.NETStandard2.0`-style spelling, the ungrouped list as fallback, **never** the nearest-compatible group NuGet would pick): id verbatim, property `dt:nuget:declaredVersionRange` = the range as written, `version`/`purl` from the evidence BOMs' matching package (id, case-insensitive) -- `""`/`pkg:nuget/<id>` when nothing resolved it; supplier, license, package hash from that evidence too. Internal ids (`DS.*`, `MESCIUS.*`, `GrapeCity.*`) stay one line: version and purl, no enrichment. Tooling ids (`CycloneDX.*`, `Microsoft.SourceLink.*`, `Microsoft.NETFramework.ReferenceAssemblies*`) are dropped even if a nuspec lists them |
+| tier 3 | nothing. A package the restore graph carries but the nuspec does not declare -- transitive, SDK pack, analyzer -- does not appear anywhere |
+| `dependencies[]` | root -> its own shipped assemblies + every tier-2 component; each own assembly (matched by hash) -> the tier-2 components its restore-scope BOM had it depend on *directly*, matched by package id. No entry has a tier-2 ref |
+| `compositions[]` | `complete` / `assemblies: [root]`; `incomplete` / `dependencies: [root; own assemblies]` |
+| `annotations[]` | one, subject the root, `Sbom.boundaryAnnotationText`, annotator Xake |
+| `formulation` | none -- compiler, SDK and analyzers are not what the customer receives |
+
+**Determinism, and the one timestamp the schema forces.** CycloneDX 1.6 requires
+`annotations[].timestamp`. It is set the way `Pack` sets zip entry times: `SOURCE_DATE_EPOCH`
+when present, else `1980-01-01T00:00:00Z` (`Sbom.annotationTimestamp`). Everything else is as
+before: no `metadata.timestamp`, content-derived serial, every list sorted by ref -- two calls
+on the same nupkg and evidence render byte-identical.
+
+**Verifier.** `Verify.sbomPackageScope nupkgPath framework bom : string list` runs the RFC's
+acceptance checks 3.1-3.4 mechanically (nupkg <-> SBOM <-> nuspec) and returns one line per
+finding, prefixed by the check number; `[]` is a pass. It shares the inventory rule with the
+producer (`Sbom.shippedPaths`, `Sbom.isBinaryPath`, `Sbom.isToolingId`), so the two cannot
+drift apart -- and it does catch a hand-edited document (`SbomTests`, "catches tampering").
+
+**Flow.** Pack the nupkg (`Pack.nupkg`) -> `forPackageScoped` per TFM -> add each
+`sbom/<tfm>/bom.cdx.json` to the file list and pack again. JSF signing of the document is not
+implemented; a signer wraps the `cycloneDx` string before it is packed.
+
+**Left for a human decision** (the RFC's own §8 and what implementing it surfaced):
+
+- *Formulation.* The RFC's exclusion list names analyzers and SDK packs as *components*; it
+  does not mention `formulation`, which is where our restore-scope document keeps the
+  toolchain. Dropped here by default because check 3.1 ("every component traces to...") reads
+  naturally over the whole document; the positioning in brief.md §8e argues for keeping it.
+- *The annotation timestamp*: DOS epoch vs `SOURCE_DATE_EPOCH` vs the build's real time. A
+  real time costs byte-identity across rebuilds of the same commit.
+- *`dependencies[]` for our own assemblies*: emitted (true, from the lock) -- the RFC allows it
+  but does not require it; a reviewer may prefer the root-only shape.
+- *Nearest-compatible group*: not applied. A nupkg built for `net6.0` with only a
+  `.NETStandard2.0` group gets **no** tier 2 -- correct to the letter ("that TFM group"), and
+  a signal that the nuspec should carry the group.
+- *A declared dependency the evidence never resolved* (`Unresolved.Pkg` in the tests) is kept,
+  purl without a version. Fail instead?
+- *The root's hash*: none, by construction (see the table). If the RFC insists on one, the
+  document has to be produced *after* packing and shipped next to the nupkg, not inside it.

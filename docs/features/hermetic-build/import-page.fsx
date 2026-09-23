@@ -173,6 +173,45 @@ do xakeScript {
             do! compileFromLock fwk brand name
         }
 
+        // the NuGet package cache root -- the same `$(NuGetPackageRoot)` token `Project.import`
+        // and the lock tokenize against (Part 1). Read back out of `Fsproj.withRoots` (public)
+        // rather than the internal `Fsproj.roots ()`.
+        let cacheRoot = allRoots () |> List.find (fun (token, _) -> token = "$(NuGetPackageRoot)") |> snd
+
+        // one CycloneDX SBOM per compiled project (Part 1): needs the lock and the built
+        // assembly (the compile rules above), reads the restore graph from *that project's own*
+        // `obj/project.assets.json` -- the restore that produced it is per project directory,
+        // not per lock -- and joins it with the lock's hashed references via `Sbom.forAssembly`.
+        // `name` is the assembly name, same capture as the compile rule's, so `Lock.project`
+        // finds the entry by `Name` directly.
+        target "out/(fwk:*)/(brand:*)/(name:*).cdx.json" {
+            let! fwk = getRuleMatch "fwk"
+            let! brand = getRuleMatch "brand"
+            let! name = getRuleMatch "name"
+
+            do! need [lockFile fwk brand]
+            let lock = Lock.readWith (allRoots ()) (lockFile fwk brand)
+            let project = Lock.project name lock
+            let output =
+                project.Output
+                |> Option.defaultWith (fun () -> failwithf "project '%s' has no /out: in its lock entry" name)
+
+            do! need [output]
+
+            let assets = Nuget.readAssets (project.Directory </> "obj" </> "project.assets.json") fwk
+            let bom = Sbom.forAssembly cacheRoot assets project output
+            do! writeText (Sbom.cycloneDx bom)
+        }
+
+        // one sbom per lock project per brand, for every framework this script imports
+        command "sbom" {
+            for f in frameworks do
+                for b in brands do
+                    do! need [lockFile f b]
+                    let lock = Lock.readWith (allRoots ()) (lockFile f b)
+                    do! need [ for project in lock.Projects -> $"out/%s{f}/%s{b}/%s{project.Name}.cdx.json" ]
+        }
+
         // compiles every project the locks name, for every framework and brand, in both
         // repositories
         command "build" {

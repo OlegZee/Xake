@@ -1,0 +1,516 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.6",
+  "serialNumber": "urn:uuid:bc7537b3-079c-4148-8268-27d14dba2db9",
+  "version": 1,
+  "metadata": {
+    "timestamp": "2026-09-23T00:20:22Z",
+    "tools": {
+      "components": [
+        {
+          "type": "application",
+          "authors": [
+            {
+              "name": "CycloneDX"
+            }
+          ],
+          "name": "CycloneDX module for .NET",
+          "version": "6.2.0.0",
+          "externalReferences": [
+            {
+              "url": "https://github.com/CycloneDX/cyclonedx-dotnet",
+              "type": "website"
+            }
+          ]
+        }
+      ]
+    },
+    "component": {
+      "type": "application",
+      "bom-ref": "pkg:nuget/MESCIUS.ActiveReports.Core.Rdl@4.6.0",
+      "supplier": {
+        "name": "MESCIUS inc."
+      },
+      "name": "MESCIUS.ActiveReports.Core.Rdl",
+      "version": "4.6.0",
+      "description": "ActiveReports Report Template object model definition",
+      "copyright": "\u00A9\uFE0F MESCIUS inc. All rights reserved.",
+      "purl": "pkg:nuget/MESCIUS.ActiveReports.Core.Rdl@4.6.0"
+    }
+  },
+  "components": [
+    {
+      "type": "library",
+      "bom-ref": "pkg:nuget/Microsoft.Bcl.AsyncInterfaces@8.0.0",
+      "authors": [
+        {
+          "name": "Microsoft"
+        }
+      ],
+      "name": "Microsoft.Bcl.AsyncInterfaces",
+      "version": "8.0.0",
+      "description": "Provides the IAsyncEnumerable\u003CT\u003E and IAsyncDisposable interfaces and helper types for .NET Standard 2.0. This package is not required starting with .NET Standard 2.1 and .NET Core 3.0.\n\nCommonly Used Types:\nSystem.IAsyncDisposable\nSystem.Collections.Generic.IAsyncEnumerable\nSystem.Collections.Generic.IAsyncEnumerator",
+      "scope": "required",
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "79CB0773D94465924CEE4E471D90353D5D8DF842C46AB2C572CB15D9B9FB5D0209A1A88D64392995335C5FE54A00D7C3194440B84C95142711BBB685CB5E9552"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "copyright": "\u00A9 Microsoft Corporation. All rights reserved.",
+      "purl": "pkg:nuget/Microsoft.Bcl.AsyncInterfaces@8.0.0",
+      "externalReferences": [
+        {
+          "url": "https://dot.net/",
+          "type": "website"
+        },
+        {
+          "url": "https://github.com/dotnet/runtime",
+          "type": "vcs"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:nuget/Microsoft.NETCore.Platforms@1.1.0",
+      "authors": [
+        {
+          "name": "Microsoft"
+        }
+      ],
+      "name": "Microsoft.NETCore.Platforms",
+      "version": "1.1.0",
+      "description": "Provides runtime information required to resolve target framework, platform, and runtime specific implementations of .NETCore packages. \nWhen using NuGet 3.x this package requires at least version 3.4.",
+      "scope": "required",
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "6BF892C274596FE2C7164E3D8503B24E187F64D0B7BEC6D9B05EB95F04086FCEB7A85EA6B2685D42DC465C52F6F0E6F636C0B3FDDAC48F6F0125DFD83E92D106"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "name": "Unknown - See URL",
+            "url": "http://go.microsoft.com/fwlink/?LinkId=329770"
+          }
+        }
+      ],
+      "copyright": "\u00A9 Microsoft Corporation.  All rights reserved.",
+      "purl": "pkg:nuget/Microsoft.NETCore.Platforms@1.1.0",
+      "externalReferences": [
+        {
+          "url": "https://dot.net/",
+          "type": "website"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:nuget/Microsoft.NETFramework.ReferenceAssemblies.net472@1.0.3",
+      "authors": [
+        {
+          "name": "Microsoft"
+        }
+      ],
+      "name": "Microsoft.NETFramework.ReferenceAssemblies.net472",
+      "version": "1.0.3",
+      "description": "Microsoft .NET Framework Reference Assemblies",
+      "scope": "required",
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "3EF64AA456EDB31B49062EA1272CEDFE268AEF5A8676EF66355A494F8DFE8B55A9DB7CA6E7B615B9023E0449CEFFDF4ADA9C4F304818B73EB69FBC99144822D8"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "name": "Unknown - See URL",
+            "url": "https://github.com/Microsoft/dotnet/blob/master/LICENSE"
+          }
+        }
+      ],
+      "copyright": "\u00A9 Microsoft Corporation. All rights reserved.",
+      "purl": "pkg:nuget/Microsoft.NETFramework.ReferenceAssemblies.net472@1.0.3",
+      "externalReferences": [
+        {
+          "url": "https://github.com/Microsoft/dotnet/tree/master/releases/reference-assemblies",
+          "type": "website"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:nuget/System.Buffers@4.6.0",
+      "authors": [
+        {
+          "name": "Microsoft"
+        }
+      ],
+      "name": "System.Buffers",
+      "version": "4.6.0",
+      "description": "System.Buffers",
+      "scope": "required",
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "8916C9C93497F5B255A5444B18B896F05824E557E6E62182CEDC38206E08258731272F815D3084804585789B4EE9CFA43E752642EF3B28AE66D7CF3EA9B12B71"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "copyright": "\u00A9 Microsoft Corporation. All rights reserved.",
+      "purl": "pkg:nuget/System.Buffers@4.6.0",
+      "externalReferences": [
+        {
+          "url": "https://github.com/dotnet/maintenance-packages",
+          "type": "website"
+        },
+        {
+          "url": "https://github.com/dotnet/maintenance-packages",
+          "type": "vcs"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:nuget/System.Memory@4.6.0",
+      "authors": [
+        {
+          "name": "Microsoft"
+        }
+      ],
+      "name": "System.Memory",
+      "version": "4.6.0",
+      "description": "System.Memory",
+      "scope": "required",
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "4D8ECDA55E15BF4BF06A767A27CBEB2C67F26DB3CA840BCBDE84F1EC49DDB19FC9FFBD6C9B4D493C21C89ADBD8B70875BE615AB7F18F4BF89DF61B6A20F2BEEA"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "copyright": "\u00A9 Microsoft Corporation. All rights reserved.",
+      "purl": "pkg:nuget/System.Memory@4.6.0",
+      "externalReferences": [
+        {
+          "url": "https://github.com/dotnet/maintenance-packages",
+          "type": "website"
+        },
+        {
+          "url": "https://github.com/dotnet/maintenance-packages",
+          "type": "vcs"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:nuget/System.Numerics.Vectors@4.6.0",
+      "authors": [
+        {
+          "name": "Microsoft"
+        }
+      ],
+      "name": "System.Numerics.Vectors",
+      "version": "4.6.0",
+      "description": "System.Numerics.Vectors",
+      "scope": "required",
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "7716566E79DBDB5FB942E280894127B498AB8792A25359EA94B5AD06EE2FF7F171D519EC80D9FC4F85DB99086F0AAFD3F78DB4D4FE84B061B6CF663975E775C8"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "copyright": "\u00A9 Microsoft Corporation. All rights reserved.",
+      "purl": "pkg:nuget/System.Numerics.Vectors@4.6.0",
+      "externalReferences": [
+        {
+          "url": "https://github.com/dotnet/maintenance-packages",
+          "type": "website"
+        },
+        {
+          "url": "https://github.com/dotnet/maintenance-packages",
+          "type": "vcs"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:nuget/System.Runtime.CompilerServices.Unsafe@6.1.0",
+      "authors": [
+        {
+          "name": "Microsoft"
+        }
+      ],
+      "name": "System.Runtime.CompilerServices.Unsafe",
+      "version": "6.1.0",
+      "description": "Provides the System.Runtime.CompilerServices.Unsafe class, which provides generic, low-level functionality for manipulating pointers.\n\nCommonly Used Types:\nSystem.Runtime.CompilerServices.Unsafe",
+      "scope": "required",
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "898D2EA5F7507A26827E8C53FA6E172726F4209364E01F532D015A9CE08EAD4F57E71D71D938CAC743856CB9A0D551B674EC8BE671CC9F5F7C48143DD58CB591"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "copyright": "\u00A9 Microsoft Corporation. All rights reserved.",
+      "purl": "pkg:nuget/System.Runtime.CompilerServices.Unsafe@6.1.0",
+      "externalReferences": [
+        {
+          "url": "https://github.com/dotnet/maintenance-packages",
+          "type": "website"
+        },
+        {
+          "url": "https://github.com/dotnet/maintenance-packages",
+          "type": "vcs"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:nuget/System.Text.Encodings.Web@8.0.0",
+      "authors": [
+        {
+          "name": "Microsoft"
+        }
+      ],
+      "name": "System.Text.Encodings.Web",
+      "version": "8.0.0",
+      "description": "Provides types for encoding and escaping strings for use in JavaScript, HyperText Markup Language (HTML), and uniform resource locators (URL).\n\nCommonly Used Types:\nSystem.Text.Encodings.Web.HtmlEncoder\nSystem.Text.Encodings.Web.UrlEncoder\nSystem.Text.Encodings.Web.JavaScriptEncoder",
+      "scope": "required",
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "BA0822C38C3B658ABA9495642D269E882B827E3BE4AD2DC1426D8A97D3CBC5A2277C5F80847D0CB9381078AF01523328C4992CAA058146D5D8EE6B8A08609C32"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "copyright": "\u00A9 Microsoft Corporation. All rights reserved.",
+      "purl": "pkg:nuget/System.Text.Encodings.Web@8.0.0",
+      "externalReferences": [
+        {
+          "url": "https://dot.net/",
+          "type": "website"
+        },
+        {
+          "url": "https://github.com/dotnet/runtime",
+          "type": "vcs"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:nuget/System.Text.Json@8.0.5",
+      "authors": [
+        {
+          "name": "Microsoft"
+        }
+      ],
+      "name": "System.Text.Json",
+      "version": "8.0.5",
+      "description": "Provides high-performance and low-allocating types that serialize objects to JavaScript Object Notation (JSON) text and deserialize JSON text to objects, with UTF-8 support built-in. Also provides types to read and write JSON text encoded as UTF-8, and to create an in-memory document object model (DOM), that is read-only, for random access of the JSON elements within a structured view of the data.\n\nThe System.Text.Json library is built-in as part of the shared framework in .NET Runtime. The package can be installed when you need to use it in other target frameworks.",
+      "scope": "required",
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "13589021AE3E81F54C877ABF613CE931CC24CA57BF127AF1063CCC1EB4DC57A6CC223A61E6452207F5D0DCE453B6627430E31E4143C78E71E9B5DD647F680ABF"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "copyright": "\u00A9 Microsoft Corporation. All rights reserved.",
+      "purl": "pkg:nuget/System.Text.Json@8.0.5",
+      "externalReferences": [
+        {
+          "url": "https://dot.net/",
+          "type": "website"
+        },
+        {
+          "url": "https://github.com/dotnet/runtime",
+          "type": "vcs"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:nuget/System.Threading.Tasks.Extensions@4.5.4",
+      "authors": [
+        {
+          "name": "Microsoft"
+        }
+      ],
+      "name": "System.Threading.Tasks.Extensions",
+      "version": "4.5.4",
+      "description": "Provides additional types that simplify the work of writing concurrent and asynchronous code.\n\nCommonly Used Types:\nSystem.Threading.Tasks.ValueTask\u003CTResult\u003E\n \n7601f4f6225089ffb291dc7d58293c7bbf5c5d4f",
+      "scope": "required",
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "68052086E77D3C7198737A3DA163D67740B7C44F93250C39659B3BF21B6547A9ABF64CBF40481F5C78F24361AF3AAF47D52D188B371554A0928A7F7665C1FC14"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "name": "Unknown - See URL",
+            "url": "https://github.com/dotnet/corefx/blob/master/LICENSE.TXT"
+          }
+        }
+      ],
+      "copyright": "\u00A9 Microsoft Corporation. All rights reserved.",
+      "purl": "pkg:nuget/System.Threading.Tasks.Extensions@4.5.4",
+      "externalReferences": [
+        {
+          "url": "https://dot.net/",
+          "type": "website"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:nuget/System.ValueTuple@4.5.0",
+      "authors": [
+        {
+          "name": "Microsoft"
+        }
+      ],
+      "name": "System.ValueTuple",
+      "version": "4.5.0",
+      "description": "Provides the System.ValueTuple structs, which implement the underlying types for tuples in C# and Visual Basic.\n\nCommonly Used Types:\nSystem.ValueTuple\nSystem.ValueTuple\u003CT1\u003E\nSystem.ValueTuple\u003CT1, T2\u003E\nSystem.ValueTuple\u003CT1, T2, T3\u003E\nSystem.ValueTuple\u003CT1, T2, T3, T4\u003E\nSystem.ValueTuple\u003CT1, T2, T3, T4, T5\u003E\nSystem.ValueTuple\u003CT1, T2, T3, T4, T5, T6\u003E\nSystem.ValueTuple\u003CT1, T2, T3, T4, T5, T6, T7\u003E\nSystem.ValueTuple\u003CT1, T2, T3, T4, T5, T6, T7, TRest\u003E\n \n30ab651fcb4354552bd4891619a0bdd81e0ebdbf \nWhen using NuGet 3.x this package requires at least version 3.4.",
+      "scope": "required",
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "FA00EBB5045D12C51274F64411C551981BECEB1266A8606A4731063109B95EA1F15939197BF3D2BA899DB61E593DC39BFCE876908BBA34286823525093AE3D8E"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "name": "Unknown - See URL",
+            "url": "https://github.com/dotnet/corefx/blob/master/LICENSE.TXT"
+          }
+        }
+      ],
+      "copyright": "\u00A9 Microsoft Corporation.  All rights reserved.",
+      "purl": "pkg:nuget/System.ValueTuple@4.5.0",
+      "externalReferences": [
+        {
+          "url": "https://dot.net/",
+          "type": "website"
+        }
+      ]
+    }
+  ],
+  "dependencies": [
+    {
+      "ref": "pkg:nuget/MESCIUS.ActiveReports.Core.Rdl@4.6.0",
+      "dependsOn": [
+        "pkg:nuget/System.Memory@4.6.0",
+        "pkg:nuget/System.Text.Json@8.0.5"
+      ]
+    },
+    {
+      "ref": "pkg:nuget/Microsoft.Bcl.AsyncInterfaces@8.0.0",
+      "dependsOn": [
+        "pkg:nuget/System.Threading.Tasks.Extensions@4.5.4"
+      ]
+    },
+    {
+      "ref": "pkg:nuget/Microsoft.NETCore.Platforms@1.1.0"
+    },
+    {
+      "ref": "pkg:nuget/Microsoft.NETFramework.ReferenceAssemblies.net472@1.0.3"
+    },
+    {
+      "ref": "pkg:nuget/System.Buffers@4.6.0"
+    },
+    {
+      "ref": "pkg:nuget/System.Memory@4.6.0",
+      "dependsOn": [
+        "pkg:nuget/System.Buffers@4.6.0",
+        "pkg:nuget/System.Numerics.Vectors@4.6.0",
+        "pkg:nuget/System.Runtime.CompilerServices.Unsafe@6.1.0"
+      ]
+    },
+    {
+      "ref": "pkg:nuget/System.Numerics.Vectors@4.6.0"
+    },
+    {
+      "ref": "pkg:nuget/System.Runtime.CompilerServices.Unsafe@6.1.0"
+    },
+    {
+      "ref": "pkg:nuget/System.Text.Encodings.Web@8.0.0",
+      "dependsOn": [
+        "pkg:nuget/System.Buffers@4.6.0",
+        "pkg:nuget/System.Memory@4.6.0",
+        "pkg:nuget/System.Runtime.CompilerServices.Unsafe@6.1.0"
+      ]
+    },
+    {
+      "ref": "pkg:nuget/System.Text.Json@8.0.5",
+      "dependsOn": [
+        "pkg:nuget/Microsoft.Bcl.AsyncInterfaces@8.0.0",
+        "pkg:nuget/System.Buffers@4.6.0",
+        "pkg:nuget/System.Memory@4.6.0",
+        "pkg:nuget/System.Runtime.CompilerServices.Unsafe@6.1.0",
+        "pkg:nuget/System.Text.Encodings.Web@8.0.0",
+        "pkg:nuget/System.Threading.Tasks.Extensions@4.5.4",
+        "pkg:nuget/System.ValueTuple@4.5.0"
+      ]
+    },
+    {
+      "ref": "pkg:nuget/System.Threading.Tasks.Extensions@4.5.4",
+      "dependsOn": [
+        "pkg:nuget/System.Runtime.CompilerServices.Unsafe@6.1.0"
+      ]
+    },
+    {
+      "ref": "pkg:nuget/System.ValueTuple@4.5.0"
+    }
+  ]
+}

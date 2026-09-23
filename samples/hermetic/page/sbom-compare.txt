@@ -1,0 +1,163 @@
+SBOM comparison: Xake's `sbom` rule vs page's own CycloneDX.MSBuild pipeline
+=============================================================================
+Fixture: ar-net-core-page + ar-net-core-dataengine siblings, netstandard2.0,
+brands MESCIUS / GCCN. Xake script: docs/features/hermetic-build/import-page.fsx
+(`sbom` phony target added, Part 1 of this task).
+
+Methodology
+-----------
+Part 1: ran `dotnet fsi import-page.fsx -- -- sbom` from the page copy. This
+needs each (framework, brand) lock, needs the compiled assembly for every
+project it names, reads that project's own `obj/project.assets.json` with
+`Nuget.readAssets`, and joins it with the lock's hashed references via
+`Sbom.forAssembly`/`Sbom.cycloneDx`, one `out/(fwk)/(brand)/(name).cdx.json`
+per project per brand (30 files total: 15 lock projects x 2 brands).
+
+Part 2: built `src/Rdl/Rdl.csproj` directly the way the real Cake build does
+(`-p:GenerateSbom=true`, `-p:LocalBuild=true`, `-p:Brand=MESCIUS`/`GCCN`), which
+triggers `CycloneDX.MSBuild` 1.3.2's `GenerateCycloneDxSbom` target
+(`CycloneDX.targets`, `AfterTargets="Build"`), which shells out to
+`dotnet cyclonedx ... -dpr` (an override in this repo that adds `-dpr` so the
+CLI reuses the already-restored, brand-correct `project.assets.json` instead of
+running its own restore, which would ignore the `Brand` property). The tool
+was already resolvable on this machine (no `dotnet-tools.json` entry, no
+manual install) and ran without any network/tool errors -- Part 2 is not
+skipped.
+
+Part 1 numbers
+---------------
+30 `*.cdx.json` files produced, sizes 50.7 KB - 70.2 KB (data projects
+~51 KB, export/rendering projects 60-70 KB). Component counts by `purl`
+(same both brands -- purls are id/version only, not brand-qualified):
+
+  Data.VBFunctionLib      1      Export.Pdf.Page      12
+  Data.ExpressionInfo     1      Export.Word.Page     13
+  Data.DataEngine         1      Export.Excel.Page    13
+  Rdl                     9      Drawing.Gc           10
+  Rendering               9      Export.Svg.Page      10
+  Export.Html.Page        9      Drawing.Gdi          16
+  Export.Text.Page        9      Scripting            16
+  Export.Image.Page       15
+
+Determinism: deleted `out/netstandard2.0/MESCIUS/MESCIUS.ActiveReports.Core.Rdl.cdx.json`,
+regenerated with the same `sbom` command, `cmp` against the pre-deletion copy --
+byte-identical. Expected: `Sbom.cycloneDx` never writes `metadata.timestamp`
+and derives `serialNumber` from the document's own content.
+
+Rdl/MESCIUS sample (Rdl-MESCIUS-ours.cdx.json)
+------------------------------------------------
+Root (`metadata.component`): asm:MESCIUS.ActiveReports.Core.Rdl, version
+4.6.0, one SHA-256 hash of the built dll. No purl on the root (it is the
+assembly Xake compiled, not a NuGet package).
+
+First 3 `components[]` (sorted by bom-ref, i.e. purl-then-file-path order):
+  1. file:.../ar-net-core-dataengine/src/ExpressionInfo/bin/Release/netstandard2.0/
+     MESCIUS.ActiveReports.Core.Data.ExpressionInfo.dll -- scope required, NO hash
+     (project-reference output; the lock recorded it unhashed at import time,
+     before that sibling project was built -- Sbom.forAssembly reflects the
+     lock's evidence, not a re-hash at sbom time)
+  2. file:.../VBFunctionLib/bin/Release/.../MESCIUS.ActiveReports.Core.Data.VBFunctionLib.dll
+     -- same: required, no hash
+  3. pkg:nuget/microsoft.bcl.asyncinterfaces@8.0.0 -- library, supplier
+     Microsoft, SHA-512 hash (hex, from .nupkg.metadata's base64), license MIT
+     id, one nested file component (the referenced dll under `lib/`, SHA-256)
+
+Root's `dependencies[]` entry: depends on 2 packages directly --
+  pkg:nuget/system.memory@4.6.0, pkg:nuget/system.text.json@8.0.5
+(only direct, required packages; the two project references are not
+"packages" in `assets.Direct`'s sense so they are not listed here, only as
+top-level file components.)
+
+Formulation: 5 entries, all scope excluded -- 3 analyzer files (source
+generators pulled in transitively, e.g. System.Text.Json's Roslyn source
+generator) plus 2 application entries, `csc` and `.NET SDK`, both carrying
+the SDK version string.
+
+Part 2 outcome
+---------------
+Worked on the first try -- no library gap, no tool-install error. Ran twice
+to check determinism.
+
+Purl-set comparison, Rdl/MESCIUS, case-sensitive as each side emits it:
+  ours (9 purls, all lowercase -- `Nuget.packageOf` reads them off the NuGet
+  cache's lowercase directory names):
+    pkg:nuget/microsoft.bcl.asyncinterfaces@8.0.0
+    pkg:nuget/netstandard.library@2.0.3
+    pkg:nuget/system.buffers@4.6.0
+    pkg:nuget/system.memory@4.6.0
+    pkg:nuget/system.numerics.vectors@4.6.0
+    pkg:nuget/system.runtime.compilerservices.unsafe@6.1.0
+    pkg:nuget/system.text.encodings.web@8.0.0
+    pkg:nuget/system.text.json@8.0.5
+    pkg:nuget/system.threading.tasks.extensions@4.5.4
+
+  theirs (11 purls, original NuGet id casing -- CycloneDX.MSBuild reads
+  package metadata, not cache directory names):
+    pkg:nuget/Microsoft.Bcl.AsyncInterfaces@8.0.0
+    pkg:nuget/Microsoft.NETCore.Platforms@1.1.0
+    pkg:nuget/Microsoft.NETFramework.ReferenceAssemblies.net472@1.0.3
+    pkg:nuget/System.Buffers@4.6.0
+    pkg:nuget/System.Memory@4.6.0
+    pkg:nuget/System.Numerics.Vectors@4.6.0
+    pkg:nuget/System.Runtime.CompilerServices.Unsafe@6.1.0
+    pkg:nuget/System.Text.Encodings.Web@8.0.0
+    pkg:nuget/System.Text.Json@8.0.5
+    pkg:nuget/System.Threading.Tasks.Extensions@4.5.4
+    pkg:nuget/System.ValueTuple@4.5.0
+
+  Case-insensitive diff (the real identity difference, casing set aside):
+    only ours   (1): pkg:nuget/netstandard.library@2.0.3
+    only theirs (3): pkg:nuget/microsoft.netcore.platforms@1.1.0
+                      pkg:nuget/microsoft.netframework.referenceassemblies.net472@1.0.3
+                      pkg:nuget/system.valuetuple@4.5.0
+    common (8)
+
+  Reading: `NETStandard.Library` is a compile-time facade package (all its
+  referenced files are under its `ref/` folder) -- our rule still lists it
+  (scope: excluded, not dropped) because the compile actually referenced it;
+  it does not show in theirs at all, i.e. the reference-graph tool used by
+  `dotnet cyclonedx` does not surface facade-only packages the same way.
+  `Microsoft.NETCore.Platforms`, the `net472` reference-assembly pack, and
+  `System.ValueTuple` appear only in theirs: these are transitive
+  restore-graph entries with no file our project actually referenced
+  (`lock.References` never touched them), so `Nuget.packageOf` finds nothing
+  to attribute them to and our from-evidence design leaves them out by
+  design -- theirs walks the full dependency graph regardless of what was
+  actually linked.
+
+  Hashes: theirs has a SHA-512 hash on every one of its 11 components (same
+  algorithm, uppercase hex vs our lowercase hex -- cosmetic). Ours has one
+  too, for every package resolved from the cache.
+
+  Per-file evidence: theirs has none -- no nested `components[]` under a
+  package, no per-dll hash. Ours nests one `file` component per referenced
+  dll under its owning package, SHA-256 each.
+
+  Formulation: theirs has no `formulation` section at all (no analyzers, no
+  compiler/SDK record). Ours always has one (Part 1 sample: 5 entries).
+
+  Determinism: theirs is NOT deterministic across two runs of the same
+  command -- `serialNumber` is a fresh random UUID each time
+  (bc7537b3-...  ->  a685a655-...) and `metadata.timestamp` is wall-clock
+  (2026-09-23T00:20:22Z -> :47Z, 25s apart, matching the two build times).
+  Every other field byte-for-byte matched between the two runs. Ours is
+  deterministic (see Part 1).
+
+  Brand: page's `-dpr` override only brand-qualifies the *root* component --
+  name (`MESCIUS.ActiveReports.Core.Rdl` vs `GCCN.ActiveReports.Core.Rdl`),
+  supplier (`MESCIUS inc.` vs `GrapeCity China, Inc.`), copyright and purl.
+  Every dependency package id stays the generic Microsoft.* id in both
+  brand runs -- brand never leaks into third-party package identity. Same
+  behavior in ours: `asm:MESCIUS.ActiveReports.Core.Rdl` /
+  `asm:GCCN.ActiveReports.Core.Rdl` as the root bom-ref, dependency purls
+  unaffected by brand.
+
+Files in this folder from this task
+------------------------------------
+Rdl-MESCIUS-ours.cdx.json    -- our sbom rule's output for Rdl/MESCIUS
+Rdl-MESCIUS-theirs.cdx.json  -- CycloneDX.MSBuild's output for the same build,
+                                 run 1 of the two determinism runs
+sbom-compare.txt             -- this file
+
+(No page/dataengine source files copied -- only generated SBOM JSON and this
+summary, per the task's constraints.)

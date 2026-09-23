@@ -280,11 +280,21 @@ type ``Project import``() =
         Assert.That((Lock.parseWith roots text).Entries.[0].Sources, Is.EqualTo [ "/x/dataengine/src/A.cs" ])
 
     [<Test>]
-    member x.``a declared root must be a well-formed, non-built-in, absolute token``() =
+    member x.``a declared root must be a well-formed token``() =
         let cwd = Directory.GetCurrentDirectory()
         Assert.Throws<System.Exception>(fun () -> Roots.withExtra cwd [ "DataEngineRoot", "/x/dataengine" ] |> ignore) |> ignore
-        Assert.Throws<System.Exception>(fun () -> Roots.withExtra cwd [ "$(ProjectRoot)", "/x/dataengine" ] |> ignore) |> ignore
-        Assert.Throws<System.Exception>(fun () -> Roots.withExtra cwd [ "$(DataEngineRoot)", "relative/dataengine" ] |> ignore) |> ignore
+
+    /// Changed 2026-09-24 (`Restore`): a built-in token may be redeclared -- that is how a
+    /// build points `$(NuGetPackageRoot)` at a package folder of its own -- and a relative
+    /// root is taken against the project root, never the process's current directory.
+    [<Test>]
+    member x.``a declared root may override a built-in one and may be relative to the project root``() =
+        let roots = Roots.withExtra "/repo" [ "$(NuGetPackageRoot)", "/x/packages" ]
+        Assert.That(roots |> List.filter (fst >> (=) "$(NuGetPackageRoot)"), Is.EqualTo [ "$(NuGetPackageRoot)", "/x/packages" ])
+
+        let relative = Roots.withExtra "/repo" [ "$(NuGetPackageRoot)", ".packages" ]
+        Assert.That(relative |> List.tryPick (fun (t, p) -> if t = "$(NuGetPackageRoot)" then Some p else None),
+                    Is.EqualTo (Some "/repo/.packages"))
 
     [<Test>]
     member x.``lists the files a preprocessed project imported``() =

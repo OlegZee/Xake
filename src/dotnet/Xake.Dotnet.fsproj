@@ -53,6 +53,9 @@
          into the lock (Lock.Package) at import time. -->
     <Compile Include="Nuget.fs" />
     <Compile Include="Project.fs" />
+    <!-- Restore turns a lock back into packages on disk; it needs `Lock.Entry`, so it comes
+         after Project.fs, and ahead of Dotnet.csc.fs, whose runner calls it. -->
+    <Compile Include="Restore.fs" />
     <Compile Include="Sbom.fs" />
     <Compile Include="Verify.fs" />
     <Compile Include="StrongName.fs" />

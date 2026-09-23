@@ -63,6 +63,77 @@ type ``Dotnet tasks tests``() =
         Assert.That(needExecuteCount.Value, Is.GreaterThanOrEqualTo 1)
         Assert.That(File.Exists "hello.exe", Is.True, "csc did not produce hello.exe")
 
+    // Composed mode with a `.resx` resource: `resolve` no longer compiles it into a random
+    // temp file (deleted after the compile, and unusable if the settings were instead
+    // recorded as a lock -- see `CscLock.resolve` in Dotnet.csc.fs and the csc-syntax.md
+    // "composed mode resx" paragraph). It records a permanent `(resx, .resources)` pair in
+    // `Lock.Project.Resources` and `run`'s existing resource step compiles it, exactly as it
+    // already does for an imported project.
+    [<Test; Category("Integration")>]
+    member x.``runs csc task with a composed resx resource``() =
+
+        let compileCount = ref 0
+
+        let resx =
+            "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n" +
+            "<root>\n" +
+            "  <data name=\"Greeting\" xml:space=\"preserve\"><value>Hello, resx!</value></data>\n" +
+            "</root>\n"
+        File.WriteAllText ("Strings.resx", resx)
+
+        // both inputs are plain files on disk, not rules -- a rule with no dependencies of
+        // its own reruns on every build (there is nothing to check staleness against), which
+        // would make `helloresx.exe` rerun too since it `need`s it. Writing them once, like
+        // `CommandLineTests`' "input.txt", is what lets the second build be a genuine no-op.
+        File.WriteAllText ("helloresx.cs", """class Program
+        {
+            public static void Main()
+            {
+                System.Console.WriteLine("Hello world!");
+            }
+        }""")
+
+        // a file target, not a phony one: phony actions always rerun in Xake (like a `.PHONY`
+        // make target), so only a file rule's own up-to-date check can show the second build
+        // was a no-op
+        let runBuild () =
+            xake {x.TestOptions with FileLog="skipbuild.log"; ConLogLevel = Verbosity.Diag; ThrowOnError = true} {
+                wantOverride (["helloresx.exe"])
+
+                rules [
+                    "helloresx.exe" ..> recipe {
+                        do! need ["helloresx.cs"]
+                        compileCount.Value <- compileCount.Value + 1
+                        do! Csc {
+                        CscSettingsType.Default with
+                            Src = !!"helloresx.cs"
+                            Out = File.make "helloresx.exe"
+                            TargetFramework = "net-4.6.2"
+                            RefGlobal = ["System.dll"]
+                            Resources = [
+                                resourceset {
+                                    prefix "Sample.Application"
+                                    files (fileset { includes "Strings.resx" })
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+
+        runBuild ()
+
+        let expectedResources = "obj" </> "xake" </> "helloresx" </> "Sample.Application.Strings.resources"
+        Assert.That(File.Exists "helloresx.exe", Is.True, "csc did not produce helloresx.exe")
+        Assert.That(File.Exists expectedResources, Is.True, sprintf "expected '%s' to exist" expectedResources)
+        Assert.That(compileCount.Value, Is.EqualTo 1)
+
+        // a second build with nothing changed must not recompile: the .resources file, the
+        // resx and the dll are all still up to date as far as the engine's dependency
+        // tracking is concerned
+        runBuild ()
+        Assert.That(compileCount.Value, Is.EqualTo 1, "second build should not rerun the rule")
+
     // Same discovery, but for a profile rather than a framework version: the reference
     // assembly comes from the SDK's netstandard pack or from the NETStandard.Library
     // package. FSharp.Core is referenced explicitly since --noframework is in effect.

@@ -22,6 +22,10 @@ module Sbom =
     /// One integrity hash, CycloneDX's own shape (`hashes[{alg, content}]`).
     type Hash = { Alg: string; Content: string }
 
+    /// One CycloneDX `properties[]` entry: a namespaced name and a string value, e.g.
+    /// `dt:nuget:declaredVersionRange` = `[1.2.3, )`.
+    type Property = { Name: string; Value: string }
+
     /// One CycloneDX `components[]` entry. Assembly-level evidence nests under the package it
     /// came from (`Components`); compile-time-only components (analyzers, the compiler, the
     /// SDK) carry `Scope = "excluded"` and live in `Bom.Formulation` instead of `Bom.Components`.
@@ -42,7 +46,20 @@ module Sbom =
         Scope: string
         /// nested evidence, e.g. the files under a package
         Components: Component list
+        /// `properties[]`; empty omits it
+        Properties: Property list
     }
+
+    /// One `compositions[]` entry: what the document claims to be complete (or not) about.
+    /// `Aggregate` is `complete` | `incomplete` | `unknown` (CycloneDX's own vocabulary);
+    /// `Assemblies` are the bom-refs whose *composition* (what they are made of) has that
+    /// completeness, `Dependencies` the bom-refs whose *dependency graph* does.
+    type Composition = { Aggregate: string; Assemblies: string list; Dependencies: string list }
+
+    /// One `annotations[]` entry: free text attached to `Subjects` (bom-refs), stamped by
+    /// `Annotator` (the name of the tool component) at `Timestamp` -- the schema requires one;
+    /// see `forPackageScoped` for how it stays deterministic.
+    type Annotation = { BomRef: string; Subjects: string list; Annotator: string; Timestamp: string; Text: string }
 
     /// One bill of materials: `Root` is `metadata.component` (the shipped assembly or package),
     /// `Components` are the top-level `components[]` (packages and non-package files),
@@ -54,6 +71,10 @@ module Sbom =
         /// bom-ref -> dependsOn bom-refs
         Dependencies: (string * string list) list
         Formulation: Component list
+        /// `compositions[]`; empty omits it (the restore-scope BOMs declare none)
+        Compositions: Composition list
+        /// `annotations[]`; empty omits it
+        Annotations: Annotation list
     }
 
     let private jstring (s: string) = Json.escape s
@@ -101,7 +122,9 @@ module Sbom =
           if c.Purl <> "" then "purl", jstring c.Purl
           if c.Scope <> "" then "scope", jstring c.Scope
           if not c.Components.IsEmpty then
-            "components", jarr (c.Components |> List.sortBy (fun x -> x.Name) |> List.map componentJson) ]
+            "components", jarr (c.Components |> List.sortBy (fun x -> x.Name) |> List.map componentJson)
+          if not c.Properties.IsEmpty then
+            "properties", jarr (c.Properties |> List.map (fun p -> jobj [ "name", jstring p.Name; "value", jstring p.Value ])) ]
         |> jobj
 
     let private dependencyJson (bomRef: string, dependsOn: string list) =
@@ -112,6 +135,21 @@ module Sbom =
 
     let private toolsComponentJson (version: string) =
         jobj [ "type", jstring "application"; "name", jstring "Xake"; "version", jstring version ]
+
+    let private compositionJson (c: Composition) =
+        [ "aggregate", jstring c.Aggregate
+          if not c.Assemblies.IsEmpty then "assemblies", jarr (c.Assemblies |> List.distinct |> List.sort |> List.map jstring)
+          if not c.Dependencies.IsEmpty then "dependencies", jarr (c.Dependencies |> List.distinct |> List.sort |> List.map jstring) ]
+        |> jobj
+
+    let private annotationJson (toolVersion: string) (a: Annotation) =
+        jobj [
+            "bom-ref", jstring a.BomRef
+            "subjects", jarr (a.Subjects |> List.distinct |> List.sort |> List.map jstring)
+            "annotator", jobj [ "component", jobj [ "type", jstring "application"; "name", jstring a.Annotator; "version", jstring toolVersion ] ]
+            "timestamp", jstring a.Timestamp
+            "text", jstring a.Text
+        ]
 
     /// CycloneDX 1.6 JSON for `bom`, deterministic: keys in a fixed order, arrays sorted where
     /// the schema carries no order of its own, no `metadata.timestamp` (a later option can set
@@ -152,6 +190,10 @@ module Sbom =
                 ]
                 "components", jarr (componentsSorted |> List.map componentJson)
                 "dependencies", jarr (dependenciesSorted |> List.map dependencyJson)
+                if not bom.Compositions.IsEmpty then
+                    "compositions", jarr (bom.Compositions |> List.sortBy (fun c -> c.Aggregate) |> List.map compositionJson)
+                if not bom.Annotations.IsEmpty then
+                    "annotations", jarr (bom.Annotations |> List.sortBy (fun a -> a.BomRef) |> List.map (annotationJson toolVersion))
                 "formulation", formulationJson
             ] + "\n"
 
@@ -186,7 +228,7 @@ module Sbom =
         { Type = "file"; BomRef = "file:" + h.Path; Name = Path.GetFileName h.Path; Version = ""
           Supplier = ""; Purl = ""
           Hashes = if h.Sha256 = "" then [] else [ { Alg = "SHA-256"; Content = h.Sha256 } ]
-          License = ""; Scope = scope; Components = [] }
+          License = ""; Scope = scope; Components = []; Properties = [] }
 
     let private keyOf (id: string) (version: string) = id.ToLowerInvariant (), version.ToLowerInvariant ()
 
@@ -278,7 +320,7 @@ module Sbom =
                     |> List.map (fileComponent "") |> List.sortBy (fun f -> f.Name)
                 { Type = "library"; BomRef = purl; Name = p.Id; Version = p.Version
                   Supplier = cached.Supplier; Purl = purl; Hashes = hashes; License = cached.License
-                  Scope = scope; Components = files })
+                  Scope = scope; Components = files; Properties = [] })
 
         let nonPackageComponents = nonPackageRefs |> List.map (fileComponent "required")
 
@@ -293,7 +335,7 @@ module Sbom =
         let rootBomRef = "asm:" + entry.Name
         let root =
             { Type = "library"; BomRef = rootBomRef; Name = entry.Name; Version = version
-              Supplier = ""; Purl = ""; Hashes = rootHash; License = ""; Scope = ""; Components = [] }
+              Supplier = ""; Purl = ""; Hashes = rootHash; License = ""; Scope = ""; Components = []; Properties = [] }
 
         // (id, version), case-insensitive -> the package's own bom-ref (== its purl, with the
         // lock's own casing), so the graph's edges line up regardless of what case each side
@@ -325,15 +367,16 @@ module Sbom =
             { Type = "application"; BomRef = "tool:csc"; Name = "csc"; Version = compiler.Version
               Supplier = ""; Purl = ""
               Hashes = (if compiler.Sha256 = "" then [] else [ { Alg = "SHA-256"; Content = compiler.Sha256 } ])
-              License = ""; Scope = "excluded"; Components = [] }
+              License = ""; Scope = "excluded"; Components = []; Properties = [] }
         let sdkComponent =
             { Type = "application"; BomRef = "tool:dotnet-sdk"; Name = ".NET SDK"; Version = entry.Evaluation.Sdk
-              Supplier = ""; Purl = ""; Hashes = []; License = ""; Scope = "excluded"; Components = [] }
+              Supplier = ""; Purl = ""; Hashes = []; License = ""; Scope = "excluded"; Components = []; Properties = [] }
 
         { Root = root
           Components = packageComponents @ nonPackageComponents
           Dependencies = dependencies
-          Formulation = analyzerComponents @ [ compilerComponent; sdkComponent ] }
+          Formulation = analyzerComponents @ [ compilerComponent; sdkComponent ]
+          Compositions = []; Annotations = [] }
 
     /// Reads a nupkg's own `id`/`version` off the `.nuspec` entry inside it (the file at the
     /// zip root ending in `.nuspec` -- nupkgs carry exactly one). `System.IO.Compression.ZipFile`
@@ -419,7 +462,7 @@ module Sbom =
               Hashes =
                 [ { Alg = "SHA-256"; Content = hashBytes (fun () -> SHA256.Create () :> HashAlgorithm) bytes }
                   { Alg = "SHA-512"; Content = hashBytes (fun () -> SHA512.Create () :> HashAlgorithm) bytes } ]
-              License = ""; Scope = ""; Components = assemblyRootComponents }
+              License = ""; Scope = ""; Components = assemblyRootComponents; Properties = [] }
 
         let components =
             assemblies |> List.collect (fun b -> b.Components) |> mergeComponents |> List.sortBy (fun c -> c.BomRef)
@@ -432,4 +475,311 @@ module Sbom =
         let formulation =
             assemblies |> List.collect (fun b -> b.Formulation) |> mergeComponents |> List.sortBy (fun c -> c.BomRef)
 
-        { Root = root; Components = components; Dependencies = dependencies; Formulation = formulation }
+        { Root = root; Components = components; Dependencies = dependencies; Formulation = formulation
+          Compositions = []; Annotations = [] }
+
+    // ---- package scope: the SBOM of what the customer receives (nuget-sbom.md "Package scope") ----
+
+    /// Where the package-scope SBOM for `framework` lives inside a nupkg:
+    /// `sbom/<tfm>/bom.cdx.json`. The `sbom/` tree is plumbing to the inventory below, so a
+    /// nupkg re-packed with its own SBOMs added does not list them as shipped files.
+    let packageSbomPath (framework: string) : string = sprintf "sbom/%s/bom.cdx.json" framework
+
+    /// Every entry of a nupkg (zip) with its bytes, path with forward slashes, in archive order.
+    /// Directory entries (a trailing `/`) are skipped.
+    let internal nupkgEntries (nupkgPath: string) : (string * byte[]) list =
+        use archive = System.IO.Compression.ZipFile.OpenRead nupkgPath
+        [ for e in archive.Entries do
+            let path = e.FullName.Replace ('\\', '/')
+            if not (path.EndsWith "/") then
+                use stream = e.Open ()
+                use ms = new MemoryStream ()
+                stream.CopyTo ms
+                yield path, ms.ToArray () ]
+
+    /// The nuspec inside a nupkg (the single `.nuspec` entry at the zip root), parsed.
+    let internal nuspecOfEntries (entries: (string * byte[]) list) : Nuget.Nuspec =
+        entries
+        |> List.tryFind (fun (path, _) -> path.EndsWith (".nuspec", StringComparison.OrdinalIgnoreCase) && not (path.Contains "/"))
+        |> function
+            | Some (_, bytes) -> Nuget.parseNuspec (Encoding.UTF8.GetString bytes)
+            | None -> Nuget.parseNuspec "<package><metadata /></package>"
+
+    let private segments (path: string) = path.Split '/' |> List.ofArray
+    let private eqi (a: string) (b: string) = String.Equals (a, b, StringComparison.OrdinalIgnoreCase)
+    let private hasExtension (exts: string list) (path: string) =
+        exts |> List.exists (fun ext -> path.EndsWith (ext, StringComparison.OrdinalIgnoreCase))
+
+    /// The building blocks `defaultPackageScope` is assembled from -- each a pure predicate a
+    /// script can reuse, wrap or replace in its own `PackageScopeOptions`.
+    module PackageScope =
+
+        /// A prefix matcher over package ids, case-insensitive: `idPrefixes [ "DS."; "Acme." ]`.
+        let idPrefixes (prefixes: string list) : string -> bool =
+            fun id -> prefixes |> List.exists (fun prefix -> id.StartsWith (prefix, StringComparison.OrdinalIgnoreCase))
+
+        /// OPC and package metadata a nupkg carries that is not shipped code and never a
+        /// component: `_rels/`, `[Content_Types].xml`, `package/` (the psmdcp core properties),
+        /// the root nuspec, the signature, the `sbom/` tree itself, root-level icon/readme/
+        /// license files, and `.xml` IntelliSense docs anywhere.
+        let plumbing (path: string) : bool =
+            match segments path with
+            | [ single ] ->
+                eqi single "[Content_Types].xml" || eqi single ".signature.p7s"
+                || hasExtension [ ".nuspec"; ".png"; ".jpg"; ".ico"; ".md"; ".txt" ] single
+                || single.StartsWith ("LICENSE", StringComparison.OrdinalIgnoreCase)
+            | first :: _ ->
+                eqi first "_rels" || eqi first "package" || eqi first "sbom"
+                || hasExtension [ ".xml" ] path
+            | [] -> true
+
+        /// Whether a nupkg path is content shipped *for `framework`*: `lib/<tfm>/**` (satellite
+        /// resource folders included), `runtimes/<rid>/lib/<tfm>/**`, `runtimes/<rid>/native/**`,
+        /// `contentFiles/<lang>/<tfm>|any/**`, `analyzers/**`, `build/**`, `buildTransitive/**`,
+        /// `buildMultiTargeting/**` (each either TFM-less or under `<tfm>/`), and `tools/**`.
+        /// Folder names compared case-insensitively. `ref/` (compile-time facades) and any other
+        /// TFM's folders are not shipped for this TFM.
+        let shippedFor (framework: string) (path: string) : bool =
+            let tfm (seg: string) = eqi seg framework
+            let tfmOrNone = function
+                | seg :: _ :: _ -> tfm seg
+                | [ _ ] -> true
+                | [] -> false
+            match segments path |> List.map (fun seg -> seg.ToLowerInvariant ()) with
+            | [ "lib"; t; _ ] | [ "lib"; t; _; _ ] -> tfm t
+            | "runtimes" :: _ :: "lib" :: t :: _ :: _ -> tfm t
+            | "runtimes" :: _ :: "native" :: _ :: _ -> true
+            | "contentfiles" :: _ :: t :: _ :: _ -> tfm t || t = "any"
+            | "analyzers" :: _ :: _ -> true
+            | "tools" :: _ :: _ -> true
+            | ("build" | "buildtransitive" | "buildmultitargeting") :: rest -> tfmOrNone rest
+            | _ -> false
+
+        /// `.dll` / `.exe` -- a `library` component, and one check 3.2 wants hashed.
+        let assembly (path: string) : bool = hasExtension [ ".dll"; ".exe" ] path
+
+        /// Anything under `runtimes/<rid>/native/`, or a `.so`/`.dylib` anywhere.
+        let native (path: string) : bool =
+            match segments path with
+            | "runtimes" :: _ :: "native" :: _ -> true
+            | _ -> hasExtension [ ".so"; ".dylib" ] path
+
+        /// Supplier-internal package ids: `DS.*`, `MESCIUS.*`, `GrapeCity.*`.
+        let internalIds : string -> bool = idPrefixes [ "DS."; "MESCIUS."; "GrapeCity." ]
+
+        /// Build tooling that is never shipped code, even when a nuspec lists it:
+        /// `CycloneDX.*`, `Microsoft.SourceLink.*`, `Microsoft.NETFramework.ReferenceAssemblies*`.
+        let toolingIds : string -> bool =
+            idPrefixes [ "CycloneDX."; "Microsoft.SourceLink."; "Microsoft.NETFramework.ReferenceAssemblies" ]
+
+        /// The text of the boundary annotation every package-scope SBOM carries on its root.
+        let boundaryText =
+            "Dependencies are the package's own nuspec-declared dependencies for this target framework (depth 1, ranges as declared). "
+            + "Transitive dependencies are not enumerated: their resolution is the consuming product's responsibility."
+
+        /// The one wall-clock value the schema forces into the document
+        /// (`annotations[].timestamp`), chosen the way `Pack` chooses zip entry times so it never
+        /// varies between two builds of the same commit: `SOURCE_DATE_EPOCH` when set, else the
+        /// DOS epoch `1980-01-01T00:00:00Z`.
+        let timestamp () : string =
+            let epoch = DateTime (1980, 1, 1, 0, 0, 0, DateTimeKind.Utc)
+            let stamp =
+                match Environment.GetEnvironmentVariable "SOURCE_DATE_EPOCH" with
+                | null | "" -> epoch
+                | v ->
+                    match Int64.TryParse v with
+                    | true, seconds -> max epoch (DateTimeOffset.FromUnixTimeSeconds(seconds).UtcDateTime)
+                    | false, _ -> epoch
+            stamp.ToString ("yyyy-MM-dd'T'HH:mm:ss'Z'", Globalization.CultureInfo.InvariantCulture)
+
+    /// The knobs of the package-scope rule (`forPackageScopedWith`, `Verify.sbomPackageScopeWith`):
+    /// what counts as shipped content and as plumbing, how a declared dependency is classified,
+    /// what the document says about itself. Pure functions and values, no global state; start
+    /// from `defaultPackageScope` and override with `{ defaultPackageScope with ... }`. The
+    /// verifier takes the same record, so a customised producer is checked by the same rule.
+    type PackageScopeOptions = {
+        /// nupkg path -> never a component (OPC parts, docs, the `sbom/` tree). Checked first.
+        IsPlumbing: string -> bool
+        /// framework -> nupkg path -> shipped for that framework (tier 1)
+        IsShipped: string -> string -> bool
+        /// shipped path -> a managed assembly: `library` type, and check 3.2 wants its hash
+        IsAssembly: string -> bool
+        /// shipped path -> a native binary: check 3.2 wants its hash
+        IsNative: string -> bool
+        /// package id -> internal: one line in tier 2 (id, range, resolved version, purl), no
+        /// supplier/license/hash pulled from the restore evidence
+        IsInternal: string -> bool
+        /// package id -> build tooling: dropped from tier 2 even when the nuspec declares it
+        IsTooling: string -> bool
+        /// shipped path -> the registry-declared subcomponents to nest under its component
+        /// (vendored / merged libraries, RFC §6). Default: none -- the registry does not exist
+        /// yet; a script with one plugs it in here
+        Subcomponents: string -> Component list
+        /// the property that carries a tier-2 entry's range as the nuspec wrote it
+        DeclaredRangeProperty: string
+        /// extra `properties[]` on the root, after `xake:nuget:targetFramework`
+        RootProperties: Property list
+        /// the boundary annotation; "" emits no annotation (check 3.4 then fails, deliberately)
+        BoundaryText: string
+        /// `annotations[].timestamp`, ISO 8601 -- see `PackageScope.timestamp`
+        AnnotationTimestamp: string
+        /// carry the evidence BOMs' `formulation` (compiler, SDK, analyzers) into the package
+        /// document. Off: the RFC lists what the customer receives, and they are not it
+        KeepFormulation: bool
+    }
+
+    /// The RFC's rules as read on 2026-09-23 (nuget-sbom.md "Package scope"), assembled from
+    /// `PackageScope`'s predicates.
+    let defaultPackageScope : PackageScopeOptions =
+        { IsPlumbing = PackageScope.plumbing
+          IsShipped = PackageScope.shippedFor
+          IsAssembly = PackageScope.assembly
+          IsNative = PackageScope.native
+          IsInternal = PackageScope.internalIds
+          IsTooling = PackageScope.toolingIds
+          Subcomponents = fun _ -> []
+          DeclaredRangeProperty = "dt:nuget:declaredVersionRange"
+          RootProperties = []
+          BoundaryText = PackageScope.boundaryText
+          AnnotationTimestamp = PackageScope.timestamp ()
+          KeepFormulation = false }
+
+    /// The nupkg paths that are shipped content for `framework` under `options` -- tier 1's
+    /// inventory, shared with `Verify.sbomPackageScopeWith` so producer and checker agree.
+    let shippedPaths (options: PackageScopeOptions) (framework: string) (entries: (string * byte[]) list) : string list =
+        entries |> List.map fst |> List.filter (fun path -> not (options.IsPlumbing path) && options.IsShipped framework path)
+
+    /// The property a tier-1 component names its nupkg path in; the join key between the
+    /// document and the archive for the verifier. Not configurable.
+    let pathProperty = "xake:nuget:path"
+
+    let private bothHashes (bytes: byte[]) =
+        [ { Alg = "SHA-256"; Content = hashBytes (fun () -> SHA256.Create () :> HashAlgorithm) bytes }
+          { Alg = "SHA-512"; Content = hashBytes (fun () -> SHA512.Create () :> HashAlgorithm) bytes } ]
+
+    /// The package-scope SBOM of one nupkg for one target framework -- the document the SDP
+    /// RFC (nuget-sbom.md "Package scope") asks for: **what the customer receives**, not the
+    /// supplier's restore graph. `assemblies` are the restore-scope BOMs (`forAssembly`) of the
+    /// assemblies packed for that TFM; they are the *evidence* the rule consults, never emitted
+    /// as they are. `options` decides the classifications; `defaultPackageScope` is the RFC's.
+    ///
+    /// - **Root** (`metadata.component`): the package, identity from the nuspec inside the
+    ///   nupkg, `bom-ref = "nupkg:<file name>"`, the TFM in property `xake:nuget:targetFramework`
+    ///   then `options.RootProperties`. No hash of the nupkg itself: this document is meant to
+    ///   be packed *into* it (`packageSbomPath`), so the nupkg's bytes are not final here.
+    /// - **Tier 1**, nested under the root's `components[]`: one component per file
+    ///   `shippedPaths` lists, with SHA-256 and SHA-512 of the shipped bytes; `IsAssembly` paths
+    ///   are `library`, everything else `file`; an assembly whose SHA-256 equals an input BOM's
+    ///   root hash takes that root's `name`/`version` (it is one of our own). `Subcomponents`
+    ///   nest under the file they belong to.
+    /// - **Tier 2**, the top-level `components[]`: the nuspec `<dependency>` entries of the TFM's
+    ///   group minus `IsTooling`, id verbatim, the range as written in `DeclaredRangeProperty`,
+    ///   `version` and `purl` from the restore graph's resolution when the assemblies' BOMs
+    ///   carry that package (so a scanner can still match), `""`/`pkg:nuget/<id>` otherwise.
+    ///   Supplier, license and package hash come from that evidence too -- except for an
+    ///   `IsInternal` package, which stays one line. Nothing from the restore graph that the
+    ///   nuspec does not declare is emitted: no SDK packs, no analyzers, no transitive package
+    ///   at any depth.
+    /// - **`dependencies[]`**: the root depends on its own shipped assemblies and on every tier-2
+    ///   component; each own assembly (matched to an input BOM by hash) depends on the tier-2
+    ///   components its restore-scope BOM had it depend on directly. No entry ever has a
+    ///   tier-2 component as its `ref` -- an empty `dependsOn` there would claim a closure this
+    ///   document does not know.
+    /// - **`compositions`**: `complete` over `assemblies: [root]`, `incomplete` over
+    ///   `dependencies: [root; own assemblies]`.
+    /// - **`annotations`**: one on the root with `BoundaryText`, annotator Xake, stamped
+    ///   `AnnotationTimestamp`.
+    /// - **`formulation`**: the evidence BOMs' union when `KeepFormulation`, else none.
+    ///
+    /// Signing the document (JSF) is out of scope here; a signer wraps the `cycloneDx` output.
+    /// Deterministic: every list sorted by its ref, no wall clock other than the annotation's
+    /// fixed stamp.
+    let forPackageScopedWith (options: PackageScopeOptions) (nupkgPath: string) (framework: string) (assemblies: Bom list) : Bom =
+        let entries = nupkgEntries nupkgPath
+        let nuspec = nuspecOfEntries entries
+        let packageRef = "nupkg:" + Path.GetFileNameWithoutExtension nupkgPath
+
+        // tier 1
+        let rootsByHash =
+            assemblies
+            |> List.choose (fun b -> b.Root.Hashes |> List.tryPick (fun h -> if h.Alg = "SHA-256" then Some (h.Content, b) else None))
+            |> Map.ofList
+        let shippedSet = shippedPaths options framework entries |> Set.ofList
+        let shipped =
+            entries
+            |> List.filter (fun (path, _) -> shippedSet.Contains path)
+            |> List.map (fun (path, bytes) ->
+                let hashes = bothHashes bytes
+                let sha256 = (hashes |> List.find (fun h -> h.Alg = "SHA-256")).Content
+                let own = rootsByHash |> Map.tryFind sha256
+                let name, version =
+                    match own with
+                    | Some b -> b.Root.Name, b.Root.Version
+                    | None -> Path.GetFileName path, ""
+                { Type = (if options.IsAssembly path then "library" else "file"); BomRef = packageRef + "/" + path
+                  Name = name; Version = version; Supplier = ""; Purl = ""; Hashes = hashes; License = ""; Scope = ""
+                  Components = options.Subcomponents path |> List.sortBy (fun c -> c.BomRef)
+                  Properties = [ { Name = pathProperty; Value = path } ] }, own)
+        let shippedComponents = shipped |> List.map fst |> List.sortBy (fun c -> c.BomRef)
+
+        // tier 2
+        let evidence = assemblies |> List.collect (fun b -> b.Components)
+        let evidenceFor (id: string) =
+            evidence |> List.tryFind (fun c -> c.Type = "library" && c.Purl <> "" && eqi c.Name id)
+        let tier2 =
+            Nuget.nuspecDependenciesFor framework nuspec
+            |> List.filter (fun d -> d.Id <> "" && not (options.IsTooling d.Id))
+            |> List.map (fun d ->
+                let resolved = evidenceFor d.Id
+                let enrichment = if options.IsInternal d.Id then None else resolved
+                let version = resolved |> Option.map (fun c -> c.Version) |> Option.defaultValue ""
+                let purl = if version = "" then "pkg:nuget/" + d.Id else sprintf "pkg:nuget/%s@%s" d.Id version
+                let field (f: Component -> string) = enrichment |> Option.map f |> Option.defaultValue ""
+                { Type = "library"; BomRef = purl; Name = d.Id; Version = version
+                  Supplier = field (fun c -> c.Supplier); Purl = purl
+                  Hashes = enrichment |> Option.map (fun c -> c.Hashes) |> Option.defaultValue []
+                  License = field (fun c -> c.License)
+                  Scope = "required"; Components = []
+                  Properties = [ { Name = options.DeclaredRangeProperty; Value = d.Range } ] })
+            |> List.sortBy (fun c -> c.BomRef)
+        let tier2Refs = tier2 |> List.map (fun c -> c.BomRef)
+        let tier2ById = tier2 |> List.map (fun c -> c.Name.ToLowerInvariant (), c.BomRef) |> Map.ofList
+
+        // dependencies: root -> own assemblies + tier 2; own assembly -> the tier-2 packages its
+        // restore-scope BOM had it depend on directly (matched by package id, not by version)
+        let ownAssemblies = shipped |> List.choose (fun (c, own) -> own |> Option.map (fun b -> c, b))
+        let ownRefs = ownAssemblies |> List.map (fun (c, _) -> c.BomRef)
+        let assemblyDeps =
+            ownAssemblies
+            |> List.map (fun (c, b) ->
+                let direct = b.Dependencies |> List.tryFind (fun (r, _) -> r = b.Root.BomRef) |> Option.map snd |> Option.defaultValue []
+                let idOf (bomRef: string) = b.Components |> List.tryPick (fun p -> if p.BomRef = bomRef then Some (p.Name.ToLowerInvariant ()) else None)
+                c.BomRef, direct |> List.choose (fun r -> idOf r |> Option.bind (fun id -> Map.tryFind id tier2ById)) |> List.distinct |> List.sort)
+        let rootDeps = packageRef, (ownRefs @ tier2Refs) |> List.distinct |> List.sort
+        let dependencies = (rootDeps :: assemblyDeps) |> List.sortBy fst
+
+        let root =
+            { Type = "library"; BomRef = packageRef; Name = nuspec.Id; Version = nuspec.Version
+              Supplier = nuspec.Authors; Purl = (if nuspec.Id = "" then "" else sprintf "pkg:nuget/%s@%s" nuspec.Id nuspec.Version)
+              Hashes = []; License = nuspec.License; Scope = ""
+              Components = shippedComponents
+              Properties = { Name = "xake:nuget:targetFramework"; Value = framework } :: options.RootProperties }
+
+        let compositions =
+            [ { Aggregate = "complete"; Assemblies = [ packageRef ]; Dependencies = [] }
+              { Aggregate = "incomplete"; Assemblies = []; Dependencies = packageRef :: ownRefs |> List.sort } ]
+        let annotations =
+            if options.BoundaryText = "" then [] else
+            [ { BomRef = packageRef + "/annotation:boundary"; Subjects = [ packageRef ]; Annotator = "Xake"
+                Timestamp = options.AnnotationTimestamp; Text = options.BoundaryText } ]
+        let formulation =
+            if options.KeepFormulation then
+                assemblies |> List.collect (fun b -> b.Formulation) |> mergeComponents |> List.sortBy (fun c -> c.BomRef)
+            else []
+
+        { Root = root; Components = tier2; Dependencies = dependencies; Formulation = formulation
+          Compositions = compositions; Annotations = annotations }
+
+    /// `forPackageScopedWith defaultPackageScope`: the RFC's rules as they stand.
+    let forPackageScoped (nupkgPath: string) (framework: string) (assemblies: Bom list) : Bom =
+        forPackageScopedWith defaultPackageScope nupkgPath framework assemblies

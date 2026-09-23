@@ -46,6 +46,7 @@ type ``Project import``() =
     let entryOf name (project: string) (directory: string) (args: string list) : Lock.Entry =
         let compilation, references, analyzers = Lock.Compilation.ofArgs args
         { Name = name
+          Framework = "net8.0"
           Evaluation = { Project = project; ProjectRefs = []; Imports = []; Sdk = "8.0.425"; SdkPin = Some (Lock.Pinned "8.0.425"); Properties = Map.empty }
           Compilation = { compilation with Directory = directory }
           Dependencies =
@@ -145,7 +146,7 @@ type ``Project import``() =
                             [ { Id = "Foo.Bar"; Version = "1.2.3"; Sha512 = "AAAA=="; Direct = true; DependsOn = [ "Baz.Qux" ] }
                               { Id = "Baz.Qux"; Version = "4.5.6"; Sha512 = ""; Direct = false; DependsOn = [] } ] } }
         let lock : Lock.Document = {
-            Framework = "net8.0"; Configuration = "Release"; Properties = [ "Brand", "X" ]; Entries = [ entry ]
+            Configuration = "Release"; Properties = [ "Brand", "X" ]; Entries = [ entry ]
         }
 
         let text = Lock.writeWith roots lock
@@ -176,6 +177,75 @@ type ``Project import``() =
         Assert.That((Lock.entry "Sample.Lib" lock).Output, Is.EqualTo (Some (root + "/src/Sample/obj/xake/net8.0/Sample.Lib.dll")))
         // the flat command line comes back exactly, alias and trailing switch included
         Assert.That((Lock.parseWith roots text |> Lock.entry "Sample.Lib").Args, Is.EqualTo args)
+
+    /// One lock now holds every target framework of the project set, so the framework is a
+    /// property of the entry, not of the file: two entries of one project, one per framework,
+    /// have to survive write/parse and stay distinguishable.
+    [<Test>]
+    member x.``an entry carries its own framework through write and parse``() =
+        let root = Directory.GetCurrentDirectory().Replace ('\\', '/')
+        let roots = Roots.builtin (Directory.GetCurrentDirectory())
+        let entryFor fwk =
+            { entryOf "Sample.Lib" (root + "/src/Sample/Sample.csproj") (root + "/src/Sample")
+                [ "/out:" + root + "/src/Sample/obj/xake/" + fwk + "/Sample.Lib.dll"; root + "/src/Sample/A.cs" ]
+                with Framework = fwk }
+        let lock : Lock.Document =
+            { Configuration = "Release"; Properties = [ "Brand", "X" ]; Entries = [ entryFor "netstandard2.0"; entryFor "net472" ] }
+
+        let text = Lock.writeWith roots lock
+        Assert.That(text, Does.Contain "\"Framework\": \"netstandard2.0\"")
+        Assert.That(text, Does.Contain "\"Framework\": \"net472\"")
+        // the framework is per entry: the document itself no longer carries one
+        Assert.That(text.Split '\n' |> Array.filter (fun l -> l.TrimStart().StartsWith "\"Framework\"") |> Array.length, Is.EqualTo 2)
+        Assert.That(Lock.parseWith roots text, Is.EqualTo lock)
+        Assert.That(Lock.parseWith roots text |> Lock.writeWith roots, Is.EqualTo text)
+
+        // `entry` by name alone can no longer tell them apart, and says so
+        let ex = Assert.Throws<System.Exception>(fun () -> Lock.entry "Sample.Lib" lock |> ignore)
+        Assert.That(ex.Message, Does.Contain "netstandard2.0")
+        Assert.That(ex.Message, Does.Contain "net472")
+        Assert.That(ex.Message, Does.Contain "entryFor")
+
+        // `entryFor` does, by either spelling of the name
+        Assert.That((Lock.entryFor "net472" "Sample.Lib" lock).Framework, Is.EqualTo "net472")
+        Assert.That((Lock.entryFor "netstandard2.0" "Sample" lock).Output,
+            Is.EqualTo (Some (root + "/src/Sample/obj/xake/netstandard2.0/Sample.Lib.dll")))
+        Assert.That(Assert.Throws<System.Exception>(fun () -> Lock.entryFor "net8.0" "Sample.Lib" lock |> ignore).Message,
+            Does.Contain "net8.0")
+
+        // a name that is unique in the lock still resolves without naming a framework
+        let one : Lock.Document = { lock with Entries = [ entryFor "net472" ] }
+        Assert.That((Lock.entry "Sample.Lib" one).Framework, Is.EqualTo "net472")
+        // `diff` reports the framework, so a lock recorded for another one cannot match
+        Assert.That(Lock.diff (entryFor "net472") (entryFor "netstandard2.0") |> List.head,
+            Is.EqualTo "~ Framework: net472 -> netstandard2.0")
+
+    /// A lock written when the framework was a property of the *file* still reads: the
+    /// document-level value is distributed into every entry. Only the new shape is written.
+    [<Test>]
+    member x.``a lock with a document-level framework reads into the entries``() =
+        let roots = Roots.builtin (Directory.GetCurrentDirectory())
+        let old = """{
+  "Framework": "net472",
+  "Configuration": "Release",
+  "Properties": { "Brand": "X" },
+  "Entries": [
+    {
+      "Name": "Sample.Lib",
+      "Evaluation": { "Project": "/p/Sample.csproj", "ProjectRefs": [], "Imports": [], "Sdk": "8.0.425", "SdkPin": "exact 8.0.425", "Properties": {} },
+      "Compilation": { "Directory": "/p", "Options": ["@Sources"], "Defines": [], "Sources": ["/p/A.cs"], "Generated": {}, "Resources": {} },
+      "Dependencies": { "Compiler": { "Tool": "csc", "Path": "/sdk/csc.dll", "Sha256": "", "Version": "4.11.0" }, "References": [], "Analyzers": [], "Packages": [] }
+    }
+  ]
+}"""
+        let parsed = Lock.parseWith roots old
+        Assert.That(parsed.Entries.Head.Framework, Is.EqualTo "net472")
+        Assert.That(parsed.Configuration, Is.EqualTo "Release")
+        // written back it is the new shape: the framework sits in the entry
+        let rewritten = Lock.writeWith roots parsed
+        Assert.That(rewritten, Does.Contain "\"Framework\": \"net472\"")
+        Assert.That(rewritten.Split '\n' |> Array.filter (fun l -> l.TrimStart().StartsWith "\"Framework\"") |> Array.length, Is.EqualTo 1)
+        Assert.That((Lock.parseWith roots rewritten).Entries, Is.EqualTo parsed.Entries)
 
     [<Test>]
     member x.``a flat lock from an older Xake is refused with a clear message``() =
@@ -269,7 +339,7 @@ type ``Project import``() =
             entryOf "Sample.Lib" (root + "/src/Sample/Sample.csproj") (root + "/src/Sample")
                 [ "/noconfig"; "/out:" + root + "/src/Sample/obj/xake/net8.0/Sample.Lib.dll"; "/x/dataengine/src/A.cs" ]
         let lock : Lock.Document = {
-            Framework = "net8.0"; Configuration = "Release"; Properties = []; Entries = [ entry ]
+            Configuration = "Release"; Properties = []; Entries = [ entry ]
         }
 
         let text = Lock.writeWith roots lock
@@ -396,7 +466,7 @@ type ``Project import``() =
               dirSlash + "/obj/Sample.csproj.nuget.g.props"
               dirSlash + "/Directory.Build.props" ]
         let packages : Lock.Package list = [ { Id = "Foo.Bar"; Version = "1.2.3"; Sha512 = "AAAA=="; Direct = true; DependsOn = [] } ]
-        let entry = Project.parseImport result imports (Lock.Pinned "8.0.425") packages
+        let entry = Project.parseImport "net8.0" result imports (Lock.Pinned "8.0.425") packages
 
         Assert.That(entry.Name, Is.EqualTo "Sample.Lib")
         Assert.That(entry.Compilation.Directory, Is.EqualTo dirSlash)
@@ -475,7 +545,7 @@ type ``Project import``() =
           }
         }""" dirSlash dirSlash)
 
-        let entry = Project.parseImport result [] (Lock.Pinned "8.0.425") []
+        let entry = Project.parseImport "net8.0" result [] (Lock.Pinned "8.0.425") []
 
         // `FullPath` here is the wrong, cwd-resolved spelling -- `Identity` combined with the
         // project directory must win, `..` folded
@@ -700,3 +770,30 @@ type ``Project import``() =
         let expectedPeak = if Env.isUnix then 2 else 1
         Assert.AreEqual(expectedPeak, !peak,
             "on Unix paths differing only by case are different projects; on Windows they are the same one")
+
+    [<Test>]
+    member x.``frameworksToImport keeps the frameworks a project declares and reports the rest``() =
+        // one `import` covers a framework matrix for every project it is given; a project that
+        // multi-targets differently must contribute only the legs it has, not a design-time
+        // build of a leg that was never configured
+        let kept, absent = Project.frameworksToImport [ "netstandard2.0"; "net472" ] [ "netstandard2.0"; "net472" ]
+        Assert.AreEqual([ "netstandard2.0"; "net472" ], kept)
+        Assert.IsEmpty absent
+
+        let kept, absent = Project.frameworksToImport [ "netstandard2.0" ] [ "netstandard2.0"; "net472" ]
+        Assert.AreEqual([ "netstandard2.0" ], kept)
+        Assert.AreEqual([ "net472" ], absent)
+
+        // msbuild's TargetFrameworks comes as a `;`-separated list and may carry whitespace;
+        // an empty list is "msbuild said nothing", which keeps everything requested
+        let kept, _ = Project.frameworksToImport [ " net8.0 "; "" ] [ "net8.0" ]
+        Assert.AreEqual([ "net8.0" ], kept)
+
+        let kept, absent = Project.frameworksToImport [] [ "netstandard2.0"; "net472" ]
+        Assert.AreEqual([ "netstandard2.0"; "net472" ], kept)
+        Assert.IsEmpty absent
+
+        // a project that declares none of them yields nothing rather than a wrong entry
+        let kept, absent = Project.frameworksToImport [ "net8.0" ] [ "net472" ]
+        Assert.IsEmpty kept
+        Assert.AreEqual([ "net472" ], absent)

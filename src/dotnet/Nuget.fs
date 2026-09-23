@@ -83,6 +83,11 @@ module Nuget =
             candidates |> List.tryPick (fun name -> targets |> List.tryFind (fun (key, _) -> key.StartsWith (name, ic))))
 
     /// Reads `project.assets.json` and builds the restore graph for one target framework.
+    /// Fails when the file has no target for `framework` -- an empty graph would otherwise be
+    /// indistinguishable from "this project has no packages", and the lock entry (and so the
+    /// SBOM built from it) would come out silently without its package components. That is
+    /// exactly what a restore run with `-p:TargetFramework=X` produced for every *other*
+    /// framework of a multi-targeted project: see verify-dataengine.md §6.
     let readAssets (assetsFile: string) (framework: string) : Assets =
         let root = File.ReadAllText assetsFile |> Json.parse
 
@@ -95,7 +100,11 @@ module Nuget =
         let entries =
             match selectTarget framework targets with
             | Some (_, Json.JObject members) -> members
-            | _ -> []
+            | Some _ -> []
+            | None ->
+                failwithf "'%s' has no target for '%s' (it has: %s) -- restore it for that framework"
+                    assetsFile framework
+                    (match targets |> List.map fst with | [] -> "no targets at all" | keys -> String.concat ", " keys)
 
         // id -> version, for resolving a dependency's version range to what was actually
         // restored: "just match by id" (a project's own dependencies list only carries ranges)

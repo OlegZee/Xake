@@ -47,6 +47,7 @@ type ``Csc fromlock``() =
                   helloCs ]
         let project : Lock.Entry = {
             Name = "Hello"
+            Framework = "netstandard2.0"
             Evaluation = { Project = Path.Combine (dir, "Hello.csproj"); ProjectRefs = []; Imports = []; Sdk = fwk.Version; SdkPin = None; Properties = Map.empty }
             Compilation = { compilation with Directory = dir; Generated = [ assemblyInfoCs, assemblyInfoContent ] }
             Dependencies =
@@ -212,6 +213,7 @@ type ``Csc fromlock``() =
         let compilation, references, analyzers = Lock.Compilation.ofArgs [ "/reference:/a/Old.dll"; "/out:/a/Old.dll.out"; "/a/A.cs" ]
         let project : Lock.Entry = {
             Name = "Sample"
+            Framework = "netstandard2.0"
             Evaluation = { Project = "/a/Sample.csproj"; ProjectRefs = []; Imports = []; Sdk = "8.0.0"; SdkPin = None; Properties = Map.empty }
             Compilation = { compilation with Directory = "/a" }
             Dependencies =
@@ -277,7 +279,7 @@ type ``Csc fromlock``() =
         let rehashed = Lock.rehash project
         Assert.That(rehashed.Dependencies.References |> List.forall (fun r -> r.Sha256 <> ""), Is.True)
 
-        let lockFile : Lock.Document = { Framework = "netstandard2.0"; Configuration = ""; Properties = []; Entries = [rehashed] }
+        let lockFile : Lock.Document = { Configuration = ""; Properties = []; Entries = [rehashed] }
         let roots = Roots.builtin (Directory.GetCurrentDirectory())
         let roundtripped = Lock.writeWith roots lockFile |> Lock.parseWith roots
         let readBack = Lock.entry rehashed.Name roundtripped

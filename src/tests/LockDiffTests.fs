@@ -17,6 +17,7 @@ type ``Lock rehash and diff``() =
         let compilation, references, analyzers =
             Lock.Compilation.ofArgs [ "/target:library"; "/define:TRACE"; "/out:/proj/obj/Sample.dll"; "/reference:/pkgs/a.dll"; "A.cs" ]
         { Name = "Sample"
+          Framework = "netstandard2.0"
           Evaluation = { Project = "/proj/Sample.csproj"; ProjectRefs = []; Imports = []; Sdk = "8.0.100"; SdkPin = None; Properties = Map.empty }
           Compilation = { compilation with Directory = "/proj"; Generated = [ "/proj/obj/AssemblyInfo.cs", "// v1" ] }
           Dependencies =

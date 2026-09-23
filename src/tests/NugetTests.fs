@@ -125,6 +125,26 @@ type ``Nuget assets``() =
         Assert.That (Nuget.frameworkFullName "netcoreapp3.1", Is.EqualTo ".NETCoreApp,Version=v3.1")
         Assert.That (Nuget.frameworkFullName "net8.0", Is.EqualTo "net8.0")
 
+    /// A restore run with a global `-p:TargetFramework=X` writes an assets file holding only
+    /// X's target. Reading it for another framework used to give an empty graph, so the lock
+    /// entry was recorded with `packages 0` and the SBOM came out without its package
+    /// components -- silently (verify-dataengine.md §6). It has to fail instead.
+    [<Test>]
+    member x.``fails loudly when the assets file has no target for the framework``() =
+        let assetsFile = Directory.GetCurrentDirectory() </> "project.assets.onetarget.json"
+        File.WriteAllText (assetsFile, """
+            {
+              "targets": { ".NETFramework,Version=v4.7.2": { "Foo.Bar/1.2.3": { "type": "package" } } },
+              "project": { "frameworks": { "net472": { "dependencies": { "Foo.Bar": {} } } } }
+            }
+            """)
+        // the framework it does have still reads
+        Assert.That ((Nuget.readAssets assetsFile "net472").Packages, Is.EqualTo [ "Foo.Bar", "1.2.3" ])
+
+        let ex = Assert.Throws<System.Exception>(fun () -> Nuget.readAssets assetsFile "netstandard2.0" |> ignore)
+        Assert.That (ex.Message, Does.Contain "netstandard2.0")
+        Assert.That (ex.Message, Does.Contain ".NETFramework,Version=v4.7.2")
+
     [<Test>]
     member x.``picks the rid-less net8_0 entry over net8_0-win-x64``() =
         let assetsFile = Directory.GetCurrentDirectory() </> "project.assets.net8.json"

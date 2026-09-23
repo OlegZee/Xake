@@ -52,6 +52,7 @@ type ``Sbom cycloneDx``() =
     /// compiler and the version property.
     let entryOf name (references: Lock.Hashed list) (analyzers: Lock.Hashed list) (packages: Lock.Package list) : Lock.Entry =
         { Name = name
+          Framework = "netstandard2.0"
           Evaluation = { Project = ""; ProjectRefs = []; Imports = []; Sdk = "8.0.100"; SdkPin = None; Properties = Map.ofList [ "Version", "1.0.0" ] }
           Compilation = { Directory = ""; Options = []; Defines = []; Sources = []; Generated = []; Resources = [] }
           Dependencies =

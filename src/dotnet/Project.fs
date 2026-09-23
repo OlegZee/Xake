@@ -498,6 +498,14 @@ module Lock =
     type Entry = {
         /// AssemblyName
         Name: string
+        /// The target framework this compilation is for (`netstandard2.0`, `net472`, ...).
+        /// One lock holds every framework of the project set, so `(Name, Framework)` -- not
+        /// `Name` alone -- identifies an entry. It sits here rather than in `Evaluation`
+        /// because it is identity: it is what a build script looks an entry up by
+        /// (`Lock.entryFor`), it is set for a composed `csc {}` compilation too (from
+        /// `targetfwk`, which has no msbuild evaluation behind it at all), and `Evaluation`
+        /// is by contract empty in that case.
+        Framework: string
         Evaluation: Evaluation
         Compilation: Compilation
         Dependencies: Dependencies
@@ -508,9 +516,10 @@ module Lock =
         member this.Sources = this.Compilation.Sources
         member this.Output = CscArgs.switchValues "out" this.Compilation.Options |> List.tryHead
 
-    /// One lock file: every project of one (framework, variant).
+    /// One lock file: every project of one variant, for every target framework it was
+    /// imported for. The framework is a property of the `Entry`, not of the file: a
+    /// multi-targeted project set is one import, one restore per project and one lock.
     type Document = {
-        Framework: string
         Configuration: string
         /// The properties the import ran with, e.g. `Brand`
         Properties: (string * string) list
@@ -688,14 +697,16 @@ module Lock =
 
     let private toHashed (r: Reference) : Hashed = { Path = r.Path; Sha256 = r.Sha256 }
 
-    /// Human-readable differences between two lock entries of the same project: `Options` and
+    /// Human-readable differences between two lock entries of the same project: `Framework`,
+    /// `Options` and
     /// `Sources` as ordered lists (`diffList`, bare `+`/`-` lines), `Defines` as a set,
     /// `Compiler` (path, hash, version), `Evaluation.Sdk`, each hashed list (`References`,
     /// `Analyzers`, `Imports`) by path, `Generated`/`Resources` by key, `ProjectRefs` as a
     /// set, `Packages` by id. Empty list means identical. Pure, deterministic order (fixed
     /// section order, sorted within each section save the two ordered ones).
     let diff (a: Entry) (b: Entry) : string list =
-        [ yield! diffList a.Compilation.Options b.Compilation.Options
+        [ if a.Framework <> b.Framework then yield sprintf "~ Framework: %s -> %s" a.Framework b.Framework
+          yield! diffList a.Compilation.Options b.Compilation.Options
           yield! diffList a.Compilation.Sources b.Compilation.Sources
           yield! diffStringSet "Define" a.Compilation.Defines b.Compilation.Defines
           yield! diffCompiler a.Dependencies.Compiler b.Dependencies.Compiler
@@ -744,6 +755,7 @@ module Lock =
 
         let e, c, d = entry.Evaluation, entry.Compilation, entry.Dependencies
         [ sprintf "      \"Name\": %s" (escape entry.Name)
+          sprintf "      \"Framework\": %s" (escape entry.Framework)
           section "Evaluation"
             [ sprintf "%s\"Project\": %s" indent (str e.Project)
               strings "ProjectRefs" e.ProjectRefs
@@ -771,14 +783,16 @@ module Lock =
     /// compilations. `roots` is the full list (built-in plus any extra a script declared, e.g.
     /// via `Roots.withExtra`), longest root first.
     let writeWith roots (lock: Document) =
-        [ sprintf "  \"Framework\": %s" (escape lock.Framework)
-          sprintf "  \"Configuration\": %s" (escape lock.Configuration)
+        [ sprintf "  \"Configuration\": %s" (escape lock.Configuration)
           sprintf "  \"Properties\": {\n%s\n  }"
             (lock.Properties |> List.map (fun (k, v) -> sprintf "    %s: %s" (escape k) (escape v)) |> String.concat ",\n")
           sprintf "  \"Entries\": [\n%s\n  ]" (lock.Entries |> List.map (writeEntry roots) |> String.concat ",\n") ]
         |> String.concat ",\n" |> sprintf "{\n%s\n}\n"
 
-    let private readEntry roots value =
+    /// `documentFramework` is the file-level `"Framework"` of a lock written before the
+    /// framework moved into the entry: an entry without one of its own inherits it, which is
+    /// exactly right -- such a file held one framework for all of its entries.
+    let private readEntry roots (documentFramework: string) value =
         let expand = Roots.expand roots
         let str name value = field name value |> Option.bind asString |> Option.defaultValue ""
         let strings name value = field name value |> Option.map asArray |> Option.defaultValue [] |> List.choose asString |> List.map expand
@@ -806,6 +820,7 @@ module Lock =
         let compiler = field "Compiler" d |> Option.defaultValue (JObject [])
         {
             Name = str "Name" value
+            Framework = field "Framework" value |> Option.bind asString |> Option.defaultValue documentFramework
             Evaluation =
                 { Project = str "Project" e |> expand
                   ProjectRefs = strings "ProjectRefs" e
@@ -830,62 +845,96 @@ module Lock =
     /// Reads a lock `writeWith` produced, paths expanded for this machine. `roots` must be the
     /// same list (or a superset) used to write it, or a token stays untranslated. A lock in
     /// the flat, pre-split format (`Projects` with a verbatim `Args`) is refused with a message
-    /// saying to re-import.
+    /// saying to re-import. A lock written when the framework was a property of the *file* (a
+    /// document-level `"Framework"`, one framework per lock) still reads: the value is
+    /// distributed into every entry that does not carry its own. Only the new shape is ever
+    /// written.
     let parseWith roots (text: string) =
         let root = Json.parse text
         let str name = field name root |> Option.bind asString |> Option.defaultValue ""
         if (field "Projects" root).IsSome && (field "Entries" root).IsNone then
             failwith "lock written by an older Xake (flat format with 'Projects'/'Args'); re-import"
         {
-            Framework = str "Framework"
             Configuration = str "Configuration"
             Properties =
                 match field "Properties" root with
                 | Some (JObject members) -> members |> List.choose (fun (k, v) -> asString v |> Option.map (fun v -> k, v))
                 | _ -> []
-            Entries = field "Entries" root |> Option.map asArray |> Option.defaultValue [] |> List.map (readEntry roots)
+            Entries = field "Entries" root |> Option.map asArray |> Option.defaultValue [] |> List.map (readEntry roots (str "Framework"))
         }
 
     let readWith roots (path: string) = System.IO.File.ReadAllText path |> parseWith roots
 
-    /// Reads a lock against the roots of this build: the built-in three, with the project root
-    /// taken from the engine (`ExecOptions.ProjectRoot`) rather than from the process's current
-    /// directory -- which is why this is a recipe and `readWith` is not.
-    let load (path: string) : Recipe<ExecContext, Document> =
+    /// A lock path resolved the way the engine resolves a target: against the build's project
+    /// root (`ExecOptions.ProjectRoot`), not the process's current directory.
+    let private fullPath (path: string) : Recipe<ExecContext, string> =
         recipe {
-            let! roots = Roots.current
-            return readWith roots path
+            let! options = getCtxOptions()
+            return if System.IO.Path.IsPathRooted path then path else options.ProjectRoot </> path
         }
 
     /// `load` with extra roots declared by the script (the ones its `Project.import` used, see
     /// `ImportOptions.Roots`).
+    ///
+    /// Reading a lock **is** depending on it: `loadWith` `needFiles` the lock itself, so a
+    /// recipe that reads one records the `FileDep` -- and, when a rule produces the lock (the
+    /// import rule of every script here), builds it first. That used to be an explicit
+    /// `do! need [lockFile ...]` in front of every `Lock.load`, easy to forget and impossible
+    /// to see the absence of.
     let loadWith (extraRoots: (string * string) list) (path: string) : Recipe<ExecContext, Document> =
         recipe {
+            let! full = fullPath path
+            do! needFiles (Filelist [ File.make full ])
             let! roots = Roots.currentWith extraRoots
-            return readWith roots path
+            return readWith roots full
+        }
+
+    /// Reads a lock against the roots of this build: the built-in three, with the project root
+    /// taken from the engine (`ExecOptions.ProjectRoot`) rather than from the process's current
+    /// directory -- which is why this is a recipe and `readWith` is not. Depends on the lock
+    /// file (see `loadWith`).
+    let load (path: string) : Recipe<ExecContext, Document> = loadWith [] path
+
+    /// `save` with extra roots declared by the script.
+    ///
+    /// Deliberately *not* symmetric with `loadWith`: writing a file is not depending on it.
+    /// A `need` here would be wrong in both of `save`'s uses -- a rule writing the lock as its
+    /// own target would depend on itself, and `csc { lock }` writes its lock from inside the
+    /// compile recipe, where the lock is not a target at all.
+    let saveWith (extraRoots: (string * string) list) (path: string) (lock: Document) : Recipe<ExecContext, unit> =
+        recipe {
+            let! full = fullPath path
+            let! roots = Roots.currentWith extraRoots
+            System.IO.File.WriteAllText (full, writeWith roots lock)
         }
 
     /// Writes a lock against this build's roots (see `load`).
-    let save (path: string) (lock: Document) : Recipe<ExecContext, unit> =
-        recipe {
-            let! roots = Roots.current
-            System.IO.File.WriteAllText (path, writeWith roots lock)
-        }
+    let save (path: string) (lock: Document) : Recipe<ExecContext, unit> = saveWith [] path lock
 
-    /// `save` with extra roots declared by the script.
-    let saveWith (extraRoots: (string * string) list) (path: string) (lock: Document) : Recipe<ExecContext, unit> =
-        recipe {
-            let! roots = Roots.currentWith extraRoots
-            System.IO.File.WriteAllText (path, writeWith roots lock)
-        }
+    let private named (name: string) (e: Entry) =
+        e.Name = name || System.IO.Path.GetFileNameWithoutExtension e.Evaluation.Project = name
 
-    /// The entry for one project, by assembly name or by project file name.
+    let private known (lock: Document) =
+        lock.Entries |> List.map (fun e -> if e.Framework = "" then e.Name else e.Name + " (" + e.Framework + ")") |> String.concat ", "
+
+    /// The entry for one project, by assembly name or by project file name. A lock now holds
+    /// every target framework of the project set, so a name can match more than one entry:
+    /// that is an error naming the frameworks, and `entryFor` is the way to say which one.
     let entry (name: string) (lock: Document) =
-        lock.Entries |> List.tryFind (fun e ->
-            e.Name = name || System.IO.Path.GetFileNameWithoutExtension e.Evaluation.Project = name)
-        |> function
-            | Some e -> e
-            | None -> failwithf "project '%s' is not in the lock (%s)" name (lock.Entries |> List.map (fun e -> e.Name) |> String.concat ", ")
+        match lock.Entries |> List.filter (named name) with
+        | [ e ] -> e
+        | [] -> failwithf "project '%s' is not in the lock (%s)" name (known lock)
+        | many ->
+            failwithf "project '%s' is in the lock for %d frameworks (%s); ask for one with Lock.entryFor"
+                name (List.length many) (many |> List.map (fun e -> e.Framework) |> String.concat ", ")
+
+    /// The entry for one project *and* one target framework -- the unambiguous lookup, and
+    /// the one a build script whose rules carry the framework should use.
+    let entryFor (framework: string) (name: string) (lock: Document) =
+        match lock.Entries |> List.filter (fun e -> e.Framework = framework && named name e) with
+        | [ e ] -> e
+        | [] -> failwithf "project '%s' for '%s' is not in the lock (%s)" name framework (known lock)
+        | _ :: _ -> failwithf "project '%s' for '%s' appears more than once in the lock" name framework
 
 /// Imports a C# project the way Visual Studio learns a project's compiler switches: a
 /// design-time build in which the compiler task is asked to report its command line instead
@@ -923,8 +972,13 @@ module Project =
         /// The project files. All of them land in one lock: what varies between projects of
         /// one framework and variant is small next to what they share
         Projects: string list
-        /// Target framework the import runs for
-        Framework: string
+        /// The target frameworks to import each project for. **All of them land in one lock**,
+        /// one `Lock.Entry` per (project, framework): a multi-targeted project is restored
+        /// once, without `TargetFramework`, so its `project.assets.json` holds every target,
+        /// and the design-time build then runs per framework against that one restore. One
+        /// lock per framework was what made two frameworks of one project impossible to
+        /// import concurrently (verify-dataengine.md §6)
+        Frameworks: string list
         Configuration: string
         /// What else selects the compilation, e.g. `["Brand", "MESCIUS"]`. Each distinct set
         /// needs its own `Variant` so the generated files do not overwrite each other's
@@ -942,7 +996,7 @@ module Project =
         Roots: (string * string) list
     } with static member Default = {
             Projects = []
-            Framework = ""
+            Frameworks = []
             Configuration = "Release"
             Properties = []
             Variant = ""
@@ -951,13 +1005,14 @@ module Project =
         }
 
     /// Serializes msbuild runs of one project file: two concurrent imports (different lock
-    /// outputs, e.g. one rule per (framework, brand)) of the *same* project both `-restore`
+    /// outputs, e.g. one rule per brand) of the *same* project both restore
     /// into that project's shared `obj/project.assets.json` (and `obj/*.nuget.g.*`) -- only
     /// `IntermediateOutputPath` is per-variant above, not `BaseIntermediateOutputPath` -- so
     /// when the package set depends on a property like `Brand`, one import can read the
     /// other's restore output and record the wrong references. A process-wide `Resource` of
-    /// quantity 1 per normalized project path serializes the two msbuild runs of that project
-    /// (`-restore` design-time build, then `-pp`); a different project path gets its own
+    /// quantity 1 per normalized project path serializes the whole import of that project
+    /// (the restore, then every framework's design-time build and `-pp`, and the reads of the
+    /// assets file in between); a different project path gets its own
     /// `Resource`, so unrelated projects still import in parallel. This is `Resource` /
     /// `withResource` (`docs/delegated.md`) used exactly as documented for a script -- a
     /// `Resource` is just a value and `withResource` is the recipe-level bracket, so a library
@@ -990,6 +1045,22 @@ module Project =
         |> Option.bind (Json.field name)
         |> Option.bind Json.asString
         |> Option.filter ((<>) "")
+
+    /// Which of the `requested` frameworks this project actually has, and which it does not,
+    /// in the order they were requested. `declared` is msbuild's `TargetFrameworks` (or the
+    /// single `TargetFramework`) -- the authority on which legs of the project exist. It
+    /// matters because one `Project.import` now covers a whole framework matrix for every
+    /// project it is given, and a repository rarely multi-targets every project the same way:
+    /// asking msbuild for a leg the project never declared makes it build one that was never
+    /// configured, against a restore (which ran without the property) that has no target for
+    /// it -- `NETSDK1005`, halfway through an import. An empty `declared` is "msbuild said
+    /// nothing", not "nothing is declared": everything requested is kept. Pure.
+    let internal frameworksToImport (declared: string list) (requested: string list) =
+        match declared |> List.map (fun (s: string) -> s.Trim ()) |> List.filter ((<>) "") with
+        | [] -> requested, []
+        | declared ->
+            let has f = declared |> List.exists (fun d -> System.String.Equals (d, f, System.StringComparison.OrdinalIgnoreCase))
+            requested |> List.partition has
 
     /// The restore graph of one target, as the lock records it: every package of
     /// `assets.Packages` with its cache sha512 (`Nuget.readCache`, "" when the cache has no
@@ -1052,7 +1123,7 @@ module Project =
     /// files the command line names. Fails when the command line rebuilt from the structured
     /// entry (`Entry.Args`) is not exactly msbuild's -- the fidelity guarantee of brief §8c,
     /// checked here rather than trusted.
-    let internal parseImport (resultFile: string) (imports: string list) (pin: SdkPin) (packages: Lock.Package list) =
+    let internal parseImport (framework: string) (resultFile: string) (imports: string list) (pin: SdkPin) (packages: Lock.Package list) =
         let root = File.ReadAllText resultFile |> Json.parse
         let items name =
             Json.field "Items" root |> Option.bind (Json.field name)
@@ -1156,6 +1227,7 @@ module Project =
         let compilation, references, analyzers = Lock.Compilation.ofArgs args
         let entry : Lock.Entry = {
             Name = prop "AssemblyName"
+            Framework = framework
             Evaluation =
                 { Project = prop "MSBuildProjectFullPath" |> slash
                   ProjectRefs = items "ProjectReference" |> List.map (identity >> resolveAgainstProject)
@@ -1191,36 +1263,69 @@ module Project =
         | sha -> tokenizeRevision sha entry
 
     /// <summary>
-    /// Imports the projects and writes the lock. Make it the recipe of a file rule over the
-    /// lock: msbuild then runs only when a project file or one of the files it imports
-    /// changed.
+    /// Imports the projects, for every framework in `options.Frameworks`, and writes the one
+    /// lock. Make it the recipe of a file rule over the lock: msbuild then runs only when a
+    /// project file or one of the files it imports changed.
     /// </summary>
+    /// <remarks>
+    /// Three msbuild phases per project, all inside that project's lock
+    /// (`withProjectLock`), so a concurrent import of the same project for another variant
+    /// cannot land between them:
+    ///
+    /// 1. **One restore, with no `TargetFramework`** (`-t:Restore`, plus
+    ///    `-p:RestoreRecursive=false`). Without the property NuGet resolves every target of a
+    ///    multi-targeted project into one `project.assets.json`; with `RestoreRecursive=false`
+    ///    it stops walking the project graph, so a project's restore no longer rewrites the
+    ///    assets files of the projects it references -- which is the half `withProjectLock`
+    ///    never covered and what made two frameworks of one project impossible to import
+    ///    concurrently (verify-dataengine.md §6). Verified on the dataengine fixture: with the
+    ///    flag, only the restored project's own assets file is written.
+    /// 2. **A design-time build per framework**, `-p:TargetFramework=&lt;f&gt;` and **no**
+    ///    `-restore` -- the restore above already produced everything it reads.
+    /// 3. **A `-pp` preprocess per framework** for the evaluation's import list.
+    /// </remarks>
     let import (options: ImportOptions) =
 
         recipe {
-            let variantDir = if options.Variant = "" then "" else options.Variant + "/"
-            let properties =
-                [ "Configuration", options.Configuration
-                  "TargetFramework", options.Framework
-                  // the compiler reports its command line and does not run
-                  "ProvideCommandLineArgs", "true"
-                  "SkipCompilerExecution", "true"
-                  // resolving a project reference must not build it
-                  "BuildProjectReferences", "false"
-                  // the generated files are per (framework, variant): brands sharing one obj
-                  // overwrite each other's assembly attributes
-                  "IntermediateOutputPath", sprintf "obj/xake/%s/%s" options.Framework variantDir
-                  // the audit talks to the feeds and its warnings turn fatal under
-                  // TreatWarningsAsErrors; it is not the import's business
-                  "NuGetAudit", "false"
-                  // CoreCompile lists this property among its Outputs (Visual Studio's own
-                  // design-time trick): a file that never exists keeps the target from being
-                  // skipped as up to date when the assembly in obj/xake is newer than the
-                  // sources -- skipped, it reports no command line at all
-                  "NonExistentFile", "__NonExistentSubDir__/__NonExistentFile__" ]
-                @ options.Properties
+            if List.isEmpty options.Projects then
+                failwith "ImportOptions.Projects is empty: there is nothing to import, and an empty lock would be written without a word. A script that filters its project list by File.Exists silently comes to this when it runs from the wrong directory"
+            if List.isEmpty options.Frameworks then
+                failwith "ImportOptions.Frameworks is empty: name at least one target framework to import for"
 
-            let switches = [for name, value in properties -> sprintf "-p:%s=%s" name value]
+            let variantDir = if options.Variant = "" then "" else options.Variant + "/"
+
+            // what selects the package set and the compilation alike; the script's own
+            // properties come last so they can override any of these
+            let common = [ "Configuration", options.Configuration
+                           // the audit talks to the feeds and its warnings turn fatal under
+                           // TreatWarningsAsErrors; it is not the import's business
+                           "NuGetAudit", "false" ]
+
+            let switchesOf properties = [for name, value in properties -> sprintf "-p:%s=%s" name value]
+
+            // the restore runs *without* TargetFramework, so every target of a multi-targeted
+            // project lands in the one project.assets.json, and with RestoreRecursive=false,
+            // so it writes that project's assets file and nobody else's
+            let restoreSwitches = switchesOf (common @ [ "RestoreRecursive", "false" ] @ options.Properties)
+
+            let buildSwitches framework =
+                switchesOf (
+                    common
+                    @ [ "TargetFramework", framework
+                        // the compiler reports its command line and does not run
+                        "ProvideCommandLineArgs", "true"
+                        "SkipCompilerExecution", "true"
+                        // resolving a project reference must not build it
+                        "BuildProjectReferences", "false"
+                        // the generated files are per (framework, variant): brands sharing one
+                        // obj overwrite each other's assembly attributes
+                        "IntermediateOutputPath", sprintf "obj/xake/%s/%s" framework variantDir
+                        // CoreCompile lists this property among its Outputs (Visual Studio's
+                        // own design-time trick): a file that never exists keeps the target
+                        // from being skipped as up to date when the assembly in obj/xake is
+                        // newer than the sources -- skipped, it reports no command line at all
+                        "NonExistentFile", "__NonExistentSubDir__/__NonExistentFile__" ]
+                    @ options.Properties)
 
             do! needFiles (Filelist (options.Projects |> List.map File.make))
             Directory.CreateDirectory (Path.GetDirectoryName (Path.GetFullPath options.Output)) |> ignore
@@ -1240,55 +1345,98 @@ module Project =
 
             let entries = ResizeArray<Lock.Entry>()
             for project in options.Projects do
-                do! trace Info "importing '%s' for '%s' %s" project options.Framework (if options.Variant = "" then "" else "(" + options.Variant + ")")
+                let projectDir = Path.GetDirectoryName (Path.GetFullPath project)
+                let pin = sdkPin projectDir
 
-                let dump = options.Output + "." + Path.GetFileNameWithoutExtension project + ".msbuild"
-                let preprocessed = dump + ".pp"
+                // one hold of the project's lock for the whole project: the restore and every
+                // framework's design-time build (which reads what that restore wrote) have to
+                // be one atomic unit with respect to another variant's import of the same
+                // project -- MESCIUS's and GCCN's restores write the same
+                // obj/project.assets.json
+                let! imported = withProjectLock project (recipe {
+                    do! trace Info "restoring '%s'%s" project (if options.Variant = "" then "" else " (" + options.Variant + ")")
 
-                let! graph = withProjectLock project (recipe {
-                    // the design-time build; the compiler's command line comes back as an item list
+                    // the same run reports the project's own framework list: the restore is
+                    // the one msbuild run here that is not per framework, so asking it costs
+                    // nothing and tells us which legs of the matrix this project has
+                    let restoreDump = sprintf "%s.%s.restore.msbuild" options.Output (Path.GetFileNameWithoutExtension project)
                     do! msbuild
-                            ([ project; "-restore"; "-nologo"; "-verbosity:quiet" ] @ switches
-                             @ [ sprintf "-t:%s" targets
-                                 sprintf "-getItem:%s" items
-                                 sprintf "-getProperty:%s" wantedProperties
-                                 sprintf "-getResultOutputFile:%s" dump ]) project
+                            ([ project; "-nologo"; "-verbosity:quiet"; "-t:Restore" ] @ restoreSwitches
+                             @ [ "-getProperty:TargetFrameworks,TargetFramework"
+                                 sprintf "-getResultOutputFile:%s" restoreDump ]) project
 
-                    // `-restore` just wrote (or overwrote) the project's shared
-                    // obj/project.assets.json; read the graph *this* import saw into the lock
-                    // now, before a concurrent import of the same project (a different
-                    // variant, next in line for the lock) restores over it
-                    let graph =
-                        match readDumpProperty dump "ProjectAssetsFile" with
-                        | Some assetsFile when File.Exists assetsFile ->
-                            let cacheRoot =
-                                readDumpProperty dump "NuGetPackageRoot" |> Option.defaultWith Roots.nugetRoot
-                            Nuget.readAssets assetsFile options.Framework |> packages cacheRoot
-                        | _ -> []
+                    let declared =
+                        match readDumpProperty restoreDump "TargetFrameworks" with
+                        | Some list -> list.Split ';' |> List.ofArray
+                        | None -> readDumpProperty restoreDump "TargetFramework" |> Option.toList
+                    File.Delete restoreDump
 
-                    // the files that took part in the evaluation; MSBuildAllProjects no longer
-                    // tells, the preprocessed project does
-                    do! msbuild ([ project; "-nologo" ] @ switches @ [ sprintf "-pp:%s" preprocessed ]) project
-                    return graph
+                    let frameworks, absent = frameworksToImport declared options.Frameworks
+                    for framework in absent do
+                        do! trace Info "'%s' does not target '%s' -- no lock entry for it" project framework
+                    if List.isEmpty frameworks then
+                        do! trace Warning "'%s' targets %s and none of them was asked for: it contributes no entry to the lock"
+                                project (String.concat ", " declared)
+
+                    let ofProject = ResizeArray<Lock.Entry>()
+                    for framework in frameworks do
+                        do! trace Info "importing '%s' for '%s'%s" project framework (if options.Variant = "" then "" else " (" + options.Variant + ")")
+
+                        let dump = sprintf "%s.%s.%s.msbuild" options.Output (Path.GetFileNameWithoutExtension project) framework
+                        let preprocessed = dump + ".pp"
+                        let switches = buildSwitches framework
+
+                        // the design-time build; the compiler's command line comes back as an
+                        // item list. No `-restore`: the one above already ran, for every target
+                        do! msbuild
+                                ([ project; "-nologo"; "-verbosity:quiet" ] @ switches
+                                 @ [ sprintf "-t:%s" targets
+                                     sprintf "-getItem:%s" items
+                                     sprintf "-getProperty:%s" wantedProperties
+                                     sprintf "-getResultOutputFile:%s" dump ]) project
+
+                        // the restore graph this import saw, for this framework's target
+                        let graph =
+                            match readDumpProperty dump "ProjectAssetsFile" with
+                            | Some assetsFile when File.Exists assetsFile ->
+                                let cacheRoot =
+                                    readDumpProperty dump "NuGetPackageRoot" |> Option.defaultWith Roots.nugetRoot
+                                Nuget.readAssets assetsFile framework |> packages cacheRoot
+                            | _ -> []
+
+                        // the files that took part in the evaluation; MSBuildAllProjects no
+                        // longer tells, the preprocessed project does
+                        do! msbuild ([ project; "-nologo" ] @ switches @ [ sprintf "-pp:%s" preprocessed ]) project
+
+                        let imports = File.ReadAllText preprocessed |> parseImports
+                        let entry = parseImport framework dump imports pin graph
+                        File.Delete dump
+                        File.Delete preprocessed
+                        ofProject.Add entry
+                    return List.ofSeq ofProject
                 })
 
-                let imports = File.ReadAllText preprocessed |> parseImports
-                let pin = sdkPin (Path.GetDirectoryName (Path.GetFullPath project))
-                let entry = parseImport dump imports pin graph
-                File.Delete dump
-                File.Delete preprocessed
+                for entry in imported do
+                    let sdk = entry.Evaluation.Sdk
+                    match pin with
+                    | Pinned v when sdk <> "" && sdk <> v ->
+                        do! trace Warning "'%s': the SDK is pinned to %s but msbuild ran %s -- the pinned SDK is not installed on this machine" entry.Name v sdk
+                    | Pinned _ -> ()
+                    | other ->
+                        do! trace Warning "'%s': the SDK is not pinned (%s) -- the lock's compiler (%s, SDK %s) will drift with every SDK the machine picks; pin it with global.json { sdk: { version, rollForward: \"disable\" } }" entry.Name (sdkPinText other) entry.Dependencies.Compiler.Version sdk
 
-                let sdk = entry.Evaluation.Sdk
-                match pin with
-                | Pinned v when sdk <> "" && sdk <> v ->
-                    do! trace Warning "'%s': the SDK is pinned to %s but msbuild ran %s -- the pinned SDK is not installed on this machine" entry.Name v sdk
-                | Pinned _ -> ()
-                | other ->
-                    do! trace Warning "'%s': the SDK is not pinned (%s) -- the lock's compiler (%s, SDK %s) will drift with every SDK the machine picks; pin it with global.json { sdk: { version, rollForward: \"disable\" } }" entry.Name (sdkPinText other) entry.Dependencies.Compiler.Version sdk
+                    // the evaluation's inputs, so that a Directory.Build.props edit re-imports
+                    // and nothing else does
+                    do! needFiles (Filelist (entry.Evaluation.Imports |> List.map (fun (h: Lock.Hashed) -> File.make h.Path)))
 
-                // the evaluation's inputs, so that a Directory.Build.props edit re-imports
-                // and nothing else does
-                do! needFiles (Filelist (entry.Evaluation.Imports |> List.map (fun (h: Lock.Hashed) -> File.make h.Path)))
+                    // every resx output has to be named by a /resource: switch, or `run` would
+                    // regenerate a file the compiler never reads
+                    let resourceInputs = CscArgs.switchValues "resource" entry.Compilation.Options
+                    for (resx, resourcesFile) in entry.Compilation.Resources do
+                        if not (List.contains resourcesFile resourceInputs) then
+                            do! trace Warning "'%s' compiles to '%s' but no /resource: switch names that path" resx resourcesFile
+
+                    entries.Add entry
 
                 // when `Generated` carries a tokenized `$(SourceRevisionId)`, a new commit does
                 // not touch any tracked input above and would leave the lock stale (the token
@@ -1296,19 +1444,9 @@ module Project =
                 // re-imported once there is a new commit to resolve at compile time) -- `HEAD`
                 // and the ref file (or `packed-refs`) it resolves through are the files that
                 // change when the commit does
-                do! needFiles (Filelist (Git.headFiles (Path.GetDirectoryName (Path.GetFullPath project)) |> List.map File.make))
-
-                // every resx output has to be named by a /resource: switch, or `run` would
-                // regenerate a file the compiler never reads
-                let resourceInputs = CscArgs.switchValues "resource" entry.Compilation.Options
-                for (resx, resourcesFile) in entry.Compilation.Resources do
-                    if not (List.contains resourcesFile resourceInputs) then
-                        do! trace Warning "'%s' compiles to '%s' but no /resource: switch names that path" resx resourcesFile
-
-                entries.Add entry
+                do! needFiles (Filelist (Git.headFiles projectDir |> List.map File.make))
 
             let lock : Lock.Document = {
-                Framework = options.Framework
                 Configuration = options.Configuration
                 Properties = options.Properties
                 Entries = List.ofSeq entries

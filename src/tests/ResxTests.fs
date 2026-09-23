@@ -135,7 +135,7 @@ type ``Resx resources``() =
                     do! Project.import {
                         Project.ImportOptions.Default with
                             Projects = [ projectFile ]
-                            Framework = "netstandard2.0"
+                            Frameworks = [ "netstandard2.0" ]
                             Configuration = "Release"
                             Variant = "x"
                             Output = lockFile

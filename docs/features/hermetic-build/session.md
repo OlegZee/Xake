@@ -1,6 +1,6 @@
 # Session state: hermetic-build
 
-Updated 2026-09-23 night (page run, extra roots; earlier: Toolset compiler source, resgen, SDK pin check; before that: import, fromlock mode, one runner, byte-identical proof).
+Updated 2026-09-24 early (autonomous night run; before that: page run, extra roots, Toolset compiler source, resgen, SDK pin check; before that: import, fromlock mode, one runner, byte-identical proof).
 
 `brief.md` next to this file (committed by the user on 2026-09-22, together with the
 `samples/hermetic/dataengine/` inspection artifacts) is the working brief:
@@ -24,12 +24,19 @@ fields -- the lock's shape is the file format. Two behaviour changes for the com
 both intended: it creates the output directory (before, `samples/fullframework.fsx` needed
 `samples/temp/` to exist), and it `needFiles` the framework references too. Trap: `samples/*.fsx`
 load Xake from `out/`, so run `dotnet fsi build.fsx -- -- build` before judging them; a stale
-`out/` made the refactor look like it had not fixed the directory issue. **Slice 1 is essentially closed (2026-09-23 night)**, see "What landed" below; the page run
-left three open items in tracker.md (page dll near-miss, concurrent import race, `..` targets).
-The user is asleep and authorized autonomous work with a commit per stage; the queue is in the
-tracker order: the near-miss root cause, `fromlock` restoring a missing toolset, `Csc.resolve`/
-`Lock.rehash`/`Lock.diff`, sha tokenization on a live checkout, the conceptual review, then
-slice 2. **Not** touched without the user: lock split/structure, release, lock update mechanism. Fixture as before:
+`out/` made the refactor look like it had not fixed the directory issue. **Slice 1 is closed, slice 2 has started (night of 2026-09-23, autonomous run with a commit per
+stage).** Landed overnight, each its own commit (see `git log` from `f2c5a2c`): page 90/90
+byte-identical against a clean `-t:Rebuild` baseline (the earlier near-miss was the comparison
+reusing msbuild's incremental caches); engine fix for file targets with `..`; `fromlock` restores
+a missing toolset compiler and explains a missing SDK; `CscLock.resolve`/`Lock.rehash`/
+`Lock.diff`; `sourcelink.json` captured and the commit sha tokenized as `$(SourceRevisionId)`,
+resolved from the repository at compile time, `.git/HEAD` a dependency of the import; the
+conceptual review (`conceptual-review.md`); `Nuget` module. In flight or next: `Sbom`
+(CycloneDX 1.6, deterministic), `Verify` (Authenticode PE hash, labelled byte differences),
+composed-mode resx through `Resources`. **Waiting for the user**: lock split and structured
+format; a separate `Csc.fromLock` instead of the `fromlock` operation; `Fsproj.roots ()` from
+`ProjectRoot`; renames; the lock update mechanism; release. Open technical item without a fix
+yet: the concurrent import race (tracker). Fixture as before:
 `git archive origin/develop` of `~/Projects-work/ar/ar-net-core-dataengine` into the job tmp dir
 (its checkout is on a broken feature branch), then `ar-net-core-page`. Always
 `-p:NuGetAudit=false` (the import sets it) or load the feed token with `cd <ar project dir> &&

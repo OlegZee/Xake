@@ -41,7 +41,7 @@ details live in brief.md (section refs) or session.md.
 
 ## Slice 2 — SBOM and verification (brief §8e, §11)
 - [x] `Nuget.readAssets` / `readCache` / `packageOf` (sha512, source, license, supplier, repository, commit) — `Nuget.fs`, `NugetTests.fs` (8), `nuget-sbom.md`
-- [ ] `Sbom.cycloneDx` deterministic; per assembly, per package; `formulation`
+- [~] `Sbom.cycloneDx` deterministic (no timestamp, content-derived serial), `Sbom.forAssembly` (packages by purl with nested file evidence, `ref/`-only packages `excluded`, dependencies from the restore graph, `formulation` with compiler/SDK/analyzers) — `Sbom.fs`, `SbomTests.fs` (3). Per package (`forPackage`) pending
 - [ ] compare with page's existing CycloneDX output (`GenerateSbom=true`)
 - [ ] `Verify`: sha256, Authenticode PE hash, compare
 

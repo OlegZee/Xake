@@ -34,6 +34,8 @@
     <Compile Include="ToolsetTests.fs" />
     <Compile Include="ResxTests.fs" />
     <Compile Include="NugetTests.fs" />
+    <Compile Include="SbomTests.fs" />
+    <Compile Include="VerifyTests.fs" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\core\Xake.fsproj" />

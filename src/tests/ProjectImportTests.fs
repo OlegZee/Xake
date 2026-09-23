@@ -1,6 +1,8 @@
 namespace Tests
 
 open System.IO
+open System.Threading
+open System.Threading.Tasks
 open NUnit.Framework
 
 open Xake
@@ -12,6 +14,32 @@ open Xake.Dotnet
 type ``Project import``() =
 
     let temp name = Path.Combine (Path.GetTempPath(), "xake-test-" + name)
+
+    // `withProjectLock` needs a real ExecContext (it goes through `withResource`, which
+    // touches the scheduler's CPU slot), so it is driven through a small long-lived engine --
+    // the same pattern `DelegatedTests.fs` uses for `withResource`/`runDetached` -- rather than
+    // called directly. Two rules "importing" the same fake project path must never overlap;
+    // two rules on different paths must be free to.
+    let engineBuilder threads =
+        RulesBuilder
+            { ExecOptions.Default with
+                Threads = threads
+                IgnoreCommandLine = true
+                NoPersist = true
+                Progress = false
+                ConLogLevel = Silent
+                FileLogLevel = Silent }
+
+    // A concurrency meter: enter()/leave() bracket a region; peak records the max overlap.
+    let meter () =
+        let current = ref 0
+        let peak = ref 0
+        let gate = obj ()
+        let enter () =
+            let n = Interlocked.Increment current
+            lock gate (fun () -> if n > !peak then peak := n)
+        let leave () = Interlocked.Decrement current |> ignore
+        enter, leave, peak
 
     [<Test>]
     member x.``tells switches from sources``() =
@@ -432,3 +460,83 @@ type ``Project import``() =
             Assert.That(Git.headSha dir, Is.EqualTo None)
             Assert.That(Git.headFiles dir, Is.Empty)
         finally Directory.Delete (dir, true)
+
+    [<Test>]
+    member x.``withProjectLock serializes two imports of the same project path``() =
+        let enter, leave, peak = meter ()
+        let runCount = ref 0
+        let sameProject = temp "lock-same" </> "Shared.csproj"
+
+        let body = recipe {
+            enter ()
+            do! Async.Sleep 80
+            leave ()
+            Interlocked.Increment runCount |> ignore
+        }
+
+        let b = engineBuilder 8   // plenty of CPU slots; the lock, not the pool, must serialize
+        let eng = b {
+            rules [ for i in 1..2 -> (sprintf "t%d" i) => Project.withProjectLock sameProject body ]
+            start
+        }
+
+        let tasks = [| for i in 1..2 -> eng.Demand (sprintf "t%d" i) |]
+        Task.WaitAll tasks
+        eng.StopAsync().Wait()
+
+        Assert.AreEqual(1, !peak, "two imports of the same project path must never overlap")
+        Assert.AreEqual(2, !runCount, "both must still run")
+
+    [<Test>]
+    member x.``withProjectLock lets two different project paths import concurrently``() =
+        let enter, leave, peak = meter ()
+        let projectFor i = temp (sprintf "lock-distinct-%d" i) </> "Distinct.csproj"
+
+        let bodyFor i = recipe {
+            enter ()
+            do! Async.Sleep 150
+            leave ()
+        }
+
+        let b = engineBuilder 8
+        let eng = b {
+            rules [ for i in 1..2 -> (sprintf "t%d" i) => Project.withProjectLock (projectFor i) (bodyFor i) ]
+            start
+        }
+
+        let tasks = [| for i in 1..2 -> eng.Demand (sprintf "t%d" i) |]
+        Task.WaitAll tasks
+        eng.StopAsync().Wait()
+
+        Assert.AreEqual(2, !peak, "different project paths must not serialize against each other")
+
+    [<Test>]
+    member x.``withProjectLock keys the same path the same way regardless of case on Windows, or exactly on Unix``() =
+        let baseDir = temp "lock-case"
+        let lower = baseDir </> "same.csproj"
+        let upper = baseDir </> "SAME.csproj"
+
+        let enter, leave, peak = meter ()
+
+        let body = recipe {
+            enter ()
+            do! Async.Sleep 80
+            leave ()
+        }
+
+        let b = engineBuilder 8
+        let eng = b {
+            rules [
+                "t1" => Project.withProjectLock lower body
+                "t2" => Project.withProjectLock upper body
+            ]
+            start
+        }
+
+        let tasks = [| eng.Demand "t1"; eng.Demand "t2" |]
+        Task.WaitAll tasks
+        eng.StopAsync().Wait()
+
+        let expectedPeak = if Env.isUnix then 2 else 1
+        Assert.AreEqual(expectedPeak, !peak,
+            "on Unix paths differing only by case are different projects; on Windows they are the same one")

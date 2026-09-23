@@ -1,9 +1,9 @@
 // Proving script for `Project.import` across two sibling repositories (brief §11, slice 1,
 // "next step"): imports ar-net-core-page's 12 shipped C# projects together with
 // ar-net-core-dataengine's 3, `-p:LocalBuild=true` (page's `ProjectReference`s into dataengine
-// instead of its NuGet packages), one lock per (framework, brand) holding all 15 entries so the
-// cross-repo project-reference mapping (`Lock.mapPaths`) resolves the same way an in-repo one
-// does.
+// instead of its NuGet packages), one lock per brand holding all 15 entries (one per project
+// per target framework in `frameworks`) so the cross-repo project-reference mapping
+// (`Lock.mapPaths`) resolves the same way an in-repo one does.
 //
 // Run it from the ar-net-core-page copy, with ar-net-core-dataengine's copy as its sibling
 // (`../ar-net-core-dataengine` from cwd) -- e.g. two `git archive origin/develop` copies under
@@ -87,7 +87,10 @@ let extraRoots = [ "$(DataEngineRoot)", dataEngineDir ]
 let frameworks = [ "netstandard2.0" ]
 let brands = [ "MESCIUS"; "GCCN" ]
 
-let lockFile framework brand = $"locks/%s{framework}/%s{brand}.json"
+/// One lock per brand: `Project.import` takes `Frameworks` and covers every framework of the
+/// project set in one call (one restore per project, no `TargetFramework`, then a design-time
+/// build per framework). Each entry carries its `Framework`; `Lock.entryFor` is the lookup.
+let lockFile brand = $"locks/%s{brand}.json"
 
 /// The pattern for dataengine's own compile outputs: relative, cwd-anchored (see the header
 /// note -- `..`-prefixed patterns now match, so no absolute-path workaround is needed).
@@ -98,20 +101,20 @@ do xakeScript {
     varschema vars
 
     rules [
-        "locks" <== [ for f in frameworks do for b in brands -> lockFile f b ]
+        "locks" <== [ for b in brands -> lockFile b ]
 
-        // one msbuild design-time build per project (page's 12, dataengine's 3), all landing
-        // in the one lock for this (framework, brand): msbuild runs only when a project or one
-        // of the files it imports changed
-        target "locks/(fwk:*)/(brand:*).json" {
-            let! framework = getRuleMatch "fwk"
-            let! brand = getRuleMatch "brand"
+        // one restore plus one design-time msbuild build per (project, framework) -- page's
+        // 12 projects and dataengine's 3 -- all landing in the one lock for this brand:
+        // msbuild runs only when a project or one of the files it imports changed
+        target "locks/(brand:*).json" {
+            let! m = getRuleMatches()
+            let brand = m.["brand"]
             let! result = getTargetFile()
 
             do! Project.import {
                 Project.ImportOptions.Default with
                     Projects = projects
-                    Framework = framework
+                    Frameworks = frameworks
                     // LocalBuild swaps page's dataengine NuGet packages for ProjectReferences
                     // into the sibling checkout; NetCoreOnly narrows page's own
                     // TargetFrameworks (netstandard2.0;net472) down to netstandard2.0 alone --
@@ -140,12 +143,12 @@ do xakeScript {
         // at, and need that first -- same pattern as import.fsx, now spanning two repositories
         // because the lock's project entries do
         let compileFromLock fwk brand name = recipe {
-            do! need [lockFile fwk brand]
-            let! lock = Lock.loadWith extraRoots (lockFile fwk brand)
-            let project = Lock.entry name lock
+            // `Lock.loadWith` depends on the lock itself -- no explicit `need` in front of it
+            let! lock = Lock.loadWith extraRoots (lockFile brand)
+            let project = Lock.entryFor fwk name lock
 
             let outputOf refPath =
-                (Lock.entry (Path.GetFileNameWithoutExtension (refPath: string)) lock).Output
+                (Lock.entryFor fwk (Path.GetFileNameWithoutExtension (refPath: string)) lock).Output
                 |> Option.defaultWith (fun () -> failwithf "project reference '%s' has no /out: in its own lock entry" refPath)
 
             let unbuilt = project.Dependencies.References |> List.filter (fun r -> r.Sha256 = "") |> List.map (fun r -> r.Path) |> Set.ofList
@@ -159,17 +162,13 @@ do xakeScript {
         }
 
         target "src/(proj:**)/obj/xake/(fwk:*)/(brand:*)/(name:*).dll" {
-            let! fwk = getRuleMatch "fwk"
-            let! brand = getRuleMatch "brand"
-            let! name = getRuleMatch "name"
-            do! compileFromLock fwk brand name
+            let! m = getRuleMatches()
+            do! compileFromLock m.["fwk"] m.["brand"] m.["name"]
         }
 
         target dataEngineObjPattern {
-            let! fwk = getRuleMatch "fwk"
-            let! brand = getRuleMatch "brand"
-            let! name = getRuleMatch "name"
-            do! compileFromLock fwk brand name
+            let! m = getRuleMatches()
+            do! compileFromLock m.["fwk"] m.["brand"] m.["name"]
         }
 
         // the NuGet package cache root -- the same `$(NuGetPackageRoot)` token `Project.import`
@@ -182,13 +181,11 @@ do xakeScript {
         // the cache is only consulted for supplier/license. `name` is the assembly name, same
         // capture as the compile rule's, so `Lock.entry` finds the entry by `Name` directly.
         target "out/(fwk:*)/(brand:*)/(name:*).cdx.json" {
-            let! fwk = getRuleMatch "fwk"
-            let! brand = getRuleMatch "brand"
-            let! name = getRuleMatch "name"
+            let! m = getRuleMatches()
+            let fwk, brand, name = m.["fwk"], m.["brand"], m.["name"]
 
-            do! need [lockFile fwk brand]
-            let! lock = Lock.loadWith extraRoots (lockFile fwk brand)
-            let project = Lock.entry name lock
+            let! lock = Lock.loadWith extraRoots (lockFile brand)
+            let project = Lock.entryFor fwk name lock
             let output =
                 project.Output
                 |> Option.defaultWith (fun () -> failwithf "project '%s' has no /out: in its lock entry" name)
@@ -201,33 +198,29 @@ do xakeScript {
 
         // one sbom per lock project per brand, for every framework this script imports
         command "sbom" {
-            for f in frameworks do
-                for b in brands do
-                    do! need [lockFile f b]
-                    let! lock = Lock.loadWith extraRoots (lockFile f b)
-                    do! need [ for entry in lock.Entries -> $"out/%s{f}/%s{b}/%s{entry.Name}.cdx.json" ]
+            for b in brands do
+                let! lock = Lock.loadWith extraRoots (lockFile b)
+                do! need [ for entry in lock.Entries -> $"out/%s{entry.Framework}/%s{b}/%s{entry.Name}.cdx.json" ]
         }
 
         // compiles every project the locks name, for every framework and brand, in both
         // repositories
         command "build" {
-            for f in frameworks do
-                for b in brands do
-                    do! need [lockFile f b]
-                    let! lock = Lock.loadWith extraRoots (lockFile f b)
-                    do! need
-                            [ for entry in lock.Entries do
-                                match entry.Output with
-                                | Some out -> yield out
-                                | None -> () ]
+            for b in brands do
+                let! lock = Lock.loadWith extraRoots (lockFile b)
+                do! need
+                        [ for entry in lock.Entries do
+                            match entry.Output with
+                            | Some out -> yield out
+                            | None -> () ]
         }
 
         command "show" {
             let! lockPath = vars.Lock
-            let! lock = Lock.loadWith extraRoots (lockPath |> Option.defaultValue (lockFile "netstandard2.0" "MESCIUS"))
+            let! lock = Lock.loadWith extraRoots (lockPath |> Option.defaultValue (lockFile "MESCIUS"))
             for entry in lock.Entries do
                 let e, c, d = entry.Evaluation, entry.Compilation, entry.Dependencies
-                do! trace Message "%s (%s)" entry.Name e.Project
+                do! trace Message "%s [%s] (%s)" entry.Name entry.Framework e.Project
                 do! trace Message "  evaluation   sdk %s, pin %s, imports %d: %s" e.Sdk
                         (e.SdkPin |> Option.map Lock.sdkPinText |> Option.defaultValue "-") e.Imports.Length
                         (e.Imports |> List.map (fun i -> Path.GetFileName i.Path) |> String.concat ", ")

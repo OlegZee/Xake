@@ -138,3 +138,48 @@ Cleanup: worktree `de-tag2` removed (`worktree remove --force` + `prune`), sourc
 `~/Projects-work/ar/ar-net-core-dataengine` worktree list back to just the primary checkout.
 Xake checkout (`git status --short`) was clean before and after this session's worktree/build
 commands.
+
+## Follow-up 2: no debug directory (2026-09-24)
+
+Fresh worktree `de-tag3` at tag `5.4.0` (user checkout clean before/after). netstandard2.0.
+
+| Build | Flags added | Size | vs shipped hash | ranges |
+|---|---|---|---|---|
+| control | none (= old baseline A) | 365056 | differs | 143 |
+| E | `-p:DebugType=none -p:DebugSymbols=false` | 364544 | differs | 127 |
+| F | E + `ContinuousIntegrationBuild=true` | 364544, byte-identical to E | differs, same as E | 127 |
+| G | E + `Deterministic=true -p:PathMap=...` | 364544, byte-identical to E/F | differs, same as E | 127 |
+
+`DebugType=none` matches shipped's "no CodeView/RSDS debug directory" trait and removes 16
+ranges (a debug-directory/PDB-checksum cluster near `0x058eec`). CI-build and
+Deterministic+PathMap add nothing further: E/F/G are byte-for-byte identical.
+
+**Correction to Follow-up 1.** Its "140 small (1-7 byte) scattered ranges" claim only reflected
+the tool's first-20-truncated output. Dumping all ranges (`dumpall.fsx`, scratch, not
+committed) shows: small header-only diffs up to offset `0x28b`, then large contiguous blocks
+for the rest of the file -- runs up to 34.8KB, 30.5KB, and one 148986-byte (145KB) block,
+totaling most of a ~365KB file. This rules out "same compile, different MVID" -- an
+MVID/pathmap delta cannot move 145KB of contiguous bytes. Control and E/F/G show the identical
+big-block pattern against shipped; they differ from each other only in the small
+debug-directory cluster DebugType=none removes.
+
+**Anatomy of the first 5 ranges** (all PE/COFF header, all downstream of section-size
+differences, none GUID-heap or signature bytes): `0x88` `TimeDateStamp`; `0x9d`/`0xa8`/`0xb1`
+Optional Header size/data-directory RVA fields (shift because `.text` size differs);
+`0xd8` `CheckSum`.
+
+**Cake/pipeline check:** grep for DebugType/DebugSymbols/pathmap/ContinuousIntegrationBuild/
+Deterministic across their `build.cake`, `verify-versions.cake`, `Directory.Build.props`
+(root + src) found zero matches -- they set none of these, so "Build H" = the `control` row.
+
+**Conclusion.** Outcome (a) is **not reached, and worse than previously believed**: the
+shipped DLL diverges from every local variant by ~145KB of large content blocks, an order of
+magnitude past anything these flags move. Best remaining explanation: a different Roslyn/SDK
+build (Follow-up 1's own A-vs-D experiment showed a different compiler generation produces
+exactly this large-contiguous-block shape) not available locally, or source differing from the
+tag despite the matching commit-sha version string. `DebugType=none` is worth keeping (matches
+shipped's no-debug-directory trait, removes 16 ranges) but is not sufficient; closing this
+needs MESCIUS's exact SDK/Roslyn build, which isn't recoverable from the artifact.
+
+Cleanup: worktree `de-tag3` removed; source repo back to just the primary checkout. Xake
+checkout untouched.

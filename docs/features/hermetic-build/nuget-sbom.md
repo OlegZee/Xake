@@ -28,7 +28,11 @@ dataengine's, found when the import first read its assets (2026-09-24; page's mu
 projects had hidden it). `readAssets` tries the alias and `Nuget.frameworkFullName alias`
 (`netstandard*`, `netcoreapp*`, `net4xx` folded; `net5.0`+ is its own full name), exact match
 first, then a prefix match -- the rid-qualified entries are for a self-contained publish, not the
-compile. Each entry there is `"<Id>/<Version>": { type: "package" | "project", dependencies: {
+compile. **When no target matches, `readAssets` fails**, naming the targets the file does have
+(2026-09-23): an empty graph is indistinguishable from "this project has no packages", so a
+restore that wrote only one framework's target used to produce a lock entry with `packages 0`
+and an SBOM missing its package components, silently (verify-dataengine.md §6).
+Each entry there is `"<Id>/<Version>": { type: "package" | "project", dependencies: {
 "<Id>": "<range>" } }`; a dependency's resolved version is found by looking up its id among the
 *same* target's entries -- a range like `[8.0.0, )` is never parsed, only matched by id, because
 the graph already carries the resolved version as the entry's own key.
@@ -204,3 +208,56 @@ the dlls directly (installer users).
 
 Every list is sorted by its ref before being returned, matching `cycloneDx`'s own determinism:
 two calls with the same inputs produce the same `Bom`, and rendering it is byte-identical.
+
+## Package scope: what the SDP RFC requires, and where we stand (2026-09-23)
+
+Source: `SDP/.memory-bank/framework/docs/6-release/sbom-package-scope-nuget.md` — "Embedded SBOM
+for NuGet Packages — Package Scope", RFC draft under PDR-0010, comments open to 2026-10-07.
+Applies to every customer-facing `DS.*`/`MESCIUS.*`/`GrapeCity.*` nupkg. Read it before
+changing `Sbom`; the summary below is deliberately short.
+
+**The thesis.** A restore-graph SBOM — which is what `dotnet CycloneDX` emits by default, and
+what `Sbom.forAssembly` emits today — describes *the supplier's build*, not *the package the
+customer receives*. Four reasons: transitive versions are re-resolved at the consumer's restore
+and so cannot be vouched for; the nuspec declares **ranges**, and the restore graph replaces
+them with one pin; code physically compiled or vendored into our assemblies is invisible to the
+restore graph, and that is where the attribution obligations live; and without an explicit
+boundary, "deliberately depth-1" and "incomplete" look the same to an auditor.
+
+**Principles.**
+
+1. **The package decides, not the restore edge.** A component is in the SBOM if it is a file
+   shipped in the nupkg for that TFM, a registry-declared subcomponent of such a file, or a
+   nuspec-declared dependency. Anything else — SDK and reference-assembly packages, analyzers
+   with `PrivateAssets="all"`, `CycloneDX.MSBuild`, doc tools, `<frameworkReference>` — is
+   **excluded**, however prominent it is in `project.assets.json`.
+2. **Three tiers.** Tier 1: the physical inventory (`lib/`, `runtimes/*/lib|native`,
+   `contentFiles/`, `analyzers/`, `build*/`, `tools/`), every file with SHA-256/512, own
+   assemblies nested under `metadata.component.components[]`, and each vendored/merged
+   third-party or internal library nested under the assembly it was compiled into. Tier 2: the
+   nuspec `<dependency>` entries of that TFM, verbatim — internal packages one line and never
+   expanded, the range kept in `dt:nuget:declaredVersionRange`, `version`/`purl` still
+   resolvable for scanners. Tier 3: **nothing transitive, at any depth**.
+3. **Declare the boundary.** `compositions`: `complete` over `assemblies`, `incomplete` over
+   `dependencies`; an `annotations[]` entry on the root saying transitive resolution is the
+   consuming product's job. `dependencies[]` may carry the root and our own assemblies, and
+   **never** an entry whose `ref` is a tier-2 component — an empty `dependsOn` would assert a
+   closure we do not know.
+4. **One SBOM per (package × TFM)**, at `sbom/{tfm}/bom.cdx.json` inside the nupkg, JSF-signed.
+5. **Vendored code comes from a verified component registry, not from the graph** — a merged
+   library appears in the restore graph as a *dependency*, which is exactly the
+   misclassification the rule removes. The registry's schema and owner are not yet defined
+   (RFC §6).
+
+**Where that leaves us.** `Sbom.forAssembly` is restore-scope: every package of
+`Dependencies.Packages` becomes a component (scope `required`/`excluded`), flat, with no
+`compositions` and no `annotations`, and our own assembly is the root without nested file
+components. Under the rule that is the *input*, not the deliverable. The gap is listed in
+tracker.md; two things are worth saying about our position:
+
+- The **lock is a better source than the restore graph for tier 1**. It records what the
+  compiler was actually handed, with hashes — so a library that was merged or ILRepack'd in is
+  a *reference* we know about, not a dependency edge we have to guess at. That is the registry's
+  hardest input, and we already have half of it.
+- `Pack` already writes the nupkg deterministically and `Pack.entries` reads one back, so the
+  physical inventory of step 1 is a file listing we can produce and verify, not a promise.

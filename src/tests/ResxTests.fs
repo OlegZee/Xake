@@ -8,12 +8,10 @@ open NUnit.Framework
 open Xake
 open Xake.Tasks
 open Xake.Dotnet
-open Xake.Hermetic.Dotnet
 
 /// `.resx` -> `.resources`, without `System.Windows.Forms`'s `ResXResourceReader`: the pure
-/// reader/writer in `Xake.Dotnet.Resx`, and the lock/`run` plumbing that regenerates a
-/// project's `.resources` files from their resx on a machine that only has the lock (see
-/// `docs/features/hermetic-build/csc-syntax.md`).
+/// reader/writer in `Xake.Dotnet.Resx`, byte-identical to msbuild's output (see
+/// `docs/csc-syntax.md`).
 [<TestFixture>]
 type ``Resx resources``() =
     inherit XakeTestBase("resx")
@@ -77,7 +75,7 @@ type ``Resx resources``() =
         finally File.Delete path
 
     [<Test; Category("Integration")>]
-    member x.``writes the same bytes as msbuild``() =
+    member x.``Resx.compile writes the same bytes as msbuild``() =
         let dir = Directory.GetCurrentDirectory ()
 
         let csproj = """<Project Sdk="Microsoft.NET.Sdk">
@@ -126,50 +124,10 @@ type ``Resx resources``() =
         let baselineResources = baselineDir </> "Sample.Strings.resources"
         File.Copy (refResources.[0], baselineResources, true)
 
-        let lockFile = dir </> "resx.lock.json"
+        // the pure writer, no lock and no import involved
+        let resourcesOutput = dir </> "out" </> "Sample.Strings.resources"
+        Resx.compile resxFile resourcesOutput
+        Assert.That(File.Exists resourcesOutput, Is.True, "the .resources file was not written")
 
-        do xake {x.TestOptions with FileLog="resx-import.log"; ThrowOnError = true} {
-            wantOverride (["build"])
-
-            rules [
-                "build" => recipe {
-                    do! Project.import {
-                        Project.ImportOptions.Default with
-                            Projects = [ projectFile ]
-                            Frameworks = [ "netstandard2.0" ]
-                            Configuration = "Release"
-                            Variant = "x"
-                            Output = lockFile
-                    }
-                }
-            ]
-        }
-
-        let lock = Lock.read (Roots.builtin (Directory.GetCurrentDirectory())) lockFile
-        let project = Lock.entry "Sample" lock
-
-        Assert.That(project.Csc.Resources, Has.Length.EqualTo 1, "expected exactly one resx recorded in the lock")
-        let (importedResx, resourcesOutput) = project.Csc.Resources.Head
-        Assert.That(importedResx, Is.EqualTo (resxFile.Replace ('\\', '/')))
-
-        // clean slate: the import already ran PrepareResources so the .resources exists; make
-        // sure `run` is the one that (re)writes it, not a leftover from the import
-        File.Delete resourcesOutput
-        Assert.That(File.Exists resourcesOutput, Is.False)
-
-        do xake {x.TestOptions with FileLog="resx-compile.log"; ThrowOnError = true} {
-            wantOverride (["compile"])
-
-            rules [
-                "compile" => recipe {
-                    do! Lock.compile project
-                }
-            ]
-        }
-
-        Assert.That(File.Exists resourcesOutput, Is.True, "the .resources file was not regenerated")
-
-        let ours = File.ReadAllBytes resourcesOutput
-        let baseline = File.ReadAllBytes baselineResources
-        Assert.That(ours, Is.EqualTo baseline,
-            "the regenerated .resources differs from msbuild's byte for byte")
+        Assert.That(File.ReadAllBytes resourcesOutput, Is.EqualTo (File.ReadAllBytes baselineResources),
+            "Resx.compile's .resources differs from msbuild's byte for byte")

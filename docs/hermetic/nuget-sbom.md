@@ -122,7 +122,7 @@ tests can drive with a hand-built `Bom` and no lock at all.
 | BOM field | Source |
 |---|---|
 | `metadata.component` (root) | the shipped assembly: `Name = entry.Csc.Name`; `Version` from `entry.Evaluation.Properties.["Version"]`, falling back to `InformationalVersion`; one SHA-256 hash of the assembly file (`Csc.sha256`) |
-| `metadata.tools.components[0]` | `{ type: application, name: "Xake", version }`, version from the `Xake.Hermetic.Dotnet` assembly's own version |
+| `metadata.tools.components[0]` | `{ type: application, name: "Xake.Hermetic.Dotnet", version }`, version from the `Xake.Hermetic.Dotnet` assembly's own version |
 | `components[].purl` | `pkg:nuget/<Id>@<Version>`, one component per package in `entry.Packages` -- every package the restore graph carried at import, not just the ones a compiled reference happens to be attributed to; `<Id>`/`<Version>` keep `project.assets.json`'s own casing |
 | `components[].supplier`, `.licenses` | `Nuget.readCache`'s `Supplier`/`License` -- matched to the package's cache directory case-insensitively (the cache always lowercases `id`/`version`, the lock usually does not) |
 | `components[].hashes` (package) | the lock's `Package.Sha512` (recorded at import from `.nupkg.metadata`'s base64 `contentHash`), converted to hex -- CycloneDX hashes are hex, NuGet's cache stores base64; empty in the lock means no hash, the cache is deliberately not consulted again |

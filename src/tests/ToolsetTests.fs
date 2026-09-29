@@ -6,123 +6,15 @@ open NUnit.Framework
 open Xake
 open Xake.Tasks
 open Xake.Dotnet
-open Xake.Hermetic.Dotnet
 
-/// The compiler-as-a-package path: a `Toolset.csproj` (the same content as
-/// `samples/hermetic/toolset/Toolset.csproj`, kept there as a sample for humans) pins its C#
-/// compiler with a `Microsoft.Net.Compilers.Toolset` `PackageReference` (plus
-/// `RoslynCompilerType=Toolset`, without which the SDK silently reverts to its own compiler --
-/// see the comment on `Project.parseImport`'s `compilerPath`). These tests exercise both ways
-/// `Lock.Entry`'s `Csc.Dependencies.Compiler.Path` can end up naming that package: the import reading it out of
-/// the project (`CSharpCoreTargetsPath`, since the package never sets `CscToolPath`), and the
-/// composed `csc {}` mode taking it directly via the `toolset` operation. The project and its
-/// source are written into this fixture's own sandbox so the tests do not depend on `samples/`.
+/// The compiler-as-a-package path in the composed `csc {}` mode: the `toolset` operation names a
+/// `Microsoft.Net.Compilers.Toolset` version and the compiler is restored from that package.
+/// (Reading the same package out of a project is a project-import concern, tested with it.)
 [<TestFixture>]
 type ``Toolset compiler``() =
     inherit XakeTestBase("toolset")
 
     let toolsetVersion = "4.12.0"
-
-    let toolsetCsproj = """<Project Sdk="Microsoft.NET.Sdk">
-
-  <PropertyGroup>
-    <TargetFramework>netstandard2.0</TargetFramework>
-    <Deterministic>true</Deterministic>
-    <GenerateDocumentationFile>false</GenerateDocumentationFile>
-    <!-- Without this the SDK silently reverts CSharpCoreTargetsPath to its own Roslyn, even
-         with the PackageReference below present: see Microsoft.NET.Sdk.BeforeCommon.targets,
-         "RoslynCompilerType specified by user, do not overwrite it." -->
-    <RoslynCompilerType>Toolset</RoslynCompilerType>
-  </PropertyGroup>
-
-  <ItemGroup>
-    <PackageReference Include="Microsoft.Net.Compilers.Toolset" Version="4.12.0" PrivateAssets="all" />
-  </ItemGroup>
-
-</Project>
-"""
-
-    let helloCs = "public class Hello\n{\n    public string Greet() => \"Hello, toolset!\";\n}\n"
-
-    /// Writes the fixture's own copy of the toolset sample project into `dir`, returning the
-    /// csproj path. Rewriting the file (and `Hello.cs`) fresh at the start of each test that
-    /// imports is what keeps the design-time build from considering a previous test's `obj/xake`
-    /// output still current -- no per-test `Variant` needed for that.
-    let writeProject (dir: string) =
-        Directory.CreateDirectory dir |> ignore
-        File.WriteAllText (dir </> "Toolset.csproj", toolsetCsproj)
-        File.WriteAllText (dir </> "Hello.cs", helloCs)
-        dir </> "Toolset.csproj"
-
-    [<Test; Category("Integration")>]
-    member x.``imports the toolset compiler from the project``() =
-
-        let projectDir = Directory.GetCurrentDirectory() </> "proj"
-        let projectFile = writeProject projectDir
-        let lockFile = Directory.GetCurrentDirectory() </> "toolset.json"
-
-        do xake {x.TestOptions with FileLog="toolset-import.log"; ThrowOnError = true} {
-            wantOverride (["import"])
-
-            rules [
-                "import" => recipe {
-                    do! Project.import {
-                        Project.ImportOptions.Default with
-                            Projects = [ projectFile ]
-                            Frameworks = [ "netstandard2.0" ]
-                            Configuration = "Release"
-                            Output = lockFile
-                    }
-                }
-            ]
-        }
-
-        let lock = Lock.read (Roots.builtin (Directory.GetCurrentDirectory())) lockFile
-        let project = Lock.entry "Toolset" lock
-
-        Assert.That(project.Csc.Dependencies.Compiler.Path, Does.Contain "/microsoft.net.compilers.toolset/")
-        Assert.That(project.Csc.Dependencies.Compiler.Path, Does.EndWith "csc.dll")
-        Assert.That(project.Csc.Dependencies.Compiler.Sha256, Has.Length.EqualTo 64)
-        Assert.That(project.Csc.Dependencies.Compiler.Sha256, Does.Match "^[0-9a-f]{64}$")
-
-        let text = File.ReadAllText lockFile
-        Assert.That(text, Does.Contain "$(NuGetPackageRoot)/microsoft.net.compilers.toolset/")
-
-    [<Test; Category("Integration")>]
-    member x.``compiles the imported project with the toolset compiler``() =
-
-        let projectDir = Directory.GetCurrentDirectory() </> "proj"
-        let projectFile = writeProject projectDir
-        let lockFile = Directory.GetCurrentDirectory() </> "toolset-compile.json"
-
-        do xake {x.TestOptions with FileLog="toolset-compile.log"; FileLogLevel = Verbosity.Diag; ThrowOnError = true} {
-            wantOverride (["build"])
-
-            rules [
-                "build" => recipe {
-                    do! Project.import {
-                        Project.ImportOptions.Default with
-                            Projects = [ projectFile ]
-                            Frameworks = [ "netstandard2.0" ]
-                            Configuration = "Release"
-                            Output = lockFile
-                    }
-                    let! lock = Lock.load lockFile
-                    let project = Lock.entry "Toolset" lock
-                    do! Lock.compile project
-                }
-            ]
-        }
-
-        let lock = Lock.read (Roots.builtin (Directory.GetCurrentDirectory())) lockFile
-        let project = Lock.entry "Toolset" lock
-        let outDll = project.Csc.Output |> Option.defaultWith (fun () -> failwith "the lock's project has no /out:")
-
-        Assert.That(File.Exists outDll, Is.True, "csc did not produce the toolset-compiled dll")
-
-        let logText = File.ReadAllText (Directory.GetCurrentDirectory() </> "toolset-compile.log")
-        Assert.That(logText, Does.Contain "microsoft.net.compilers.toolset",
-            "the compiler command line in the log does not show the toolset package")
 
     [<Test; Category("Integration")>]
     member x.``composed mode takes the compiler from the toolset package``() =

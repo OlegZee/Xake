@@ -6,7 +6,6 @@ open NUnit.Framework
 open Xake
 open Xake.Tasks
 open Xake.Dotnet
-open Xake.Hermetic.Dotnet
 
 /// The Roslyn compiler server (`VBCSCompiler`) behind `csc {}`: `run` adds `/shared` (and
 /// `/keepalive`) on the command line when the compiler about to run has a `VBCSCompiler.dll`
@@ -48,8 +47,8 @@ type ``Csc compiler server``() =
         x.Build "server-shared" (settings (Shared (Some 120)) "Server.cs" "Server.dll")
         Assert.That(File.Exists "Server.dll", Is.True, "csc did not produce Server.dll through the server")
 
-        let diffs = Verify.compare "Server.inproc.dll" "Server.dll"
-        Assert.That(diffs, Is.Empty, sprintf "the two compiles differ: %s" (Verify.verdict diffs))
+        Assert.That(File.ReadAllBytes "Server.dll", Is.EqualTo (File.ReadAllBytes "Server.inproc.dll"),
+            "the two compiles differ")
 
         // the switch went to the compiler in one run and not the other (the command line is
         // traced at Debug)

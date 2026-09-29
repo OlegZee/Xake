@@ -135,7 +135,7 @@ module Sbom =
         |> jobj
 
     let private toolsComponentJson (version: string) =
-        jobj [ "type", jstring "application"; "name", jstring "Xake"; "version", jstring version ]
+        jobj [ "type", jstring "application"; "name", jstring "Xake.Hermetic.Dotnet"; "version", jstring version ]
 
     let private compositionJson (c: Composition) =
         [ "aggregate", jstring c.Aggregate

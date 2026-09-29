@@ -82,6 +82,8 @@ type ``Sbom cycloneDx``() =
         Assert.That (json1, Does.Contain "\"bomFormat\": \"CycloneDX\"")
         Assert.That (json1, Does.Contain "\"specVersion\": \"1.6\"")
         Assert.That (json1, Does.Not.Contain "timestamp")
+        // the tool entry names this package (whose assembly the version comes from), not `Xake`
+        Assert.That (json1, Does.Contain "\"name\": \"Xake.Hermetic.Dotnet\"")
 
         let serialLine = json1.Split '\n' |> Array.find (fun l -> l.Contains "serialNumber")
         Assert.That (serialLine, Does.Match "urn:uuid:[0-9a-f-]{36}")

@@ -15,7 +15,7 @@ module Verify =
         int b.[o] ||| (int b.[o + 1] <<< 8) ||| (int b.[o + 2] <<< 16) ||| (int b.[o + 3] <<< 24)
 
     /// The byte ranges of the PE/CLR structures `authenticodeHash` excludes and `compare`
-    /// labels. `internal` (`InternalsVisibleTo("tests")` on this assembly) so tests can corrupt
+    /// labels. `internal` (`InternalsVisibleTo("hermetic.tests")` on this assembly) so tests can corrupt
     /// exactly the bytes it names.
     type internal Layout = {
         Is64: bool

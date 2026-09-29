@@ -69,14 +69,10 @@
   </ItemGroup>
 
   <!-- Test assemblies only; no other package sees these internals. hermetic.tests tests the
-       parsers (Json, Project.parseImport, Nuget.frameworkFullName, the PE Layout); tests
-       (src/tests) keeps DotnetTasksTests, which checks the kept fsproj evaluation. -->
+       parsers (Json, Project.parseImport, Nuget.frameworkFullName, the PE Layout, Fsproj). -->
   <ItemGroup>
     <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
       <_Parameter1>hermetic.tests</_Parameter1>
-    </AssemblyAttribute>
-    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
-      <_Parameter1>tests</_Parameter1>
     </AssemblyAttribute>
   </ItemGroup>
 

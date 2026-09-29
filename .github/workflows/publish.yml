@@ -49,6 +49,12 @@ jobs:
     - name: Build, test and pack
       run: |
         export ${{ steps.release.outputs.variable }}=${{ steps.release.outputs.version }}
+        # a hermetic release still packs Xake, at the default 0.0.1 unless told otherwise, and the
+        # hermetic dll would then reference Xake 0.0.1.0. Pin it to the floor of the dependency
+        # range, so the reference is Xake 3.4.0.0.
+        if [ "${{ steps.release.outputs.variable }}" = "HERMETIC_VERSION" ]; then
+          export VERSION=3.4.0
+        fi
         dotnet fsi build.fsx -- -- build test pack
 
     - name: Publish

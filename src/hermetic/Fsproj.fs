@@ -143,13 +143,22 @@ module Fsproj =
             // only what this build reads is kept
             let dump = options.Output + ".msbuild"
 
+            let propertyArgs = [for name, value in properties -> sprintf "-p:%s=%s" name value]
+
+            // ResolveReferences reads project.assets.json, so a restore has to have run. It is a
+            // call of its own: with `-restore` in the same call, msbuild reports item paths of a
+            // project with two or more ProjectReferences against the current directory instead
+            // of the project's, and the references untokenized (SDK 8.0.425 and 10.0.401).
             // every element spelled out: a list expression mixing literals with a `for`
             // comprehension turns the literals into statements and quietly drops them
+            let restoreLine =
+                [ "msbuild"; options.Project; "-t:Restore"; "-nologo"; "-verbosity:quiet" ]
+                @ propertyArgs
+
             let commandLine =
                 [ "msbuild"; options.Project
-                  // ResolveReferences reads project.assets.json, so a restore has to have run
-                  "-restore"; "-nologo"; "-verbosity:quiet" ]
-                @ [for name, value in properties -> sprintf "-p:%s=%s" name value]
+                  "-nologo"; "-verbosity:quiet" ]
+                @ propertyArgs
                 @ [ sprintf "-t:%s" targets
                     sprintf "-getItem:%s" items
                     sprintf "-getProperty:%s" wantedProperties
@@ -158,6 +167,17 @@ module Fsproj =
             do! trace Info "evaluating '%s' for '%s'" options.Project options.Framework
 
             Directory.CreateDirectory (Path.GetDirectoryName (Path.GetFullPath options.Output)) |> ignore
+
+            let! restoreCode =
+                shell {
+                    cmd "dotnet"
+                    args restoreLine
+                    logprefix "[msbuild]"
+                    stdoutlevel (Tool.diagnosticLevel Level.Verbose)
+                    erroutlevel (Tool.diagnosticLevel Level.Error)
+                }
+
+            do! Tool.failOnExitCode true options.Project restoreCode
 
             let! exitCode =
                 shell {

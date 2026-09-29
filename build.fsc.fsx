@@ -80,43 +80,6 @@ let binaries =
 /// only thing that runs msbuild, and only when the project file or the version changed.
 let evaluated name framework = $"projects/%s{framework}/%s{name}.json"
 
-/// Works around an msbuild defect `Fsproj.evaluate` runs into (SDK 8.0.425 and 10.0.401):
-/// with `-restore`, `-getItem` reports FullPath against the *current directory* instead of
-/// the project's as soon as a project has two ProjectReferences -- src/hermetic has, so its
-/// sources came back as `<repo>/Json.fs` and its project references as
-/// `<repo>/../dotnet/Xake.Dotnet.fsproj`. A source or project reference that does not exist
-/// where the file says is re-rooted under the project directory, in place, as text, so the
-/// kept evaluation stays byte-for-byte what `evaluate` would write without the defect.
-/// Remove once `Fsproj.evaluate` restores in a call of its own (the plain `-getItem` call is
-/// correct).
-let repairEvaluation (projectFile: string) (evaluationFile: string) =
-    let root = System.IO.Directory.GetCurrentDirectory()
-    let projectDir = System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath projectFile)
-    let token = "$(ProjectRoot)"
-    let expand (p: string) = if p.StartsWith token then root + p.Substring token.Length else p
-    let tokenize (p: string) =
-        let p = p.Replace('\\', '/')
-        let r = root.Replace('\\', '/')
-        if p.StartsWith (r + "/") then token + p.Substring r.Length else p
-    let text = System.IO.File.ReadAllText evaluationFile
-    let doc = System.Text.Json.JsonDocument.Parse text
-    let wrong =
-        [ for field in ["Sources"; "ProjectRefs"] do
-            match doc.RootElement.TryGetProperty field with
-            | true, items ->
-                for item in items.EnumerateArray() do
-                    let written = item.GetString()
-                    let path = expand written
-                    if not (System.IO.File.Exists path) then
-                        let fixedPath =
-                            System.IO.Path.GetFullPath(System.IO.Path.Combine(projectDir, System.IO.Path.GetRelativePath(root, path)))
-                        if System.IO.File.Exists fixedPath then yield written, tokenize fixedPath
-            | _ -> () ]
-    if not wrong.IsEmpty then
-        let repaired = wrong |> List.fold (fun (t: string) (was, now) -> t.Replace($"\"%s{was}\"", $"\"%s{now}\"")) text
-        System.IO.File.WriteAllText(evaluationFile, repaired)
-    wrong.Length
-
 /// A fileset made of exact paths, in the order given -- unlike a mask, this preserves the
 /// compile order fsc is handed.
 let filesetOf (files: string list) = files |> List.fold (fun fs file -> fs ++ file) Fileset.Empty
@@ -195,10 +158,6 @@ do xakeScript {
                     Properties = ["Version", version]
                     Output = result.FullName
             }
-
-            let repaired = repairEvaluation project result.FullName
-            if repaired > 0 then
-                do! trace Level.Info "%s: %d paths re-rooted under the project (msbuild -restore defect, see repairEvaluation)" name repaired
         }
 
         // one rule compiles them all: which library and which framework is asked for

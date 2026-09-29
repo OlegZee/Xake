@@ -906,3 +906,21 @@ Not run: the workflows themselves.
 **Exact next step**: fix `Fsproj.evaluate` (separate restore call) and drop `repairEvaluation`;
 then release Xake 3.4.0 (tag `v3.4.0`) and Xake.Hermetic.Dotnet 0.1.0 (tag `hermetic-v0.1.0`),
 then E8 (extraction-plan.md §4 lists the exact `#r` lines).
+
+### Fsproj.evaluate fixed (2026-09-30, later)
+
+Root cause as observed: `dotnet msbuild -restore ... -getItem` on src/hermetic (two
+ProjectReferences) reports `FullPath` against the current directory (`/private/tmp/repro/Json.fs`
+when run from /tmp/repro; the project-reference paths likewise), reproduced on SDK 10.0.401.
+Fix: `Fsproj.evaluate` runs `dotnet msbuild <proj> -t:Restore <same -p: properties>` first, then
+the unchanged item query without `-restore`; by hand and through `build.fsc.fsx` the paths are
+project-relative and tokenized. `repairEvaluation` is gone from `build.fsc.fsx`; from clean
+(`rm -rf out obj/xake src/hermetic/obj/xake projects/netstandard2.0/*.json`)
+`dotnet fsi build.fsc.fsx -- -- build test` is green and `git diff --stat projects/` is empty.
+New test in FsprojTests.fs (Main with two sibling ProjectReferences, cwd elsewhere, fails
+without the fix): hermetic.tests 118 passed, `dotnet build src/hermetic -c Release` 0 warnings.
+**Trap**: `build.fsc.fsx` runs against `.bootstrap/Xake.Hermetic.Dotnet.dll` (ignored, frozen);
+the fix only takes effect there after `cp src/hermetic/bin/Release/netstandard2.0/Xake.Hermetic.Dotnet.dll .bootstrap/`
+(done locally). publish.yml: the `hermetic-v*` build step also exports `VERSION=3.4.0`.
+**Exact next step**: release Xake 3.4.0 (tag `v3.4.0`) and Xake.Hermetic.Dotnet 0.1.0 (tag
+`hermetic-v0.1.0`), then E8.

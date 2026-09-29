@@ -1,6 +1,6 @@
 {
   "Properties": {
-    "AssemblyName": "Xake.Dotnet",
+    "AssemblyName": "Xake.Hermetic.Dotnet",
     "DebugType": "portable",
     "DefineConstants": "TRACE;RELEASE;NETSTANDARD;NETSTANDARD2_0;NETSTANDARD1_0_OR_GREATER;NETSTANDARD1_1_OR_GREATER;NETSTANDARD1_2_OR_GREATER;NETSTANDARD1_3_OR_GREATER;NETSTANDARD1_4_OR_GREATER;NETSTANDARD1_5_OR_GREATER;NETSTANDARD1_6_OR_GREATER;NETSTANDARD2_0_OR_GREATER",
     "NoWarn": "",
@@ -8,19 +8,20 @@
     "OtherFlags": ""
   },
   "Sources": [
-    "$(ProjectRoot)/src/dotnet/obj/xake/netstandard2.0/Xake.Dotnet.AssemblyInfo.fs",
-    "$(ProjectRoot)/src/dotnet/Tool.fs",
-    "$(ProjectRoot)/src/dotnet/Hash.fs",
-    "$(ProjectRoot)/src/dotnet/DotNetFwk.fs",
-    "$(ProjectRoot)/src/dotnet/ResourceFileset.fs",
-    "$(ProjectRoot)/src/dotnet/Resx.fs",
-    "$(ProjectRoot)/src/dotnet/DotnetTasks.fs",
-    "$(ProjectRoot)/src/dotnet/CscArgs.fs",
-    "$(ProjectRoot)/src/dotnet/Csc.fs",
-    "$(ProjectRoot)/src/dotnet/Dotnet.csc.fs",
-    "$(ProjectRoot)/src/dotnet/Dotnet.fsc.fs",
-    "$(ProjectRoot)/src/dotnet/Dotnet.resgen.fs",
-    "$(ProjectRoot)/src/dotnet/Dotnet.Msbuild.fs"
+    "$(ProjectRoot)/src/hermetic/obj/xake/netstandard2.0/Xake.Hermetic.Dotnet.AssemblyInfo.fs",
+    "$(ProjectRoot)/src/hermetic/Json.fs",
+    "$(ProjectRoot)/src/hermetic/Roots.fs",
+    "$(ProjectRoot)/src/hermetic/Nuget.fs",
+    "$(ProjectRoot)/src/hermetic/Restore.fs",
+    "$(ProjectRoot)/src/hermetic/Fsproj.fs",
+    "$(ProjectRoot)/src/hermetic/Git.fs",
+    "$(ProjectRoot)/src/hermetic/Lock.fs",
+    "$(ProjectRoot)/src/hermetic/Project.fs",
+    "$(ProjectRoot)/src/hermetic/Sbom.fs",
+    "$(ProjectRoot)/src/hermetic/Verify.fs",
+    "$(ProjectRoot)/src/hermetic/StrongName.fs",
+    "$(ProjectRoot)/src/hermetic/Pack.fs",
+    "$(ProjectRoot)/src/hermetic/Sign.fs"
   ],
   "References": [
     "$(NuGetPackageRoot)/fsharp.core/8.0.100/lib/netstandard2.0/FSharp.Core.dll",
@@ -140,9 +141,11 @@
     "$(NuGetPackageRoot)/netstandard.library/2.0.3/build/netstandard2.0/ref/System.Xml.XmlSerializer.dll",
     "$(NuGetPackageRoot)/netstandard.library/2.0.3/build/netstandard2.0/ref/System.Xml.XPath.dll",
     "$(NuGetPackageRoot)/netstandard.library/2.0.3/build/netstandard2.0/ref/System.Xml.XPath.XDocument.dll",
-    "$(ProjectRoot)/src/core/bin/Release/netstandard2.0/Xake.dll"
+    "$(ProjectRoot)/src/core/bin/Release/netstandard2.0/Xake.dll",
+    "$(ProjectRoot)/src/dotnet/bin/Release/netstandard2.0/Xake.Dotnet.dll"
   ],
   "ProjectRefs": [
+    "$(ProjectRoot)/src/dotnet/Xake.Dotnet.fsproj",
     "$(ProjectRoot)/src/core/Xake.fsproj"
   ]
 }

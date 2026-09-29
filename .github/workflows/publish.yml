@@ -1,4 +1,8 @@
-# Publishes the Xake package to nuget.org. Triggered by a `v*` tag; see docs/devprocess.md.
+# Publishes one NuGet package to nuget.org, chosen by the tag (see docs/devprocess.md):
+#   v<X.Y.Z>           -> Xake                  (src/dotnet, carries the engine too)
+#   hermetic-v<X.Y.Z>  -> Xake.Hermetic.Dotnet  (src/hermetic, depends on Xake [3.4.0, 4.0.0))
+# The two are versioned independently; `pack` builds both (and asserts the hermetic nuspec's
+# dependency range), only the tagged one is pushed.
 # For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-net
 
 name: Publish package
@@ -7,6 +11,7 @@ on:
   push:
     tags:
       - 'v*'
+      - 'hermetic-v*'
 
 jobs:
   publish:
@@ -20,22 +25,36 @@ jobs:
         dotnet-version: 10.0.x
 
     # The tag carries the release version; the run number becomes the fourth component, so
-    # re-tagging or re-running never collides with an already published version.
-    - name: Extract version from tag
-      id: version
+    # re-tagging or re-running never collides with an already published version. The prefix
+    # picks the package and the build variable its version goes into (VERSION for Xake,
+    # HERMETIC_VERSION for Xake.Hermetic.Dotnet); the other package packs at its default.
+    - name: Pick package and version from tag
+      id: release
       run: |
         TAG_NAME="${{ github.ref_name }}"
-        VERSION="${TAG_NAME#v}"  # Remove 'v' prefix
+        case "$TAG_NAME" in
+          hermetic-v*)
+            echo "package=Xake.Hermetic.Dotnet" >> $GITHUB_OUTPUT
+            echo "variable=HERMETIC_VERSION" >> $GITHUB_OUTPUT
+            VERSION="${TAG_NAME#hermetic-v}" ;;
+          v*)
+            echo "package=Xake" >> $GITHUB_OUTPUT
+            echo "variable=VERSION" >> $GITHUB_OUTPUT
+            VERSION="${TAG_NAME#v}" ;;
+          *)
+            echo "::error::tag '$TAG_NAME' is neither v* nor hermetic-v*"; exit 1 ;;
+        esac
         echo "version=${VERSION}.${{ github.run_number }}" >> $GITHUB_OUTPUT
 
-    - name: Build and test
-      run: dotnet fsi build.fsx -- -- build test pack
-      env:
-        VERSION: ${{ steps.version.outputs.version }}
+    - name: Build, test and pack
+      run: |
+        export ${{ steps.release.outputs.variable }}=${{ steps.release.outputs.version }}
+        dotnet fsi build.fsx -- -- build test pack
 
     - name: Publish
       run: >
-        dotnet nuget push out/*.nupkg
+        dotnet nuget push
+        out/pkg/${{ steps.release.outputs.package }}/${{ steps.release.outputs.package }}.${{ steps.release.outputs.version }}.nupkg
         --api-key ${{ secrets.NUGET_API_KEY }}
         --source https://api.nuget.org/v3/index.json
         --skip-duplicate

@@ -695,7 +695,7 @@ overwriting an assembly fsi has loaded kills the run with a `BadImageFormatExcep
 
 ```bash
 dotnet fsi build.fsx -- -- build
-mkdir -p .bootstrap && cp out/netstandard2.0/*.dll .bootstrap/
+mkdir -p .bootstrap && cp out/netstandard2.0/*.dll .bootstrap/          # Xake, Xake.Dotnet, Xake.Hermetic.Dotnet
 dotnet fsi build.fsc.fsx -- -- build test
 ```
 
@@ -708,7 +708,7 @@ nupkg carries a `net462` asset fsc cannot produce here (see the limitation below
 ```bash
 dotnet fsi build.fsx -- -- build                                         # dotnet build, produces out/
 # and the fsc build, which needs its bootstrap staged first
-mkdir -p .bootstrap && cp out/netstandard2.0/*.dll .bootstrap/
+mkdir -p .bootstrap && cp out/netstandard2.0/*.dll .bootstrap/          # Xake, Xake.Dotnet, Xake.Hermetic.Dotnet
 rm -rf out .xake && dotnet fsi build.fsc.fsx -- -- build test
 dotnet fsi build.fsc.fsx -- -- build                                     # no-op, no msbuild run
 ```
@@ -817,3 +817,92 @@ Judgment calls:
 - `xake.sln` lists only core and tests (not even src/dotnet), left alone. The four working fsx scripts here (`import.fsx`, `import-page.fsx`, `verify-dataengine.fsx`, `verify-shipped.fsx`) got `#r ".bootstrap/Xake.Hermetic.Dotnet.dll"` + `open Xake.Hermetic.Dotnet`; the repo's `.bootstrap/` is not re-staged (still the old two dlls), so they need a re-stage before running from here.
 
 **Exact next step**: E6 (build.fsx third library, non-overlapping pack targets; build.fsc.fsx), then E7.
+
+## E1-E4 follow-up (2026-09-30): base tests independent of `Xake.Hermetic.Dotnet`
+
+`src/tests/tests.fsproj` no longer references `src/hermetic`, and the hermetic fsproj's `InternalsVisibleTo("tests")` is gone (only `hermetic.tests` remains). Moved to `src/hermetic.tests`: the `Fsproj` evaluation test from DotnetTasksTests (`FsprojTests.fs`), the two `Project.import` cases of ToolsetTests (`ToolsetImportTests.fs`), and the `Project.import` + `Lock.compile` resx byte-identity case (`ResxImportTests.fs`). Stayed in base: the composed `csc { toolset }` test (already `csc {}` only), the two Resx reader tests, CscServerTests (`Verify.compare` did no masking, so it is now a plain `File.ReadAllBytes` equality). Added one base test, `Resx.compile writes the same bytes as msbuild` (msbuild baseline vs `Resx.compile`, no lock), so B7's byte identity is checked without the hermetic package. Counts: base 248 passed 1 skipped, hermetic.tests 117 = 365/1 (364 + the new base resx test). `Verify.fs`'s doc comment still says `InternalsVisibleTo("tests")` (file outside this task's scope).
+
+SBOM: `metadata.tools.components[0]` is now named `Xake.Hermetic.Dotnet` (version from the same assembly as before). SBOM output changed in this field only. There is no `vendor` field in the emitted entry, so nothing to keep. SbomTests asserts the name.
+
+## E6–E7 (2026-09-30): build scripts and CI for two packages
+
+**build.fsx.** `Library` gained `Package` (which package, hence which version var); the third
+library is `Xake.Hermetic.Dotnet` (`src/hermetic`, needs Xake + Xake.Dotnet). Second var
+`HermeticVersion` (`-d HermeticVersion=`, `$HERMETIC_VERSION`, the field-name-to-env rule of
+`Var.create`), defaulting to the literal `<Version>` in the fsproj (regex, so the two cannot
+drift). Three decisions:
+- **`dotnet build -p:BuildProjectReferences=false`** for every library. A global `/p:Version`
+  flows into project references: building src/hermetic at 0.1.0 would rebuild Xake and
+  Xake.Dotnet at 0.1.0 and copy them over `out/`. Each library `need`s its references first, so
+  msbuild never has to build them.
+- **Pack layout `out/pkg/<id>/<id>.<ver>.nupkg`, one rule per package** (both, not either): a
+  single `out/Xake.(ver:*).nupkg` matches `Xake.Hermetic.Dotnet.0.1.0.nupkg` with
+  ver=`Hermetic.Dotnet.0.1.0`, and the per-id folder is also what lets CI push
+  `out/pkg/<id>/...` without the other package. `pack` needs both in one `need` (the engine in
+  build.fsx's bootstrap is 3.0.1, which re-runs a target asked for twice in sequence -- the
+  fixed "one target, one execution" bug -- so one list, not two `need`s).
+- **The hermetic pack compiles against Xake at Xake's version**: it `need`s the Xake nupkg
+  (which also serializes the two packs, they share `src/core/obj` and `src/dotnet/obj`), runs
+  `dotnet build src/dotnet -c Release /p:Version=<Version>`, then
+  `dotnet pack src/hermetic /p:Version=<HermeticVersion> -p:BuildProjectReferences=false`.
+  Checked with PEReader: `Xake.Hermetic.Dotnet 0.1.0.0 -> Xake 3.4.0.0, Xake.Dotnet 3.4.0.0` for
+  `-d Version=3.4.0-rc1 -d HermeticVersion=0.1.0-rc1`. Without it the hermetic assembly would
+  reference Xake.Dotnet at *its own* version.
+- **Nuspec assertion**: after pack, `checkXakeRange` opens the nupkg (`ZipFile`), reads the
+  root `.nuspec`, requires every `<dependency id="Xake">` to be `[3.4.0, 4.0.0)`; otherwise it
+  deletes the nupkg and fails. Negative test on a hand-edited nupkg (`1.0.0`): both TFM groups
+  reported.
+
+Runs (SDK 10.0.401, working tree with the concurrent test moves): `build test` green,
+src/tests 248 passed 1 skipped, hermetic.tests 117 passed; `pack` (defaults) ->
+`out/pkg/Xake/Xake.0.0.1.nupkg`, `out/pkg/Xake.Hermetic.Dotnet/Xake.Hermetic.Dotnet.0.1.0.nupkg`;
+`VERSION=3.4.0.99 HERMETIC_VERSION=0.1.0.99 ... pack` -> `Xake.3.4.0.99.nupkg`,
+`Xake.Hermetic.Dotnet.0.1.0.99.nupkg`. Hermetic nupkg holds only its own dll/xml per TFM.
+
+**build.fsc.fsx.** Third library, `#r ".bootstrap/Xake.Hermetic.Dotnet.dll"`, `open
+Xake.Hermetic.Dotnet` (`Fsproj`), `versionOf name` for the evaluation's `Version`, `test` runs
+both projects, and the same pack/push rules as build.fsx. `.bootstrap/` re-staged from
+`build.fsx build` (`cp out/netstandard2.0/*.dll .bootstrap/`, FSharp.Core.dll kept): Xake.dll
+589312, Xake.Dotnet.dll 219648, Xake.Hermetic.Dotnet.dll 400384 bytes, the same sizes as the
+E1–E4 staging.
+
+**Trap found: `Fsproj.evaluate` on a project with two ProjectReferences.** With `-restore`,
+msbuild's `-getItem` reports `FullPath` against the *current directory*: src/hermetic's sources
+came back as `<repo>/Json.fs`, its project references as `/Users/olegz/projects/dotnet/...`
+(untokenized, machine-specific). Reproduced by hand on SDK 8.0.425 and 10.0.401; without
+`-restore` the paths are right; removing either ProjectReference makes them right; static-graph
+restore crashes (NRE in `MSBuildStaticGraphRestore`) with the global `TargetFramework`;
+`RestoreRecursive=false`/`RestoreDisableParallel` do not help. src/ was off limits for this run,
+so build.fsc.fsx carries `repairEvaluation`: a Sources/ProjectRefs entry that does not exist is
+re-rooted under the project directory, in place in the text, so the kept json is what
+`evaluate` would write without the defect (16 paths for src/hermetic, 0 for the other two). The
+real fix is in `Fsproj.evaluate`: run `-t:Restore` as its own msbuild call, then the
+`-getItem` call without `-restore`; it has to land before 0.1.0 is published (tracker).
+
+**fsc build proof.** `rm -rf out .xake && dotnet fsi build.fsc.fsx -- -- build`: 3 evaluations
++ 3 compilations in 5.8 s, `projects/netstandard2.0/Xake.Hermetic.Dotnet.json` new and
+`Xake.Dotnet.json` smaller (the moved files; both are tracked outputs of this script, left in the
+working tree); second run all skipped, 0.7 s, no msbuild; clean rebuild byte-identical to the
+first (deterministic). `build test` via build.fsc.fsx: 248+1 / 117. **Against `dotnet build`
+it is not byte-identical, and was not before this change**: every dll is 512 bytes smaller and
+`verify-shipped.fsx` says "content differs" (Xake.dll 5817 ranges / 454 KB, Xake.Dotnet 2594 /
+152 KB, Xake.Hermetic.Dotnet 5445 / 274 KB); the `.xml` docs are identical. Xake.dll's sources
+did not change, so this is the fsc command line (the SDK passes relative source paths,
+`--highentropyva+`, `--targetprofile:netstandard`, its own pdb path; F# embeds file names in its
+signature/optimization resources), not E6. B6's "byte-identical" is against the fsc build's own
+earlier output.
+
+**E7.** `publish.yml`: tags `v*` and `hermetic-v*`; a `case` on the prefix outputs `package`,
+`variable` (`VERSION` / `HERMETIC_VERSION`) and `version` = tag minus prefix + `.<run>`, anything
+else fails the job; `build test pack` with that variable exported; push
+`out/pkg/<package>/<package>.<version>.nupkg --skip-duplicate`. The other package still packs
+at its default version and is not pushed; in a hermetic release that means Xake packs at 0.0.1
+and the hermetic assembly references `Xake 0.0.1.0` (below any published 3.x, so it binds;
+set `VERSION` too if that matters). `build.yml` runs `build test pack` on 8.0.x and 10.0.x, so
+the range assertion runs on the floor SDK as well. YAML parsed with Ruby's `YAML` (no PyYAML,
+no actionlint here); the tag step was run locally for `v3.4.0`, `hermetic-v0.1.0`, `foo`.
+Not run: the workflows themselves.
+
+**Exact next step**: fix `Fsproj.evaluate` (separate restore call) and drop `repairEvaluation`;
+then release Xake 3.4.0 (tag `v3.4.0`) and Xake.Hermetic.Dotnet 0.1.0 (tag `hermetic-v0.1.0`),
+then E8 (extraction-plan.md §4 lists the exact `#r` lines).

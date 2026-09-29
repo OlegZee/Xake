@@ -137,3 +137,5 @@ to that rule rather than the deliverable. Items are ordered by what they unblock
 ## Housekeeping
 - [ ] release of `feature/hermetic-build` — deferred by the user; `#r` on `.bootstrap/` for now
 - [x] move brief/tracker into the commit — done by the user 2026-09-22 (commit 992975e, with the dataengine inspection artifacts)
+- [x] **B1** (2026-09-29): `Project.fs` split into `CscArgs.fs`, `Git.fs`, `Lock.fs`, `Project.fs`, bodies untouched; 358 passed, 1 skipped, 0 warnings
+- [ ] **B2**: `Csc` record + module (`ofSettings`, `run`, `compile`), `csc { ...; resolve }`, hermetic steps out of `run` into `Lock.build`, `CSC_SERVER`; retire `Csc settings` (decision a)

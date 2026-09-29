@@ -138,4 +138,4 @@ to that rule rather than the deliverable. Items are ordered by what they unblock
 - [ ] release of `feature/hermetic-build` — deferred by the user; `#r` on `.bootstrap/` for now
 - [x] move brief/tracker into the commit — done by the user 2026-09-22 (commit 992975e, with the dataengine inspection artifacts)
 - [x] **B1** (2026-09-29): `Project.fs` split into `CscArgs.fs`, `Git.fs`, `Lock.fs`, `Project.fs`, bodies untouched; 358 passed, 1 skipped, 0 warnings
-- [ ] **B2**: `Csc` record + module (`ofSettings`, `run`, `compile`), `csc { ...; resolve }`, hermetic steps out of `run` into `Lock.build`, `CSC_SERVER`; retire `Csc settings` (decision a)
+- [x] **B2** (2026-09-29): `Csc` record + module (`ofSettings`, `run`, `compile`, `runOptions`), `csc { ...; resolve }`, hermetic steps out of `run` into `Lock.build`/`compileWith`, `csc { lock }` as an extension in Lock.fs, `CSC_SERVER`; `Csc settings` retired for `Csc.compile` (decision a). `Lock.Entry = { Csc; Evaluation; Packages }`, lock JSON byte-identical (golden test against 99faffc's writer + dataengine locks `cmp`-identical). 362 passed, 1 skipped (+4 tests), 35 integration, 0 warnings

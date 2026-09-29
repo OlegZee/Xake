@@ -149,17 +149,17 @@ do xakeScript {
             let project = Lock.entryFor fwk name lock
 
             let outputOf refPath =
-                (Lock.entryFor fwk (Path.GetFileNameWithoutExtension (refPath: string)) lock).Output
+                (Lock.entryFor fwk (Path.GetFileNameWithoutExtension (refPath: string)) lock).Csc.Output
                 |> Option.defaultWith (fun () -> failwithf "project reference '%s' has no /out: in its own lock entry" refPath)
 
-            let unbuilt = project.Dependencies.References |> List.filter (fun r -> r.Sha256 = "") |> List.map (fun r -> r.Path) |> Set.ofList
+            let unbuilt = project.Csc.Dependencies.References |> List.filter (fun r -> r.Sha256 = "") |> List.map (fun r -> r.Path) |> Set.ofList
             let mapped = project |> Lock.mapPaths (fun p -> if unbuilt.Contains p then outputOf p else p)
 
             // absolute paths throughout: `need`/`getTargetFile` resolve them unchanged (an
             // absolute argument to `Path.Combine` with `ProjectRoot` wins), whether the output
             // is page's own or dataengine's
             do! need (unbuilt |> Set.toList |> List.map outputOf)
-            do! CscLock.compile mapped
+            do! Lock.compile mapped
         }
 
         target "src/(proj:**)/obj/xake/(fwk:*)/(brand:*)/(name:*).dll" {
@@ -178,7 +178,7 @@ do xakeScript {
 
         // one CycloneDX SBOM per compiled project: needs the lock and the built assembly (the
         // compile rules above). The restore graph is in the lock entry itself
-        // (`Dependencies.Packages`, folded in at import), so nothing under `obj/` is read here;
+        // (`Lock.Entry.Packages`, folded in at import), so nothing under `obj/` is read here;
         // the cache is only consulted for supplier/license. `name` is the assembly name, same
         // capture as the compile rule's, so `Lock.entryFor fwk name` finds the entry by `Name`
         // and `Framework` directly.
@@ -189,7 +189,7 @@ do xakeScript {
             let! lock = Lock.loadWith extraRoots (lockFile brand)
             let project = Lock.entryFor fwk name lock
             let output =
-                project.Output
+                project.Csc.Output
                 |> Option.defaultWith (fun () -> failwithf "project '%s' has no /out: in its lock entry" name)
 
             do! need [output]
@@ -202,7 +202,7 @@ do xakeScript {
         command "sbom" {
             for b in brands do
                 let! lock = Lock.loadWith extraRoots (lockFile b)
-                do! need [ for entry in lock.Entries -> $"out/%s{entry.Framework}/%s{b}/%s{entry.Name}.cdx.json" ]
+                do! need [ for entry in lock.Entries -> $"out/%s{entry.Csc.Framework}/%s{b}/%s{entry.Csc.Name}.cdx.json" ]
         }
 
         // compiles every project the locks name, for every framework and brand, in both
@@ -212,7 +212,7 @@ do xakeScript {
                 let! lock = Lock.loadWith extraRoots (lockFile b)
                 do! need
                         [ for entry in lock.Entries do
-                            match entry.Output with
+                            match entry.Csc.Output with
                             | Some out -> yield out
                             | None -> () ]
         }
@@ -221,17 +221,17 @@ do xakeScript {
             let! lockPath = vars.Lock
             let! lock = Lock.loadWith extraRoots (lockPath |> Option.defaultValue (lockFile "MESCIUS"))
             for entry in lock.Entries do
-                let e, c, d = entry.Evaluation, entry.Compilation, entry.Dependencies
-                do! trace Message "%s [%s] (%s)" entry.Name entry.Framework e.Project
+                let e, c, d = entry.Evaluation, entry.Csc, entry.Csc.Dependencies
+                do! trace Message "%s [%s] (%s)" entry.Csc.Name entry.Csc.Framework e.Project
                 do! trace Message "  evaluation   sdk %s, pin %s, imports %d: %s" e.Sdk
                         (e.SdkPin |> Option.map Lock.sdkPinText |> Option.defaultValue "-") e.Imports.Length
                         (e.Imports |> List.map (fun i -> Path.GetFileName i.Path) |> String.concat ", ")
-                do! trace Message "  compilation  options %d, defines %d, sources %d, out %A" c.Options.Length c.Defines.Length c.Sources.Length entry.Output
+                do! trace Message "  compilation  options %d, defines %d, sources %d, out %A" c.Options.Length c.Defines.Length c.Sources.Length c.Output
                 do! trace Message "               generated %s" (c.Generated |> List.map (fst >> Path.GetFileName) |> String.concat ", ")
                 do! trace Message "  dependencies compiler %s %s %s" d.Compiler.Version d.Compiler.Path (d.Compiler.Sha256.Substring(0, 12))
                 do! trace Message "               references %d (%d unhashed), analyzers %d, packages %d (%d direct)" d.References.Length
                         (d.References |> List.filter (fun r -> r.Sha256 = "") |> List.length) d.Analyzers.Length
-                        d.Packages.Length (d.Packages |> List.filter (fun p -> p.Direct) |> List.length)
+                        entry.Packages.Length (entry.Packages |> List.filter (fun p -> p.Direct) |> List.length)
         }
     ]
 }

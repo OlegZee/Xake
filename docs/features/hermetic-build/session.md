@@ -712,3 +712,47 @@ mkdir -p .bootstrap && cp out/netstandard2.0/*.dll .bootstrap/
 rm -rf out .xake && dotnet fsi build.fsc.fsx -- -- build test
 dotnet fsi build.fsc.fsx -- -- build                                     # no-op, no msbuild run
 ```
+
+## B2 landed (2026-09-29): the resolved compilation as a public API
+
+`Csc.fs` (new, after `Restore.fs`/`CscArgs.fs`) holds the settings (`CscSettingsType` without
+`Lock`, `Server: CompilerServer option`), `RunOptions { FailOnError; CscPath; Server;
+Environment }`, `CompilerServer.resolve`, the `Csc` record and `module Csc` (`ofArgs`, `args`,
+`ofSettings`, `runOptions`, `run`, `compile`, `rehash`, `mapPaths`, `mapText`, `diffList`,
+`sha256`, `hashed`, `compilerVersion`, `isMarker`). `Dotnet.csc.fs` is the builder only
+(`resolve` + two `Run` overloads). `Lock.fs` has `Entry = { Csc; Evaluation; Packages }`,
+`Options { Run; Restore }`, `build(With)`, `compile(With)`, `record`, `verify`,
+`restoreRequest`, `restore` (was `Restore.prepare`), and `csc { lock }` as an extension.
+`Restore.ensure/missing` take a `Restore.Request { Packages; Paths }`. Lock JSON byte-identical:
+golden test against 99faffc's writer, and the dataengine locks `cmp`-identical old vs new.
+`verify-dataengine.sh`, run from a temp copy with its own `.bootstrap`: 36/36 byte-identical
+vs `dotnet build`, 36/36 deterministic, 12/12 SBOMs, 36/36 from a fresh package folder.
+
+Judgment calls:
+- `Hashed`, `Reference`, `Compiler`, `Dependencies`, `Csc` and `Package` are namespace-level types
+  (their field labels must be in scope for record literals); `Package` lives in `Restore.fs`.
+  `Lock.Hashed/Reference/Compiler/Package` stay as abbreviations. The settings types sit in
+  `[<AutoOpen>] module CscTypes`.
+- `Csc.ofArgs : string list -> Csc` (empty name/framework/directory, compiler `{ Tool = "csc" }`
+  with the other fields empty); `Csc.args c = c.Args`.
+- `Lock.Entry` has no members any more (`Args`, `Output`, `Sources` are on `entry.Csc`).
+  `Lock.ofCsc` and `Lock.Evaluation.Empty` are new. `Lock.sha256/hashed/compilerVersion` are
+  gone (now `Csc.*`), and `Lock.diffList` forwards to `Csc.diffList`.
+- `Csc.runOptions settings` is public: it is the helper `Csc.compile` and `csc { lock }` share. It
+  reads `NETFX`/`NETFX-TARGET` a second time, which records the dependency twice and is
+  harmless.
+- When `CscPath` is not set, `Csc.run` fails with a plain "'X': the compiler P does not exist"
+  if the compiler is missing. The SDK/package-specific messages only come from `Lock.compile`.
+- `Lock.build`/`Lock.compile` resolve the server with `CompilerServer.resolve None`, and
+  `buildWith`/`compileWith` take the options as given. `CSC_SERVER` goes through `getVar`, so it
+  is a tracked dependency and changing it rebuilds (same as `NETFX`). An empty or unknown value
+  logs a warning and means `on`.
+- The "compiling 'X'" trace now comes after the restore and revision steps, because it moved
+  into `Csc.run`.
+- `CscLockTests` builds through `Lock.buildWith` + `Csc.runOptions`, the same path the `lock`
+  sugar takes. The first test in that file uses `csc { ...; lock path }` literally. The two
+  "no evaluation" asserts in the `ofSettings` test now check `Lock.ofCsc c` against
+  `Evaluation.Empty`.
+- `src/dotnet/readme.md` never called `Csc settings`, so it is unchanged. `samples/book/intro.fsx`
+  and the three `docs/features/hermetic-build/*.fsx` are updated. `.bootstrap/` is untouched, so
+  the updated fsx need a re-staged bootstrap.

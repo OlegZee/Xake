@@ -86,14 +86,14 @@ do xakeScript {
 
             // the referenced projects' own outputs, as this run of the lock will build them
             let outputOf refPath =
-                (Lock.entryFor fwk (Path.GetFileNameWithoutExtension (refPath: string)) lock).Output
+                (Lock.entryFor fwk (Path.GetFileNameWithoutExtension (refPath: string)) lock).Csc.Output
                 |> Option.defaultWith (fun () -> failwithf "project reference '%s' has no /out: in its own lock entry" refPath)
 
-            let unbuilt = project.Dependencies.References |> List.filter (fun r -> r.Sha256 = "") |> List.map (fun r -> r.Path) |> Set.ofList
+            let unbuilt = project.Csc.Dependencies.References |> List.filter (fun r -> r.Sha256 = "") |> List.map (fun r -> r.Path) |> Set.ofList
             let mapped = project |> Lock.mapPaths (fun p -> if unbuilt.Contains p then outputOf p else p)
 
             do! need (unbuilt |> Set.toList |> List.map (outputOf >> relative))
-            do! CscLock.compile mapped
+            do! Lock.compile mapped
         }
 
         // compiles every project the locks name, for every framework and brand. Dynamic
@@ -107,7 +107,7 @@ do xakeScript {
                 let! lock = Lock.load (lockFile b)
                 do! need
                         [ for entry in lock.Entries do
-                            match entry.Output with
+                            match entry.Csc.Output with
                             | Some out -> yield relative out
                             | None -> () ]
         }
@@ -116,17 +116,17 @@ do xakeScript {
             let! lockPath = vars.Lock
             let! lock = Lock.load (lockPath |> Option.defaultValue (lockFile "MESCIUS"))
             for entry in lock.Entries do
-                let e, c, d = entry.Evaluation, entry.Compilation, entry.Dependencies
-                do! trace Message "%s [%s] (%s)" entry.Name entry.Framework e.Project
+                let e, c, d = entry.Evaluation, entry.Csc, entry.Csc.Dependencies
+                do! trace Message "%s [%s] (%s)" entry.Csc.Name entry.Csc.Framework e.Project
                 do! trace Message "  evaluation   sdk %s, pin %s, imports %d: %s" e.Sdk
                         (e.SdkPin |> Option.map Lock.sdkPinText |> Option.defaultValue "-") e.Imports.Length
                         (e.Imports |> List.map (fun i -> Path.GetFileName i.Path) |> String.concat ", ")
-                do! trace Message "  compilation  options %d, defines %d, sources %d, out %A" c.Options.Length c.Defines.Length c.Sources.Length entry.Output
+                do! trace Message "  compilation  options %d, defines %d, sources %d, out %A" c.Options.Length c.Defines.Length c.Sources.Length c.Output
                 do! trace Message "               generated %s" (c.Generated |> List.map (fst >> Path.GetFileName) |> String.concat ", ")
                 do! trace Message "  dependencies compiler %s %s %s" d.Compiler.Version d.Compiler.Path (d.Compiler.Sha256.Substring(0, 12))
                 do! trace Message "               references %d (%d unhashed), analyzers %d, packages %d (%d direct)" d.References.Length
                         (d.References |> List.filter (fun r -> r.Sha256 = "") |> List.length) d.Analyzers.Length
-                        d.Packages.Length (d.Packages |> List.filter (fun p -> p.Direct) |> List.length)
+                        entry.Packages.Length (entry.Packages |> List.filter (fun p -> p.Direct) |> List.length)
         }
     ]
 }

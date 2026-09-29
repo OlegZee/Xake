@@ -25,13 +25,13 @@ type ``Csc compiler server``() =
             TargetFramework = "net-4.6.2"
             RefGlobal = ["System.dll"; "System.Core.dll"]
             CommandArgs = ["/deterministic"]
-            Server = server
+            Server = Some server
     }
 
     member private x.Build (label: string) (settings: CscSettingsType) =
         xake {x.TestOptions with FileLog = label + ".log"; FileLogLevel = Verbosity.Diag; ThrowOnError = true} {
             wantOverride ([label])
-            rules [ label => recipe { do! Csc settings } ]
+            rules [ label => recipe { do! Csc.compile settings } ]
         }
 
     [<Test; Category("Integration")>]
@@ -70,20 +70,20 @@ type ``Csc compiler server``() =
             Assert.That(commands, Does.Contain (bincore </> "VBCSCompiler"),
                 sprintf "no VBCSCompiler from '%s' is running after a /shared compile" bincore)
 
-    /// `/shared` is a parameter of the run, not of the compilation: the entry `resolve`
+    /// `/shared` is a parameter of the run, not of the compilation: the `Csc` `ofSettings`
     /// composes -- what a lock records -- is the same whatever `Server` says.
     [<Test; Category("Integration")>]
     member x.``the lock's arguments never carry /shared``() =
 
         File.WriteAllText ("ServerLock.cs", "public class ServerLock {}\n")
-        let mutable entries : Lock.Entry list = []
+        let mutable entries : Csc list = []
 
         do xake {x.TestOptions with FileLog = "server-lock.log"; ThrowOnError = true} {
             wantOverride (["server-lock"])
             rules [
                 "server-lock" => recipe {
-                    let! shared = CscLock.resolve (settings (Shared (Some 60)) "ServerLock.cs" "ServerLock.dll")
-                    let! inproc = CscLock.resolve (settings InProcess "ServerLock.cs" "ServerLock.dll")
+                    let! shared = Csc.ofSettings (settings (Shared (Some 60)) "ServerLock.cs" "ServerLock.dll")
+                    let! inproc = Csc.ofSettings (settings InProcess "ServerLock.cs" "ServerLock.dll")
                     entries <- [shared; inproc]
                 }
             ]
@@ -92,6 +92,32 @@ type ``Csc compiler server``() =
         let shared, inproc = entries.[0], entries.[1]
         Assert.That(shared.Args |> List.exists (fun a -> a.StartsWith "/shared" || a.StartsWith "/keepalive"), Is.False)
         Assert.That(shared, Is.EqualTo inproc)
+
+    /// `CSC_SERVER` as a script variable is the one switch for the whole script: with the
+    /// target's own `Server` left at `None` (inherit), `off` compiles in-process and `on` (or
+    /// a number, the keepalive) through the server -- observed the way the test above
+    /// observes it, on the traced command line.
+    [<Test; Category("Integration")>]
+    member x.``the CSC_SERVER script variable turns the server off and on``() =
+
+        File.WriteAllText ("ServerVar.cs", "public class ServerVar {}\n")
+        let inheriting = { settings InProcess "ServerVar.cs" "ServerVar.dll" with Server = None }
+
+        let build (label: string) (value: string) =
+            xake {x.TestOptions with FileLog = label + ".log"; FileLogLevel = Verbosity.Diag; ThrowOnError = true
+                                     Vars = ["CSC_SERVER", value]} {
+                wantOverride ([label])
+                rules [ label => recipe { do! Csc.compile inheriting } ]
+            }
+
+        build "server-var-off" "off"
+        Assert.That(File.Exists "ServerVar.dll", Is.True, "csc did not produce ServerVar.dll")
+        Assert.That(File.ReadAllText "server-var-off.log", Does.Not.Contain "/shared", "CSC_SERVER=off still passed /shared")
+
+        build "server-var-on" "90"
+        let onLog = File.ReadAllText "server-var-on.log"
+        Assert.That(onLog, Does.Contain "/shared", "CSC_SERVER=90 did not pass /shared")
+        Assert.That(onLog, Does.Contain "/keepalive:90")
 
     /// Not an assertion, a measurement: N compiles of the same one-file library through the
     /// server and in-process, wall-clock per compile, written to the test output.

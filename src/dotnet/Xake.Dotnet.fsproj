@@ -48,17 +48,22 @@
     <Compile Include="Json.fs" />
     <Compile Include="Roots.fs" />
     <Compile Include="Fsproj.fs" />
-    <!-- Nuget reads restore's outputs (project.assets.json, the package cache) and depends on
-         Json only; it compiles ahead of Project.fs because the import folds the package graph
-         into the lock (Lock.Package) at import time. -->
     <Compile Include="Nuget.fs" />
+    <!-- Restore gets the packages a compilation names onto the disk; it takes an explicit
+         request (packages + paths) and names no lock type, so it compiles ahead of Csc.fs,
+         whose `toolset` operation downloads the compiler package through it. -->
+    <Compile Include="Restore.fs" />
     <Compile Include="CscArgs.fs" />
+    <!-- The resolved compilation (`Csc`), its settings and the one runner; then the csc {}
+         builder over it. -->
+    <Compile Include="Csc.fs" />
+    <Compile Include="Dotnet.csc.fs" />
     <Compile Include="Git.fs" />
+    <!-- The lock format and the lock's side of a build (Lock.build/compile/record/verify,
+         csc { lock }): wraps a Csc with its provenance, restores, resolves the revision
+         token, then hands it to Csc.run. -->
     <Compile Include="Lock.fs" />
     <Compile Include="Project.fs" />
-    <!-- Restore turns a lock back into packages on disk; it needs `Lock.Entry`, so it comes
-         after Project.fs, and ahead of Dotnet.csc.fs, whose runner calls it. -->
-    <Compile Include="Restore.fs" />
     <Compile Include="Sbom.fs" />
     <Compile Include="Verify.fs" />
     <Compile Include="StrongName.fs" />
@@ -66,7 +71,6 @@
     <!-- Signing is the one delegated rule in the pipeline (signing.md); it uses Verify,
          StrongName and Pack, so it compiles after all three. -->
     <Compile Include="Sign.fs" />
-    <Compile Include="Dotnet.csc.fs" />
     <Compile Include="Dotnet.fsc.fs" />
     <Compile Include="Dotnet.resgen.fs" />
     <Compile Include="Dotnet.Msbuild.fs" />

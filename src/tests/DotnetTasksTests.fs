@@ -36,7 +36,7 @@ type ``Dotnet tasks tests``() =
                     do! need ["hello.cs"]
 
                     do! trace Error "Rebuilding..."
-                    do! Csc {
+                    do! Csc.compile {
                     CscSettingsType.Default with
                         Src = !!"hello.cs"
                         Out = File.make "hello.exe"
@@ -65,9 +65,9 @@ type ``Dotnet tasks tests``() =
 
     // Composed mode with a `.resx` resource: `resolve` no longer compiles it into a random
     // temp file (deleted after the compile, and unusable if the settings were instead
-    // recorded as a lock -- see `CscLock.resolve` in Dotnet.csc.fs and the csc-syntax.md
+    // recorded as a lock -- see `Csc.ofSettings` in Csc.fs and the csc-syntax.md
     // "composed mode resx" paragraph). It records a permanent `(resx, .resources)` pair in
-    // `Lock.Compilation.Resources` and `run`'s existing resource step compiles it, exactly as it
+    // `Csc.Resources` and `run`'s existing resource step compiles it, exactly as it
     // already does for an imported project.
     [<Test; Category("Integration")>]
     member x.``runs csc task with a composed resx resource``() =
@@ -104,7 +104,7 @@ type ``Dotnet tasks tests``() =
                     "helloresx.exe" ..> recipe {
                         do! need ["helloresx.cs"]
                         compileCount.Value <- compileCount.Value + 1
-                        do! Csc {
+                        do! Csc.compile {
                         CscSettingsType.Default with
                             Src = !!"helloresx.cs"
                             Out = File.make "helloresx.exe"

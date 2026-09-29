@@ -12,29 +12,39 @@ open Xake.Dotnet
 /// runs), the lock decides whether this is the compilation that was recorded. No lock: record
 /// and compile. Lock present and matching: compile the *recorded* entry, so its hashes gate
 /// the build. Lock present and different: fail with the diff. Updating is explicit --
-/// `CscLock.record`, or deleting the file.
+/// `Lock.record`, or deleting the file.
 [<TestFixture>]
 type ``Csc lock``() =
     inherit XakeTestBase("csc-lock")
 
     /// The shape the other integration tests here use: a net-4.6.2 library, one source file.
-    let settings (src: Fileset) (out: string) (lockPath: string option) = {
-        CscSettingsType.Default with
+    /// The lock path goes alongside: the settings no longer carry one.
+    let settings (src: Fileset) (out: string) (lockPath: string option) =
+        { CscSettingsType.Default with
             Src = src
             Out = File.make out
             Target = Library
             TargetFramework = "net-4.6.2"
-            RefGlobal = ["System.dll"]
-            Lock = lockPath
-    }
+            RefGlobal = ["System.dll"] }, lockPath
 
     let readLock (path: string) =
         Lock.readWith (Roots.builtin (Directory.GetCurrentDirectory())) path
 
-    member private x.Build (label: string) (settings: CscSettingsType) =
+    /// Without a lock: `Csc.compile`. With one: `Lock.build`, through the same run options
+    /// `csc { ...; lock }` uses (`Csc.runOptions`).
+    member private x.Build (label: string) ((settings: CscSettingsType), (lockPath: string option)) =
         xake {x.TestOptions with FileLog = label + ".log"; ThrowOnError = true} {
             wantOverride ([label])
-            rules [ label => recipe { do! Csc settings } ]
+            rules [
+                label => recipe {
+                    match lockPath with
+                    | None -> do! Csc.compile settings
+                    | Some path ->
+                        let! c = Csc.ofSettings settings
+                        let! run = Csc.runOptions settings
+                        do! Lock.buildWith { Lock.Options.Default with Run = run } path c
+                }
+            ]
         }
 
     member private x.Run (label: string) (body: Recipe<ExecContext, unit>) =
@@ -50,21 +60,29 @@ type ``Csc lock``() =
         let lockPath = "locks/locka.json"
         if File.Exists lockPath then File.Delete lockPath
 
-        x.Build "lock-a" (settings !!"LockA.cs" "LockA.dll" (Some lockPath))
+        // the builder spelling of the same thing: `lock` as the block's last operation
+        x.Run "lock-a" (csc {
+            src !!"LockA.cs"
+            out (File.make "LockA.dll")
+            target Library
+            targetfwk "net-4.6.2"
+            grefs ["System.dll"]
+            lock lockPath
+        })
 
         Assert.That(File.Exists lockPath, Is.True, "the lock file was not recorded")
         Assert.That(File.Exists "LockA.dll", Is.True, "csc did not produce LockA.dll")
 
         let doc = readLock lockPath
         Assert.That(doc.Entries, Has.Length.EqualTo 1)
-        Assert.That(doc.Entries.Head.Framework, Is.EqualTo "net-4.6.2")
+        Assert.That(doc.Entries.Head.Csc.Framework, Is.EqualTo "net-4.6.2")
         let entry = doc.Entries.Head
-        Assert.That(entry.Name, Is.EqualTo "LockA")
-        Assert.That(entry.Sources |> List.exists (fun s -> s.EndsWith "LockA.cs"), Is.True)
-        Assert.That(entry.Dependencies.References, Is.Not.Empty)
-        Assert.That(entry.Dependencies.References |> List.forall (fun r -> r.Sha256 <> ""), Is.True,
+        Assert.That(entry.Csc.Name, Is.EqualTo "LockA")
+        Assert.That(entry.Csc.Sources |> List.exists (fun s -> s.EndsWith "LockA.cs"), Is.True)
+        Assert.That(entry.Csc.Dependencies.References, Is.Not.Empty)
+        Assert.That(entry.Csc.Dependencies.References |> List.forall (fun r -> r.Sha256 <> ""), Is.True,
             "the recorded entry has to be hashed -- that is what gates the next build")
-        Assert.That(entry.Dependencies.Compiler.Sha256, Is.Not.Empty)
+        Assert.That(entry.Csc.Dependencies.Compiler.Sha256, Is.Not.Empty)
 
     [<Test; Category("Integration")>]
     member x.``second build with unchanged settings leaves the lock untouched``() =
@@ -100,10 +118,10 @@ type ``Csc lock``() =
         Assert.That(ex.Data0, Does.Contain "LockC2.cs", "the diff has to name the source that was added")
         Assert.That(ex.Data0, Does.Contain "lock", "the message has to say a lock is what refused the build")
         // refusing is all it does: nothing is rewritten behind the user's back
-        Assert.That((readLock lockPath).Entries.Head.Sources |> List.exists (fun s -> s.EndsWith "LockC2.cs"), Is.False)
+        Assert.That((readLock lockPath).Entries.Head.Csc.Sources |> List.exists (fun s -> s.EndsWith "LockC2.cs"), Is.False)
 
     [<Test; Category("Integration")>]
-    member x.``CscLock.record overwrites the lock and the next build passes``() =
+    member x.``Lock.record overwrites the lock and the next build passes``() =
 
         File.WriteAllText ("LockD.cs", "public class LockD {}\n")
         File.WriteAllText ("LockD2.cs", "public class LockD2 {}\n")
@@ -114,10 +132,12 @@ type ``Csc lock``() =
 
         // the settings moved: the idiomatic update step a script declares as its own target
         let updated = settings (!!"LockD.cs" + "LockD2.cs") "LockD.dll" (Some lockPath)
-        x.Run "update-locks" (recipe { do! CscLock.record lockPath updated })
+        x.Run "update-locks" (recipe {
+            let! c = Csc.ofSettings (fst updated)
+            do! Lock.record lockPath c })
 
-        Assert.That((readLock lockPath).Entries.Head.Sources |> List.exists (fun s -> s.EndsWith "LockD2.cs"), Is.True,
-            "CscLock.record did not overwrite the lock with the new settings")
+        Assert.That((readLock lockPath).Entries.Head.Csc.Sources |> List.exists (fun s -> s.EndsWith "LockD2.cs"), Is.True,
+            "Lock.record did not overwrite the lock with the new settings")
 
         x.Build "lock-d2" updated
         Assert.That(File.Exists "LockD.dll", Is.True, "csc did not produce LockD.dll after the lock was updated")
@@ -139,7 +159,8 @@ type ``Csc lock``() =
         Assert.That(File.Exists "LockLib.dll", Is.True, "the reference library was not built")
 
         let referencing =
-            { settings !!"LockE.cs" "LockE.dll" (Some lockPath) with Ref = !!"LockLib.dll" }
+            let s, path = settings !!"LockE.cs" "LockE.dll" (Some lockPath)
+            { s with Ref = !!"LockLib.dll" }, path
 
         x.Build "lock-e" referencing
         Assert.That(File.Exists "LockE.dll", Is.True, "csc did not produce LockE.dll")
@@ -154,9 +175,9 @@ type ``Csc lock``() =
         // did not move, and the resolved side carries no hashes to compare)
         Assert.That(ex.Data0, Does.Contain "expected")
 
-    /// `CscLock.verify` -- the diff alone, no compile, nothing written (scenario 3).
+    /// `Lock.verify` -- the diff alone, no compile, nothing written (scenario 3).
     [<Test; Category("Integration")>]
-    member x.``CscLock.verify reports the difference without compiling``() =
+    member x.``Lock.verify reports the difference without compiling``() =
 
         File.WriteAllText ("LockF.cs", "public class LockF {}\n")
         File.WriteAllText ("LockF2.cs", "public class LockF2 {}\n")
@@ -170,9 +191,11 @@ type ``Csc lock``() =
         let mutable changed : string list = []
 
         x.Run "verify-locks" (recipe {
-            let! same = CscLock.verify lockPath (settings !!"LockF.cs" "LockF.dll" (Some lockPath))
+            let! same = Csc.ofSettings (fst (settings !!"LockF.cs" "LockF.dll" None))
+            let! same = Lock.verify lockPath same
             unchanged <- same
-            let! diff = CscLock.verify lockPath (settings (!!"LockF.cs" + "LockF2.cs") "LockF.dll" (Some lockPath))
+            let! moved = Csc.ofSettings (fst (settings (!!"LockF.cs" + "LockF2.cs") "LockF.dll" None))
+            let! diff = Lock.verify lockPath moved
             changed <- diff
         })
 

@@ -1,11 +1,17 @@
 # `csc {}` as it stands
 
-`csc {}` is the C# compiler task. It builds one `Lock.Entry` -- a project's exact compiler
-command line, plus what it references and how to check it -- and hands that to a single runner.
-Settings are intent, `Lock.Entry` is the resolved compilation: there are two ways to arrive
-at a `Lock.Entry` (compose one from settings, or bring one in from a lock) but only one thing
-that ever shells out to the compiler. (Before Stage B, 2026-09-24, the entry was `Lock.Project`
-and the lock file `Lock.File`; the format then was a flat record with a verbatim `Args` list.)
+`csc {}` is the C# compiler task. It resolves its settings into one `Csc` record -- a project's
+exact compiler command line, plus what it references and how to check it -- and hands that to a
+single runner, `Csc.run`. Settings are intent, `Csc` is the resolved compilation: there are
+several ways to arrive at a `Csc` (compose one from settings with `csc { ...; resolve }` or
+`Csc.ofSettings`, take the `Csc` of a lock entry, or `Csc.ofArgs` from a command line) but only
+one thing that ever shells out to the compiler. A lock entry is `Lock.Entry = { Csc; Evaluation;
+Packages }`: a `Csc` plus the provenance the lock records. (Before B2, 2026-09-29, the resolved
+compilation was `Lock.Entry` itself with its `Compilation` section; the JSON key `"Compilation"`
+is unchanged. Before Stage B, 2026-09-24, it was `Lock.Project` and the lock file `Lock.File`.)
+
+The base reference for the settings, `Csc.compile`, `resolve`, `Csc.run` and `RunOptions` is
+[docs/tasks.md](../../tasks.md); this file keeps the details behind them and the lock parts.
 
 ## Composed mode
 
@@ -20,9 +26,12 @@ and the lock file `Lock.File`; the format then was a flat record with a verbatim
 (`samples/fullframework.fsx`; `src/tests/DotnetTasksTests.fs`, `runs csc task (full test)`, shows
 the same shape with `out`, `Src`, `TargetFramework`, `RefGlobal` set directly on the record.)
 
-`Csc` calls `resolve`, which turns the settings below into a
-`Lock.Entry` at recipe time -- same argument order the task has always produced, save that
-references are now spelled `/reference:` rather than `/r:` -- and passes it to the runner. Every custom operation of `CscSettingsBuilder`:
+`csc {}` (through `Csc.compile`) calls `Csc.ofSettings`, which turns the settings below into a
+`Csc` at recipe time -- same argument order the task has always produced, save that
+references are now spelled `/reference:` rather than `/r:` -- and passes it to `Csc.run`.
+`csc { ...; resolve }` stops after `Csc.ofSettings` and returns the `Csc`; `resolve` must be the
+last operation, and outside a file rule needs an explicit `out`. Every custom operation of
+`CscSettingsBuilder`:
 
 | Keyword | Argument | Does | Default |
 |---|---|---|---|
@@ -41,29 +50,30 @@ references are now spelled `/reference:` rather than `/r:` -- and passes it to t
 | `unsafe` | `bool` | `/unsafe` | `false` |
 | `cscpath` | `string` | compiler executable, bypassing framework discovery entirely | `None` |
 | `toolset` | `string` (package version) | compiler from `Microsoft.Net.Compilers.Toolset/<version>` in the NuGet cache instead of the SDK's; see below | `None` |
-| `lock` | `string` | records this compilation in a lock file at that path (project-root-relative or absolute) and, once it exists, refuses to compile anything that differs from it; see "Locking composed settings" below | `None` |
+| `lock` | `string` | defined on the hermetic side (`Lock.fs`, `CscLockBuilder`), not by `Dotnet.csc.fs`: builds the resolved compilation with `Lock.buildWith`, i.e. records it in a lock file at that path (project-root-relative or absolute) and, once it exists, refuses to compile anything that differs from it; must be the last operation; see "Locking composed settings" below | -- |
+| `resolve` | (none) | returns the `Csc` (`Csc.ofSettings`) instead of compiling; must be the last operation | -- |
 | `args` | `string list` | raw extra switches, appended last (`CommandArgs`) | `[]` |
 | `nofailonerror` | (none) | do not fail the build on a compile error | `FailOnError = true` |
 | `noserver` | (none) | compile in a fresh csc process instead of through the Roslyn compiler server (`VBCSCompiler`); see [csc-server.md](csc-server.md) | `Server = Shared None` (env `XAKE_CSC_SERVER=0` turns it off) |
 | `keepalive` | `int` (seconds) | idle time after which a compiler server this build starts exits (`/keepalive`) | Roslyn's own default, 600 |
 
 `out`, `platform`, `unsafe`, `nostdlib` (from `targetfwk`) and `define` are composition
-settings; replaying a lock (`CscLock.compile`, below) does not go through them at all. The
-argument list `resolve` builds is,
+settings; replaying a lock (`Lock.compile`, below) does not go through them at all. The
+argument list `Csc.ofSettings` builds is,
 in order: `/noconfig` (when the target framework requires it), `/nologo`, `/target:`,
 `/platform:`, `/unsafe`, `/nostdlib+`, `/out:`, `/define:`, sources, `/reference:` refs, global
-refs, `/res:`, then `CommandArgs`. The list then goes through `Lock.Compilation.ofArgs` exactly
+refs, `/res:`, then `CommandArgs`. The list then goes through `Csc.ofArgs` exactly
 like an imported one (below) and gets the same round-trip check; it always passes, there being
 one item per switch.
 
 **Composed-mode `.resx` resources (2026-09-23).** A `resources`/`resourceslist` fileset entry
-that names a `.resx` file is not compiled by `resolve` itself -- unlike an ordinary
+that names a `.resx` file is not compiled by `Csc.ofSettings` itself -- unlike an ordinary
 embedded-resource file (already the file the compiler reads), a `.resx` needs turning into a
 `.resources` first, and `resolve` used to do that eagerly into a temp file with a random name,
-deleted once the compile was done. That left nothing for `CscLock.resolve` to hand back: a lock
+deleted once the compile was done. That left nothing for `resolve` to hand back: a lock
 recorded from settings with `.resx` resources had `/res:` arguments naming files that no longer
 existed. Instead `resolve` records a permanent
-`(resx, .resources)` pair in `Lock.Compilation.Resources` --
+`(resx, .resources)` pair in `Csc.Resources` --
 `<ProjectRoot>/obj/xake/<assembly name>/<manifestName>` where `manifestName` is the `/res:`
 logical name `Impl.makeResourceName` computes (e.g. `Sample.Application.Strings.resources`) --
 and emits `/res:<resourcesPath>,<manifestName>`, exactly the shape `Project.import` already
@@ -91,10 +101,10 @@ temp files of its own; the only temp file `run` still cleans up is its own respo
   launcher the `csc.dll` next to it is read). The SDK that evaluated the project is
   `Evaluation.Sdk`, empty for a composed compilation -- the two used to share one overloaded
   `Compiler.Sdk` field.
-- `CscLock.compile` restores a toolset package the lock names when it is not on this machine yet
-  -- through the runner's restore step (`Restore.ensure`, step 1 below), which treats the
+- `Lock.compile` restores a toolset package the lock names when it is not on this machine yet
+  -- through its restore step (`Restore.ensure`, step 1 below), which treats the
   compiler as one package among the entry's references and analyzers; `ensureCompilerAvailable`
-  only explains what is still missing afterwards.
+  only explains what is still missing afterwards. `Csc.run` itself restores nothing.
 
 ### Import: the project decides, msbuild answers
 
@@ -110,33 +120,36 @@ temp files of its own; the only temp file `run` still cleans up is its own respo
   (csproj or `-p:`). Without it, on SDK 9 and later, `Microsoft.NET.Sdk.BeforeCommon.targets`
   silently sets `CSharpCoreTargetsPath` back to the SDK's, and the package has no effect.
 
-## Replaying a lock: `CscLock.compile`
+## Replaying a lock: `Lock.compile`, and the runner `Csc.run`
 
 ```fsharp
-do! CscLock.compile mapped                          // mapped : Lock.Entry
-do! CscLock.compileWith { RunOptions.Default with FailOnError = false } mapped
+do! Lock.compile entry                              // entry : Lock.Entry
+do! Lock.compileWith { Lock.Options.Default with Run = { RunOptions.Default with FailOnError = false } } entry
+do! Csc.run RunOptions.Default entry.Csc            // the runner alone: no restore, no revision token
 ```
 
-`CscLock.compile` hands a resolved compilation straight to the runner, with no extra env vars
-and no temp files: the entry's own `Args` is the whole compilation. It is an entry point of
-its own, not a mode of `csc {}` (changed 2026-09-24, conceptual-review.md 2.2): as a `fromlock`
-setting inside the record it made `csc { fromlock p; src !!"*.cs" }` compile while silently
-ignoring `src` and every other composition setting, and the type said nothing about it. What
-does apply to both entry points is `RunOptions = { FailOnError; CscPath; Restore; Server }` -- how the runner
-behaves, not what it compiles (`Server` is whether csc runs as a thin client of the Roslyn
-compiler server, [csc-server.md](csc-server.md)); `Csc` builds one from the settings' own `FailOnError`/`CscPath`/`Server`
-(`Restore` stays `Restore.Options.Default`), and `CscLock.compile` uses `RunOptions.Default`
-(`compileWith` takes them explicitly). Signatures: `CscLock.compile : Lock.Entry ->
-Recipe<ExecContext, unit>`, `CscLock.compileWith : RunOptions -> Lock.Entry -> Recipe<ExecContext,
-unit>`. The
-module is `CscLock`, not `Csc`, because F# will not let a module and the `let`-bound function
-`Csc` share a name (see the doc comment on `CscLock.resolve`).
+`Lock.compile` hands a lock entry's `Csc` to the runner after the two hermetic steps that must
+happen first (restore, revision token; below), with no extra env vars and no temp files: the
+`Csc`'s own `Args` is the whole compilation. It is an entry point of its own, not a mode of
+`csc {}` (changed 2026-09-24, conceptual-review.md 2.2): as a `fromlock` setting inside the record
+it made `csc { fromlock p; src !!"*.cs" }` compile while silently ignoring `src` and every other
+composition setting, and the type said nothing about it. What applies to every entry point is
+`RunOptions = { FailOnError; CscPath; Server; Environment }` -- how the runner behaves, not what it
+compiles (`Server` is whether csc runs as a thin client of the Roslyn compiler server,
+[csc-server.md](csc-server.md); `Environment` is the compiler process's env vars). `Csc.compile`
+builds one with `Csc.runOptions settings` (the settings' `FailOnError`/`CscPath`, the server
+resolved through `CompilerServer.resolve`, the target framework's `EnvVars`).
+`Lock.compileWith` takes a `Lock.Options = { Run: RunOptions; Restore: Restore.Options }`;
+`Lock.compile` uses `Lock.Options.Default` with the server resolved (`CSC_SERVER`, then
+`XAKE_CSC_SERVER`). Signatures: `Csc.run : RunOptions -> Csc -> Recipe<ExecContext, unit>`,
+`Lock.compile : Lock.Entry -> Recipe<ExecContext, unit>`, `Lock.compileWith : Lock.Options ->
+Lock.Entry -> Recipe<ExecContext, unit>`. The module is `Csc` (`[<ModuleSuffix>]` next to the
+record `Csc`); the 3.3 function `Csc settings` no longer exists, `Csc.compile settings` replaces it.
 
-The runner (`run` in `Dotnet.csc.fs`, shared by both entry points) does, in order (after a
-`trace Info "compiling '<name>' (<tool> <version>)"`):
+`Lock.compileWith` does, before handing the entry to `Csc.run` (hermetic side, `Lock.fs`):
 
 1. **Restores what the lock names and this machine lacks** (`Restore.ensure options.Restore
-   [entry]`, see [restore.md](restore.md)): the compiler when it lives in a
+   (Lock.restoreRequest [entry])`, see [restore.md](restore.md)): the compiler when it lives in a
    `Microsoft.Net.Compilers.Toolset`-shaped package, and every reference and analyzer under the
    package folder, in one `dotnet restore`. With nothing missing (the normal case) this is one
    `File.Exists` per path and no process. Any problem it reports fails with `('<name>') restoring
@@ -147,8 +160,8 @@ The runner (`run` in `Dotnet.csc.fs`, shared by both entry points) does, in orde
    - under the package folder (`Restore.packageRoot options.Restore`) -- a toolset-shaped package
      the restore did not, or was not allowed to, provide: `'<name>': the compiler <path> is not
      available and restoring <id> <version> did not provide it`. A hash mismatch *after* a
-     successful restore is left to step 8 -- it means a different package build, not a missing
-     one.
+     successful restore is left to the hash check below -- it means a different package build,
+     not a missing one.
    - under `$(DotnetRoot)/sdk/<version>/` -- an SDK this machine does not have; nothing to
      restore, so this fails immediately: `'<name>': the lock names the compiler of SDK
      <version> (<path>), which is not installed; install that SDK or re-import with the
@@ -157,32 +170,41 @@ The runner (`run` in `Dotnet.csc.fs`, shared by both entry points) does, in orde
    - anywhere else -- `'<name>': the compiler <path> named by the lock does not exist`.
 
    Every failure here goes through the same `trace Error` + `FailOnError`-gated `failwith` shape
-   (`failStep`) as the hash-mismatch check (step 8) and `Impl.failOnExitCode`.
-3. `needFiles` the compiler itself (raised 2026-09-23, conceptual-review.md 2.4): the hash check
-   in step 8 covers the compiler's path, but nothing before this made it a tracked
-   dependency, so an SDK or toolset update that changed `csc.dll`'s bytes left the target looking
-   up to date and the hash check never ran.
-4. **Resolves `$(SourceRevisionId)`** (raised 2026-09-23, "Lock stability"): the lock never
+   (`failStep`) as the hash-mismatch check and `Tool.failOnExitCode`.
+3. **Resolves `$(SourceRevisionId)`** (raised 2026-09-23, "Lock stability"): the lock never
    carries a commit sha itself (see `Generated` and `Project.tokenizeRevision` below) -- when
-   `Generated`'s content or `entry.Args` carries the literal token `$(SourceRevisionId)`,
-   it is replaced everywhere `Lock.mapText` reaches (`Generated` content, `Options`, `Defines`,
-   evaluation properties) with `Git.headSha entry.Compilation.Directory` (walking up from the
+   `Generated`'s content or `Csc.Args` carries the literal token `$(SourceRevisionId)`,
+   it is replaced everywhere `Csc.mapText` reaches (`Generated` content, `Options`, `Defines`)
+   with `Git.headSha c.Directory` (walking up from the
    project's own directory for a `.git`; no `git` executable). No token anywhere -- nothing
    happens, the composed mode included, since it never populates `Generated`. A token present but no
    repository found (or `HEAD` unresolvable) fails with `'<name>': the lock needs
    $(SourceRevisionId) but no git repository was found at or above '<dir>' -- a lock that needs
    a revision must be compiled in a repository`, the same `trace Error` + `FailOnError` shape as
    the other checks here.
-5. Writes back every `Generated` file that is missing or whose content differs from what is on
-   disk -- the resolved entry is the source of truth for msbuild-generated inputs like
-   `AssemblyInfo.cs` (and, now, `sourcelink.json` with its token already resolved by step 4). The
+
+`Lock.build`/`Lock.buildWith` (see "Locking composed settings") do the lock gate first and then
+this same `compileWith`.
+
+`Csc.run` (`Csc.fs`, the one runner, shared by every entry point) does, in order (after a
+`trace Info "compiling '<name>' (<tool> <version>)"`):
+
+1. A compiler that does not exist (with no `RunOptions.CscPath`) is traced as an error and fails
+   the build when `FailOnError` is set (`'<name>': the compiler <path> does not exist`).
+2. `needFiles` the compiler itself (raised 2026-09-23, conceptual-review.md 2.4): the hash check
+   below covers the compiler's path, but nothing before this made it a tracked
+   dependency, so an SDK or toolset update that changed `csc.dll`'s bytes left the target looking
+   up to date and the hash check never ran.
+3. Writes back every `Generated` file that is missing or whose content differs from what is on
+   disk -- the resolved compilation is the source of truth for msbuild-generated inputs like
+   `AssemblyInfo.cs` (and `sourcelink.json` with its token already resolved by step 3 above). The
    composed mode never populates `Generated`, so this is a no-op there.
-6. Creates the output directories, for every path `CscArgs.outputs entry.Args` names.
-7. `needFiles` every resx in `Compilation.Resources` (so a resx edit rebuilds the dll) and, for each
+4. Creates the output directories, for every path `CscArgs.outputs args` names.
+5. `needFiles` every resx in `Csc.Resources` (so a resx edit rebuilds the dll) and, for each
    `(resx, resources)` pair, compiles the resx to that `.resources` path with `Xake.Dotnet.Resx`
    when the output is **missing** -- so a machine with only the lock, or a cleaned `obj/`, still
    ends up with the exact file the recorded `/resource:` switch names. This is the same step for
-   both modes now (2026-09-23): the composed mode's `resolve` records its own `.resx` resources
+   both modes (2026-09-23): the composed mode's `resolve` records its own `.resx` resources
    here too (see the composed-mode resx paragraph above), at a permanent path under
    `obj/xake/<name>/`, instead of compiling them itself into a temp file at recipe time. This
    dropped a `.resources`-vs-`.resx`
@@ -196,31 +218,32 @@ The runner (`run` in `Dotnet.csc.fs`, shared by both entry points) does, in orde
    file with an unchanged timestamp is still caught (the hash check runs every time `run` runs
    for other reasons); a swapped file that also updates the timestamp is caught because the
    timestamp change is what makes the engine run `run` in the first place.
-8. Verifies the SHA-256 of every hashed reference, analyzer, and the compiler itself against what
+6. Verifies the SHA-256 of every hashed reference, analyzer, and the compiler itself against what
    is on disk. An empty recorded hash means "not checked" (the composed mode never records one,
    and neither does an unbuilt project reference). Any mismatch is collected and reported
    together (`('<name>') hash mismatch:` then one line per path), then fails the build when
    `FailOnError` is set (`XakeException`, message containing the path).
-9. `needFiles` on `CscArgs.inputs entry.Args` -- every file any input switch names, plus the
-   sources. For the composed mode this now covers everything the args name, including the
+7. `needFiles` on `CscArgs.inputs args` -- every file any input switch names, plus the
+   sources. For the composed mode this covers everything the args name, including the
    framework's global references, not only sources/refs/resources.
-10. Writes the arguments to a response file, with `Impl.escapeArgument`.
+8. Writes the arguments to a response file, with `Impl.escapeArgument`.
     `/noconfig` cannot go inside the rsp -- csc warns `CS2023` and ignores it there -- so it stays
     on the command line and everything else goes into `@<rspfile>`.
-11. Picks the compiler: `RunOptions.CscPath` wins if set; otherwise, when the entry's recorded
+9. Picks the compiler: `RunOptions.CscPath` wins if set; otherwise, when the `Csc`'s recorded
     compiler path ends in `.dll`, it runs through `dotnet <path>`; otherwise the path is run
     directly (a native launcher, e.g. the SDK's `csc` apphost).
-12. Adds the compiler-server switches (2026-09-23, [csc-server.md](csc-server.md)) -- `/shared`,
+10. Adds the compiler-server switches (2026-09-23, [csc-server.md](csc-server.md)) -- `/shared`,
     plus `/keepalive:<s>` when `RunOptions.Server` names one -- on the command line, ahead of
     `/noconfig` and the `@rsp`, never in the rsp and never in the lock: csc parses them out on the
-    client side before anything reaches `VBCSCompiler`, so `Entry.Args` is unchanged by them. Only when a
+    client side before anything reaches `VBCSCompiler`, so `Csc.Args` is unchanged by them. Only when a
     `VBCSCompiler.dll` sits next to the compiler file about to run (the SDK's `Roslyn/bincore`,
-    a toolset package's), the runner sets no env vars, and the compiler is not under the temp
+    a toolset package's), `RunOptions.Environment` is empty, and the compiler is not under the temp
     directory (`serverArgs`); the legacy `csc.exe`, `mcs`, an arbitrary `cscpath` and a
     mono/registry toolchain compile in-process as before.
-13. Runs the compiler with the working directory set to `Compilation.Directory` (what `dotnet
-    build` uses; an XML-doc `<include file='..'>` resolves against it), the framework's env vars
-    (`envVars`, empty on `CscLock.compile`), and fails on a non-zero exit when `FailOnError` is set.
+11. Runs the compiler with the working directory set to `Csc.Directory` (what `dotnet
+    build` uses; an XML-doc `<include file='..'>` resolves against it), `RunOptions.Environment`
+    as env vars (empty on `Lock.compile`'s default options), and fails on a non-zero exit when
+    `FailOnError` is set.
 
 The rsp file is deleted once the compiler exits, success or failure -- the only temp file `run`
 produces now that the composed mode's `.resx` resources are permanent outputs (see above),
@@ -311,7 +334,7 @@ recipe-level lock and evaluation entry points (`Lock.load`/`loadWith`/`save`/`sa
 still take a roots list. The json reader lives in its own `Json` module. Neither is under
 `Fsproj` any more, which is again just the F# project evaluation it is named for.
 
-`Lock.Entry`, one per project, is three records (conceptual-review.md 2.1, Stage B 2026-09-24):
+`Lock.Entry`, one per project, is `{ Csc; Evaluation; Packages }` (since B2, 2026-09-29; the JSON below is unchanged): the `Csc` record holds identity (`Name`, `Framework`), what is compiled and its `Dependencies`; `Evaluation` and `Packages` are the provenance only the lock has. The three sections of the file (conceptual-review.md 2.1, Stage B 2026-09-24) are:
 
 - `Name` -- `AssemblyName`
 - `Framework` -- the target framework this compilation is for. With every framework in one
@@ -332,7 +355,7 @@ still take a roots list. The json reader lives in its own `Json` module. Neither
     `Version`, `InformationalVersion`, `SignAssembly`, `AssemblyOriginatorKeyFile`,
     `Deterministic`, `TargetPath`, `IntermediateOutputPath`); `SdkPin` and `NETCoreSdkVersion`
     have their own fields now and are no longer in it
-- `Compilation` -- what is compiled; changes with every PR:
+- `Compilation` -- what is compiled; changes with every PR (in memory these are fields of `Csc` -- `Directory`, `Options`, `Defines`, `Sources`, `Generated`, `Resources` -- the file's `"Compilation"` key groups them):
   - `Directory` -- the compiler's working directory
   - `Options` -- every argument that is not a source, a reference, an analyzer or a define, in
     msbuild's order, with the four **section markers** in place (below)
@@ -354,18 +377,17 @@ still take a roots list. The json reader lives in its own `Json` module. Neither
     prefix of an `extern alias` reference and "" otherwise (written to the file only when set)
   - `Analyzers` -- `{ Path; Sha256 }`
   - `Packages` -- the restore graph, `{ Id; Version; Sha512; Direct; DependsOn }` per package
-    (below)
-- `Args` (member) -- the exact command line, rebuilt from `Compilation` and `Dependencies`;
+    (below); in memory this is `Lock.Entry.Packages`, not part of `Csc.Dependencies`
+- `Args` (member of `Csc`) -- the exact command line, rebuilt from `Options` and `Dependencies`;
   `Sources` and `Output` (from `/out:` in `Options`) are members too, nothing is stored twice
 
-**Structured `Options` and the four section markers.** `Compilation.Options` holds every
+**Structured `Options` and the four section markers.** `Csc.Options` holds every
 argument except the four factored sections, in msbuild's original order, with a marker string
 at the position each section occupied: `"@Sources"`, `"@References"`, `"@Analyzers"`,
-`"@Defines"`. `Entry.Args` rebuilds the list by expanding each marker: `@References` to one
+`"@Defines"`. `Csc.Args` rebuilds the list by expanding each marker: `@References` to one
 `/reference:<alias=>path` per entry (a path containing a comma re-quoted, as msbuild quotes
 it -- `CscArgs.quoteIfNeeded`), `@Analyzers` to one `/analyzer:path` per entry, `@Defines` to one
-`/define:A;B`, `@Sources` to the sources. `Lock.Compilation.ofArgs : string list -> Compilation *
-Reference list * Hashed list` does the factoring: a `/reference:`/`/r:` switch with exactly one
+`/define:A;B`, `@Sources` to the sources. `Csc.ofArgs : string list -> Csc` does the factoring: a `/reference:`/`/r:` switch with exactly one
 item goes to the references (alias split with the quote-aware `CscArgs` logic), `/analyzer:`/`/a:`
 with one item to the analyzers, every `/define:`/`/d:` to `Defines` (concatenated, one marker at
 the first), every source to `Sources` (one marker at the first source). A contiguous block
@@ -382,7 +404,7 @@ order without storing the flat list, so the structured form and the verbatim one
 information.
 
 **The round-trip check (brief §8c's fidelity guarantee).** `parseImport` builds the entry
-through `ofArgs`, then requires `entry.Args = msbuild's absolute args` -- otherwise it fails,
+through `ofArgs`, then requires `entry.Csc.Args = msbuild's absolute args` -- otherwise it fails,
 naming the project and printing `Lock.diffList` of the two lists (`- <msbuild's>` / `+
 <rebuilt>`), and nothing is written. So the lock never describes a compilation other than the
 one msbuild reported: "do not reconstruct" is checked at import rather than trusted. `resolve`
@@ -502,8 +524,8 @@ it is non-empty, calls the pure `Project.tokenizeRevision sha entry : Lock.Entry
 occurrence of `sha` in `Generated` content, `Options`, `Defines` and the evaluation's `Properties`
 values is replaced with the literal token `$(SourceRevisionId)`. The sha itself is **not** recorded anywhere in the lock --
 `SourceRevisionId` is asked from msbuild only to drive this substitution, never added to the
-`Properties` whitelist. `run` (`Dotnet.csc.fs`, step 4 of the runner) resolves the token back at
-compile time, from the project's own repository (`Git.headSha entry.Compilation.Directory`) -- see below.
+`Properties` whitelist. `Lock.compileWith` (step 3 above) resolves the token back at
+compile time, from the project's own repository (`Git.headSha entry.Csc.Directory`) -- see below.
 
 `Project.import` also `needFiles`s `Git.headFiles (project's directory)` -- `.git/HEAD` and the
 ref file (or `packed-refs`) it resolves through -- for every project, whether or not it uses the
@@ -541,11 +563,11 @@ global.json { sdk: { version, rollForward: "disable" } }"`. When it is `Pinned v
 The project-reference pattern, from `import.fsx`:
 
 ```fsharp
-let unbuilt = project.Dependencies.References |> List.filter (fun r -> r.Sha256 = "") |> List.map (fun r -> r.Path) |> Set.ofList
+let unbuilt = project.Csc.Dependencies.References |> List.filter (fun r -> r.Sha256 = "") |> List.map (fun r -> r.Path) |> Set.ofList
 let mapped = project |> Lock.mapPaths (fun p -> if unbuilt.Contains p then outputOf p else p)
 
 do! need (unbuilt |> Set.toList |> List.map (outputOf >> relative))
-do! CscLock.compile mapped
+do! Lock.compile mapped
 ```
 
 A project reference in the lock is unhashed and points at the referenced project's own build
@@ -554,7 +576,7 @@ entry's `Options`, `Sources`, `References`, `Analyzers`, `Generated` and `Resour
 a rewritten
 `Hashed` entry loses its hash, since the recorded hash was computed for the old path. The script
 maps those references to the path its own rule will produce them at, `need`s those targets
-first, and only then runs `CscLock.compile mapped` -- the runner itself does not `need` the
+first, and only then runs `Lock.compile mapped` -- the runner itself does not `need` the
 mapped outputs, it only `needFiles` what the (already-mapped) args name.
 
 ## Behaviour notes
@@ -573,35 +595,39 @@ mapped outputs, it only `needFiles` what the (already-mapped) args name.
 
 ## Recording a lock from composed `csc` settings
 
-`Project.import` produces a `Lock.Entry` from an msbuild project; `resolve` (private, above)
-produces one from composed `csc {}` settings, and used to hand it only to `run` -- discarded once
-compiled. `lock-from-settings.md` (design note, recommendation 1b) asked for that value to be
-reachable, so a lock-recording rule can write it out the way an import rule already does. The
-smallest API for that, as built:
+`Project.import` produces a `Lock.Entry` from an msbuild project; `csc { ...; resolve }` produces
+the `Csc` of one from composed settings (`Csc.ofSettings` for record syntax), and `Lock.ofCsc`
+wraps it in an entry with an empty `Evaluation` and no `Packages`. `lock-from-settings.md` (design
+note, recommendation 1b) asked for that value to be reachable, so a lock-recording rule can write
+it out the way an import rule already does. The API, as built:
 
 ```fsharp
-module CscLock =
-    val resolve : CscSettingsType -> Recipe<ExecContext, Lock.Entry>
+let! c = csc { src !!"*.cs"; out (File.make "app.dll"); resolve }   // Csc
+do! Lock.record "locks/app.json" c
+```
+
+```fsharp
+module Csc =
+    val ofSettings : CscSettingsType -> Recipe<ExecContext, Csc>
 
 module Lock =
+    val ofCsc : Csc -> Entry
     val rehash : Entry -> Entry
     val diff : Entry -> Entry -> string list
 ```
 
-**`CscLock.resolve settings`** runs `resolve` and returns just the `Lock.Entry` -- `resolve`
-produces no temp files of its own to clean up (see the composed-mode resx paragraph above), so a
-lock it returns, `.resx` resources included, is compilable and recordable as is. Not
-`Csc.resolve`: F# does not let a `module` and a `let`-bound function share one name in a
-namespace the way it lets a `type` and a `module` share one via
-`[<CompilationRepresentation(ModuleSuffix)>]` -- verified by compiling a minimal repro (`let Csc
-x = ...` next to `module Csc = ...` leaves `Csc.resolve` unresolved, `FS0039`, in either
-definition order). `Csc` stays the function it always was; the new module is `CscLock` instead.
+`resolve` produces no temp files of its own to clean up (see the composed-mode resx paragraph
+above), so a `Csc` it returns, `.resx` resources included, is compilable and recordable as is.
+The record is `Csc` and the operations are `Csc.ofSettings`/`Csc.run`/`Csc.compile` because F#
+does not let a `module` and a `let`-bound function share one name (`FS0039`, verified) -- which
+is why the 3.3 function `Csc settings` went (`Csc.compile settings` replaces it) and `CscLock`
+was the interim module name before B2.
 
 **`Lock.rehash entry`** fills `Sha256` for every hashed entry (`References`, `Analyzers`,
 `Imports`) and for `Compiler` (its `Version` too, when empty), from what is on disk right now
-(`Lock.sha256`, empty when the file does not exist). `resolve` never hashes -- hashing every reference on every composed compile
+(`Hash.sha256`, empty when the file does not exist). `Csc.ofSettings` never hashes -- hashing every reference on every composed compile
 would tax the common case for nothing -- so a lock-recording rule calls `rehash` itself, once,
-after `CscLock.resolve`; the cost is then paid only when that rule reruns, like everything else
+after `resolve`; the cost is then paid only when that rule reruns, like everything else
 in Xake.
 
 **`Lock.diff a b`** is a pure, human-readable comparison of two lock entries of the same
@@ -614,12 +640,12 @@ each hashed list (`References`, `Analyzers`, `Imports`) by path (added, removed,
 key (added, removed, or `~ <label> <key>: content changed`), `ProjectRefs` as a set
 (added/removed), and `Packages` by id (`+ Package Id@Version`, `- Package Id@Version`, `~ Package
 Id: <old> -> <new>` for a version change, `~ Package Id@Version: sha512 changed`). This is the primitive `csc { lock "path" }` (below, built
-2026-09-24; planned as `locked`) and `CscLock.verify` are built on (`lock-from-settings.md`
+2026-09-24; planned as `locked`) and `Lock.verify` are built on (`lock-from-settings.md`
 scenario 3); no `Policy` wiring exists. `Lock.diff` stays usable stand-alone (e.g. from an
 fsx-level "verify" rule).
 
 Tests: `src/tests/LockDiffTests.fs` (`rehash`, `diff` identical and with changes, pure, no
-msbuild/compiler needed); `src/tests/FromLockTests.fs`, `CscLock.resolve resolves composed
+msbuild/compiler needed); `src/tests/FromLockTests.fs`, `Csc.ofSettings resolves composed
 settings into a hashable, round-trippable lock` (Integration: resolves a trivial library,
 asserts `Sources`/`Args`/`Compiler.Path`/empty reference hashes, then `Lock.rehash` and a
 `Lock.writeWith`/`Lock.parseWith` round trip).
@@ -627,33 +653,41 @@ asserts `Sources`/`Args`/`Compiler.Path`/empty reference hashes, then `Lock.reha
 ## Locking composed settings: `lock`
 
 ```fsharp
-let settings = { CscSettings with
-                    Src = !!"src/*.cs"
-                    RefGlobal = ["System.dll"]
-                    TargetFramework = "net-4.6.2"
-                    Out = File.make "out/app.dll"
-                    Lock = Some "locks/app.json" }
+"out/app.dll" ..> csc {
+    src !!"src/*.cs"
+    grefs ["System.dll"]
+    targetfwk "net-4.6.2"
+    out (File.make "out/app.dll")
+    lock "locks/app.json"
+}
 
-"out/app.dll" ..> Csc settings
-"update-locks" => recipe { do! CscLock.record "locks/app.json" settings }
+"update-locks" => recipe {
+    let! c = csc { src !!"src/*.cs"; grefs ["System.dll"]; targetfwk "net-4.6.2"
+                   out (File.make "out/app.dll"); resolve }
+    do! Lock.record "locks/app.json" c
+}
 ```
 
-`lock "<path>"` (`CscSettingsType.Lock: string option`) is migration path A of
-`lock-from-settings.md` §9: a tuned `csc { }` block stays where it is and gains a lock. The
-path is relative to the project root, like every other target path, or absolute.
+`lock "<path>"` is migration path A of `lock-from-settings.md` §9: a tuned `csc { }` block
+stays where it is and gains a lock. It is a custom operation defined next to the lock, not in the
+base builder (`CscLockBuilder` in `Lock.fs`, an extension of `CscSettingsBuilder` with its own
+`Run`), and must be the last operation; the block then means `Csc.ofSettings`, `Csc.runOptions`,
+`Lock.buildWith`. The same thing without the sugar is `Lock.build "locks/app.json" c` on a `Csc`
+from `resolve`. The path is relative to the project root, like every other target path, or
+absolute. There is no `Lock` field on `CscSettingsType`.
 
 **The semantics are strict, and an update is always explicit** (the user's decision,
 2026-09-24 -- no engine mode, no global variable, no "follow the settings and warn" default).
-`resolve` runs as it always does, so the settings remain the source of truth for *what* is
+`Csc.ofSettings` runs as it always does, so the settings remain the source of truth for *what* is
 compiled; the lock decides whether this is the compilation that was recorded:
 
-1. **No lock file yet** -- `Lock.rehash` the resolved entry, write it as a one-entry
+1. **No lock file yet** -- `Lock.rehash` the resolved entry (`Lock.ofCsc c`), write it as a one-entry
    `Lock.Document` (`Configuration` "", `Properties` []; the entry's own `Framework` is the
    settings' `targetfwk`, else the `NETFX-TARGET` var, else "") with `Lock.save`, and compile *that* entry. The hashes `run` verifies were
    taken a moment earlier, so the check is trivially true -- it is the next build it is for.
 2. **Lock present, and the resolved settings match it** (`Lock.diff recorded resolved` empty)
    -- compile the **recorded** entry, not the resolved one. That is the whole point: the
-   recorded entry carries hashes, and `run`'s hash check (step 8 above) then gates the build,
+   recorded entry carries hashes, and `run`'s hash check (step 6 above) then gates the build,
    so a reference swapped on disk after recording fails even though the settings did not move.
 3. **Lock present and different** -- the build **fails**, printing the diff and naming the two
    ways to update:
@@ -662,7 +696,7 @@ compiled; the lock decides whether this is the compilation that was recorded:
    'app': the resolved compilation differs from the lock 'locks/app.json':
    + /repo/src/Extra.cs
    Update the lock deliberately: delete 'locks/app.json', or run the target that calls
-   CscLock.record "locks/app.json".
+   Lock.record "locks/app.json".
    ```
 
    `nofailonerror` (`FailOnError = false`) turns that failure into a warning and compiles from
@@ -678,39 +712,36 @@ filesets say: sources, options, defines, reference/analyzer paths, the compiler 
 
 | Way | What it is |
 |---|---|
-| `dotnet fsi build.fsx -- -- update-locks` | the script's own phony target calling `CscLock.record`; the normal way |
+| `dotnet fsi build.fsx -- -- update-locks` | the script's own phony target calling `Lock.record`; the normal way |
 | `rm locks/app.json` | a missing lock means "record it" -- the same rule as any missing target |
 
-`CscLock.record : string -> CscSettingsType -> Recipe<ExecContext, unit>` resolves, rehashes and overwrites
-the lock, compiling nothing. `CscLock.verify : string -> CscSettingsType -> Recipe<ExecContext, string list>`
-returns the same diff `lock` fails on (`Lock.diff (Lock.entry name doc) resolved`; an empty list means the lock is current), writing nothing and compiling
+`Lock.record : string -> Csc -> Recipe<ExecContext, unit>` rehashes and overwrites
+the lock, compiling nothing. `Lock.verify : string -> Csc -> Recipe<ExecContext, string list>`
+returns the same diff `lock` fails on (`Lock.diff (Lock.entry name doc) (Lock.ofCsc c)`; an empty list means the lock is current), writing nothing and compiling
 nothing -- `lock-from-settings.md` scenario 3 as a stand-alone check, e.g. a `check-locks`
-target in CI. `CscLock.compile` remains the entry point for a lock that came from
+target in CI. `Lock.compile` remains the entry point for a lock that came from
 `Project.import`.
 
 **The lock file is not a target of the engine on this path.** It is written from inside the
 compile recipe, which is what lets the `csc { }` block stay in place; the engine neither
 `need`s it nor rebuilds it, and the update target is an ordinary phony action of the script's
 own. Recommendation 1b of `lock-from-settings.md` (the lock as a real file target, built by a
-rule of its own from `CscLock.resolve`) still stands for scripts that want it and needs nothing
+rule of its own from `csc { ...; resolve }`) still stands for scripts that want it and needs nothing
 new. As before, one lock file per compilation: two `csc` calls sharing one path would
 read-modify-write the same file and is an authoring error, not something the library guards.
 
-**Sharing the settings.** `csc { ... }`'s `Run` returns the compile recipe, not the settings,
-so a block cannot be handed to `CscLock.record` as it stands; the settings have to be a value,
-which in practice means record syntax (`{ CscSettings with ... }`, as above). Path B of
-§9 -- a second builder `cscSettings { ... }` whose `Run` returns the `CscSettingsType`, so a
-tuned block moves over unchanged -- is **not built**: ~15 lines whenever a real block asks for
-it.
+**Sharing the settings.** `csc { ...; resolve }` returns the `Csc`, so one block can feed both
+the compile and `Lock.record`/`Lock.verify` -- define the block once as a recipe and use its
+result. (Path B of §9, a second builder `cscSettings { ... }`, is not needed any more.)
 
 Tests: `src/tests/CscLockTests.fs` (6, Integration) -- first build records and compiles, second
-build leaves the lock byte-identical, an added source fails with the diff, `CscLock.record`
+build leaves the lock byte-identical, an added source fails with the diff, `Lock.record`
 overwrites and the next build passes, a reference tampered after recording fails the hash check,
-and `CscLock.verify` reports the difference without writing or compiling.
+and `Lock.verify` reports the difference without writing or compiling.
 
 ## Not yet
 
-- Running `fsc` through the same `Lock.Entry`/runner pair -- today only `csc` does. See
+- Running `fsc` through the same `Csc`/runner pair -- today only `csc` does. See
   `tracker.md`.
 - `Resx.read`/`compile` only support plain string entries (`<data name="X"><value>...</value></data>`).
   A typed value (a `type` attribute) or a `ResXFileRef`/binary value (`mimetype`) fails with a

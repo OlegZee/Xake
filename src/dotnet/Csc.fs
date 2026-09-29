@@ -542,12 +542,12 @@ module Csc =
                 @ (resxResources |> List.map (fun (manifestName, _, resourcesPath) -> manifestName, resourcesPath))
             let resources = resxResources |> List.map (fun (_, resx, resourcesPath) -> resx, resourcesPath)
 
-            let resfiles = plainEntries |> List.map snd
-
             let (Filelist src)  = settings.Src |> getFiles
             let (Filelist refs) = settings.Ref |> getFiles
 
-            do! needFiles (Filelist (src @ refs @ resfiles))
+            // no `needFiles` here: `resolve` only describes the compilation. `run` needs
+            // everything the command line reads (`CscArgs.inputs`: sources, references,
+            // resource files) once, for every producer -- this, a lock entry, `ofArgs`.
 
             let! targetFramework, fwkInfo = frameworkOf settings
 

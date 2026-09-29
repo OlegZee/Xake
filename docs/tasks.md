@@ -129,8 +129,105 @@ built on any OS with nothing pre-installed beyond the SDK:
 }
 ```
 
-Other operations: `out`, `target`, `platform`, `ref`/`refs`/`refif`, `resources`/`resourceslist`,
-`unsafe`, `cscpath`, `args`, `nofailonerror`.
+Every operation of `csc {}`:
+
+| Operation | Argument | Effect |
+|---|---|---|
+| `out` | `File` | output file (default: the rule's target) |
+| `target` | `TargetType` | `/target:`; resolved from the output name when left `Auto` |
+| `platform` | `TargetPlatform` | `/platform:` (default `AnyCpu`) |
+| `targetfwk` | `string` | framework to compile against (default: the `NETFX-TARGET` variable) |
+| `src` | `Fileset` | source files |
+| `ref` / `refs` / `refif` | `Fileset`; `refs` replaces, `refif` takes `bool * Fileset` | references from files |
+| `grefs` | `string list` | framework/global references, e.g. `["System.dll"]` |
+| `resources` / `resourceslist` | `ResourceFileset` / list | embedded resources; a `.resx` is compiled to `.resources` first |
+| `define` | `string list` | conditional compilation symbols |
+| `unsafe` | `bool` | allow unsafe code |
+| `args` | `string list` | extra compiler arguments, appended last |
+| `nofailonerror` | -- | a compile error does not fail the build |
+| `cscpath` | `string` | run this compiler instead of the one the framework provides; overrides `toolset` |
+| `toolset` | `string` (version) | take `csc.dll` from `Microsoft.Net.Compilers.Toolset/<version>` in the NuGet cache, restoring the package first when it is missing, instead of the SDK's own compiler |
+| `noserver` | -- | compile in a fresh compiler process instead of through the Roslyn compiler server |
+| `keepalive` | `int` (seconds) | idle time after which a compiler server this build starts exits (`/keepalive`; Roslyn's default is 600) |
+| `resolve` | -- | return the resolved `Csc` instead of compiling; must be the last operation (see below) |
+
+`lock "path"` is not part of the base package: it is added by `Xake.Dotnet`'s hermetic side
+(`Lock.fs`, module `CscLockBuilder`), and gates the compilation against a lock file; see
+[csc-syntax.md](features/hermetic-build/csc-syntax.md).
+
+`toolset` example, see [samples/toolset.fsx](../samples/toolset.fsx):
+
+```fsharp
+"temp/helloworld.exe" ..> csc {
+  toolset "4.11.0"
+  targetfwk "net-4.6.2"
+  src !!"helloworld.cs"
+  grefs ["System.dll"]
+}
+```
+
+#### Record syntax: `Csc.compile`
+
+`Csc.compile` takes a `CscSettingsType` (`CscSettings` holds the defaults) and returns the
+recipe that compiles; it is what `csc { ... }` itself runs. It replaces the function
+`Csc settings` of 3.3, which no longer exists: `do! Csc settings` is now
+`do! Csc.compile settings`.
+
+```fsharp
+"hw.exe" ..> recipe {
+  do! Csc.compile { CscSettings with Src = !! "hw.cs" }
+}
+```
+
+#### Resolving without compiling: `resolve`, `Csc.run`
+
+`csc { ...; resolve }` stops before the compiler and returns the resolved compilation, a
+`Csc` record (name, framework, directory, options, defines, sources, hashed dependencies), in a
+recipe; record-syntax settings go through `Csc.ofSettings settings`. `Csc.run options c` compiles
+such a record and is the only function that starts the compiler:
+
+```fsharp
+recipe {
+  let! c = csc { src !!"helloworld.cs"; out (File.make "temp/hw.exe"); resolve }
+  do! Csc.run RunOptions.Default c
+}
+```
+
+`resolve` has to come last: an operation after it does not compile. Outside a file rule there is
+no target to take the output from, so `out` must be set. `Csc.run` fails the build when a hashed
+reference, analyzer or the compiler differs from its recorded SHA-256 (an empty hash is not
+checked, and a composed compilation has none).
+
+`RunOptions` (default `RunOptions.Default`):
+
+| Field | Meaning | Default |
+|---|---|---|
+| `FailOnError` | a compile error fails the build | `true` |
+| `CscPath` | compiler executable overriding the one the `Csc` names | `None` |
+| `Server` | `Shared of keepAlive: int option` (`/shared`, plus `/keepalive:<n>`) or `InProcess` | `Shared None`, unless env `XAKE_CSC_SERVER` is `0`, `false`, `no` or `off` |
+| `Environment` | environment variables of the compiler process | `[]`; the framework's own on the mono and Framework paths |
+
+`Csc.runOptions settings` builds the options `csc {}` runs with from composed settings: the
+settings' `FailOnError`, `CscPath`, the resolved server and the target framework's environment.
+
+#### Compiler server
+
+Compiles go through the Roslyn compiler server (`VBCSCompiler`) when one sits next to the
+compiler, so a build with many `csc` targets does not pay the compiler's startup each time. Turn
+it off or tune it in one place for the whole script with the `CSC_SERVER` variable, or per target
+with `noserver` / `keepalive`. Precedence, first that is set wins:
+
+1. the target's `noserver` or `keepalive`;
+2. the script variable `CSC_SERVER`: `on`, `off`, or a number of keepalive seconds
+   (case-insensitive; anything else logs a warning and counts as `on`);
+3. the environment variable `XAKE_CSC_SERVER` (`0`, `false`, `no`, `off` turn the server off);
+4. the server, with Roslyn's own keepalive.
+
+The switch is silently skipped (the compile runs in-process) for a compiler that has no
+`VBCSCompiler.dll` next to it -- the legacy `csc.exe`, mono's `mcs`, an arbitrary `cscpath` --
+for toolchains that need environment variables, and for a compiler under the temp directory.
+`CSC_SERVER` is read like `NETFX`, so changing it rebuilds the target. Details:
+[csc-server.md](features/hermetic-build/csc-server.md).
 
 How the compiler and the reference assemblies are located, and how to force a particular
 toolchain, is described in [dotnet-build.md](dotnet-build.md).
@@ -257,9 +354,11 @@ let strings = resourceset {
 | `NETFX` | Framework whose tools are used, overriding the target framework |
 | `NETFX-TARGET` | Default `targetfwk` for all compiler tasks |
 | `FSCVER` | F# compiler version `fsc` asks for |
+| `CSC_SERVER` | `csc` compiler server: `on`, `off` or keepalive seconds; overridden by a target's `noserver`/`keepalive`, overrides env `XAKE_CSC_SERVER` |
 
 ```bash
 dotnet fsi build.fsx -- -- build -d NETFX-TARGET:net-4.6.2
+dotnet fsi build.fsx -- -- build -d CSC_SERVER:off
 ```
 
 Names such as `net-4.6.2`, `sdk-net462` and `mono-4.5` select both the framework and, through
@@ -294,5 +393,5 @@ recipe {
 
 - Prefer `Xake.Tasks` namespace in new scripts
 - Prefer `sh`, `cp`, and `rm` builders over older legacy APIs
-- Prefer the `csc`/`fsc`/`msbuild`/`resgen` builders over calling `Csc`/`Fsc`/`MSBuild`/`ResGen` with a settings record
+- Prefer the `csc`/`fsc`/`msbuild`/`resgen` builders over calling `Fsc`/`MSBuild`/`ResGen` with a settings record (`Csc` is the record of a resolved compilation; use `Csc.compile` for settings)
 - Prefer typed variables with `Var.*` and `varschema` for better help output

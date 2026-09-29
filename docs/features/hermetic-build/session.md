@@ -1,5 +1,19 @@
 # Session state: hermetic-build
 
+## 2026-09-29 — extraction plan revised, spike done
+
+`extraction-plan.md` revised with the user: the resolved compilation is the `Csc` record, obtained
+from `csc { ...; resolve }` (a final operation, `Run` overloaded like `ShellBuilder`); the seam is
+`Csc.run` with **no hooks**, hermetic steps (restore, revision token, compiler-missing messages,
+lock gate) run in `Lock.build` *before* `Csc.run`; `CSC_SERVER` script variable next to `NETFX`.
+Spike (scratch, not in the repo): extension custom op + extension `Run` from another assembly
+**works** on F# 8, option field equality fine, but `Csc.run` **cannot** resolve while the
+function `Csc` exists (FS0039, binds to the value). Plan §5 has the a/b/c choice.
+
+The user chose **a**: retire `Csc settings` in favour of `Csc.compile settings` (lands with B2).
+
+B1 landed the same day (pure file split, suite 358/1). **Exact next step**: B2, see the tracker.
+
 ## 2026-09-23 — the R1–R4 run (four subagents, merged)
 
 Where things stand: `feature/hermetic-build` at the merge of `wt/sbom-scope`; suite **358 passed,

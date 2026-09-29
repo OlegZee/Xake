@@ -240,7 +240,7 @@ type ``Csc fromlock``() =
 
     /// `Csc.ofSettings` (the public entry point `lock-from-settings.md` recommendation 1b
     /// asks for; `csc { ...; resolve }` in builder syntax) resolving composed settings for a
-    /// trivial library, without compiling; then `Lock.rehash` and a `writeWith`/`parse` round
+    /// trivial library, without compiling; then `Lock.rehash` and a `format`/`parse` round
     /// trip over the result.
     [<Test; Category("Integration")>]
     member x.``Csc.ofSettings resolves composed settings into a hashable, round-trippable lock``() =
@@ -289,7 +289,7 @@ type ``Csc fromlock``() =
 
         let lockFile : Lock.Document = { Configuration = ""; Properties = []; Entries = [rehashed] }
         let roots = Roots.builtin (Directory.GetCurrentDirectory())
-        let roundtripped = Lock.writeWith roots lockFile |> Lock.parseWith roots
+        let roundtripped = Lock.format roots lockFile |> Lock.parse roots
         let readBack = Lock.entry rehashed.Csc.Name roundtripped
 
         Assert.That(readBack, Is.EqualTo rehashed)
@@ -399,7 +399,7 @@ type ``Csc fromlock``() =
         Assert.That(File.Exists resourcesPath, Is.True, "the .resources file was not compiled")
         Assert.That(File.Exists "HelloResx.dll", Is.True, "csc did not produce HelloResx.dll from the resolved lock")
 
-    /// `$(SourceRevisionId)` (`Project.tokenizeRevision`, resolved back in `Lock.compile`): a lock whose
+    /// `$(SourceRevisionId)` (`Git.tokenize`, resolved back in `Lock.compile`): a lock whose
     /// `Generated` (and the `/sourcelink:` argument naming it) carries the token compiles, in a
     /// project directory that is itself a (fake) git checkout, with the token replaced by the
     /// checkout's actual commit -- and not left in the written file.

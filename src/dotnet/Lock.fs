@@ -28,6 +28,25 @@ module Lock =
     type Compiler = Xake.Dotnet.Compiler
     type Package = Xake.Dotnet.Package
 
+    /// The restore graph of one target, as the lock records it (`Entry.Packages`, what
+    /// `Project.import` writes): every package of `assets.Packages` with its cache sha512
+    /// (`Nuget.readCache`, "" when the cache has no `.nupkg.metadata`), whether it is a direct
+    /// `PackageReference`, and the ids it depends on (edges of `assets.Graph` whose source is
+    /// this package). Pure but for reading the cache's metadata files.
+    let packagesOf (cacheRoot: string) (assets: Nuget.Assets) : Package list =
+        let direct = assets.Direct |> List.map (fun s -> s.ToLowerInvariant ()) |> Set.ofList
+        let same (a: string) (b: string) = System.String.Equals (a, b, System.StringComparison.OrdinalIgnoreCase)
+        assets.Packages |> List.map (fun (id, version) ->
+            { Id = id
+              Version = version
+              Sha512 = (Nuget.readCache cacheRoot id version).Sha512
+              Direct = direct.Contains (id.ToLowerInvariant ())
+              DependsOn =
+                assets.Graph
+                |> List.choose (fun ((fromId, fromVersion), (toId, _)) ->
+                    if same fromId id && same fromVersion version then Some toId else None)
+                |> List.distinct })
+
     /// How a project's SDK is selected, from `global.json` searched upwards from the project's
     /// directory the way the .NET host itself resolves it (`sdk.version` plus
     /// `sdk.rollForward`, default `latestPatch` when a version is set and the policy is
@@ -129,7 +148,7 @@ module Lock =
 
     /// Applies `f` to every piece of text that may embed a value rather than name a file:
     /// the compilation's (`Csc.mapText`) and the evaluation's property values. Used to
-    /// tokenize the commit sha out of a lock (`Project.tokenizeRevision`) and to resolve it
+    /// tokenize the commit sha out of a lock (`Git.tokenize`) and to resolve it
     /// back at compile time (`compile`).
     let mapText (f: string -> string) (entry: Entry) : Entry =
         { entry with
@@ -288,8 +307,9 @@ module Lock =
     /// The lock as text: paths tokenized against the given roots, one line per item, so the
     /// file is the same on every machine and a diff of two locks is the difference between two
     /// compilations. `roots` is the full list (built-in plus any extra a script declared, e.g.
-    /// via `Roots.withExtra`), longest root first.
-    let writeWith roots (lock: Document) =
+    /// via `Roots.make`), longest root first. Pure; `save` is the recipe that takes the roots
+    /// from the build.
+    let format roots (lock: Document) =
         [ sprintf "  \"Configuration\": %s" (escape lock.Configuration)
           sprintf "  \"Properties\": {\n%s\n  }"
             (lock.Properties |> List.map (fun (k, v) -> sprintf "    %s: %s" (escape k) (escape v)) |> String.concat ",\n")
@@ -349,14 +369,14 @@ module Lock =
             Packages = packageList "Packages" d
         }
 
-    /// Reads a lock `writeWith` produced, paths expanded for this machine. `roots` must be the
+    /// Reads a lock `format` produced, paths expanded for this machine. `roots` must be the
     /// same list (or a superset) used to write it, or a token stays untranslated. A lock in
     /// the flat, pre-split format (`Projects` with a verbatim `Args`) is refused with a message
     /// saying to re-import. A lock written when the framework was a property of the *file* (a
     /// document-level `"Framework"`, one framework per lock) still reads: the value is
     /// distributed into every entry that does not carry its own. Only the new shape is ever
-    /// written.
-    let parseWith roots (text: string) =
+    /// written. Pure; `load` is the recipe that takes the roots from the build.
+    let parse roots (text: string) =
         let root = Json.parse text
         let str name = field name root |> Option.bind asString |> Option.defaultValue ""
         if (field "Projects" root).IsSome && (field "Entries" root).IsNone then
@@ -370,7 +390,10 @@ module Lock =
             Entries = field "Entries" root |> Option.map asArray |> Option.defaultValue [] |> List.map (readEntry roots (str "Framework"))
         }
 
-    let readWith roots (path: string) = System.IO.File.ReadAllText path |> parseWith roots
+    /// `parse` of the file at `path` (taken as given, not against the project root), with
+    /// the roots passed explicitly -- for code outside a recipe. Inside one use `load`, which
+    /// also records the lock as a dependency.
+    let read roots (path: string) = System.IO.File.ReadAllText path |> parse roots
 
     /// A lock path resolved the way the engine resolves a target: against the build's project
     /// root (`ExecOptions.ProjectRoot`), not the process's current directory.
@@ -393,12 +416,12 @@ module Lock =
             let! full = fullPath path
             do! needFiles (Filelist [ File.make full ])
             let! roots = Roots.currentWith extraRoots
-            return readWith roots full
+            return read roots full
         }
 
     /// Reads a lock against the roots of this build: the built-in three, with the project root
     /// taken from the engine (`ExecOptions.ProjectRoot`) rather than from the process's current
-    /// directory -- which is why this is a recipe and `readWith` is not. Depends on the lock
+    /// directory -- which is why this is a recipe and `read` is not. Depends on the lock
     /// file (see `loadWith`).
     let load (path: string) : Recipe<ExecContext, Document> = loadWith [] path
 
@@ -412,7 +435,7 @@ module Lock =
         recipe {
             let! full = fullPath path
             let! roots = Roots.currentWith extraRoots
-            System.IO.File.WriteAllText (full, writeWith roots lock)
+            System.IO.File.WriteAllText (full, format roots lock)
         }
 
     /// Writes a lock against this build's roots (see `load`).
@@ -541,7 +564,7 @@ module Lock =
     ///  2. a compiler that is still missing is explained (an SDK that is not installed is not
     ///     a package).
     ///  3. the token `$(SourceRevisionId)` in `Generated`, `Options` or `Defines` (the lock
-    ///     never carries the commit sha itself, `Project.tokenizeRevision`) is resolved from
+    ///     never carries the commit sha itself, `Git.tokenize`) is resolved from
     ///     the project's own repository.
     ///  4. `Csc.run`, whose hash check makes the replay trustworthy.
     /// </summary>
@@ -564,7 +587,7 @@ module Lock =
             // here, from the project's own repository, right before it is used -- a lock that
             // needs a revision has to be compiled in a repository, or this fails with a clear
             // message
-            let sourceRevisionToken = "$(SourceRevisionId)"
+            let sourceRevisionToken = Git.revisionToken
             let containsToken (s: string) = s.Contains sourceRevisionToken
             let needsRevision =
                 (c.Generated |> List.exists (snd >> containsToken))

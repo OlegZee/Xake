@@ -220,7 +220,7 @@ composed side, since composing *is* the only source.
 
 Decide alongside the split, not before: whether a composed-mode record belongs in the
 dependencies section, the compilation section, or both. Building scenario 1 now against the
-current flat `Lock.Project`, letting `write`/`parse` (now `Lock.writeWith`/`parseWith`, with
+current flat `Lock.Project`, letting `write`/`parse` (now `Lock.format`/`parse`, with
 `Lock.save`/`load` as the recipe forms) absorb the split later (as already planned
 for import-mode locks), avoids designing the split twice.
 

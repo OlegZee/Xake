@@ -74,7 +74,7 @@ vulnerability matching are downstream of it (Dependency-Track or similar, by pur
 
 `Nuget.readAssets` is an import-time reader now. `Project.import` calls it right after the
 design-time build, inside the per-project lock (import-race.md), and records the result as
-`Lock.Package list` in the entry's `Dependencies.Packages` via `Project.packages cacheRoot
+`Lock.Package list` in the entry's `Dependencies.Packages` via `Lock.packagesOf cacheRoot
 assets`: per package `Id` and `Version` (the assets file's own casing), `Sha512` (the cache's
 `.nupkg.metadata` `contentHash`, base64, "" when the cache lacks it), `Direct` (a
 `PackageReference` of the project's framework section) and `DependsOn` (the ids of its assets
@@ -259,7 +259,7 @@ tracker.md; two things are worth saying about our position:
   compiler was actually handed, with hashes — so a library that was merged or ILRepack'd in is
   a *reference* we know about, not a dependency edge we have to guess at. That is the registry's
   hardest input, and we already have half of it.
-- `Pack` already writes the nupkg deterministically and `Pack.entries` reads one back, so the
+- `Pack` already writes the nupkg deterministically and `Pack.list` reads one back, so the
   physical inventory of step 1 is a file listing we can produce and verify, not a promise.
 
 ## `forPackageScoped`: the package-scope document (2026-09-23)
@@ -287,7 +287,7 @@ when present, else `1980-01-01T00:00:00Z` (`Sbom.PackageScope.timestamp`). Every
 before: no `metadata.timestamp`, content-derived serial, every list sorted by ref -- two calls
 on the same nupkg and evidence render byte-identical.
 
-**Verifier.** `Verify.sbomPackageScope nupkgPath framework bom : string list` runs the RFC's
+**Verifier.** `Sbom.checkPackageScope options nupkgPath framework bom : string list` runs the RFC's
 acceptance checks 3.1-3.4 mechanically (nupkg <-> SBOM <-> nuspec) and returns one line per
 finding, prefixed by the check number; `[]` is a pass. It shares the inventory rule with the
 producer (`Sbom.shippedPaths` and the same `PackageScopeOptions`, see below), so the two cannot
@@ -320,7 +320,7 @@ implemented; a signer wraps the `cycloneDx` string before it is packed.
 The RFC fixes the *shape* of the document; what it leaves to each supplier -- which nupkg
 folders are content, which ids are internal, what the annotation says -- is an options record
 in the style of `Pack.Options` and `Restore.Options`: pure functions and values, sensible
-defaults, `{ defaultPackageScope with ... }` to override, no global state.
+defaults, `{ Sbom.PackageScopeOptions.Default with ... }` to override, no global state.
 
 ```fsharp
 type Sbom.PackageScopeOptions = {
@@ -337,12 +337,13 @@ type Sbom.PackageScopeOptions = {
     AnnotationTimestamp: string                  // ISO 8601; `PackageScope.timestamp ()`
     KeepFormulation: bool                        // carry compiler/SDK/analyzers over; off
 }
-val Sbom.defaultPackageScope : PackageScopeOptions
+static member Sbom.PackageScopeOptions.Default : PackageScopeOptions
 val Sbom.forPackageScopedWith : PackageScopeOptions -> nupkgPath: string -> framework: string -> Bom list -> Bom
-val Verify.sbomPackageScopeWith : PackageScopeOptions -> nupkgPath: string -> framework: string -> Bom -> string list
+val Sbom.checkPackageScope : PackageScopeOptions -> nupkgPath: string -> framework: string -> Bom -> string list
 ```
 
-`forPackageScoped` / `Verify.sbomPackageScope` are the two applied to `defaultPackageScope`.
+`forPackageScoped` is `forPackageScopedWith` applied to `PackageScopeOptions.Default`; the checker
+takes the options explicitly.
 The defaults are assembled from `Sbom.PackageScope`'s named predicates -- `plumbing`,
 `shippedFor`, `assembly`, `native`, `internalIds`, `toolingIds`, `idPrefixes [...]`,
 `boundaryText`, `timestamp` -- so an override usually *wraps* one rather than restating it:
@@ -351,7 +352,7 @@ The defaults are assembled from `Sbom.PackageScope`'s named predicates -- `plumb
 open Xake.Dotnet
 
 let acme =
-    { Sbom.defaultPackageScope with
+    { Sbom.PackageScopeOptions.Default with
         // props/targets are build glue for us, not shipped content
         IsPlumbing = fun path -> Sbom.PackageScope.plumbing path || path.EndsWith ".props"
         // our own id prefixes
@@ -362,7 +363,7 @@ let acme =
         AnnotationTimestamp = "2026-09-23T00:00:00Z" }
 
 let bom = Sbom.forPackageScopedWith acme nupkg "netstandard2.0" [ asmBom ]
-match Verify.sbomPackageScopeWith acme nupkg "netstandard2.0" bom with
+match Sbom.checkPackageScope acme nupkg "netstandard2.0" bom with
 | [] -> do! writeTargetText (Sbom.cycloneDx bom)
 | findings -> failwithf "SBOM does not pass its own checks:\n%s" (String.concat "\n" findings)
 ```
@@ -371,4 +372,4 @@ Two things are deliberately **not** options: the tier-1 join key `xake:nuget:pat
 (`Sbom.pathProperty`) -- the verifier needs one fixed name to look a component's bytes up by --
 and the bom-ref scheme (`nupkg:<file>`, `nupkg:<file>/<path>`, purls for tier 2). The verifier
 takes the same record as the producer, so a customised document is checked against the rule that
-produced it, and `defaultPackageScope` against a customised document fails on purpose (tested).
+produced it, and `PackageScopeOptions.Default` against a customised document fails on purpose (tested).

@@ -171,7 +171,7 @@ module Sign =
     let isSigned (path: string) : bool =
         match kindOf path with
         | PeImage -> (Verify.layout (File.ReadAllBytes path)).CertTable |> Option.isSome
-        | Nupkg -> Pack.entries path |> List.exists (fun (name, _, _, _) -> name = SignatureEntry)
+        | Nupkg -> Pack.list path |> List.exists (fun (name, _, _, _) -> name = SignatureEntry)
 
     /// The reproducibility check for a signed artifact, and the only one that means anything:
     /// the signed file is the *same image* as the input, and it does carry a signature. Byte
@@ -185,7 +185,7 @@ module Sign =
         | PeImage -> Verify.authenticodeHash signed = Verify.authenticodeHash input
         | Nupkg ->
             let strip = List.filter (fun (name, _, _, _) -> name <> SignatureEntry)
-            strip (Pack.entries signed) = strip (Pack.entries input)
+            strip (Pack.list signed) = strip (Pack.list input)
 
     // ---------------------------------------------------------------------------
     // the fake signer -- a genuine container around a fake payload
@@ -259,7 +259,7 @@ module Sign =
                 yield { Pack.Path = entry.FullName; Pack.Source = dest } ]
 
     /// Rewrites the package with a `.signature.p7s` entry holding `payload`, through
-    /// `Pack.zip`/`Pack.defaultOptions` so every other entry keeps the deterministic bytes
+    /// `Pack.zip`/`Pack.Options.Default` so every other entry keeps the deterministic bytes
     /// `Pack.nupkg` gave it.
     let internal addSignatureEntry (nupkgPath: string) (payload: byte[]) : byte[] =
         let temp = Path.Combine (Path.GetTempPath (), "xake-sign-" + Guid.NewGuid().ToString "N")
@@ -269,7 +269,7 @@ module Sign =
             let signaturePath = Path.Combine (temp, "signature.p7s")
             File.WriteAllBytes (signaturePath, payload)
             let output = Path.Combine (temp, "signed.nupkg")
-            Pack.zip output ({ Pack.Path = SignatureEntry; Pack.Source = signaturePath } :: content) Pack.defaultOptions
+            Pack.zip output ({ Pack.Path = SignatureEntry; Pack.Source = signaturePath } :: content) Pack.Options.Default
             File.ReadAllBytes output
         finally
             if Directory.Exists temp then Directory.Delete (temp, true)
@@ -389,32 +389,58 @@ module Sign =
                       Steps = [] }
             }
 
-    // ---------------------------------------------------------------------------
-    // the settings builder
-    // ---------------------------------------------------------------------------
+/// The state of a `sign {}` block: the settings, plus what turns them into a rule -- the
+/// signer, and for a delegated rule the store and the dispatch budget.
+type SignState = {
+    Settings: Sign.Settings
+    Signer: Sign.Signer option
+    Store: Sign.Store option
+    Budget: Resource option }
 
-    /// Computation expression builder for `Sign.Settings`.
-    type SignSettingsBuilder () =
+/// `sign { ... }`: the signing rule, the way `csc { ... }` is the compile recipe. Record syntax
+/// stays available through `Sign.Settings` with `Sign.rule` / `Sign.executor`.
+[<AutoOpen>]
+module SignBuilder =
+
+    /// Computation expression builder for the signing rule. `Run` gives the rule
+    /// `Sign.rule settings signer`, wrapped in `delegated (Sign.executor settings signer store
+    /// budget)` when `store` and `budget` are given.
+    type SignRuleBuilder () =
 
         /// <summary>The rule mask for the signed output.</summary>
-        [<CustomOperation("target")>]      member __.Target (s: Settings, value: string) = { s with Target = value }
+        [<CustomOperation("target")>]      member __.Target (s: SignState, value: string) = { s with Settings = { s.Settings with Target = value } }
         /// <summary>Maps a signed target path to the unsigned file to sign.</summary>
-        [<CustomOperation("input")>]       member __.Input (s: Settings, value: string -> string) = { s with Input = value }
+        [<CustomOperation("input")>]       member __.Input (s: SignState, value: string -> string) = { s with Settings = { s.Settings with Input = value } }
         /// <summary>Names the key -- a thumbprint, a Trusted Signing profile or an agent-side alias. Never key material.</summary>
-        [<CustomOperation("certificate")>] member __.Certificate (s: Settings, value: Certificate) = { s with Certificate = value }
+        [<CustomOperation("certificate")>] member __.Certificate (s: SignState, value: Sign.Certificate) = { s with Settings = { s.Settings with Certificate = value } }
         /// <summary>The RFC 3161 timestamp server URL; unset means no countersignature.</summary>
-        [<CustomOperation("timestamp")>]   member __.Timestamp (s: Settings, value: string) = { s with TimestampServer = Some value }
+        [<CustomOperation("timestamp")>]   member __.Timestamp (s: SignState, value: string) = { s with Settings = { s.Settings with TimestampServer = Some value } }
         /// <summary>The digest algorithm (default sha256).</summary>
-        [<CustomOperation("hashalg")>]     member __.HashAlg (s: Settings, value: Algorithm) = { s with Hash = value }
+        [<CustomOperation("hashalg")>]     member __.HashAlg (s: SignState, value: Sign.Algorithm) = { s with Settings = { s.Settings with Hash = value } }
         /// <summary>A human-readable description carried into the signature; not part of the identity key.</summary>
-        [<CustomOperation("description")>] member __.Description (s: Settings, value: string) = { s with Description = Some value }
+        [<CustomOperation("description")>] member __.Description (s: SignState, value: string) = { s with Settings = { s.Settings with Description = Some value } }
+        /// <summary>What signs: a function from a request to the signed bytes (`Sign.fakeSigner` in tests). Required.</summary>
+        [<CustomOperation("signer")>]      member __.Signer (s: SignState, value: Sign.Signer) = { s with Signer = Some value }
+        /// <summary>Where signed bytes are published and fetched by identity key; with `budget`, makes the rule delegated (`Sign.executor`).</summary>
+        [<CustomOperation("store")>]       member __.Store (s: SignState, value: Sign.Store) = { s with Store = Some value }
+        /// <summary>The dispatch resource bounding concurrent signer calls (the signing service's rate limit); with `store`, makes the rule delegated.</summary>
+        [<CustomOperation("budget")>]      member __.Budget (s: SignState, value: Resource) = { s with Budget = Some value }
 
         member __.Bind (x, f) = f x
-        member __.Yield (()) = Settings.Default
+        member __.Yield (()) = { Settings = Sign.Settings.Default; Signer = None; Store = None; Budget = None }
         member __.For (x, f) = f x
 
-        member __.Zero () = Settings.Default
-        member __.Run (s: Settings) = s
+        member __.Zero () = { Settings = Sign.Settings.Default; Signer = None; Store = None; Budget = None }
 
-    /// The signing settings builder instance.
-    let sign = SignSettingsBuilder ()
+        member __.Run (s: SignState) : ExecContext Rule =
+            match s.Signer, s.Store, s.Budget with
+            | None, _, _ -> failwithf "sign { target \"%s\" }: no `signer` given" s.Settings.Target
+            | Some signer, None, None -> Sign.rule s.Settings signer
+            | Some signer, Some store, Some budget ->
+                Sign.rule s.Settings signer |> delegated (Sign.executor s.Settings signer store budget)
+            | Some _, _, _ ->
+                failwithf "sign { target \"%s\" }: `store` and `budget` go together (a delegated signing rule needs both)" s.Settings.Target
+
+    /// The signing rule builder. Shadows FSharp.Core's numeric `sign` where `Xake.Dotnet` is
+    /// open; that one is still `Operators.sign`.
+    let sign = SignRuleBuilder ()

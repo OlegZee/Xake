@@ -5,7 +5,7 @@ network, no signing tool -- it measures, it does not sign or validate a signatur
 
 ## Functions
 
-- **`Verify.sha256 : path -> string`** -- lowercase hex SHA-256 of the whole file. Two files
+- **`Hash.sha256 : path -> string`** (base, `Hash.fs`; `Verify.sha256` until B10) -- lowercase hex SHA-256 of the whole file. Two files
   with the same value are byte-identical; anything at all (a timestamp, a re-signature, one
   flipped bit) changes it.
 
@@ -42,11 +42,11 @@ network, no signing tool -- it measures, it does not sign or validate a signatur
   clause names the single biggest range so it cannot hide behind a range count -- e.g.
   `content differs: 143 ranges, 148 213 bytes, largest 145 408 bytes at 0x2a40 (Content)`.
 
-- **`Verify.sbomPackageScope : nupkgPath -> framework -> Sbom.Bom -> string list`** and
-  **`Verify.sbomPackageScopeWith : Sbom.PackageScopeOptions -> nupkgPath -> framework ->
-  Sbom.Bom -> string list`** -- the package-scope SBOM acceptance checks 3.1-3.4, one line per
-  finding, `[]` a pass (`nuget-sbom.md`, "Package scope"). The `With` form takes the options
-  the document was produced with; the plain one applies `Sbom.defaultPackageScope`.
+- The package-scope SBOM acceptance checks 3.1-3.4 moved to **`Sbom.checkPackageScope :
+  Sbom.PackageScopeOptions -> nupkgPath -> framework -> Sbom.Bom -> string list`** (B10: `Verify`
+  must not depend on `Sbom`), one line per finding, `[]` a pass (`nuget-sbom.md`, "Package
+  scope"). It takes the options the document was produced with
+  (`Sbom.PackageScopeOptions.Default` for the RFC's rules).
 
 `Verify.layout` (the PE/CLR offsets `compare` labels with) is `internal`: `StrongName` and
 `Sign` use it, a script does not.

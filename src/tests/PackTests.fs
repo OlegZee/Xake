@@ -39,16 +39,16 @@ type ``Deterministic pack``() =
               { Pack.Path = "content/c.bin"; Pack.Source = c } ]
         let out1 = Path.Combine (testDir, "one.zip")
         let out2 = Path.Combine (testDir, "two.zip")
-        Pack.zip out1 entries Pack.defaultOptions
-        Pack.zip out2 entries Pack.defaultOptions
+        Pack.zip out1 entries Pack.Options.Default
+        Pack.zip out2 entries Pack.Options.Default
 
         CollectionAssert.AreEqual (File.ReadAllBytes out1, File.ReadAllBytes out2)
 
-        let listed = Pack.entries out1
+        let listed = Pack.list out1
         let paths = listed |> List.map (fun (p, _, _, _) -> p)
         Assert.That (paths, Is.EqualTo (paths |> List.sortWith (fun x y -> String.CompareOrdinal (x, y))))
         for (_, _, _, dt) in listed do
-            Assert.That (dt, Is.EqualTo Pack.defaultOptions.Timestamp)
+            Assert.That (dt, Is.EqualTo Pack.Options.Default.Timestamp)
 
     [<Test>]
     member this.``entry order and timestamps do not depend on the input order or file mtimes`` () =
@@ -66,8 +66,8 @@ type ``Deterministic pack``() =
 
         let out1 = Path.Combine (testDir, "fwd.zip")
         let out2 = Path.Combine (testDir, "rev.zip")
-        Pack.zip out1 forward Pack.defaultOptions
-        Pack.zip out2 reversed Pack.defaultOptions
+        Pack.zip out1 forward Pack.Options.Default
+        Pack.zip out2 reversed Pack.Options.Default
 
         CollectionAssert.AreEqual (File.ReadAllBytes out1, File.ReadAllBytes out2)
 
@@ -86,10 +86,10 @@ type ``Deterministic pack``() =
 
         let out1 = Path.Combine (testDir, "one.nupkg")
         let out2 = Path.Combine (testDir, "two.nupkg")
-        Pack.nupkg out1 nuspec files Pack.defaultOptions
-        Pack.nupkg out2 nuspec files Pack.defaultOptions
+        Pack.nupkg out1 nuspec files Pack.Options.Default
+        Pack.nupkg out2 nuspec files Pack.Options.Default
 
-        let paths = Pack.entries out1 |> List.map (fun (p, _, _, _) -> p)
+        let paths = Pack.list out1 |> List.map (fun (p, _, _, _) -> p)
         Assert.That (paths, Does.Contain "Test.Pkg.nuspec")
         Assert.That (paths, Does.Contain "[Content_Types].xml")
         Assert.That (paths, Does.Contain "_rels/.rels")
@@ -113,8 +113,8 @@ type ``Deterministic pack``() =
         // change one byte of A.dll -> the derived GUID changes
         File.WriteAllBytes (dll, [| 1uy; 2uy; 3uy; 5uy |])
         let out3 = Path.Combine (testDir, "three.nupkg")
-        Pack.nupkg out3 nuspec files Pack.defaultOptions
-        let psmdcpPath3 = Pack.entries out3 |> List.map (fun (p, _, _, _) -> p) |> List.find (fun p -> p.EndsWith ".psmdcp")
+        Pack.nupkg out3 nuspec files Pack.Options.Default
+        let psmdcpPath3 = Pack.list out3 |> List.map (fun (p, _, _, _) -> p) |> List.find (fun p -> p.EndsWith ".psmdcp")
         Assert.That (psmdcpPath3, Is.Not.EqualTo psmdcpPath)
 
     [<Test; Category "Integration">]
@@ -125,9 +125,9 @@ type ``Deterministic pack``() =
               { Pack.Path = "lib/b.txt"; Pack.Source = b }
               { Pack.Path = "content/c.bin"; Pack.Source = c } ]
         let out = Path.Combine (testDir, "roundtrip.zip")
-        Pack.zip out entries Pack.defaultOptions
+        Pack.zip out entries Pack.Options.Default
 
-        let expected = Pack.entries out |> List.map (fun (p, _, _, _) -> p) |> List.sortWith (fun x y -> String.CompareOrdinal (x, y))
+        let expected = Pack.list out |> List.map (fun (p, _, _, _) -> p) |> List.sortWith (fun x y -> String.CompareOrdinal (x, y))
 
         use fs = File.OpenRead out
         use archive = new System.IO.Compression.ZipArchive (fs, System.IO.Compression.ZipArchiveMode.Read)

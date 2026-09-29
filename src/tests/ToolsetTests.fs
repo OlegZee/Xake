@@ -76,7 +76,7 @@ type ``Toolset compiler``() =
             ]
         }
 
-        let lock = Lock.readWith (Roots.builtin (Directory.GetCurrentDirectory())) lockFile
+        let lock = Lock.read (Roots.builtin (Directory.GetCurrentDirectory())) lockFile
         let project = Lock.entry "Toolset" lock
 
         Assert.That(project.Csc.Dependencies.Compiler.Path, Does.Contain "/microsoft.net.compilers.toolset/")
@@ -113,7 +113,7 @@ type ``Toolset compiler``() =
             ]
         }
 
-        let lock = Lock.readWith (Roots.builtin (Directory.GetCurrentDirectory())) lockFile
+        let lock = Lock.read (Roots.builtin (Directory.GetCurrentDirectory())) lockFile
         let project = Lock.entry "Toolset" lock
         let outDll = project.Csc.Output |> Option.defaultWith (fun () -> failwith "the lock's project has no /out:")
 

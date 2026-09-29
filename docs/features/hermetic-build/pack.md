@@ -16,12 +16,12 @@ this release rebuild to the same package" cannot be answered by comparing bytes.
 
 - `type Entry = { Path: string; Source: string }` -- `Path` inside the zip (forward slashes),
   `Source` the file on disk.
-- `type Options = { Timestamp: DateTime; Level: CompressionLevel }`; `Pack.defaultOptions`
+- `type Options = { Timestamp: DateTime; Level: CompressionLevel }`; `Pack.Options.Default`
   (not `Options.Default`) -- see `SOURCE_DATE_EPOCH` below.
 - `Pack.zip : output -> Entry list -> Options -> unit`
 - `Pack.nupkg : output -> nuspec: string -> files: Entry list -> Options -> unit` -- `nuspec`
   is the path of the `.nuspec` file, read for `id`/`version` and packed at the root.
-- `Pack.entries : zipPath -> (string * int64 * uint32 * DateTime) list` -- path, uncompressed
+- `Pack.list : zipPath -> (string * int64 * uint32 * DateTime) list` -- path, uncompressed
   size, CRC-32, DOS time, in central-directory order. No entry bytes.
 
 ## What `Pack.nupkg`/`Pack.zip` fix, and how
@@ -29,14 +29,14 @@ this release rebuild to the same package" cannot be answered by comparing bytes.
 - **Sorted entries** — every entry list is sorted by path (ordinal) before writing, so input
   order never affects output.
 - **Fixed timestamp** — every entry gets one DOS timestamp from `Options.Timestamp`:
-  `defaultOptions` is 1980-01-01 (the DOS epoch), or `SOURCE_DATE_EPOCH` (unix seconds, the
+  `Options.Default` is 1980-01-01 (the DOS epoch), or `SOURCE_DATE_EPOCH` (unix seconds, the
   [reproducible-builds.org](https://reproducible-builds.org/specs/source-date-epoch/)
   convention) when set, clamped up to 1980 if earlier. File mtimes are never consulted.
 - **A content-derived psmdcp GUID** — `Guid(sha256(id, version, sorted "path:hash" pairs of
   every packed file)[0..15])` instead of `Guid.NewGuid()`. Same inputs, same GUID, same bytes;
   change one byte of one file and the GUID changes visibly.
 - **No creation date** — the psmdcp XML never has `dcterms:created`.
-- **No extra fields, no comments** — so `entries` can assume the end-of-central-directory
+- **No extra fields, no comments** — so `list` can assume the end-of-central-directory
   record is exactly the file's last 22 bytes.
 
 Two calls with the same entries and `Options` produce byte-identical output, regardless of
@@ -44,7 +44,7 @@ input order or source-file mtimes.
 
 ## Why hand-rolled instead of `ZipArchive`
 
-`ZipArchiveEntry.Crc32` — needed by `Pack.entries` for tests and `Verify`-style comparison — is
+`ZipArchiveEntry.Crc32` — needed by `Pack.list` for tests and `Verify`-style comparison — is
 **not part of the netstandard2.0/net462 API surface** this assembly targets: confirmed by
 compiling a throwaway project against both TFMs, where `entry.Crc32` fails with `FS0039` on
 each. Since the central directory needs a hand parser regardless, the writer is hand-rolled
@@ -58,7 +58,7 @@ is the standard table-driven implementation, used both writing and reading.
 
 ## `SOURCE_DATE_EPOCH`
 
-When set, `Pack.defaultOptions` uses it (clamped to 1980) instead of the DOS epoch, so a CI
+When set, `Pack.Options.Default` uses it (clamped to 1980) instead of the DOS epoch, so a CI
 pipeline pinning it to the commit time gets that time baked into every entry without losing
 byte-identity across reruns of the same commit.
 

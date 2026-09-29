@@ -112,7 +112,7 @@ type ``Lock rehash and diff``() =
 /// The lock file format did not move when `Lock.Entry` became `{ Csc; Evaluation; Packages }`:
 /// the writer flattens the entry back into the `Name`/`Framework`/`Evaluation`/`Compilation`/
 /// `Dependencies` shape (with `Packages` inside `Dependencies`) and the reader regroups it. The
-/// expected text below was written by the pre-split `Lock.writeWith` (commit 99faffc) from the
+/// expected text below was written by the pre-split `Lock.format` (commit 99faffc) from the
 /// same entry, so this pins the format byte for byte.
 [<TestFixture>]
 type ``Lock file format``() =
@@ -217,10 +217,10 @@ type ``Lock file format``() =
 
     [<Test>]
     member x.``an entry with evaluation and packages is written byte-identical to the pre-split format``() =
-        Assert.That(Lock.writeWith roots (document ()), Is.EqualTo golden)
+        Assert.That(Lock.format roots (document ()), Is.EqualTo golden)
 
     [<Test>]
     member x.``the pre-split text reads back into the same entry and writes back unchanged``() =
-        let parsed = Lock.parseWith roots golden
+        let parsed = Lock.parse roots golden
         Assert.That(parsed, Is.EqualTo (document ()))
-        Assert.That(Lock.writeWith roots parsed, Is.EqualTo golden)
+        Assert.That(Lock.format roots parsed, Is.EqualTo golden)

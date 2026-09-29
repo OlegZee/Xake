@@ -34,7 +34,7 @@ and, around it:
   and the policy into the runner. `RunOptions.Default` is today's behaviour exactly.
 - `Roots.nugetPackageRootToken`, `Roots.packageRootOverride dir` — the extra-root list that
   makes `Lock.loadWith` expand `$(NuGetPackageRoot)` against the same folder.
-- `Roots.withExtra` changed in two ways (below).
+- `Roots.withExtra` (`Roots.make` since B10) changed in two ways (below).
 
 A script that wants the build's dependencies in a folder of its own, in one place:
 
@@ -131,14 +131,14 @@ the installed one" — is worth a step of its own. `restoreToolsetCompiler` surv
 `resolve`'s `toolset` operation, which composes a lock and therefore has no lock to read the
 package out of; it is now a recipe over `Restore.download`.
 
-**`Roots.withExtra` learned two things**, both needed for the folder to be one folder:
+**`Roots.withExtra` (now `Roots.make`) learned two things**, both needed for the folder to be one folder:
 
 - an extra root with a built-in token now *replaces* the built-in instead of being refused.
   That is how `$(NuGetPackageRoot)` is pointed at the build's own folder when the lock is
   read, so the lock and the restore agree about where the packages are.
 - a relative extra root is resolved against `projectRoot`, not the process's current
   directory. A script would otherwise write `Path.GetFullPath ".packages"` and silently
-  reintroduce the cwd dependency stage A1 removed. `withExtra` stays a pure function of its
+  reintroduce the cwd dependency stage A1 removed. `make` stays a pure function of its
   two arguments; `Restore.into` is the recipe that supplies the project root from
   `ExecOptions.ProjectRoot`.
 

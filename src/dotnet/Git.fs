@@ -115,3 +115,22 @@ module Git =
                 match headContent with
                 | "" -> None
                 | sha -> Some sha
+
+    /// The token a lock carries in place of the commit sha (`tokenize`), resolved back from
+    /// the repository right before a compile (`Lock.compile`).
+    let revisionToken = "$(SourceRevisionId)"
+
+    /// Replaces every occurrence of `sha` in `text` with the literal token `revisionToken`
+    /// (`$(SourceRevisionId)`). `sourcelink.json` (and, in principle, any other generated
+    /// text) embeds the commit that produced it -- SourceLink's own doing, not this tool's --
+    /// which would otherwise make a lock's content, and so the lock file itself, change on
+    /// every commit even though the compilation it describes did not. The sha itself is
+    /// deliberately not recorded anywhere in the lock; `Lock.compile` resolves the token back
+    /// from the project's repository right before it would be used.
+    ///
+    /// Text-level so that it can live here, before `Lock` in compile order (which needs
+    /// `headSha`): a whole entry -- `Generated` content, `Options`, `Defines` and evaluation
+    /// `Properties` -- is `entry |> Lock.mapText (Git.tokenize sha)`. Pure; a no-op when `sha`
+    /// is empty.
+    let tokenize (sha: string) (text: string) : string =
+        if sha = "" || not (text.Contains sha) then text else text.Replace (sha, revisionToken)

@@ -10,6 +10,8 @@ open Xake.Tasks
 /// msbuild for it costs one evaluation and gives exactly what `dotnet build` would use --
 /// conditions, imports, generated assembly attributes and the resolved reference list
 /// included.
+///
+/// Retired after B6: `Project.import` for an fsproj replaces it.
 module Fsproj =
 
     /// What a project file says about one target framework.
@@ -96,8 +98,9 @@ module Fsproj =
     /// The project as this build reads it. msbuild answers with every metadata field of every
     /// item -- a couple of hundred kilobytes of which two fields are ever looked at -- so what
     /// gets kept is this: readable, diffable, and about a twentieth of the size.
-    /// `roots` is the list paths are tokenized against (see `Roots`).
-    let internal writeWith roots (project: ProjectInfo) =
+    /// `roots` is the list paths are tokenized against (see `Roots`). Pure; `evaluate` writes
+    /// it against the build's own roots.
+    let internal format roots (project: ProjectInfo) =
         let list name items =
             items
             |> List.map (Roots.tokenize roots >> Json.escape >> sprintf "    %s")
@@ -167,17 +170,18 @@ module Fsproj =
             do! Tool.failOnExitCode true options.Project exitCode
 
             let! roots = Roots.current
-            File.WriteAllText (options.Output, parseEvaluation dump |> writeWith roots)
+            File.WriteAllText (options.Output, parseEvaluation dump |> format roots)
             File.Delete dump
         }
 
     /// <summary>
     /// Reads the file `evaluate` wrote, expanding its tokens against `roots` (see `Roots`).
-    /// Inside a recipe use `load`, which takes the build's own project root.
+    /// Inside a recipe use `load`, which takes the build's own project root. Pure but for
+    /// reading `resultFile`.
     /// </summary>
     /// <param name="roots">The roots the file was written against</param>
     /// <param name="resultFile">The file the evaluation was written to</param>
-    let parseWith roots (resultFile: string) =
+    let parse roots (resultFile: string) =
         let root = File.ReadAllText resultFile |> Json.parse
 
         let strings name =
@@ -209,5 +213,5 @@ module Fsproj =
     let load (resultFile: string) : Recipe<ExecContext, ProjectInfo> =
         recipe {
             let! roots = Roots.current
-            return parseWith roots resultFile
+            return parse roots resultFile
         }

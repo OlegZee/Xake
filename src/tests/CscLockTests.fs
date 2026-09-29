@@ -28,7 +28,7 @@ type ``Csc lock``() =
             RefGlobal = ["System.dll"] }, lockPath
 
     let readLock (path: string) =
-        Lock.readWith (Roots.builtin (Directory.GetCurrentDirectory())) path
+        Lock.read (Roots.builtin (Directory.GetCurrentDirectory())) path
 
     /// Without a lock: `Csc.compile`. With one: `Lock.build`, through the same run options
     /// `csc { ...; lock }` uses (`Csc.runOptions`).

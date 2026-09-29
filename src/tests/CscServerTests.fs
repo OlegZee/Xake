@@ -6,6 +6,7 @@ open NUnit.Framework
 open Xake
 open Xake.Tasks
 open Xake.Dotnet
+open Xake.Hermetic.Dotnet
 
 /// The Roslyn compiler server (`VBCSCompiler`) behind `csc {}`: `run` adds `/shared` (and
 /// `/keepalive`) on the command line when the compiler about to run has a `VBCSCompiler.dll`

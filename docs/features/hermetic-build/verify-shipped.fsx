@@ -2,8 +2,10 @@
 // Usage: dotnet fsi verify-shipped.fsx -- <pathA> <pathB>
 #r "../../../.bootstrap/Xake.dll"
 #r "../../../.bootstrap/Xake.Dotnet.dll"
+#r "../../../.bootstrap/Xake.Hermetic.Dotnet.dll"
 
 open Xake.Dotnet
+open Xake.Hermetic.Dotnet
 
 let args = fsi.CommandLineArgs |> Array.skip 1
 let a, b =

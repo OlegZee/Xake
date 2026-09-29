@@ -151,9 +151,10 @@ Every operation of `csc {}`:
 | `keepalive` | `int` (seconds) | idle time after which a compiler server this build starts exits (`/keepalive`; Roslyn's default is 600) |
 | `resolve` | -- | return the resolved `Csc` instead of compiling; must be the last operation (see below) |
 
-`lock "path"` is not part of the base package: it is added by `Xake.Dotnet`'s hermetic side
-(`Lock.fs`, module `CscLockBuilder`), and gates the compilation against a lock file; see
-[csc-syntax.md](features/hermetic-build/csc-syntax.md).
+`lock "path"` is not part of the base package: it is added by the separate package
+`Xake.Hermetic.Dotnet` (`open Xake.Hermetic.Dotnet`), and gates the compilation against a lock
+file; see [hermetic/lock.md](hermetic/lock.md). Details behind the operations above:
+[csc-syntax.md](csc-syntax.md).
 
 `toolset` example, see [samples/toolset.fsx](../samples/toolset.fsx):
 
@@ -227,7 +228,7 @@ The switch is silently skipped (the compile runs in-process) for a compiler that
 `VBCSCompiler.dll` next to it -- the legacy `csc.exe`, mono's `mcs`, an arbitrary `cscpath` --
 for toolchains that need environment variables, and for a compiler under the temp directory.
 `CSC_SERVER` is read like `NETFX`, so changing it rebuilds the target. Details:
-[csc-server.md](features/hermetic-build/csc-server.md).
+[csc-server.md](csc-server.md).
 
 How the compiler and the reference assemblies are located, and how to force a particular
 toolchain, is described in [dotnet-build.md](dotnet-build.md).

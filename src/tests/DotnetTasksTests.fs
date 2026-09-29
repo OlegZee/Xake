@@ -6,6 +6,7 @@ open NUnit.Framework
 open Xake
 open Xake.Tasks
 open Xake.Dotnet
+open Xake.Hermetic.Dotnet
 
 [<TestFixture>]
 type ``Dotnet tasks tests``() =

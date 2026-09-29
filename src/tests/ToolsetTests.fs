@@ -6,6 +6,7 @@ open NUnit.Framework
 open Xake
 open Xake.Tasks
 open Xake.Dotnet
+open Xake.Hermetic.Dotnet
 
 /// The compiler-as-a-package path: a `Toolset.csproj` (the same content as
 /// `samples/hermetic/toolset/Toolset.csproj`, kept there as a sample for humans) pins its C#

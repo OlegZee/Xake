@@ -388,7 +388,7 @@ module DotNetFwk =
     /// `net472` downloads from this `netstandard2.0` project just as well.
     /// `DisableImplicitFrameworkReferences` keeps the SDK from adding `NETStandard.Library` to
     /// the folder as a side effect of the TFM.
-    let internal restoreProjectText (packages: (string * string) list) =
+    let restoreProjectText (packages: (string * string) list) =
         [ yield "<Project Sdk=\"Microsoft.NET.Sdk\">"
           yield "  <PropertyGroup>"
           yield "    <TargetFramework>netstandard2.0</TargetFramework>"

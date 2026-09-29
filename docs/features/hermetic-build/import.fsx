@@ -18,10 +18,12 @@
 // released package: this branch is not released.
 #r "../../../.bootstrap/Xake.dll"
 #r "../../../.bootstrap/Xake.Dotnet.dll"
+#r "../../../.bootstrap/Xake.Hermetic.Dotnet.dll"
 
 open System.IO
 open Xake
 open Xake.Dotnet
+open Xake.Hermetic.Dotnet
 open Xake.Tasks
 
 let vars = {|

@@ -785,3 +785,10 @@ After B8 (orchestrator): `Lock.record` now `needFiles` what it hashes (reference
 compiler, imports), so a record-only target reruns when those change; the compile-side
 `needFiles` stays in `Csc.run`. Still stale after B9: `csc-server.md` (`RunOptions.Restore`,
 `CscLock.resolve`, `Compilation.Directory`) and `lock-from-settings.md`; E5 moves them anyway.
+
+**Where things stand (2026-09-29, end of the run)**: B1–B5, B7–B9 landed (commits 99faffc,
+750dbb1, 646decc, ecc52df); suite 362 passed, 1 skipped; both libraries 0 warnings. Open
+before B10 (API polish) can start: the user's approval of §3 principles and the §5 questions
+3–7 (Fsproj to hermetic, independent versions, B6 timing, `sign {}` returning a rule, the six
+SBOM questions in `nuget-sbom.md`). B8 part 2 (default framework when no `targetfwk`) is also
+the user's call. **Exact next step**: get those answers, then B10, then E1–E7.

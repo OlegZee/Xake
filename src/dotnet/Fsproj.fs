@@ -160,11 +160,11 @@ module Fsproj =
                     cmd "dotnet"
                     args commandLine
                     logprefix "[msbuild]"
-                    stdoutlevel (Impl.levelFromString Level.Verbose)
-                    erroutlevel (Impl.levelFromString Level.Error)
+                    stdoutlevel (Tool.diagnosticLevel Level.Verbose)
+                    erroutlevel (Tool.diagnosticLevel Level.Error)
                 }
 
-            do! Impl.failOnExitCode true options.Project exitCode
+            do! Tool.failOnExitCode true options.Project exitCode
 
             let! roots = Roots.current
             File.WriteAllText (options.Output, parseEvaluation dump |> writeWith roots)

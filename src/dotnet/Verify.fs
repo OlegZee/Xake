@@ -1,4 +1,4 @@
-namespace Xake.Dotnet
+﻿namespace Xake.Dotnet
 
 open System
 open System.IO
@@ -10,10 +10,7 @@ open System.Security.Cryptography
 module Verify =
 
     /// lowercase hex sha256 of a file
-    let sha256 (path: string) : string =
-        use stream = File.OpenRead path
-        use algo = SHA256.Create()
-        algo.ComputeHash stream |> Array.map (sprintf "%02x") |> String.concat ""
+    let sha256 (path: string) : string = Hash.sha256 path
 
     let private u16 (b: byte[]) (o: int) = int b.[o] ||| (int b.[o + 1] <<< 8)
     let private i32 (b: byte[]) (o: int) =

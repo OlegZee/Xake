@@ -192,11 +192,11 @@ module FscImpl =
                             args commandLineArgs
                             envs fwkInfo.EnvVars
                             logprefix "[fsc]"
-                            stdoutlevel (Impl.levelFromString Level.Verbose)
-                            erroutlevel (Impl.levelFromString Level.Verbose)
+                            stdoutlevel (Tool.diagnosticLevel Level.Verbose)
+                            erroutlevel (Tool.diagnosticLevel Level.Verbose)
                         }
 
-                    do! Impl.failOnExitCode settings.FailOnError outFile.Name exitCode
+                    do! Tool.failOnExitCode settings.FailOnError outFile.Name exitCode
                 finally
                     deleteTempFiles ()
         }

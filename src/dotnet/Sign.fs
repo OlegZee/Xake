@@ -1,4 +1,4 @@
-namespace Xake.Dotnet
+﻿namespace Xake.Dotnet
 
 open System
 open System.IO
@@ -129,7 +129,7 @@ module Sign =
     let imageHash (path: string) : string =
         match kindOf path with
         | PeImage -> Verify.authenticodeHash path
-        | Nupkg -> Verify.sha256 path
+        | Nupkg -> Hash.sha256 path
 
     /// The identity key of one signing job: `sha256(image hash | certificate | timestamp
     /// server | hash algorithm)`. It says "this exact image, signed by this key, under this

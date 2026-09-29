@@ -34,6 +34,8 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Compile Include="Tool.fs" />
+    <Compile Include="Hash.fs" />
     <Compile Include="DotNetFwk.fs" />
     <Compile Include="ResourceFileset.fs" />
     <!-- Resx has no dependency on Fsproj/DotnetTasks; it is compiled here (ahead of

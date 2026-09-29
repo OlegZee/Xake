@@ -91,13 +91,13 @@ module MsbuildImpl =
                     args commandLineArgs
                     envs fwkInfo.EnvVars
                     logprefix pfx
-                    stdoutlevel (Impl.levelFromString Level.Verbose)
-                    erroutlevel (Impl.levelFromString Level.Verbose)
+                    stdoutlevel (Tool.diagnosticLevel Level.Verbose)
+                    erroutlevel (Tool.diagnosticLevel Level.Verbose)
                 }
 
 
             do! trace Info "%s done '%s'" pfx settings.BuildFile
-            do! Impl.failOnExitCode settings.FailOnError settings.BuildFile exitCode
+            do! Tool.failOnExitCode settings.FailOnError settings.BuildFile exitCode
         }
 
     /// Computation expression builder for the msbuild task.

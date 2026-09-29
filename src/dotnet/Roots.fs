@@ -1,4 +1,4 @@
-namespace Xake.Dotnet
+﻿namespace Xake.Dotnet
 
 open System.IO
 
@@ -17,11 +17,11 @@ open Xake
 module Roots =
 
     /// The NuGet package cache (`NUGET_PACKAGES`, else `~/.nuget/packages`).
-    let nugetRoot () = DotNetFwk.sdkImpl.nugetRoot ()
+    let nugetRoot () = DotNetFwk.nugetRoot ()
 
     /// The .NET SDK installation root, when one can be located: compilers, analyzers and
     /// reference packs live under it.
-    let dotnetRoot () = DotNetFwk.sdkImpl.dotnetRoot ()
+    let dotnetRoot () = DotNetFwk.dotnetRoot ()
 
     /// The token the package folder is written against.
     let nugetPackageRootToken = "$(NuGetPackageRoot)"

@@ -1,4 +1,4 @@
-namespace Xake.Dotnet
+﻿namespace Xake.Dotnet
 
 open System.IO
 
@@ -68,7 +68,7 @@ module Restore =
 
     /// The package folder in effect, normalized the way `Roots` writes paths.
     let packageRoot (options: Options) =
-        (options.PackageRoot |> Option.defaultWith Roots.nugetRoot).Replace('\\', '/').TrimEnd '/'
+        DotNetFwk.normalizedPackageRoot options.PackageRoot
 
     /// <summary>
     /// Default options with the package folder at <c>dir</c>, taken relative to the build's
@@ -166,80 +166,15 @@ module Restore =
                     yield sprintf "%s %s: expected sha512 %s, got %s"
                         p.Id p.Version p.Sha512 (if actual = "" then "none" else actual) ]
 
-    /// The synthesized restore project. `PackageDownload` rather than `PackageReference`: it
-    /// fetches exactly the listed version into the folder and nothing else -- no dependency
-    /// walk (the lock already names the whole graph) and, crucially, no framework
-    /// compatibility check, so a package that targets only `net472` downloads from this
-    /// `netstandard2.0` project just as well. `DisableImplicitFrameworkReferences` keeps the
-    /// SDK from adding `NETStandard.Library` to the folder as a side effect of the TFM.
-    let internal projectText (packages: (string * string) list) =
-        [ yield "<Project Sdk=\"Microsoft.NET.Sdk\">"
-          yield "  <PropertyGroup>"
-          yield "    <TargetFramework>netstandard2.0</TargetFramework>"
-          yield "    <DisableImplicitFrameworkReferences>true</DisableImplicitFrameworkReferences>"
-          yield "  </PropertyGroup>"
-          yield "  <ItemGroup>"
-          for (id, version) in packages do
-              yield sprintf "    <PackageDownload Include=\"%s\" Version=\"[%s]\" />" id version
-          yield "  </ItemGroup>"
-          yield "</Project>"
-          yield "" ]
-        |> String.concat "\n"
+    /// The synthesized restore project (see `DotNetFwk.downloadPackages`).
+    let internal projectText (packages: (string * string) list) = DotNetFwk.restoreProjectText packages
 
     /// Fetches the named `(id, version)` packages into the folder with **one** `dotnet
     /// restore`, whatever the policy says -- this is the primitive, `ensure` is the one that
-    /// consults `Options.Enabled`.
-    ///
-    /// The synthesized project lives under the build's own project root
-    /// (`obj/xake/restore/`), not in a temp directory, so that NuGet's settings discovery
-    /// finds the repository's `nuget.config` and its private feeds -- a lock whose packages
-    /// come from a company feed is otherwise unrestorable. The repository's own msbuild
-    /// customizations are switched off on the command line instead
-    /// (`Directory.Build.props`/`.targets`, central package management), because they are
-    /// written for real projects and this one only downloads.
-    ///
-    /// Each call gets a numbered subdirectory of its own, removed once the restore succeeds:
-    /// `ensure` serializes its own restores on a `Resource`, but `Csc.ofSettings`'s `toolset` calls
-    /// this directly, and two of those must not overwrite each other's project file.
-    /// Concurrent restores into one package folder are NuGet's own business, and it handles
-    /// them. A failed attempt is left on disk, named by the message, so it can be re-run by
-    /// hand.
-    let private attempts = ref 0
-
+    /// consults `Options.Enabled`. The mechanism is `DotNetFwk.downloadPackages`, shared with
+    /// `csc { toolset }`; `ensure` serializes its own restores on a `Resource`.
     let download (options: Options) (packages: (string * string) list) : Recipe<ExecContext, unit> =
-        recipe {
-            if not (List.isEmpty packages) then
-                let root = packageRoot options
-                let! ctxOptions = getCtxOptions ()
-                let attempt = System.Threading.Interlocked.Increment attempts
-                let dir = ctxOptions.ProjectRoot </> "obj" </> "xake" </> "restore" </> string attempt
-                Directory.CreateDirectory dir |> ignore
-                let project = dir </> "restore.csproj"
-                File.WriteAllText (project, projectText packages)
-
-                let! exitCode =
-                    shell {
-                        cmd "dotnet"
-                        args [ "restore"; project
-                               "-v:quiet"; "-nologo"
-                               "-p:NuGetAudit=false"
-                               "-p:ImportDirectoryBuildProps=false"
-                               "-p:ImportDirectoryBuildTargets=false"
-                               "-p:ImportDirectoryPackagesProps=false"
-                               "-p:ManagePackageVersionsCentrally=false" ]
-                        env ("NUGET_PACKAGES", root)
-                        workdir dir
-                        logprefix "[restore]"
-                        stdoutlevel (Impl.levelFromString Level.Verbose)
-                        erroutlevel (Impl.levelFromString Level.Verbose)
-                    }
-
-                if exitCode <> 0 then
-                    failwithf "restoring %d package(s) into '%s' failed with exit code %d (see '%s'): %s"
-                        (List.length packages) root exitCode project
-                        (packages |> List.map (fun (id, v) -> id + " " + v) |> String.concat ", ")
-                try Directory.Delete (dir, true) with _ -> ()
-        }
+        DotNetFwk.downloadPackages options.PackageRoot packages
 
     /// One `Resource` per package folder, so that two compiles running in parallel and
     /// needing the same packages launch one restore between them rather than two competing

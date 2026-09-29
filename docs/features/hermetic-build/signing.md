@@ -132,7 +132,7 @@ nothing about wall-clock time. Two different targets that happen to hold the sam
 one signature; a changed cert or timestamp server is a different key and re-signs.
 
 **Dedup and delivery** follow `delegated-proc.fsx` exactly: a `ConcurrentDictionary<string,
-Lazy<Task<BuildResult>>>` of in-flight keys, a store lookup first, `Resource.withAcquired
+Lazy<Task<byte[]>>>` of in-flight keys (the signed bytes; the `BuildResult` is synthesized per target), a store lookup first, `Resource.withAcquired
 budget 1` around the dispatch (never `Scheduler.withYieldedSlot` — the engine already detached
 the executor; see `docs/session.md`). On a hit the executor writes the stored bytes to the
 target and returns a synthesized `BuildResult`; on a miss it calls the `Signer`, publishes the
@@ -163,7 +163,6 @@ let budget = Resource.newResource "sign" 4                    // the service rat
 
 do xakeScript {
     rules [
-        // sugar for: (Sign.rule signing signer) |> delegated (Sign.executor signing signer store budget)
         (Sign.rule signing signer) |> delegated (Sign.executor signing signer store budget)
 
         "release" <== [ "signed/Rdl.dll"; "signed/MESCIUS.ActiveReports.Core.Rdl.nupkg" ]
@@ -221,7 +220,8 @@ SHA-256 of the file that **ships** (signed), and the attestation additionally re
 Authenticode hash, which is what a reproduce job can regenerate. `Sbom.forAssembly` /
 `Sbom.forPackage` therefore run on the **signed** artifact — after this rule, not before — and
 the signed file's `authenticodeHash` ties it back to the reproducible ring-1/ring-2 output. The
-lock records public key tokens and certificate thumbprints; never key material.
+lock is meant to record public key tokens and certificate thumbprints, never key material --
+not built: `Lock.Entry` has no field for either today.
 
 ## 4. Out of scope now; what the user must provide
 

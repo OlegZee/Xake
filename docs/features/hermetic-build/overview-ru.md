@@ -4,6 +4,10 @@
 `brief.md`, `session.md`, `tracker.md`, тематических заметок в этой папке и из git; числа не
 выдуманы, расхождения между документами отмечены явно.
 
+*Сверено с кодом 2026-09-29:* имена и сигнатуры API ниже приведены к `src/dotnet/*.fs`; то, что
+появилось после 2026-09-23 (сервер компилятора, SBOM package scope), отмечено на месте. Полная
+публичная поверхность — `api.md`.
+
 ## 1. Что это за ветка
 
 Идея: msbuild остаётся *оценщиком* проекта, но не участвует в сборке. Ветка добавляет в
@@ -32,16 +36,16 @@ nupkg, `Sign` — делегированное правило подписи, `S
 |---|---|---|
 | `Json` | 111 | внутренний парсер JSON — чтобы `System.Text.Json` не приехал зависимостью ко всем потребителям на netstandard2.0 |
 | `Roots` | 121 | токены путей; `$(ProjectRoot)` берётся из `ExecOptions.ProjectRoot`, а не из cwd |
-| `Nuget` | 234 | чтение `project.assets.json`, `.nupkg.metadata`, nuspec: граф, sha512, лицензия, поставщик |
+| `Nuget` | 309 | чтение `project.assets.json`, `.nupkg.metadata`, nuspec: граф, sha512, лицензия, поставщик; `parseNuspec`/`nuspecDependenciesFor` — группы зависимостей по TFM |
 | `Project` | 1456 | `CscArgs` (командная строка как данные), `Lock` (`Entry` = `Evaluation`/`Compilation`/`Dependencies`), `Project.import` |
 | `Restore` | 302 | доставка пакетов, которые называет lock |
-| `Sbom` | 435 | детерминированный CycloneDX 1.6 из lock: `forAssembly`, `forPackage` |
-| `Verify` | 260 | sha256, Authenticode PE-хэш, размеченные диапазоны различий, вердикт |
+| `Sbom` | 785 | детерминированный CycloneDX 1.6 из lock: `forAssembly`, `forPackage` (restore scope); `forPackageScoped`/`forPackageScopedWith` + `PackageScopeOptions` (package scope, с 2026-09-24) |
+| `Verify` | 347 | sha256, Authenticode PE-хэш, размеченные диапазоны различий (`compare`), `verdict`; `sbomPackageScope`/`sbomPackageScopeWith` — приёмочные проверки 3.1–3.4 |
 | `StrongName` | 307 | PE TimeDateStamp/CheckSum, повторная подпись strong name |
 | `Pack` | 313 | рукописный детерминированный zip/nupkg + чтение обратно с CRC-32 |
 | `Sign` | 420 | подпись как делегированное правило (Authenticode + NuGet), фейковый signer |
 | `Resx` | 47 | `.resx` → `.resources` байт-в-байт как msbuild `GenerateResource` |
-| `Dotnet.csc.fs` | +583 | одна форма: `resolve` (составные настройки → `Lock.Entry`) и один `run`; `lock "path"` |
+| `Dotnet.csc.fs` | +625 | одна форма: `resolve` (составные настройки → `Lock.Entry`) и один `run`; `CscLock.compile`/`compileWith`/`resolve`/`record`/`verify`; `lock "path"`; `RunOptions`; сервер компилятора (`CompilerServer`, `noserver`/`keepalive`) |
 | `Fsproj.fs` | +213 | F#-ветка оценки (осталась как есть) |
 
 **Доказательства** (все из `session.md` / `verify-dataengine.md`, перепроверялись после каждой
@@ -57,10 +61,13 @@ nupkg, `Sign` — делегированное правило подписи, `S
 - dataengine по времени: холодный параллельный импорт 13.4 с, сборка из locks 7.3 с, no-op 0.12 с,
   `restore` в пустую папку 153 МБ. Штатный .NET на той же фикстуре: restore 0.8 с + `dotnet build`
   2.5 с на бренд. **Поассемблийно Xake ~1.7× медленнее msbuild** — единственная причина: нет
-  `/shared`, каждый `csc` это свежий процесс, msbuild переиспользует `VBCSCompiler`.
+  `/shared`, каждый `csc` это свежий процесс, msbuild переиспользует `VBCSCompiler`. *(С коммита
+  da16369 `run` компилирует через `VBCSCompiler`: `RunOptions.Server = Shared None` по умолчанию,
+  `noserver`/`keepalive` в `csc {}`, `XAKE_CSC_SERVER=0`; см. `csc-server.md`,
+  `verify-dataengine.md`.)*
 - Тесты: по трекеру **331 passed, 1 skipped**. В дереве сейчас ~285 методов `[<Test>]` + 66
   `[<TestCase>]`; из них ~120 добавлены этой веткой в 14 новых файлах (`ProjectImportTests` 34,
-  `NugetTests` 13, `FromLockTests` 11, `RestoreTests` 9, `SignTests`/`VerifyTests`/`CscLockTests`
+  `NugetTests` 13 (сейчас 18), `FromLockTests` 11, `RestoreTests` 9, `SignTests`/`VerifyTests`/`CscLockTests`
   по 7 и т.д.).
 
 ### Что здесь технически нетривиально
@@ -130,11 +137,13 @@ nupkg, `Sign` — делегированное правило подписи, `S
 - **Настоящий signer.** `Sign` — скелет с fake-подписантом и шестью тестами; нет ни сертификата,
   ни агента с ключом (signtool / Trusted Signing / HSM). Открытый подпункт: 8-байтное
   выравнивание перед таблицей сертификатов показывается неразмеченным диапазоном `Content`.
-- **Нет `/shared`** — отсюда 1.7× по времени на сборку. Работа начата (R3), не закончена.
+- ~~**Нет `/shared`**~~ — сделано после написания (da16369, `CompilerServer`, `csc-server.md`).
 - **SBOM package scope** — девять пунктов по RFC PDR-0010 (SDP), который **в статусе draft,
   комментарии до 2026-10-07**. Текущий `Sbom.forAssembly` даёт restore-scope, то есть по этому
   RFC он *вход*, а не поставляемый артефакт. Не сделано ничего из tier 1–3, `compositions`,
-  один SBOM на (пакет × TFM), верификатор приёмочных проверок.
+  один SBOM на (пакет × TFM), верификатор приёмочных проверок. *(Сделано после написания:
+  `Sbom.forPackageScoped nupkgPath framework assemblies` / `forPackageScopedWith options ...`,
+  `Sbom.packageSbomPath`, `Verify.sbomPackageScope` — см. `nuget-sbom.md`, «Package scope».)*
 - **Interop-дефект, не просто гигиена тестов:** в дереве, где Xake уже собирал, msbuild падает с
   `MSB3577` для 12 из 15 проектов page (упирается в `.resources`, которые Xake кладёт в
   `obj/xake/<fwk>/<brand>/`). Пользователь, чередующий Xake и `dotnet build` в одном `obj`,
@@ -242,14 +251,14 @@ nupkg, `Sign` — делегированное правило подписи, `S
    владеет Xake (`obj/xake/resources/<variant>/`). Байт-идентичность не страдает (csc зашивает
    manifest name, не путь), а `MSB3577` у пользователя, чередующего Xake и `dotnet build`,
    исчезает. Заодно вернуть доказательство page на расщеплённом lock.
-4. **Закрыть `/shared` (R3).** 1.7× — первое, что скажет владелец любого большого билда; всё
+4. **Закрыть `/shared` (R3)** — *сделано, da16369*. 1.7× — первое, что скажет владелец любого большого билда; всё
    остальное в ветке уже быстрее msbuild на полном прогоне, и терять это на мелочи обидно.
 5. **Зафиксировать формат lock**: поле версии, правило миграции, документированный контракт
    «что лежит в `Evaluation`/`Compilation`/`Dependencies`». Locks коммитятся в чужие
    репозитории — ломать их потом будет дороже, чем любой API.
 6. **Убрать глобальный мемо `locateFramework`** (или тест, который мутирует окружение) — пока
    тестов немного, это одна правка; потом это станет «почему-то падает на CI».
-7. **По SBOM: не реализовывать tier 1–3 до 2026-10-07**, а отправить в RFC ответ со своей
+7. **По SBOM: не реализовывать tier 1–3 до 2026-10-07** (*реализовано всё же 2026-09-24, с вариативными частями в `Sbom.PackageScopeOptions`*), а отправить в RFC ответ со своей
    стороны (§8 RFC): lock — механический вход для реестра verified components, потому что он
    записывает *что именно получил компилятор*, с хэшами; `Pack.entries` делает физическую
    инвентаризацию nupkg проверяемой. Это дёшево и даёт максимум влияния на то, во что потом

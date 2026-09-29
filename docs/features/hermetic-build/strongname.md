@@ -7,18 +7,20 @@ except the PE `TimeDateStamp`, `CheckSum` and the 128-byte strong-name signature
 
 ## Functions
 
-- **`stamp`** -- sets `TimeDateStamp`, then recomputes `CheckSum`.
-- **`checksum`** -- the standard PE checksum ("MapFileAndCheckSum"): a 16-bit ones'-complement
+- **`stamp : byte[] -> uint32 -> byte[]`** -- sets `TimeDateStamp`, then recomputes `CheckSum`.
+- **`checksum : byte[] -> byte[]`** -- the standard PE checksum ("MapFileAndCheckSum"): a 16-bit ones'-complement
   sum over the file, `CheckSum` itself excluded from the sum, plus the file length. Verified
   against `System.Reflection.Metadata`'s own `PEBuilder.CalculateChecksum` (dotnet/runtime) and
   empirically against real `csc` output.
-- **`readSnk`/`writeSnk`** (`writeSnk` internal) -- CAPI `PRIVATEKEYBLOB`/`PUBLICKEYBLOB` <->
+- **`readSnk : path -> RSAParameters * bool`** (the bool: the blob carried the private key) /
+  **`writeSnk`** (internal) -- CAPI `PRIVATEKEYBLOB`/`PUBLICKEYBLOB` <->
   `RSAParameters`, `.snk` only. `writeSnk` fabricates throwaway test keys without `sn.exe`; a key
   it writes, handed to `csc /keyfile:`, produces a signature that decodes correctly under the
   same `RSAParameters` -- the encoding is checked against a real compiler, not just itself.
-- **`sign`/`verify`** -- re-sign or check the strong-name signature; `sign` also sets
+- **`sign : byte[] -> RSAParameters -> byte[]`** / **`verify : byte[] -> RSAParameters -> bool`** -- re-sign or check the strong-name signature; `sign` also sets
   `COMIMAGE_FLAGS_STRONGNAMESIGNED` (0x8) in the CLI header `Flags`.
-- **`signFile`/`normalise`** -- file wrappers; `normalise` is stamp + sign + a final `checksum`.
+- **`signFile : path -> snkPath -> unit`** / **`normalise : path -> timeDateStamp: uint32 -> snkPath -> unit`**
+  -- file wrappers, in place; `normalise` is stamp + sign + a final `checksum`.
 
 ## The hash-exclusion rule (verified against csc byte for byte)
 

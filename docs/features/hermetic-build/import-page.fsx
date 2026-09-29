@@ -15,8 +15,9 @@
 // Xake comes from `.bootstrap/` next to the Xake checkout (see build.fsc.fsx), not from a
 // released package: this branch is not released.
 //
-// Cross-repo roots. `$(ProjectRoot)` (one of the three built-in roots `Roots.builtin` always
-// tokenizes against) is the build's project root -- the page copy. dataengine's paths, and the
+// Cross-repo roots. `$(ProjectRoot)` (one of the three built-in roots: `Roots.builtin`, which
+// `Roots.current`/`currentWith` apply to the engine's `ExecOptions.ProjectRoot`) is the build's
+// project root -- the page copy. dataengine's paths, and the
 // "unbuilt" project-reference outputs the import records for the two page->dataengine
 // `ProjectReference`s, live under a different tree entirely and would otherwise land in the
 // lock as raw, machine-specific absolute paths. `Project.ImportOptions.Roots` (this branch,
@@ -179,7 +180,8 @@ do xakeScript {
         // compile rules above). The restore graph is in the lock entry itself
         // (`Dependencies.Packages`, folded in at import), so nothing under `obj/` is read here;
         // the cache is only consulted for supplier/license. `name` is the assembly name, same
-        // capture as the compile rule's, so `Lock.entry` finds the entry by `Name` directly.
+        // capture as the compile rule's, so `Lock.entryFor fwk name` finds the entry by `Name`
+        // and `Framework` directly.
         target "out/(fwk:*)/(brand:*)/(name:*).cdx.json" {
             let! m = getRuleMatches()
             let fwk, brand, name = m.["fwk"], m.["brand"], m.["name"]

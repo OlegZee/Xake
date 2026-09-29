@@ -80,7 +80,7 @@ temp files of its own; the only temp file `run` still cleans up is its own respo
 | Setting | Compiler | Notes |
 |---|---|---|
 | `cscpath "<exe>"` | that executable | no framework or package lookup at all |
-| `toolset "<version>"` | `csc.dll` from `microsoft.net.compilers.toolset/<version>/tasks/netcore/bincore` in the NuGet cache | the package is restored into the cache if missing (same mechanism as the reference-assembly packages); still missing afterwards fails the build |
+| `toolset "<version>"` | `csc.dll` from `microsoft.net.compilers.toolset/<version>/tasks/netcore/bincore` in the NuGet cache | the package is fetched into the machine's NuGet cache if missing (`Restore.download` with `Restore.Options.Default`); still missing afterwards fails the build |
 | neither | whatever `targetfwk` / `NETFX-TARGET` resolves through `DotNetFwk.locateFramework` | the SDK's `csc.dll`, or `csc.exe` / `mcs` on a framework that ships one |
 
 - `toolset` replaces only the compiler. References, defines and environment variables still
@@ -92,8 +92,9 @@ temp files of its own; the only temp file `run` still cleans up is its own respo
   `Evaluation.Sdk`, empty for a composed compilation -- the two used to share one overloaded
   `Compiler.Sdk` field.
 - `CscLock.compile` restores a toolset package the lock names when it is not on this machine yet
-  (`ensureCompilerAvailable`, see below) -- the same restore mechanism as `toolset` above, just
-  triggered by replaying a lock instead of by the `toolset` operation.
+  -- through the runner's restore step (`Restore.ensure`, step 1 below), which treats the
+  compiler as one package among the entry's references and analyzers; `ensureCompilerAvailable`
+  only explains what is still missing afterwards.
 
 ### Import: the project decides, msbuild answers
 
@@ -117,30 +118,37 @@ do! CscLock.compileWith { RunOptions.Default with FailOnError = false } mapped
 ```
 
 `CscLock.compile` hands a resolved compilation straight to the runner, with no extra env vars
-and no temp files: the project's own `Args` is the whole compilation. It is an entry point of
+and no temp files: the entry's own `Args` is the whole compilation. It is an entry point of
 its own, not a mode of `csc {}` (changed 2026-09-24, conceptual-review.md 2.2): as a `fromlock`
 setting inside the record it made `csc { fromlock p; src !!"*.cs" }` compile while silently
 ignoring `src` and every other composition setting, and the type said nothing about it. What
 does apply to both entry points is `RunOptions = { FailOnError; CscPath; Restore; Server }` -- how the runner
 behaves, not what it compiles (`Server` is whether csc runs as a thin client of the Roslyn
-compiler server, [csc-server.md](csc-server.md)); `Csc` builds one from the settings' own `FailOnError`/`CscPath`,
-and `CscLock.compile` uses `RunOptions.Default` (`compileWith` takes them explicitly). The
+compiler server, [csc-server.md](csc-server.md)); `Csc` builds one from the settings' own `FailOnError`/`CscPath`/`Server`
+(`Restore` stays `Restore.Options.Default`), and `CscLock.compile` uses `RunOptions.Default`
+(`compileWith` takes them explicitly). Signatures: `CscLock.compile : Lock.Entry ->
+Recipe<ExecContext, unit>`, `CscLock.compileWith : RunOptions -> Lock.Entry -> Recipe<ExecContext,
+unit>`. The
 module is `CscLock`, not `Csc`, because F# will not let a module and the `let`-bound function
 `Csc` share a name (see the doc comment on `CscLock.resolve`).
 
-The runner (`run` in `Dotnet.csc.fs`, shared by both entry points) does, in order:
+The runner (`run` in `Dotnet.csc.fs`, shared by both entry points) does, in order (after a
+`trace Info "compiling '<name>' (<tool> <version>)"`):
 
-1. **Makes the compiler available** (`ensureCompilerAvailable`, raised 2026-09-23), before
-   anything else touches it, so the hash check below has something to check:
+1. **Restores what the lock names and this machine lacks** (`Restore.ensure options.Restore
+   [entry]`, see [restore.md](restore.md)): the compiler when it lives in a
+   `Microsoft.Net.Compilers.Toolset`-shaped package, and every reference and analyzer under the
+   package folder, in one `dotnet restore`. With nothing missing (the normal case) this is one
+   `File.Exists` per path and no process. Any problem it reports fails with `('<name>') restoring
+   the packages the lock names failed:` and the list.
+2. **Explains a compiler that is still missing** (`ensureCompilerAvailable`, raised 2026-09-23;
+   since `Restore` it no longer restores anything itself):
    - already on disk (`Dependencies.Compiler.Path` exists) -- nothing to do.
-   - under `$(NuGetPackageRoot)` -- the path names a `Microsoft.Net.Compilers.Toolset`-shaped
-     package (`<root>/<packageId>/<version>/...`) that just is not restored yet on this
-     machine: `trace Info "restoring compiler package %s %s"` and restore it, the same
-     mechanism the composed mode's `toolset` uses (factored into a shared
-     `restoreToolsetCompiler`). Still missing afterwards fails with `'<name>': the compiler
-     <path> is not available and restoring <id> <version> did not provide it`. A hash mismatch
-     *after* a successful restore is left to step 4 -- it means a different package build, not
-     a missing one.
+   - under the package folder (`Restore.packageRoot options.Restore`) -- a toolset-shaped package
+     the restore did not, or was not allowed to, provide: `'<name>': the compiler <path> is not
+     available and restoring <id> <version> did not provide it`. A hash mismatch *after* a
+     successful restore is left to step 8 -- it means a different package build, not a missing
+     one.
    - under `$(DotnetRoot)/sdk/<version>/` -- an SDK this machine does not have; nothing to
      restore, so this fails immediately: `'<name>': the lock names the compiler of SDK
      <version> (<path>), which is not installed; install that SDK or re-import with the
@@ -149,28 +157,28 @@ The runner (`run` in `Dotnet.csc.fs`, shared by both entry points) does, in orde
    - anywhere else -- `'<name>': the compiler <path> named by the lock does not exist`.
 
    Every failure here goes through the same `trace Error` + `FailOnError`-gated `failwith` shape
-   as the hash-mismatch check (step 6) and `Impl.failOnExitCode`.
-2. **Resolves `$(SourceRevisionId)`** (raised 2026-09-23, "Lock stability"): the lock never
+   (`failStep`) as the hash-mismatch check (step 8) and `Impl.failOnExitCode`.
+3. `needFiles` the compiler itself (raised 2026-09-23, conceptual-review.md 2.4): the hash check
+   in step 8 covers the compiler's path, but nothing before this made it a tracked
+   dependency, so an SDK or toolset update that changed `csc.dll`'s bytes left the target looking
+   up to date and the hash check never ran.
+4. **Resolves `$(SourceRevisionId)`** (raised 2026-09-23, "Lock stability"): the lock never
    carries a commit sha itself (see `Generated` and `Project.tokenizeRevision` below) -- when
-   `Generated`'s content, `Options` or `Defines` carries the literal token `$(SourceRevisionId)`,
-   it is replaced here (`Lock.mapText`) with `Git.headSha compilation.Directory` (walking up from the project's own
-   directory for a `.git`; no `git` executable). No token anywhere -- nothing happens, the
-   composed mode included, since it never populates `Generated`. A token present but no
+   `Generated`'s content or `entry.Args` carries the literal token `$(SourceRevisionId)`,
+   it is replaced everywhere `Lock.mapText` reaches (`Generated` content, `Options`, `Defines`,
+   evaluation properties) with `Git.headSha entry.Compilation.Directory` (walking up from the
+   project's own directory for a `.git`; no `git` executable). No token anywhere -- nothing
+   happens, the composed mode included, since it never populates `Generated`. A token present but no
    repository found (or `HEAD` unresolvable) fails with `'<name>': the lock needs
    $(SourceRevisionId) but no git repository was found at or above '<dir>' -- a lock that needs
    a revision must be compiled in a repository`, the same `trace Error` + `FailOnError` shape as
    the other checks here.
-3. Writes back every `Generated` file that is missing or whose content differs from what is on
-   disk -- the resolved project is the source of truth for msbuild-generated inputs like
-   `AssemblyInfo.cs` (and, now, `sourcelink.json` with its token already resolved by step 2). The
+5. Writes back every `Generated` file that is missing or whose content differs from what is on
+   disk -- the resolved entry is the source of truth for msbuild-generated inputs like
+   `AssemblyInfo.cs` (and, now, `sourcelink.json` with its token already resolved by step 4). The
    composed mode never populates `Generated`, so this is a no-op there.
-4. Creates the output directories, for every path `CscArgs.outputs entry.Args` names.
-5. `needFiles` the compiler itself (raised 2026-09-23, conceptual-review.md 2.4): the hash check
-   in step 7 covers the compiler's path, but nothing before this made it a tracked
-   dependency, so an SDK or toolset update that changed `csc.dll`'s bytes left the target looking
-   up to date and the hash check never ran. `needFiles [compiler.Path]`, right after
-   `ensureCompilerAvailable`, closes that.
-6. `needFiles` every resx in `Compilation.Resources` (so a resx edit rebuilds the dll) and, for each
+6. Creates the output directories, for every path `CscArgs.outputs entry.Args` names.
+7. `needFiles` every resx in `Compilation.Resources` (so a resx edit rebuilds the dll) and, for each
    `(resx, resources)` pair, compiles the resx to that `.resources` path with `Xake.Dotnet.Resx`
    when the output is **missing** -- so a machine with only the lock, or a cleaned `obj/`, still
    ends up with the exact file the recorded `/resource:` switch names. This is the same step for
@@ -188,27 +196,31 @@ The runner (`run` in `Dotnet.csc.fs`, shared by both entry points) does, in orde
    file with an unchanged timestamp is still caught (the hash check runs every time `run` runs
    for other reasons); a swapped file that also updates the timestamp is caught because the
    timestamp change is what makes the engine run `run` in the first place.
-7. Verifies the SHA-256 of every hashed reference, analyzer, and the compiler itself against what
+8. Verifies the SHA-256 of every hashed reference, analyzer, and the compiler itself against what
    is on disk. An empty recorded hash means "not checked" (the composed mode never records one,
    and neither does an unbuilt project reference). Any mismatch is collected and reported
-   together, then fails the build when `FailOnError` is set (`XakeException`, message containing
-   the path).
-8. `needFiles` on `CscArgs.inputs entry.Args` -- every file any input switch names, plus the
+   together (`('<name>') hash mismatch:` then one line per path), then fails the build when
+   `FailOnError` is set (`XakeException`, message containing the path).
+9. `needFiles` on `CscArgs.inputs entry.Args` -- every file any input switch names, plus the
    sources. For the composed mode this now covers everything the args name, including the
    framework's global references, not only sources/refs/resources.
-9. Writes the arguments to a response file, with `Impl.escapeArgument`, and runs the compiler.
-   `/noconfig` cannot go inside the rsp -- csc warns `CS2023` and ignores it there -- so it stays
-   on the command line and everything else goes into `@<rspfile>`.
-10. Picks the compiler: `settings.CscPath` wins if set; otherwise, when the project's recorded
+10. Writes the arguments to a response file, with `Impl.escapeArgument`.
+    `/noconfig` cannot go inside the rsp -- csc warns `CS2023` and ignores it there -- so it stays
+    on the command line and everything else goes into `@<rspfile>`.
+11. Picks the compiler: `RunOptions.CscPath` wins if set; otherwise, when the entry's recorded
     compiler path ends in `.dll`, it runs through `dotnet <path>`; otherwise the path is run
     directly (a native launcher, e.g. the SDK's `csc` apphost).
-11. Adds the compiler-server switches (2026-09-23, [csc-server.md](csc-server.md)) -- `/shared`,
-    plus `/keepalive:<s>` when `RunOptions.Server` names one -- on the command line, next to
-    `/noconfig`, never in the rsp and never in the lock: csc parses them out on the client side
-    before anything reaches `VBCSCompiler`, so `Entry.Args` is unchanged by them. Only when a
+12. Adds the compiler-server switches (2026-09-23, [csc-server.md](csc-server.md)) -- `/shared`,
+    plus `/keepalive:<s>` when `RunOptions.Server` names one -- on the command line, ahead of
+    `/noconfig` and the `@rsp`, never in the rsp and never in the lock: csc parses them out on the
+    client side before anything reaches `VBCSCompiler`, so `Entry.Args` is unchanged by them. Only when a
     `VBCSCompiler.dll` sits next to the compiler file about to run (the SDK's `Roslyn/bincore`,
-    a toolset package's) and the runner sets no env vars (`serverArgs`); the legacy `csc.exe`,
-    `mcs`, an arbitrary `cscpath` and a mono/registry toolchain compile in-process as before.
+    a toolset package's), the runner sets no env vars, and the compiler is not under the temp
+    directory (`serverArgs`); the legacy `csc.exe`, `mcs`, an arbitrary `cscpath` and a
+    mono/registry toolchain compile in-process as before.
+13. Runs the compiler with the working directory set to `Compilation.Directory` (what `dotnet
+    build` uses; an XML-doc `<include file='..'>` resolves against it), the framework's env vars
+    (`envVars`, empty on `CscLock.compile`), and fails on a non-zero exit when `FailOnError` is set.
 
 The rsp file is deleted once the compiler exits, success or failure -- the only temp file `run`
 produces now that the composed mode's `.resx` resources are permanent outputs (see above),
@@ -229,7 +241,7 @@ framework**. `ImportOptions`:
 | `Properties` | extra `-p:` properties, e.g. `["Brand", "MESCIUS"]` |
 | `Variant` | names the `obj/xake/<framework>/<variant>/` subtree; keeps distinct property sets from overwriting each other's generated files |
 | `Output` | the lock file to write |
-| `Roots` | extra `(token, absolute path)` roots to tokenize against, beyond the built-in three; default `[]` |
+| `Roots` | extra `(token, path)` roots to tokenize against, beyond the built-in three (a relative path is taken against the project root; a built-in token's name replaces that built-in); default `[]` |
 
 **One restore, then a design-time build per framework (2026-09-23).** Three msbuild phases per
 project, all of them inside that project's `withProjectLock`:
@@ -279,9 +291,12 @@ otherwise land in the lock untokenized and machine-specific. `ImportOptions.Root
 extra token per sibling repository (the decision: no shared parent root, since siblings can move
 independently and a shared root would tokenize more than intended) -- e.g. `Roots = [
 "$(DataEngineRoot)", "/abs/path/to/ar-net-core-dataengine" ]`. `Project.import` combines them
-with the built-in three via `Roots.withExtra`, which validates each token is well-formed
-(`$(Name)`), is not one of the built-ins, and that its path is absolute -- failing early rather
-than writing a lock that silently didn't tokenize -- and keeps the longest-root-first order
+with the built-in three via `Roots.withExtra projectRoot extra` (inside the import:
+`Roots.currentWith options.Roots`), which validates each token is well-formed (`$(Name)`) --
+failing early rather than writing a lock that silently didn't tokenize -- takes a relative path
+against the project root (not the process's cwd), lets an extra token of a built-in's name
+*replace* that built-in (how `Roots.packageRootOverride dir` points `$(NuGetPackageRoot)` at a
+build's own package folder; it used to be refused), and keeps the longest-root-first order
 `Roots.builtin` already relies on. A script reading such a lock back must pass the same roots:
 `Lock.loadWith extraRoots path` inside a recipe, or `Lock.readWith (Roots.withExtra projectRoot
 extra) path` outside one. `Lock.load`/`save` use the built-in three only.
@@ -289,7 +304,7 @@ extra) path` outside one. `Lock.load`/`save` use the built-in three only.
 **Where the project root comes from (review §2.5).** `$(ProjectRoot)` is the engine's
 `ExecOptions.ProjectRoot` -- what `need`, `getFiles` and rule matching already resolve against --
 not the process's current directory. The `Roots` module holds the whole thing: `nugetRoot ()`,
-`dotnetRoot ()`, `builtinTokens`, the pure `builtin projectRoot` / `withExtra projectRoot extra`,
+`dotnetRoot ()`, `nugetPackageRootToken`, `builtinTokens`, `packageRootOverride dir`, the pure `builtin projectRoot` / `withExtra projectRoot extra`,
 and the recipes `current` / `currentWith extra` that read the root from `getCtxOptions()`. The
 recipe-level lock and evaluation entry points (`Lock.load`/`loadWith`/`save`/`saveWith`,
 `Fsproj.load`) are recipes for exactly this reason; the pure `writeWith`/`parseWith`/`readWith`
@@ -395,7 +410,57 @@ framework name (`.NETStandard,Version=v2.0`), only a multi-target project uses t
 (a document-level `"Framework"`) still reads -- the value is distributed into every entry that
 has none of its own -- and is always written back in the new shape; tokenization (`Roots.tokenizeAll`) and the
 one-line-per-item style are unchanged, the file is deterministic (write, parse, write again is
-byte-identical -- tested). A lock in the old flat format (`"Projects"` with `"Args"`) is refused
+byte-identical -- tested). The shape `Lock.writeWith` produces (two-space indent per level, one
+item per line; `Alias` only on a reference that has one; each package one inline object):
+
+```json
+{
+  "Configuration": "Release",
+  "Properties": {
+    "Brand": "MESCIUS"
+  },
+  "Entries": [
+    {
+      "Name": "DataEngine",
+      "Framework": "netstandard2.0",
+      "Evaluation": {
+        "Project": "$(ProjectRoot)/src/DataEngine/DataEngine.csproj",
+        "ProjectRefs": [ ... ],
+        "Imports": [
+          { "Path": "$(ProjectRoot)/Directory.Build.props", "Sha256": "..." }
+        ],
+        "Sdk": "8.0.425",
+        "SdkPin": "exact 8.0.425",
+        "Properties": {
+          "AssemblyName": "DataEngine", ...
+        }
+      },
+      "Compilation": {
+        "Directory": "$(ProjectRoot)/src/DataEngine",
+        "Options": [ "/noconfig", ..., "@Defines", "@References", "@Analyzers", "@Sources", ... ],
+        "Defines": [ "TRACE", ... ],
+        "Sources": [ "$(ProjectRoot)/src/DataEngine/A.cs", ... ],
+        "Generated": { "<path>": "<content>", ... },
+        "Resources": { "<resx path>": "<.resources path>", ... }
+      },
+      "Dependencies": {
+        "Compiler": { "Tool": "csc", "Path": "$(DotnetRoot)/sdk/8.0.425/Roslyn/bincore/csc.dll", "Sha256": "...", "Version": "4.11.0-3.25569.22" },
+        "References": [
+          { "Path": "$(NuGetPackageRoot)/...", "Sha256": "..." },
+          { "Path": "...", "Sha256": "...", "Alias": "legacy" }
+        ],
+        "Analyzers": [ { "Path": "...", "Sha256": "..." } ],
+        "Packages": [
+          { "Id": "Newtonsoft.Json", "Version": "13.0.3", "Sha512": "...", "Direct": true, "DependsOn": [] }
+        ]
+      }
+    }
+  ]
+}
+```
+
+(Lists are written one item per line; they are folded to `[ ... ]` above for space. `Generated`
+and `Resources` are JSON objects keyed by path, `Properties` too.) A lock in the old flat format (`"Projects"` with `"Args"`) is refused
 by `parseWith` with "lock written by an older Xake; re-import" -- nothing released used it, so
 there is no reader for it. `samples/hermetic/dataengine/locks/` shows the shape on the real
 fixture: 889 lines per brand, 27 `Options` (`@Defines`, `@References`, `@Analyzers`, `@Sources`
@@ -404,8 +469,9 @@ in msbuild's positions), 12 `Defines`, 113-115 `References`, 4 `Packages`.
 `Lock.diff a b` covers every section: `Framework`, `Options` and `Sources` as ordered lists, `Defines`,
 `ProjectRefs` as sets, `Compiler` incl. `Version`, `Evaluation.Sdk`, the hashed lists,
 `Generated`/`Resources` pairs, `Packages` (added, removed, version changed, sha512 changed).
-`Lock.mapPaths f` rewrites `Options` (markers left alone), `Sources`, `References` (dropping the
-hash when the path changed), `Analyzers`, `Generated` keys and `Resources`; `Lock.mapText f`
+`Lock.mapPaths f` rewrites `Options` (markers left alone), `Sources`, `References` and
+`Analyzers` (each dropping its hash when the path changed), `Generated` keys and both paths of
+`Resources`; `Lock.mapText f`
 applies `f` to `Generated` content, `Options`, `Defines` and the evaluation's property values
 (`tokenizeRevision` and `run`'s resolution of `$(SourceRevisionId)` both use it).
 
@@ -436,8 +502,8 @@ it is non-empty, calls the pure `Project.tokenizeRevision sha entry : Lock.Entry
 occurrence of `sha` in `Generated` content, `Options`, `Defines` and the evaluation's `Properties`
 values is replaced with the literal token `$(SourceRevisionId)`. The sha itself is **not** recorded anywhere in the lock --
 `SourceRevisionId` is asked from msbuild only to drive this substitution, never added to the
-`Properties` whitelist. `run` (`Dotnet.csc.fs`, step 2 of the runner) resolves the token back at
-compile time, from the project's own repository (`Git.headSha project.Directory`) -- see below.
+`Properties` whitelist. `run` (`Dotnet.csc.fs`, step 4 of the runner) resolves the token back at
+compile time, from the project's own repository (`Git.headSha entry.Compilation.Directory`) -- see below.
 
 `Project.import` also `needFiles`s `Git.headFiles (project's directory)` -- `.git/HEAD` and the
 ref file (or `packed-refs`) it resolves through -- for every project, whether or not it uses the
@@ -508,14 +574,14 @@ mapped outputs, it only `needFiles` what the (already-mapped) args name.
 ## Recording a lock from composed `csc` settings
 
 `Project.import` produces a `Lock.Entry` from an msbuild project; `resolve` (private, above)
-produces one from composed `csc {}` settings, but only for `run`'s own use -- discarded once
-compiled. `lock-from-settings.md` (design note, recommendation 1b) asks for that value to be
+produces one from composed `csc {}` settings, and used to hand it only to `run` -- discarded once
+compiled. `lock-from-settings.md` (design note, recommendation 1b) asked for that value to be
 reachable, so a lock-recording rule can write it out the way an import rule already does. The
-smallest API for that:
+smallest API for that, as built:
 
 ```fsharp
 module CscLock =
-    val resolve : CscSettingsType -> Recipe<Lock.Entry>
+    val resolve : CscSettingsType -> Recipe<ExecContext, Lock.Entry>
 
 module Lock =
     val rehash : Entry -> Entry
@@ -539,7 +605,7 @@ after `CscLock.resolve`; the cost is then paid only when that rule reruns, like 
 in Xake.
 
 **`Lock.diff a b`** is a pure, human-readable comparison of two lock entries of the same
-project: `[]` means identical. In order: `Options` and `Sources` as ordered lists (bare `+`/`-`
+project: `[]` means identical. In order: `Framework` (`~ Framework: <a> -> <b>`), then `Options` and `Sources` as ordered lists (bare `+`/`-`
 lines from an LCS diff -- a moved argument shows as a removal at its old position and an
 addition at its new one, there being no separate "moved" marker in an ordered diff), `Defines`
 as a set, `Compiler` (`Path`/`Sha256`/`Version`, one line per differing field), `Evaluation.Sdk`,
@@ -547,10 +613,10 @@ each hashed list (`References`, `Analyzers`, `Imports`) by path (added, removed,
 <path>: <old> -> <new>` when both sides have a hash and they differ), `Generated`/`Resources` by
 key (added, removed, or `~ <label> <key>: content changed`), `ProjectRefs` as a set
 (added/removed), and `Packages` by id (`+ Package Id@Version`, `- Package Id@Version`, `~ Package
-Id: <old> -> <new>` for a version change, `~ Package Id@Version: sha512 changed`). This is the primitive `csc { locked "path" }` sugar and
-any `Policy` wiring would build on (`lock-from-settings.md` scenario 3); neither exists yet --
-`Lock.diff` is deliberately usable stand-alone (e.g. from an fsx-level "verify" rule) before
-either does.
+Id: <old> -> <new>` for a version change, `~ Package Id@Version: sha512 changed`). This is the primitive `csc { lock "path" }` (below, built
+2026-09-24; planned as `locked`) and `CscLock.verify` are built on (`lock-from-settings.md`
+scenario 3); no `Policy` wiring exists. `Lock.diff` stays usable stand-alone (e.g. from an
+fsx-level "verify" rule).
 
 Tests: `src/tests/LockDiffTests.fs` (`rehash`, `diff` identical and with changes, pure, no
 msbuild/compiler needed); `src/tests/FromLockTests.fs`, `CscLock.resolve resolves composed
@@ -583,11 +649,11 @@ compiled; the lock decides whether this is the compilation that was recorded:
 
 1. **No lock file yet** -- `Lock.rehash` the resolved entry, write it as a one-entry
    `Lock.Document` (`Configuration` "", `Properties` []; the entry's own `Framework` is the
-   settings' `targetfwk` or "") with `Lock.save`, and compile *that* entry. The hashes `run` verifies were
+   settings' `targetfwk`, else the `NETFX-TARGET` var, else "") with `Lock.save`, and compile *that* entry. The hashes `run` verifies were
    taken a moment earlier, so the check is trivially true -- it is the next build it is for.
 2. **Lock present, and the resolved settings match it** (`Lock.diff recorded resolved` empty)
    -- compile the **recorded** entry, not the resolved one. That is the whole point: the
-   recorded entry carries hashes, and `run`'s hash check (step 7 above) then gates the build,
+   recorded entry carries hashes, and `run`'s hash check (step 8 above) then gates the build,
    so a reference swapped on disk after recording fails even though the settings did not move.
 3. **Lock present and different** -- the build **fails**, printing the diff and naming the two
    ways to update:
@@ -615,9 +681,9 @@ filesets say: sources, options, defines, reference/analyzer paths, the compiler 
 | `dotnet fsi build.fsx -- -- update-locks` | the script's own phony target calling `CscLock.record`; the normal way |
 | `rm locks/app.json` | a missing lock means "record it" -- the same rule as any missing target |
 
-`CscLock.record : string -> CscSettingsType -> Recipe<unit>` resolves, rehashes and overwrites
-the lock, compiling nothing. `CscLock.verify : string -> CscSettingsType -> Recipe<string list>`
-returns the same diff `lock` fails on (an empty list means the lock is current), writing nothing and compiling
+`CscLock.record : string -> CscSettingsType -> Recipe<ExecContext, unit>` resolves, rehashes and overwrites
+the lock, compiling nothing. `CscLock.verify : string -> CscSettingsType -> Recipe<ExecContext, string list>`
+returns the same diff `lock` fails on (`Lock.diff (Lock.entry name doc) resolved`; an empty list means the lock is current), writing nothing and compiling
 nothing -- `lock-from-settings.md` scenario 3 as a stand-alone check, e.g. a `check-locks`
 target in CI. `CscLock.compile` remains the entry point for a lock that came from
 `Project.import`.

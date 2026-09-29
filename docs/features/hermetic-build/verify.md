@@ -42,6 +42,15 @@ network, no signing tool -- it measures, it does not sign or validate a signatur
   clause names the single biggest range so it cannot hide behind a range count -- e.g.
   `content differs: 143 ranges, 148 213 bytes, largest 145 408 bytes at 0x2a40 (Content)`.
 
+- **`Verify.sbomPackageScope : nupkgPath -> framework -> Sbom.Bom -> string list`** and
+  **`Verify.sbomPackageScopeWith : Sbom.PackageScopeOptions -> nupkgPath -> framework ->
+  Sbom.Bom -> string list`** -- the package-scope SBOM acceptance checks 3.1-3.4, one line per
+  finding, `[]` a pass (`nuget-sbom.md`, "Package scope"). The `With` form takes the options
+  the document was produced with; the plain one applies `Sbom.defaultPackageScope`.
+
+`Verify.layout` (the PE/CLR offsets `compare` labels with) is `internal`: `StrongName` and
+`Sign` use it, a script does not.
+
 ## Reading the field labels
 
 - **`TimeDateStamp` + `CheckSum` (+ often `StrongNameSignature`)** -- the classic "re-stamped,

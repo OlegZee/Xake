@@ -363,7 +363,7 @@ let acme =
 
 let bom = Sbom.forPackageScopedWith acme nupkg "netstandard2.0" [ asmBom ]
 match Verify.sbomPackageScopeWith acme nupkg "netstandard2.0" bom with
-| [] -> do! writeText (Sbom.cycloneDx bom)
+| [] -> do! writeTargetText (Sbom.cycloneDx bom)
 | findings -> failwithf "SBOM does not pass its own checks:\n%s" (String.concat "\n" findings)
 ```
 

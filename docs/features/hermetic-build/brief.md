@@ -137,12 +137,14 @@ strong-name and Authenticode signing, possibly obfuscation (?), bundled third-pa
 **What it decides.**
 - **§8 is settled: drop-in, not script-first.** Nobody rewrites a build of that size in an
   F# DSL. The tool must read the existing `.sln`/`.csproj` and drive `csc` itself. The engine,
-  `Fsproj.evaluate` (rename: it is not F#-specific) and the `csc` task are the reusable parts;
+  `Fsproj.evaluate` (rename: it is not F#-specific) and the `csc` task are the reusable parts
+  (as built: `Fsproj` stays F#, the C# import is `Project.import`; see the §11 as-built table);
   the script is generated or implicit.
 - **Compile lock and SBOM must scale to hundreds of projects.** One msbuild evaluation per
   project per TFM, cached and parallel, is the cost model; `projects/<fwk>/<lib>.json` × 300
   files in git is a lot of diff noise — a single lock per solution or per TFM may be the
-  better unit. To measure on the real repo before deciding.
+  better unit. To measure on the real repo before deciding. (As built: one lock per variant,
+  every project and every framework inside it — `Lock.Document.Entries`.)
 - **Signing, obfuscation and packaging are inside the hermetic boundary**, or the attestation
   only covers unsigned intermediates nobody ships. Authenticode and strong-name signing as
   Xake tasks, obfuscator as a task, nupkg/installer assembly as tasks — each with tracked
@@ -270,6 +272,11 @@ dotnet msbuild Proj.csproj -restore -p:Configuration=Release -p:TargetFramework=
     -t:CoreCompile   -getItem:CscCommandLineArgs -getItem:ReferencePath;...  -getProperty:...
 ```
 
+(As built, `Project.import`: one `-t:Restore -p:RestoreRecursive=false` per project with no
+`TargetFramework`, then per framework `-t:PrepareResources;Compile` with no `-restore`,
+`-getItem:CscCommandLineArgs,ReferencePath,Analyzer,ProjectReference,EmbeddedResource`, and a
+`-pp` run for the import list; §8j trap 6 is why `Compile`, not `CoreCompile`.)
+
 and the kept lock is the exact `csc` invocation `dotnet build` would have made — analyzers and
 source generators, `/keyfile`, `/nullable`, `/langversion`, `/warnaserror`, embedded resources,
 generated `AssemblyInfo`/TFM attributes, `/deterministic`, `/pathmap` — everything, with paths
@@ -286,7 +293,7 @@ by a Xake task, recorded as an evaluation-time step, or left to msbuild — expl
 | Step | Owner in the hermetic build |
 |---|---|
 | `PrepareForBuild`, `ResolveReferences`, `ResolveKeySource` | evaluation time (msbuild), result in the lock |
-| `PrepareResources` (resgen: `.resx` → `.resources`) | Xake `resgen` task (exists), its outputs are csc inputs |
+| `PrepareResources` (resgen: `.resx` → `.resources`) | Xake `resgen` task (exists), its outputs are csc inputs (as built: the pairs are recorded in `Compilation.Resources` and the runner compiles a missing output with `Resx.compile`) |
 | `Compile` | Xake `csc` task with the imported command line |
 | `CreateSatelliteAssemblies` (localized resource dlls) | Xake task to write (AL or csc-with-resources); a component vendor ships these |
 | `GenerateSerializationAssemblies`, `GenerateManifests`, `UnmanagedRegistration` | out of scope unless the projects use them (?) |
@@ -297,9 +304,12 @@ by a Xake task, recorded as an evaluation-time step, or left to msbuild — expl
 **Evaluation inputs.** `MSBuildAllProjects` (the SDK itself uses it as `Inputs` of its
 incremental targets, lines 2571/2873/3463) lists every imported file; recorded as dependencies
 of the import rule so a `Directory.Build.props` or SDK change re-imports and nothing else does.
+(As built: `MSBuildAllProjects` turned out useless on SDK 8, §8j trap 1; the import list comes
+from `msbuild -pp` and lands in `Evaluation.Imports`.)
 
 **Result of an import.** A lock directory with **one file per (TFM, brand)** holding a
-section per project — six files for ActiveReports (decision 2026-09-21: smaller files, keyed
+section per project (as built since 2026-09-24: one file per brand, every TFM inside, one
+`Lock.Entry` per (project, framework); see the §11 as-built table) — six files for ActiveReports (decision 2026-09-21: smaller files, keyed
 by what actually varies; a per-project split would be 90 files of mostly identical reference
 lists) and a *generated, editable* Xake script
 that wires the locks, the resgen/csc/satellite steps and the layout. The script is the escape
@@ -704,7 +714,7 @@ like `build.fsc.fsx`: variables, a handful of rules, calls into the library.
 Everything with a `Recipe` return records its own dependencies, so a script author gets
 incremental behaviour without thinking about it — the same contract `Fsproj.evaluate` has now.
 
-**Order of building, matched to the demo:** `Project.import` + `Lock` + `csc { invocation }`
+**Order of building, matched to the demo:** `Project.import` + `Lock` + `csc { invocation }` (built as `CscLock.compile`)
 (demo item 1 and 2) → `Nuget` + `Sbom` (item 3) → `Verify` (item 4) → `Babel`/`Pack`/`Sign`
 (item 5). `Sln` can wait until more than one project is imported; the first demo names its
 project explicitly, as `build.fsc.fsx` does.
@@ -718,6 +728,36 @@ the assembly anyway. The fsx needs a released Xake with this branch, or `.bootst
 as today; releasing first is cheaper. Tests live in `src/tests` from the first piece: the
 design-time import gets a fixture like `reads the project msbuild evaluated`, pure modules get
 unit tests, and the fsx run is the integration test.
+
+### As built (2026-09-29)
+
+The table above is the 2026-09-21 plan and stays as written. What the code
+(`src/dotnet/*.fs`) has today, row by row; **≠** marks a row that was planned differently.
+The full surface, signature by signature, is in `api.md`.
+
+| | Planned (2026-09-21) | As built |
+|---|---|---|
+| ≠ | `Project.ImportOptions = { Project; Configuration; Framework; Properties; Output }` | `{ Projects: string list; Frameworks: string list; Configuration; Properties; Variant; Output; Roots }` — one import covers many projects and every framework; `Project.import : ImportOptions -> Recipe<ExecContext, unit>` writes one lock |
+| ≠ | `Lock = { Compiler: Csc\|Fsc; Args; Sources; References; Packages; Imports; Properties }` | `Lock.Entry = { Name; Framework; Evaluation; Compilation; Dependencies }` in three sections: `Evaluation { Project; ProjectRefs; Imports: Hashed list; Sdk; SdkPin: SdkPin option; Properties }`, `Compilation { Directory; Options (with `@Sources`/`@References`/`@Analyzers`/`@Defines` markers); Defines; Sources; Generated; Resources }`, `Dependencies { Compiler { Tool; Path; Sha256; Version }; References: Reference list (with `Alias`); Analyzers: Hashed list; Packages: Package list }`. `Args` is not stored: `Entry.Args` rebuilds it and the import checks the round trip |
+| ≠ | one lock file per (TFM, brand) (§8c) | `Lock.Document = { Configuration; Properties; Entries }`: one lock per variant (brand), every framework inside, `Entry.Framework` is identity; `Lock.entryFor framework name doc` is the unambiguous lookup, `Lock.entry name doc` fails when a name matches several frameworks |
+| ≠ | `Lock.read`, `Lock.write` | recipes `Lock.load` / `loadWith extraRoots` (they `needFiles` the lock) and `Lock.save` / `saveWith extraRoots`, against the engine's `ProjectRoot`; pure forms `Lock.parseWith roots`, `readWith roots`, `writeWith roots` |
+| ≠ | tokenizing roots in `Fsproj` | module `Roots`: `builtin projectRoot`, `withExtra projectRoot extra`, recipes `current` / `currentWith extra`, `nugetRoot`, `dotnetRoot`, `packageRootOverride dir`; tokens `$(NuGetPackageRoot)`, `$(ProjectRoot)`, `$(DotnetRoot)` plus one per sibling repository (`ImportOptions.Roots`) instead of one shared `$(Root)` |
+| ≠ | `CscSettingsType.Invocation: string list option`, `csc { invocation lock.Args }` | no verbatim mode inside `csc {}`: `CscLock.compile : Lock.Entry -> Recipe<ExecContext, unit>` and `CscLock.compileWith : RunOptions -> Lock.Entry -> ...` replay an entry; `RunOptions = { FailOnError; CscPath; Restore: Restore.Options; Server: CompilerServer }`. `csc {}` itself resolves settings to a `Lock.Entry` (`CscLock.resolve`) and runs the same runner |
+| ≠ | `Toolset: CompilerSource` | `Toolset: string option` — a `Microsoft.Net.Compilers.Toolset` version; builder operation `toolset "<version>"`; `cscpath` still overrides |
+| ≠ | import reads `CscToolPath`/`CscToolExe` | `CscToolPath`/`CscToolExe` when set; else `<dir of CSharpCoreTargetsPath>/bincore/csc.dll` — what a toolset package redirects (it never sets `CscToolPath`); else `RoslynTargetsPath/bincore/csc.dll`. The compiler's `Version` comes from its file version resource |
+| new | — | `csc { lock "path" }` (`CscSettingsType.Lock`): strict locking of composed settings — missing: record and compile; matching: compile the recorded entry; different: fail with `Lock.diff`. `CscLock.record path settings` (explicit update) and `CscLock.verify path settings` (the diff, nothing written) |
+| new | — | compiler server: `CompilerServer = Shared of keepAlive: int option \| InProcess`, `noserver` / `keepalive n`, `XAKE_CSC_SERVER=0` |
+| new | — | module `Restore`: `Options { PackageRoot; Enabled }`, `into dir`, `missing`, `download`, `ensure`, `prepare`, `verify`, `packageRoot` — the packages a lock names, one `dotnet restore` via `PackageDownload` |
+| ≠ | `Nuget.Assets = { Packages; Graph; Direct }`; `Package` (id, version, sha512, source, license, supplier, repository) | `Assets` adds `Framework`; `Nuget.Package` adds `Commit`, `Directory`; also `packageOf`, `ships`, `Nuspec`/`parseNuspec`, `nuspecFrameworkMatches`, `nuspecDependenciesFor`. The graph is read at import into `Dependencies.Packages` (`Lock.Package { Id; Version; Sha512; Direct; DependsOn }`) |
+| ≠ | `Sbom.forAssembly : Lock -> File -> Bom` | `Sbom.forAssembly (cacheRoot: string) (entry: Lock.Entry) (assemblyPath: string) : Bom` — packages, edges and direct flags from the lock entry, supplier/license from the cache |
+| ≠ | `Sbom.forPackage` | `Sbom.forPackage (nupkgPath: string) (assemblies: Bom list) : Bom` (restore scope, union); plus the package scope: `forPackageScoped nupkgPath framework assemblies`, `forPackageScopedWith (options: PackageScopeOptions) ...`, `defaultPackageScope`, `PackageScope.*` predicates, `packageSbomPath`, `shippedPaths` |
+| ≠ | `SbomComponent` msbuild items arrive through `Lock` | not built |
+| ≠ | `Verify.sha256`, `authenticodeHash`, `compare` | as planned, plus `Verify.verdict : Difference list -> string` and `Verify.sbomPackageScope` / `sbomPackageScopeWith` (acceptance checks 3.1–3.4) |
+| new | — | `StrongName`: `stamp`, `checksum`, `readSnk`, `sign`, `verify`, `signFile`, `normalise` (§8j E4) |
+| ≠ | `Pack` recipe wrapping a CLI | pure functions, no CLI: `Pack.zip`, `Pack.nupkg`, `Pack.entries`, `Options { Timestamp; Level }`, `defaultOptions` |
+| ≠ | `Sign` settings record, CE builder, `delegated` rule | `Sign.Settings { Target; Input; Certificate; TimestampServer; Hash; Description }`, `Request`, `Signer = Request -> Async<byte[]>`, `Store { TryFetch; Publish }`; `Sign.rule settings signer`, `Sign.executor settings signer store budget` (a `DelegatedExecutor`), `fakeSigner`, `directoryStore`, `identity`, `imageHash`, `request`, `kindOf`, `isSigned`, `verifySameImage`; the builder is `Sign.sign { ... }` (returns `Settings`), not a top-level `sign` |
+| ≠ | `Sln`, `Policy`, `Babel` | not built |
+| ≠ | `Fsproj.evaluate` generalised or retired | `Fsproj` stays the F# evaluation (`evaluate`, `parseWith`, `load`); the C# import is `Project.import` |
 
 ## 12. What it takes to start (2026-09-21)
 
@@ -734,12 +774,13 @@ anything built on it runs from `.bootstrap/` until it is.
    of record (the plan in `docs/session.md`). Half a day; it unblocks every fsx after it.
 2. **A C# fixture in this repo.** A small `samples/hermetic/` C# project with a package
    reference, an `.resx`, an analyzer package, `SignAssembly` with a test key and two brands
-   via a props file — so the import, the lock and `csc { invocation }` are proven and tested
+   via a props file — so the import, the lock and `csc { invocation }` (as built: `CscLock.compile`) are proven and tested
    here, without access to ActiveReports. The integration test compares `dotnet build`'s dll
    with Xake's byte for byte; that is demo item 1 in miniature.
 3. **First library slice** (§11 order): `Project.import` (design-time msbuild for C#, lock per
    TFM+brand, hashes for libraries, `needFiles` on imports), `Lock` read/write, `csc {}`
-   verbatim mode with hash verification and the Toolset compiler source. Tests in `src/tests`.
+   verbatim mode with hash verification and the Toolset compiler source. (As built: `Lock.load`/
+   `Lock.save` recipes, and the verbatim mode is `CscLock.compile`, not a `csc {}` setting.) Tests in `src/tests`.
    Then `Nuget` + `Sbom`, then `Verify`.
 4. **The fsx** over those types, run first against the fixture, then against ActiveReports.
 
@@ -809,7 +850,9 @@ The command line carries everything: `/noconfig /nostdlib+ /keyfile /determinist
 3. **Sources and obj paths are project-relative** (`Aggregates/Aggregate.cs`,
    `obj/.../X.dll`): the verbatim `csc` invocation runs with cwd = project dir, or the lock
    absolutizes and tokenizes. Tokenizing is the better lock; `$(Root)` covers both repos as
-   siblings.
+   siblings. (As built: no shared `$(Root)` — one extra token per sibling repository via
+   `ImportOptions.Roots`, e.g. `$(DataEngineRoot)`; the compile runs with
+   `workdir = Compilation.Directory` as well.)
 4. **Generated inputs depend on the commit by design**: `AssemblyInfo.cs` carries
    `AssemblyInformationalVersion("5.0.2+<sha>")` (`IncludeSourceRevisionInInformationalVersion`
    defaults to true in dataengine; page sets it false) and `sourcelink.json` maps the repo path

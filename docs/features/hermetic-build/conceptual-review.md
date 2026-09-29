@@ -11,32 +11,35 @@ A1/A2, the lock split, `csc { lock }`, `Restore`, one lock per variant all lande
 review was written). The verdict of §1 held: both seams are closed, and the way they were
 closed is the shape this review asked for.
 
+Line numbers in the Evidence column re-checked 2026-09-29 at `b4ba814` (the compiler-server
+change, da16369, moved most of `Dotnet.csc.fs`).
+
 | Claim / recommendation | Status | Evidence |
 |---|---|---|
 | §1, §2.8 `src/core` changed in exactly two files | STALE-WRONG | four now: `ExecCore.fs`, `WorkerPool.fs`, `Path.fs` (`impl.normalizeLiteralPrefix`, 4e74f69), `Database.fs` (`Storage.openWithRetry`, 2d10b52). Both new ones are engine bug fixes too, so the conclusion "no drift" stands |
 | §2.1 `Lock.Project` mixes three notions | DONE | `Lock.Entry = { Name; Framework; Evaluation; Compilation; Dependencies }`, `Project.fs:498` |
-| §2.1 `Args` duplicates the reference paths | DONE | `Entry.Args` is a member rebuilt from `Compilation.Options` + `Dependencies` (`Project.fs:515`, `Lock.Compilation.args`/`ofArgs`); import and `resolve` both verify the rebuilt line equals the original (`Dotnet.csc.fs:490`) |
+| §2.1 `Args` duplicates the reference paths | DONE | `Entry.Args` is a member rebuilt from `Compilation.Options` + `Dependencies` (`Project.fs:515`, `Lock.Compilation.args`/`ofArgs`); import and `resolve` both verify the rebuilt line equals the original (`Project.fs:1254`, `Dotnet.csc.fs:572`) |
 | §2.1 `mapPaths` rewrites five fields in step | DONE | `Lock.mapPaths` (`Project.fs:584`) walks `Options` (skipping the section markers), `Sources` and the reference/analyzer entries |
 | §2.1 `Compiler.Sdk` means two things | DONE | `Compiler.Version` (from the file version resource, `Lock.compilerVersion`) vs `Evaluation.Sdk` (`NETCoreSdkVersion`) |
-| §2.1 `resolve` fills placeholder fields | DONE by contract | `resolve` writes `Evaluation = { Project=""; ProjectRefs=[]; Imports=[]; Sdk=""; SdkPin=None; Properties=Map.empty }` and the type documents "empty when composed" (`Dotnet.csc.fs:482`) |
-| §2.2 `FromLock` is a mode flag in the settings | DONE, and more | `CscSettingsType.FromLock` and the `fromlock` operation are gone; `CscLock.compile`/`compileWith` (`Dotnet.csc.fs:563`), `RunOptions` (`Dotnet.csc.fs:74`). `Csc settings` is one path: resolve, then run |
-| §2.2 `run` takes `RunOptions = { FailOnError; CscPath }` | DONE, superseded | the record also carries `Restore: Restore.Options` (`Dotnet.csc.fs:74`) |
-| §2.2 "optionally a small `cscLock {}` builder" | STALE | the need was met from the other side: `csc { lock "path" }` with strict semantics, plus `CscLock.record`/`verify` (`Dotnet.csc.fs:685`, `CscLockTests.fs`) |
-| §2.3 the `.resources` timestamp test is a second rebuilder | DONE | `run` regenerates only when the output is missing (`Dotnet.csc.fs:260-264`), the comment names this review |
-| §2.3 `Generated`/`.resources` as targets via a rule factory | STILL HOLDS (open) | no `Lock.rules`; `run` still writes `Generated` and compiles resx inline (`Dotnet.csc.fs:240-264`) |
-| §2.4 the compiler is hashed but not a tracked dependency | DONE | `do! needFiles (Filelist [File.make compiler.Path])` (`Dotnet.csc.fs:204`) |
-| §2.4 gate semantics must be written down | DONE | `csc-syntax.md`, "they never trigger one" (line 184) |
+| §2.1 `resolve` fills placeholder fields | DONE by contract | `resolve` writes `Evaluation = { Project=""; ProjectRefs=[]; Imports=[]; Sdk=""; SdkPin=None; Properties=Map.empty }` and the type documents "empty when composed" (`Dotnet.csc.fs:563`) |
+| §2.2 `FromLock` is a mode flag in the settings | DONE, and more | `CscSettingsType.FromLock` and the `fromlock` operation are gone; `CscLock.compile`/`compileWith` (`Dotnet.csc.fs:643`), `RunOptions` (`Dotnet.csc.fs:102`). `Csc settings` is one path: resolve, then run |
+| §2.2 `run` takes `RunOptions = { FailOnError; CscPath }` | DONE, superseded | the record also carries `Restore: Restore.Options` and `Server: CompilerServer` (`Dotnet.csc.fs:102`) |
+| §2.2 "optionally a small `cscLock {}` builder" | STALE | the need was met from the other side: `csc { lock "path" }` with strict semantics, plus `CscLock.record`/`verify` (`Dotnet.csc.fs:629-680`, `CscLockTests.fs`) |
+| §2.3 the `.resources` timestamp test is a second rebuilder | DONE | `run` regenerates only when the output is missing (`Dotnet.csc.fs:331-334`), the comment names this review |
+| §2.3 `Generated`/`.resources` as targets via a rule factory | STILL HOLDS (open) | no `Lock.rules`; `run` still writes `Generated` and compiles resx inline (`Dotnet.csc.fs:310-334`) |
+| §2.4 the compiler is hashed but not a tracked dependency | DONE | `do! needFiles (Filelist [File.make compiler.Path])` (`Dotnet.csc.fs:275`) |
+| §2.4 gate semantics must be written down | DONE | `csc-syntax.md`, "they never trigger one" (line 195) |
 | §2.4 the import rule must not `needFiles` what it hashes | STILL HOLDS | `Project.import` `needFiles` only the project files, `Evaluation.Imports` and `.git/HEAD` (`Project.fs:1330,1430,1447`) |
-| §2.4 `resolve`'s `needFiles (src @ refs @ resfiles)` is redundant | STILL HOLDS | still there, `Dotnet.csc.fs:404`, duplicated by `CscArgs.inputs` at `Dotnet.csc.fs:291` |
+| §2.4 `resolve`'s `needFiles (src @ refs @ resfiles)` is redundant | STILL HOLDS | still there, `Dotnet.csc.fs:484`, duplicated by `CscArgs.inputs` at `Dotnet.csc.fs:362` |
 | §2.5 `$(ProjectRoot)` from the process cwd | DONE | `Roots.builtin projectRoot`, `Roots.current`/`currentWith` read `ExecOptions.ProjectRoot` (`Roots.fs:43,110`); the cwd survives only as a fallback for an empty root |
 | §2.5 move `Json` and the roots functions out of `Fsproj` | DONE | `src/dotnet/Json.fs`, `src/dotnet/Roots.fs`, compiled ahead of `Fsproj.fs` (`Xake.Dotnet.fsproj`) |
 | §2.6 `Fsproj.evaluate` cannot be retired yet | STILL HOLDS | `Dotnet.fsc.fs` mentions neither `Lock` nor `RunOptions`; `Fsproj.evaluate`/`load` have one caller, `build.fsc.fsx:107,127` |
 | §2.7 `Lock.Project` -> `Lock.Entry`, `Lock.File` -> `Lock.Document` | DONE | `Project.fs:498,522` |
-| §2.7 `SdkPin`/`NETCoreSdkVersion` out of the `Properties` bag | DONE | `Evaluation.Sdk: string`, `Evaluation.SdkPin: SdkPin option` over a DU (`Project.fs:361,337`) |
+| §2.7 `SdkPin`/`NETCoreSdkVersion` out of the `Properties` bag | DONE | `Evaluation.Sdk: string`, `Evaluation.SdkPin: SdkPin option` over a DU (`Project.fs:361,332`) |
 | §2.7 keep `Variant` | STILL HOLDS | `ImportOptions.Variant` (`Project.fs:988`) |
-| §3 "env vars *and temp files* as `run` parameters" | PARTIALLY STALE | `run` takes `envVars` only; `resolve` produces no temp files -- a composed `.resx` becomes a permanent `(resx, .resources)` pair under `obj/xake/<name>/` (`Dotnet.csc.fs:391`) |
+| §3 "env vars *and temp files* as `run` parameters" | PARTIALLY STALE | `run` takes `envVars` only; `resolve` produces no temp files -- a composed `.resx` becomes a permanent `(resx, .resources)` pair under `obj/xake/<name>/` (`Dotnet.csc.fs:470`) |
 | §3 one runner, two producers | STILL HOLDS, widened | `run` is still the only thing that shells out to csc; the producers are now `Project.parseImport`, `CscLock.resolve`, and a lock read off disk |
-| §3 the lock is a gate, not a rebuilder | STILL HOLDS, with a caveat | `run` now restores missing packages before the hash check (`Restore.ensure`, `Dotnet.csc.fs:190`), so a *missing* dependency is repaired rather than failed; a dependency whose bytes differ still fails |
+| §3 the lock is a gate, not a rebuilder | STILL HOLDS, with a caveat | `run` now restores missing packages before the hash check (`Restore.ensure`, `Dotnet.csc.fs:262`), so a *missing* dependency is repaired rather than failed; a dependency whose bytes differ still fails |
 | §4 items 1-7 | DONE | as already marked in §4 |
 
 ## 1. Verdict
@@ -49,12 +52,12 @@ is a fix of a real engine bug (one target executed twice per run), not a hermeti
 idea. No new `Dependency` case, no new `Rule` case, nothing in `Xake` knows what a lock is.
 Everything hermetic is a recipe, a value, and a file format in `Xake.Dotnet`, and the
 scripts make the lock a file target that other rules `need` -- the right shape. The two
-things that matter most: (a) `Lock.Project` holds three different kinds of fact in one flat
+things that matter most: (a) `Lock.Project` (renamed to `Lock.Entry` in stage B) holds three different kinds of fact in one flat
 record and its producers fill it inconsistently (`resolve` writes placeholders and gives
-`Compiler.Sdk` a different meaning than `parseImport` does); (b) `csc {}` carries a mode
-flag (`FromLock`) inside its settings record, so the type allows a block whose other settings
+`Compiler.Sdk` (split into `Dependencies.Compiler.Version` and `Evaluation.Sdk` in stage B) a different meaning than `parseImport` does); (b) `csc {}` carries a mode
+flag (`FromLock`; removed in stage A2, replay is `CscLock.compile`) inside its settings record, so the type allows a block whose other settings
 are silently ignored. Beneath those, `run` quietly does a rebuilder's and two rules' work, and
-`Fsproj.roots ()` reinvents the engine's project root from the process cwd. Each is small
+`Fsproj.roots ()` (removed in stage A1; now `Roots.builtin`/`Roots.current`) reinvents the engine's project root from the process cwd. Each is small
 now; each is the kind of thing that becomes the shape of slice 2 if left alone.
 
 > **2026-09-23:** (a) and (b) are both closed, and so are the two smaller items; only the "everything is a
@@ -64,6 +67,11 @@ target" question of 2.3 is still open. The engine count is out of date -- four f
 ## 2. Findings
 
 ### 2.1 `Lock.Project` is three notions in one record -- conceptual
+
+**Status (2026-09-29): done in stage B** (aa5ddc8): `Lock.Entry = { Name; Framework; Evaluation;
+Compilation; Dependencies }` (`Framework` added by ab978d3), `Entry.Args` a computed member,
+`Compiler.Version` apart from `Evaluation.Sdk`; `Dependencies.Packages` added. Old names below
+are the 2026-09-23 ones.
 
 `Lock.Project` (`src/dotnet/Project.fs`, module `Lock`) carries, side by side:
 
@@ -92,7 +100,7 @@ the tracker plans, generated, resources, directory), `Dependencies` (references,
 compiler, each hashed) -- with `Args` built from `Dependencies` rather than duplicating its
 paths, and `Compiler` given a `Version` of its own instead of overloading `Sdk`. In memory
 this is the same data with three names; `mapPaths` shrinks to one section. Cost: M, mostly
-in `writeProject`/`readProject`, the fixtures under `samples/hermetic/`, and `FromLockTests`;
+in `writeProject`/`readProject` (now the private `writeEntry`/`readEntry`), the fixtures under `samples/hermetic/`, and `FromLockTests`;
 it is exactly the work the tracker already plans, so do it once, with the split.
 
 > **2026-09-23:** done in this shape (`Lock.Entry` with `Evaluation`/`Compilation`/`Dependencies`, `Args` a
@@ -103,7 +111,12 @@ reads.
 
 ### 2.2 `FromLock` is a mode flag inside a settings record -- conceptual
 
-`CscSettingsType.FromLock: Lock.Project option` (`Dotnet.csc.fs`) makes `Csc` a two-way
+**Status (2026-09-29): done in stage A2** (9b753ba): `FromLock`/`fromlock` gone; replay is
+`CscLock.compile entry` / `CscLock.compileWith options entry`; the runner takes
+`RunOptions = { FailOnError; CscPath; Restore; Server }` (the last two added by 90da140 and
+da16369). The `cscLock {}` builder was not built; stage C (2b55885) added `csc { lock "path" }`.
+
+`CscSettingsType.FromLock: Lock.Project option` (`Dotnet.csc.fs`; removed in stage A2) makes `Csc` a two-way
 branch: `Some project -> run settings project [] []`, else `resolve` then `run`. In the first
 branch `Src`, `Ref`, `RefGlobal`, `Resources`, `Define`, `Target`, `Platform`, `Out`,
 `TargetFramework`, `CommandArgs`, `Toolset` are all ignored, and nothing in the type says so:
@@ -111,7 +124,7 @@ branch `Src`, `Ref`, `RefGlobal`, `Resources`, `Define`, `Target`, `Platform`, `
 `FailOnError` and `CscPath` are honoured in both branches -- they are runner options, and
 `run` takes the whole `settings` record just to read those two.
 
-Cleaner shape: `Csc.fromLock : Lock.Project -> Recipe<unit>` (optionally a small
+Cleaner shape: `Csc.fromLock : Lock.Project -> Recipe<unit>` (built as `CscLock.compile : Lock.Entry -> Recipe<ExecContext, unit>`) (optionally a small
 `cscLock { project p; cscpath ...; nofailonerror }` builder) next to `csc {}`, both calling
 the same `run`, and `run` taking a `RunOptions = { FailOnError; CscPath }` instead of the
 settings record. `FromLock` and the `fromlock` operation go. What is lost: one entry point
@@ -125,6 +138,10 @@ composed settings, which honours every other setting instead of ignoring it. `Ru
 carries `Restore`.
 
 ### 2.3 `run` does a rebuilder's and two rules' work -- debt
+
+**Status (2026-09-29): cheap fix done in stage A** (`run` regenerates a `.resources` only when
+it is missing, `Dotnet.csc.fs:331-334`); **open**: `Generated`/`.resources` as targets via a
+rule factory (no `Lock.rules`), and `run` has since taken on `Restore.ensure` (90da140) too.
 
 Inside one recipe, before the compiler starts, `run`:
 
@@ -164,6 +181,11 @@ machine lacks -- which is more work in the same recipe, deliberately.
 
 ### 2.4 Two dependency mechanisms, and the one they miss -- debt
 
+**Status (2026-09-29): done in stage A** -- the compiler is `needFiles`'d (`Dotnet.csc.fs:275`),
+gate semantics written in `csc-syntax.md`; the `Lock.load` recipe now `needFiles` the lock
+itself (ab978d3), so the script's `need [lockFile ...]` described below is gone. **Open**
+(cosmetic): `resolve`'s redundant `needFiles (src @ refs @ resfiles)` (`Dotnet.csc.fs:484`).
+
 The engine records: `FileDep` on project files and imports (from `Project.import`), `FileDep`
 on every path `CscArgs.inputs` names plus each resx (from `run`), `ArtifactDep` on the lock
 and on referenced projects' outputs -- but those last two only because the *script* writes
@@ -178,14 +200,14 @@ new dependency kind") and it is coherent -- provided it is written down where `r
 documented, because today "verifies the SHA-256 of every hashed reference" reads as if a
 swapped dll would be caught, and with an unchanged timestamp it is not.
 
-The gap: the compiler. `project.Compiler.Path` is hashed but not in `CscArgs.inputs`, so the
+The gap: the compiler. `project.Compiler.Path` (now `entry.Dependencies.Compiler.Path`) is hashed but not in `CscArgs.inputs`, so the
 engine has no `FileDep` on `csc.dll`. An SDK update changes the compiler bytes, the dll stays
 "up to date", and the hash that would have said otherwise is never computed. Fix: add the
 compiler to the `needFiles` list in `run`. Cost: one line. (The import rule deliberately does
 *not* `needFiles` the references it hashes -- a package changing under the same path must not
 silently re-import; that is right and should stay.)
 
-> **2026-09-23:** the compiler is `needFiles`'d (`Dotnet.csc.fs:204`) and the gate semantics are stated in
+> **2026-09-23:** the compiler is `needFiles`'d (`Dotnet.csc.fs:275` today) and the gate semantics are stated in
 `csc-syntax.md`. One nuance this text predates: since `Restore`, a dependency that is *missing*
 is fetched rather than failed; only one whose bytes differ still fails. The import still does not
 `needFiles` what it hashes.
@@ -194,16 +216,21 @@ Duplication that is only cosmetic: `resolve` calls `needFiles (src @ refs @ resf
 `run` then `needFiles` the same paths again via `CscArgs.inputs`; the pool dedups by target,
 so it costs nothing, but the first call can go.
 
-> **2026-09-23:** still there (`Dotnet.csc.fs:404` against `:291`).
+> **2026-09-23:** still there (`Dotnet.csc.fs:484` against `:362`, as of 2026-09-29).
 
 ### 2.5 A second project root, and shared infrastructure under `Fsproj` -- debt
+
+**Status (2026-09-29): done in stage A1** (e9ffed5): `Json.fs` (`module internal Json`) and
+`Roots.fs` (`Roots.builtin`/`withExtra` pure, `Roots.current`/`currentWith` recipes over
+`ExecOptions.ProjectRoot`); `Fsproj` keeps only the F# evaluation (`evaluate`, `parseWith`,
+`load`).
 
 `Fsproj.roots ()` defines `$(ProjectRoot)` as `Directory.GetCurrentDirectory()`. The engine
 has a project root: `ExecOptions.ProjectRoot`, reachable in any recipe via `getCtxOptions()`,
 and it is what `need`, `getFiles` and rule matching resolve against. The two agree only when
 the script is run from its own directory; the import scripts' headers already carry "run it
 from the repository being imported" because of this. Cleaner: `roots` takes the project root
-as a parameter and `import`/`write`/`read` pass `options.ProjectRoot`. Cost: S.
+as a parameter and `import`/`write`/`read` (now `Lock.save`/`Lock.load`, recipes) pass `options.ProjectRoot`. Cost: S.
 
 > **2026-09-23:** done (stage A1), and the entry points that need the root became recipes: `Roots.current`/
 `currentWith`, `Lock.load`/`loadWith`/`save`/`saveWith`, `Fsproj.load`. The cwd-based ones are
@@ -221,8 +248,11 @@ rename with the tests' `Fsproj.withRoots`/`Fsproj.roots` following.
 
 ### 2.6 `Fsproj.evaluate` is now the special case -- debt, deferred
 
+**Status (2026-09-29): open, as recommended** -- `Dotnet.fsc.fs` has no `Lock`-based runner;
+`build.fsc.fsx:107,127` is still the only caller of `Fsproj.evaluate`/`load`.
+
 Two evaluators: `Fsproj.evaluate` (items and properties, `ProjectInfo`, fed into the composed
-`fsc {}`), `Project.import` (the command line, `Lock.Project`, fed into `run`). Brief §11 said
+`fsc {}`), `Project.import` (the command line, `Lock.Project` -- `Lock.Entry` since stage B -- fed into `run`). Brief §11 said
 the first "becomes the F# case of this or is retired". It cannot be retired yet: `fsc` has no
 runner over a `Lock.Project` (`Dotnet.fsc.fs` composes its own args and `needFiles` its own
 list), so `build.fsc.fsx` has nothing else to call. Leave it, do not extend it; retire it when
@@ -233,6 +263,10 @@ two projects the same way `import.fsx` does.
 only caller of `Fsproj.evaluate`/`load`.
 
 ### 2.7 Names -- cosmetic
+
+**Status (2026-09-29): done in stage B** (`Lock.Entry`, `Lock.Document`, `Lock.entry`,
+`SdkPin` a DU in `Evaluation`); `Variant` kept. Remaining naming questions are listed in
+`api.md`.
 
 - `Lock.Project` is not a project; it is one project's compilation. `Lock.Entry` or
   `Lock.Compilation` says what it is, and stops the collision with module `Project`
@@ -251,6 +285,10 @@ only caller of `Fsproj.evaluate`/`load`.
 did not change.
 
 ### 2.8 Engine drift, concretely
+
+**Status (2026-09-29): holds, count stale** -- four `src/core` files (`ExecCore.fs`,
+`WorkerPool.fs`, `Path.fs`, `Database.fs`), all engine bug fixes; no drift. The import loop is
+one restore per project plus a design-time build per framework (ab978d3).
 
 `git diff dev..HEAD -- src/core`: `ExecCore.fs` (+5), `WorkerPool.fs` (+31/-14). Nothing
 else. In `Xake.Dotnet`, what re-implements an engine idea: the `.resources` timestamp check
@@ -272,6 +310,9 @@ fallback.
 
 ## 3. What is clean and should stay
 
+**Status (2026-09-29): holds**, amended as in the note at the end of this section; the
+producers are now `Project.import`, `CscLock.resolve` and a lock read with `Lock.load`.
+
 - The engine untouched except for a bug fix; every hermetic piece a recipe, a value or a file.
 - The lock as a file target in the scripts, `need`ed by the compile rule, msbuild only ever
   inside that rule -- the same contract `build.fsc.fsx` has with `Fsproj.evaluate`, and what
@@ -279,7 +320,7 @@ fallback.
   update variable. The instinct "no engine mode, locks are targets" is the right one.
 - `CscArgs` as data: one table of switch shapes, `inputs`/`outputs` deriving the dependency
   set from the command line -- exactly what a task owes the engine, computed not declared.
-- One runner, two producers: `resolve` and `parseImport` both end in a `Lock.Project`, `run`
+- One runner, two producers: `resolve` and `parseImport` both end in a `Lock.Project` (`Lock.Entry` since stage B), `run`
   is the only thing that shells out. Keep that even after 2.2 splits the front ends.
 - Env vars and temp files as `run` parameters, not lock fields: the file format describes the
   compilation, not the machine.
@@ -326,3 +367,8 @@ Leave:
 11. `Fsproj.evaluate` until `fsc` has a `Lock`-based runner (2.6).
 12. The scripts' wiring pattern (`need` the lock, `Lock.read`, `mapPaths` the unbuilt
     references, `need` them, compile) -- it is what the library should keep making easy.
+    (Today: `Lock.load` -- which `need`s the lock itself -- then `Lock.entryFor`,
+    `Lock.mapPaths`, `need` the unbuilt references, `CscLock.compile`.)
+
+**Status (2026-09-29):** items 1-7 done (A1 e9ffed5, A2 9b753ba, B aa5ddc8/94f8087; `csc { lock }`
+as stage C, 2b55885); item 8 open; items 9-12 left as recommended.

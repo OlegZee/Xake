@@ -8,7 +8,7 @@ Where things stand: `feature/hermetic-build` at the merge of `wt/sbom-scope`; su
 - **R1** `conceptual-review.md` §0 status table + inline notes. Core files touched by the branch
   are four (`ExecCore`, `WorkerPool`, `Path`, `Database`), all bug fixes. Still open from the
   review: `Generated`/`.resources` as engine targets (the MSB3577 interop item is its trigger),
-  the duplicate `needFiles` in `resolve` (`Dotnet.csc.fs:404`), no lock runner for `fsc`.
+  the duplicate `needFiles` in `resolve` (`Dotnet.csc.fs:484`), no lock runner for `fsc`.
 - **R2** package-scope SBOM (`Sbom.forPackageScoped`, `Nuget.parseNuspec`,
   `Verify.sbomPackageScope`) and `Sbom.PackageScopeOptions` — `nuget-sbom.md` has the rules and
   **six questions the user must answer** ("Left for a human decision"). Restore-scope
@@ -30,7 +30,11 @@ after the merge.
 Updated 2026-09-24 late night (the `Sign` skeleton and its six tests; before that the
 `ProjectRefs` fix, the page re-proof, Stage C `csc { lock }`; before that Stage B, the lock
 split; before that: stages A1/A2, the autonomous night run, page run, extra roots, Toolset
-compiler source, resgen, SDK pin check, import, fromlock mode, one runner, byte-identical proof).
+compiler source, resgen, SDK pin check, import, fromlock mode, one runner, byte-identical proof). Names in the history
+below are as they were then: `fromlock`/`FromLock` became `CscLock.compile` (stage A2),
+`Lock.Project`/`Lock.File`/`Lock.project` became `Lock.Entry`/`Lock.Document`/`Lock.entry`
+(stage B), the cwd-based `Fsproj.roots`/`withRoots`/`write`/`parse` and `Lock.read`/`write`/`parse`
+became `Roots.*` and the `Lock.load`/`save` recipes (stage A1).
 
 `brief.md` next to this file (committed by the user on 2026-09-22, together with the
 `samples/hermetic/dataengine/` inspection artifacts) is the working brief:
@@ -74,9 +78,9 @@ and `import.fsx build` compiles dataengine develop (3 projects × 2 brands) **by
 `dotnet build`**, 18/18 files (dll, pdb, xml). All uncommitted. The **one-resolved-form refactor of `csc` is done** (2026-09-22, late):
 `Dotnet.csc.fs` is now `run` (the only runner: generated files, output dirs, hash check,
 `needFiles` on `CscArgs.inputs`, rsp with `/noconfig` outside, compiler selection, `shell`),
-`resolve` (the composed settings turned into a `Lock.Project` with the exact argument list the
+`resolve` (the composed settings turned into a `Lock.Project` (renamed to `Lock.Entry` in stage B) with the exact argument list the
 old code produced, `/noconfig` first when the target framework asks for it), and `Csc` choosing
-between `FromLock` and `resolve`. Env vars and resx temp files are `run` parameters, not lock
+between `FromLock` (gone in stage A2: `CscLock.compile`) and `resolve`. Env vars and resx temp files are `run` parameters, not lock
 fields -- the lock's shape is the file format. Two behaviour changes for the composed mode,
 both intended: it creates the output directory (before, `samples/fullframework.fsx` needed
 `samples/temp/` to exist), and it `needFiles` the framework references too. Trap: `samples/*.fsx`
@@ -256,7 +260,8 @@ explicit, no engine mode, no global variable.** Built as migration path A of
 - **`CscSettingsType.Lock: string option`**, custom operation `lock "path"` (project-root
   relative like any target path, or absolute). `Csc` resolves as always, then: no lock file --
   `Lock.rehash` and `Lock.save` a one-entry `Lock.Document` (`Framework` = the settings'
-  `targetfwk` or "", `Configuration` "", `Properties` []), compile the *rehashed* entry;
+  `targetfwk` or "", `Configuration` "", `Properties` [] -- since `ab978d3` the framework is
+  the entry's `Entry.Framework` and the document has no `Framework` field), compile the *rehashed* entry;
   lock present and `Lock.diff recorded resolved` empty -- compile the **recorded** entry, so
   its hashes gate the build; different -- fail with the diff and the two update routes named.
   `nofailonerror` downgrades the failure to a warning and compiles the resolved entry.
@@ -327,7 +332,8 @@ comes from"). Commits `aa5ddc8` (library + tests), `94f8087` (scripts, fixtures,
 the docs.
 
 - **`Lock.Entry = { Name; Evaluation; Compilation; Dependencies }`**, `Lock.Document` with
-  `Entries`, `Lock.entry name doc`. `Evaluation`: `Project`, `ProjectRefs`, `Imports`, `Sdk`,
+  `Entries`, `Lock.entry name doc`. (`Framework` joined `Name` in `ab978d3`, with
+  `Lock.entryFor framework name doc`.) `Evaluation`: `Project`, `ProjectRefs`, `Imports`, `Sdk`,
   typed `SdkPin option` (the DU moved from `Project` into `Lock`; `Lock.sdkPinText`/`parseSdkPin`
   keep the old text form in the file), `Properties` without `SdkPin`/`NETCoreSdkVersion`.
   `Compilation`: `Directory`, `Options`, `Defines`, `Sources`, `Generated`, `Resources`.
@@ -374,7 +380,8 @@ the docs.
 
 ### What landed (2026-09-24): stage A2 -- the lock is not a setting
 
-- `run` takes `RunOptions = { FailOnError; CscPath }` instead of the whole settings record;
+- `run` takes `RunOptions = { FailOnError; CscPath }` (since extended with `Restore` and
+  `Server`) instead of the whole settings record;
   `CscSettingsType.FromLock` and the `fromlock` operation are gone, replaced by the replay
   entry point `CscLock.compile project` (and `compileWith options project`) next to
   `CscLock.resolve`. `Csc settings` is one path again: resolve, then run.
@@ -382,15 +389,16 @@ the docs.
 ### What landed (2026-09-24): stage A1 -- helpers out of `Fsproj`, project root from the engine
 
 - `src/dotnet/Json.fs` (`module internal Json`) and `src/dotnet/Roots.fs` (`Roots.nugetRoot`/
-  `dotnetRoot`/`builtinTokens`/`builtin`/`withExtra`/`tokenize`/`tokenizeAll`/`expand`, plus the
-  recipes `current`/`currentWith`) compile before `Fsproj.fs`; `$(ProjectRoot)` now comes from
+  `dotnetRoot`/`builtinTokens`/`builtin`/`withExtra`, internal `tokenize`/`tokenizeAll`/`expand`,
+  plus the recipes `current`/`currentWith`; `nugetPackageRootToken`/`packageRootOverride` came
+  later with `Restore`) compile before `Fsproj.fs`; `$(ProjectRoot)` now comes from
   `ExecOptions.ProjectRoot`, so `Lock.load`/`loadWith`/`save`/`saveWith` and `Fsproj.load`
   replace the cwd-based `Lock.read`/`write`/`parse` and `Fsproj.roots`/`withRoots`/`write`/`parse`.
 
 ### What landed (2026-09-23, night): page with `LocalBuild=true`, extra roots
 
 - **Extra roots, explicit**: `ImportOptions.Roots` (token → absolute path) and
-  `Lock.writeWith/parseWith/readWith roots`; `Fsproj.withRoots` validates the token shape and
+  `Lock.writeWith/parseWith/readWith roots`; `Fsproj.withRoots` (now `Roots.withExtra`, stage A1) validates the token shape and
   keeps longest-root-first. Decision (user): one token per sibling repository, no shared parent
   root — `$(DataEngineRoot)` for page.
 - **`import-page.fsx`**: cwd = the page copy, 15 projects per lock so the cross-repo project
@@ -402,7 +410,7 @@ the docs.
   resolves against the *process* cwd, not the project dir — `parseImport` now combines
   `Identity` with the project directory; and the csc runner had no working directory, so a
   relative `<include>` in doc comments failed (CS1589) — `run` now sets `workdir
-  project.Directory`.
+  project.Directory` (today `entry.Compilation.Directory`).
 - **Result**: dataengine's 18 files identical again; page's xml identical; page's dll identical
   in size and differing only in the deterministic-hash fields (timestamp, checksum, MVID,
   strong-name signature, PDB GUID), pdb differing more. Some input differs from msbuild's.
@@ -416,6 +424,8 @@ the docs.
 ### What landed (2026-09-23, later): the SDK pin check
 
 `Project.sdkPin projectDir` → `NoGlobalJson | Pinned v | RollsForward (v, policy) | NoVersion file`
+(the DU is `Lock.SdkPin` since stage B, recorded as `Evaluation.SdkPin`/`Evaluation.Sdk` rather
+than in the property bag)
 (walks up for `global.json`; absent `rollForward` is `latestPatch`; only `disable` counts as
 pinned). `parseImport` takes it and records `Properties["SdkPin"]` and `["NETCoreSdkVersion"]` —
 free map, no lock format change. `import` warns per project when not pinned, or pinned but a
@@ -433,10 +443,11 @@ Suite: 257 passed, 1 skipped. Five pure tests in `ProjectImportTests.fs`.
   header *comment*. Output is **byte-identical to msbuild's GenerateResource** (test with
   multi-line, unicode incl. emoji, empty value). The `resgen` task and `Impl.compileResx` no
   longer fail on netstandard for string resx.
-- **`Lock.Project.Resources: (resx * .resources) list`**, from `EmbeddedResource` items: after
+- **`Lock.Project.Resources: (resx * .resources) list`** (now `Lock.Entry.Compilation.Resources`), from `EmbeddedResource` items: after
   `PrepareResources` msbuild exposes `OutputResource` (exact path), `ManifestResourceName`,
   `Type`, `WithCulture` — `parseImport` prefers `OutputResource`. `run` gets a step before the
-  hash check: `needFiles` each resx, regenerate the `.resources` when missing or older.
+  hash check: `needFiles` each resx, regenerate the `.resources` when missing or older (later: only when missing -- the engine
+  decides staleness, conceptual-review.md 2.3).
 - **Bug caught by the fixture**: `parseImport`'s `Generated` filter took every input under the
   intermediate dir that existed, which after `PrepareResources` includes the binary `.resources`
   — read as text, written back mangled by `run`. Resources are now computed first and excluded
@@ -460,7 +471,8 @@ Suite: 257 passed, 1 skipped. Five pure tests in `ProjectImportTests.fs`.
   the newest SDK (10.0.401 here), so the fixture is evaluated by SDK 10 while dataengine's is 8.
 - **`csc { toolset "4.12.0" }`** in the composed mode: `csc.dll` from
   `microsoft.net.compilers.toolset/<version>/tasks/netcore/bincore` in the NuGet cache, restored
-  through `DotNetFwk.sdkImpl.restorePackage` (made internal, with `nugetRoot`) when missing;
+  through `DotNetFwk.sdkImpl.restorePackage` (made internal, with `nugetRoot`; today
+  `Restore.download`) when missing;
   references and env vars still from `DotNetFwk.locateFramework`; `run` executes it through the
   existing `dotnet <dll>` branch. `cscpath` still overrides everything.
 - **`CscArgs` bug found by the fixture**: netstandard2.0 projects embed
@@ -477,7 +489,7 @@ Suite: 257 passed, 1 skipped. Five pure tests in `ProjectImportTests.fs`.
 
 ### What landed (2026-09-22, late): `csc { fromlock }` and the end-to-end proof
 
-- **`compileFromLock`** (`Dotnet.csc.fs`), reached through `CscSettingsType.FromLock:
+- **`compileFromLock`** (`Dotnet.csc.fs`; today the private `run`, reached through `CscLock.compile`), reached through `CscSettingsType.FromLock:
   Lock.Project option` / the `fromlock` custom operation. Replays `project.Args` verbatim:
   writes back `Generated` files that are missing or differ (the lock is the source of truth),
   creates output directories, verifies SHA-256 of every hashed reference, analyzer and the
@@ -512,7 +524,7 @@ Suite: 257 passed, 1 skipped. Five pure tests in `ProjectImportTests.fs`.
 
 ### What landed (2026-09-22, afternoon): `Project.import`, `Lock`, `CscArgs`
 
-All in `src/dotnet/Project.fs`, after `Fsproj.fs` (it reuses `Fsproj.Json`, `roots`, `expand`).
+All in `src/dotnet/Project.fs`, after `Fsproj.fs` (it reuses `Fsproj.Json`, `roots`, `expand` -- `Json` and `Roots` modules since stage A1).
 
 - **`CscArgs`** — the compiler command line as data. `parse` tells a switch from a source
   (an absolute Unix path also starts with `/`: a switch has no second slash before the colon);
@@ -521,16 +533,18 @@ All in `src/dotnet/Project.fs`, after `Fsproj.fs` (it reuses `Fsproj.Json`, `roo
   `switchValues`, `mapPaths`, `absolutize` (also folds `..`, so the SDK's
   `targets/../analyzers/x.dll` and its real path are one file). Both the import and the
   future `fromlock` mode read arguments through it — keep the switch tables here only.
-- **`Lock`** — `Lock.File = { Framework; Configuration; Properties; Projects }`, one file per
+- **`Lock`** — `Lock.File = { Framework; Configuration; Properties; Projects }` (today
+  `Lock.Document = { Configuration; Properties; Entries }`, framework per entry), one file per
   (TFM, variant), one `Lock.Project` per project: `Args` verbatim with absolute paths,
   `References`/`Analyzers`/`Imports` as `{ Path; Sha256 }` (empty hash = did not exist at
   import, i.e. a project reference's output), `Compiler = { Tool; Path; Sha256; Sdk }`,
   `Generated` = the files msbuild wrote under the intermediate dir that are compiler inputs
   (AssemblyInfo.cs, TFM attributes, GeneratedMSBuildEditorConfig) *with content*, and a short
-  `Properties` whitelist. `write`/`parse`/`read`/`project`. Sources and `/out` are computed
+  `Properties` whitelist. `write`/`parse`/`read`/`project` (today `writeWith`/`parseWith`/`readWith`, the recipes
+  `load`/`save`, and `entry`/`entryFor`). Sources and `/out` are computed
   members, not stored twice. `write` tokenizes with `tokenizeAll`, a regex replace of a root
   followed by `/ = , ;` or the end — a prefix replace missed `/pathmap:<root>=/_/`.
-- **`Fsproj.roots ()` gained `$(DotnetRoot)`** (from `DotNetFwk.sdkImpl.dotnetRoot`, made
+- **`Fsproj.roots ()` (today `Roots.builtin projectRoot`) gained `$(DotnetRoot)`** (from `DotNetFwk.sdkImpl.dotnetRoot`, made
   internal): compiler and analyzer paths live there. The kept `projects/*.json` did not change
   shape (nothing of Xake's references the SDK dir).
 - **`Project.import options`** — per project, two msbuild runs: the design-time build
@@ -599,9 +613,9 @@ cached in a file rule; the compilation itself is the `fsc` task's, driven by exp
   avoided.
   What msbuild writes is *dumped*, not kept: every metadata field of every item, 200 KB and 3600
   lines per project of which one field is read. `evaluate` rewrites it into the ~15 KB of lists
-  the build actually consumes (`Fsproj.write`), with paths written against `$(NuGetPackageRoot)`
+  the build actually consumes (`Fsproj.write`, today internal `writeWith`), with paths written against `$(NuGetPackageRoot)`
   and `$(ProjectRoot)`.
-- **`Fsproj.parse`** reads that kept form (`parseEvaluation` reads msbuild's own). Sources are `CompileBefore @ Compile @ CompileAfter` — for
+- **`Fsproj.parse`** (today `parseWith roots` / the recipe `load`) reads that kept form (`parseEvaluation` reads msbuild's own). Sources are `CompileBefore @ Compile @ CompileAfter` — for
   F# the SDK puts the generated `AssemblyInfo.fs` in **`CompileBefore`** (see
   `FSharp/Microsoft.FSharp.Overrides.NetSdk.targets`), not `Compile`, so it lands first, which is
   what makes `InternalsVisibleTo("Xake.Dotnet")` reach the compiler. The json parser is

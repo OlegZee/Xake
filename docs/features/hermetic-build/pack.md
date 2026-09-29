@@ -12,6 +12,18 @@ A `.nupkg` is a zip. `dotnet pack` does not produce the same bytes twice:
 None of this is a bug in `dotnet pack` — nobody promised reproducibility — but it means "did
 this release rebuild to the same package" cannot be answered by comparing bytes.
 
+## The functions
+
+- `type Entry = { Path: string; Source: string }` -- `Path` inside the zip (forward slashes),
+  `Source` the file on disk.
+- `type Options = { Timestamp: DateTime; Level: CompressionLevel }`; `Pack.defaultOptions`
+  (not `Options.Default`) -- see `SOURCE_DATE_EPOCH` below.
+- `Pack.zip : output -> Entry list -> Options -> unit`
+- `Pack.nupkg : output -> nuspec: string -> files: Entry list -> Options -> unit` -- `nuspec`
+  is the path of the `.nuspec` file, read for `id`/`version` and packed at the root.
+- `Pack.entries : zipPath -> (string * int64 * uint32 * DateTime) list` -- path, uncompressed
+  size, CRC-32, DOS time, in central-directory order. No entry bytes.
+
 ## What `Pack.nupkg`/`Pack.zip` fix, and how
 
 - **Sorted entries** — every entry list is sorted by path (ordinal) before writing, so input
@@ -52,9 +64,9 @@ byte-identity across reruns of the same commit.
 
 ## What is not done
 
-- **Signing** — NuGet author signing (`.signature.p7s`, e.g. via `dotnet nuget sign`) is a
-  later, delegated rule (brief §8f): sign after pack, verify the signer was handed the same
-  hash `Pack.nupkg` produced.
+- **Signing** — NuGet author signing (`.signature.p7s`, e.g. via `dotnet nuget sign`) is the
+  delegated `Sign` rule (`signing.md`; a skeleton against `Sign.fakeSigner` so far): sign after
+  pack, identity from the unsigned nupkg's sha256.
 - **`.nupkg.metadata` and symbols packages** (`.snupkg`) — not produced here.
 
 ## The SBOM per package

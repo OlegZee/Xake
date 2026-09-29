@@ -2,9 +2,9 @@
 
 ## The race
 
-`Project.import` runs two `dotnet msbuild` calls per project: a design-time build
+`Project.import` ran (at the time; three phases today, see the last section) two `dotnet msbuild` calls per project: a design-time build
 (`-restore -t:PrepareResources;Compile`) and a `-pp` preprocess. One lock rule per (framework,
-brand) means two brands can import the *same* project file at once. Both `-restore`s write
+brand) -- one per brand since the lock split by variant -- means two brands can import the *same* project file at once. Both `-restore`s write
 that project's `obj/project.assets.json` / `obj/*.nuget.g.*` -- only `IntermediateOutputPath`
 is per-variant, not `BaseIntermediateOutputPath` -- so when the package set depends on a
 property (`GcPrefix` -> `gcdocs.*` vs `ds.documents.*`), one restore lands between the other's
@@ -25,7 +25,8 @@ Both changed *where* restore writes; the fix instead changes *when*.
 ## The fix: a per-project-path lock
 
 `Project.withProjectLock : string -> Recipe<ExecContext,'a> -> Recipe<ExecContext,'a>`
-(`Project.fs`) wraps the two msbuild calls of one project in a `Resource` of quantity 1, keyed
+(`Project.fs`, `internal`) wraps the msbuild calls of one project (then two; today the whole
+import of the project) in a `Resource` of quantity 1, keyed
 by its full path (ordinal on Unix, ordinal-ignore-case on Windows). A process-wide
 `ConcurrentDictionary<string, Resource>` hands out one `Resource` per path, so different
 projects still import in parallel; only two imports of the *same* file serialize. This is

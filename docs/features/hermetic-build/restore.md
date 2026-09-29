@@ -30,7 +30,7 @@ module Restore =
 
 and, around it:
 
-- `RunOptions` gains `Restore: Restore.Options`, so `CscLock.compileWith` carries the folder
+- `RunOptions` gains `Restore: Restore.Options` (and, later, `Server`, see `csc-server.md`), so `CscLock.compileWith` carries the folder
   and the policy into the runner. `RunOptions.Default` is today's behaviour exactly.
 - `Roots.nugetPackageRootToken`, `Roots.packageRootOverride dir` — the extra-root list that
   makes `Lock.loadWith` expand `$(NuGetPackageRoot)` against the same folder.

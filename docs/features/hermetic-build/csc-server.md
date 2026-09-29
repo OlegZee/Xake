@@ -14,8 +14,8 @@ failed, falling back to local build"). Nothing else about the invocation changed
 
 ```fsharp
 type CompilerServer =
-    | Shared of keepAlive: int option   // default: Shared None
-    | InProcess
+    | Shared of keepAlive: int option   // default: CompilerServer.fromEnvironment () = Shared None
+    | InProcess                         //   unless XAKE_CSC_SERVER is 0/false/off/no
 
 RunOptions      = { FailOnError; CscPath; Restore; Server: CompilerServer }
 CscSettingsType = { ...; Server: CompilerServer }     // `noserver`, `keepalive <s>` in the builder
@@ -30,7 +30,7 @@ for the whole process -- the CI switch.
 `/shared` and `/keepalive` never enter a lock. `CommandLineParser.TryParseClientArgs` strips
 them on the client side, before the request is built; what the server compiles is the argument
 list without them. In Xake they are added in `run` at invocation time, on the command line
-next to `/noconfig` (not in the response file, not in `Entry.Args`) -- exactly as the
+ahead of `/noconfig` and the `@rsp` (not in the response file, not in `Entry.Args`) -- exactly as the
 framework's env vars are a parameter of `run` and not a lock field. Locks recorded today are
 byte-identical to those recorded before this change; `CscServerTests` "the lock's arguments
 never carry /shared" checks that `CscLock.resolve` yields the same entry for either setting.
@@ -64,7 +64,7 @@ miss our server.)
 
 ## When the switch is *not* added (`serverArgs`)
 
-`/shared` goes on the command line only when
+`/shared` goes on the command line only when `Server` is `Shared _` and
 
 1. a `VBCSCompiler.dll` sits in the directory of the compiler file about to be run. The legacy
    full-framework `csc.exe` (`C:\Windows\Microsoft.NET\Framework\v4.0.30319`, the C# 5 native

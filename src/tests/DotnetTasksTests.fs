@@ -208,17 +208,17 @@ let greet name = sprintf "Hello, %s" name
         // msbuild's answer is kept in the compact form, which has to read back the same
         let kept = Path.Combine(Path.GetTempPath(), "xake-test-eval-kept.json")
         let roots = Roots.builtin (Directory.GetCurrentDirectory())
-        File.WriteAllText(kept, Fsproj.writeWith roots project)
-        Assert.That(Fsproj.parseWith roots kept, Is.EqualTo project)
+        File.WriteAllText(kept, Fsproj.format roots project)
+        Assert.That(Fsproj.parse roots kept, Is.EqualTo project)
 
         // a path under the package cache is kept as a token: the file goes into the
         // repository and the cache is somewhere else on the next machine
         let packages = (Roots.nugetRoot()).Replace('\\', '/').TrimEnd '/'
         let reference = packages + "/fsharp.core/8.0.100/lib/netstandard2.0/FSharp.Core.dll"
-        File.WriteAllText(kept, Fsproj.writeWith roots { project with References = [reference] })
+        File.WriteAllText(kept, Fsproj.format roots { project with References = [reference] })
 
         Assert.That(File.ReadAllText kept, Does.Contain "$(NuGetPackageRoot)/fsharp.core")
-        Assert.That((Fsproj.parseWith roots kept).References, Is.EqualTo [reference])
+        Assert.That((Fsproj.parse roots kept).References, Is.EqualTo [reference])
 
     [<Test>]
     member x.``resource set instantiation``() =
@@ -308,6 +308,23 @@ let greet name = sprintf "Hello, %s" name
         Assert.AreEqual(
             "Sample.App.Strings.resx",
             Impl.makeResourceName {dynamic with Prefix = Some "Sample.App"} None "sub/Strings.resx")
+
+    [<Test>]
+    member x.``csc without a target framework fails asking for one``() =
+
+        let build () =
+            xake {x.TestOptions with FileLog="csc-nofwk.log"; ThrowOnError = true} {
+                wantOverride (["nofwk"])
+                rules [
+                    "nofwk" => recipe {
+                        let! _ = Csc.ofSettings { CscSettingsType.Default with Src = !!"a.cs"; Out = File.make "nofwk.dll" }
+                        ()
+                    }
+                ]
+            }
+
+        let ex = Assert.Throws<XakeException> (fun () -> build () |> ignore)
+        Assert.That(ex.ToString(), Does.Contain "csc needs a target framework: set targetfwk in the csc block or the NETFX-TARGET script variable")
 
     [<Test>]
     member __.``task builders produce recipes``() =

@@ -11,7 +11,7 @@ open System.Security.Cryptography
 /// runs; this module writes the zip format by hand -- sorted entries, a fixed timestamp, no
 /// extra fields, no comments -- so that packing the same inputs twice gives byte-identical
 /// bytes. Hand-rolled rather than `System.IO.Compression.ZipArchive`: `ZipArchiveEntry.Crc32`
-/// (needed by `entries` below) is not part of the netstandard2.0/net462 API surface that this
+/// (needed by `list` below) is not part of the netstandard2.0/net462 API surface that this
 /// assembly targets -- confirmed by compiling a throwaway project against both TFMs, where
 /// `entry.Crc32` fails with FS0039 on each. `ZipArchive` itself was never exercised for
 /// determinism because of this: reading the central directory back needs a hand parser either
@@ -33,27 +33,27 @@ module Pack =
         Timestamp: DateTime
         /// compression level
         Level: CompressionLevel
-    }
-
-    /// 1980-01-01 (the DOS epoch, and the oldest date the zip format can represent) unless
-    /// `SOURCE_DATE_EPOCH` (unix seconds, https://reproducible-builds.org/specs/source-date-epoch/)
-    /// names a later one.
-    let defaultOptions : Options =
-        let epoch = DateTime (1980, 1, 1, 0, 0, 0, DateTimeKind.Utc)
-        let fromEnv =
-            match Environment.GetEnvironmentVariable "SOURCE_DATE_EPOCH" with
-            | null | "" -> None
-            | v ->
-                match Int64.TryParse v with
-                | true, seconds ->
-                    let dt = DateTimeOffset.FromUnixTimeSeconds(seconds).UtcDateTime
-                    Some (if dt < epoch then epoch else dt)
-                | false, _ -> None
-        { Timestamp = fromEnv |> Option.defaultValue epoch; Level = CompressionLevel.Optimal }
+    } with
+        /// Optimal compression, and a timestamp of 1980-01-01 (the DOS epoch, and the oldest
+        /// date the zip format can represent) unless `SOURCE_DATE_EPOCH` (unix seconds,
+        /// https://reproducible-builds.org/specs/source-date-epoch/) names a later one -- read
+        /// on each access.
+        static member Default : Options =
+            let epoch = DateTime (1980, 1, 1, 0, 0, 0, DateTimeKind.Utc)
+            let fromEnv =
+                match Environment.GetEnvironmentVariable "SOURCE_DATE_EPOCH" with
+                | null | "" -> None
+                | v ->
+                    match Int64.TryParse v with
+                    | true, seconds ->
+                        let dt = DateTimeOffset.FromUnixTimeSeconds(seconds).UtcDateTime
+                        Some (if dt < epoch then epoch else dt)
+                    | false, _ -> None
+            { Timestamp = fromEnv |> Option.defaultValue epoch; Level = CompressionLevel.Optimal }
 
     // ---- CRC-32 (ISO 3309 / zip's polynomial), a table-driven implementation: ZipArchiveEntry
     // does not expose Crc32 on netstandard2.0/net462 (see the module comment), so both the
-    // writer and `entries` compute it themselves. ----
+    // writer and `list` compute it themselves. ----
 
     let private crcTable : uint32[] =
         Array.init 256 (fun i ->
@@ -290,7 +290,7 @@ module Pack =
     /// for `Verify`-style comparison of two packages. `size` is the uncompressed length.
     /// Assumes no zip-file comment (this module never writes one), so the end-of-central-
     /// directory record is the file's last 22 bytes.
-    let entries (zipPath: string) : (string * int64 * uint32 * DateTime) list =
+    let list (zipPath: string) : (string * int64 * uint32 * DateTime) list =
         let bytes = File.ReadAllBytes zipPath
         let eocd = bytes.Length - 22
         let count = readU16 bytes (eocd + 10)

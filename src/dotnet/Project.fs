@@ -61,7 +61,7 @@ module Project =
         /// `$(ProjectRoot)`, `$(DotnetRoot)`) -- one token per sibling repository, e.g.
         /// `["$(DataEngineRoot)", "/abs/path/to/dataengine"]` when a `Projects` entry or a
         /// project reference resolves outside `$(ProjectRoot)` (the current directory). See
-        /// `Roots.withExtra`.
+        /// `Roots.make`.
         Roots: (string * string) list
     } with static member Default = {
             Projects = []
@@ -131,25 +131,6 @@ module Project =
             let has f = declared |> List.exists (fun d -> System.String.Equals (d, f, System.StringComparison.OrdinalIgnoreCase))
             requested |> List.partition has
 
-    /// The restore graph of one target, as the lock records it: every package of
-    /// `assets.Packages` with its cache sha512 (`Nuget.readCache`, "" when the cache has no
-    /// `.nupkg.metadata`), whether it is a direct `PackageReference`, and the ids it depends
-    /// on (edges of `assets.Graph` whose source is this package). Pure but for reading the
-    /// cache's metadata files.
-    let packages (cacheRoot: string) (assets: Nuget.Assets) : Lock.Package list =
-        let direct = assets.Direct |> List.map (fun s -> s.ToLowerInvariant ()) |> Set.ofList
-        let same (a: string) (b: string) = System.String.Equals (a, b, System.StringComparison.OrdinalIgnoreCase)
-        assets.Packages |> List.map (fun (id, version) ->
-            { Id = id
-              Version = version
-              Sha512 = (Nuget.readCache cacheRoot id version).Sha512
-              Direct = direct.Contains (id.ToLowerInvariant ())
-              DependsOn =
-                assets.Graph
-                |> List.choose (fun ((fromId, fromVersion), (toId, _)) ->
-                    if same fromId id && same fromVersion version then Some toId else None)
-                |> List.distinct })
-
     /// `PrepareResources` runs resgen so the `/resource:` switches name real files;
     /// `Compile` (not `CoreCompile`) so that everything hooked before it -- generated
     /// assembly attributes, `BeforeCompile` extensions -- has run.
@@ -159,20 +140,6 @@ module Project =
         "AssemblyName,MSBuildProjectFullPath,MSBuildProjectDirectory,IntermediateOutputPath,BaseIntermediateOutputPath,TargetPath," +
         "CscToolPath,CscToolExe,CSharpCoreTargetsPath,RoslynTargetsPath,NETCoreSdkVersion,NetCoreRoot,NuGetPackageRoot,ProjectAssetsFile," +
         "TargetFrameworkMoniker,LangVersion,Version,InformationalVersion,SignAssembly,AssemblyOriginatorKeyFile,Deterministic,SourceRevisionId"
-
-    /// Replaces every occurrence of `sha` in the entry's `Generated` content, `Options`,
-    /// `Defines` and evaluation `Properties` values with the literal token
-    /// `$(SourceRevisionId)`. `sourcelink.json` (and, in principle, any other generated text)
-    /// embeds the commit that produced it -- SourceLink's own doing, not this tool's -- which
-    /// would otherwise make the lock's content, and so the lock file itself, change on every
-    /// commit even though the compilation it describes did not. The sha itself is
-    /// deliberately not recorded anywhere in the lock; `Lock.compile` resolves the
-    /// token back from the project's repository right before it would be used. Pure; a no-op
-    /// when `sha` is empty.
-    let tokenizeRevision (sha: string) (entry: Lock.Entry) : Lock.Entry =
-        if sha = "" then entry else
-        let token = "$(SourceRevisionId)"
-        entry |> Lock.mapText (fun s -> if s.Contains sha then s.Replace (sha, token) else s)
 
     /// Every file msbuild imported, from a preprocessed project (`-pp`): each import is
     /// announced by a banner with the file's path on the line above a rule of `=`.
@@ -187,7 +154,7 @@ module Project =
         |> List.distinct
 
     /// Builds the lock entry from what msbuild wrote. `pin` is the project's SDK pin (from
-    /// `sdkPin`) and `packages` the restore graph (from `packages`), both computed separately
+    /// `sdkPin`) and `packages` the restore graph (from `Lock.packagesOf`), both computed separately
     /// so this function does no file walking of its own beyond the msbuild result and the
     /// files the command line names. Fails when the command line rebuilt from the structured
     /// entry (`Entry.Args`) is not exactly msbuild's -- the fidelity guarantee of brief §8c,
@@ -329,7 +296,7 @@ module Project =
         // so the lock's content, hence the lock file, does not change on every commit
         match prop "SourceRevisionId" with
         | "" -> entry
-        | sha -> tokenizeRevision sha entry
+        | sha -> entry |> Lock.mapText (Git.tokenize sha)
 
     /// <summary>
     /// Imports the projects, for every framework in `options.Frameworks`, and writes the one
@@ -470,7 +437,7 @@ module Project =
                             | Some assetsFile when File.Exists assetsFile ->
                                 let cacheRoot =
                                     readDumpProperty dump "NuGetPackageRoot" |> Option.defaultWith Roots.nugetRoot
-                                Nuget.readAssets assetsFile framework |> packages cacheRoot
+                                Nuget.readAssets assetsFile framework |> Lock.packagesOf cacheRoot
                             | _ -> []
 
                         // the files that took part in the evaluation; MSBuildAllProjects no
@@ -521,5 +488,5 @@ module Project =
                 Entries = List.ofSeq entries
             }
             let! roots = Roots.currentWith options.Roots
-            File.WriteAllText (options.Output, Lock.writeWith roots lock)
+            File.WriteAllText (options.Output, Lock.format roots lock)
         }

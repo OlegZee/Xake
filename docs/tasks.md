@@ -115,7 +115,7 @@ With no `out`, the compiler writes to the rule's target file:
 "helloworld.exe" ..> csc { src !!"helloworld.cs" }
 ```
 
-`targetfwk` picks the framework to compile against. On Windows a Framework installation found
+`targetfwk` picks the framework to compile against. Either `targetfwk` or the `NETFX-TARGET` script variable is required: without one, `csc` fails. On Windows a Framework installation found
 through the registry wins; everywhere else -- and as a fallback -- the compiler comes from the
 .NET SDK and the reference assemblies from a NuGet package, so a full-framework binary can be
 built on any OS with nothing pre-installed beyond the SDK:

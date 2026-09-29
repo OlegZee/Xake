@@ -87,7 +87,7 @@ module Restore =
     let into (dir: string) : Recipe<ExecContext, Options> =
         recipe {
             let! ctxOptions = getCtxOptions ()
-            let root = Roots.withExtra ctxOptions.ProjectRoot (Roots.packageRootOverride dir)
+            let root = Roots.make ctxOptions.ProjectRoot (Roots.packageRootOverride dir)
             return { Options.Default with
                         PackageRoot = root |> List.tryPick (fun (token, path) -> if token = Roots.nugetPackageRootToken then Some path else None) }
         }

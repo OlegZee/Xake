@@ -31,9 +31,9 @@ What was decided for that release, so it is not re-litigated:
   nuspec and every consumer inherits it. See docs/devprocess.md.
 - `builder {}` (the empty settings block) does **not** compile on F# 8 — `builder { () }` does,
   and is what the docs, samples and tests use.
-- `csc` with no `targetfwk` passes no framework references at all, so it only ever worked on
-  Windows via `csc.rsp`. Every documented `csc` sample now sets `targetfwk`. Making the default
-  probe supply references too would be a real fix, and is not done.
+- `csc` with no `targetfwk` (and no `NETFX-TARGET`) is an error now: `Csc.ofSettings` fails asking
+  for one. The old fallback passed no framework references at all and only worked on Windows via
+  `csc.rsp`. `fsc` still has that fallback (B6).
 - `samples/features.fsx` had a catch-all `"(dir:*)/(file:*).(ext:c*)"` rule declared *after*
   `temp/AssemblyInfo.cs`; since the last matching rule wins, it shadowed it and the sample had
   been failing for a long time. The catch-all now comes first.

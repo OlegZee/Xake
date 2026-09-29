@@ -13,7 +13,7 @@ open Xake
 /// The project root is the engine's (`ExecOptions.ProjectRoot`, what `need`, `getFiles` and
 /// rule matching already resolve against), not the process's current directory: inside a
 /// recipe take the list from `current` / `currentWith`, outside one pass the root explicitly to
-/// `builtin` / `withExtra`.
+/// `builtin` / `make`.
 module Roots =
 
     /// The NuGet package cache (`NUGET_PACKAGES`, else `~/.nuget/packages`).
@@ -27,7 +27,7 @@ module Roots =
     let nugetPackageRootToken = "$(NuGetPackageRoot)"
 
     /// The tokens `builtin` always provides. An extra root of the same name replaces the
-    /// built-in one (see `withExtra`).
+    /// built-in one (see `make`).
     let builtinTokens = [ nugetPackageRootToken; "$(ProjectRoot)"; "$(DotnetRoot)" ]
 
     /// The extra-root list that points `$(NuGetPackageRoot)` at a folder of the build's own,
@@ -61,7 +61,7 @@ module Roots =
     ///
     /// An extra root *replaces* the built-in of the same name rather than being refused (it
     /// used to be refused): that is how a build declares a package folder of its own --
-    /// `withExtra root (Roots.packageRootOverride dir)` reads and writes
+    /// `make root (Roots.packageRootOverride dir)` reads and writes
     /// `$(NuGetPackageRoot)/...` against `dir` instead of the machine's cache, so a lock can
     /// be resolved against the same folder `Restore` fills.
     ///
@@ -69,7 +69,7 @@ module Roots =
     /// and not against the process's current directory -- `Path.GetFullPath` in a script would
     /// silently reintroduce exactly the cwd dependency the project root exists to avoid. The
     /// function stays pure in its two arguments either way.
-    let withExtra (projectRoot: string) (extra: (string * string) list) =
+    let make (projectRoot: string) (extra: (string * string) list) =
         let baseDir =
             match projectRoot with
             | null | "" -> Directory.GetCurrentDirectory()
@@ -113,9 +113,9 @@ module Roots =
             return builtin options.ProjectRoot
         }
 
-    /// `current` plus the extra roots a script declares (see `withExtra`).
+    /// `current` plus the extra roots a script declares (see `make`).
     let currentWith (extra: (string * string) list) : Recipe<ExecContext, (string * string) list> =
         recipe {
             let! options = getCtxOptions()
-            return withExtra options.ProjectRoot extra
+            return make options.ProjectRoot extra
         }

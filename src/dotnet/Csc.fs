@@ -554,8 +554,7 @@ module Csc =
             let (globalRefPaths, nostdlib, noconfig) =
                 match targetFramework with
                 | null ->
-                    // TODO provide an option for user to explicitly specify all grefs (currently csc.rsp is used)
-                    settings.RefGlobal, false, false
+                    failwithf "'%s': csc needs a target framework: set targetfwk in the csc block or the NETFX-TARGET script variable (e.g. targetfwk \"net8.0\")" assemblyName
                 | tgt ->
                     let fwk = Some tgt |> DotNetFwk.locateFramework in
                     let lookup = DotNetFwk.locateAssembly fwk

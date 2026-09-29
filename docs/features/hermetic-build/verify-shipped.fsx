@@ -13,8 +13,8 @@ let a, b =
 
 printfn "A: %s" a
 printfn "B: %s" b
-printfn "sha256 A          = %s" (Verify.sha256 a)
-printfn "sha256 B          = %s" (Verify.sha256 b)
+printfn "sha256 A          = %s" (Hash.sha256 a)
+printfn "sha256 B          = %s" (Hash.sha256 b)
 printfn "authenticodeHash A = %s" (Verify.authenticodeHash a)
 printfn "authenticodeHash B = %s" (Verify.authenticodeHash b)
 

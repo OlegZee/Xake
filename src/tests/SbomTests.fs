@@ -145,7 +145,7 @@ type ``Sbom cycloneDx``() =
 
         // mixed-case ids, as `project.assets.json` spells them -- the cache directories above
         // stay lowercase, as the real NuGet cache always does. The graph is the lock's own
-        // (`Project.packages` at import), sha512 included.
+        // (`Lock.packagesOf` at import), sha512 included.
         let packages : Lock.Package list =
             [ { Id = "Foo.Bar"; Version = "1.2.3"; Sha512 = "AAAA"; Direct = true; DependsOn = [ "Ref.Only"; "Runtime.Only" ] }
               { Id = "Ref.Only"; Version = "1.0.0"; Sha512 = "AAAA"; Direct = false; DependsOn = [] }
@@ -289,7 +289,7 @@ type ``Sbom cycloneDx``() =
 
 /// `Sbom.forPackageScoped`: the package-scope document the SDP RFC asks for (nuget-sbom.md
 /// "Package scope") -- tier 1 from the nupkg's shipped files, tier 2 from the nuspec, nothing
-/// transitive, the boundary declared -- and `Verify.sbomPackageScope`, its acceptance checks.
+/// transitive, the boundary declared -- and `Sbom.checkPackageScope`, its acceptance checks.
 [<TestFixture>]
 type ``Sbom package scope``() =
     inherit XakeTestBase("sbom-scope")
@@ -390,7 +390,7 @@ type ``Sbom package scope``() =
               { Pack.Path = "readme.md"; Pack.Source = readme }
               { Pack.Path = "icon.png"; Pack.Source = icon }
               { Pack.Path = "sbom/netstandard2.0/bom.cdx.json"; Pack.Source = stale } ]
-            Pack.defaultOptions
+            Pack.Options.Default
         nupkg, asmBom, asmDll
 
     [<Test>]
@@ -504,7 +504,7 @@ type ``Sbom package scope``() =
     member x.``the verifier passes the generated document and catches tampering``() =
         let nupkg, asmBom, _ = x.Fixture ()
         let bom = Sbom.forPackageScoped nupkg "netstandard2.0" [ asmBom ]
-        Assert.That (Verify.sbomPackageScope nupkg "netstandard2.0" bom, Is.Empty)
+        Assert.That (Sbom.checkPackageScope Sbom.PackageScopeOptions.Default nupkg "netstandard2.0" bom, Is.Empty)
 
         // a shipped binary without a component (3.2), a tier-2 ref in dependencies[] (3.4),
         // a range that drifted from the nuspec (3.3), a component the nuspec never declared (3.1)
@@ -517,7 +517,7 @@ type ``Sbom package scope``() =
                 Components = (bom.Components |> List.map drift) @ [ undeclared ]
                 Dependencies = bom.Dependencies @ [ "pkg:nuget/Foo.Bar@1.2.3", [] ]
                 Compositions = [] }
-        let findings = Verify.sbomPackageScope nupkg "netstandard2.0" tampered
+        let findings = Sbom.checkPackageScope Sbom.PackageScopeOptions.Default nupkg "netstandard2.0" tampered
         Assert.That (findings |> List.exists (fun f -> f.StartsWith "3.2" && f.Contains "native.dll"), Is.True, String.concat "\n" findings)
         Assert.That (findings |> List.exists (fun f -> f.StartsWith "3.3" && f.Contains "Foo.Bar"), Is.True)
         Assert.That (findings |> List.exists (fun f -> f.StartsWith "3.1" && f.Contains "Transitive.Pkg"), Is.True)
@@ -533,7 +533,7 @@ type ``Sbom package scope``() =
                     Hashes = []; License = "MIT"; Scope = ""; Components = []; Properties = [ { Name = "xake:pedigree"; Value = "merged" } ] } ]
             else []
         let options =
-            { Sbom.defaultPackageScope with
+            { Sbom.PackageScopeOptions.Default with
                 // `.props` are not content here; `ref/` facades are
                 IsPlumbing = fun path -> Sbom.PackageScope.plumbing path || path.EndsWith ".props"
                 IsShipped = fun tfm path -> Sbom.PackageScope.shippedFor tfm path || path.StartsWith ("ref/" + tfm + "/")
@@ -566,14 +566,14 @@ type ``Sbom package scope``() =
         Assert.That (bom.Formulation |> List.exists (fun c -> c.BomRef = "tool:csc"), Is.True)
 
         // the verifier applies the same options -- and the default rule would reject this document
-        Assert.That (Verify.sbomPackageScopeWith options nupkg "netstandard2.0" bom, Is.Empty)
-        Assert.That (Verify.sbomPackageScope nupkg "netstandard2.0" bom, Is.Not.Empty)
+        Assert.That (Sbom.checkPackageScope options nupkg "netstandard2.0" bom, Is.Empty)
+        Assert.That (Sbom.checkPackageScope Sbom.PackageScopeOptions.Default nupkg "netstandard2.0" bom, Is.Not.Empty)
 
     [<Test>]
     member x.``no boundary text means no annotation, and the verifier says so``() =
         let nupkg, asmBom, _ = x.Fixture ()
-        let options = { Sbom.defaultPackageScope with BoundaryText = "" }
+        let options = { Sbom.PackageScopeOptions.Default with BoundaryText = "" }
         let bom = Sbom.forPackageScopedWith options nupkg "netstandard2.0" [ asmBom ]
         Assert.That (bom.Annotations, Is.Empty)
         Assert.That (Sbom.cycloneDx bom, Does.Not.Contain "annotations")
-        Assert.That (Verify.sbomPackageScopeWith options nupkg "netstandard2.0" bom |> List.exists (fun f -> f.Contains "annotation"), Is.True)
+        Assert.That (Sbom.checkPackageScope options nupkg "netstandard2.0" bom |> List.exists (fun f -> f.Contains "annotation"), Is.True)

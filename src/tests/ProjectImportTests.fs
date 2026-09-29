@@ -150,8 +150,8 @@ type ``Project import``() =
             Configuration = "Release"; Properties = [ "Brand", "X" ]; Entries = [ entry ]
         }
 
-        let text = Lock.writeWith roots lock
-        Assert.That(Lock.parseWith roots text, Is.EqualTo lock)
+        let text = Lock.format roots lock
+        Assert.That(Lock.parse roots text, Is.EqualTo lock)
 
         // nothing machine-specific survives in the file: the checkout and the package cache
         // are tokens, and a root inside a value (`/pathmap:`) is one too
@@ -171,13 +171,13 @@ type ``Project import``() =
         Assert.That(text, Does.Not.Contain "\"Args\"")
 
         // and the same text again from the parsed lock: the file is deterministic
-        Assert.That(Lock.parseWith roots text |> Lock.writeWith roots, Is.EqualTo text)
+        Assert.That(Lock.parse roots text |> Lock.format roots, Is.EqualTo text)
 
         Assert.That((Lock.entry "Sample" lock).Csc.Name, Is.EqualTo "Sample.Lib")
         Assert.That((Lock.entry "Sample.Lib" lock).Csc.Sources, Is.EqualTo [ root + "/src/Sample/A.cs" ])
         Assert.That((Lock.entry "Sample.Lib" lock).Csc.Output, Is.EqualTo (Some (root + "/src/Sample/obj/xake/net8.0/Sample.Lib.dll")))
         // the flat command line comes back exactly, alias and trailing switch included
-        Assert.That((Lock.parseWith roots text |> Lock.entry "Sample.Lib").Csc.Args, Is.EqualTo args)
+        Assert.That((Lock.parse roots text |> Lock.entry "Sample.Lib").Csc.Args, Is.EqualTo args)
 
     /// One lock now holds every target framework of the project set, so the framework is a
     /// property of the entry, not of the file: two entries of one project, one per framework,
@@ -194,13 +194,13 @@ type ``Project import``() =
         let lock : Lock.Document =
             { Configuration = "Release"; Properties = [ "Brand", "X" ]; Entries = [ entryFor "netstandard2.0"; entryFor "net472" ] }
 
-        let text = Lock.writeWith roots lock
+        let text = Lock.format roots lock
         Assert.That(text, Does.Contain "\"Framework\": \"netstandard2.0\"")
         Assert.That(text, Does.Contain "\"Framework\": \"net472\"")
         // the framework is per entry: the document itself no longer carries one
         Assert.That(text.Split '\n' |> Array.filter (fun l -> l.TrimStart().StartsWith "\"Framework\"") |> Array.length, Is.EqualTo 2)
-        Assert.That(Lock.parseWith roots text, Is.EqualTo lock)
-        Assert.That(Lock.parseWith roots text |> Lock.writeWith roots, Is.EqualTo text)
+        Assert.That(Lock.parse roots text, Is.EqualTo lock)
+        Assert.That(Lock.parse roots text |> Lock.format roots, Is.EqualTo text)
 
         // `entry` by name alone can no longer tell them apart, and says so
         let ex = Assert.Throws<System.Exception>(fun () -> Lock.entry "Sample.Lib" lock |> ignore)
@@ -240,20 +240,20 @@ type ``Project import``() =
     }
   ]
 }"""
-        let parsed = Lock.parseWith roots old
+        let parsed = Lock.parse roots old
         Assert.That(parsed.Entries.Head.Csc.Framework, Is.EqualTo "net472")
         Assert.That(parsed.Configuration, Is.EqualTo "Release")
         // written back it is the new shape: the framework sits in the entry
-        let rewritten = Lock.writeWith roots parsed
+        let rewritten = Lock.format roots parsed
         Assert.That(rewritten, Does.Contain "\"Framework\": \"net472\"")
         Assert.That(rewritten.Split '\n' |> Array.filter (fun l -> l.TrimStart().StartsWith "\"Framework\"") |> Array.length, Is.EqualTo 1)
-        Assert.That((Lock.parseWith roots rewritten).Entries, Is.EqualTo parsed.Entries)
+        Assert.That((Lock.parse roots rewritten).Entries, Is.EqualTo parsed.Entries)
 
     [<Test>]
     member x.``a flat lock from an older Xake is refused with a clear message``() =
         let roots = Roots.builtin (Directory.GetCurrentDirectory())
         let flat = """{ "Framework": "net8.0", "Configuration": "Release", "Properties": {}, "Projects": [ { "Name": "X", "Args": [] } ] }"""
-        let ex = Assert.Throws<System.Exception>(fun () -> Lock.parseWith roots flat |> ignore)
+        let ex = Assert.Throws<System.Exception>(fun () -> Lock.parse roots flat |> ignore)
         Assert.That(ex.Message, Does.Contain "re-import")
 
     [<Test>]
@@ -328,14 +328,14 @@ type ``Project import``() =
             let expected : Lock.Package list =
                 [ { Id = "Foo.Bar"; Version = "1.2.3"; Sha512 = "AAAA=="; Direct = true; DependsOn = [ "Baz.Qux" ] }
                   { Id = "Baz.Qux"; Version = "4.5.6"; Sha512 = ""; Direct = false; DependsOn = [] } ]
-            Assert.That(Project.packages cacheRoot assets, Is.EqualTo expected)
+            Assert.That(Lock.packagesOf cacheRoot assets, Is.EqualTo expected)
         finally Directory.Delete (cacheRoot, true)
 
     [<Test>]
     member x.``an extra root tokenizes a sibling repository's paths and round-trips``() =
         let root = Directory.GetCurrentDirectory().Replace ('\\', '/')
         let extraRoots = [ "$(DataEngineRoot)", "/x/dataengine" ]
-        let roots = Roots.withExtra (Directory.GetCurrentDirectory()) extraRoots
+        let roots = Roots.make (Directory.GetCurrentDirectory()) extraRoots
 
         let entry =
             entryOf "Sample.Lib" (root + "/src/Sample/Sample.csproj") (root + "/src/Sample")
@@ -344,27 +344,27 @@ type ``Project import``() =
             Configuration = "Release"; Properties = []; Entries = [ entry ]
         }
 
-        let text = Lock.writeWith roots lock
+        let text = Lock.format roots lock
         Assert.That(text, Does.Contain "$(DataEngineRoot)/src/A.cs")
         Assert.That(text, Does.Not.Contain "/x/dataengine")
 
-        Assert.That(Lock.parseWith roots text, Is.EqualTo lock)
-        Assert.That((Lock.parseWith roots text).Entries.[0].Csc.Sources, Is.EqualTo [ "/x/dataengine/src/A.cs" ])
+        Assert.That(Lock.parse roots text, Is.EqualTo lock)
+        Assert.That((Lock.parse roots text).Entries.[0].Csc.Sources, Is.EqualTo [ "/x/dataengine/src/A.cs" ])
 
     [<Test>]
     member x.``a declared root must be a well-formed token``() =
         let cwd = Directory.GetCurrentDirectory()
-        Assert.Throws<System.Exception>(fun () -> Roots.withExtra cwd [ "DataEngineRoot", "/x/dataengine" ] |> ignore) |> ignore
+        Assert.Throws<System.Exception>(fun () -> Roots.make cwd [ "DataEngineRoot", "/x/dataengine" ] |> ignore) |> ignore
 
     /// Changed 2026-09-24 (`Restore`): a built-in token may be redeclared -- that is how a
     /// build points `$(NuGetPackageRoot)` at a package folder of its own -- and a relative
     /// root is taken against the project root, never the process's current directory.
     [<Test>]
     member x.``a declared root may override a built-in one and may be relative to the project root``() =
-        let roots = Roots.withExtra "/repo" [ "$(NuGetPackageRoot)", "/x/packages" ]
+        let roots = Roots.make "/repo" [ "$(NuGetPackageRoot)", "/x/packages" ]
         Assert.That(roots |> List.filter (fst >> (=) "$(NuGetPackageRoot)"), Is.EqualTo [ "$(NuGetPackageRoot)", "/x/packages" ])
 
-        let relative = Roots.withExtra "/repo" [ "$(NuGetPackageRoot)", ".packages" ]
+        let relative = Roots.make "/repo" [ "$(NuGetPackageRoot)", ".packages" ]
         Assert.That(relative |> List.tryPick (fun (t, p) -> if t = "$(NuGetPackageRoot)" then Some p else None),
                     Is.EqualTo (Some "/repo/.packages"))
 
@@ -598,7 +598,7 @@ type ``Project import``() =
         finally Directory.Delete (dir, true)
 
     [<Test>]
-    member x.``tokenizeRevision replaces the sha in Generated content, Options, Defines and Properties, and leaves other text``() =
+    member x.``Git.tokenize replaces the sha in Generated content, Options, Defines and Properties, and leaves other text``() =
         let sha = "abc123def456abc123def456abc123def456abc"
         let plain = entryOf "Sample" "/a/Sample.csproj" "/a" [ "/sourcelink:/a/obj/sourcelink.json"; sprintf "/define:VERSION_%s" sha; sprintf "/pathmap:/%s=/_/" sha ]
         let entry =
@@ -606,7 +606,7 @@ type ``Project import``() =
                 Evaluation = { plain.Evaluation with Properties = Map.ofList [ "Version", sprintf "1.0.0+%s" sha; "AssemblyName", "Sample" ] }
                 Csc = { plain.Csc with Generated = [ "/a/obj/sourcelink.json", sprintf "{\"documents\":{\"/x/*\":\"https://h/src/%s/*\"}}" sha ] } }
 
-        let tokenized = Project.tokenizeRevision sha entry
+        let tokenized = entry |> Lock.mapText (Git.tokenize sha)
 
         Assert.That(tokenized.Csc.Generated, Is.EqualTo [
             "/a/obj/sourcelink.json", "{\"documents\":{\"/x/*\":\"https://h/src/$(SourceRevisionId)/*\"}}" ])
@@ -617,9 +617,9 @@ type ``Project import``() =
         Assert.That(tokenized.Evaluation.Properties.["AssemblyName"], Is.EqualTo "Sample")
 
     [<Test>]
-    member x.``tokenizeRevision is a no-op when the sha is empty``() =
+    member x.``Git.tokenize is a no-op when the sha is empty``() =
         let entry = entryOf "Sample" "/a/Sample.csproj" "/a" [ "/define:X" ]
-        Assert.That(Project.tokenizeRevision "" entry, Is.EqualTo entry)
+        Assert.That(entry |> Lock.mapText (Git.tokenize ""), Is.EqualTo entry)
 
     [<Test>]
     member x.``Git headSha resolves a symbolic HEAD via a loose ref``() =

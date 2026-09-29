@@ -172,7 +172,7 @@ record `Csc`); the 3.3 function `Csc settings` no longer exists, `Csc.compile se
    Every failure here goes through the same `trace Error` + `FailOnError`-gated `failwith` shape
    (`failStep`) as the hash-mismatch check and `Tool.failOnExitCode`.
 3. **Resolves `$(SourceRevisionId)`** (raised 2026-09-23, "Lock stability"): the lock never
-   carries a commit sha itself (see `Generated` and `Project.tokenizeRevision` below) -- when
+   carries a commit sha itself (see `Generated` and `Git.tokenize` below) -- when
    `Generated`'s content or `Csc.Args` carries the literal token `$(SourceRevisionId)`,
    it is replaced everywhere `Csc.mapText` reaches (`Generated` content, `Options`, `Defines`)
    with `Git.headSha c.Directory` (walking up from the
@@ -314,23 +314,23 @@ otherwise land in the lock untokenized and machine-specific. `ImportOptions.Root
 extra token per sibling repository (the decision: no shared parent root, since siblings can move
 independently and a shared root would tokenize more than intended) -- e.g. `Roots = [
 "$(DataEngineRoot)", "/abs/path/to/ar-net-core-dataengine" ]`. `Project.import` combines them
-with the built-in three via `Roots.withExtra projectRoot extra` (inside the import:
+with the built-in three via `Roots.make projectRoot extra` (inside the import:
 `Roots.currentWith options.Roots`), which validates each token is well-formed (`$(Name)`) --
 failing early rather than writing a lock that silently didn't tokenize -- takes a relative path
 against the project root (not the process's cwd), lets an extra token of a built-in's name
 *replace* that built-in (how `Roots.packageRootOverride dir` points `$(NuGetPackageRoot)` at a
 build's own package folder; it used to be refused), and keeps the longest-root-first order
 `Roots.builtin` already relies on. A script reading such a lock back must pass the same roots:
-`Lock.loadWith extraRoots path` inside a recipe, or `Lock.readWith (Roots.withExtra projectRoot
+`Lock.loadWith extraRoots path` inside a recipe, or `Lock.read (Roots.make projectRoot
 extra) path` outside one. `Lock.load`/`save` use the built-in three only.
 
 **Where the project root comes from (review §2.5).** `$(ProjectRoot)` is the engine's
 `ExecOptions.ProjectRoot` -- what `need`, `getFiles` and rule matching already resolve against --
 not the process's current directory. The `Roots` module holds the whole thing: `nugetRoot ()`,
-`dotnetRoot ()`, `nugetPackageRootToken`, `builtinTokens`, `packageRootOverride dir`, the pure `builtin projectRoot` / `withExtra projectRoot extra`,
+`dotnetRoot ()`, `nugetPackageRootToken`, `builtinTokens`, `packageRootOverride dir`, the pure `builtin projectRoot` / `make projectRoot extra`,
 and the recipes `current` / `currentWith extra` that read the root from `getCtxOptions()`. The
 recipe-level lock and evaluation entry points (`Lock.load`/`loadWith`/`save`/`saveWith`,
-`Fsproj.load`) are recipes for exactly this reason; the pure `writeWith`/`parseWith`/`readWith`
+`Fsproj.load`) are recipes for exactly this reason; the pure `format`/`parse`/`read`
 still take a roots list. The json reader lives in its own `Json` module. Neither is under
 `Fsproj` any more, which is again just the F# project evaluation it is named for.
 
@@ -414,7 +414,7 @@ would be the one case that fails by design (they fold into one section) -- msbui
 **Packages: the restore graph in the lock (decided 2026-09-24).** Right after the design-time
 build, still inside `withProjectLock`, `import` reads `project.assets.json` (the
 `ProjectAssetsFile` property from the same result dump) with `Nuget.readAssets` for the import's
-framework and builds `Dependencies.Packages` with `Project.packages cacheRoot assets`, the cache
+framework and builds `Dependencies.Packages` with `Lock.packagesOf cacheRoot assets`, the cache
 being the `NuGetPackageRoot` property (fallback `Roots.nugetRoot ()`): per package `Id`,
 `Version` (the assets file's casing), `Sha512` (base64 `contentHash` from the cache's
 `.nupkg.metadata`, "" when the cache lacks it), `Direct` (a `PackageReference` of the project's
@@ -432,7 +432,7 @@ framework name (`.NETStandard,Version=v2.0`), only a multi-target project uses t
 (a document-level `"Framework"`) still reads -- the value is distributed into every entry that
 has none of its own -- and is always written back in the new shape; tokenization (`Roots.tokenizeAll`) and the
 one-line-per-item style are unchanged, the file is deterministic (write, parse, write again is
-byte-identical -- tested). The shape `Lock.writeWith` produces (two-space indent per level, one
+byte-identical -- tested). The shape `Lock.format` produces (two-space indent per level, one
 item per line; `Alias` only on a reference that has one; each package one inline object):
 
 ```json
@@ -483,7 +483,7 @@ item per line; `Alias` only on a reference that has one; each package one inline
 
 (Lists are written one item per line; they are folded to `[ ... ]` above for space. `Generated`
 and `Resources` are JSON objects keyed by path, `Properties` too.) A lock in the old flat format (`"Projects"` with `"Args"`) is refused
-by `parseWith` with "lock written by an older Xake; re-import" -- nothing released used it, so
+by `Lock.parse` with "lock written by an older Xake; re-import" -- nothing released used it, so
 there is no reader for it. `samples/hermetic/dataengine/locks/` shows the shape on the real
 fixture: 889 lines per brand, 27 `Options` (`@Defines`, `@References`, `@Analyzers`, `@Sources`
 in msbuild's positions), 12 `Defines`, 113-115 `References`, 4 `Packages`.
@@ -495,7 +495,7 @@ in msbuild's positions), 12 `Defines`, 113-115 `References`, 4 `Packages`.
 `Analyzers` (each dropping its hash when the path changed), `Generated` keys and both paths of
 `Resources`; `Lock.mapText f`
 applies `f` to `Generated` content, `Options`, `Defines` and the evaluation's property values
-(`tokenizeRevision` and `run`'s resolution of `$(SourceRevisionId)` both use it).
+(`Git.tokenize` and `run`'s resolution of `$(SourceRevisionId)` both use it).
 
 `Lock.load path` (a recipe) parses a lock file (`Lock.Document`: `Configuration`, `Properties`,
 `Entries` -- the framework is on the entry), paths expanded for this machine. **`load` and
@@ -520,7 +520,7 @@ commit sha in it) and passes it on `/sourcelink:<path>` -- `sourcelink` is one o
 input. Left as is, its content would carry the commit sha, and so the lock's content -- and the
 lock file itself -- would change on every commit even though the compilation did not change.
 `parseImport` asks msbuild for the `SourceRevisionId` property (in `wantedProperties`) and, when
-it is non-empty, calls the pure `Project.tokenizeRevision sha entry : Lock.Entry`: every
+it is non-empty, calls `entry |> Lock.mapText (Git.tokenize sha)` (pure): every
 occurrence of `sha` in `Generated` content, `Options`, `Defines` and the evaluation's `Properties`
 values is replaced with the literal token `$(SourceRevisionId)`. The sha itself is **not** recorded anywhere in the lock --
 `SourceRevisionId` is asked from msbuild only to drive this substitution, never added to the
@@ -589,9 +589,9 @@ mapped outputs, it only `needFiles` what the (already-mapped) args name.
   `CS2023` and ignores it.
 - A hash mismatch reports every mismatching path at once, `"<path>: expected <hash>, got
   <hash-or-\"missing\">"`, one line per path, and fails when `FailOnError` is set.
-- A `Lock.Entry` in memory has absolute paths throughout; `Lock.save`/`writeWith` tokenizes
+- A `Lock.Entry` in memory has absolute paths throughout; `Lock.save`/`format` tokenizes
   them against known roots (project root, NuGet package cache, SDK) so the file on disk is
-  portable and diffable, and `Lock.load`/`parseWith` expands them back on load.
+  portable and diffable, and `Lock.load`/`parse` expands them back on load.
 
 ## Recording a lock from composed `csc` settings
 
@@ -648,7 +648,7 @@ Tests: `src/tests/LockDiffTests.fs` (`rehash`, `diff` identical and with changes
 msbuild/compiler needed); `src/tests/FromLockTests.fs`, `Csc.ofSettings resolves composed
 settings into a hashable, round-trippable lock` (Integration: resolves a trivial library,
 asserts `Sources`/`Args`/`Compiler.Path`/empty reference hashes, then `Lock.rehash` and a
-`Lock.writeWith`/`Lock.parseWith` round trip).
+`Lock.format`/`Lock.parse` round trip).
 
 ## Locking composed settings: `lock`
 

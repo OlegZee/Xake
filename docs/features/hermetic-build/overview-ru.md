@@ -40,7 +40,7 @@ nupkg, `Sign` — делегированное правило подписи, `S
 | `Project` | 1456 | `CscArgs` (командная строка как данные), `Lock` (`Entry` = `Evaluation`/`Compilation`/`Dependencies`), `Project.import` |
 | `Restore` | 302 | доставка пакетов, которые называет lock |
 | `Sbom` | 785 | детерминированный CycloneDX 1.6 из lock: `forAssembly`, `forPackage` (restore scope); `forPackageScoped`/`forPackageScopedWith` + `PackageScopeOptions` (package scope, с 2026-09-24) |
-| `Verify` | 347 | sha256, Authenticode PE-хэш, размеченные диапазоны различий (`compare`), `verdict`; `sbomPackageScope`/`sbomPackageScopeWith` — приёмочные проверки 3.1–3.4 |
+| `Verify` | 347 | sha256, Authenticode PE-хэш, размеченные диапазоны различий (`compare`), `verdict` (приёмочные проверки 3.1–3.4 SBOM — `Sbom.checkPackageScope`) |
 | `StrongName` | 307 | PE TimeDateStamp/CheckSum, повторная подпись strong name |
 | `Pack` | 313 | рукописный детерминированный zip/nupkg + чтение обратно с CRC-32 |
 | `Sign` | 420 | подпись как делегированное правило (Authenticode + NuGet), фейковый signer |
@@ -104,7 +104,7 @@ nupkg, `Sign` — делегированное правило подписи, `S
    `-restore`. Плюс `Nuget.readAssets` теперь падает громко. Проверено: 6 холодных параллельных
    импортов, lock байт-идентичен между независимыми прогонами.
 6. **Токенизация `$(SourceRevisionId)`.** sha коммита приезжает в `sourcelink.json` и в
-   `AssemblyInfo.cs`, то есть lock менялся бы на каждом коммите. `Project.tokenizeRevision`
+   `AssemblyInfo.cs`, то есть lock менялся бы на каждом коммите. `Git.tokenize`
    заменяет его на токен (sha никогда не хранится), а `run` резолвит из репозитория
    (`Git.headSha` — без git-исполняемого файла, worktree поддержаны) и внятно падает, если
    репозитория нет. Импорт при этом `needFiles` на `.git/HEAD` и файл ветки.
@@ -143,7 +143,7 @@ nupkg, `Sign` — делегированное правило подписи, `S
   RFC он *вход*, а не поставляемый артефакт. Не сделано ничего из tier 1–3, `compositions`,
   один SBOM на (пакет × TFM), верификатор приёмочных проверок. *(Сделано после написания:
   `Sbom.forPackageScoped nupkgPath framework assemblies` / `forPackageScopedWith options ...`,
-  `Sbom.packageSbomPath`, `Verify.sbomPackageScope` — см. `nuget-sbom.md`, «Package scope».)*
+  `Sbom.packageSbomPath`, `Sbom.checkPackageScope` — см. `nuget-sbom.md`, «Package scope».)*
 - **Interop-дефект, не просто гигиена тестов:** в дереве, где Xake уже собирал, msbuild падает с
   `MSB3577` для 12 из 15 проектов page (упирается в `.resources`, которые Xake кладёт в
   `obj/xake/<fwk>/<brand>/`). Пользователь, чередующий Xake и `dotnet build` в одном `obj`,
@@ -260,6 +260,6 @@ nupkg, `Sign` — делегированное правило подписи, `S
    тестов немного, это одна правка; потом это станет «почему-то падает на CI».
 7. **По SBOM: не реализовывать tier 1–3 до 2026-10-07** (*реализовано всё же 2026-09-24, с вариативными частями в `Sbom.PackageScopeOptions`*), а отправить в RFC ответ со своей
    стороны (§8 RFC): lock — механический вход для реестра verified components, потому что он
-   записывает *что именно получил компилятор*, с хэшами; `Pack.entries` делает физическую
+   записывает *что именно получил компилятор*, с хэшами; `Pack.list` делает физическую
    инвентаризацию nupkg проверяемой. Это дёшево и даёт максимум влияния на то, во что потом
    придётся вкладываться кодом.

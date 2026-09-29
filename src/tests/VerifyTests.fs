@@ -33,7 +33,7 @@ type ``Verify PE``() =
     member x.``authenticode hash ignores checksum and certificate table``() =
         let path = copyTo "auth.dll"
         let originalHash = Verify.authenticodeHash path
-        let originalSha = Verify.sha256 path
+        let originalSha = Hash.sha256 path
 
         let bytes = File.ReadAllBytes path
         let layout = Verify.layout bytes
@@ -52,7 +52,7 @@ type ``Verify PE``() =
         File.WriteAllBytes(path, patched)
 
         Assert.That(Verify.authenticodeHash path, Is.EqualTo originalHash)
-        Assert.That(Verify.sha256 path, Is.Not.EqualTo originalSha)
+        Assert.That(Hash.sha256 path, Is.Not.EqualTo originalSha)
 
     [<Test>]
     member x.``compare labels the known fields``() =

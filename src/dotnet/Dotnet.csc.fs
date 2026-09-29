@@ -3,7 +3,7 @@ namespace Xake.Dotnet
 /// The `csc {}` builder. What it builds -- the settings, the resolved `Csc` and its runner --
 /// lives in `Csc.fs`; this file only names the operations.
 [<AutoOpen>]
-module CscImpl =
+module CscBuilder =
 
     open Xake
 

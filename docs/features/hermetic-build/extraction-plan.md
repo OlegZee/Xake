@@ -50,7 +50,7 @@ hermetic type.
 
 If the user wants `Fsproj` in the base instead, Json and Roots have to go to the base too
 (internal, linked into both projects via `<Compile Include="..\dotnet\Json.fs" Link=...>`).
-**Recommendation: hermetic.**
+**Decided 2026-09-30: hermetic** (Fsproj, Json and Roots go to Xake.Hermetic.Dotnet).
 
 ### Package name
 
@@ -60,7 +60,9 @@ If the user wants `Fsproj` in the base instead, Json and Roots have to go to the
 | `Xake.Dotnet.Hermetic` / same | honest that it is .NET-only; long, and `open Xake.Dotnet.Hermetic` in every script |
 | `Xake.Evidence` (or `Xake.Provenance`) | sells the pitch ("the build that can testify"); vague for restore/pack/sign |
 
-**Recommend `Xake.Hermetic`.** Xake is .NET-first anyway, so "Dotnet" in the name adds little.
+**Decided 2026-09-30: package and namespace `Xake.Hermetic.Dotnet`** (the user's choice: honest
+about being .NET-only, leaves `Xake.Hermetic` free for a future cross-language core). Every
+`Xake.Hermetic` below reads as `Xake.Hermetic.Dotnet`.
 
 ### The seam: what `csc {}` keeps and what moves
 
@@ -162,7 +164,7 @@ bootstrap come **after** §4: until the extraction the hermetic code is in the a
 
 ## 3. API polish
 
-### Principles (for the user to approve)
+### Principles (approved by the user 2026-09-30)
 
 1. **One concept, one module, named by the noun**: `Csc`, `Lock`, `Project`, `Restore`,
    `Sbom`, `Pack`, `Sign`. No `Impl`/`CscImpl`/`CscLock` names that exist only because of
@@ -302,14 +304,17 @@ its siblings. Options:
   and `Restore` reuses it, not the other way round.
 
 **Questions for the user**
-1. Package name: `Xake.Hermetic`? Or `Xake.Dotnet.Hermetic` / `Xake.Evidence`?
+1. ~~Package name~~ decided: `Xake.Hermetic.Dotnet`.
 2. ~~Seam~~ decided 2026-09-29: `Csc` record, `csc { ...; resolve }`, `Csc.run`, no hooks;
    `CSC_SERVER` script variable.
-3. `Fsproj` to hermetic (so Json and Roots are hermetic-only)?
-4. Independent versions, with Xake.Hermetic at 0.x?
-5. Is fsc through the runner (B6) required for 3.4.0, or can it follow?
-6. `sign {}` returning a rule: yes?
-7. The six SBOM questions (`nuget-sbom.md`) decide the `Sbom.for*` names.
+3. ~~`Fsproj` to hermetic~~ decided: yes.
+4. ~~Independent versions~~ decided: yes, Xake.Hermetic.Dotnet starts at 0.1.0.
+5. ~~B6 timing~~ decided: after 3.4.0.
+6. ~~`sign {}` returning a rule~~ decided: yes.
+7. The six SBOM questions (`nuget-sbom.md`) decide the `Sbom.for*` names. **Still open**; B10
+   leaves `Sbom.for*` as they are.
+8. B8 part 2, no `targetfwk` and no `NETFX-TARGET`: decided 2026-09-30, **an error** asking for
+   `targetfwk` (the Windows-only `csc.rsp` fallback goes; every documented sample sets it).
 
 **Suggested order and rough effort**
 

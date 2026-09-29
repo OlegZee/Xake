@@ -37,16 +37,15 @@ type ``Sign delegated``() =
         path
 
     /// The settings under test: a mask over `signed/`, mapping each target back to the
-    /// same-named file in `out/`.
-    // `Sign.sign`, not a bare `sign`: FSharp.Core already defines `sign`.
+    /// same-named file in `out/`. Record syntax here, for `Sign.identity` / `Sign.request`;
+    /// `runScript` states the same values through `sign {}`.
     let settings =
-        Sign.sign {
-            target "signed/(name:*).(ext:dll|exe|nupkg)"
-            input (fun t -> Path.Combine (outDir, Path.GetFileName t))
-            certificate (Sign.Thumbprint "cc4967777c49a3ff")
-            timestamp "http://timestamp.invalid/rfc3161"
-            hashalg Sign.Sha256
-        }
+        { Sign.Settings.Default with
+            Target = "signed/(name:*).(ext:dll|exe|nupkg)"
+            Input = fun t -> Path.Combine (outDir, Path.GetFileName t)
+            Certificate = Sign.Thumbprint "cc4967777c49a3ff"
+            TimestampServer = Some "http://timestamp.invalid/rfc3161"
+            Hash = Sign.Sha256 }
 
     /// `fakeSigner` plus a call counter, optionally slowed down and metered so a test can watch
     /// how many signer calls overlap.
@@ -76,8 +75,10 @@ type ``Sign delegated``() =
     /// One engine run over `targets`, with the signing rule delegated to `Sign.executor`.
     /// `threads` is the CPU-slot count and `budget` the dispatch resource -- deliberately
     /// independent, which is what criterion 4 measures.
-    let runScript (signer: Sign.Signer) (budget: Resource) (threads: int) (targets: string list) =
-        let store = Sign.directoryStore storeDir
+    // the arguments are not named `signer`/`budget`/`store`: inside `sign {}` those are the
+    // operations, and a variable of the same name would not be an argument to them
+    let runScript (theSigner: Sign.Signer) (dispatch: Resource) (threads: int) (targets: string list) =
+        let theStore = Sign.directoryStore storeDir
         let options =
             { ExecOptions.Default with
                 Threads = threads
@@ -91,7 +92,17 @@ type ``Sign delegated``() =
                 ConLogLevel = Silent
                 FileLogLevel = Silent }
         RulesBuilder options {
-            rules [ (Sign.rule settings signer) |> delegated (Sign.executor settings signer store budget) ]
+            rules [
+                sign {
+                    target "signed/(name:*).(ext:dll|exe|nupkg)"
+                    input (fun t -> Path.Combine (outDir, Path.GetFileName t))
+                    certificate (Sign.Thumbprint "cc4967777c49a3ff")
+                    timestamp "http://timestamp.invalid/rfc3161"
+                    hashalg Sign.Sha256
+                    signer theSigner
+                    store theStore
+                    budget dispatch
+                } ]
         }
 
     let signedPath (name: string) = Path.Combine (testDir, "signed", name)
@@ -105,13 +116,32 @@ type ``Sign delegated``() =
     member _.Teardown () =
         if Directory.Exists testDir then Directory.Delete (testDir, true)
 
+    [<Test>]
+    member _.``sign {} gives the local rule, or the delegated one when store and budget are set`` () =
+        let local = sign { target "signed/*.dll"; signer Sign.fakeSigner }
+        match local with
+        | FileRule (mask, _) -> Assert.That (mask, Is.EqualTo "signed/*.dll")
+        | other -> Assert.Fail (sprintf "expected a FileRule, got %A" other)
+        let remote =
+            sign {
+                target "signed/*.dll"
+                signer Sign.fakeSigner
+                store (Sign.directoryStore storeDir)
+                budget (Resource.newResource "sign" 1)
+            }
+        match remote with
+        | DelegatedRule (FileRule (mask, _), _) -> Assert.That (mask, Is.EqualTo "signed/*.dll")
+        | other -> Assert.Fail (sprintf "expected a delegated FileRule, got %A" other)
+        Assert.Throws<exn> (fun () -> sign { target "signed/*.dll" } |> ignore) |> ignore
+        Assert.Throws<exn> (fun () -> sign { target "signed/*.dll"; signer Sign.fakeSigner; store (Sign.directoryStore storeDir) } |> ignore) |> ignore
+
     // --- 1 -------------------------------------------------------------------------------
 
     [<Test>]
     member _.``the fake signer leaves the authenticode hash alone and adds a certificate table`` () =
         let unsigned = input "A.dll" None
         let expectedHash = Verify.authenticodeHash unsigned
-        let expectedSha = Verify.sha256 unsigned
+        let expectedSha = Hash.sha256 unsigned
 
         let signed = signedPath "A.dll"
         Sign.fakeSigner (Sign.request settings unsigned) |> Async.RunSynchronously
@@ -119,7 +149,7 @@ type ``Sign delegated``() =
 
         Assert.That (Verify.authenticodeHash signed, Is.EqualTo expectedHash,
             "signing must not change the image the Authenticode hash covers")
-        Assert.That (Verify.sha256 signed, Is.Not.EqualTo expectedSha, "the file's raw bytes do change")
+        Assert.That (Hash.sha256 signed, Is.Not.EqualTo expectedSha, "the file's raw bytes do change")
         Assert.That (Sign.isSigned signed, Is.True)
         Assert.That (Sign.verifySameImage unsigned signed, Is.True)
 
@@ -234,7 +264,7 @@ type ``Sign delegated``() =
              <description>test</description></metadata></package>")
         let payload = input "A.dll" None
         let unsigned = Path.Combine (outDir, "Test.Pkg.1.2.3.nupkg")
-        Pack.nupkg unsigned nuspec [ { Pack.Path = "lib/netstandard2.0/A.dll"; Pack.Source = payload } ] Pack.defaultOptions
+        Pack.nupkg unsigned nuspec [ { Pack.Path = "lib/netstandard2.0/A.dll"; Pack.Source = payload } ] Pack.Options.Default
 
         Assert.That (Sign.isSigned unsigned, Is.False, "Pack.nupkg writes no signature")
 
@@ -242,13 +272,13 @@ type ``Sign delegated``() =
         Sign.fakeSigner (Sign.request settings unsigned) |> Async.RunSynchronously
         |> fun bytes -> File.WriteAllBytes (signed, bytes)
 
-        let names = Pack.entries signed |> List.map (fun (n, _, _, _) -> n)
+        let names = Pack.list signed |> List.map (fun (n, _, _, _) -> n)
         Assert.That (names, Does.Contain Sign.SignatureEntry)
         Assert.That (Sign.isSigned signed, Is.True)
 
         // entry-level identity: everything but the signature is byte-identical (name, size,
         // crc32 and timestamp all unchanged)
-        let others (path: string) = Pack.entries path |> List.filter (fun (n, _, _, _) -> n <> Sign.SignatureEntry)
+        let others (path: string) = Pack.list path |> List.filter (fun (n, _, _, _) -> n <> Sign.SignatureEntry)
         CollectionAssert.AreEqual (others unsigned, others signed)
         Assert.That (Sign.verifySameImage unsigned signed, Is.True)
 

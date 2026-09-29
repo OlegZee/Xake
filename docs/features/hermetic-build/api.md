@@ -15,6 +15,11 @@ declaration order.
 ⚠ marks a name that reads awkwardly or does not match its neighbours, with the reason in one
 line. It is a flag for the plan. Nothing has been renamed.
 
+**Historical snapshot.** B2-B10 applied the renames of `extraction-plan.md` §3 (e.g. `Lock.readWith`
+-> `Lock.read`, `Roots.withExtra` -> `Roots.make`, `Pack.defaultOptions` -> `Pack.Options.Default`,
+`Sign.sign` -> `sign {}` returning a rule, `CscImpl` -> `CscBuilder`); the names below are the
+2026-09-29 ones and are deliberately not updated.
+
 ---
 
 ## Part 1: hermetic (feature/hermetic-build)

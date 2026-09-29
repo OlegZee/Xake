@@ -92,7 +92,6 @@ module Sign =
         Description: string option }
 
     val Settings.Default : Settings
-    val sign : SignSettingsBuilder                    // Sign.sign { target ...; input ...; certificate ...; timestamp ...; hashalg ...; description ... }
 
     val kindOf     : string -> Kind                   // by extension: .nupkg -> Nupkg, else PeImage
     val imageHash  : string -> string                 // authenticodeHash for a PE, sha256 for a nupkg
@@ -104,12 +103,20 @@ module Sign =
     val executor   : Settings -> Signer -> Store -> Resource -> DelegatedExecutor<ExecContext>
     val directoryStore : string -> Store              // a directory as the shared store
     val fakeSigner : Signer                           // tests and dry runs; section 5
+
+// [<AutoOpen>] module SignBuilder
+val sign : SignRuleBuilder    // sign { target ...; input ...; certificate ...; timestamp ...; hashalg ...; description ...;
+                              //        signer s; store st; budget b } -> ExecContext Rule
 ```
 
 *(landed)* Three naming facts the F# compiler settled, not the design:
 
-- **the builder is `Sign.sign`, never a bare `sign`** — `FSharp.Core` already defines `sign`
-  (the sign of a number), and an unqualified `sign { ... }` binds to that and fails to compile;
+- **the builder is a bare `sign`** (B10, extraction plan §3 principle 4), in an `[<AutoOpen>]`
+  module, so it shadows `FSharp.Core`'s numeric `sign` wherever `Xake.Dotnet` is open (that one
+  stays reachable as `Operators.sign`). It returns the rule: `Sign.rule settings signer`, wrapped
+  in `delegated (Sign.executor settings signer store budget)` when `store` and `budget` are
+  given. It used to be `Sign.sign` returning `Settings`; `FSharp.Core`'s `sign` only won while
+  the builder sat in the non-auto-opened `Sign` module;
 - the cases are likewise qualified in a script — `Sign.Thumbprint`, `Sign.Sha256`, `Sign.KeyId`.
   Putting them in an `[<AutoOpen>]` module the way `csc`'s settings types are was tried and
   reverted: `Sha256`/`Request`/`Kind` are common enough names that auto-opening them broke an
@@ -148,22 +155,22 @@ the documented split in `docs/delegated.md` ("artifact bytes are delivered out o
 the library):
 
 ```fsharp
-let signing =
-    Sign.sign {
-        target "signed/(name:*).(ext:dll|exe|nupkg)"
-        input (fun t -> "out" </> Path.GetFileName t)
-        certificate (Sign.Thumbprint "cc4967777c49a3ff...")
-        timestamp "http://timestamp.digicert.com"
-        hashalg Sign.Sha256
-    }
-
-let signer = Sign.fakeSigner                                  // the real one on the signing agent
-let store  = Sign.directoryStore ".xake/signstore"
-let budget = Resource.newResource "sign" 4                    // the service rate limit, not the core count
+let signingAgent = Sign.fakeSigner                            // the real one on the signing agent
+let signStore    = Sign.directoryStore ".xake/signstore"
+let signBudget   = Resource.newResource "sign" 4              // the service rate limit, not the core count
 
 do xakeScript {
     rules [
-        (Sign.rule signing signer) |> delegated (Sign.executor signing signer store budget)
+        sign {
+            target "signed/(name:*).(ext:dll|exe|nupkg)"
+            input (fun t -> "out" </> Path.GetFileName t)
+            certificate (Sign.Thumbprint "cc4967777c49a3ff...")
+            timestamp "http://timestamp.digicert.com"
+            hashalg Sign.Sha256
+            signer signingAgent
+            store signStore
+            budget signBudget
+        }
 
         "release" <== [ "signed/Rdl.dll"; "signed/MESCIUS.ActiveReports.Core.Rdl.nupkg" ]
 
@@ -190,7 +197,7 @@ Three checks, all already available, none of which needs a certificate or the ne
    end to end ("the signed dll a customer holds, with its signature removed, equals the
    reproducible build of tag X under lock L").
 2. **A certificate table is present.** `Verify.layout` reports `CertTable = Some (offset,
-   size)` for a signed PE; for a nupkg, `Pack.entries` lists `.signature.p7s`. `layout` is
+   size)` for a signed PE; for a nupkg, `Pack.list` lists `.signature.p7s`. `layout` is
    `internal`, so a script cannot ask it directly. *(landed)* This is `Sign.isSigned : string ->
    bool` rather than the `Verify.isSigned` the note first proposed — one function covering both
    kinds, next to the `kindOf` that decides which is which, instead of a PE-only predicate in
@@ -241,7 +248,7 @@ not built: `Lock.Entry` has no field for either today.
 **Files to add** (nothing else changes; `Verify`, `StrongName` and `Pack` are used as they are):
 
 - `src/dotnet/Sign.fs` — the surface of section 2. After `Pack.fs` in the compile order
-  (`Xake.Dotnet.fsproj`), since the nupkg path uses `Pack.entries`/`Pack.zip`.
+  (`Xake.Dotnet.fsproj`), since the nupkg path uses `Pack.list`/`Pack.zip`.
 - `src/tests/SignTests.fs` — fixture `Sign delegated`, in the style of `VerifyTests.fs`
   (fixtures start from a real managed dll, this test assembly's own `Xake.Dotnet.dll`, copied
   to a temp file).
@@ -257,19 +264,19 @@ cryptography is not.
   `VerifyTests.fs` already applies by hand to test `authenticodeHash`, promoted to a function —
   which is the evidence that `Verify` sees it as a certificate table.
 - Nupkg: rewrite with `Pack.zip` plus a `.signature.p7s` entry carrying the same JSON, under
-  `Pack.defaultOptions` so the unsigned bytes stay deterministic. *(landed)* Not "read with
-  `Pack.entries`" as this note first said: `Pack.entries` lists the central directory (name,
+  `Pack.Options.Default` so the unsigned bytes stay deterministic. *(landed)* Not "read with
+  `Pack.list`" as this note first said: `Pack.list` lists the central directory (name,
   size, crc, timestamp) and cannot hand back an entry's *bytes*, which is what re-zipping needs.
   The signer explodes the package into a temp directory with `System.IO.Compression`'s
   `ZipArchive` (read-only, already used by `PackTests`) and feeds those files to `Pack.zip`.
-  `Pack.entries` is what the *test* compares with, entry by entry.
+  `Pack.list` is what the *test* compares with, entry by entry.
 
 It is not a valid signature and the module says so in one line: nothing verifies it, it exists
 so the rule, the executor, the store and the verification step can be exercised end to end.
 
 **Acceptance criteria.**
 
-1. `Sign.fakeSigner` on a copied dll: `Verify.authenticodeHash` unchanged, `Verify.sha256`
+1. `Sign.fakeSigner` on a copied dll: `Verify.authenticodeHash` unchanged, `Hash.sha256`
    changed, `Verify.layout` reports `CertTable = Some _`.
 2. The delegated rule, run through `xakeScript` on two targets sharing one input image: the
    signer is invoked **once** (a counter), both targets are written, and the second is served
@@ -282,7 +289,7 @@ so the rule, the executor, the store and the verification step can be exercised 
    entry of `ExecOptions.Targets` is a target *group*, and groups run one after another
    (`ScriptRunner.targetLists`), so the eight targets go in as one `";"`-joined entry —
    otherwise the run is serial and the peak is 1, which says nothing about the budget.
-5. Nupkg path: `Pack.entries` on the signed package lists `.signature.p7s`, every other entry
+5. Nupkg path: `Pack.list` on the signed package lists `.signature.p7s`, every other entry
    is byte-identical to the unsigned package, and two signings of the same nupkg produce the
    same identity key.
 6. `Sign.identity` changes when the certificate, the timestamp server or the hash algorithm

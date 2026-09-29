@@ -8,7 +8,7 @@ open Xake.Dotnet                   // (2.1)
 do xakeScript {                    // (3)
     rule("main" <== ["hw.exe"])    // (4)
     rule("hw.exe" ..> recipe {     // (5)
-        do! Csc {
+        do! Csc.compile {
             CscSettings with
                 Src = !! "hw.cs"
         }

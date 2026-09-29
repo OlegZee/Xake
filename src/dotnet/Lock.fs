@@ -8,56 +8,25 @@ open Xake.Tasks
 /// The imported compilation of a project: exactly what `dotnet build` would have handed the
 /// compiler, plus the identity (path and SHA-256) of everything the compiler would read that
 /// is not in the repository -- packages, analyzers, the compiler itself, the msbuild files
-/// that produced the answer. One lock file (`Document`) per (framework, variant) holds one
-/// `Entry` per project, and an entry is three records: `Evaluation` (where the answer came
-/// from -- the project file, its imports, the SDK; empty-valued for a compilation composed
-/// from `csc {}` settings), `Compilation` (what is compiled: the structured command line, the
-/// generated inputs, the resx pairs; changes with every PR) and `Dependencies` (what it is
-/// compiled with and against, each hashed: the compiler, the references, the analyzers, the
-/// package graph; changes rarely and is reviewed when it does).
+/// that produced the answer. One lock file (`Document`) per variant holds one `Entry` per
+/// (project, framework), and an entry is the `Csc` the compiler is handed (the structured
+/// command line, the generated inputs, the resx pairs, and the hashed compiler, references and
+/// analyzers) plus its provenance: `Evaluation` (where the answer came from -- the project
+/// file, its imports, the SDK; empty-valued for a compilation composed from `csc {}`
+/// settings) and `Packages` (the restore graph). On disk the entry keeps the sectioned shape
+/// `Name`, `Framework`, `Evaluation`, `Compilation`, `Dependencies` (with `Packages` inside).
+///
+/// The recipes at the end (`build`, `compile`, `record`, `verify`) are the lock's side of a
+/// build: gate a compilation against the lock, obtain what it names (packages, the revision
+/// token, an explanation for a missing compiler), then hand it to `Csc.run`.
 module Lock =
 
-    /// A file the build reads that is not source: where it is and what it was.
-    type Hashed = {
-        Path: string
-        /// Lowercase hex SHA-256, or empty when the file did not exist at import time (a
-        /// project reference points at the referenced project's own output, not built yet)
-        Sha256: string
-    }
-
-    /// One `/reference:` item: a hashed assembly with the `alias=` prefix it carried, if any
-    /// (`extern alias`; empty for the ordinary case).
-    type Reference = {
-        Path: string
-        Sha256: string
-        Alias: string
-    }
-
-    type Compiler = {
-        /// "csc" or "fsc"
-        Tool: string
-        /// The compiler assembly, `csc.dll` under the SDK's Roslyn directory unless the project
-        /// pins a compiler package
-        Path: string
-        Sha256: string
-        /// The compiler's own version, from its file version resource (`ProductVersion` cut at
-        /// the first `+` or space, e.g. `4.11.0-3.25569.22`); empty when the file is missing
-        Version: string
-    }
-
-    /// One package of the restore graph, as `project.assets.json` and the package cache saw it
-    /// at import time.
-    type Package = {
-        Id: string
-        Version: string
-        /// base64 sha512 from the cache's `.nupkg.metadata` (`contentHash`); "" when the cache
-        /// lacked it at import
-        Sha512: string
-        /// a direct `PackageReference` of the project (as opposed to transitive)
-        Direct: bool
-        /// package ids this one depends on, resolved within the same graph
-        DependsOn: string list
-    }
+    /// Abbreviations of the types that moved to `Csc.fs` / `Restore.fs`, kept so that
+    /// `Lock.Hashed`, `Lock.Reference`, `Lock.Compiler` and `Lock.Package` still name them.
+    type Hashed = Xake.Dotnet.Hashed
+    type Reference = Xake.Dotnet.Reference
+    type Compiler = Xake.Dotnet.Compiler
+    type Package = Xake.Dotnet.Package
 
     /// How a project's SDK is selected, from `global.json` searched upwards from the project's
     /// directory the way the .NET host itself resolves it (`sdk.version` plus
@@ -108,149 +77,23 @@ module Lock =
         /// A small whitelist of msbuild properties (`AssemblyName`, `TargetFrameworkMoniker`,
         /// `Version`, ...)
         Properties: Map<string, string>
-    }
+    } with
+        /// The evaluation of a composed compilation: no project, no imports, no SDK, no pin.
+        static member Empty =
+            { Project = ""; ProjectRefs = []; Imports = []; Sdk = ""; SdkPin = None; Properties = Map.empty }
 
-    /// What is compiled. `Options`, `Defines`, `Sources` and the references and analyzers of
-    /// `Dependencies` together are the exact command line msbuild would have run
-    /// (`Entry.Args` rebuilds it): `Options` holds every argument that is not one of those
-    /// four sections, in msbuild's original order, with a marker string -- `"@Sources"`,
-    /// `"@References"`, `"@Analyzers"`, `"@Defines"` -- at the position each section occupied.
-    /// A leading `@` in `Options` is always such a marker and never a csc response-file
-    /// reference: msbuild never emits one on the compiler's command line.
-    type Compilation = {
-        /// The project's directory: the compiler's working directory in `dotnet build`, and
-        /// what relative arguments were resolved against
-        Directory: string
-        /// Every switch that is not a reference, analyzer or define, paths absolute, with the
-        /// four section markers in place
-        Options: string list
-        /// Conditional compilation symbols (`/define:A;B` split)
-        Defines: string list
-        /// Source files, absolute
-        Sources: string list
-        /// Inputs msbuild generated during the import (assembly attributes, the editorconfig
-        /// it derives from properties), by path, with their content: they depend on the
-        /// commit and the properties, and are small
-        Generated: (string * string) list
-        /// `.resx` files this project embeds, compiled by `PrepareResources`: (resx path,
-        /// `.resources` output path), both absolute. `run` regenerates the output from the
-        /// resx (via `Xake.Dotnet.Resx`) whenever it is missing, so a machine with only the
-        /// lock -- or a cleaned `obj/` -- can still reproduce the exact input the recorded
-        /// `/resource:` switch names.
-        Resources: (string * string) list
-    }
-
-    /// What the compilation is made with and against, each hashed.
-    type Dependencies = {
-        Compiler: Compiler
-        /// Every assembly referenced, in command-line order
-        References: Reference list
-        Analyzers: Hashed list
+    /// One project's compilation, as recorded in a lock: what the compiler is handed (`Csc`,
+    /// which carries the entry's identity, `Name` and `Framework`) plus the provenance the
+    /// runner never reads -- the msbuild evaluation and the restore graph.
+    ///
+    /// `(Csc.Name, Csc.Framework)` -- not the name alone -- identifies an entry: one lock holds
+    /// every framework of the project set (`Lock.entryFor`).
+    type Entry = {
+        Csc: Csc
+        Evaluation: Evaluation
         /// The restore graph (`project.assets.json`) at import time; empty when composed
         Packages: Package list
     }
-
-    let private sourcesMarker = "@Sources"
-    let private referencesMarker = "@References"
-    let private analyzersMarker = "@Analyzers"
-    let private definesMarker = "@Defines"
-
-    /// Whether an `Options` element is one of the four section markers.
-    let isMarker (option: string) =
-        option = sourcesMarker || option = referencesMarker || option = analyzersMarker || option = definesMarker
-
-    let private formatReference (r: Reference) =
-        "/reference:" + (if r.Alias = "" then "" else r.Alias + "=") + CscArgs.quoteIfNeeded r.Path
-
-    /// The structured command line, and the way back to the flat one.
-    module Compilation =
-
-        /// Factors a command line into the structured form: a `/reference:`/`/r:` switch
-        /// carrying exactly one item goes into the references (its `alias=` prefix split off),
-        /// a `/analyzer:`/`/a:` switch with one item into the analyzers, every `/define:`/`/d:`
-        /// into `Defines` (all of them concatenated, one marker at the first), every source
-        /// into `Sources` (one marker at the first). Everything else stays in `Options`, in
-        /// order. A contiguous block collapses to one marker; should two non-contiguous
-        /// blocks of one kind ever appear, the marker stays at the first and the round-trip
-        /// check at import (`Entry.Args` against the original) decides. `Directory`,
-        /// `Generated` and `Resources` of the returned compilation are empty: the caller
-        /// knows them. Hashes of the returned references and analyzers are empty too.
-        let ofArgs (args: string list) : Compilation * Reference list * Hashed list =
-            let options = ResizeArray<string>()
-            let defines = ResizeArray<string>()
-            let sources = ResizeArray<string>()
-            let references = ResizeArray<Reference>()
-            let analyzers = ResizeArray<Hashed>()
-            let marker (m: string) = if not (options.Contains m) then options.Add m
-            let singleItem (value: string) =
-                match CscArgs.splitList value |> List.filter ((<>) "") with
-                | [ item ] -> Some item
-                | _ -> None
-            for arg in args do
-                match CscArgs.parse arg with
-                | CscArgs.Source path ->
-                    marker sourcesMarker
-                    sources.Add path
-                | CscArgs.Switch (name, value) ->
-                    match CscArgs.canonical name, singleItem value with
-                    | "reference", Some item ->
-                        marker referencesMarker
-                        let alias, path =
-                            match CscArgs.aliasSplitIndex item with
-                            | -1 -> "", item
-                            | i -> item.Substring (0, i), item.Substring (i + 1)
-                        references.Add { Path = path; Sha256 = ""; Alias = alias }
-                    | "analyzer", Some item ->
-                        marker analyzersMarker
-                        analyzers.Add { Path = item; Sha256 = "" }
-                    | "define", _ ->
-                        marker definesMarker
-                        for d in value.Split ';' do
-                            if d <> "" then defines.Add d
-                    | _ -> options.Add arg
-            { Directory = ""
-              Options = List.ofSeq options
-              Defines = List.ofSeq defines
-              Sources = List.ofSeq sources
-              Generated = []
-              Resources = [] },
-            List.ofSeq references,
-            List.ofSeq analyzers
-
-        /// The flat command line back from the structure: each marker in `Options` expands to
-        /// its section -- one `/reference:<alias=>path` per reference (a path with a comma
-        /// re-quoted, as msbuild quotes it), one `/analyzer:path` per analyzer, one
-        /// `/define:A;B`, the sources.
-        let args (compilation: Compilation) (references: Reference list) (analyzers: Hashed list) : string list =
-            compilation.Options |> List.collect (fun option ->
-                if option = sourcesMarker then compilation.Sources
-                elif option = referencesMarker then references |> List.map formatReference
-                elif option = analyzersMarker then analyzers |> List.map (fun a -> "/analyzer:" + CscArgs.quoteIfNeeded a.Path)
-                elif option = definesMarker then
-                    if List.isEmpty compilation.Defines then [] else [ "/define:" + String.concat ";" compilation.Defines ]
-                else [ option ])
-
-    /// One project's compilation, as recorded in a lock.
-    type Entry = {
-        /// AssemblyName
-        Name: string
-        /// The target framework this compilation is for (`netstandard2.0`, `net472`, ...).
-        /// One lock holds every framework of the project set, so `(Name, Framework)` -- not
-        /// `Name` alone -- identifies an entry. It sits here rather than in `Evaluation`
-        /// because it is identity: it is what a build script looks an entry up by
-        /// (`Lock.entryFor`), it is set for a composed `csc {}` compilation too (from
-        /// `targetfwk`, which has no msbuild evaluation behind it at all), and `Evaluation`
-        /// is by contract empty in that case.
-        Framework: string
-        Evaluation: Evaluation
-        Compilation: Compilation
-        Dependencies: Dependencies
-    } with
-        /// The exact command line, paths absolute (rebuilt from `Compilation` and
-        /// `Dependencies`; the import verifies it equals what msbuild reported)
-        member this.Args = Compilation.args this.Compilation this.Dependencies.References this.Dependencies.Analyzers
-        member this.Sources = this.Compilation.Sources
-        member this.Output = CscArgs.switchValues "out" this.Compilation.Options |> List.tryHead
 
     /// One lock file: every project of one variant, for every target framework it was
     /// imported for. The framework is a property of the `Entry`, not of the file: a
@@ -262,115 +105,39 @@ module Lock =
         Entries: Entry list
     }
 
-    let internal sha256 (path: string) =
-        if not (System.IO.File.Exists path) then "" else
-        use stream = System.IO.File.OpenRead path
-        use algo = System.Security.Cryptography.SHA256.Create()
-        algo.ComputeHash stream |> Array.map (sprintf "%02x") |> String.concat ""
+    /// A composed compilation as a lock entry: no evaluation, no package graph.
+    let ofCsc (c: Csc) : Entry = { Csc = c; Evaluation = Evaluation.Empty; Packages = [] }
 
-    let hashed path = { Path = path; Sha256 = sha256 path }
-
-    /// A compiler's own version: `ProductVersion` from its file version resource, cut at the
-    /// first `+` (the commit suffix) or space; "" when the file does not exist. A native
-    /// apphost launcher (the SDK's `csc` next to `csc.dll`, what `DotNetFwk.locateFramework`
-    /// returns on macOS/Linux) carries no version of its own, so the managed assembly of the
-    /// same name next to it is read instead -- that is the compiler the launcher runs.
-    let compilerVersion (path: string) =
-        let productVersion (file: string) =
-            if not (System.IO.File.Exists file) then "" else
-            match System.Diagnostics.FileVersionInfo.GetVersionInfo(file).ProductVersion with
-            | null -> ""
-            | v ->
-                match v.IndexOfAny [| '+'; ' ' |] with
-                | -1 -> v
-                | i -> v.Substring (0, i)
-        match productVersion path with
-        | "" when System.IO.File.Exists path && not (path.EndsWith (".dll", System.StringComparison.OrdinalIgnoreCase)) ->
-            productVersion (System.IO.Path.ChangeExtension (path, ".dll"))
-        | v -> v
-
-    /// Fills `Sha256` for every hashed entry (`References`, `Analyzers`, `Imports`) and for
-    /// `Compiler` (its `Version` too, when empty), from what is on disk right now; leaves `""`
-    /// where the file does not exist (`sha256` already does that per entry). For `resolve`'s
-    /// composed-mode entries, which leave every hash empty, this is the "record time" step
-    /// `lock-from-settings.md` recommendation 5 asks for -- run once by the lock-recording
-    /// rule, not on every compile.
+    /// Fills `Sha256` for every hashed item (`References`, `Analyzers`, the compiler via
+    /// `Csc.rehash`, and `Imports`) from what is on disk right now; leaves `""` where the file
+    /// does not exist. For a composed entry, which leaves every hash empty, this is the
+    /// "record time" step `lock-from-settings.md` recommendation 5 asks for -- run once by the
+    /// lock-recording rule, not on every compile.
     let rehash (entry: Entry) : Entry =
-        let rehashOne (h: Hashed) = { h with Sha256 = sha256 h.Path }
-        let compiler = entry.Dependencies.Compiler
         { entry with
-            Evaluation = { entry.Evaluation with Imports = entry.Evaluation.Imports |> List.map rehashOne }
-            Dependencies =
-                { entry.Dependencies with
-                    References = entry.Dependencies.References |> List.map (fun r -> { r with Sha256 = sha256 r.Path })
-                    Analyzers = entry.Dependencies.Analyzers |> List.map rehashOne
-                    Compiler =
-                        { compiler with
-                            Sha256 = sha256 compiler.Path
-                            Version = if compiler.Version = "" then compilerVersion compiler.Path else compiler.Version } } }
+            Csc = Csc.rehash entry.Csc
+            Evaluation = { entry.Evaluation with Imports = entry.Evaluation.Imports |> List.map (fun h -> { h with Sha256 = Csc.sha256 h.Path }) } }
 
-    /// Rewrites every path the entry's options, sources, references, analyzers, generated
-    /// files and resources carry, through `f`. A build script uses this to point a project
-    /// reference (the lock has it unhashed, at the referenced project's own
-    /// `bin/Release/.../X.dll`) at the path the script itself produces that output at -- the
-    /// rest of the lock, including the hashes that identify what was actually compiled
-    /// against, stays as imported. A rewritten hashed entry loses its hash: the hash on record
-    /// was computed for the old path, and it would otherwise be checked against a different
-    /// file. Section markers are left alone.
+    /// Rewrites every path the entry's compilation carries, through `f` (`Csc.mapPaths`). A
+    /// build script uses this to point a project reference (the lock has it unhashed, at the
+    /// referenced project's own `bin/Release/.../X.dll`) at the path the script itself
+    /// produces that output at -- the rest of the lock, including the hashes that identify
+    /// what was actually compiled against, stays as imported. A rewritten hashed entry loses
+    /// its hash. Section markers are left alone.
     let mapPaths (f: string -> string) (entry: Entry) : Entry =
-        let rewriteHashed (h: Hashed) =
-            let path = f h.Path
-            if path = h.Path then h else { Path = path; Sha256 = "" }
-        let rewriteReference (r: Reference) =
-            let path = f r.Path
-            if path = r.Path then r else { r with Path = path; Sha256 = "" }
-        let c = entry.Compilation
-        { entry with
-            Compilation =
-                { c with
-                    Options = c.Options |> List.map (fun o -> if isMarker o then o else CscArgs.parse o |> CscArgs.mapPaths f |> CscArgs.format)
-                    Sources = c.Sources |> List.map f
-                    Generated = c.Generated |> List.map (fun (path, content) -> f path, content)
-                    Resources = c.Resources |> List.map (fun (resx, resources) -> f resx, f resources) }
-            Dependencies =
-                { entry.Dependencies with
-                    References = entry.Dependencies.References |> List.map rewriteReference
-                    Analyzers = entry.Dependencies.Analyzers |> List.map rewriteHashed } }
+        { entry with Csc = Csc.mapPaths f entry.Csc }
 
     /// Applies `f` to every piece of text that may embed a value rather than name a file:
-    /// `Generated` content, `Options`, `Defines`, and the evaluation's property values. Used to
+    /// the compilation's (`Csc.mapText`) and the evaluation's property values. Used to
     /// tokenize the commit sha out of a lock (`Project.tokenizeRevision`) and to resolve it
-    /// back at compile time (`run`).
+    /// back at compile time (`compile`).
     let mapText (f: string -> string) (entry: Entry) : Entry =
-        let c = entry.Compilation
         { entry with
-            Compilation =
-                { c with
-                    Generated = c.Generated |> List.map (fun (path, content) -> path, f content)
-                    Options = c.Options |> List.map f
-                    Defines = c.Defines |> List.map f }
+            Csc = Csc.mapText f entry.Csc
             Evaluation = { entry.Evaluation with Properties = entry.Evaluation.Properties |> Map.map (fun _ v -> f v) } }
 
-    /// A plain ordered-list diff (Myers/LCS): `- x` for an element only on the left, `+ x` for
-    /// one only on the right. A moved element shows as both -- removed from its old position,
-    /// added at its new one -- there being no separate "moved" marker in an ordered diff.
-    let diffList (a: string list) (b: string list) : string list =
-        let arrA, arrB = List.toArray a, List.toArray b
-        let la, lb = arrA.Length, arrB.Length
-        let lcs = Array2D.create (la + 1) (lb + 1) 0
-        for i in la - 1 .. -1 .. 0 do
-            for j in lb - 1 .. -1 .. 0 do
-                lcs.[i, j] <-
-                    if arrA.[i] = arrB.[j] then lcs.[i + 1, j + 1] + 1
-                    else max lcs.[i + 1, j] lcs.[i, j + 1]
-        let rec walk i j =
-            if i = la && j = lb then []
-            elif i = la then sprintf "+ %s" arrB.[j] :: walk i (j + 1)
-            elif j = lb then sprintf "- %s" arrA.[i] :: walk (i + 1) j
-            elif arrA.[i] = arrB.[j] then walk (i + 1) (j + 1)
-            elif lcs.[i + 1, j] >= lcs.[i, j + 1] then sprintf "- %s" arrA.[i] :: walk (i + 1) j
-            else sprintf "+ %s" arrB.[j] :: walk i (j + 1)
-        walk 0 0
+    /// See `Csc.diffList`.
+    let diffList (a: string list) (b: string list) : string list = Csc.diffList a b
 
     /// `label`-prefixed added/removed/hash-changed lines for a `Hashed` list, keyed by path,
     /// sorted for determinism. A hash-changed line is only reported when both sides have a
@@ -441,19 +208,20 @@ module Lock =
     /// set, `Packages` by id. Empty list means identical. Pure, deterministic order (fixed
     /// section order, sorted within each section save the two ordered ones).
     let diff (a: Entry) (b: Entry) : string list =
-        [ if a.Framework <> b.Framework then yield sprintf "~ Framework: %s -> %s" a.Framework b.Framework
-          yield! diffList a.Compilation.Options b.Compilation.Options
-          yield! diffList a.Compilation.Sources b.Compilation.Sources
-          yield! diffStringSet "Define" a.Compilation.Defines b.Compilation.Defines
-          yield! diffCompiler a.Dependencies.Compiler b.Dependencies.Compiler
+        let ca, cb = a.Csc, b.Csc
+        [ if ca.Framework <> cb.Framework then yield sprintf "~ Framework: %s -> %s" ca.Framework cb.Framework
+          yield! Csc.diffList ca.Options cb.Options
+          yield! Csc.diffList ca.Sources cb.Sources
+          yield! diffStringSet "Define" ca.Defines cb.Defines
+          yield! diffCompiler ca.Dependencies.Compiler cb.Dependencies.Compiler
           if a.Evaluation.Sdk <> b.Evaluation.Sdk then yield sprintf "~ Evaluation.Sdk: %s -> %s" a.Evaluation.Sdk b.Evaluation.Sdk
-          yield! diffHashed "Reference" (a.Dependencies.References |> List.map toHashed) (b.Dependencies.References |> List.map toHashed)
-          yield! diffHashed "Analyzer" a.Dependencies.Analyzers b.Dependencies.Analyzers
+          yield! diffHashed "Reference" (ca.Dependencies.References |> List.map toHashed) (cb.Dependencies.References |> List.map toHashed)
+          yield! diffHashed "Analyzer" ca.Dependencies.Analyzers cb.Dependencies.Analyzers
           yield! diffHashed "Import" a.Evaluation.Imports b.Evaluation.Imports
-          yield! diffPairs "Generated" a.Compilation.Generated b.Compilation.Generated
-          yield! diffPairs "Resources" a.Compilation.Resources b.Compilation.Resources
+          yield! diffPairs "Generated" ca.Generated cb.Generated
+          yield! diffPairs "Resources" ca.Resources cb.Resources
           yield! diffStringSet "ProjectRef" a.Evaluation.ProjectRefs b.Evaluation.ProjectRefs
-          yield! diffPackages a.Dependencies.Packages b.Dependencies.Packages ]
+          yield! diffPackages a.Packages b.Packages ]
 
     open Json
 
@@ -489,9 +257,12 @@ module Lock =
         let section name (fields: string list) =
             fields |> String.concat ",\n" |> sprintf "      %s: {\n%s\n      }" (escape name)
 
-        let e, c, d = entry.Evaluation, entry.Compilation, entry.Dependencies
-        [ sprintf "      \"Name\": %s" (escape entry.Name)
-          sprintf "      \"Framework\": %s" (escape entry.Framework)
+        // the file keeps the sectioned shape: `Name`/`Framework`, then `Evaluation`, then the
+        // compilation's fields as `Compilation`, and its dependencies together with the
+        // entry's package graph as `Dependencies`
+        let e, c, d = entry.Evaluation, entry.Csc, entry.Csc.Dependencies
+        [ sprintf "      \"Name\": %s" (escape c.Name)
+          sprintf "      \"Framework\": %s" (escape c.Framework)
           section "Evaluation"
             [ sprintf "%s\"Project\": %s" indent (str e.Project)
               strings "ProjectRefs" e.ProjectRefs
@@ -511,7 +282,7 @@ module Lock =
                 (escape d.Compiler.Tool) (str d.Compiler.Path) (escape d.Compiler.Sha256) (escape d.Compiler.Version)
               referenceList "References" d.References
               hashedList "Analyzers" d.Analyzers
-              packageList "Packages" d.Packages ] ]
+              packageList "Packages" entry.Packages ] ]
         |> String.concat ",\n" |> sprintf "    {\n%s\n    }"
 
     /// The lock as text: paths tokenized against the given roots, one line per item, so the
@@ -555,8 +326,19 @@ module Lock =
         let e, c, d = sectionOf "Evaluation", sectionOf "Compilation", sectionOf "Dependencies"
         let compiler = field "Compiler" d |> Option.defaultValue (JObject [])
         {
-            Name = str "Name" value
-            Framework = field "Framework" value |> Option.bind asString |> Option.defaultValue documentFramework
+            Csc =
+                { Name = str "Name" value
+                  Framework = field "Framework" value |> Option.bind asString |> Option.defaultValue documentFramework
+                  Directory = str "Directory" c |> expand
+                  Options = strings "Options" c
+                  Defines = strings "Defines" c
+                  Sources = strings "Sources" c
+                  Generated = pairs "Generated" c
+                  Resources = pairs "Resources" c
+                  Dependencies =
+                    { Compiler = { Tool = str "Tool" compiler; Path = str "Path" compiler |> expand; Sha256 = str "Sha256" compiler; Version = str "Version" compiler }
+                      References = referenceList "References" d
+                      Analyzers = hashedList "Analyzers" d } }
             Evaluation =
                 { Project = str "Project" e |> expand
                   ProjectRefs = strings "ProjectRefs" e
@@ -564,18 +346,7 @@ module Lock =
                   Sdk = str "Sdk" e
                   SdkPin = str "SdkPin" e |> parseSdkPin
                   Properties = pairs "Properties" e |> Map.ofList }
-            Compilation =
-                { Directory = str "Directory" c |> expand
-                  Options = strings "Options" c
-                  Defines = strings "Defines" c
-                  Sources = strings "Sources" c
-                  Generated = pairs "Generated" c
-                  Resources = pairs "Resources" c }
-            Dependencies =
-                { Compiler = { Tool = str "Tool" compiler; Path = str "Path" compiler |> expand; Sha256 = str "Sha256" compiler; Version = str "Version" compiler }
-                  References = referenceList "References" d
-                  Analyzers = hashedList "Analyzers" d
-                  Packages = packageList "Packages" d }
+            Packages = packageList "Packages" d
         }
 
     /// Reads a lock `writeWith` produced, paths expanded for this machine. `roots` must be the
@@ -648,10 +419,10 @@ module Lock =
     let save (path: string) (lock: Document) : Recipe<ExecContext, unit> = saveWith [] path lock
 
     let private named (name: string) (e: Entry) =
-        e.Name = name || System.IO.Path.GetFileNameWithoutExtension e.Evaluation.Project = name
+        e.Csc.Name = name || System.IO.Path.GetFileNameWithoutExtension e.Evaluation.Project = name
 
     let private known (lock: Document) =
-        lock.Entries |> List.map (fun e -> if e.Framework = "" then e.Name else e.Name + " (" + e.Framework + ")") |> String.concat ", "
+        lock.Entries |> List.map (fun e -> if e.Csc.Framework = "" then e.Csc.Name else e.Csc.Name + " (" + e.Csc.Framework + ")") |> String.concat ", "
 
     /// The entry for one project, by assembly name or by project file name. A lock now holds
     /// every target framework of the project set, so a name can match more than one entry:
@@ -662,12 +433,274 @@ module Lock =
         | [] -> failwithf "project '%s' is not in the lock (%s)" name (known lock)
         | many ->
             failwithf "project '%s' is in the lock for %d frameworks (%s); ask for one with Lock.entryFor"
-                name (List.length many) (many |> List.map (fun e -> e.Framework) |> String.concat ", ")
+                name (List.length many) (many |> List.map (fun e -> e.Csc.Framework) |> String.concat ", ")
 
     /// The entry for one project *and* one target framework -- the unambiguous lookup, and
     /// the one a build script whose rules carry the framework should use.
     let entryFor (framework: string) (name: string) (lock: Document) =
-        match lock.Entries |> List.filter (fun e -> e.Framework = framework && named name e) with
+        match lock.Entries |> List.filter (fun e -> e.Csc.Framework = framework && named name e) with
         | [ e ] -> e
         | [] -> failwithf "project '%s' for '%s' is not in the lock (%s)" name framework (known lock)
         | _ :: _ -> failwithf "project '%s' for '%s' appears more than once in the lock" name framework
+
+    /// What a lock-gated build needs besides the compilation: the runner's options and where
+    /// the packages the lock names live (and whether a missing one may be fetched).
+    type Options = {
+        Run: RunOptions
+        Restore: Restore.Options
+    } with static member Default = {
+            Run = RunOptions.Default
+            Restore = Restore.Options.Default
+        }
+
+    /// What a restore of `entries` has to provide: every compiler, reference and analyzer
+    /// path they name, looked up in their combined package graph.
+    let restoreRequest (entries: Entry list) : Restore.Request =
+        { Packages = entries |> List.collect (fun e -> e.Packages)
+          Paths =
+            [ for e in entries do
+                let d = e.Csc.Dependencies
+                yield d.Compiler.Path
+                for r in d.References do yield r.Path
+                for a in d.Analyzers do yield a.Path ] }
+
+    /// Fills the package folder from a whole lock in one step -- a script's "restore the
+    /// build's dependencies" target, so a build agent can populate (and then cache) the folder
+    /// before any compile runs. Fails the build on the first problem; `Restore.ensure` is the
+    /// variant that reports instead, for a caller with its own failure policy.
+    let restore (options: Restore.Options) (document: Document) : Recipe<ExecContext, unit> =
+        recipe {
+            let! problems = Restore.ensure options (restoreRequest document.Entries)
+            if not (List.isEmpty problems) then
+                failwithf "restoring the packages of the lock failed:\n%s" (problems |> String.concat "\n")
+        }
+
+    /// Traces `msg` as an error and, when the options say so, fails the build with it -- the
+    /// same shape as `Impl.failOnExitCode` and the runner's hash-mismatch check.
+    let private failStep (options: Options) (msg: string) =
+        recipe {
+            do! trace Error "%s" msg
+            if options.Run.FailOnError then failwith msg
+        }
+
+    /// Accounts for a compiler the lock names that this machine still does not have, once the
+    /// restore step (`Restore.ensure`, which treats the compiler as one package among the
+    /// entry's references and analyzers) has had its chance -- all that is left here is the
+    /// part that is specific to the compiler, saying what went wrong:
+    ///  - already on disk: nothing to do.
+    ///  - under the package folder: a `Microsoft.Net.Compilers.Toolset`-shaped package (see
+    ///    `csc { toolset }`) that the restore did not, or was not allowed to, provide. A
+    ///    hash mismatch after a successful restore is a different package build, not a missing
+    ///    one, and is left to the runner's check.
+    ///  - under `$(DotnetRoot)/sdk/<version>/`: an SDK this machine does not have; nothing to
+    ///    restore, so this fails immediately naming the SDK version.
+    ///  - anywhere else: the path simply does not exist.
+    let private ensureCompilerAvailable (options: Options) (c: Csc) =
+        recipe {
+            let compiler = c.Dependencies.Compiler
+            if File.Exists compiler.Path then
+                ()
+            else
+                let path = compiler.Path.Replace('\\', '/')
+                let comparer = if Env.isUnix then System.StringComparison.Ordinal else System.StringComparison.OrdinalIgnoreCase
+                let normalize (r: string) = r.Replace('\\', '/').TrimEnd '/'
+                let under (r: string) = path.StartsWith(r + "/", comparer)
+
+                match Restore.packageRoot options.Restore |> normalize |> Some |> Option.filter under with
+                | Some packageRoot ->
+                    let rest = path.Substring(packageRoot.Length + 1).Split('/')
+                    let packageId, version = rest.[0], rest.[1]
+                    do! failStep options
+                            (sprintf "'%s': the compiler %s is not available and restoring %s %s did not provide it"
+                                c.Name compiler.Path packageId version)
+                | None ->
+                    match Roots.dotnetRoot () |> Option.map normalize |> Option.filter under with
+                    | Some dotnetRoot ->
+                        let sdkPrefix = dotnetRoot + "/sdk/"
+                        let msg =
+                            if path.StartsWith(sdkPrefix, comparer) then
+                                let version = path.Substring(sdkPrefix.Length).Split('/').[0]
+                                sprintf "'%s': the lock names the compiler of SDK %s (%s), which is not installed; install that SDK or re-import with the installed one"
+                                    c.Name version compiler.Path
+                            else
+                                sprintf "'%s': the compiler %s named by the lock is not installed" c.Name compiler.Path
+                        do! failStep options msg
+                    | None ->
+                        do! failStep options
+                                (sprintf "'%s': the compiler %s named by the lock does not exist" c.Name compiler.Path)
+        }
+
+    /// <summary>
+    /// Replays a lock entry -- one imported by `Project.import`, read back from a lock, or
+    /// recorded from composed settings -- exactly as recorded, with the runner and restore
+    /// options given:
+    ///  1. `Restore.ensure`: a lock built on another machine names packages this one may not
+    ///     have yet -- a compiler in a toolset package, and every reference and analyzer under
+    ///     the package folder. The whole missing set is fetched in one restore; with nothing
+    ///     missing (the normal case) this is a `File.Exists` per path and no process at all.
+    ///  2. a compiler that is still missing is explained (an SDK that is not installed is not
+    ///     a package).
+    ///  3. the token `$(SourceRevisionId)` in `Generated`, `Options` or `Defines` (the lock
+    ///     never carries the commit sha itself, `Project.tokenizeRevision`) is resolved from
+    ///     the project's own repository.
+    ///  4. `Csc.run`, whose hash check makes the replay trustworthy.
+    /// </summary>
+    let compileWith (options: Options) (entry: Entry) : Recipe<ExecContext, unit> =
+        recipe {
+            let c = entry.Csc
+
+            let! restoreProblems = Restore.ensure options.Restore (restoreRequest [entry])
+            if not (List.isEmpty restoreProblems) then
+                do! failStep options
+                        (sprintf "('%s') restoring the packages the lock names failed:\n%s"
+                            c.Name (restoreProblems |> String.concat "\n"))
+
+            // whatever the restore could not provide, the compiler's own absence is worth an
+            // explanation of its own (an SDK that is not installed is not a package)
+            do! ensureCompilerAvailable options c
+
+            // when `Generated`, `Options` or `Defines` carries the token `$(SourceRevisionId)`
+            // (from a project whose SourceLink writes it into `sourcelink.json`), resolve it
+            // here, from the project's own repository, right before it is used -- a lock that
+            // needs a revision has to be compiled in a repository, or this fails with a clear
+            // message
+            let sourceRevisionToken = "$(SourceRevisionId)"
+            let containsToken (s: string) = s.Contains sourceRevisionToken
+            let needsRevision =
+                (c.Generated |> List.exists (snd >> containsToken))
+                || (c.Args |> List.exists containsToken)
+            let! c =
+                if not needsRevision then
+                    recipe.Return c
+                else
+                    match Git.headSha c.Directory with
+                    | Some sha ->
+                        recipe.Return (c |> Csc.mapText (fun s -> if containsToken s then s.Replace (sourceRevisionToken, sha) else s))
+                    | None ->
+                        recipe {
+                            let msg =
+                                sprintf "'%s': the lock needs %s but no git repository was found at or above '%s' -- a lock that needs a revision must be compiled in a repository"
+                                    c.Name sourceRevisionToken c.Directory
+                            do! trace Error "%s" msg
+                            if options.Run.FailOnError then failwith msg
+                            return c
+                        }
+
+            do! Csc.run options.Run c
+        }
+
+    /// `compileWith` with the default options, the compiler server resolved for this build
+    /// (`CompilerServer.resolve`: `CSC_SERVER`, then `XAKE_CSC_SERVER`).
+    let compile (entry: Entry) : Recipe<ExecContext, unit> =
+        recipe {
+            let! server = CompilerServer.resolve None
+            do! compileWith { Options.Default with Run = { Options.Default.Run with Server = server } } entry
+        }
+
+    /// Writes `entry`, hashed (`rehash`, the record-time step), as a one-entry lock at `path`
+    /// and returns what was written. There is no msbuild configuration or property set behind
+    /// a composed compilation, so those stay empty in the document.
+    let private recordEntry (path: string) (entry: Entry) =
+        recipe {
+            let! full = fullPath path
+            let dir = Path.GetDirectoryName full
+            if dir <> "" then Directory.CreateDirectory dir |> ignore
+            let rehashed = rehash entry
+            do! save full { Configuration = ""; Properties = []; Entries = [ rehashed ] }
+            return rehashed
+        }
+
+    /// <summary>
+    /// Hashes `c` and writes (overwriting) the one-entry lock at `path` -- the deliberate
+    /// update step `build` refuses to take on its own. A script declares it as a target of
+    /// its own:
+    /// <code>
+    /// "update-locks" => recipe {
+    ///     let! c = csc { src !!"*.cs"; out "app.dll"; resolve }
+    ///     do! Lock.record "locks/app.json" c }
+    /// </code>
+    /// Nothing is compiled here.
+    /// </summary>
+    let record (path: string) (c: Csc) : Recipe<ExecContext, unit> =
+        recipe {
+            let! _ = recordEntry path (ofCsc c)
+            return ()
+        }
+
+    /// <summary>
+    /// The differences between the lock at `path` and `c` -- `[]` means the lock is current.
+    /// This is what `build` fails on, without compiling and without writing anything
+    /// (`lock-from-settings.md` scenario 3). Hashes are not compared when `c` has none (a
+    /// composed compilation); the recorded hashes are verified against disk by the runner
+    /// when a lock is actually compiled.
+    /// </summary>
+    let verify (path: string) (c: Csc) : Recipe<ExecContext, string list> =
+        recipe {
+            let! doc = load path
+            return diff (entry c.Name doc) (ofCsc c)
+        }
+
+    /// <summary>
+    /// Builds `c` gated by the lock at `path` (relative to the project root, or absolute).
+    /// Strict, `npm ci`-like semantics: missing -- record it and compile; present -- `c` must
+    /// match it or the build fails with the differences; matching -- compile the recorded
+    /// entry, whose hashes then gate the build. Compiling is `compileWith` (restore,
+    /// revision, `Csc.run`). Updating is explicit: delete the file, or call `record` from a
+    /// target of the script's own. With `FailOnError = false` a mismatch is a traced error
+    /// and `c` itself is compiled.
+    /// </summary>
+    let buildWith (options: Options) (path: string) (c: Csc) : Recipe<ExecContext, unit> =
+        recipe {
+            let! full = fullPath path
+            if not (File.Exists full) then
+                // no lock yet: record what was just resolved and compile that -- the hashes
+                // `Csc.run` verifies are the ones taken a moment ago
+                let! recorded = recordEntry path (ofCsc c)
+                do! compileWith options recorded
+            else
+                let! doc = load full
+                let recorded = entry c.Name doc
+                match diff recorded (ofCsc c) with
+                | [] ->
+                    // compile the recorded entry, not the resolved one: its hashes are what
+                    // gate the build
+                    do! compileWith options recorded
+                | differences ->
+                    do! failStep options
+                            (sprintf "'%s': the resolved compilation differs from the lock '%s':\n%s\nUpdate the lock deliberately: delete '%s', or run the target that calls Lock.record \"%s\"."
+                                c.Name path (differences |> String.concat "\n") path path)
+                    // FailOnError = false turned the failure into a warning: the resolved
+                    // compilation is the source of truth, so compile what it says
+                    do! compileWith options (ofCsc c)
+        }
+
+    /// `buildWith` with the default options, the compiler server resolved for this build.
+    let build (path: string) (c: Csc) : Recipe<ExecContext, unit> =
+        recipe {
+            let! server = CompilerServer.resolve None
+            do! buildWith { Options.Default with Run = { Options.Default.Run with Server = server } } path c
+        }
+
+/// The state of a `csc {}` block after `lock "path"`.
+type CscLocked = CscLocked of path: string * CscSettingsType
+
+/// `csc { ...; lock "path" }`: the settings resolved, then built gated by that lock
+/// (`Lock.buildWith`) with the run options the settings imply (`Csc.runOptions`).
+[<AutoOpen>]
+module CscLockBuilder =
+    type CscSettingsBuilder with
+        /// <summary>Records this compilation in the lock file at the given path (relative to the
+        /// project root, or absolute) and, once it exists, refuses to compile anything else:
+        /// the resolved settings must match the lock, or the build fails with the differences.
+        /// A matching lock is what gets compiled, so its recorded hashes are verified against
+        /// disk. To update it, delete the file or call `Lock.record` from a target of the
+        /// script's own. Must be the last operation.</summary>
+        [<CustomOperation("lock")>]
+        member _.Lock(s: CscSettingsType, path: string) = CscLocked (path, s)
+
+        member _.Run(CscLocked (path, s)) =
+            recipe {
+                let! c = Csc.ofSettings s
+                let! run = Csc.runOptions s
+                do! Lock.buildWith { Lock.Options.Default with Run = run } path c
+            }

@@ -5,11 +5,26 @@ open System.IO
 open Xake
 open Xake.Tasks
 
+/// One package of the restore graph, as `project.assets.json` and the package cache saw it
+/// at import time (a lock records these per entry, `Lock.Entry.Packages`). Top-level in the
+/// namespace so its field labels are in scope wherever `Xake.Dotnet` is open.
+type Package = {
+    Id: string
+    Version: string
+    /// base64 sha512 from the cache's `.nupkg.metadata` (`contentHash`); "" when the cache
+    /// lacked it at import
+    Sha512: string
+    /// a direct `PackageReference` of the project (as opposed to transitive)
+    Direct: bool
+    /// package ids this one depends on, resolved within the same graph
+    DependsOn: string list
+}
+
 /// Obtaining the packages a lock names, on a machine that does not have them yet.
 ///
 /// A lock is a complete *description* of what a compilation reads -- every reference and
 /// analyzer by absolute path, plus the whole restore graph with the nupkg's own hash
-/// (`Lock.Dependencies.Packages`). Until this module it was only a partial *source* for
+/// (`Lock.Entry.Packages`). Until this module it was only a partial *source* for
 /// obtaining them: a compiler living in a package was restored, reference packages were not,
 /// so an empty package folder failed the build with hundreds of `expected <sha256>, got
 /// missing` lines.
@@ -21,7 +36,7 @@ open Xake.Tasks
 /// one `PackageDownload` per missing package fetches the whole set at once.
 ///
 /// What it deliberately does not do: decide whether the *files* are the right ones. The
-/// SHA-256 check in `Dotnet.csc.fs`'s `run` stays the authority on that, and runs after this
+/// SHA-256 check in `Csc.run` stays the authority on that, and runs after this
 /// step. This module only gets the bytes onto the disk and checks the nupkg against the
 /// sha512 the lock recorded.
 module Restore =
@@ -66,7 +81,7 @@ module Restore =
     /// <code>
     /// let! restore = Restore.into ".packages"
     /// let! doc = Lock.loadWith (Roots.packageRootOverride (Restore.packageRoot restore)) "locks/app.json"
-    /// do! Restore.prepare restore doc
+    /// do! Lock.restore restore doc
     /// </code>
     /// </summary>
     let into (dir: string) : Recipe<ExecContext, Options> =
@@ -77,7 +92,20 @@ module Restore =
                         PackageRoot = root |> List.tryPick (fun (token, path) -> if token = Roots.nugetPackageRootToken then Some path else None) }
         }
 
-    /// One package the entries name whose files are not in the package folder.
+    /// What a restore is asked to make available: the files that have to exist, and the
+    /// package graph that says which nupkg (by original id casing and sha512) each package
+    /// directory comes from. `Lock.restoreRequest` projects lock entries into one; the files
+    /// are every compiler, reference and analyzer path -- the compiler deliberately among
+    /// them, since it is a package like any other when it comes from a
+    /// `Microsoft.Net.Compilers.Toolset`-shaped one.
+    type Request = {
+        /// The restore graph the paths' packages are looked up in
+        Packages: Package list
+        /// Files expected on disk; only those under the package folder name a package
+        Paths: string list
+    }
+
+    /// One package the request names whose files are not in the package folder.
     type Missing = {
         /// The id in its original NuGet casing when the lock's package graph knows it, the
         /// cache's lowercase directory name otherwise (restore is case-insensitive on ids).
@@ -91,17 +119,7 @@ module Restore =
         Files: string list
     }
 
-    /// Every file an entry expects to find on disk before it compiles: the compiler, and each
-    /// reference and analyzer. The compiler is deliberately in the list -- it is a package
-    /// like any other when the lock names a `Microsoft.Net.Compilers.Toolset`-shaped one, and
-    /// restoring it in the same pass is what lets `ensureCompilerAvailable` stop being a
-    /// parallel implementation of this.
-    let private expected (entry: Lock.Entry) =
-        [ yield entry.Dependencies.Compiler.Path
-          for r in entry.Dependencies.References do yield r.Path
-          for a in entry.Dependencies.Analyzers do yield a.Path ]
-
-    /// The packages `entries` name that the folder does not have, grouped so one restore
+    /// The packages `request` names that the folder does not have, grouped so one restore
     /// covers all of them. Costs one `File.Exists` per distinct path and nothing else: on a
     /// machine that already has everything -- the normal case -- this is the whole price of
     /// the restore step, no process and no network.
@@ -109,19 +127,17 @@ module Restore =
     /// A path outside the package folder (the SDK's own compiler, a project reference, a
     /// framework assembly) names no package and is ignored here; whether it exists is the
     /// hash check's business.
-    let missing (options: Options) (entries: Lock.Entry list) : Missing list =
+    let missing (options: Options) (request: Request) : Missing list =
         let root = packageRoot options
         // the lock's package graph, keyed case-insensitively, for the original id casing and
         // the nupkg hash
         let graph =
-            entries
-            |> List.collect (fun e -> e.Dependencies.Packages)
+            request.Packages
             |> List.fold
-                (fun m (p: Lock.Package) ->
+                (fun m (p: Package) ->
                     Map.add (p.Id.ToLowerInvariant (), p.Version.ToLowerInvariant ()) (p.Id, p.Sha512) m)
                 Map.empty
-        entries
-        |> List.collect expected
+        request.Paths
         |> List.distinct
         |> List.choose (fun path -> Nuget.packageOf root path |> Option.map (fun idVersion -> idVersion, path))
         |> List.filter (snd >> File.Exists >> not)
@@ -131,7 +147,7 @@ module Restore =
                 graph
                 |> Map.tryFind (id.ToLowerInvariant (), version.ToLowerInvariant ())
                 |> Option.defaultValue (id, "")
-            { Id = properId; Version = version; Sha512 = sha512; Files = items |> List.map snd })
+            ({ Id = properId; Version = version; Sha512 = sha512; Files = items |> List.map snd } : Missing))
         |> List.sortBy (fun p -> p.Id.ToLowerInvariant (), p.Version)
 
     /// What a restore of `packages` failed to deliver: the package directory still absent, or
@@ -183,7 +199,7 @@ module Restore =
     /// written for real projects and this one only downloads.
     ///
     /// Each call gets a numbered subdirectory of its own, removed once the restore succeeds:
-    /// `ensure` serializes its own restores on a `Resource`, but `resolve`'s `toolset` calls
+    /// `ensure` serializes its own restores on a `Resource`, but `Csc.ofSettings`'s `toolset` calls
     /// this directly, and two of those must not overwrite each other's project file.
     /// Concurrent restores into one package folder are NuGet's own business, and it handles
     /// them. A failed attempt is left on disk, named by the message, so it can be re-run by
@@ -248,25 +264,26 @@ module Restore =
     let private memoKey (root: string) (p: Missing) = root + "|" + p.Id + "|" + p.Version
 
     /// <summary>
-    /// Makes every package `entries` name available in the package folder, and reports what is
+    /// Makes every package `request` names available in the package folder, and reports what is
     /// still wrong: `[]` means nothing was missing, or everything missing was restored and its
     /// nupkg matched the sha512 the lock recorded.
     ///
-    /// One restore for the whole set, once per process: the caller can hand it a single entry
-    /// (what the runner does) or every entry of a lock (what a script's "populate the package
-    /// folder" target does) and the cost is the same shape. With nothing missing it starts no
+    /// One restore for the whole set, once per process: the caller can hand it a single entry's
+    /// request (what `Lock.compile` does) or every entry of a lock (what a script's "populate
+    /// the package folder" target does, `Lock.restore`) and the cost is the same shape. With
+    /// nothing missing it starts no
     /// process and touches no network -- see `missing`.
     ///
     /// Restoring is skipped, with a warning naming the count, when `Options.Enabled` is
     /// `false`; the caller's own check then reports each missing file with its expected hash,
     /// exactly as it did before this module existed.
     /// </summary>
-    let ensure (options: Options) (entries: Lock.Entry list) : Recipe<ExecContext, string list> =
+    let ensure (options: Options) (request: Request) : Recipe<ExecContext, string list> =
         recipe {
             let root = packageRoot options
             let notMemoized = List.filter (fun p -> not (restored.ContainsKey (memoKey root p)))
 
-            match missing options entries |> notMemoized with
+            match missing options request |> notMemoized with
             | [] -> return []
             | wanted when not options.Enabled ->
                 do! trace Warning
@@ -279,7 +296,7 @@ module Restore =
                     withResource (Locks.forRoot root) 1 (recipe {
                         // whoever held the lock may have restored exactly what this entry
                         // needs while it waited -- recheck rather than restore again
-                        match missing options entries |> notMemoized with
+                        match missing options request |> notMemoized with
                         | [] -> return []
                         | wanted ->
                             do! trace Info "restoring %d package(s) into '%s'" (List.length wanted) root
@@ -288,15 +305,4 @@ module Restore =
                             return verify options wanted
                     })
                 return problems
-        }
-
-    /// Fills the package folder from a whole lock in one step -- a script's
-    /// "restore the build's dependencies" target, so a build agent can populate (and then
-    /// cache) the folder before any compile runs. Fails the build on the first problem;
-    /// `ensure` is the variant that reports instead, for a caller with its own failure policy.
-    let prepare (options: Options) (document: Lock.Document) : Recipe<ExecContext, unit> =
-        recipe {
-            let! problems = ensure options document.Entries
-            if not (List.isEmpty problems) then
-                failwithf "restoring the packages of the lock failed:\n%s" (problems |> String.concat "\n")
         }

@@ -166,7 +166,7 @@ module Project =
     /// embeds the commit that produced it -- SourceLink's own doing, not this tool's -- which
     /// would otherwise make the lock's content, and so the lock file itself, change on every
     /// commit even though the compilation it describes did not. The sha itself is
-    /// deliberately not recorded anywhere in the lock; `run` (`Dotnet.csc.fs`) resolves the
+    /// deliberately not recorded anywhere in the lock; `Lock.compile` resolves the
     /// token back from the project's repository right before it would be used. Pure; a no-op
     /// when `sha` is empty.
     let tokenizeRevision (sha: string) (entry: Lock.Entry) : Lock.Entry =
@@ -293,37 +293,37 @@ module Project =
             imports |> List.map slash
             |> List.filter (fun path -> not (sdkRoot <> "" && path.StartsWith (sdkRoot + "/")) && not (path.StartsWith baseIntermediate))
 
-        let compilation, references, analyzers = Lock.Compilation.ofArgs args
+        let composed = Csc.ofArgs args
         let entry : Lock.Entry = {
-            Name = prop "AssemblyName"
-            Framework = framework
+            Csc =
+                { composed with
+                    Name = prop "AssemblyName"
+                    Framework = framework
+                    Directory = directory
+                    Generated = generated
+                    Resources = resources
+                    Dependencies =
+                        { Compiler = { Tool = "csc"; Path = compilerPath; Sha256 = Csc.sha256 compilerPath; Version = Csc.compilerVersion compilerPath }
+                          References = composed.Dependencies.References |> List.map (fun r -> { r with Sha256 = Csc.sha256 r.Path })
+                          Analyzers = composed.Dependencies.Analyzers |> List.map (fun a -> Csc.hashed a.Path) } }
             Evaluation =
                 { Project = prop "MSBuildProjectFullPath" |> slash
                   ProjectRefs = items "ProjectReference" |> List.map (identity >> resolveAgainstProject)
-                  Imports = imports |> List.map Lock.hashed
+                  Imports = imports |> List.map Csc.hashed
                   Sdk = prop "NETCoreSdkVersion"
                   SdkPin = Some pin
                   Properties =
                     properties |> Map.filter (fun name _ ->
                         List.contains name [ "AssemblyName"; "TargetFrameworkMoniker"; "LangVersion"; "Version"; "InformationalVersion"
                                              "SignAssembly"; "AssemblyOriginatorKeyFile"; "Deterministic"; "TargetPath"; "IntermediateOutputPath" ]) }
-            Compilation =
-                { compilation with
-                    Directory = directory
-                    Generated = generated
-                    Resources = resources }
-            Dependencies =
-                { Compiler = { Tool = "csc"; Path = compilerPath; Sha256 = Lock.sha256 compilerPath; Version = Lock.compilerVersion compilerPath }
-                  References = references |> List.map (fun r -> { r with Sha256 = Lock.sha256 r.Path })
-                  Analyzers = analyzers |> List.map (fun a -> Lock.hashed a.Path)
-                  Packages = packages }
+            Packages = packages
         }
         // the round trip: the structured entry must give back msbuild's command line exactly,
         // or the lock would describe a compilation other than the one msbuild ran
-        let rebuilt = entry.Args
+        let rebuilt = entry.Csc.Args
         if rebuilt <> args then
             failwithf "'%s': the command line rebuilt from the lock entry differs from msbuild's (structured form lost fidelity):\n%s"
-                entry.Name (Lock.diffList args rebuilt |> String.concat "\n")
+                entry.Csc.Name (Csc.diffList args rebuilt |> String.concat "\n")
         // SourceLink's `sourcelink.json` (captured above, now that `sourcelink` is an input
         // switch) embeds the commit msbuild resolved via `SourceRevisionId` -- tokenize it out
         // so the lock's content, hence the lock file, does not change on every commit
@@ -489,10 +489,10 @@ module Project =
                     let sdk = entry.Evaluation.Sdk
                     match pin with
                     | Pinned v when sdk <> "" && sdk <> v ->
-                        do! trace Warning "'%s': the SDK is pinned to %s but msbuild ran %s -- the pinned SDK is not installed on this machine" entry.Name v sdk
+                        do! trace Warning "'%s': the SDK is pinned to %s but msbuild ran %s -- the pinned SDK is not installed on this machine" entry.Csc.Name v sdk
                     | Pinned _ -> ()
                     | other ->
-                        do! trace Warning "'%s': the SDK is not pinned (%s) -- the lock's compiler (%s, SDK %s) will drift with every SDK the machine picks; pin it with global.json { sdk: { version, rollForward: \"disable\" } }" entry.Name (sdkPinText other) entry.Dependencies.Compiler.Version sdk
+                        do! trace Warning "'%s': the SDK is not pinned (%s) -- the lock's compiler (%s, SDK %s) will drift with every SDK the machine picks; pin it with global.json { sdk: { version, rollForward: \"disable\" } }" entry.Csc.Name (sdkPinText other) entry.Csc.Dependencies.Compiler.Version sdk
 
                     // the evaluation's inputs, so that a Directory.Build.props edit re-imports
                     // and nothing else does
@@ -500,8 +500,8 @@ module Project =
 
                     // every resx output has to be named by a /resource: switch, or `run` would
                     // regenerate a file the compiler never reads
-                    let resourceInputs = CscArgs.switchValues "resource" entry.Compilation.Options
-                    for (resx, resourcesFile) in entry.Compilation.Resources do
+                    let resourceInputs = CscArgs.switchValues "resource" entry.Csc.Options
+                    for (resx, resourcesFile) in entry.Csc.Resources do
                         if not (List.contains resourcesFile resourceInputs) then
                             do! trace Warning "'%s' compiles to '%s' but no /resource: switch names that path" resx resourcesFile
 

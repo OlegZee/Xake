@@ -46,26 +46,28 @@ type ``Restore``() =
         File.WriteAllText (helloCs, "public class Hello {}\n")
         let outDll = Path.Combine (dir, "obj", "Hello.dll")
 
-        let compilation, references, analyzers =
-            Lock.Compilation.ofArgs
+        let c =
+            Csc.ofArgs
                 [ "/noconfig"; "/nostdlib+"; "/target:library"; "/deterministic+"
                   "/reference:" + netstandardDll
                   "/reference:" + refPath packageRoot
                   "/out:" + outDll
                   helloCs ]
         let entry : Lock.Entry = {
-            Name = "Hello"
-            Framework = "netstandard2.0"
+            Csc =
+                { c with
+                    Name = "Hello"
+                    Framework = "netstandard2.0"
+                    Directory = dir
+                    Dependencies =
+                        { c.Dependencies with
+                            Compiler = { Tool = "csc"; Path = cscDll; Sha256 = Csc.sha256 cscDll; Version = Csc.compilerVersion cscDll }
+                            References =
+                                c.Dependencies.References |> List.map (fun r ->
+                                    if r.Path = refPath packageRoot then { r with Sha256 = refSha256 }
+                                    else { r with Sha256 = Csc.sha256 r.Path }) } }
             Evaluation = { Project = Path.Combine (dir, "Hello.csproj"); ProjectRefs = []; Imports = []; Sdk = fwk.Version; SdkPin = None; Properties = Map.empty }
-            Compilation = { compilation with Directory = dir }
-            Dependencies =
-                { Compiler = { Tool = "csc"; Path = cscDll; Sha256 = Lock.sha256 cscDll; Version = Lock.compilerVersion cscDll }
-                  References =
-                    references |> List.map (fun r ->
-                        if r.Path = refPath packageRoot then { r with Sha256 = refSha256 }
-                        else { r with Sha256 = Lock.sha256 r.Path })
-                  Analyzers = analyzers
-                  Packages = [ { Id = packageId; Version = packageVersion; Sha512 = packageSha512; Direct = true; DependsOn = [] } ] }
+            Packages = [ { Id = packageId; Version = packageVersion; Sha512 = packageSha512; Direct = true; DependsOn = [] } ]
         }
         entry, outDll
 
@@ -79,7 +81,7 @@ type ``Restore``() =
         let entry, _ = makeEntry (Directory.GetCurrentDirectory()) root "" "sha512-of-the-nupkg"
         let options = { Restore.Options.Default with PackageRoot = Some root }
 
-        match Restore.missing options [entry] with
+        match Restore.missing options (Lock.restoreRequest [entry]) with
         | [ one ] ->
             // the original casing and the nupkg hash come from the lock's package graph, not
             // from the (lowercase) directory name in the path
@@ -95,8 +97,8 @@ type ``Restore``() =
         // point the folder at the machine's own cache: `netstandard.dll` and the compiler are
         // either outside it (ignored) or in it (present), and no reference is absent
         let entry, _ = makeEntry (Directory.GetCurrentDirectory()) userNugetRoot "" ""
-        let entry = { entry with Dependencies = { entry.Dependencies with References = entry.Dependencies.References |> List.filter (fun r -> File.Exists r.Path) } }
-        Assert.That(Restore.missing Restore.Options.Default [entry], Is.Empty)
+        let entry = { entry with Csc = { entry.Csc with Dependencies = { entry.Csc.Dependencies with References = entry.Csc.Dependencies.References |> List.filter (fun r -> File.Exists r.Path) } } }
+        Assert.That(Restore.missing Restore.Options.Default (Lock.restoreRequest [entry]), Is.Empty)
 
     [<Test>]
     member __.``one restore project lists every package at an exact version``() =
@@ -165,14 +167,14 @@ type ``Restore``() =
         try
             let dir = Directory.GetCurrentDirectory()
             let sha512 = (Nuget.readCache userNugetRoot packageId packageVersion).Sha512
-            let entry, outDll = makeEntry dir root (Lock.sha256 cached) sha512
+            let entry, outDll = makeEntry dir root (Csc.sha256 cached) sha512
             if File.Exists outDll then File.Delete outDll
             Assert.That(File.Exists (refPath root), Is.False, "the scratch folder already has the package -- test setup is wrong")
 
-            let options = { RunOptions.Default with Restore = { Restore.Options.Default with PackageRoot = Some root } }
+            let options = { Lock.Options.Default with Restore = { Restore.Options.Default with PackageRoot = Some root } }
             do xake {x.TestOptions with FileLog="restore-e2e.log"; ThrowOnError = true} {
                 wantOverride (["hello-restored"])
-                rules [ "hello-restored" => recipe { do! CscLock.compileWith options entry } ]
+                rules [ "hello-restored" => recipe { do! Lock.compileWith options entry } ]
             }
 
             Assert.That(File.Exists (refPath root), Is.True, "the reference package was not restored into the build's own folder")
@@ -189,12 +191,12 @@ type ``Restore``() =
         try
             let dir = Directory.GetCurrentDirectory()
             let entry, _ = makeEntry dir root (String.replicate 64 "a") ""
-            let options = { RunOptions.Default with Restore = { PackageRoot = Some root; Enabled = false } }
+            let options = { Lock.Options.Default with Restore = { PackageRoot = Some root; Enabled = false } }
 
             let build () =
                 xake {x.TestOptions with FileLog="restore-off.log"; ThrowOnError = true} {
                     wantOverride (["hello-no-restore"])
-                    rules [ "hello-no-restore" => recipe { do! CscLock.compileWith options entry } ]
+                    rules [ "hello-no-restore" => recipe { do! Lock.compileWith options entry } ]
                 }
             let ex = Assert.Throws<XakeException> (fun () -> build () |> ignore)
             Assert.That(ex.Data0, Does.Contain "got missing")
@@ -211,12 +213,12 @@ type ``Restore``() =
         try
             let dir = Directory.GetCurrentDirectory()
             let entry, _ = makeEntry dir root "" "not-the-hash-of-this-nupkg=="
-            let options = { RunOptions.Default with Restore = { Restore.Options.Default with PackageRoot = Some root } }
+            let options = { Lock.Options.Default with Restore = { Restore.Options.Default with PackageRoot = Some root } }
 
             let build () =
                 xake {x.TestOptions with FileLog="restore-sha512.log"; ThrowOnError = true} {
                     wantOverride (["hello-bad-sha512"])
-                    rules [ "hello-bad-sha512" => recipe { do! CscLock.compileWith options entry } ]
+                    rules [ "hello-bad-sha512" => recipe { do! Lock.compileWith options entry } ]
                 }
             let ex = Assert.Throws<XakeException> (fun () -> build () |> ignore)
             Assert.That(ex.Data0, Does.Contain (packageId + " " + packageVersion))

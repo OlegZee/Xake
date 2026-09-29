@@ -147,8 +147,8 @@ type ``Resx resources``() =
         let lock = Lock.readWith (Roots.builtin (Directory.GetCurrentDirectory())) lockFile
         let project = Lock.entry "Sample" lock
 
-        Assert.That(project.Compilation.Resources, Has.Length.EqualTo 1, "expected exactly one resx recorded in the lock")
-        let (importedResx, resourcesOutput) = project.Compilation.Resources.Head
+        Assert.That(project.Csc.Resources, Has.Length.EqualTo 1, "expected exactly one resx recorded in the lock")
+        let (importedResx, resourcesOutput) = project.Csc.Resources.Head
         Assert.That(importedResx, Is.EqualTo (resxFile.Replace ('\\', '/')))
 
         // clean slate: the import already ran PrepareResources so the .resources exists; make
@@ -161,7 +161,7 @@ type ``Resx resources``() =
 
             rules [
                 "compile" => recipe {
-                    do! CscLock.compile project
+                    do! Lock.compile project
                 }
             ]
         }

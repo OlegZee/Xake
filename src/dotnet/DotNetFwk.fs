@@ -2,6 +2,7 @@
 
 open Xake
 open Xake.ProcessExec
+open Xake.Tasks
 open System.IO
 
 module internal PkgConfig =
@@ -373,6 +374,102 @@ module DotNetFwk =
                 None, sprintf "reference assemblies for '%s' are not available: failed to restore package Microsoft.NETFramework.ReferenceAssemblies.%s" moniker moniker
             | Some refDir ->
                 sdkFwkInfo [refDir; refDir </> "Facades"] moniker
+
+    /// The NuGet package cache (`NUGET_PACKAGES`, else `~/.nuget/packages`).
+    let nugetRoot () = sdkImpl.nugetRoot ()
+
+    /// The .NET SDK installation root, when one can be located: compilers, analyzers and
+    /// reference packs live under it.
+    let dotnetRoot () = sdkImpl.dotnetRoot ()
+
+    /// The synthesized restore project. `PackageDownload` rather than `PackageReference`: it
+    /// fetches exactly the listed version into the folder and nothing else -- no dependency
+    /// walk and, crucially, no framework compatibility check, so a package that targets only
+    /// `net472` downloads from this `netstandard2.0` project just as well.
+    /// `DisableImplicitFrameworkReferences` keeps the SDK from adding `NETStandard.Library` to
+    /// the folder as a side effect of the TFM.
+    let internal restoreProjectText (packages: (string * string) list) =
+        [ yield "<Project Sdk=\"Microsoft.NET.Sdk\">"
+          yield "  <PropertyGroup>"
+          yield "    <TargetFramework>netstandard2.0</TargetFramework>"
+          yield "    <DisableImplicitFrameworkReferences>true</DisableImplicitFrameworkReferences>"
+          yield "  </PropertyGroup>"
+          yield "  <ItemGroup>"
+          for (id, version) in packages do
+              yield sprintf "    <PackageDownload Include=\"%s\" Version=\"[%s]\" />" id version
+          yield "  </ItemGroup>"
+          yield "</Project>"
+          yield "" ]
+        |> String.concat "\n"
+
+    /// The package folder in effect, normalized to forward slashes without a trailing one:
+    /// `None` is the machine's own cache (`nugetRoot ()`), `Some dir` a folder of the build's
+    /// own.
+    let normalizedPackageRoot (packageRoot: string option) =
+        (packageRoot |> Option.defaultWith nugetRoot).Replace('\\', '/').TrimEnd '/'
+
+    let private downloadAttempts = ref 0
+
+    /// Fetches the named `(id, version)` packages into the package folder with **one**
+    /// `dotnet restore` of a synthesized project.
+    ///
+    /// The project lives under the build's own project root (`obj/xake/restore/<n>/`), not in a
+    /// temp directory, so that NuGet's settings discovery finds the repository's `nuget.config`
+    /// and its private feeds. The repository's own msbuild customizations are switched off on
+    /// the command line instead (`Directory.Build.props`/`.targets`, central package
+    /// management), because they are written for real projects and this one only downloads.
+    ///
+    /// Each call gets a numbered subdirectory of its own, removed once the restore succeeds, so
+    /// concurrent calls do not overwrite each other's project file. Concurrent restores into
+    /// one package folder are NuGet's own business, and it handles them. A failed attempt is
+    /// left on disk, named by the message, so it can be re-run by hand.
+    let downloadPackages (packageRoot: string option) (packages: (string * string) list) : Recipe<ExecContext, unit> =
+        recipe {
+            if not (List.isEmpty packages) then
+                let root = normalizedPackageRoot packageRoot
+                let! ctxOptions = getCtxOptions ()
+                let attempt = System.Threading.Interlocked.Increment downloadAttempts
+                let dir = ctxOptions.ProjectRoot </> "obj" </> "xake" </> "restore" </> string attempt
+                Directory.CreateDirectory dir |> ignore
+                let project = dir </> "restore.csproj"
+                File.WriteAllText (project, restoreProjectText packages)
+
+                let! exitCode =
+                    shell {
+                        cmd "dotnet"
+                        args [ "restore"; project
+                               "-v:quiet"; "-nologo"
+                               "-p:NuGetAudit=false"
+                               "-p:ImportDirectoryBuildProps=false"
+                               "-p:ImportDirectoryBuildTargets=false"
+                               "-p:ImportDirectoryPackagesProps=false"
+                               "-p:ManagePackageVersionsCentrally=false" ]
+                        env ("NUGET_PACKAGES", root)
+                        workdir dir
+                        logprefix "[restore]"
+                        stdoutlevel (Tool.diagnosticLevel Level.Verbose)
+                        erroutlevel (Tool.diagnosticLevel Level.Verbose)
+                    }
+
+                if exitCode <> 0 then
+                    failwithf "restoring %d package(s) into '%s' failed with exit code %d (see '%s'): %s"
+                        (List.length packages) root exitCode project
+                        (packages |> List.map (fun (id, v) -> id + " " + v) |> String.concat ", ")
+                try Directory.Delete (dir, true) with _ -> ()
+        }
+
+    /// The folder of one NuGet package (`<packageRoot>/<id lowercase>/<version>`), fetching it
+    /// into the package folder first when it is not there yet. `packageRoot` is `None` for the
+    /// machine's own cache (`nugetRoot ()`), `Some dir` (absolute) for a folder of the build's
+    /// own. Restoring cannot change *what* a version is, so this is safe to call from any
+    /// recipe; it starts no process when the folder already exists.
+    let restorePackage (packageRoot: string option) (packageId: string) (version: string) : Recipe<ExecContext, string> =
+        recipe {
+            let dir = normalizedPackageRoot packageRoot </> packageId.ToLowerInvariant() </> version
+            if not (Directory.Exists dir) then
+                do! downloadPackages packageRoot [ packageId, version ]
+            return dir
+        }
 
     module internal impl =
 

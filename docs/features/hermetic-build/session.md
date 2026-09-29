@@ -756,3 +756,13 @@ Judgment calls:
 - `src/dotnet/readme.md` never called `Csc settings`, so it is unchanged. `samples/book/intro.fsx`
   and the three `docs/features/hermetic-build/*.fsx` are updated. `.bootstrap/` is untouched, so
   the updated fsx need a re-staged bootstrap.
+
+## B3-B5 (2026-09-29): base files off the hermetic and internal names
+
+New `Tool.fs` (first in compile order; `diagnosticLevel`, `failOnExitCode`, with `Impl.levelFromString`/`failOnExitCode` as forwarders) and `Hash.fs` (`Hash.sha256`, "" for a missing file, as the lock always had it; `Verify.sha256` used to throw on a missing file and now returns "" -- `Csc.sha256`/`Verify.sha256` stay as forwarders because tests call them). `DotNetFwk` gained public `nugetRoot`, `dotnetRoot`, `normalizedPackageRoot`, `downloadPackages` (the one `dotnet restore` of a synthesized `PackageDownload` project, moved out of `Restore.download`) and `restorePackage`; `csc { toolset }` uses `restorePackage None`, and the "already restored" check is now the package directory, not `csc.dll`. `CscArgs` helpers are public, not folded (only `Csc.fs` uses them). 362 passed, 1 skipped, 0 warnings after each step.
+
+Corrections after B3–B5 (orchestrator, 2026-09-29): `Hash.sha256` throws on a missing file
+again (a verification must not produce "" by accident); the "" convention stays in
+`Csc.sha256` only, and the lock/import/SBOM call sites that hash possibly-missing files use
+that one. `csc { toolset }` checks `csc.dll` inside the restored folder and fails with a
+"partial restore" message instead of trusting the folder.

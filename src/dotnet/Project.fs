@@ -1,4 +1,4 @@
-namespace Xake.Dotnet
+﻿namespace Xake.Dotnet
 
 open System.IO
 
@@ -406,10 +406,10 @@ module Project =
                             cmd "dotnet"
                             args ("msbuild" :: arguments)
                             logprefix "[msbuild]"
-                            stdoutlevel (Impl.levelFromString Level.Verbose)
-                            erroutlevel (Impl.levelFromString Level.Error)
+                            stdoutlevel (Tool.diagnosticLevel Level.Verbose)
+                            erroutlevel (Tool.diagnosticLevel Level.Error)
                         }
-                    do! Impl.failOnExitCode true name exitCode
+                    do! Tool.failOnExitCode true name exitCode
                 }
 
             let entries = ResizeArray<Lock.Entry>()

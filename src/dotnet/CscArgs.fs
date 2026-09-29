@@ -64,7 +64,7 @@ module CscArgs =
     /// segment does not split (msbuild quotes a path in a list when the path itself contains a
     /// comma, e.g. the generated `.NETStandard,Version=vX.Y.AssemblyAttributes.cs` a netstandard
     /// project embeds); the quotes themselves are not part of the path and are dropped.
-    let internal splitList (value: string) =
+    let splitList (value: string) =
         let items = ResizeArray<string>()
         let current = System.Text.StringBuilder()
         let mutable inQuotes = false
@@ -78,14 +78,14 @@ module CscArgs =
 
     /// Re-quotes a path list item if joining it back with ',' would make it split again where
     /// it did not before -- the inverse of `splitList`.
-    let internal quoteIfNeeded (s: string) = if s.Contains "," then "\"" + s + "\"" else s
+    let quoteIfNeeded (s: string) = if s.Contains "," then "\"" + s + "\"" else s
 
     /// A `/reference:` (etc.) list item may be `alias=path`: the alias is a short identifier
     /// with no path separator in it, always at the very start, so an `=` is only the alias
     /// marker when it comes before the first `/` -- a bare path may itself contain an `=` after
     /// one (e.g. the generated `.NETStandard,Version=vX.Y.AssemblyAttributes.cs`, once its
     /// comma-hiding quotes are gone).
-    let internal aliasSplitIndex (p: string) =
+    let aliasSplitIndex (p: string) =
         match p.IndexOf '=' with
         | -1 -> -1
         | i -> match p.IndexOf '/' with | slash when slash >= 0 && slash < i -> -1 | _ -> i

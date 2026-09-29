@@ -1,4 +1,4 @@
-namespace Xake.Dotnet
+﻿namespace Xake.Dotnet
 
 open System.IO
 
@@ -297,11 +297,8 @@ module Csc =
     let isMarker (option: string) = CscSections.isMarker option
 
     /// Lowercase hex SHA-256 of a file, "" when it does not exist.
-    let sha256 (path: string) =
-        if not (System.IO.File.Exists path) then "" else
-        use stream = System.IO.File.OpenRead path
-        use algo = System.Security.Cryptography.SHA256.Create()
-        algo.ComputeHash stream |> Array.map (sprintf "%02x") |> String.concat ""
+    /// `Hash.sha256`, with "" for a file that does not exist: the lock's "not hashed" value.
+    let sha256 (path: string) = if File.Exists path then Hash.sha256 path else ""
 
     let hashed path : Hashed = { Path = path; Sha256 = sha256 path }
 
@@ -454,13 +451,12 @@ module Csc =
     /// (`<packageRoot>/<packageId>/<version>/tasks/netcore/bincore/csc.dll`), fetching the
     /// package into the folder first when it is not there yet. This is `ofSettings`'s
     /// `toolset` operation.
-    let private restoreToolsetCompiler (options: Restore.Options) (packageId: string) (version: string) =
+    let private restoreToolsetCompiler (packageId: string) (version: string) =
         recipe {
-            let cscDll =
-                Restore.packageRoot options </> packageId.ToLowerInvariant() </> version
-                </> "tasks" </> "netcore" </> "bincore" </> "csc.dll"
+            let! dir = DotNetFwk.restorePackage None packageId version
+            let cscDll = dir </> "tasks" </> "netcore" </> "bincore" </> "csc.dll"
             if not (File.Exists cscDll) then
-                do! Restore.download options [ packageId, version ]
+                failwithf "toolset %s %s: the package folder %s has no compiler at %s (a partial restore? delete the folder and rebuild)" packageId version dir cscDll
             return cscDll
         }
 
@@ -606,7 +602,7 @@ module Csc =
                 | None -> recipe { return fwkInfo.CscTool }
                 | Some version ->
                     recipe {
-                        let! cscDll = restoreToolsetCompiler Restore.Options.Default "Microsoft.Net.Compilers.Toolset" version
+                        let! cscDll = restoreToolsetCompiler "Microsoft.Net.Compilers.Toolset" version
                         if not (File.Exists cscDll) then
                             failwithf "compiler package Microsoft.Net.Compilers.Toolset %s could not be restored (expected '%s')" version cscDll
                         return cscDll
@@ -768,11 +764,11 @@ module Csc =
                         // and present.
                         workdir c.Directory
                         logprefix "[csc]"
-                        stdoutlevel (Impl.levelFromString Level.Verbose)
-                        erroutlevel (Impl.levelFromString Level.Verbose)
+                        stdoutlevel (Tool.diagnosticLevel Level.Verbose)
+                        erroutlevel (Tool.diagnosticLevel Level.Verbose)
                     }
 
-                do! Impl.failOnExitCode options.FailOnError c.Name exitCode
+                do! Tool.failOnExitCode options.FailOnError c.Name exitCode
             finally
                 deleteTempFiles ()
         }

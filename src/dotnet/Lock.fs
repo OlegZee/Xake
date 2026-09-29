@@ -1,4 +1,4 @@
-namespace Xake.Dotnet
+﻿namespace Xake.Dotnet
 
 open System.IO
 
@@ -476,7 +476,7 @@ module Lock =
         }
 
     /// Traces `msg` as an error and, when the options say so, fails the build with it -- the
-    /// same shape as `Impl.failOnExitCode` and the runner's hash-mismatch check.
+    /// same shape as `Tool.failOnExitCode` and the runner's hash-mismatch check.
     let private failStep (options: Options) (msg: string) =
         recipe {
             do! trace Error "%s" msg

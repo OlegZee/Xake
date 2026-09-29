@@ -64,20 +64,8 @@ module internal Impl =
     let platformStr = function
         |AnyCpu -> "anycpu" |AnyCpu32Preferred -> "anycpu32preferred" |ARM -> "arm" | X64 -> "x64" | X86 -> "x86" |Itanium -> "itanium"
 
-    /// <summary>
-    /// Classifies a line of compiler output by log level.
-    /// </summary>
-    /// <remarks>
-    /// Diagnostics tied to a source position read "file.cs(1,1): error CS0103: ...", while
-    /// whole-compilation ones read "error FS0084: ..." with no position at all. Both have to be
-    /// recognized, otherwise a failing compile reports nothing above the default verbosity.
-    /// </remarks>
-    let levelFromString defaultLevel (text:string) :Level =
-        let hasDiagnostic kind =
-            text.Contains ("): " + kind + " ") || text.TrimStart().StartsWith (kind + " ")
-        if hasDiagnostic "warning" then Level.Warning
-        else if hasDiagnostic "error" then Level.Error
-        else defaultLevel
+    /// Forwarder to `Tool.diagnosticLevel`.
+    let levelFromString defaultLevel (text:string) :Level = Tool.diagnosticLevel defaultLevel text
     let inline coalesce ls = //: 'a option list -> 'a option =
         ls |> List.fold (fun r a -> if Option.isSome r then r else a) None
 
@@ -142,15 +130,5 @@ module internal Impl =
         | (res,file) ->
             (res,file,false)
 
-    /// <summary>
-    /// The exit-code epilogue shared by the compiler tasks: reports a non-zero exit code and
-    /// fails the build when the task is configured to.
-    /// </summary>
-    /// <param name="failOnError">Whether a non-zero exit code has to fail the build</param>
-    /// <param name="name">The target being built, for the diagnostic message</param>
-    /// <param name="exitCode">The tool's exit code</param>
-    let failOnExitCode failOnError (name: string) exitCode = recipe {
-        if exitCode <> 0 then
-            do! trace Error "('%s') failed with exit code '%i'" name exitCode
-            if failOnError then failwithf "Exiting due to FailOnError set on '%s'" name
-    }
+    /// Forwarder to `Tool.failOnExitCode`.
+    let failOnExitCode failOnError (name: string) exitCode = Tool.failOnExitCode failOnError name exitCode

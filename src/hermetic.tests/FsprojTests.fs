@@ -70,3 +70,65 @@ type ``Fsproj evaluation``() =
 
         Assert.That(File.ReadAllText kept, Does.Contain "$(NuGetPackageRoot)/fsharp.core")
         Assert.That((Fsproj.parse roots kept).References, Is.EqualTo [reference])
+
+    [<Test>]
+    member x.``evaluates a project with two project references against the project directory``() =
+
+        // a working directory other than the project's, as in a build script: with `-restore`
+        // in the same msbuild call the items of such a project came back cwd-relative
+        let dir = Path.Combine(Path.GetTempPath(), "xake-eval-" + Guid.NewGuid().ToString "N")
+        let write (name: string) (text: string) =
+            let path = Path.Combine(dir, name)
+            Directory.CreateDirectory(Path.GetDirectoryName path) |> ignore
+            File.WriteAllText(path, text)
+
+        let library (references: string list) =
+            let refs =
+                references
+                |> List.map (fun r -> sprintf """<ProjectReference Include="..\%s\%s.fsproj" />""" r r)
+                |> String.concat ""
+            sprintf """<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><TargetFramework>netstandard2.0</TargetFramework></PropertyGroup>
+  <ItemGroup><Compile Include="Lib.fs" /></ItemGroup>
+  <ItemGroup>%s</ItemGroup>
+</Project>""" refs
+
+        try
+            write "Main/Lib.fs" "module Main.Lib\nlet a = 1\n"
+            write "Main/Main.fsproj" (library ["Left"; "Right"])
+            write "Left/Lib.fs" "module Left.Lib\nlet a = 1\n"
+            write "Left/Left.fsproj" (library [])
+            write "Right/Lib.fs" "module Right.Lib\nlet a = 1\n"
+            write "Right/Right.fsproj" (library [])
+
+            let project = Path.Combine(dir, "Main", "Main.fsproj")
+            let result = Path.Combine(dir, "eval.json")
+            Assert.That(Directory.GetCurrentDirectory(), Is.Not.EqualTo(Path.Combine(dir, "Main")))
+
+            do xake {x.TestOptions with FileLog = "fsproj-eval.log"; ThrowOnError = true; ProjectRoot = dir} {
+                rules [
+                    "main" => recipe {
+                        do! Fsproj.evaluate {
+                            Fsproj.EvalOptions.Default with
+                                Project = project
+                                Framework = "netstandard2.0"
+                                Output = result
+                        }
+                    }
+                ]
+            }
+
+            let kept = File.ReadAllText result
+            let loaded = Fsproj.parse (Roots.builtin dir) result
+            let norm (p: string) = p.Replace('\\', '/')
+            let under (p: string) = (norm p).StartsWith (norm dir + "/Main/")
+
+            Assert.That(loaded.Sources, Is.Not.Empty)
+            Assert.That(loaded.Sources |> List.forall under, Is.True, sprintf "%A" loaded.Sources)
+            Assert.That(kept, Does.Contain "$(ProjectRoot)/Main/Lib.fs")
+            Assert.That(loaded.ProjectRefs |> List.map norm,
+                        Is.EqualTo [norm dir + "/Left/Left.fsproj"; norm dir + "/Right/Right.fsproj"])
+            Assert.That(kept, Does.Contain "$(ProjectRoot)/Left/Left.fsproj")
+            Assert.That(kept, Does.Contain "$(ProjectRoot)/Right/Right.fsproj")
+        finally
+            if Directory.Exists dir then Directory.Delete(dir, true)

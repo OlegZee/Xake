@@ -99,7 +99,7 @@ dotnet fsi samples/fullframework.fsx                                     # end-t
 ```
 
 `samples/*.fsx` reference `out/netstandard2.0/*.dll`, so run the self-hosting build first.
-The fsc-based build (`build.fsc.fsx`) and its bootstrap live in `docs/features/hermetic-build/`.
+The fsc-based build (`build.fsc.fsx`) and its bootstrap live in `docs/features/hermetic-build/` (the package's own docs are in `docs/hermetic/`).
 
 ## Earlier work: delegated execution (merged, PR #15)
 

@@ -8,6 +8,7 @@ open NUnit.Framework
 open Xake
 open Xake.Tasks
 open Xake.Dotnet
+open Xake.Hermetic.Dotnet
 
 /// `.resx` -> `.resources`, without `System.Windows.Forms`'s `ResXResourceReader`: the pure
 /// reader/writer in `Xake.Dotnet.Resx`, and the lock/`run` plumbing that regenerates a

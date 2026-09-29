@@ -605,6 +605,16 @@ module Lock =
             let! full = fullPath path
             let dir = Path.GetDirectoryName full
             if dir <> "" then Directory.CreateDirectory dir |> ignore
+            // what gets hashed is what the recorded lock depends on: a target that only
+            // records (no `Csc.run`, which holds the compile-side `needFiles`) must still
+            // rerun when a reference, analyzer, compiler or import changes
+            let hashedPaths =
+                [ for r in entry.Csc.Dependencies.References -> r.Path
+                  for a in entry.Csc.Dependencies.Analyzers -> a.Path
+                  yield entry.Csc.Dependencies.Compiler.Path
+                  for i in entry.Evaluation.Imports -> i.Path ]
+                |> List.filter File.Exists
+            do! needFiles (Filelist (hashedPaths |> List.map File.make))
             let rehashed = rehash entry
             do! save full { Configuration = ""; Properties = []; Entries = [ rehashed ] }
             return rehashed

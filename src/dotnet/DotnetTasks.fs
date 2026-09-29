@@ -98,6 +98,15 @@ module internal Impl =
             let (Filelist l) = Fileset (fo,fs) |> (toFileList pathRoot) in
             l |> List.map mapFile
 
+    /// Compiles a `.resx` to a `.resources` file. Deliberately two paths, not one (B7):
+    /// - net462 uses `ResXResourceReader` (System.Windows.Forms), which handles everything
+    ///   msbuild does: typed values (images, icons, serialized objects), `ResXFileRef` entries
+    ///   and the 4.0.0.0 -> 2.0.0.0 type-name rewrite below.
+    /// - netstandard2.0 has no `ResXResourceReader`, so it uses `Resx.compile`, which is
+    ///   strings only and fails loudly on a typed or file-ref entry.
+    /// `Resx.compile` cannot replace the net462 path without regressing those entries; the
+    /// string-only output is what `ResxTests` compares byte for byte against msbuild (on the
+    /// netstandard2.0 build). Unifying would need `Resx.read` to grow typed/ResXFileRef support.
     let compileResx (resxfile:File) (rcfile:File) =
 #if NETFRAMEWORK
         use writer = new ResourceWriter (rcfile.FullName)

@@ -214,6 +214,39 @@ type ``Dotnet tasks tests``() =
         Assert.That((libCompiles.Value, appCompiles.Value), Is.EqualTo ((3, 3)), "a missing library is rebuilt, then verified")
         Assert.That(File.Exists "hashlib.dll", Is.True)
 
+    // The counterpart of the ordering above: a hashed reference that is missing and that no
+    // rule produces cannot be obtained by `needFiles`, so `run` reports every such file with
+    // the hash it was expected to have, before `needFiles` would stop at the first one.
+    [<Test; Category("Integration")>]
+    member x.``csc reports every missing hashed reference that no rule produces``() =
+
+        File.WriteAllText ("missingref.cs", "class C {}")
+        let expected = String.replicate 64 "a"
+        let missing = ["nothere1.dll"; "nothere2.dll"] |> List.map Path.GetFullPath
+        let settings =
+            { CscSettingsType.Default with
+                Src = !!"missingref.cs"
+                Out = File.make "missingref.dll"
+                TargetFramework = "net-4.6.2" }
+
+        let build () =
+            xake {x.TestOptions with FileLog="csc-missingref.log"; ThrowOnError = true} {
+                wantOverride (["missingref"])
+                rules [
+                    "missingref" => recipe {
+                        let! options = Csc.runOptions settings
+                        let! c = Csc.ofSettings settings
+                        let refs = missing |> List.map (fun p -> ({ Path = p; Sha256 = expected; Alias = "" } : Reference))
+                        let c = { c with Dependencies = { c.Dependencies with References = c.Dependencies.References @ refs } }
+                        do! Csc.run options c
+                    }
+                ]
+            }
+
+        let ex = Assert.Throws<XakeException> (fun () -> build () |> ignore)
+        for p in missing do
+            Assert.That(ex.ToString(), Does.Contain (sprintf "%s: expected %s, got missing" p expected))
+
     // Same discovery, but for a profile rather than a framework version: the reference
     // assembly comes from the SDK's netstandard pack or from the NETStandard.Library
     // package. FSharp.Core is referenced explicitly since --noframework is in effect.

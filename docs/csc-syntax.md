@@ -138,7 +138,10 @@ hands the `Csc` here. It does, in order (after a
    framework's global references, not only sources/refs/resources. It comes after step 5
    because the `.resources` files named by `/res:` have no rule and must already exist, and
    before the hash check because a reference produced by another rule of the script is
-   (re)built here: the check has to see the file the compiler is about to read.
+   (re)built here: the check has to see the file the compiler is about to read. A hashed file
+   that is missing and that no rule of the script produces cannot be obtained this way, so just
+   before this step every such file is reported at once, as a hash mismatch (`expected <sha>,
+   got missing`), instead of `needFiles` stopping at the first with "Neither rule nor file".
 7. Verifies the SHA-256 of every hashed reference, analyzer, and the compiler itself against what
    is on disk. An empty recorded hash means "not checked" (the composed mode never records one,
    and neither does an unbuilt project reference). Any mismatch is collected and reported

@@ -2,7 +2,7 @@
 
 `Xake.Hermetic.Dotnet.Nuget` (`src/hermetic/Nuget.fs`) reads two files a `dotnet restore` already produced
 -- it never talks to the network or re-resolves anything. It is the evidence layer the
-`Sbom` module builds on ([brief.md §8e, §11](../features/hermetic-build/brief.md)): what packages did the compile actually see, and
+`Sbom` module builds on: what packages did the compile actually see, and
 what do we know about each one from the cache.
 
 ## What it reads, and from where
@@ -37,7 +37,7 @@ first, then a prefix match -- the rid-qualified entries are for a self-contained
 compile. **When no target matches, `readAssets` fails**, naming the targets the file does have
 (2026-09-23): an empty graph is indistinguishable from "this project has no packages", so a
 restore that wrote only one framework's target used to produce a lock entry with `packages 0`
-and an SBOM missing its package components, silently ([verify-dataengine.md §6](../features/hermetic-build/verify-dataengine.md)).
+and an SBOM missing its package components, silently (seen when verifying against a real solution).
 Each entry there is `"<Id>/<Version>": { type: "package" | "project", dependencies: {
 "<Id>": "<range>" } }`; a dependency's resolved version is found by looking up its id among the
 *same* target's entries -- a range like `[8.0.0, )` is never parsed, only matched by id, because
@@ -73,13 +73,13 @@ packages, e.g. `NETStandard.Library`).
 
 Vulnerability data (CVEs, advisories) is not in `project.assets.json` or the cache -- it needs a
 feed (`dotnet list package --vulnerable`, GitHub Advisory Database, OSV) and is explicitly out
-of this module's scope, same conclusion as [brief.md §8e](../features/hermetic-build/brief.md): the build produces the SBOM, VEX and
+of this module's scope: the build produces the SBOM, VEX and
 vulnerability matching are downstream of it (Dependency-Track or similar, by purl).
 
 ## The graph lives in the lock
 
 `Nuget.readAssets` is an import-time reader now. `Project.import` calls it right after the
-design-time build, inside the per-project lock ([import-race.md](../features/hermetic-build/import-race.md)), and records the result as
+design-time build, inside the per-project lock (which keeps concurrent imports from racing on shared assets files), and records the result as
 `Lock.Package list` in the entry's `Dependencies.Packages` via `Lock.packagesOf cacheRoot
 assets`: per package `Id` and `Version` (the assets file's own casing), `Sha512` (the cache's
 `.nupkg.metadata` `contentHash`, base64, "" when the cache lacks it), `Direct` (a
@@ -87,7 +87,7 @@ assets`: per package `Id` and `Version` (the assets file's own casing), `Sha512`
 `dependencies`). `type: project` entries are not packages and are dropped, edges included. The
 SBOM step (`Sbom.forAssembly`) reads the lock only -- `obj/project.assets.json` is a restore
 output and no longer a hidden input of the SBOM; the per-variant assets copy that
-the stopgap of [import-race.md](../features/hermetic-build/import-race.md) kept is gone. `readCache`, `ships` and `packageOf` stay public and are
+the earlier import-race stopgap kept is gone. `readCache`, `ships` and `packageOf` stay public and are
 still what the SBOM consults for supplier, license and the "does it ship" test -- the lock does
 not carry those.
 
@@ -136,7 +136,7 @@ tests can drive with a hand-built `Bom` and no lock at all.
 `forAssembly` no longer starts from the references and works backwards to the packages it
 can attribute a file to -- it starts from `entry.Packages`, the *whole* restore graph, and
 attaches referenced files where `Nuget.packageOf` finds them. A scanner wants the graph, not
-just what happened to get linked ([brief.md §8e](../features/hermetic-build/brief.md)): a package nobody referenced but that the
+just what happened to get linked: a package nobody referenced but that the
 restore still pulled in (a platform/reference-assembly pack, a runtime-only package) is still a
 component, just `scope: "excluded"` rather than dropped.
 
@@ -188,7 +188,7 @@ across a rebuild of the same commit -- not wired up yet.
 ### `forPackage`: one BOM per shipped nupkg
 
 `forAssembly` answers "what is in this dll". `Sbom.forPackage (nupkgPath: string) (assemblies:
-Bom list) : Bom` is the per-nupkg BOM [brief.md §8e](../features/hermetic-build/brief.md) asks for: the union of its assemblies'
+Bom list) : Bom` is the per-nupkg BOM: the union of its assemblies'
 `forAssembly` BOMs, with the nupkg's own identity and hash as `metadata.component`, so a
 customer who takes a package rather than individual dlls still gets one document that covers
 everything inside it -- the assembly-level BOMs stay available underneath for anyone who took
@@ -258,8 +258,8 @@ boundary, "deliberately depth-1" and "incomplete" look the same to an auditor.
 **Where that leaves us.** `Sbom.forAssembly` is restore-scope: every package of
 `Dependencies.Packages` becomes a component (scope `required`/`excluded`), flat, with no
 `compositions` and no `annotations`, and our own assembly is the root without nested file
-components. Under the rule that is the *input*, not the deliverable. The gap is listed in
-[the tracker](../features/hermetic-build/tracker.md); two things are worth saying about our position:
+components. Under the rule that is the *input*, not the deliverable. Two things are worth saying
+about our position:
 
 - The **lock is a better source than the restore graph for tier 1**. It records what the
   compiler was actually handed, with hashes — so a library that was merged or ILRepack'd in is
@@ -284,7 +284,7 @@ supplier/license/hash of that package, what our assembly directly used), never w
 | tier 3 | nothing. A package the restore graph carries but the nuspec does not declare -- transitive, SDK pack, analyzer -- does not appear anywhere |
 | `dependencies[]` | root -> its own shipped assemblies + every tier-2 component; each own assembly (matched by hash) -> the tier-2 components its restore-scope BOM had it depend on *directly*, matched by package id. No entry has a tier-2 ref |
 | `compositions[]` | `complete` / `assemblies: [root]`; `incomplete` / `dependencies: [root; own assemblies]` |
-| `annotations[]` | one, subject the root, `Sbom.PackageScope.boundaryText`, annotator Xake |
+| `annotations[]` | one, subject the root, `Sbom.PackageScope.boundaryText`, annotator `Xake.Hermetic.Dotnet` (the tool component) |
 | `formulation` | none -- compiler, SDK and analyzers are not what the customer receives |
 
 **Determinism, and the one timestamp the schema forces.** CycloneDX 1.6 requires
@@ -308,7 +308,7 @@ implemented; a signer wraps the `cycloneDx` string before it is packed.
 - *Formulation.* The RFC's exclusion list names analyzers and SDK packs as *components*; it
   does not mention `formulation`, which is where our restore-scope document keeps the
   toolchain. Dropped here by default because check 3.1 ("every component traces to...") reads
-  naturally over the whole document; the positioning in [brief.md §8e](../features/hermetic-build/brief.md) argues for keeping it.
+  naturally over the whole document; the SBOM-first positioning of the package argues for keeping it.
 - *The annotation timestamp*: DOS epoch vs `SOURCE_DATE_EPOCH` vs the build's real time. A
   real time costs byte-identity across rebuilds of the same commit.
 - *`dependencies[]` for our own assemblies*: emitted (true, from the lock) -- the RFC allows it

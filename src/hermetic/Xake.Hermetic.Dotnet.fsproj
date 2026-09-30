@@ -38,7 +38,8 @@
        Nuget (assets, nuspec, cache) and Restore (which names no lock type), the kept fsproj
        evaluation, Git (revision token), the lock format and the lock's side of a build
        (Lock.build/compile/record/verify, csc { lock }), the import, and the release
-       pipeline (SBOM, verification, deterministic pack). -->
+       pipeline. Signing is the one delegated rule (signing.md); it uses Verify, StrongName
+       and Pack, so it compiles after all three. -->
   <ItemGroup>
     <Compile Include="Json.fs" />
     <Compile Include="Roots.fs" />
@@ -50,7 +51,9 @@
     <Compile Include="Project.fs" />
     <Compile Include="Sbom.fs" />
     <Compile Include="Verify.fs" />
+    <Compile Include="StrongName.fs" />
     <Compile Include="Pack.fs" />
+    <Compile Include="Sign.fs" />
   </ItemGroup>
 
   <ItemGroup>

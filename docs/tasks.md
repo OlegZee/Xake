@@ -151,8 +151,9 @@ Every operation of `csc {}`:
 | `keepalive` | `int` (seconds) | idle time after which a compiler server this build starts exits (`/keepalive`; Roslyn's default is 600) |
 | `resolve` | -- | return the resolved `Csc` instead of compiling; must be the last operation (see below) |
 
-The lock/restore/SBOM tooling (including `lock "path"`) ships as a separate package,
-`Xake.Hermetic.Dotnet`, see its docs. Details behind the operations above:
+`lock "path"` is not part of the base package: it is added by the separate package
+`Xake.Hermetic.Dotnet` (`open Xake.Hermetic.Dotnet`), and gates the compilation against a lock
+file; see [hermetic/lock.md](hermetic/lock.md). Details behind the operations above:
 [csc-syntax.md](csc-syntax.md).
 
 `toolset` example, see [samples/toolset.fsx](../samples/toolset.fsx):

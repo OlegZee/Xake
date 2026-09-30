@@ -188,6 +188,21 @@ a parameter of the run and never enters a compilation's argument list (section 6
 turns the option into a value with this precedence: the target's `noserver`/`keepalive`, the
 script variable `CSC_SERVER`, the environment variable `XAKE_CSC_SERVER`, `Shared None`.
 
+### Compiler selection
+
+`Csc.ofSettings` picks the compiler it records in `Dependencies.Compiler` with this precedence:
+`CscSettingsType.Toolset` (the block's `toolset`), the script variable `CSC_TOOLSET` (read with
+`getVar` only when `Toolset` is `None`, so it is a tracked dependency; empty counts as unset),
+then the SDK's `Roslyn/bincore/csc.dll`. Both toolset sources restore
+`Microsoft.Net.Compilers.Toolset/<version>` into the machine's cache. `CscPath` is a run option
+and overrides the recorded path at run time. The SDK is the one the `dotnet` host selects in the
+project root: `DotNetFwk.locateFrameworkIn options.ProjectRoot` runs `dotnet --version` there, so
+`global.json` (and its `rollForward`) applies, and takes `<dotnetRoot>/sdk/<version>`; with no
+`global.json` that is the newest SDK, as before. A pin the host cannot satisfy falls back to the
+newest SDK, and `ofSettings` traces the probe's warning (`DotNetFwk.sdkProbeWarning`). The probe
+is cached per project root for the process; `DotNetFwk.locateFramework` (no build context)
+probes from the current directory.
+
 ### Dependency direction
 
 ```
@@ -278,7 +293,7 @@ Who uses whom inside the hermetic package (names used in code, not comments):
 | `Csc.mapText f` | pure | rewrites `Generated` content, `Options`, `Defines` |
 | `Csc.diffList` | pure | ordered LCS diff, `- x` / `+ x` lines |
 | `Csc.runOptions settings` | recipe | `RunOptions` for composed settings: `FailOnError`, `CscPath`, resolved server, the framework's env vars |
-| `Csc.ofSettings settings` | recipe | composes a `Csc`; fails without `targetfwk` or `NETFX-TARGET`; never hashes |
+| `Csc.ofSettings settings` | recipe | composes a `Csc`; fails without `targetfwk` or `NETFX-TARGET`; the compiler from `Toolset`, else `CSC_TOOLSET`, else the SDK `global.json` selects; never hashes |
 | `Csc.run options c` | recipe | the runner (below) |
 | `Csc.compile settings` | recipe | `ofSettings`, `runOptions`, `run`; replaces 3.3's `Csc settings` |
 
@@ -307,7 +322,10 @@ plus `toolset`, `noserver`, `keepalive` and `resolve`, the marker `CscRequest`, 
 | `normalizedPackageRoot root` | the package folder in effect (`None` = the machine's cache), forward slashes, no trailing slash |
 | `restoreProjectText packages` | the synthesized restore project: `netstandard2.0`, `DisableImplicitFrameworkReferences`, one `PackageDownload` per package at an exact `[version]` |
 | `downloadPackages root packages` | one `dotnet restore` of that project under `obj/xake/restore/<n>/` of the project root (so `nuget.config` is found), with the repository's `Directory.Build.*` and central package management switched off, `NUGET_PACKAGES` pointed at the folder |
-| `restorePackage root id version` | the package directory, downloading it first when absent; `csc { toolset }` uses it |
+| `restorePackage root id version` | the package directory, downloading it first when absent; `csc { toolset }` and `CSC_TOOLSET` use it |
+| `locateFrameworkIn root fwk` | the toolchain for a framework, the SDK being the one `dotnet --version` reports in `root` (`global.json`); memoized per (root, framework) |
+| `locateFramework fwk` | `locateFrameworkIn` with the current directory as the root |
+| `sdkProbeWarning root` | the probe's warning for `root` (a `global.json` pin it could not honour), once that root has been probed |
 
 ### Hermetic modules
 
@@ -921,7 +939,7 @@ The versions are independent. `Xake` stays semantic-versioned 3.x. `Xake.Hermeti
 at 0.1.0, a preview: its API may break while it is 0.x. The range `[3.4.0, 4.0)` (written by
 NuGet as `[3.4.0, 4.0.0)`) holds only because the hermetic package uses no internals of the base;
 the base names it relies on (`Csc`, `RunOptions`, `Csc.run`, `Csc.ofSettings`, `resolve`,
-`CSC_SERVER`, `Hash`, `Tool`, the `DotNetFwk` functions) become breaking to change after 3.4.0.
+`CSC_SERVER`, `CSC_TOOLSET`, `Hash`, `Tool`, the `DotNetFwk` functions) become breaking to change after 3.4.0.
 Lockstep versions would have made CI simpler but forced a `Xake` release for every
 hermetic-only change.
 

@@ -321,6 +321,18 @@ module Csc =
             productVersion (System.IO.Path.ChangeExtension (path, ".dll"))
         | v -> v
 
+    /// The compiler a composed compilation records: the managed `csc.dll` in place of the
+    /// SDK's `csc`/`csc.exe` apphost launcher next to it (what `DotNetFwk.locateFramework`
+    /// returns for the SDK's `Roslyn/bincore`), so the path and its hash are the ones an
+    /// imported lock records; `run` starts a `.dll` compiler through `dotnet`. Any other path
+    /// -- a .NET Framework `csc.exe` with no dll beside it, mono's `mcs` -- stays as it is.
+    let managedCompiler (path: string) =
+        let name = Path.GetFileName path
+        let dir = Path.GetDirectoryName path
+        let isLauncher = name = "csc" || name.Equals ("csc.exe", System.StringComparison.OrdinalIgnoreCase)
+        if isLauncher && not (Impl.isEmpty dir) && File.Exists (dir </> "csc.dll") then dir </> "csc.dll"
+        else path
+
     /// Factors a command line into the structured form: a `/reference:`/`/r:` switch
     /// carrying exactly one item goes into the references (its `alias=` prefix split off),
     /// a `/analyzer:`/`/a:` switch with one item into the analyzers, every `/define:`/`/d:`
@@ -598,7 +610,7 @@ module Csc =
             // package cache first when it is not there yet
             let! compilerPath =
                 match settings.Toolset with
-                | None -> recipe { return fwkInfo.CscTool }
+                | None -> recipe { return managedCompiler fwkInfo.CscTool }
                 | Some version ->
                     recipe {
                         let! cscDll = restoreToolsetCompiler "Microsoft.Net.Compilers.Toolset" version

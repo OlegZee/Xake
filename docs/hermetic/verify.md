@@ -16,7 +16,7 @@ network, no signing tool -- it measures, it does not sign or validate a signatur
   This is exactly what a signing tool hashes before embedding a signature, and what
   `signtool verify /v` reports as "Hash of file (sha256)". Works on PE32 and PE32+ alike.
 
-  What it is for ([brief §8i/§8j](../features/hermetic-build/brief.md), [E5](../features/hermetic-build/e5-shipped-vs-local.md)): a shipped, Authenticode-signed dll differs from a local
+  What it is for (comparing a shipped build with a local one): a shipped, Authenticode-signed dll differs from a local
   unsigned build in at least the checksum and the certificate table, so `sha256` never matches
   even when the code is identical. Equal `authenticodeHash` values mean **the shipped dll is
   the local build, modulo signature** -- the reproducibility question E5 asks, answered without
@@ -55,7 +55,7 @@ network, no signing tool -- it measures, it does not sign or validate a signatur
 
 - **`TimeDateStamp` + `CheckSum` (+ often `StrongNameSignature`)** -- the classic "re-stamped,
   not rebuilt" signature: a tool re-linked or re-signed the same IL without touching source or
-  compiler inputs. This is exactly what an obfuscator like Babel does ([brief §8i](../features/hermetic-build/brief.md), E4): it
+  compiler inputs. This is exactly what an obfuscator like Babel does: it
   writes a new timestamp, the checksum moves because the bytes moved, and the strong-name
   signature is recomputed over the renamed/rewritten IL. Seeing only these three fields differ
   between two Babel runs (with a fixed `--randomseed`) is the "Babel is deterministic" result;

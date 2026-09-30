@@ -1,6 +1,6 @@
 # Deterministic pack (`Pack.fs`)
 
-`Xake.Hermetic.Dotnet.Pack` (`src/hermetic/Pack.fs`); design background in [brief §8f/§11](../features/hermetic-build/brief.md).
+`Xake.Hermetic.Dotnet.Pack` (`src/hermetic/Pack.fs`).
 
 A `.nupkg` is a zip. `dotnet pack` does not produce the same bytes twice:
 
@@ -73,7 +73,7 @@ byte-identity across reruns of the same commit.
 
 ## The SBOM per package
 
-`Sbom.forPackage` ([brief §8e](../features/hermetic-build/brief.md)) hashes this module's output — the finished `.nupkg` bytes — as
+`Sbom.forPackage` hashes this module's output — the finished `.nupkg` bytes — as
 the root component of the package-level CycloneDX document, the way `Sbom.forAssembly` hashes a
 compiled dll. Because `Pack.nupkg` is a pure function of its inputs, its output hash is
 reproducible right along with the package: two identical builds of the same tag give the same

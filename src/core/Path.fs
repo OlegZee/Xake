@@ -92,6 +92,38 @@ module private impl =
         | Part.Recurse -> "**"
         | Part.FsRoot -> dirSeparator
 
+    // A segment is considered the start of a wildcard/named-group portion of a
+    // pattern once it contains any of these characters. Everything from that segment
+    // on is left untouched - it may legitimately contain '/' inside a named group
+    // (e.g. "(root:*/*-a).ss"), so it must not be split and reassembled.
+    let isSpecialSegment (s: string) = s.IndexOfAny([| '*'; '?'; '(' |]) >= 0
+
+    // A segment that must never be popped by a ".." above it: the empty segment
+    // produced by a leading '/' (unix/UNC root), or a drive letter like "C:".
+    let isRootMarkerSegment (s: string) = s = "" || (s.Length = 2 && s.[1] = ':')
+
+    /// Collapses "." and ".." segments against the preceding literal segment,
+    /// refusing to climb past a root marker segment.
+    let rec collapseDotSegments (stack: string list) = function
+        | [] -> List.rev stack
+        | "." :: rest -> collapseDotSegments stack rest
+        | ".." :: rest ->
+            match stack with
+            | top :: restStack when not (isRootMarkerSegment top) -> collapseDotSegments restStack rest
+            | _ -> collapseDotSegments stack rest
+        | s :: rest -> collapseDotSegments (s :: stack) rest
+
+    /// Normalizes ".." / "." only within the literal directory prefix of a combined
+    /// root+pattern path string (i.e. up to, but not including, the first segment
+    /// that contains a wildcard or named-group marker). The wildcard/named-group
+    /// suffix is left byte-for-byte as given.
+    let normalizeLiteralPrefix (combined: string) =
+        let segments = combined.Replace('\\', '/').Split('/') |> List.ofArray
+        let idx = segments |> List.tryFindIndex isSpecialSegment |> Option.defaultValue segments.Length
+        let prefix, suffix = segments |> List.splitAt idx
+        let normalizedPrefix = collapseDotSegments [] prefix
+        System.String.Join("/", normalizedPrefix @ suffix)
+
 
 module private PicklerImpl =
 
@@ -233,8 +265,15 @@ let matches filePattern rootPath =
 /// Matches a file against a pattern and returns captured named groups, or None if no match.
 let matchGroups (pattern:string) rootPath =
 
-    let regex = Path.Combine(rootPath, pattern) |> matchImpl.maskToRegex
-    fun file -> 
+    // Path.Combine keeps ".." segments literally, while an actual target file's path
+    // (File.make -> FileInfo -> GetFullPath) has them resolved away - so a pattern
+    // like "../out/x.dll" would never match its own (normalized) target. Collapse
+    // ".."/"." only in the literal directory prefix (rootPath plus any leading plain
+    // segments of the pattern), leaving the first wildcard/named-group segment onward
+    // untouched: a named group can itself contain '/' (e.g. "(root:*/*-a).ss"), so it
+    // must not be re-split or reinterpreted.
+    let regex = Path.Combine(rootPath, pattern) |> impl.normalizeLiteralPrefix |> matchImpl.maskToRegex
+    fun file ->
         let m = regex.Match(matchImpl.normalizeSlashes file)
         if m.Success then
             [for groupName in regex.GetGroupNames()  do

@@ -696,36 +696,47 @@ module Csc =
                 if not (File.Exists resourcesFile) then
                     Resx.compile resx resourcesFile
 
+            // everything that carries a hash has to be exactly what was recorded, or the
+            // compilation is not the one described
+            let hashedFiles =
+                [ for r in c.Dependencies.References do yield r.Path, r.Sha256
+                  for a in c.Dependencies.Analyzers do yield a.Path, a.Sha256
+                  yield compiler.Path, compiler.Sha256 ]
+                |> List.filter (fun (_, expected) -> expected <> "")
+            let verify files =
+                recipe {
+                    let mismatches =
+                        files |> List.choose (fun (path: string, expected) ->
+                            let actual = if File.Exists path then sha256 path else "missing"
+                            if actual = expected then None else Some (path, expected, actual))
+                    if not (List.isEmpty mismatches) then
+                        let detail =
+                            mismatches
+                            |> List.map (fun (path, expected, actual) -> sprintf "%s: expected %s, got %s" path expected actual)
+                            |> String.concat "\n"
+                        do! trace Error "('%s') hash mismatch:\n%s" c.Name detail
+                        if options.FailOnError then
+                            failwithf "('%s') hash mismatch:\n%s" c.Name detail
+                }
+
+            // a hashed file that is missing and that no rule of the script produces cannot be
+            // obtained by the `needFiles` below, which would stop at the first one with "Neither
+            // rule nor file"; report all of them now, each with the hash it was expected to have
+            let! ctxOptions = getCtxOptions()
+            let hasRule path =
+                ExecCore.locateRule ctxOptions.Rules ctxOptions.ProjectRoot (FileTarget (File.make path)) |> Option.isSome
+            do! verify (hashedFiles |> List.filter (fun (path, _) -> not (File.Exists path) && not (hasRule path)))
+
             // the generated files and the `.resources` outputs have to exist before the inputs
             // are demanded (neither has a rule, so the engine takes them as plain files). Note:
             // for the composed mode this needs everything the args name -- including the
             // framework's global references (mscorlib.dll etc) -- not only the sources, refs and
-            // resource files. That is intended. It also has to come before the hash check: a
-            // reference another rule of the script produces is (re)built here, and the check
+            // resource files. That is intended. It also has to come before the full hash check:
+            // a reference another rule of the script produces is (re)built here, and the check
             // verifies what the compiler is about to read, not what was on disk before.
             do! needFiles (Filelist (CscArgs.inputs args |> List.map File.make))
 
-            // everything that carries a hash has to be exactly what was recorded, or the
-            // compilation is not the one described
-            let mismatches =
-                let check (path: string) (expected: string) =
-                    if expected = "" then None
-                    else
-                        let actual = if File.Exists path then sha256 path else "missing"
-                        if actual = expected then None else Some (path, expected, actual)
-                [ for r in c.Dependencies.References do yield check r.Path r.Sha256
-                  for a in c.Dependencies.Analyzers do yield check a.Path a.Sha256
-                  yield check compiler.Path compiler.Sha256 ]
-                |> List.choose id
-
-            if not (List.isEmpty mismatches) then
-                let detail =
-                    mismatches
-                    |> List.map (fun (path, expected, actual) -> sprintf "%s: expected %s, got %s" path expected actual)
-                    |> String.concat "\n"
-                do! trace Error "('%s') hash mismatch:\n%s" c.Name detail
-                if options.FailOnError then
-                    failwithf "('%s') hash mismatch:\n%s" c.Name detail
+            do! verify hashedFiles
 
             // csc warns CS2023 and ignores /noconfig when it is inside the response file, so
             // it has to stay on the command line and everything else goes into the rsp

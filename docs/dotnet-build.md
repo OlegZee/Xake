@@ -82,9 +82,18 @@ Windows registry is consulted.
   `refasm.csproj` is written to the temp directory and `dotnet restore` is run on it, then the
   lookup is retried. A clean machine therefore needs no preparation, but the first
   full-framework compile requires network access.
+- **netstandard**, `netstandard2.0` and `netstandard2.1`, is resolved by the same provider but
+  against a different reference set: `<dotnet>/packs/NETStandard.Library.Ref/<ver>/ref/<moniker>`
+  when the SDK carries it (2.1 only, today), otherwise
+  `<pkg cache>/netstandard.library/2.0.3/build/<moniker>/ref`, restored the same way when
+  missing. `netstandard.dll` alone carries the whole surface, so that single directory is the
+  entire `AssemblyDirs`. The `fsc` task recognizes the profile and adds `--targetprofile:netstandard`
+  and `-r:netstandard.dll` (instead of `mscorlib.dll`) on top of `--noframework`. `csc` has no
+  netstandard support.
 
 Accepted framework names — anything that normalizes to one of the known monikers
-`net20 net35 net40 net45 net451 net452 net46 net461 net462 net47 net471 net472 net48`.
+`net20 net35 net40 net45 net451 net452 net46 net461 net462 net47 net471 net472 net48`, plus
+`netstandard2.0` and `netstandard2.1` (which accept no abbreviations beyond an `sdk-` prefix).
 Normalization lowercases and strips `sdk-`, `net-`, `net`, `-full`, dots and dashes, so all of
 these mean `net462`: `net-4.6.2`, `4.6.2`, `net462`, `sdk-net462`. Likewise `4.5-full`, `4.5`
 and `net-4.5` all mean `net45`.

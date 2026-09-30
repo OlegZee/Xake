@@ -29,9 +29,9 @@ touched, so it is not re-litigated:
   nuspec and every consumer inherits it. See docs/devprocess.md.
 - `builder {}` (the empty settings block) does **not** compile on F# 8 — `builder { () }` does,
   and is what the docs, samples and tests use.
-- `csc` with no `targetfwk` passes no framework references at all, so it only ever worked on
-  Windows via `csc.rsp`. Every documented `csc` sample now sets `targetfwk`. Making the default
-  probe supply references too would be a real fix, and is not done.
+- `csc` with no `targetfwk` (and no `NETFX-TARGET`) is an error now: `Csc.ofSettings` fails asking
+  for one. The old fallback passed no framework references at all and only worked on Windows via
+  `csc.rsp`. `fsc` still has that fallback.
 - `samples/features.fsx` had a catch-all `"(dir:*)/(file:*).(ext:c*)"` rule declared *after*
   `temp/AssemblyInfo.cs`; since the last matching rule wins, it shadowed it and the sample had
   been failing for a long time. The catch-all now comes first.
@@ -110,9 +110,9 @@ goes to the recreate path. The `EndOfStreamException` warning in test runs is de
 ## How to verify changes here
 
 ```bash
-dotnet build src/core -c Release && dotnet build src/dotnet -c Release   # both TFMs
-dotnet test src/tests                                                    # 233 passed, 1 skipped
-dotnet test src/tests --filter 'Category=Integration'                    # real csc invocation
+dotnet build src/core -c Release && dotnet build src/dotnet -c Release   # both TFMs, 0 warnings
+dotnet test src/tests -c Release                                         # 248 passed, 1 skipped
+dotnet test src/tests --filter 'Category=Integration'                    # real csc and fsc runs (9)
 dotnet fsi build.fsx -- -- build test                                    # self-hosting
 dotnet fsi samples/fullframework.fsx                                     # end-to-end csc
 ```

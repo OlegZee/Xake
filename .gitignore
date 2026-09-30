@@ -44,4 +44,6 @@ temp
 ~testout~
 paket-files/
 /out
+# staged bootstrap for build.fsc.fsx
+/.bootstrap
 src/core/Xake.xml

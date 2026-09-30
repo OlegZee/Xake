@@ -68,11 +68,23 @@ worth knowing before touching it again:
   drags in a `netstandard` facade that the net4x reference-assembly packages do not carry.
   Hence there is no `fsc` end-to-end test; `samples/features.fsx` works around it by
   referencing an `FSharp.Core.dll` of its own.
-- **A target requested twice in one recipe is built twice.** `need ["x"]` followed by
-  `needFiles` on the same `x` rebuilds it, because the worker pool drops its dedup entry when
-  the first request completes. Reproducible with no .NET task involved (engine-level, in
-  `WorkerPool.fs`). This is why the csc test asserts on its output file rather than an
-  execution count.
+- **A target requested twice in one run used to be built twice** — `need ["x"]` followed by
+  `needFiles` on the same `x` rebuilt it. Fixed in `WorkerPool.fs`; what actually went wrong
+  took two mechanisms, so it is worth writing down:
+  - the pool deduped only *in-flight* requests, dropping the entry when the task finished, and
+  - the "does it need rebuilding" verdict is memoized for the whole run
+    (`getChangeReasons ctx |> memoizeRec`, `ExecCore.fs`) — the memo is how the recursive graph
+    analysis ties its knot, not an optimization that can be dropped — so the second request did
+    not ask the database again and got the pre-build "Not built yet" answer.
+
+  The pool now keeps two maps: `running`, which is shared by whoever asks whenever they ask,
+  and `finished`, which serves the rest of the run and is emptied when the next one starts.
+  `Scheduler.newRun` marks that boundary and is posted exactly where the memo is created. So:
+  within a run a target executes once; across runs the database decides again; and a task that
+  was already going when a run began still serves it, which is the pre-existing behaviour for
+  concurrent demands. Covered by
+  `builds a target requested twice in one run only once` and `builds a file needed and then
+  needFiled only once`.
 - `build.fsx` builds `netstandard2.0` only; the `net462` asset comes from `dotnet build` /
   `dotnet pack`.
 

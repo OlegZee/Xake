@@ -4,15 +4,19 @@
 /// Message type for the worker pool mailbox: requests execution of a target.
 type ExecMessage<'r> =
     | Run of Target * Target list * Async<'r> * AsyncReplyChannel<Async<'r>>
+    /// Reports a finished task: it moves aside and stays available for the rest of the run
     | Done of string list
+    /// Marks the boundary between one run and the next
+    | NewRun
 
 /// Internal worker pool that deduplicates and throttles parallel task execution.
 module internal WorkerPool =
 
   open System.Threading
-  open System.Threading.Tasks
 
-  /// Creates a throttled worker pool that deduplicates tasks by target name.
+  /// Creates a throttled worker pool that runs a target at most once per run: a request for
+  /// a target already running joins it, a request for one this run has finished gets its
+  /// result, and a new run starts over -- there the database decides what needs rebuilding.
   /// Returns the semaphore and the mailbox processor.
   let create (logger:ILogger) maxThreads =
     // controls how many threads are running in parallel
@@ -22,16 +26,18 @@ module internal WorkerPool =
     let mapKey (artifact:Target) = artifact.FullName
 
     throttler, MailboxProcessor.Start(fun mbox ->
-        let rec loop(map) = async {
+        let rec loop (running, finished) = async {
           match! mbox.Receive() with
           | Run(artifact, targets, action, chnl) ->
               let mkey = artifact |> mapKey
 
-              match map |> Map.tryFind mkey with
-              | Some (task:Task<'a>) ->
-                  log Never "Task found for '%s'. Status %A" artifact.ShortName task.Status
-                  chnl.Reply <| Async.AwaitTask task
-                  return! loop(map)
+              // running tasks are shared whenever they started, finished ones only within the
+              // run that produced them
+              match running |> Map.tryFind mkey |> Option.orElse (finished |> Map.tryFind mkey) with
+              | Some result ->
+                  log Never "Task found for '%s'" artifact.ShortName
+                  chnl.Reply result
+                  return! loop (running, finished)
 
               | None ->
                   do log Info "Task queued '%s'" artifact.ShortName
@@ -44,16 +50,23 @@ module internal WorkerPool =
                           return buildResult
                       finally
                           throttler.Release() |> ignore
-                          mbox.Post(Done keys)
+                          mbox.Post (Done keys)
                     })
-                  chnl.Reply <| Async.AwaitTask task
-                  let newMap = keys |> List.fold (fun m k -> m |> Map.add k task) map
-                  return! loop newMap
+                  let result = Async.AwaitTask task
+                  chnl.Reply result
+                  return! loop (keys |> List.fold (fun m k -> m |> Map.add k result) running, finished)
 
           | Done keys ->
-              return! loop (keys |> List.fold (fun m k -> m |> Map.remove k) map)
+              let move (running, finished) key =
+                  match running |> Map.tryFind key with
+                  | Some result -> running |> Map.remove key, finished |> Map.add key result
+                  | None -> running, finished
+              return! loop (keys |> List.fold move (running, finished))
+
+          | NewRun ->
+              return! loop (running, Map.empty)
         }
-        loop(Map.empty) )
+        loop (Map.empty, Map.empty) )
 
 open System.Threading
 
@@ -73,6 +86,10 @@ module Scheduler =
 
     /// Returns the underlying mailbox processor for posting work items.
     let pool s = s.Pool
+
+    /// Starts a new run: a target an earlier run finished is looked at afresh, through the
+    /// database, rather than answered from the pool.
+    let newRun s = s.Pool.Post NewRun
 
     /// Release current slot, run work, reacquire slot.
     let withYieldedSlot scheduler work = async {

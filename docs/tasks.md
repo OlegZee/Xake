@@ -146,7 +146,7 @@ Every operation of `csc {}`:
 | `args` | `string list` | extra compiler arguments, appended last |
 | `nofailonerror` | -- | a compile error does not fail the build |
 | `cscpath` | `string` | run this compiler instead of the one the framework provides; overrides `toolset` |
-| `toolset` | `string` (version) | take `csc.dll` from `Microsoft.Net.Compilers.Toolset/<version>` in the NuGet cache, restoring the package first when it is missing, instead of the SDK's own compiler |
+| `toolset` | `string` (version) | take `csc.dll` from `Microsoft.Net.Compilers.Toolset/<version>` in the NuGet cache, restoring the package first when it is missing, instead of the SDK's own compiler; overrides the `CSC_TOOLSET` variable |
 | `noserver` | -- | compile in a fresh compiler process instead of through the Roslyn compiler server |
 | `keepalive` | `int` (seconds) | idle time after which a compiler server this build starts exits (`/keepalive`; Roslyn's default is 600) |
 | `resolve` | -- | return the resolved `Csc` instead of compiling; must be the last operation (see below) |
@@ -229,6 +229,17 @@ The switch is silently skipped (the compile runs in-process) for a compiler that
 for toolchains that need environment variables, and for a compiler under the temp directory.
 `CSC_SERVER` is read like `NETFX`, so changing it rebuilds the target. Details:
 [csc-server.md](csc-server.md).
+
+#### Compiler toolset for the whole script
+
+The script variable `CSC_TOOLSET` is `toolset` for every `csc` target that names none: a
+`Microsoft.Net.Compilers.Toolset` version, restored the same way. Precedence: the block's
+`toolset`, then `CSC_TOOLSET`, then the SDK's compiler (an empty value counts as unset);
+`cscpath` still overrides all three. Setting it project-wide is how a build gets a compiler
+that does not depend on what is installed: every compile, and so every lock entry recorded from
+it, then names a restorable NuGet compiler with a fixed version instead of whichever SDK the
+machine happens to have. Like `CSC_SERVER` it is read as a variable, so changing it rebuilds
+the targets that read it.
 
 How the compiler and the reference assemblies are located, and how to force a particular
 toolchain, is described in [dotnet-build.md](dotnet-build.md).
@@ -356,6 +367,7 @@ let strings = resourceset {
 | `NETFX-TARGET` | Default `targetfwk` for all compiler tasks |
 | `FSCVER` | F# compiler version `fsc` asks for |
 | `CSC_SERVER` | `csc` compiler server: `on`, `off` or keepalive seconds; overridden by a target's `noserver`/`keepalive`, overrides env `XAKE_CSC_SERVER` |
+| `CSC_TOOLSET` | `csc` compiler package version (`Microsoft.Net.Compilers.Toolset`) for targets with no `toolset`; empty or unset means the SDK's compiler |
 
 ```bash
 dotnet fsi build.fsx -- -- build -d NETFX-TARGET:net-4.6.2

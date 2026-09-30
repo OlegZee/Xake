@@ -8,8 +8,10 @@ several ways to arrive at a `Csc` (compose one from settings with `csc { ...; re
 one thing that ever shells out to the compiler.
 
 The base reference for the settings, `Csc.compile`, `resolve`, `Csc.run` and `RunOptions` is
-[tasks.md](tasks.md); this file keeps the details behind them. The lock/restore/SBOM tooling
-ships as a separate package, `Xake.Hermetic.Dotnet`, see its docs.
+[tasks.md](tasks.md); this file keeps the details behind them. Locks -- the file that records a
+`Csc` with the hashes of everything it reads, `Lock.compile`, `Lock.build`, `csc { ...; lock }`
+and `Project.import` -- are not part of `Xake.Dotnet`; they live in the package
+`Xake.Hermetic.Dotnet` and are described in [hermetic/lock.md](hermetic/lock.md).
 
 ## Composed mode
 
@@ -55,7 +57,7 @@ last operation, and outside a file rule needs an explicit `out`. Every custom op
 | `keepalive` | `int` (seconds) | idle time after which a compiler server this build starts exits (`/keepalive`) | Roslyn's own default, 600 |
 
 `out`, `platform`, `unsafe`, `nostdlib` (from `targetfwk`) and `define` are composition
-settings; replaying a lock entry (`Lock.compile`) does not go through them at all. The
+settings; replaying a lock entry (`Lock.compile`, [hermetic/lock.md](hermetic/lock.md)) does not go through them at all. The
 argument list `Csc.ofSettings` builds is,
 in order: `/noconfig` (when the target framework requires it), `/nologo`, `/target:`,
 `/platform:`, `/unsafe`, `/nostdlib+`, `/out:`, `/define:`, sources, `/reference:` refs, global
@@ -73,7 +75,8 @@ existed. Instead `resolve` records a permanent
 `(resx, .resources)` pair in `Csc.Resources` --
 `<ProjectRoot>/obj/xake/<assembly name>/<manifestName>` where `manifestName` is the `/res:`
 logical name `Impl.makeResourceName` computes (e.g. `Sample.Application.Strings.resources`) --
-and emits `/res:<resourcesPath>,<manifestName>`, exactly the shape `Project.import` produces for an imported project's resx. `run`'s existing resource step (see below) then compiles
+and emits `/res:<resourcesPath>,<manifestName>`, exactly the shape `Project.import`
+([hermetic/lock.md](hermetic/lock.md)) produces for an imported project's resx. `run`'s existing resource step (see below) then compiles
 it when the output is missing and `needFiles` the resx itself, so the engine decides when a resx
 edit reruns the compile, not `resolve`. Non-resx resources are unaffected -- they were already
 the file the compiler reads and stay a plain `/res:` file input. `resolve` no longer produces any
@@ -92,7 +95,7 @@ temp files of its own; the only temp file `run` still cleans up is its own respo
 - `toolset` replaces only the compiler. References, defines and environment variables still
   come from the targeted framework.
 - A lock records the compiler that ran (`Dependencies.Compiler`: path, SHA-256, version) and
-  `Csc.run` verifies it.
+  `Csc.run` verifies it; see [hermetic/lock.md](hermetic/lock.md).
 
 ## The runner: `Csc.run`
 
@@ -109,7 +112,7 @@ hands the `Csc` here. It does, in order (after a
    up to date and the hash check never ran.
 3. Writes back every `Generated` file that is missing or whose content differs from what is on
    disk -- the resolved compilation is the source of truth for msbuild-generated inputs like
-   `AssemblyInfo.cs` (and `sourcelink.json` with its token already resolved). The
+   `AssemblyInfo.cs` (and `sourcelink.json` with its token already resolved, see [hermetic/lock.md](hermetic/lock.md)). The
    composed mode never populates `Generated`, so this is a no-op there.
 4. Creates the output directories, for every path `CscArgs.outputs args` names.
 5. `needFiles` every resx in `Csc.Resources` (so a resx edit rebuilds the dll) and, for each

@@ -554,7 +554,7 @@ module Csc =
             let (globalRefPaths, nostdlib, noconfig) =
                 match targetFramework with
                 | null ->
-                    failwithf "'%s': csc needs a target framework: set targetfwk in the csc block or the NETFX-TARGET script variable (e.g. targetfwk \"net8.0\")" assemblyName
+                    failwithf "'%s': csc needs a target framework: set targetfwk in the csc block or the NETFX-TARGET script variable (e.g. targetfwk \"netstandard2.0\")" assemblyName
                 | tgt ->
                     let fwk = Some tgt |> DotNetFwk.locateFramework in
                     let lookup = DotNetFwk.locateAssembly fwk

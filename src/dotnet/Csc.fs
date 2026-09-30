@@ -489,7 +489,8 @@ module Csc =
                 | _ -> null
             let! netfxVar = getVar "NETFX"
             let dotnetFwk = match netfxVar with | Some _ -> netfxVar | None -> Option.ofObj targetFramework
-            return targetFramework, DotNetFwk.locateFramework dotnetFwk
+            let! options = getCtxOptions()
+            return targetFramework, DotNetFwk.locateFrameworkIn options.ProjectRoot dotnetFwk
         }
 
     /// The runner's options for composed settings: `FailOnError` and `CscPath` from the
@@ -566,13 +567,16 @@ module Csc =
             // resource files) once, for every producer -- this, a lock entry, `ofArgs`.
 
             let! targetFramework, fwkInfo = frameworkOf settings
+            match DotNetFwk.sdkProbeWarning options.ProjectRoot with
+            | Some warning -> do! trace Warning "%s" warning
+            | None -> ()
 
             let (globalRefPaths, nostdlib, noconfig) =
                 match targetFramework with
                 | null ->
                     failwithf "'%s': csc needs a target framework: set targetfwk in the csc block or the NETFX-TARGET script variable (e.g. targetfwk \"netstandard2.0\")" assemblyName
                 | tgt ->
-                    let fwk = Some tgt |> DotNetFwk.locateFramework in
+                    let fwk = Some tgt |> DotNetFwk.locateFrameworkIn options.ProjectRoot in
                     let lookup = DotNetFwk.locateAssembly fwk
                     (("mscorlib.dll" :: settings.RefGlobal) |> List.map lookup), true, true
 

@@ -50,7 +50,8 @@ module MsbuildImpl =
             do! trace Level.Debug "MSBuild: settings=%A" settings
 
             let! dotnetFwk = getVar "NETFX"
-            let fwkInfo = DotNetFwk.locateFramework dotnetFwk
+            let! options = getCtxOptions()
+            let fwkInfo = DotNetFwk.locateFrameworkIn options.ProjectRoot dotnetFwk
 
             let pfx = "[msbuild]"
 

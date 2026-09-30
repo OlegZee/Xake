@@ -29,6 +29,7 @@
     <Compile Include="FlatScriptTests.fs" />
     <Compile Include="DotnetTasksTests.fs" />
     <Compile Include="ToolsetTests.fs" />
+    <Compile Include="SdkProbeTests.fs" />
     <Compile Include="CscServerTests.fs" />
     <Compile Include="ResxTests.fs" />
   </ItemGroup>

@@ -69,6 +69,3 @@ open Xake.Hermetic.Dotnet
 `Lock.build` gates against the lock, restores what it names, resolves the revision token and
 then calls `Csc.run`. To update a lock deliberately, delete the file or run a target that calls
 `Lock.record`.
-
-Working notes for the package (brief, decisions, experiments) live in
-[../features/hermetic-build/](../features/hermetic-build/README.md).

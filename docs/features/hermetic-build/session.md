@@ -924,3 +924,21 @@ the fix only takes effect there after `cp src/hermetic/bin/Release/netstandard2.
 (done locally). publish.yml: the `hermetic-v*` build step also exports `VERSION=3.4.0`.
 **Exact next step**: release Xake 3.4.0 (tag `v3.4.0`) and Xake.Hermetic.Dotnet 0.1.0 (tag
 `hermetic-v0.1.0`), then E8.
+
+## 2026-09-30 — review stack opened on OlegZee/Xake (the working repo; upstream FakeBuild lags)
+
+The user wants per-topic PRs reviewed one by one, then a release, then the rest. The branch
+history stays here; each PR is one commit of final file states, stacked, draft:
+#17 → #18 → #19 engine fixes (one per commit) → #20 `pr/base-csc` (src/dotnet, base tests,
+base docs) → #21 `pr/hermetic-a-lock` → #22 `pr/hermetic-b-sbom-verify` (Pack moved here: SBOM
+tests need `Pack.nupkg`) → #23 `pr/hermetic-c-pack-sign` → `pr/build-ci` → `pr/hermetic-docs`
+(two new documents, `docs/hermetic-architecture.md` and `docs/hermetic-guide.md`). Fixes found
+while writing the docs went into the stack and were cherry-picked here (850f6ce): `targetfwk`
+message example, `needFiles` before the hash check in `Csc.run` (plus the missing-file report
+before it, via `ExecCore.locateRule` through IVT), `Csc.managedCompiler` (csc.dll instead of
+the launcher), `Sbom.toolName`. Working notes and `samples/hermetic` stay on this branch only.
+
+**Procedure after each merge into dev** (squash): the next PR is retargeted by GitHub; merge
+`dev` back into this branch to keep history aligned. Release order: merge through #20, tag
+`v3.4.0`; merge the rest, tag `hermetic-v0.1.0`; then E8 (bootstrap bump) as one more PR.
+The PR worktree is `.claude/worktrees/pr-engine`.

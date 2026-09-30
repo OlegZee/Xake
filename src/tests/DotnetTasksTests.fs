@@ -269,6 +269,8 @@ let greet name = sprintf "Hello, %s" name
 
         let ex = Assert.Throws<XakeException> (fun () -> build () |> ignore)
         Assert.That(ex.ToString(), Does.Contain "csc needs a target framework: set targetfwk in the csc block or the NETFX-TARGET script variable")
+        // the example has to be one composed mode accepts (a .NET Framework or netstandard moniker)
+        Assert.That(ex.ToString(), Does.Contain "targetfwk \"netstandard2.0\"")
 
     [<Test>]
     member __.``task builders produce recipes``() =

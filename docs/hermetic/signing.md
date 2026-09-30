@@ -1,9 +1,9 @@
 # Signing as a delegated rule
 
-`Xake.Hermetic.Dotnet.Sign` (`src/hermetic/Sign.fs`). Design background: [brief §8f ring 3, §11](../features/hermetic-build/brief.md), the `Sign` row.
+`Xake.Hermetic.Dotnet.Sign` (`src/hermetic/Sign.fs`).
 
 **Status: skeleton** — `src/hermetic/Sign.fs` + `src/hermetic.tests/SignTests.fs` (six tests, one
-per acceptance criterion in the [skeleton plan](../features/hermetic-build/signing-skeleton.md)). No real signing
+per acceptance criterion of the skeleton). No real signing
 tool is wired up; `Sign.fakeSigner` builds a genuine certificate structure around a fake payload.
 
 Decision: **signing is a delegated rule, with a skeleton and a test against a fake signer.** The real tool — Windows `signtool`, `dotnet sign` against Azure
@@ -13,7 +13,7 @@ substitution, not a redesign.
 
 ## 1. What is signed, when, and why it is the delegated case
 
-The ordering constraint is [brief §8f's](../features/hermetic-build/brief.md): compile → obfuscate (Babel) → re-strong-name →
+The ordering constraint is: compile → obfuscate (Babel) → re-strong-name →
 **Authenticode** → pack → **NuGet-sign**. So there are exactly two signing steps, both at the
 end of the chain, both after everything that this branch already makes reproducible:
 
@@ -112,7 +112,7 @@ val sign : SignRuleBuilder    // sign { target ...; input ...; certificate ...; 
 
 Three naming facts the F# compiler settled, not the design:
 
-- **the builder is a bare `sign`** ([extraction plan](../features/hermetic-build/extraction-plan.md) §3 principle 4), in an `[<AutoOpen>]`
+- **the builder is a bare `sign`**, in an `[<AutoOpen>]`
   module, so it shadows `FSharp.Core`'s numeric `sign` wherever `Xake.Hermetic.Dotnet` is open (that one
   stays reachable as `Operators.sign`). It returns the rule: `Sign.rule settings signer`, wrapped
   in `delegated (Sign.executor settings signer store budget)` when `store` and `budget` are
@@ -223,7 +223,7 @@ that padding is a short unlabelled `"Content"` range which flips `verdict` back 
 differs". PE files are file-aligned (512 bytes) in practice, so this does not bite the real
 pipeline; `SignTests` asserts the exact label list only when the input is already aligned. The
 general fix — label the gap between `a`'s end and `b`'s certificate table as part of
-`CertificateTable` — stays with the open `Verify.verdict` item in [the tracker](../features/hermetic-build/tracker.md).
+`CertificateTable` — stays open as a `Verify.verdict` follow-up.
 
 **SBOM.** §8f's "two hashes" holds unchanged: the component hash in the SBOM is the raw
 SHA-256 of the file that **ships** (signed), and the attestation additionally records the
@@ -254,5 +254,4 @@ rule invokes the signer once for two targets sharing one input and serves the se
 store; a second run re-serves both with zero signer calls; the dispatch `Resource` caps
 concurrent signer calls while the run is not bounded by `Threads`; a signed nupkg lists
 `.signature.p7s` with every other entry byte-identical; `Sign.identity` changes with the
-certificate, timestamp server or algorithm and not with wall-clock time. The plan they came from
-is in the [skeleton plan](../features/hermetic-build/signing-skeleton.md).
+certificate, timestamp server or algorithm and not with wall-clock time.

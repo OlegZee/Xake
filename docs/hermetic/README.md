@@ -4,8 +4,9 @@ Version **0.1.0, preview**: the API may break while the package is 0.x.
 
 `Xake.Hermetic.Dotnet` builds .NET assemblies and packages so that what shipped can be
 explained and checked: a **lock** file records exactly what the compiler was handed and the hash
-of everything it read, and the build compiles from the lock and fails when anything differs. It
-is a separate NuGet package that depends on `Xake` (the engine and the `csc`/`fsc`/`msbuild`/`resgen`
+of everything it read, the build compiles from the lock and fails when anything differs, and the
+result can be turned into a deterministic package with an SBOM. It is a
+separate NuGet package that depends on `Xake` (the engine and the `csc`/`fsc`/`msbuild`/`resgen`
 tasks of `Xake.Dotnet`, version 3.4 or later, below 4.0); nothing in `Xake` knows about it.
 
 ```fsharp
@@ -22,7 +23,9 @@ open Xake.Hermetic.Dotnet
 |---|---|---|
 | Lock | the lock file format, `Lock.build` / `compile` / `record` / `verify`, `csc { lock }`, `Project.import` (msbuild design-time build into a lock) | [lock.md](lock.md) |
 | Restore | fetch the packages a lock names into a folder of the build's choice, one `dotnet restore` for the whole set | [restore.md](restore.md) |
-| Nuget | read the restore graph (`project.assets.json`) and the package cache (nuspec, `.nupkg.metadata`) that Restore and the import use | |
+| Nuget and Sbom | read the restore graph and package cache; write a deterministic CycloneDX 1.6 SBOM per assembly and per package | [nuget-sbom.md](nuget-sbom.md) |
+| Verify | Authenticode PE hash and labelled byte differences between two binaries | [verify.md](verify.md) |
+| Pack | deterministic zip and `.nupkg` (sorted entries, fixed timestamps, content-derived ids) | |
 
 The compilation itself, `csc {}`, `Csc.ofSettings` and the runner `Csc.run`, stay in `Xake.Dotnet`:
 [../csc-syntax.md](../csc-syntax.md), [../tasks.md](../tasks.md).

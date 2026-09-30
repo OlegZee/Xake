@@ -1,6 +1,6 @@
 # Restoring the packages a lock names
 
-`src/hermetic/Restore.fs` (package `Xake.Hermetic.Dotnet`). Closes the gap [verify-dataengine.md](../features/hermetic-build/verify-dataengine.md) §5/§7 measured: a lock was a
+`src/hermetic/Restore.fs` (package `Xake.Hermetic.Dotnet`). Closes the gap that verifying the lock against a real solution measured: a lock was a
 complete *description* of what a compilation reads but only a partial *source* for obtaining
 it. A compiler living in a package was restored (`ensureCompilerAvailable`); reference and
 analyzer packages were not, so a package folder that did not already have them failed the

@@ -204,7 +204,7 @@ once per framework, each pass passing a global `-p:TargetFramework=X` on a `-res
 then wrote an assets file with only X's target, and `-restore`'s walk of the project graph
 rewrote the *referenced* projects' assets files too -- which a per-project lock cannot cover.
 Concurrent imports failed with `NETSDK1005 ... doesn't have a target for '<fwk>'` or silently
-recorded an entry with `packages 0` ([verify-dataengine.md §6](../features/hermetic-build/verify-dataengine.md)). The fix is structural: the
+recorded an entry with `packages 0` (measured while verifying the lock against a real multi-project solution). The fix is structural: the
 framework matrix of one variant is one import, so the two frameworks cannot race at all, and
 `RestoreRecursive=false` keeps one project's restore out of another's obj. Both were verified
 by hand on the dataengine fixture -- a restore without `TargetFramework` yields
@@ -331,7 +331,7 @@ being the `NuGetPackageRoot` property (fallback `Roots.nugetRoot ()`): per packa
 `.nupkg.metadata`, "" when the cache lacks it), `Direct` (a `PackageReference` of the project's
 own framework section) and `DependsOn` (the ids this package's assets entry depends on).
 `type: project` entries are not packages and do not appear. Reading inside the lock is what
-closes the second half of the [import race](../features/hermetic-build/import-race.md): the per-variant assets copy and the `ProjectAssetsFile`
+closes the second half of the import race (concurrent imports rewriting shared assets files): the per-variant assets copy and the `ProjectAssetsFile`
 property hack are gone -- the lock carries the graph, and `Sbom.forAssembly` reads the lock only.
 Trap found here: a single-`TargetFramework` project's assets keys `targets` by the *full*
 framework name (`.NETStandard,Version=v2.0`), only a multi-target project uses the alias;
@@ -498,7 +498,7 @@ mapped outputs, it only `needFiles` what the (already-mapped) args name.
 `Project.import` produces a `Lock.Entry` from an msbuild project; `csc { ...; resolve }` produces
 the `Csc` of one from composed settings (`Csc.ofSettings` for record syntax), and `Lock.ofCsc`
 wraps it in an entry with an empty `Evaluation` and no `Packages`, so a lock-recording rule can
-write it out the way an import rule does (design: [lock-from-settings.md](../features/hermetic-build/lock-from-settings.md)).
+write it out the way an import rule does.
 The API:
 
 ```fsharp
@@ -527,7 +527,7 @@ is why the 3.3 function `Csc settings` went (`Csc.compile settings` replaces it)
 
 **`Lock.rehash entry`** fills `Sha256` for every hashed entry (`References`, `Analyzers`,
 `Imports`) and for `Compiler` (its `Version` too, when empty), from what is on disk right now
-(`Hash.sha256`, empty when the file does not exist). `Csc.ofSettings` never hashes -- hashing every reference on every composed compile
+(`Csc.sha256`, which gives "" for a file that does not exist; `Hash.sha256` itself throws). `Csc.ofSettings` never hashes -- hashing every reference on every composed compile
 would tax the common case for nothing -- so a lock-recording rule calls `rehash` itself, once,
 after `resolve`; the cost is then paid only when that rule reruns, like everything else
 in Xake.
@@ -541,8 +541,8 @@ each hashed list (`References`, `Analyzers`, `Imports`) by path (added, removed,
 <path>: <old> -> <new>` when both sides have a hash and they differ), `Generated`/`Resources` by
 key (added, removed, or `~ <label> <key>: content changed`), `ProjectRefs` as a set
 (added/removed), and `Packages` by id (`+ Package Id@Version`, `- Package Id@Version`, `~ Package
-Id: <old> -> <new>` for a version change, `~ Package Id@Version: sha512 changed`). This is the primitive `csc { lock "path" }` (below) and `Lock.verify` are built on
-([lock-from-settings.md](../features/hermetic-build/lock-from-settings.md), scenario 3); no `Policy` wiring exists. `Lock.diff` stays usable stand-alone (e.g. from an
+Id: <old> -> <new>` for a version change, `~ Package Id@Version: sha512 changed`). This is the primitive `csc { lock "path" }` (below) and `Lock.verify` are built on; no `Policy`
+wiring exists. `Lock.diff` stays usable stand-alone (e.g. from an
 fsx-level "verify" rule).
 
 Tests: `src/hermetic.tests/LockDiffTests.fs` (`rehash`, `diff` identical and with changes, pure, no
@@ -572,7 +572,7 @@ open Xake.Hermetic.Dotnet
 }
 ```
 
-`lock "<path>"` is migration path A of [lock-from-settings.md](../features/hermetic-build/lock-from-settings.md) §9: a tuned `csc { }` block
+`lock "<path>"` is the migration path for an existing script: a tuned `csc { }` block
 stays where it is and gains a lock. It is a custom operation defined next to the lock, not in the
 base builder (`CscLockBuilder` in `Lock.fs`, an extension of `CscSettingsBuilder` with its own
 `Run`), and must be the last operation; the block then means `Csc.ofSettings`, `Csc.runOptions`,
@@ -629,7 +629,7 @@ target in CI. `Lock.compile` remains the entry point for a lock that came from
 **The lock file is not a target of the engine on this path.** It is written from inside the
 compile recipe, which is what lets the `csc { }` block stay in place; the engine neither
 `need`s it nor rebuilds it, and the update target is an ordinary phony action of the script's
-own. Recommendation 1b of [lock-from-settings.md](../features/hermetic-build/lock-from-settings.md) (the lock as a real file target, built by a
+own. The alternative design (the lock as a real file target, built by a
 rule of its own from `csc { ...; resolve }`) still stands for scripts that want it and needs nothing
 new. As before, one lock file per compilation: two `csc` calls sharing one path would
 read-modify-write the same file and is an authoring error, not something the library guards.

@@ -33,7 +33,8 @@ module CscBuilder =
         [<CustomOperation("cscpath")>]       member __.CscPath(s:CscSettingsType, value) =   {s with CscPath = Some value}
         /// <summary>Takes `csc.dll` from `Microsoft.Net.Compilers.Toolset/&lt;version&gt;` in the
         /// NuGet cache (restoring the package if it is missing) instead of the SDK's own, so the
-        /// compiler is a pinned, hashed dependency in the lock. `cscpath` still overrides this.</summary>
+        /// compiler is a pinned, hashed dependency in the lock. Takes precedence over the script
+        /// variable `CSC_TOOLSET`; `cscpath` still overrides this.</summary>
         [<CustomOperation("toolset")>]       member __.Toolset(s:CscSettingsType, version: string) = {s with Toolset = Some version}
 
         /// <summary>Compiles in a fresh compiler process instead of through the Roslyn compiler

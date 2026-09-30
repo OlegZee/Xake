@@ -288,6 +288,49 @@ let greet name = sprintf "Hello, %s" name
             Assert.Ignore(sprintf "no C# compiler at '%s' -- .NET SDK not available?" fwk.CscTool)
         Assert.That(fwk.AssemblyDirs, Is.Not.Empty, "reference assembly directories")
 
+    // The SDK's `Roslyn/bincore` has a `csc` (`csc.exe` on Windows) apphost next to `csc.dll`;
+    // a composed compilation records the dll, the compiler an imported lock hashes. Where the
+    // probe finds no dll beside the compiler (the .NET Framework's own `csc.exe`, mono) the
+    // test is ignored: the path is kept as it is there.
+    [<Test; Category("Integration")>]
+    member x.``composed compilation records the SDK's csc.dll as the compiler``() =
+
+        let probed = (DotNetFwk.locateFramework (Some "netstandard2.0")).CscTool
+        if not (File.Exists (Path.GetDirectoryName probed </> "csc.dll")) then
+            Assert.Ignore(sprintf "no csc.dll next to '%s' (not the SDK's compiler)" probed)
+
+        File.WriteAllText ("managedcsc.cs", "public class C {}")
+        let resolved = ref ""
+        do xake {x.TestOptions with FileLog="csc-managed.log"; ThrowOnError = true} {
+            wantOverride (["managedcsc"])
+            rules [
+                "managedcsc" => recipe {
+                    let! c = Csc.ofSettings { CscSettingsType.Default with
+                                                Src = !!"managedcsc.cs"
+                                                Out = File.make "managedcsc.dll"
+                                                TargetFramework = "netstandard2.0" }
+                    resolved.Value <- c.Dependencies.Compiler.Path
+                }
+            ]
+        }
+        Assert.That(resolved.Value, Does.EndWith "csc.dll")
+        Assert.That(Path.GetDirectoryName resolved.Value, Is.EqualTo (Path.GetDirectoryName probed))
+
+    [<Test>]
+    member __.``managedCompiler replaces only a csc launcher that has csc.dll beside it``() =
+        let dir = Path.GetFullPath "managedcompiler"
+        Directory.CreateDirectory dir |> ignore
+        let launcher = dir </> "csc"
+        File.WriteAllText (launcher, "")
+        try File.Delete (dir </> "csc.dll") with _ -> ()
+        Assert.That(Csc.managedCompiler launcher, Is.EqualTo launcher, "no dll beside it")
+        File.WriteAllText (dir </> "csc.dll", "")
+        Assert.That(Csc.managedCompiler launcher, Is.EqualTo (dir </> "csc.dll"))
+        Assert.That(Csc.managedCompiler (dir </> "csc.exe"), Is.EqualTo (dir </> "csc.dll"))
+        Assert.That(Csc.managedCompiler (dir </> "csc.dll"), Is.EqualTo (dir </> "csc.dll"))
+        Assert.That(Csc.managedCompiler (dir </> "other"), Is.EqualTo (dir </> "other"))
+        Assert.That(Csc.managedCompiler "mcs", Is.EqualTo "mcs")
+
     [<Test>]
     member __.``escapes compiler arguments``() =
 

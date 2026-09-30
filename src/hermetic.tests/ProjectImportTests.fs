@@ -259,7 +259,7 @@ type ``Project import``() =
 
     [<Test>]
     member x.``ofArgs factors a realistic msbuild command line and Args rebuilds it exactly``() =
-        // the shape of a real page/dataengine lock: references and analyzers in the middle,
+        // the shape of a real page/repo-a lock: references and analyzers in the middle,
         // sources after them, a switch after the sources; an alias reference; a quoted list
         // item with a comma inside (netstandard's generated AssemblyAttributes.cs on /embed)
         let args =
@@ -335,27 +335,27 @@ type ``Project import``() =
     [<Test>]
     member x.``an extra root tokenizes a sibling repository's paths and round-trips``() =
         let root = Directory.GetCurrentDirectory().Replace ('\\', '/')
-        let extraRoots = [ "$(DataEngineRoot)", "/x/dataengine" ]
+        let extraRoots = [ "$(RepoARoot)", "/x/repo-a" ]
         let roots = Roots.make (Directory.GetCurrentDirectory()) extraRoots
 
         let entry =
             entryOf "Sample.Lib" (root + "/src/Sample/Sample.csproj") (root + "/src/Sample")
-                [ "/noconfig"; "/out:" + root + "/src/Sample/obj/xake/net8.0/Sample.Lib.dll"; "/x/dataengine/src/A.cs" ]
+                [ "/noconfig"; "/out:" + root + "/src/Sample/obj/xake/net8.0/Sample.Lib.dll"; "/x/repo-a/src/A.cs" ]
         let lock : Lock.Document = {
             Configuration = "Release"; Properties = []; Entries = [ entry ]
         }
 
         let text = Lock.format roots lock
-        Assert.That(text, Does.Contain "$(DataEngineRoot)/src/A.cs")
-        Assert.That(text, Does.Not.Contain "/x/dataengine")
+        Assert.That(text, Does.Contain "$(RepoARoot)/src/A.cs")
+        Assert.That(text, Does.Not.Contain "/x/repo-a")
 
         Assert.That(Lock.parse roots text, Is.EqualTo lock)
-        Assert.That((Lock.parse roots text).Entries.[0].Csc.Sources, Is.EqualTo [ "/x/dataengine/src/A.cs" ])
+        Assert.That((Lock.parse roots text).Entries.[0].Csc.Sources, Is.EqualTo [ "/x/repo-a/src/A.cs" ])
 
     [<Test>]
     member x.``a declared root must be a well-formed token``() =
         let cwd = Directory.GetCurrentDirectory()
-        Assert.Throws<System.Exception>(fun () -> Roots.make cwd [ "DataEngineRoot", "/x/dataengine" ] |> ignore) |> ignore
+        Assert.Throws<System.Exception>(fun () -> Roots.make cwd [ "RepoARoot", "/x/repo-a" ] |> ignore) |> ignore
 
     /// Changed 2026-09-24 (`Restore`): a built-in token may be redeclared -- that is how a
     /// build points `$(NuGetPackageRoot)` at a package folder of its own -- and a relative
@@ -373,7 +373,7 @@ type ``Project import``() =
     member x.``lists the files a preprocessed project imported``() =
         let preprocessed = """<!--
 ============================================================================================================================================
-/repo/src/DataEngine/DataEngine.csproj
+/repo/src/CoreLib/CoreLib.csproj
 ============================================================================================================================================
 -->
 <Project ToolsVersion="15.0" DefaultTargets="Build">
@@ -399,23 +399,23 @@ type ``Project import``() =
 ============================================================================================================================================
   <Import Project="$(Brand).props">
 
-/repo/src/MESCIUS.props
+/repo/src/Acme.props
 ============================================================================================================================================
 -->
   <!--
 ============================================================================================================================================
   </Import>
 
-/repo/src/MESCIUS.props
+/repo/src/Acme.props
 ============================================================================================================================================
 -->
 </Project>
 """
         Assert.That(Project.parseImports preprocessed, Is.EqualTo [
-            "/repo/src/DataEngine/DataEngine.csproj"
+            "/repo/src/CoreLib/CoreLib.csproj"
             "/dotnet/sdk/8.0.425/Sdks/Microsoft.NET.Sdk/Sdk/Sdk.props"
             "/repo/Directory.Build.props"
-            "/repo/src/MESCIUS.props" ])
+            "/repo/src/Acme.props" ])
 
     [<Test>]
     member x.``builds the lock entry from what msbuild answered``() =
@@ -543,7 +543,7 @@ type ``Project import``() =
               { "Identity": "/out:obj/xake/net8.0/X/Sample.Lib.dll" }
             ],
             "ProjectReference": [
-              { "Identity": "../../Rendering/Rendering.csproj", "FullPath": "/wherever/the/process/cwd/put/it/Rendering.csproj" }
+              { "Identity": "../../Layout/Layout.csproj", "FullPath": "/wherever/the/process/cwd/put/it/Layout.csproj" }
             ]
           }
         }""" dirSlash dirSlash)
@@ -553,7 +553,7 @@ type ``Project import``() =
         // `FullPath` here is the wrong, cwd-resolved spelling -- `Identity` combined with the
         // project directory must win, `..` folded
         Assert.That(entry.Evaluation.ProjectRefs,
-                    Is.EqualTo [ (Path.GetFullPath (Path.Combine (dir, "..", "..", "Rendering", "Rendering.csproj"))).Replace ('\\', '/') ])
+                    Is.EqualTo [ (Path.GetFullPath (Path.Combine (dir, "..", "..", "Layout", "Layout.csproj"))).Replace ('\\', '/') ])
 
     [<Test>]
     member x.``sdkPin finds no global.json``() =

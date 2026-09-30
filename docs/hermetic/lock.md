@@ -172,7 +172,7 @@ framework**. `ImportOptions`:
 | `Projects` | project files; all land in one lock |
 | `Frameworks` | the target frameworks to import each project for; all of them land in that same lock, one `Lock.Entry` per (project, framework). A project gets entries only for the ones it declares -- see below |
 | `Configuration` | msbuild `Configuration`, default `Release` |
-| `Properties` | extra `-p:` properties, e.g. `["Brand", "MESCIUS"]` |
+| `Properties` | extra `-p:` properties, e.g. `["Brand", "Acme"]` |
 | `Variant` | names the `obj/xake/<framework>/<variant>/` subtree; keeps distinct property sets from overwriting each other's generated files |
 | `Output` | the lock file to write |
 | `Roots` | extra `(token, path)` roots to tokenize against, beyond the built-in three (a relative path is taken against the project root; a built-in token's name replaces that built-in); default `[]` |
@@ -207,7 +207,7 @@ Concurrent imports failed with `NETSDK1005 ... doesn't have a target for '<fwk>'
 recorded an entry with `packages 0` (measured while verifying the lock against a real multi-project solution). The fix is structural: the
 framework matrix of one variant is one import, so the two frameworks cannot race at all, and
 `RestoreRecursive=false` keeps one project's restore out of another's obj. Both were verified
-by hand on the dataengine fixture -- a restore without `TargetFramework` yields
+by hand on the repo-a fixture -- a restore without `TargetFramework` yields
 `['.NETFramework,Version=v4.7.2', '.NETStandard,Version=v2.0']` where one with it yields a
 single target, and with `RestoreRecursive=false` only the restored project's own assets file
 appears. The `withProjectLock` `Resource` stays, now held for the whole project (restore plus
@@ -220,11 +220,11 @@ nothing saying so was the worst half of that defect.
 **Extra roots.** The three built-in roots (`$(NuGetPackageRoot)`, `$(ProjectRoot)` = the
 build's project root, `$(DotnetRoot)`) tokenize everything under the package cache, the checkout being
 imported, and the SDK -- but a cross-repo `ProjectReference` (page's `LocalBuild=true` pointing
-at a sibling `ar-net-core-dataengine` checkout) resolves to paths under neither, and would
+at a sibling `repo-a` checkout) resolves to paths under neither, and would
 otherwise land in the lock untokenized and machine-specific. `ImportOptions.Roots` declares one
 extra token per sibling repository (the decision: no shared parent root, since siblings can move
 independently and a shared root would tokenize more than intended) -- e.g. `Roots = [
-"$(DataEngineRoot)", "/abs/path/to/ar-net-core-dataengine" ]`. `Project.import` combines them
+"$(RepoARoot)", "/abs/path/to/repo-a" ]`. `Project.import` combines them
 with the built-in three via `Roots.make projectRoot extra` (inside the import:
 `Roots.currentWith options.Roots`), which validates each token is well-formed (`$(Name)`) --
 failing early rather than writing a lock that silently didn't tokenize -- takes a relative path
@@ -307,7 +307,7 @@ marker stays at the first and the round-trip check decides. A leading `@` in `Op
 always a marker and never a csc response-file reference: msbuild never puts one on the compiler's
 command line (the rsp is `run`'s own, written around the whole list).
 
-*Why markers and not a canonical order.* The real locks are the argument: dataengine's have
+*Why markers and not a canonical order.* The real locks are the argument: repo-a's have
 `/warnaserror+:NU1605` **after** the sources, and the relative order of the reference, analyzer
 and source blocks differs between Roslyn versions. A canonical order would have rebuilt a
 different command line on a new SDK and failed every import there; markers keep msbuild's own
@@ -350,14 +350,14 @@ item per line; `Alias` only on a reference that has one; each package one inline
 {
   "Configuration": "Release",
   "Properties": {
-    "Brand": "MESCIUS"
+    "Brand": "Acme"
   },
   "Entries": [
     {
-      "Name": "DataEngine",
+      "Name": "CoreLib",
       "Framework": "netstandard2.0",
       "Evaluation": {
-        "Project": "$(ProjectRoot)/src/DataEngine/DataEngine.csproj",
+        "Project": "$(ProjectRoot)/src/CoreLib/CoreLib.csproj",
         "ProjectRefs": [ ... ],
         "Imports": [
           { "Path": "$(ProjectRoot)/Directory.Build.props", "Sha256": "..." }
@@ -365,14 +365,14 @@ item per line; `Alias` only on a reference that has one; each package one inline
         "Sdk": "8.0.425",
         "SdkPin": "exact 8.0.425",
         "Properties": {
-          "AssemblyName": "DataEngine", ...
+          "AssemblyName": "CoreLib", ...
         }
       },
       "Compilation": {
-        "Directory": "$(ProjectRoot)/src/DataEngine",
+        "Directory": "$(ProjectRoot)/src/CoreLib",
         "Options": [ "/noconfig", ..., "@Defines", "@References", "@Analyzers", "@Sources", ... ],
         "Defines": [ "TRACE", ... ],
-        "Sources": [ "$(ProjectRoot)/src/DataEngine/A.cs", ... ],
+        "Sources": [ "$(ProjectRoot)/src/CoreLib/A.cs", ... ],
         "Generated": { "<path>": "<content>", ... },
         "Resources": { "<resx path>": "<.resources path>", ... }
       },
@@ -395,7 +395,7 @@ item per line; `Alias` only on a reference that has one; each package one inline
 (Lists are written one item per line; they are folded to `[ ... ]` above for space. `Generated`
 and `Resources` are JSON objects keyed by path, `Properties` too.) A lock in the old flat format (`"Projects"` with `"Args"`) is refused
 by `Lock.parse` with "lock written by an older Xake; re-import" -- nothing released used it, so
-there is no reader for it. `samples/hermetic/dataengine/locks/` shows the shape on the real
+there is no reader for it. `samples/hermetic/repo-a/locks/` shows the shape on the real
 fixture: 889 lines per brand, 27 `Options` (`@Defines`, `@References`, `@Analyzers`, `@Sources`
 in msbuild's positions), 12 `Defines`, 113-115 `References`, 4 `Packages`.
 

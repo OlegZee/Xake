@@ -43,4 +43,6 @@ script variable `CSC_SERVER` sets it for the whole script) and `resolve` (return
 `Csc` for `Csc.run` instead of compiling). From record syntax use `Csc.compile settings`. All of
 it is in [docs/tasks.md](../../docs/tasks.md).
 
-The lock/restore/SBOM tooling ships as a separate package, `Xake.Hermetic.Dotnet`, see its docs.
+Lock files for `csc` (`csc { ...; lock "path" }`, `Lock.build`, `Project.import`), restore from a
+lock, deterministic packs, SBOMs and signing are not in this package: they are the separate,
+preview package `Xake.Hermetic.Dotnet`, see [docs/hermetic/README.md](../../docs/hermetic/README.md).

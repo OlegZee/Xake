@@ -87,7 +87,7 @@ module Nuget =
     /// indistinguishable from "this project has no packages", and the lock entry (and so the
     /// SBOM built from it) would come out silently without its package components. That is
     /// exactly what a restore run with `-p:TargetFramework=X` produced for every *other*
-    /// framework of a multi-targeted project: see verify-dataengine.md §6.
+    /// framework of a multi-targeted project: see the repo-a verification notes §6.
     let readAssets (assetsFile: string) (framework: string) : Assets =
         let root = File.ReadAllText assetsFile |> Json.parse
 

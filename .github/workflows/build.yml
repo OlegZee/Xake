@@ -27,8 +27,10 @@ jobs:
       uses: actions/setup-dotnet@v6
       with:
         dotnet-version: ${{ matrix.dotnet }}
-    - name: Build & test
-      run: dotnet fsi build.fsx -- -- build test
+    # `test` runs both test projects, src/tests and src/hermetic.tests; `pack` builds both
+    # packages and fails if the Xake.Hermetic.Dotnet nuspec loses its `Xake [3.4.0, 4.0.0)` range
+    - name: Build, test & pack
+      run: dotnet fsi build.fsx -- -- build test pack
     - name: Upload build log
       uses: actions/upload-artifact@v7
       if: always()

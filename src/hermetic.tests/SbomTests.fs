@@ -476,6 +476,8 @@ type ``Sbom package scope``() =
         let annotation = bom.Annotations |> List.exactlyOne
         Assert.That (annotation.Subjects, Is.EqualTo [ "nupkg:MyPkg.1.0.0" ])
         Assert.That (annotation.Text, Does.Contain "consuming product")
+        // the annotator is the tool component, named after the package
+        Assert.That (annotation.Annotator, Is.EqualTo "Xake.Hermetic.Dotnet")
         Assert.That (annotation.Timestamp, Does.Match @"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
 
         let json1 = Sbom.cycloneDx bom

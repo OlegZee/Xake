@@ -134,8 +134,12 @@ module Sbom =
           if not sorted.IsEmpty then "dependsOn", jarr (sorted |> List.map jstring) ]
         |> jobj
 
+    /// The name the documents give the tool that made them: the `metadata.tools` component
+    /// and the annotator of the annotations this module writes.
+    let toolName = "Xake.Hermetic.Dotnet"
+
     let private toolsComponentJson (version: string) =
-        jobj [ "type", jstring "application"; "name", jstring "Xake.Hermetic.Dotnet"; "version", jstring version ]
+        jobj [ "type", jstring "application"; "name", jstring toolName; "version", jstring version ]
 
     let private compositionJson (c: Composition) =
         [ "aggregate", jstring c.Aggregate
@@ -689,8 +693,8 @@ module Sbom =
     ///   document does not know.
     /// - **`compositions`**: `complete` over `assemblies: [root]`, `incomplete` over
     ///   `dependencies: [root; own assemblies]`.
-    /// - **`annotations`**: one on the root with `BoundaryText`, annotator Xake, stamped
-    ///   `AnnotationTimestamp`.
+    /// - **`annotations`**: one on the root with `BoundaryText`, annotator `toolName` (the
+    ///   package name), stamped `AnnotationTimestamp`.
     /// - **`formulation`**: the evidence BOMs' union when `KeepFormulation`, else none.
     ///
     /// Signing the document (JSF) is out of scope here; a signer wraps the `cycloneDx` output.
@@ -772,7 +776,7 @@ module Sbom =
               { Aggregate = "incomplete"; Assemblies = []; Dependencies = packageRef :: ownRefs |> List.sort } ]
         let annotations =
             if options.BoundaryText = "" then [] else
-            [ { BomRef = packageRef + "/annotation:boundary"; Subjects = [ packageRef ]; Annotator = "Xake"
+            [ { BomRef = packageRef + "/annotation:boundary"; Subjects = [ packageRef ]; Annotator = toolName
                 Timestamp = options.AnnotationTimestamp; Text = options.BoundaryText } ]
         let formulation =
             if options.KeepFormulation then

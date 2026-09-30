@@ -73,6 +73,18 @@ Windows registry is consulted.
   5. `%ProgramFiles%\dotnet`.
   "Highest version" is a numeric, component-wise comparison — `10.0.400` beats `8.0.424`, and a
   released version beats a preview (`10.0.100-rc.1`) when both are present.
+- **`global.json` is honoured.** Within that root the SDK is the one the `dotnet` host selects
+  for the project: `DotNetFwk` runs `<root>/dotnet --version` with the build's `ProjectRoot` as
+  the working directory (so a `global.json` in it or any parent applies, `rollForward`
+  included) and takes `<root>/sdk/<printed version>`. With no `global.json` the host prints the
+  newest SDK, which is what the "highest version" pick above gives, so nothing changes. When the
+  host fails — the pinned SDK is not installed — or prints a version that has no directory under
+  this root, the highest version is taken and the compile traces a warning naming the version
+  `global.json` asked for. The probe is a synchronous `pexecSync` call, cached per project root
+  for the life of the process (a `global.json` edited mid-run is not re-read);
+  `DotNetFwk.locateFrameworkIn root` is the entry point and `csc`, `fsc` and `msbuild` pass their
+  `ProjectRoot`. `DotNetFwk.locateFramework`, which has no build context, probes from the
+  current directory.
 - **Reference assemblies** come from the `Microsoft.NETFramework.ReferenceAssemblies.<moniker>`
   NuGet package, version `1.0.3`, read straight out of the package cache
   (`NUGET_PACKAGES`, or `~/.nuget/packages`) at

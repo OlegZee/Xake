@@ -240,6 +240,9 @@ it, then names a restorable NuGet compiler with a fixed version instead of which
 machine happens to have. Like `CSC_SERVER` it is read as a variable, so changing it rebuilds
 the targets that read it.
 
+The SDK compiler is the one from the SDK a `global.json` in (or above) the project root selects,
+as `dotnet --version` there reports it; with no `global.json`, the newest SDK installed.
+
 How the compiler and the reference assemblies are located, and how to force a particular
 toolchain, is described in [dotnet-build.md](dotnet-build.md).
 

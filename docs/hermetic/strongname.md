@@ -1,7 +1,7 @@
 # StrongName
 
 `Xake.Hermetic.Dotnet.StrongName` (`src/hermetic/StrongName.fs`). PE timestamp normalisation and CLR strong-name (re-)signing, pure `System.Security.Cryptography`
-(netstandard2.0 + net462). Built for E4 ([brief §8j](../features/hermetic-build/brief.md)): Babel is deterministic with `--randomseed`
+(netstandard2.0 + net462). Built for rebuilding an obfuscated assembly reproducibly: Babel is deterministic with `--randomseed`
 except the PE `TimeDateStamp`, `CheckSum` and the 128-byte strong-name signature after it.
 `StrongName.normalise` closes that gap without waiting on the vendor.
 

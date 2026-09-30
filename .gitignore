@@ -47,3 +47,4 @@ paket-files/
 # staged bootstrap for build.fsc.fsx
 /.bootstrap
 src/core/Xake.xml
+.claude/worktrees/

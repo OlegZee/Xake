@@ -32,6 +32,11 @@ open Xake.Hermetic.Dotnet
 The compilation itself, `csc {}`, `Csc.ofSettings` and the runner `Csc.run`, stay in `Xake.Dotnet`:
 [../csc-syntax.md](../csc-syntax.md), [../tasks.md](../tasks.md).
 
+- [Architecture](../hermetic-architecture.md): the design, where it meets `Xake`, the evidence
+  and the known limits, for maintainers and reviewers.
+- [Guide](../hermetic-guide.md) (draft): a task-oriented walk-through, from the first lock to
+  packing and signing.
+
 ## Two ways in
 
 Gate a `csc {}` block by a lock. The first build records `locks/app.json` and compiles; later

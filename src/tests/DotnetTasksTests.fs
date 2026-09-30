@@ -134,6 +134,86 @@ type ``Dotnet tasks tests``() =
         runBuild ()
         Assert.That(compileCount.Value, Is.EqualTo 1, "second build should not rerun the rule")
 
+    // A reference produced by another rule of the same script has to be (re)built before
+    // `Csc.run` checks its hash, not after: the check is meant to verify what the compiler is
+    // about to read. The consuming rule records its compilation once, hashed (`rehash`, the
+    // step a lock makes), and replays that record on later builds -- base API only, no lock.
+    // The library compiles with /deterministic, so rebuilding it from the same source yields
+    // the same bytes and the recorded hash stays valid.
+    [<Test; Category("Integration")>]
+    member x.``csc builds a referenced library before checking its hash``() =
+
+        File.WriteAllText ("hashlib.cs", "public class Lib { public static string Name = \"lib\"; }")
+        File.WriteAllText ("hashapp.cs", "class Program { static void Main() { System.Console.WriteLine(Lib.Name); } }")
+        for f in ["hashlib.dll"; "hashapp.exe"] do try File.Delete f with _ -> ()
+
+        let recorded : Csc option ref = ref None
+        let libCompiles = ref 0
+        let appCompiles = ref 0
+
+        let libSettings =
+            { CscSettingsType.Default with
+                Src = !!"hashlib.cs"
+                Out = File.make "hashlib.dll"
+                TargetFramework = "net-4.6.2"
+                RefGlobal = ["System.dll"]
+                CommandArgs = ["/deterministic"] }
+        let appSettings =
+            { CscSettingsType.Default with
+                Src = !!"hashapp.cs"
+                Ref = !!"hashlib.dll"
+                Out = File.make "hashapp.exe"
+                TargetFramework = "net-4.6.2"
+                RefGlobal = ["System.dll"] }
+
+        let runBuild () =
+            xake {x.TestOptions with FileLog="csc-refhash.log"; ConLogLevel = Verbosity.Diag; ThrowOnError = true} {
+                wantOverride (["hashapp.exe"])
+
+                rules [
+                    "hashlib.dll" ..> recipe {
+                        do! need ["hashlib.cs"]
+                        libCompiles.Value <- libCompiles.Value + 1
+                        do! Csc.compile libSettings
+                    }
+                    "hashapp.exe" ..> recipe {
+                        do! need ["hashapp.cs"]
+                        appCompiles.Value <- appCompiles.Value + 1
+                        let! options = Csc.runOptions appSettings
+                        let! c =
+                            match recorded.Value with
+                            | Some c -> recipe { return c }
+                            | None ->
+                                recipe {
+                                    do! need ["hashlib.dll"]
+                                    let! c = Csc.ofSettings appSettings
+                                    let c = Csc.rehash c
+                                    recorded.Value <- Some c
+                                    return c
+                                }
+                        do! Csc.run options c
+                    }
+                ]
+            }
+
+        runBuild ()
+        Assert.That(File.Exists "hashapp.exe", Is.True, "csc did not produce hashapp.exe")
+        let libRef = recorded.Value.Value.Dependencies.References |> List.find (fun r -> r.Path.EndsWith "hashlib.dll")
+        Assert.That(libRef.Sha256, Is.Not.Empty, "the recorded compilation hashes the library")
+        Assert.That((libCompiles.Value, appCompiles.Value), Is.EqualTo ((1, 1)))
+
+        // the library source changes (timestamp): the library rebuilds and the application,
+        // which references it, recompiles against it
+        File.SetLastWriteTimeUtc ("hashlib.cs", System.DateTime.UtcNow.AddSeconds 2.0)
+        runBuild ()
+        Assert.That((libCompiles.Value, appCompiles.Value), Is.EqualTo ((2, 2)), "touching the library source rebuilds both")
+
+        // the library output is gone: checking its hash before building it would see it missing
+        File.Delete "hashlib.dll"
+        runBuild ()
+        Assert.That((libCompiles.Value, appCompiles.Value), Is.EqualTo ((3, 3)), "a missing library is rebuilt, then verified")
+        Assert.That(File.Exists "hashlib.dll", Is.True)
+
     // Same discovery, but for a profile rather than a framework version: the reference
     // assembly comes from the SDK's netstandard pack or from the NETStandard.Library
     // package. FSharp.Core is referenced explicitly since --noframework is in effect.

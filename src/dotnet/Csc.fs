@@ -632,9 +632,11 @@ module Csc =
     ///
     /// Before running the compiler this: writes back any `Generated` file that is missing or
     /// whose content changed, creates the output directories, compiles each `.resx` whose
-    /// `.resources` output is missing, and verifies the SHA-256 of every hashed reference,
-    /// analyzer and of the compiler itself against what is on disk -- a mismatch fails the
-    /// build rather than silently compiling against something other than what was recorded.
+    /// `.resources` output is missing, `needFiles` every input the command line names (so a
+    /// reference another rule produces is built first), and verifies the SHA-256 of every
+    /// hashed reference, analyzer and of the compiler itself against what is on disk -- a
+    /// mismatch fails the build rather than silently compiling against something other than
+    /// what was recorded.
     /// An empty hash (a composed compilation never records one) skips that check.
     ///
     /// Obtaining anything that is missing (packages, a revision token) is not this function's
@@ -673,7 +675,7 @@ module Csc =
 
             // a resx `PrepareResources` compiled is named by a `/resource:` switch as the
             // `.resources` file it produced, not the resx itself -- that file has to exist
-            // before the hash check and the `needFiles` below see it. The resx is `needFiles`d
+            // before the `needFiles` of the inputs below sees it. The resx is `needFiles`d
             // so the engine decides whether an edit reruns this recipe; regenerating only when
             // the `.resources` output is missing (not on a timestamp comparison) keeps `run`
             // from being a second rebuilder next to the engine's (conceptual-review.md 2.3).
@@ -681,6 +683,15 @@ module Csc =
             for (resx, resourcesFile) in c.Resources do
                 if not (File.Exists resourcesFile) then
                     Resx.compile resx resourcesFile
+
+            // the generated files and the `.resources` outputs have to exist before the inputs
+            // are demanded (neither has a rule, so the engine takes them as plain files). Note:
+            // for the composed mode this needs everything the args name -- including the
+            // framework's global references (mscorlib.dll etc) -- not only the sources, refs and
+            // resource files. That is intended. It also has to come before the hash check: a
+            // reference another rule of the script produces is (re)built here, and the check
+            // verifies what the compiler is about to read, not what was on disk before.
+            do! needFiles (Filelist (CscArgs.inputs args |> List.map File.make))
 
             // everything that carries a hash has to be exactly what was recorded, or the
             // compilation is not the one described
@@ -703,12 +714,6 @@ module Csc =
                 do! trace Error "('%s') hash mismatch:\n%s" c.Name detail
                 if options.FailOnError then
                     failwithf "('%s') hash mismatch:\n%s" c.Name detail
-
-            // the generated files have to exist before the inputs are demanded. Note: for the
-            // composed mode this needs everything the args name -- including the framework's
-            // global references (mscorlib.dll etc) -- not only the sources, refs and resource
-            // files. That is intended.
-            do! needFiles (Filelist (CscArgs.inputs args |> List.map File.make))
 
             // csc warns CS2023 and ignores /noconfig when it is inside the response file, so
             // it has to stay on the command line and everything else goes into the rsp

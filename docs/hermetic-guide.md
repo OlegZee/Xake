@@ -96,6 +96,13 @@ Notes:
 - `targetfwk` (or the script variable `NETFX-TARGET`) is required. The composed `csc` task
   targets .NET Framework monikers (`net-4.6.2`, `net472`, ...) and `netstandard2.0`/`2.1`; see
   [tasks.md](tasks.md#csc).
+- The compiler is the block's `toolset "<version>"`, else the script variable `CSC_TOOLSET`
+  (same meaning: a `Microsoft.Net.Compilers.Toolset` version), else the SDK's `csc.dll`; `cscpath`
+  overrides all three. The SDK is the one a `global.json` in (or above) the project root selects,
+  as `dotnet --version` run there reports it, and the newest installed when there is none; a pin
+  to an SDK that is not installed falls back to the newest with a warning. Setting
+  `CSC_TOOLSET` for the whole script (`var "CSC_TOOLSET" "4.12.0"`, or `-d CSC_TOOLSET:4.12.0`)
+  makes every lock entry name a restorable NuGet compiler instead of an installed SDK.
 - The path is relative to the project root, or absolute.
 - Use one lock file per `csc` block. Two blocks sharing one lock path overwrite each other.
 
@@ -553,7 +560,7 @@ explain why. `<name>` is the assembly name.
 | `'<name>': the compiler <path> is not available and restoring <id> <version> did not provide it` | a compiler package (`toolset "<version>"`) could not be restored | check the feed and credentials; delete a partial package folder |
 | `'<name>': the compiler <path> named by the lock is not installed` | a path under the SDK root, but not under `sdk/` | re-import on this machine |
 | `'<name>': the compiler <path> named by the lock does not exist` | anywhere else | re-import or re-record |
-| `'<name>': the compiler <path> does not exist` | from `Csc.run` directly (no lock involved) | check `cscpath`, `toolset` or the SDK |
+| `'<name>': the compiler <path> does not exist` | from `Csc.run` directly (no lock involved) | check `cscpath`, `toolset`/`CSC_TOOLSET` or the SDK (`global.json`) |
 
 ### A hash mismatch
 

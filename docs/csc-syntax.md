@@ -133,20 +133,26 @@ hands the `Csc` here. It does, in order (after a
    file with an unchanged timestamp is still caught (the hash check runs every time `run` runs
    for other reasons); a swapped file that also updates the timestamp is caught because the
    timestamp change is what makes the engine run `run` in the first place.
-6. Verifies the SHA-256 of every hashed reference, analyzer, and the compiler itself against what
+6. `needFiles` on `CscArgs.inputs args` -- every file any input switch names, plus the
+   sources. For the composed mode this covers everything the args name, including the
+   framework's global references, not only sources/refs/resources. It comes after step 5
+   because the `.resources` files named by `/res:` have no rule and must already exist, and
+   before the hash check because a reference produced by another rule of the script is
+   (re)built here: the check has to see the file the compiler is about to read.
+7. Verifies the SHA-256 of every hashed reference, analyzer, and the compiler itself against what
    is on disk. An empty recorded hash means "not checked" (the composed mode never records one,
    and neither does an unbuilt project reference). Any mismatch is collected and reported
    together (`('<name>') hash mismatch:` then one line per path), then fails the build when
    `FailOnError` is set (`XakeException`, message containing the path).
-7. `needFiles` on `CscArgs.inputs args` -- every file any input switch names, plus the
-   sources. For the composed mode this covers everything the args name, including the
-   framework's global references, not only sources/refs/resources.
 8. Writes the arguments to a response file, with `Impl.escapeArgument`.
     `/noconfig` cannot go inside the rsp -- csc warns `CS2023` and ignores it there -- so it stays
     on the command line and everything else goes into `@<rspfile>`.
 9. Picks the compiler: `RunOptions.CscPath` wins if set; otherwise, when the `Csc`'s recorded
     compiler path ends in `.dll`, it runs through `dotnet <path>`; otherwise the path is run
-    directly (a native launcher, e.g. the SDK's `csc` apphost).
+    directly (a native launcher, e.g. a `cscpath` naming the SDK's `csc` apphost). The composed
+    mode records the SDK's `Roslyn/bincore/csc.dll` rather than the `csc` launcher the framework
+    probe returns next to it (`Csc.managedCompiler`), the same compiler an imported lock
+    hashes; a `cscpath` override is used verbatim.
 10. Adds the compiler-server switches ([csc-server.md](csc-server.md)) -- `/shared`,
     plus `/keepalive:<s>` when `RunOptions.Server` names one -- on the command line, ahead of
     `/noconfig` and the `@rsp`, never in the rsp and never in the lock: csc parses them out on the

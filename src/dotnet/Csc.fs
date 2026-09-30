@@ -91,7 +91,11 @@ module CscTypes =
         /// Compiler package version (`Microsoft.Net.Compilers.Toolset`): when set,
         /// `Csc.ofSettings` takes `csc.dll` from that package in the NuGet cache instead of
         /// the SDK's own, so the compiler is a pinned dependency rather than whatever the SDK
-        /// happens to ship. `CscPath` still overrides everything, this included.
+        /// happens to ship. `None` inherits the script variable `CSC_TOOLSET` (set in
+        /// `xakeScript { var ... }` or with `-d`; same meaning, a version), and when that is
+        /// unset or empty the SDK's compiler is used. So: `toolset` in the block, then
+        /// `CSC_TOOLSET`, then the SDK. Reading the variable makes it a dependency of the
+        /// target, like `CSC_SERVER`. `CscPath` still overrides everything, this included.
         Toolset: string option
         /// Compiler server use; see `CompilerServer`. `None` (the default) inherits it from
         /// the script variable `CSC_SERVER`, then the environment variable `XAKE_CSC_SERVER`
@@ -607,9 +611,19 @@ module Csc =
 
             // references and env vars always come from the targeted framework -- `toolset`
             // only replaces the compiler executable, fetching the package into the machine's
-            // package cache first when it is not there yet
-            let! compilerPath =
+            // package cache first when it is not there yet. The block's `toolset` wins over the
+            // script variable `CSC_TOOLSET`, which is only read (and so only becomes a
+            // dependency) when the block names none.
+            let! toolset =
                 match settings.Toolset with
+                | Some _ -> recipe { return settings.Toolset }
+                | None ->
+                    recipe {
+                        let! var = getVar "CSC_TOOLSET"
+                        return var |> Option.map (fun v -> v.Trim()) |> Option.filter ((<>) "")
+                    }
+            let! compilerPath =
+                match toolset with
                 | None -> recipe { return managedCompiler fwkInfo.CscTool }
                 | Some version ->
                     recipe {

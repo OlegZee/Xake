@@ -1,11 +1,9 @@
 # Session notes
 
-Cross-feature facts only: engine behaviour, release decisions, traps. Feature state lives in
-`docs/features/<name>/` (see CLAUDE.md).
+## Release prep (branch `feature/rulesless-syntax`)
 
-## Release 3.3.0 facts (PR #16, merged): `Xake.Dotnet` inside the `Xake` package
-
-What was decided for that release, so it is not re-litigated:
+Preparing the first release that ships `Xake.Dotnet` inside the `Xake` package. What was
+touched, so it is not re-litigated:
 
 - [`docs/dotnet-build.md`](dotnet-build.md) is the reference for toolchain discovery: the three
   providers (`sdkImpl`, `msImpl`, `monoFwkImpl`), the fallback chain, framework-name
@@ -22,9 +20,15 @@ What was decided for that release, so it is not re-litigated:
 - The mono provider built its `PATH` env var as `sdkroot </> ("bin" + ";" + PATH)` — `+` binds
   tighter than `</>`, and `;` is not the Unix separator. Fixed, but the mono path has no test
   coverage.
-- `build.fsx`'s `#r "nuget: Xake, 3.0.1"` bootstrap is deliberately behind the release; bump it
-  only after a release lands on nuget.org. Same for `samples/gettingstarted.fsx`, which
-  references the published package and therefore cannot be run until this release is out.
+- `build.fsx` bootstraps from `#r "nuget: Xake, 3.4.0.21"` (the 3.4.0 release as nuget.org
+  carries it). It stays behind the release being made; bump it only after a release lands on
+  nuget.org, to the exact published `X.Y.Z.<run>`. `samples/gettingstarted.fsx` references the
+  published package (`#r "nuget: Xake"`) and is checked against it after each release.
+- `src/hermetic` builds on the *published* `Xake` (PackageReference `[3.4.0.21, 4.0)`), not on
+  `src/core`/`src/dotnet`. The floor is the exact published version: `[3.4.0, 4.0)` warns NU1603
+  because no plain `3.4.0` exists. A local feed (`-d NUGET_SOURCE=<folder>`) is only for working
+  against an unreleased base; a packed `3.4.0.99` in `~/.nuget/packages/xake/` shadows the
+  release until deleted.
 - **The supported floor is .NET 8**, enforced in three places (`global.json`, the tests TFM, the
   CI matrix) and by an explicit `FSharp.Core` 8.0.100 pin with
   `DisableImplicitFSharpCoreReference`. Without the pin the SDK's own FSharp.Core lands in the
@@ -33,7 +37,7 @@ What was decided for that release, so it is not re-litigated:
   and is what the docs, samples and tests use.
 - `csc` with no `targetfwk` (and no `NETFX-TARGET`) is an error now: `Csc.ofSettings` fails asking
   for one. The old fallback passed no framework references at all and only worked on Windows via
-  `csc.rsp`. `fsc` still has that fallback (B6).
+  `csc.rsp`. `fsc` still has that fallback.
 - `samples/features.fsx` had a catch-all `"(dir:*)/(file:*).(ext:c*)"` rule declared *after*
   `temp/AssemblyInfo.cs`; since the last matching rule wins, it shadowed it and the sample had
   been failing for a long time. The catch-all now comes first.
@@ -70,12 +74,34 @@ worth knowing before touching it again:
   drags in a `netstandard` facade that the net4x reference-assembly packages do not carry.
   Hence there is no `fsc` end-to-end test; `samples/features.fsx` works around it by
   referencing an `FSharp.Core.dll` of its own.
-- ~~A target requested twice in one recipe is built twice~~ — fixed on `feature/hermetic-build`
-  (see `docs/features/hermetic-build/session.md`, "One target, one execution per run"). The csc test still asserts on its output file
-  rather than an execution count.
+- **A target requested twice in one run used to be built twice** — `need ["x"]` followed by
+  `needFiles` on the same `x` rebuilt it. Fixed in `WorkerPool.fs`; what actually went wrong
+  took two mechanisms, so it is worth writing down:
+  - the pool deduped only *in-flight* requests, dropping the entry when the task finished, and
+  - the "does it need rebuilding" verdict is memoized for the whole run
+    (`getChangeReasons ctx |> memoizeRec`, `ExecCore.fs`) — the memo is how the recursive graph
+    analysis ties its knot, not an optimization that can be dropped — so the second request did
+    not ask the database again and got the pre-build "Not built yet" answer.
+
+  The pool now keeps two maps: `running`, which is shared by whoever asks whenever they ask,
+  and `finished`, which serves the rest of the run and is emptied when the next one starts.
+  `Scheduler.newRun` marks that boundary and is posted exactly where the memo is created. So:
+  within a run a target executes once; across runs the database decides again; and a task that
+  was already going when a run began still serves it, which is the pre-existing behaviour for
+  concurrent demands. Covered by
+  `builds a target requested twice in one run only once` and `builds a file needed and then
+  needFiled only once`.
 - `build.fsx` builds `netstandard2.0` only; the `net462` asset comes from `dotnet pack`. An
   fsc-built net462 leg would need an FSharp.Core with a net4x assembly, which the pinned
   package does not have.
+
+## Trap: rule patterns with `..` never matched
+
+A file rule such as `"../sibling/(x:*).dll"` failed with "neither rule nor file is found":
+`File.make` normalizes `..` out of a target path, but `Path.matchGroups` combined the project
+root and the pattern with `Path.Combine` and kept the literal `..`, so the two could never
+agree. The literal prefix before the first wildcard or group is now normalized
+(`impl.normalizeLiteralPrefix`, `src/core/Path.fs`). Covered by `ParentDirTargetTests.fs`.
 
 ## Trap: a transient sharing violation on the `.xake` database looked like corruption
 
@@ -83,8 +109,8 @@ Closing a database and reopening it moments later (a second `xake {}` run in the
 which the tests do constantly) occasionally threw `IOException: being used by another process`
 even after `Dispose()` had returned. `Storage.impl.openDatabaseFile` treated every exception as
 a corrupt file, deleted it and started over -- so the next build saw "Not built yet" and re-ran
-a rule it should have skipped (the flaky `executes need only once`). Since 2026-09-24 the three
-file opens retry an `IOException` up to five times with a 20 ms backoff; real corruption still
+a rule it should have skipped (the flaky `executes need only once`). The three
+file opens now retry an `IOException` up to five times with a 20 ms backoff; real corruption still
 goes to the recreate path. The `EndOfStreamException` warning in test runs is deliberate: the
 `handles broken database` and storage tests write garbage on purpose.
 
@@ -92,22 +118,40 @@ goes to the recreate path. The `EndOfStreamException` warning in test runs is de
 
 ```bash
 dotnet build src/core -c Release && dotnet build src/dotnet -c Release   # both TFMs, 0 warnings
-dotnet build src/hermetic -c Release                                     # third library, Xake.Hermetic.Dotnet
-dotnet test src/tests -c Release                                         # 251 passed, 1 skipped (HEAD 88b4882)
-dotnet test src/hermetic.tests -c Release                                # 113 passed (HEAD 88b4882)
+dotnet restore src/hermetic.tests                                        # Xake 3.4.0.21 from nuget.org, no NU1603
+dotnet build src/hermetic -c Release --no-restore                        # Xake.Hermetic.Dotnet, both TFMs, 0 warnings
+dotnet test src/tests -c Release                                         # 258 passed, 1 skipped
+dotnet test src/hermetic.tests -c Release --no-restore                   # 118 passed
 dotnet test src/tests --filter 'Category=Integration'                    # real csc and fsc runs
 dotnet test src/hermetic.tests --filter 'Category=Integration'
 dotnet fsi build.fsx -- -- build test pack                               # self-hosting: 3 libraries, both test projects, both packages
 dotnet fsi samples/fullframework.fsx                                     # end-to-end csc
 ```
 
-Test counts are as of HEAD 88b4882 ("251 + 113"); tests are moving between the two projects on
-`feature/hermetic-build`, so the split shifts (the working tree on 2026-09-30 ran 248 + 1 skipped
-and 117). `pack` writes `out/pkg/Xake/` and `out/pkg/Xake.Hermetic.Dotnet/` and fails if the
-hermetic nuspec's `Xake` dependency is not `[3.4.0, 4.0.0)` (docs/devprocess.md).
+Test counts are "258 + 118" as of the build-scripts PR; tests move between the two projects, so
+the split shifts. `pack` writes `out/pkg/Xake/` and `out/pkg/Xake.Hermetic.Dotnet/` (independent:
+the hermetic pack restores `Xake` from nuget.org; `pack-hermetic` packs only that one) and fails
+if the hermetic nuspec has no `Xake` dependency or names `Xake.Dotnet` (docs/devprocess.md).
 
 `samples/*.fsx` reference `out/netstandard2.0/*.dll`, so run the self-hosting build first.
-The fsc-based build (`build.fsc.fsx`, repo root) needs a staged `.bootstrap/` (gitignored, all three assemblies); how to stage and verify it is in `docs/features/hermetic-build/session.md` (the package's own docs are in `docs/hermetic/`).
+
+## Trap: `build.fsc.fsx` needs a staged `.bootstrap/`
+
+The fsc-based build (`build.fsc.fsx`, repo root) compiles all three libraries with the `fsc`
+task and loads Xake itself from `.bootstrap/` (gitignored), not from `out/`: it overwrites
+`out/`, and overwriting the assemblies fsi has loaded kills the run with a
+`BadImageFormatException`. Stage all three assemblies from a `build.fsx` build, keeping any
+`FSharp.Core.dll` already there, and re-stage whenever the libraries change:
+
+```bash
+dotnet fsi build.fsx -- -- build
+mkdir -p .bootstrap && cp out/netstandard2.0/*.dll .bootstrap/
+dotnet fsi build.fsc.fsx -- -- build test
+```
+
+What to compile is read from the msbuild evaluations kept in `projects/netstandard2.0/*.json`
+(tracked; regenerated when a project file changes). Its output is deterministic but not
+byte-identical to `dotnet build`. The package's own docs are in `docs/hermetic/`.
 
 ## Earlier work: delegated execution (merged, PR #15)
 

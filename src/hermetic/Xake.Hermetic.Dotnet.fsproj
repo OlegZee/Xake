@@ -37,7 +37,8 @@
   <!-- Order follows the dependencies: the json reader and the root tokens first, then
        Nuget (assets, nuspec, cache) and Restore (which names no lock type), the kept fsproj
        evaluation, Git (revision token), the lock format and the lock's side of a build
-       (Lock.build/compile/record/verify, csc { lock }), and the import. -->
+       (Lock.build/compile/record/verify, csc { lock }), the import, and the release
+       pipeline (SBOM, verification, deterministic pack). -->
   <ItemGroup>
     <Compile Include="Json.fs" />
     <Compile Include="Roots.fs" />
@@ -47,6 +48,9 @@
     <Compile Include="Git.fs" />
     <Compile Include="Lock.fs" />
     <Compile Include="Project.fs" />
+    <Compile Include="Sbom.fs" />
+    <Compile Include="Verify.fs" />
+    <Compile Include="Pack.fs" />
   </ItemGroup>
 
   <ItemGroup>

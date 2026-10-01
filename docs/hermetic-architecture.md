@@ -902,7 +902,7 @@ run: base 258 passed and 1 skipped, hermetic 118 passed, 0 warnings in both libr
 | `fsc` is not through the runner | `Dotnet.fsc.fs` names no `Lock` or `RunOptions`. F# compilations are described by the kept evaluation (`Fsproj.evaluate`), not by a lock, and are not hash-gated. Planned after the 3.4.0 release as an `Fsc` record with `Fsc.ofSettings`/`Fsc.run` over a private runner core shared with `Csc.run`; then `Fsproj` retires into `Project.import`. Additive, not breaking |
 | The net462 resx path | `Impl.compileResx` has two bodies on purpose: net462 uses `ResXResourceReader` (typed values, file refs), netstandard2.0 uses `Resx.compile`, which reads plain string values only and throws on typed entries. The runner calls `Resx.compile` for a missing `.resources`. No byte-identity claim is made for net462 |
 | The published base as a dependency | `src/hermetic` takes `Xake` as a PackageReference `[3.4.0.21, 4.0)`, so it compiles against the assemblies on nuget.org, not the `src/core`/`src/dotnet` of the same checkout, and the nuspec range is the reference's own (no pack-time rewriting). The lower bound must be a version that exists: the release run number makes 3.4.0 `3.4.0.21`, and `[3.4.0, 4.0)` warns NU1603 on every restore. A change the hermetic package needs from the base is released first; until then it is developed against a locally packed base passed as an extra restore source (`NUGET_SOURCE`) |
-| The fsx bootstrap | `build.fsx` bootstraps from `#r "nuget: Xake, 3.4.0.21"`. Until `Xake.Hermetic.Dotnet` is on nuget.org, `build.fsc.fsx` and the maintainers' scripts on the feature branch load `.bootstrap/*.dll`, an ignored folder copied by hand from `out/` or `bin/`; a fix in `src/hermetic` takes effect there only after a re-copy. After its release they switch to `#r "nuget: Xake, 3.4.0.21"` and `#r "nuget: Xake.Hermetic.Dotnet, 0.1.0.<run>"`; `build.fsx` stays on the base package only |
+| The fsx bootstrap | `build.fsx` bootstraps from `#r "nuget: Xake, 3.4.0.21"`, `build.fsc.fsx` from that and `#r "nuget: Xake.Hermetic.Dotnet, 0.1.0.22"` (exact published versions); `build.fsx` stays on the base package only. A fix in `src/hermetic` reaches `build.fsc.fsx` only after a release and a bump, or through a temporary `#r` on a copy of the built dlls (docs/devprocess.md) |
 | `sign` shadowing | `open Xake.Hermetic.Dotnet` brings the builder `sign` into scope, shadowing FSharp.Core's numeric `sign` (still `Operators.sign`). A value named like an operation (`signer`, `store`, `budget`) cannot be passed inside the block (FS3095); tests name them `theSigner` and so on |
 | SBOM tool identity | `metadata.tools.components[0]` is `Xake.Hermetic.Dotnet` with the executing assembly's version (the `AssemblyVersion`, for example `0.1.0.0`, not the package's full version), and the package-scope annotation's annotator is the same name (`Sbom.toolName`). There is no vendor field |
 | Vendor defaults in `PackageScopeOptions.Default` | `PackageScope.internalIds` is `DS.*`, `MESCIUS.*`, `GrapeCity.*`, the first user's prefixes; other users must override `IsInternal` |
@@ -954,10 +954,9 @@ packed), and pushes only the tagged package with `--skip-duplicate`. `build.yml`
 `build test pack` on SDK 8.0.x and 10.0.x.
 
 Order of release: `Xake` first, then `Xake.Hermetic.Dotnet` against the published version.
-`Xake` 3.4.0 is out (as `3.4.0.21`, the range floor, and `build.fsx`'s bootstrap); next is
-`Xake.Hermetic.Dotnet` 0.1.0 (tag `hermetic-v0.1.0`), then the `build.fsc.fsx` bootstrap switch
-(section 8). The `Fsproj.evaluate` fix (restore as a separate msbuild call) is in the tree and
-must be in 0.1.0.
+`Xake` 3.4.0 is out (as `3.4.0.21`, the range floor, and `build.fsx`'s bootstrap), and so is
+`Xake.Hermetic.Dotnet` 0.1.0 (tag `hermetic-v0.1.0`, published as `0.1.0.22`); `build.fsc.fsx`
+bootstraps from both (section 8).
 
 Before the first hermetic release every hermetic name is free to change. After it, names may
 still change while the package is 0.x; each change should be listed in the release notes.

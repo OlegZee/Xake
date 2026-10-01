@@ -569,8 +569,9 @@ module Sbom =
             | "runtimes" :: _ :: "native" :: _ -> true
             | _ -> hasExtension [ ".so"; ".dylib" ] path
 
-        /// Supplier-internal package ids: `DS.*`, `MESCIUS.*`, `GrapeCity.*`.
-        let internalIds : string -> bool = idPrefixes [ "DS."; "MESCIUS."; "GrapeCity." ]
+        /// Supplier-internal package ids: none by default. Name your own prefixes with
+        /// `{ PackageScopeOptions.Default with IsInternal = idPrefixes [ "Acme." ] }`.
+        let internalIds : string -> bool = idPrefixes []
 
         /// Build tooling that is never shipped code, even when a nuspec lists it:
         /// `CycloneDX.*`, `Microsoft.SourceLink.*`, `Microsoft.NETFramework.ReferenceAssemblies*`.

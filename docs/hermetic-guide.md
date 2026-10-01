@@ -226,20 +226,33 @@ For an existing `.csproj`, do not rewrite it as `csc {}` settings. Import it: `P
 asks msbuild, once, what it would hand the compiler (a design-time build: the compiler reports
 its command line instead of running) and writes that into a lock.
 
+Wire the import as a deliberate update target, and read the committed lock as a plain file.
+The lock is reviewed and committed like source; `update-locks` is the only thing that writes it:
+
 ```fsharp
+let lockPath = "locks/hello.json"
+
+let importInto (output: string) = recipe {
+    let! options = getCtxOptions ()
+    do! Project.import {
+        Project.ImportOptions.Default with
+            Projects = [ "src/Hello/Hello.csproj" ]
+            Frameworks = [ "netstandard2.0"; "net472" ]
+            Output = System.IO.Path.Combine (options.ProjectRoot, output) }
+}
+
 do xakeScript {
     rules [
-        "locks/hello.json" ..> recipe {
-            let! lockFile = getTargetFile ()
-            do! Project.import {
-                Project.ImportOptions.Default with
-                    Projects = [ "src/Hello/Hello.csproj" ]
-                    Frameworks = [ "netstandard2.0"; "net472" ]
-                    Output = lockFile.FullName }
-        }
+        "update-locks" => importInto lockPath
     ]
 }
 ```
+
+Run `dotnet fsi build.fsx -- -- update-locks`, review the lock diff, commit it. `Output` is made
+absolute because `Project.import` writes it as given, relative to the process's current
+directory. Building from the committed lock is section 6; a `check-locks` that compares a fresh
+import with the committed lock, and the CI wiring, are in
+[hermetic/workflows.md](hermetic/workflows.md) (section B).
 
 `ImportOptions`:
 
@@ -253,9 +266,13 @@ do xakeScript {
 | `Output` | the lock file to write | `""` |
 | `Roots` | extra `("$(Name)", path)` roots for sibling repositories | `[]` |
 
-Make the import the recipe of a file rule over the lock, as above: msbuild then runs only when a
-project file or one of the msbuild files it imports changes, or when the git commit changes. A
-frameworks list may name frameworks some projects do not target; those are skipped with a
+The import can also be the recipe of a file rule over the lock (`"locks/hello.json" ..> recipe {
+let! lockFile = getTargetFile () ... }`), so msbuild runs when a project file, an imported msbuild
+file or the git commit changes. **Warning:** the lock is then a build product. On a fresh clone
+there is no `.xake` database, the rule runs again and overwrites the committed lock, on CI
+included, and it re-imports after every commit. Use it only for a lock that is not committed.
+
+A frameworks list may name frameworks some projects do not target; those are skipped with a
 message.
 
 The import warns when the SDK is not pinned:
@@ -264,7 +281,7 @@ The import warns when the SDK is not pinned:
 [WARN] 'Hello': the SDK is not pinned (none) -- the lock's compiler (5.9.0-1.26423.113, SDK 10.0.401) will drift with every SDK the machine picks; pin it with global.json { sdk: { version, rollForward: "disable" } }
 ```
 
-Several variants of the same projects (brands, editions) are several locks: one import rule
+Several variants of the same projects (brands, editions) are several locks: one import target
 each, with its own `Properties`, `Variant` and `Output`. See the `ImportOptions` reference in
 [hermetic/lock.md](hermetic/lock.md#where-a-lockentry-comes-from).
 
@@ -294,7 +311,8 @@ The smallest form, compiling every entry (this was run):
 }
 ```
 
-`Lock.load` depends on the lock file, so the import rule from section 5 runs first when needed.
+`Lock.load` reads the committed lock and depends on the file; a missing lock fails with
+`Neither rule nor file is found`, so run `update-locks` (section 5) first.
 Each assembly is written where msbuild's compiler would write it, the `/out:` of the entry
 (under `obj/xake/<framework>/` for an import).
 

@@ -25,8 +25,6 @@
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageIcon>Icon.png</PackageIcon>
     <PackageReadmeFile>readme.md</PackageReadmeFile>
-    <!-- The nuspec dependency on package `Xake`, see the XakeDependencyRange target. -->
-    <XakeDependencyRange>[3.4.0, 4.0)</XakeDependencyRange>
   </PropertyGroup>
 
   <!-- nuget.org renders these; they are packed, not referenced by path, so the files have to
@@ -56,13 +54,14 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- Becomes the nuspec dependency on package `Xake` (Xake.Dotnet's PackageId); the
-         range is set by XakeDependencyRange below. -->
-    <ProjectReference Include="..\dotnet\Xake.Dotnet.fsproj" />
-    <!-- Needed to compile: Xake.Dotnet references the engine with PrivateAssets="all", so
-         Xake.dll does not flow through it. PrivateAssets here too: the engine ships inside
-         the `Xake` package, it is not a package of its own. -->
-    <ProjectReference Include="..\core\Xake.fsproj" PrivateAssets="all" />
+    <!-- Built on the published package, not on src/dotnet and src/core: the `Xake` package
+         carries both Xake.dll and Xake.Dotnet.dll, and the range is what the nuspec
+         dependency says. 3.4.0 is the first release with the base this package needs;
+         nuget.org carries it as 3.4.0.21 (publish.yml appends the run number). The lower
+         bound is that exact published version: with `[3.4.0, 4.0)` NuGet finds no 3.4.0,
+         resolves 3.4.0.21 instead and warns NU1603 ("depends on Xake (>= 3.4.0) but Xake
+         3.4.0 was not found"), on every restore here and in every consumer. -->
+    <PackageReference Include="Xake" Version="[3.4.0.21, 4.0)" />
   </ItemGroup>
 
   <!-- Test assemblies only; no other package sees these internals. hermetic.tests tests the
@@ -72,20 +71,6 @@
       <_Parameter1>hermetic.tests</_Parameter1>
     </AssemblyAttribute>
   </ItemGroup>
-
-  <!-- `dotnet pack` turns the ProjectReference to Xake.Dotnet into a dependency on package
-       `Xake` at that project's PackageVersion: `>= 1.0.0` when it has none, or this package's
-       own version when a global /p:Version flows into the reference. Neither is right, and
-       ProjectReference has no metadata for a range, so the version NuGet's pack targets
-       collected for it is replaced with the range just before the nuspec is written. The
-       pack task parses ProjectVersion as a version range. -->
-  <Target Name="XakeDependencyRange" AfterTargets="_GetProjectReferenceVersions">
-    <ItemGroup>
-      <_ProjectReferencesWithVersions Condition="'%(Filename)' == 'Xake.Dotnet'">
-        <ProjectVersion>$(XakeDependencyRange)</ProjectVersion>
-      </_ProjectReferencesWithVersions>
-    </ItemGroup>
-  </Target>
 
   <!-- Kept in step with src/core and src/dotnet: the FSharp.Core floor consumers inherit. -->
   <ItemGroup>

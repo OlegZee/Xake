@@ -942,3 +942,17 @@ the launcher), `Sbom.toolName`. Working notes and `samples/hermetic` stay on thi
 `dev` back into this branch to keep history aligned. Release order: merge through #20, tag
 `v3.4.0`; merge the rest, tag `hermetic-v0.1.0`; then E8 (bootstrap bump) as one more PR.
 The PR worktree is `.claude/worktrees/pr-engine`.
+
+## 2026-10-01 — #17–#19 merged by the user; hermetic goes on the released Xake
+
+The user merged the engine PRs and rebased the rest of the stack himself (squash + stack:
+after each merge the next branch must be rebased onto `dev`, the ones above onto it; rebase and
+force-push are denied to the assistant by the session's safety rules, merges are allowed).
+Decision: `Xake.Hermetic.Dotnet` stays in this repo (`src/hermetic`) but references the
+**published** `Xake` package (`PackageReference [3.4.0, 4.0)`), not `src/dotnet`. So #21 is
+reworked after `v3.4.0` is on nuget.org (the published version is `3.4.0.<run>`; the range
+covers it); #24 loses the range check and `BuildProjectReferences=false`. During development a
+local feed (`out/pkg`) in a `nuget.config` can stand in for nuget.org.
+**Exact next step**: the user reviews/merges #20 and tags `v3.4.0`; then push the prepared
+PackageReference rework to `pr/hermetic-a-lock`, rebase #22–#25, and bump `build.fsx` to
+`#r "nuget: Xake, 3.4.0"`.

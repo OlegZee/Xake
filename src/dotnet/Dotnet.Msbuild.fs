@@ -51,7 +51,7 @@ module MsbuildImpl =
 
             let! dotnetFwk = getVar "NETFX"
             let! options = getCtxOptions()
-            let fwkInfo = DotNetFwk.locateFrameworkIn options.ProjectRoot dotnetFwk
+            let! fwkInfo = DotNetFwk.resolveFramework dotnetFwk
 
             let pfx = "[msbuild]"
 

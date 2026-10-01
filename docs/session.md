@@ -20,9 +20,15 @@ touched, so it is not re-litigated:
 - The mono provider built its `PATH` env var as `sdkroot </> ("bin" + ";" + PATH)` — `+` binds
   tighter than `</>`, and `;` is not the Unix separator. Fixed, but the mono path has no test
   coverage.
-- `build.fsx`'s `#r "nuget: Xake, 3.0.1"` bootstrap is deliberately behind the release; bump it
-  only after a release lands on nuget.org. Same for `samples/gettingstarted.fsx`, which
-  references the published package and therefore cannot be run until this release is out.
+- `build.fsx` bootstraps from `#r "nuget: Xake, 3.4.0.21"` (the 3.4.0 release as nuget.org
+  carries it). It stays behind the release being made; bump it only after a release lands on
+  nuget.org, to the exact published `X.Y.Z.<run>`. `samples/gettingstarted.fsx` references the
+  published package (`#r "nuget: Xake"`) and is checked against it after each release.
+- `src/hermetic` builds on the *published* `Xake` (PackageReference `[3.4.0.21, 4.0)`), not on
+  `src/core`/`src/dotnet`. The floor is the exact published version: `[3.4.0, 4.0)` warns NU1603
+  because no plain `3.4.0` exists. A local feed (`-d NUGET_SOURCE=<folder>`) is only for working
+  against an unreleased base; a packed `3.4.0.99` in `~/.nuget/packages/xake/` shadows the
+  release until deleted.
 - **The supported floor is .NET 8**, enforced in three places (`global.json`, the tests TFM, the
   CI matrix) and by an explicit `FSharp.Core` 8.0.100 pin with
   `DisableImplicitFSharpCoreReference`. Without the pin the SDK's own FSharp.Core lands in the
@@ -112,18 +118,20 @@ goes to the recreate path. The `EndOfStreamException` warning in test runs is de
 
 ```bash
 dotnet build src/core -c Release && dotnet build src/dotnet -c Release   # both TFMs, 0 warnings
-dotnet build src/hermetic -c Release                                     # third library, Xake.Hermetic.Dotnet
-dotnet test src/tests -c Release                                         # 252 passed, 1 skipped
-dotnet test src/hermetic.tests -c Release                                # 118 passed
+dotnet restore src/hermetic.tests                                        # Xake 3.4.0.21 from nuget.org, no NU1603
+dotnet build src/hermetic -c Release --no-restore                        # Xake.Hermetic.Dotnet, both TFMs, 0 warnings
+dotnet test src/tests -c Release                                         # 258 passed, 1 skipped
+dotnet test src/hermetic.tests -c Release --no-restore                   # 118 passed
 dotnet test src/tests --filter 'Category=Integration'                    # real csc and fsc runs
 dotnet test src/hermetic.tests --filter 'Category=Integration'
 dotnet fsi build.fsx -- -- build test pack                               # self-hosting: 3 libraries, both test projects, both packages
 dotnet fsi samples/fullframework.fsx                                     # end-to-end csc
 ```
 
-Test counts are "252 + 118" as of the build-scripts PR; tests move between the two projects, so
-the split shifts. `pack` writes `out/pkg/Xake/` and `out/pkg/Xake.Hermetic.Dotnet/` and fails if
-the hermetic nuspec's `Xake` dependency is not `[3.4.0, 4.0.0)` (docs/devprocess.md).
+Test counts are "258 + 118" as of the build-scripts PR; tests move between the two projects, so
+the split shifts. `pack` writes `out/pkg/Xake/` and `out/pkg/Xake.Hermetic.Dotnet/` (independent:
+the hermetic pack restores `Xake` from nuget.org; `pack-hermetic` packs only that one) and fails
+if the hermetic nuspec has no `Xake` dependency or names `Xake.Dotnet` (docs/devprocess.md).
 
 `samples/*.fsx` reference `out/netstandard2.0/*.dll`, so run the self-hosting build first.
 

@@ -1,8 +1,10 @@
 # Publishes one NuGet package to nuget.org, chosen by the tag (see docs/devprocess.md):
 #   v<X.Y.Z>           -> Xake                  (src/dotnet, carries the engine too)
-#   hermetic-v<X.Y.Z>  -> Xake.Hermetic.Dotnet  (src/hermetic, depends on Xake [3.4.0, 4.0.0))
-# The two are versioned independently; `pack` builds both (and asserts the hermetic nuspec's
-# dependency range), only the tagged one is pushed.
+#   hermetic-v<X.Y.Z>  -> Xake.Hermetic.Dotnet  (src/hermetic, built on the *published* Xake,
+#                                                the range is in its fsproj)
+# The two are versioned and packed independently: a v* release runs `pack` (both packages), a
+# hermetic-v* release only `pack-hermetic`; only the tagged package is pushed. Release Xake
+# first when the hermetic package needs something new from it (docs/devprocess.md).
 # For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-net
 
 name: Publish package
@@ -27,7 +29,7 @@ jobs:
     # The tag carries the release version; the run number becomes the fourth component, so
     # re-tagging or re-running never collides with an already published version. The prefix
     # picks the package and the build variable its version goes into (VERSION for Xake,
-    # HERMETIC_VERSION for Xake.Hermetic.Dotnet); the other package packs at its default.
+    # HERMETIC_VERSION for Xake.Hermetic.Dotnet) and the pack command.
     - name: Pick package and version from tag
       id: release
       run: |
@@ -36,10 +38,12 @@ jobs:
           hermetic-v*)
             echo "package=Xake.Hermetic.Dotnet" >> $GITHUB_OUTPUT
             echo "variable=HERMETIC_VERSION" >> $GITHUB_OUTPUT
+            echo "pack=pack-hermetic" >> $GITHUB_OUTPUT
             VERSION="${TAG_NAME#hermetic-v}" ;;
           v*)
             echo "package=Xake" >> $GITHUB_OUTPUT
             echo "variable=VERSION" >> $GITHUB_OUTPUT
+            echo "pack=pack" >> $GITHUB_OUTPUT
             VERSION="${TAG_NAME#v}" ;;
           *)
             echo "::error::tag '$TAG_NAME' is neither v* nor hermetic-v*"; exit 1 ;;
@@ -49,13 +53,10 @@ jobs:
     - name: Build, test and pack
       run: |
         export ${{ steps.release.outputs.variable }}=${{ steps.release.outputs.version }}
-        # a hermetic release still packs Xake, at the default 0.0.1 unless told otherwise, and the
-        # hermetic dll would then reference Xake 0.0.1.0. Pin it to the floor of the dependency
-        # range, so the reference is Xake 3.4.0.0.
-        if [ "${{ steps.release.outputs.variable }}" = "HERMETIC_VERSION" ]; then
-          export VERSION=3.4.0
-        fi
-        dotnet fsi build.fsx -- -- build test pack
+        # Xake.Hermetic.Dotnet compiles against the Xake package restored from nuget.org, so a
+        # hermetic release neither packs nor pins the base; a v* release packs both, and the
+        # hermetic nupkg (at its default version) is simply not pushed
+        dotnet fsi build.fsx -- -- build test ${{ steps.release.outputs.pack }}
 
     - name: Publish
       run: >

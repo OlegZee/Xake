@@ -5,8 +5,8 @@
 // result. So the answer is msbuild's own -- conditions, imports, the resolved reference list
 // and the generated assembly attributes included -- while the compilation is ours.
 //
-// Bootstrap: none of this is in a published Xake package yet, so this script runs against a
-// frozen copy of what build.fsx produces. The copy matters -- this script overwrites `out/`,
+// Bootstrap: `Fsproj` is not in a published package yet (Xake.Hermetic.Dotnet is not on
+// nuget.org), so this script runs against a frozen copy of what build.fsx produces. The copy matters -- this script overwrites `out/`,
 // and overwriting the assemblies fsi has loaded kills the run with a BadImageFormatException:
 //
 //     dotnet fsi build.fsx -- -- build                                  # through dotnet build
@@ -14,10 +14,11 @@
 //     dotnet fsi build.fsc.fsx -- -- build test
 //
 // `Fsproj` (the msbuild evaluation this script compiles from) lives in Xake.Hermetic.Dotnet,
-// so the bootstrap is all three assemblies. Once Xake and Xake.Hermetic.Dotnet are on
-// nuget.org, the three lines become `#r "nuget: Xake, <version>"` and
+// so the bootstrap is all three assemblies. Xake itself is on nuget.org (3.4.0.21, which
+// build.fsx already bootstraps from); the switch waits for Xake.Hermetic.Dotnet: once that is
+// published, the three lines become `#r "nuget: Xake, <version>"` and
 // `#r "nuget: Xake.Hermetic.Dotnet, <version>"`, the staging goes away and this script takes
-// over as build.fsx (extraction-plan.md §4, E8).
+// over as build.fsx (extraction-plan.md §4, E8, a later step than build.fsx's bump).
 //
 // Testing and packing still shell out to the SDK: the test project is built by msbuild, and
 // the nupkg carries a net462 asset fsc cannot produce here (see docs/session.md).
@@ -41,6 +42,9 @@ let vars = {|
     HermeticVersion = Var.create<string>(description = "Version number for the Xake.Hermetic.Dotnet package, e.g. 0.1.0") |> withDefault (projectVersion "src/hermetic/Xake.Hermetic.Dotnet.fsproj")
     NUGET_KEY  = Var.env<string>(description = "API key for NuGet.org, required for pushing packages") |> withDefault ""
     TestFilter = Var.string(envVar = "FILTER", description = "Optional filter clause for test selection, e.g. 'MyNamespace.*Tests'")
+    // as in build.fsx: an extra restore source for Xake.Hermetic.Dotnet, only to develop it
+    // against an unreleased Xake (docs/devprocess.md); normally it restores from nuget.org
+    NugetSource = Var.string(cliArg = "NUGET_SOURCE", envVar = "NUGET_SOURCE", description = "Extra NuGet source for restoring Xake.Hermetic.Dotnet, for developing against an unreleased Xake")
 |}
 
 /// Only netstandard2.0 is compiled here. A net462 leg would need an FSharp.Core carrying a
@@ -87,7 +91,8 @@ let filesetOf (files: string list) = files |> List.fold (fun fs file -> fs ++ fi
 /// The two NuGet packages, versioned independently.
 /// `Xake` is packed from src/dotnet, which pulls the core's assembly into the same nupkg (see
 /// src/dotnet/Xake.Dotnet.fsproj). `Xake.Hermetic.Dotnet` is packed from src/hermetic and
-/// depends on `Xake [3.4.0, 4.0.0)`.
+/// depends on the published `Xake` through its PackageReference (the range is in the fsproj);
+/// its evaluation references that package's assemblies, not the ones this script compiles.
 ///
 /// Each package is packed into a folder of its own, `out/pkg/<id>/<id>.<version>.nupkg`: a
 /// single mask such as `out/(id:*).(ver:*).nupkg` cannot tell `Xake.Hermetic.Dotnet.0.1.0` from
@@ -97,26 +102,27 @@ let xakePackage = "Xake"
 let hermeticPackage = "Xake.Hermetic.Dotnet"
 let packagePath id version = $"out/pkg/%s{id}/%s{id}.%s{version}.nupkg"
 
-/// The nuspec dependency the hermetic package must declare on `Xake`. The range is written by
-/// the `XakeDependencyRange` target in src/hermetic/Xake.Hermetic.Dotnet.fsproj, which relies
-/// on a private NuGet item name; if a future SDK renames it, pack silently writes `>= 1.0.0`.
-let expectedXakeRange = "[3.4.0, 4.0.0)"
-
-/// Reads the nuspec out of a nupkg and checks every `Xake` dependency carries the range;
-/// returns the problems found (none means the package is right).
-let checkXakeRange (nupkg: string) =
+/// The nuspec dependencies of the hermetic package must name `Xake` (the package that carries
+/// both Xake.dll and Xake.Dotnet.dll) and never `Xake.Dotnet`, which is not a package; returns
+/// the problems found (none means the package is right). The range itself is the fsproj's.
+let checkXakeDependency (nupkg: string) =
     use zip = System.IO.Compression.ZipFile.OpenRead nupkg
     let entry = zip.Entries |> Seq.find (fun e -> e.FullName.EndsWith ".nuspec" && not (e.FullName.Contains "/"))
     use reader = new System.IO.StreamReader(entry.Open())
     let doc = System.Xml.Linq.XDocument.Parse(reader.ReadToEnd())
-    let deps =
+    let ids =
         doc.Descendants()
-        |> Seq.filter (fun e -> e.Name.LocalName = "dependency" && e.Attribute(System.Xml.Linq.XName.Get "id").Value = "Xake")
-        |> Seq.map (fun e -> e.Attribute(System.Xml.Linq.XName.Get "version").Value)
+        |> Seq.filter (fun e -> e.Name.LocalName = "dependency")
+        |> Seq.map (fun e -> e.Attribute(System.Xml.Linq.XName.Get "id").Value)
         |> List.ofSeq
-    [ if List.isEmpty deps then yield "no dependency on package Xake"
-      for v in deps do
-          if v <> expectedXakeRange then yield $"Xake dependency is '%s{v}', expected '%s{expectedXakeRange}'" ]
+    [ if not (List.contains "Xake" ids) then yield "no dependency on package Xake"
+      if List.contains "Xake.Dotnet" ids then yield "depends on Xake.Dotnet, which is not a package" ]
+
+/// `-p:RestoreAdditionalProjectSources=...` when NUGET_SOURCE is set, nothing otherwise.
+let restoreSource = recipe {
+    let! source = vars.NugetSource
+    return [ for s in Option.toList source -> "-p:RestoreAdditionalProjectSources=" + s ]
+}
 
 let dotnet arglist = sh "dotnet" { args arglist; failonerror }
 
@@ -202,11 +208,17 @@ do xakeScript {
         }
 
         (* Nuget publishing rules *)
-        // both packages, each at its own version; the hermetic one waits for Xake (see below)
+        // both packages, each at its own version; they are independent (the hermetic one
+        // builds on the published Xake), so a release of one can pack just that one
         command "pack" {
             let! version = vars.Version
             let! hermeticVersion = vars.HermeticVersion
             do! need [packagePath xakePackage version; packagePath hermeticPackage hermeticVersion]
+        }
+
+        command "pack-hermetic" {
+            let! hermeticVersion = vars.HermeticVersion
+            do! need [packagePath hermeticPackage hermeticVersion]
         }
 
         target $"out/pkg/%s{xakePackage}/%s{xakePackage}.(ver:*).nupkg" {
@@ -221,31 +233,20 @@ do xakeScript {
 
         target $"out/pkg/%s{hermeticPackage}/%s{hermeticPackage}.(ver:*).nupkg" {
             let! ver = getRuleMatch "ver"
-            let! xakeVersion = vars.Version
             let! nupkg = getTargetFullName()
+            let! source = restoreSource
 
-            // The hermetic package is compiled against the Xake assemblies at *Xake's* version:
-            // a global /p:Version flows into project references, so they are built first at
-            // that version (this also serializes the two packs, which share the base projects'
-            // obj/) and pack does not rebuild them.
-            do! need [packagePath xakePackage xakeVersion]
-            do! dotnet [
-                "build"; "src/dotnet"
-                "-c"; "Release"
-                $"/p:Version={xakeVersion}"
-            ]
-            do! dotnet [
+            // nothing of this script's own Xake is involved: src/hermetic references the
+            // published package, restored from nuget.org (or NUGET_SOURCE)
+            do! dotnet ([
                 "pack"; "src/hermetic"
                 "-c"; "Release"
                 $"/p:Version={ver}"
-                "-p:BuildProjectReferences=false"
                 "--output"; $"out/pkg/%s{hermeticPackage}/"
-            ]
+              ] @ source)
 
-            // the nuspec's dependency range is produced by a target relying on a private NuGet
-            // item name, so it is asserted here rather than trusted
-            match checkXakeRange nupkg with
-            | [] -> do! trace Level.Info "%s: depends on Xake %s" (System.IO.Path.GetFileName nupkg) expectedXakeRange
+            match checkXakeDependency nupkg with
+            | [] -> do! trace Level.Info "%s: depends on package Xake" (System.IO.Path.GetFileName nupkg)
             | problems ->
                 System.IO.File.Delete nupkg
                 failwithf "%s: %s" nupkg (String.concat "; " problems)

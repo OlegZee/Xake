@@ -3,10 +3,11 @@
 Reproducible .NET builds for [Xake](https://github.com/OlegZee/Xake): lock files, package
 restore, CycloneDX SBOMs, verification of built binaries, deterministic packing and signing.
 
-The package builds on the `csc {}` task of `Xake` (`Xake.Dotnet`) and adds what a build needs to
-be repeatable and auditable: a lock file that records exactly what the compiler is handed, with
-the SHA-256 of every reference, analyzer and the compiler itself; a restore of the packages that
-lock names; an SBOM generated from the lock; and the release steps after the compile. It is a
+The package builds on the `csc {}` task of `Xake` (`Xake.Dotnet`; Xake 3.4.0.21 or later,
+below 4.0) and adds what a build needs to be repeatable and auditable: a lock file that records
+exactly what the compiler is handed, with the SHA-256 of every reference, analyzer and the
+compiler itself; a restore of the packages that lock names; an SBOM generated from the lock; and
+the release steps after the compile. It is a
 0.x preview: names may still change between minor versions.
 
 ## Usage

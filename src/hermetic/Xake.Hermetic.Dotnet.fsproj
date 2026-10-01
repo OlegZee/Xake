@@ -52,9 +52,12 @@
   <ItemGroup>
     <!-- Built on the published package, not on src/dotnet and src/core: the `Xake` package
          carries both Xake.dll and Xake.Dotnet.dll, and the range is what the nuspec
-         dependency says. 3.4.0 is the first release with the base this package needs
-         (nuget.org carries it as 3.4.0.<run>, which the range covers). -->
-    <PackageReference Include="Xake" Version="[3.4.0, 4.0)" />
+         dependency says. 3.4.0 is the first release with the base this package needs;
+         nuget.org carries it as 3.4.0.21 (publish.yml appends the run number). The lower
+         bound is that exact published version: with `[3.4.0, 4.0)` NuGet finds no 3.4.0,
+         resolves 3.4.0.21 instead and warns NU1603 ("depends on Xake (>= 3.4.0) but Xake
+         3.4.0 was not found"), on every restore here and in every consumer. -->
+    <PackageReference Include="Xake" Version="[3.4.0.21, 4.0)" />
   </ItemGroup>
 
   <!-- Test assemblies only; no other package sees these internals. hermetic.tests tests the

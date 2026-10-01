@@ -966,3 +966,16 @@ All nine PRs are merged into `dev` with merge commits; `dev` is merged back here
 **In flight**: E8 as a PR to `dev` (`build.fsc.fsx` on the packages, `.bootstrap/` retired) and the
 feature fsx scripts here. **Then**: the backlog in the tracker; B6 is the big one, the SBOM
 questions need the user.
+
+## 2026-10-02 — scenarios reviewed, four PRs to dev
+
+`docs/hermetic/workflows.md` (developer / import / teammate / CI / release / offline, with gaps)
+and `docs/roadmap.md` (rules with arguments idea, B6, hermetic gaps) written here and sent to
+`dev` in #28. The gaps became PRs: #29 reference packs through `DotNetFwk.restorePackage`
+(base; hermetic sees it after the next Xake release), #30 `Lock.Options.RecordMissing` (off
+when `CI` is set, `LOCK_RECORD_MISSING` overrides), `packageroot`/`norestore` after `lock`,
+tokenized drift messages, #31 sha512 check for present packages. E8 (#27) merged: both build
+scripts bootstrap from nuget.org, `.bootstrap/` retired; the feature fsx scripts too.
+**Exact next step**: after the user merges #28–#31, merge `dev` here, fix the two stale Gaps
+lines in `workflows.md`, then start B6 from fresh `dev`: design note first (`Fsc` record,
+hashing `fsc.dll` from the SDK, `--` argument form, shared runner core with `Csc.run`).

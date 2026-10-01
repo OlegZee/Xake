@@ -1,0 +1,75 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <AssemblyName>Xake.Hermetic.Dotnet</AssemblyName>
+    <RootNamespace>Xake.Hermetic.Dotnet</RootNamespace>
+
+    <!-- Versioned independently of Xake (extraction-plan.md §4): 0.x is a preview and may
+         break. Same mechanism as src/dotnet: the build script and CI override it with
+         /p:Version=...; this is the value a plain `dotnet pack` produces. -->
+    <PackageId>Xake.Hermetic.Dotnet</PackageId>
+    <Version>0.1.0</Version>
+    <OutputType>Library</OutputType>
+    <!-- The SDK would otherwise reference its own FSharp.Core, see the pin below. -->
+    <DisableImplicitFSharpCoreReference>true</DisableImplicitFSharpCoreReference>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <TargetFrameworks>net462;netstandard2.0</TargetFrameworks>
+    <Copyright>(c) OlegZee 2014-2026</Copyright>
+    <Authors>OlegZee</Authors>
+
+    <Description>Reproducible .NET builds for Xake: lock files, restore, SBOM, verification, packing and signing</Description>
+    <PackageProjectUrl>https://github.com/OlegZee/Xake</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/OlegZee/Xake</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageTags>reproducible;lockfile;sbom;cyclonedx;hermetic;dotnet</PackageTags>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageIcon>Icon.png</PackageIcon>
+    <PackageReadmeFile>readme.md</PackageReadmeFile>
+  </PropertyGroup>
+
+  <!-- nuget.org renders these; they are packed, not referenced by path, so the files have to
+       be listed explicitly. `readme.md` is the git-tracked casing (docs/session.md). -->
+  <ItemGroup>
+    <None Include="..\..\Icon.png" Pack="true" PackagePath="\" Visible="false" />
+    <None Include="readme.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+  <!-- Order follows the dependencies: the json reader and the root tokens first, then
+       Nuget (assets, nuspec, cache) and Restore (which names no lock type), the kept fsproj
+       evaluation, Git (revision token), the lock format and the lock's side of a build
+       (Lock.build/compile/record/verify, csc { lock }), and the import. -->
+  <ItemGroup>
+    <Compile Include="Json.fs" />
+    <Compile Include="Roots.fs" />
+    <Compile Include="Nuget.fs" />
+    <Compile Include="Restore.fs" />
+    <Compile Include="Fsproj.fs" />
+    <Compile Include="Git.fs" />
+    <Compile Include="Lock.fs" />
+    <Compile Include="Project.fs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Built on the published package, not on src/dotnet and src/core: the `Xake` package
+         carries both Xake.dll and Xake.Dotnet.dll, and the range is what the nuspec
+         dependency says. 3.4.0 is the first release with the base this package needs;
+         nuget.org carries it as 3.4.0.21 (publish.yml appends the run number). The lower
+         bound is that exact published version: with `[3.4.0, 4.0)` NuGet finds no 3.4.0,
+         resolves 3.4.0.21 instead and warns NU1603 ("depends on Xake (>= 3.4.0) but Xake
+         3.4.0 was not found"), on every restore here and in every consumer. -->
+    <PackageReference Include="Xake" Version="[3.4.0.21, 4.0)" />
+  </ItemGroup>
+
+  <!-- Test assemblies only; no other package sees these internals. hermetic.tests tests the
+       parsers (Json, Project.parseImport, Nuget.frameworkFullName, the PE Layout, Fsproj). -->
+  <ItemGroup>
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
+      <_Parameter1>hermetic.tests</_Parameter1>
+    </AssemblyAttribute>
+  </ItemGroup>
+
+  <!-- Kept in step with src/core and src/dotnet: the FSharp.Core floor consumers inherit. -->
+  <ItemGroup>
+    <PackageReference Include="FSharp.Core" Version="8.0.100" />
+  </ItemGroup>
+</Project>

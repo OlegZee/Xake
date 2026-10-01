@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFrameworks>net8.0</TargetFrameworks>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- The shared helpers are linked from src/tests, not copied. XakeTestBase's scratch
+         folders therefore stay under src/tests/~testout~ (its __SOURCE_DIRECTORY__). -->
+    <Compile Include="..\tests\Common.fs" Link="Common.fs" />
+    <Compile Include="..\tests\XakeTestBase.fs" Link="XakeTestBase.fs" />
+    <Compile Include="ProjectImportTests.fs" />
+    <Compile Include="LockDiffTests.fs" />
+    <Compile Include="FromLockTests.fs" />
+    <Compile Include="CscLockTests.fs" />
+    <Compile Include="NugetTests.fs" />
+    <Compile Include="RestoreTests.fs" />
+    <Compile Include="FsprojTests.fs" />
+    <Compile Include="ToolsetImportTests.fs" />
+    <Compile Include="ResxImportTests.fs" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- The `Xake` package (engine and Xake.Dotnet) flows in through this reference. -->
+    <ProjectReference Include="..\hermetic\Xake.Hermetic.Dotnet.fsproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.6.0" />
+    <PackageReference Include="NUnit" Version="3.13.3" />
+    <PackageReference Include="NUnit3TestAdapter" Version="4.2.1" />
+    <PackageReference Include="NUnit.Analyzers" Version="3.6.1" />
+    <PackageReference Include="coverlet.collector" Version="6.0.0" />
+  </ItemGroup>
+</Project>

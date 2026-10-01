@@ -122,6 +122,8 @@ dotnet fsi fullframework.fsx
 * See [the features.fsx](https://github.com/OlegZee/Xake/blob/dev/samples/features.fsx) script for various samples.
 * See [docs/tasks.md](docs/tasks.md) for the task reference and [docs/dotnet-build.md](docs/dotnet-build.md) for building .NET Framework targets.
 * [Xake.Hermetic.Dotnet](docs/hermetic/README.md) (preview, separate package): lock files, restore from a lock, deterministic packs, SBOMs and signing for .NET builds.
+* [Xake.Hermetic.Dotnet architecture](docs/hermetic-architecture.md): design, evidence and known limits, for maintainers and reviewers.
+* [Xake.Hermetic.Dotnet guide](docs/hermetic-guide.md) (draft): a task-oriented walk-through from the first lock to packing and signing.
 * We have the [introduction page](https://github.com/OlegZee/Xake/wiki/Introduction) for you to learn more about Xake.
 * And there're the [documentation notes](https://github.com/OlegZee/Xake/wiki) for more details.
 

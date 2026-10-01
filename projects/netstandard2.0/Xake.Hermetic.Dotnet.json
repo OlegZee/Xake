@@ -141,11 +141,10 @@
     "$(NuGetPackageRoot)/netstandard.library/2.0.3/build/netstandard2.0/ref/System.Xml.XmlSerializer.dll",
     "$(NuGetPackageRoot)/netstandard.library/2.0.3/build/netstandard2.0/ref/System.Xml.XPath.dll",
     "$(NuGetPackageRoot)/netstandard.library/2.0.3/build/netstandard2.0/ref/System.Xml.XPath.XDocument.dll",
-    "$(ProjectRoot)/src/core/bin/Release/netstandard2.0/Xake.dll",
-    "$(ProjectRoot)/src/dotnet/bin/Release/netstandard2.0/Xake.Dotnet.dll"
+    "$(NuGetPackageRoot)/xake/3.4.0.21/lib/netstandard2.0/Xake.dll",
+    "$(NuGetPackageRoot)/xake/3.4.0.21/lib/netstandard2.0/Xake.Dotnet.dll"
   ],
   "ProjectRefs": [
-    "$(ProjectRoot)/src/dotnet/Xake.Dotnet.fsproj",
-    "$(ProjectRoot)/src/core/Xake.fsproj"
+
   ]
 }

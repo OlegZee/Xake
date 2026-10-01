@@ -28,7 +28,7 @@ jobs:
       with:
         dotnet-version: ${{ matrix.dotnet }}
     # `test` runs both test projects, src/tests and src/hermetic.tests; `pack` builds both
-    # packages and fails if the Xake.Hermetic.Dotnet nuspec loses its `Xake [3.4.0, 4.0.0)` range
+    # packages and fails if the Xake.Hermetic.Dotnet nuspec has no dependency on package `Xake`
     - name: Build, test & pack
       run: dotnet fsi build.fsx -- -- build test pack
     - name: Upload build log

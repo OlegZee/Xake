@@ -5,7 +5,7 @@ Version **0.1.0, preview**: the API may break while the package is 0.x.
 `Xake.Hermetic.Dotnet` builds .NET assemblies and packages so that what shipped can be
 explained and checked: a **lock** file records exactly what the compiler was handed and the hash
 of everything it read, the build compiles from the lock and fails when anything differs, and the
-result can be turned into a deterministic package with an SBOM. It is a
+result can be turned into a deterministic package with an SBOM and a signing step. It is a
 separate NuGet package that depends on `Xake` (the engine and the `csc`/`fsc`/`msbuild`/`resgen`
 tasks of `Xake.Dotnet`, Xake 3.4.0.21 or later, below 4.0); nothing in `Xake` knows about it.
 
@@ -25,7 +25,9 @@ open Xake.Hermetic.Dotnet
 | Restore | fetch the packages a lock names into a folder of the build's choice, one `dotnet restore` for the whole set | [restore.md](restore.md) |
 | Nuget and Sbom | read the restore graph and package cache; write a deterministic CycloneDX 1.6 SBOM per assembly and per package | [nuget-sbom.md](nuget-sbom.md) |
 | Verify | Authenticode PE hash and labelled byte differences between two binaries | [verify.md](verify.md) |
-| Pack | deterministic zip and `.nupkg` (sorted entries, fixed timestamps, content-derived ids) | |
+| Pack | deterministic zip and `.nupkg` (sorted entries, fixed timestamps, content-derived ids) | [pack.md](pack.md) |
+| StrongName | PE timestamp and checksum normalisation, strong-name (re-)signing without `sn.exe` | [strongname.md](strongname.md) |
+| Sign | Authenticode and NuGet signing as a delegated rule with a pluggable signer | [signing.md](signing.md) |
 
 The compilation itself, `csc {}`, `Csc.ofSettings` and the runner `Csc.run`, stay in `Xake.Dotnet`:
 [../csc-syntax.md](../csc-syntax.md), [../tasks.md](../tasks.md).

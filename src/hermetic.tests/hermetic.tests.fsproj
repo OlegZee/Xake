@@ -17,7 +17,9 @@
     <Compile Include="RestoreTests.fs" />
     <Compile Include="SbomTests.fs" />
     <Compile Include="VerifyTests.fs" />
+    <Compile Include="StrongNameTests.fs" />
     <Compile Include="PackTests.fs" />
+    <Compile Include="SignTests.fs" />
     <Compile Include="FsprojTests.fs" />
     <Compile Include="ToolsetImportTests.fs" />
     <Compile Include="ResxImportTests.fs" />

@@ -1,174 +1,15 @@
-﻿namespace Xake.Dotnet
+namespace Xake.Dotnet
 
+/// The `csc {}` builder. What it builds -- the settings, the resolved `Csc` and its runner --
+/// lives in `Csc.fs`; this file only names the operations.
 [<AutoOpen>]
-module CscImpl =
+module CscBuilder =
 
-    open System.IO
     open Xake
-    open Xake.Tasks
 
-    type CscSettingsType = {
-        /// Limits which platforms this code can run on. The default is anycpu.
-        Platform: TargetPlatform
-        /// Specifies the format of the output file.
-        Target: TargetType
-        /// Specifies the output file name (default: base name of file with main class or first file).
-        Out: File
-        /// Source files.
-        Src: Fileset
-        /// References metadata from the specified assembly files.
-        Ref: Fileset
-        /// References the specified assemblies from GAC.
-        RefGlobal: string list
-        /// Embeds the specified resource.
-        Resources: ResourceFileset list
-        /// Defines conditional compilation symbols.
-        Define: string list
-        /// Allows unsafe code.
-        Unsafe: bool
-        /// Target .NET framework
-        TargetFramework: string
-        /// Custom command-line arguments
-        CommandArgs: string list
-        /// Build fails on compile error.
-        FailOnError: bool
-        /// Path to csc executable
-        CscPath: string option
-    } with static member Default = {
-            Platform = AnyCpu
-            Target = Auto    // try to resolve the type from name etc
-            Out = File.undefined
-            Src = Fileset.Empty
-            Ref = Fileset.Empty
-            RefGlobal = []
-            Resources = []
-            Define = []
-            Unsafe = false
-            TargetFramework = null
-            CommandArgs = []
-            FailOnError = true
-            CscPath = None
-        }
-
-    /// Default settings for the CSC task, so that you could only override required settings.
-    let CscSettings = CscSettingsType.Default
-
-    /// <summary>
-    /// C# compiler task. Compiles the source fileset into the target assembly.
-    /// </summary>
-    /// <param name="settings">Compiler settings</param>
-    /// <returns>Recipe compiling the target</returns>
-    let Csc (settings:CscSettingsType) =
-
-        recipe {
-            do! trace Level.Debug "Csc: settings=%A" settings
-
-            let! options = getCtxOptions()
-            let getFiles = toFileList options.ProjectRoot
-
-            let! outFile =
-                if settings.Out = File.undefined then
-                    getTargetFile()
-                else
-                    settings.Out |> recipe.Return
-
-            let resinfos = settings.Resources |> List.collect (Impl.collectResInfo options.ProjectRoot) |> List.map Impl.compileResxFiles
-            let resfiles = resinfos |> List.choose (fun (_, file, istemp) -> if istemp then None else Some file)
-
-            let (Filelist src)  = settings.Src |> getFiles
-            let (Filelist refs) = settings.Ref |> getFiles
-
-            do! needFiles (Filelist (src @ refs @ resfiles))
-
-            let! globalTargetFwk = getVar "NETFX-TARGET"
-            let targetFramework =
-                match settings.TargetFramework, globalTargetFwk with
-                | s, _ when not <| System.String.IsNullOrWhiteSpace(s) -> s
-                | _, Some s when s <> "" -> s
-                | _ -> null
-
-            let (globalRefs,nostdlib,noconfig) =
-                match targetFramework with
-                | null ->
-                    let mapfn = (+) "/r:"
-                    // TODO provide an option for user to explicitly specify all grefs (currently csc.rsp is used)
-                    (settings.RefGlobal |> List.map mapfn), false, false
-                | tgt ->
-                    let fwk = Some tgt |> DotNetFwk.locateFramework in
-                    let lookup = DotNetFwk.locateAssembly fwk
-                    let mapfn = lookup >> ((+) "/r:")
-
-                    ("mscorlib.dll" :: settings.RefGlobal |> List.map mapfn), true, true
-
-            let args =
-                seq {
-                    yield "/nologo"
-
-                    yield "/target:" + Impl.targetStr outFile.Name settings.Target
-                    yield "/platform:" + Impl.platformStr settings.Platform
-
-                    if settings.Unsafe then
-                        yield "/unsafe"
-
-                    if nostdlib then
-                        yield "/nostdlib+"
-
-                    if outFile <> File.undefined then
-                        yield sprintf "/out:%s" (File.getFullName outFile)
-
-                    if not (List.isEmpty settings.Define) then
-                        yield "/define:" + (settings.Define |> String.concat ";")
-
-                    yield! src |> List.map (fun f -> f.FullName)
-
-                    yield! refs |> List.map ((fun f -> f.FullName) >> (+) "/r:")
-                    yield! globalRefs
-
-                    yield! resinfos |> List.map (fun(name,file,_) -> sprintf "/res:%s,%s" file.FullName name)
-                    yield! settings.CommandArgs
-                }
-
-            let! netfxVar = getVar "NETFX"
-            // the compiler is taken from the framework being targeted, unless NETFX says otherwise
-            let dotnetFwk = match netfxVar with | Some _ -> netfxVar | None -> Option.ofObj targetFramework
-            let fwkInfo = DotNetFwk.locateFramework dotnetFwk
-
-// TODO for short args this is ok, otherwise use rsp file --    let commandLine = args |> escapeAndJoinArgs
-            let rspFile = Path.GetTempFileName()
-            File.WriteAllLines(rspFile, args |> Seq.map Impl.escapeArgument |> List.ofSeq)
-            let commandLineArgs =
-                seq {
-                    if noconfig then
-                        yield "/noconfig"
-                    yield "@" + rspFile
-                    }
-            let cscTool = settings.CscPath |> function | Some v -> v | _ -> fwkInfo.CscTool
-
-            // the response file and the resx files compiled to a temporary location have to go
-            // regardless of how the compilation ends
-            let tempFiles =
-                rspFile :: (resinfos |> List.choose (fun (_, file, istemp) -> if istemp then Some file.FullName else None))
-            let deleteTempFiles () =
-                tempFiles |> List.iter (fun file -> try System.IO.File.Delete file with _ -> ())
-
-            do! trace Info "compiling '%s' using framework '%s'" outFile.Name fwkInfo.Version
-            do! trace Debug "Command line: '%s %s'" cscTool (args |> Seq.map Impl.escapeArgument |> String.concat "\r\n\t")
-
-            try
-                let! exitCode =
-                    shell {
-                        cmd cscTool
-                        args commandLineArgs
-                        envs fwkInfo.EnvVars
-                        logprefix "[csc]"
-                        stdoutlevel (Impl.levelFromString Level.Verbose)
-                        erroutlevel (Impl.levelFromString Level.Verbose)
-                    }
-
-                do! Impl.failOnExitCode settings.FailOnError outFile.Name exitCode
-            finally
-                deleteTempFiles ()
-        }
+    /// The state of a `csc {}` block after `resolve`: "resolve, do not run". `Run` on it
+    /// returns the `Csc` instead of compiling.
+    type CscRequest = CscRequest of CscSettingsType
 
     /// Computation expression builder for the csc task.
     type CscSettingsBuilder() =
@@ -190,6 +31,18 @@ module CscImpl =
         [<CustomOperation("define")>]    member __.Define(s:CscSettingsType, value) =      {s with Define = value}
         [<CustomOperation("unsafe")>]    member __.Unsafe(s:CscSettingsType, value) =      {s with Unsafe = value}
         [<CustomOperation("cscpath")>]       member __.CscPath(s:CscSettingsType, value) =   {s with CscPath = Some value}
+        /// <summary>Takes `csc.dll` from `Microsoft.Net.Compilers.Toolset/&lt;version&gt;` in the
+        /// NuGet cache (restoring the package if it is missing) instead of the SDK's own, so the
+        /// compiler is a pinned, hashed dependency in the lock. Takes precedence over the script
+        /// variable `CSC_TOOLSET`; `cscpath` still overrides this.</summary>
+        [<CustomOperation("toolset")>]       member __.Toolset(s:CscSettingsType, version: string) = {s with Toolset = Some version}
+
+        /// <summary>Compiles in a fresh compiler process instead of through the Roslyn compiler
+        /// server (`VBCSCompiler`); see `CompilerServer`.</summary>
+        [<CustomOperation("noserver")>]   member __.NoServer(s:CscSettingsType) = {s with Server = Some InProcess}
+        /// <summary>Seconds of idle time after which a compiler server this build starts exits
+        /// (`/keepalive`); Roslyn's own default is 600.</summary>
+        [<CustomOperation("keepalive")>]  member __.KeepAlive(s:CscSettingsType, seconds: int) = {s with Server = Some (Shared (Some seconds))}
 
         /// <summary>Passes custom arguments to the compiler</summary>
         [<CustomOperation("args")>]       member __.Args(s:CscSettingsType, args) =   {s with CommandArgs = args}
@@ -201,7 +54,15 @@ module CscImpl =
         member __.For(x, f) = f x
 
         member __.Zero() = CscSettingsType.Default
-        member __.Run(s:CscSettingsType) = Csc s
+        /// <summary>Stops short of compiling: the block returns the resolved `Csc`
+        /// (`Csc.ofSettings`) instead of a recipe that compiles it, for `Csc.run` or
+        /// `Lock.build` to take. Must be the last operation -- the ones after it do not
+        /// type-check. Outside a file rule it needs an explicit `out`, since the output
+        /// otherwise defaults to the rule's target.</summary>
+        [<CustomOperation("resolve")>]    member __.Resolve(s:CscSettingsType) = CscRequest s
+
+        member __.Run(s:CscSettingsType) = Csc.compile s
+        member __.Run(CscRequest s) = Csc.ofSettings s
 
     /// The csc task builder instance.
     let csc = CscSettingsBuilder()

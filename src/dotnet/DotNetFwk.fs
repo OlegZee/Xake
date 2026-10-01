@@ -2,6 +2,7 @@
 
 open Xake
 open Xake.ProcessExec
+open Xake.Tasks
 open System.IO
 
 module internal PkgConfig =
@@ -215,6 +216,10 @@ module DotNetFwk =
 
         let referenceAssembliesVersion = "1.0.3"
 
+        /// The package carrying the netstandard2.0 reference assemblies. 2.1 ships with the
+        /// SDK instead, see netstandardRefDir.
+        let netstandardLibraryVersion = "2.0.3"
+
         let private knownMonikers =
             [ "net20"; "net35"; "net40"; "net45"; "net451"; "net452"; "net46"
               "net461"; "net462"; "net47"; "net471"; "net472"; "net48" ]
@@ -226,6 +231,13 @@ module DotNetFwk =
                    .Replace("net", "").Replace(".", "").Replace("-", "")
             let m = "net" + digits
             if knownMonikers |> List.contains m then Some m else None
+
+        /// "netstandard2.0" | "sdk-netstandard2.0" -> Some "netstandard2.0". Kept apart from
+        /// `moniker`: netstandard is a profile, not a Framework version, and it is resolved
+        /// against a different set of reference assemblies.
+        let netstandardMoniker (fwk: string) =
+            let m = fwk.ToLowerInvariant().Replace("sdk-", "")
+            if ["netstandard2.0"; "netstandard2.1"] |> List.contains m then Some m else None
 
         /// Numeric-aware pick of the latest subdirectory: "10.0.400" beats "8.0.424",
         /// and a released version beats a preview one.
@@ -241,7 +253,7 @@ module DotNetFwk =
                 let candidates = if Array.isEmpty released then dirs else released
                 candidates |> Array.sortBy versionKey |> Array.tryLast
 
-        let private nugetRoot () =
+        let internal nugetRoot () =
             match %"NUGET_PACKAGES" with
             | null | "" ->
                 System.Environment.GetFolderPath System.Environment.SpecialFolder.UserProfile
@@ -250,17 +262,17 @@ module DotNetFwk =
 
         /// Restores the reference assemblies package, so that the first build on a clean
         /// machine works without the user having to prepare anything.
-        let private restorePackage moniker =
-            let dir = Path.GetTempPath() </> ("xake-refasm-" + moniker)
+        let internal restorePackage (packageId: string) (version: string) =
+            let dir = Path.GetTempPath() </> ("xake-refasm-" + packageId.ToLowerInvariant())
             let project = dir </> "refasm.csproj"
             try
                 Directory.CreateDirectory dir |> ignore
                 File.WriteAllText (project, sprintf """<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup><TargetFramework>netstandard2.0</TargetFramework></PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies.%s" Version="%s" />
+    <PackageReference Include="%s" Version="%s" />
   </ItemGroup>
-</Project>""" moniker referenceAssembliesVersion)
+</Project>""" packageId version)
                 pexecSync ignore ignore "dotnet" (sprintf "restore \"%s\"" project) [] (Some dir) |> ignore
             with _ -> ()
 
@@ -271,7 +283,7 @@ module DotNetFwk =
             match locate () with
             | Some dir -> Some dir
             | None ->
-                restorePackage moniker
+                restorePackage ("Microsoft.NETFramework.ReferenceAssemblies." + moniker) referenceAssembliesVersion
                 locate ()
 
         let private dotnetHost () =
@@ -279,7 +291,7 @@ module DotNetFwk =
             | null | "" -> try System.Diagnostics.Process.GetCurrentProcess().MainModule.FileName with _ -> null
             | path -> path
 
-        let private sdkDir () =
+        let internal dotnetRoot () =
             let hostDir =
                 match dotnetHost () with
                 | null | "" -> None
@@ -291,7 +303,89 @@ module DotNetFwk =
               Some "/usr/share/dotnet"
               (match %"ProgramFiles" with | null | "" -> None | dir -> Some (dir </> "dotnet")) ]
             |> List.tryPick (Option.filter (fun root -> Directory.Exists (root </> "sdk")))
-            |> Option.bind (fun root -> latestDir (root </> "sdk"))
+
+        /// The SDK directory the `dotnet` host picks when run in `projectRoot`, plus a warning
+        /// when that could not be honoured. The host resolves `global.json` (searched upwards
+        /// from its working directory, `rollForward` included), so this runs `dotnet --version`
+        /// there and takes `<dotnetRoot>/sdk/<printed version>`. With no `global.json` the host
+        /// picks the newest SDK, which is what `latestDir` does, so nothing changes then. When
+        /// the host fails (the pinned SDK is not installed) or prints a version with no
+        /// directory under this `dotnetRoot`, the newest SDK is taken and the warning names the
+        /// version asked for.
+        let private probeSdk (projectRoot: string) : string option * string option =
+            match dotnetRoot () with
+            | None -> None, None
+            | Some dotnetDir ->
+                let sdkRoot = dotnetDir </> "sdk"
+                let newest = latestDir sdkRoot
+                let hostExe = dotnetDir </> (if Env.isWindows then "dotnet.exe" else "dotnet")
+                let host = if File.Exists hostExe then hostExe else "dotnet"
+                let stdout = ResizeArray<string>()
+                let allOutput = ResizeArray<string>()
+                let onOut (line: string) = lock allOutput (fun () -> stdout.Add line; allOutput.Add line)
+                let onErr (line: string) = lock allOutput (fun () -> allOutput.Add line)
+                let workDir = if Directory.Exists projectRoot then Some projectRoot else None
+                let exitCode =
+                    try pexecSync onOut onErr host "--version" [] workDir
+                    with _ -> -1
+                let newestName = newest |> Option.map Path.GetFileName |> Option.defaultValue "none"
+                let printed =
+                    if exitCode <> 0 then None
+                    else stdout |> Seq.map (fun l -> l.Trim()) |> Seq.tryFind ((<>) "")
+                match printed with
+                | Some version when Directory.Exists (sdkRoot </> version) ->
+                    Some (sdkRoot </> version), None
+                | Some version ->
+                    newest,
+                    Some (sprintf "'dotnet --version' in '%s' selects SDK %s, which is not under %s; using the newest SDK there (%s)"
+                            projectRoot version sdkRoot newestName)
+                | None ->
+                    let field (prefix: string) =
+                        allOutput |> Seq.map (fun l -> l.Trim())
+                        |> Seq.tryFind (fun l -> l.StartsWith prefix)
+                        |> Option.map (fun l -> l.Substring(prefix.Length).Trim())
+                    let requested =
+                        match field "Requested SDK version:", field "global.json file:" with
+                        | Some v, Some file -> sprintf "global.json (%s) asks for SDK %s, which is not installed" file v
+                        | Some v, None -> sprintf "global.json asks for SDK %s, which is not installed" v
+                        | None, _ -> sprintf "'dotnet --version' failed (exit code %d)" exitCode
+                    newest,
+                    Some (sprintf "%s in '%s'; using the newest SDK (%s)" requested projectRoot newestName)
+
+        /// `probeSdk`, once per project root for the life of the process (a `global.json` edited
+        /// mid-run is not seen again). A cache of its own rather than `CommonLib.memoize` so
+        /// `probedWarning` can ask about a root without running the probe.
+        let private sdkProbes =
+            System.Collections.Concurrent.ConcurrentDictionary<string, Lazy<string option * string option>>()
+
+        let private sdkProbe (projectRoot: string) =
+            sdkProbes.GetOrAdd(projectRoot, fun root -> lazy (probeSdk root)).Value
+
+        /// The probe's warning for `projectRoot`, if the SDK was probed there at all.
+        let internal probedWarning (projectRoot: string) =
+            match sdkProbes.TryGetValue projectRoot with
+            | true, probe when probe.IsValueCreated -> snd probe.Value
+            | _ -> None
+
+        let private sdkDir projectRoot = sdkProbe projectRoot |> fst
+
+        /// netstandard reference assemblies: 2.1 ships with the SDK as a pack, 2.0 only
+        /// exists in the NETStandard.Library package.
+        let private netstandardRefDir moniker =
+            let fromSdkPack () =
+                dotnetRoot ()
+                |> Option.bind (fun root -> latestDir (root </> "packs" </> "NETStandard.Library.Ref"))
+                |> Option.map (fun pack -> pack </> "ref" </> moniker)
+                |> Option.filter Directory.Exists
+            let packageDir () =
+                let dir = nugetRoot () </> "netstandard.library" </> netstandardLibraryVersion
+                             </> "build" </> moniker </> "ref"
+                if Directory.Exists dir then Some dir else None
+            match fromSdkPack () |> Option.orElseWith packageDir with
+            | Some dir -> Some dir
+            | None ->
+                restorePackage "NETStandard.Library" netstandardLibraryVersion
+                packageDir ()
 
         /// fsc and msbuild ship as managed dlls, so they are launched through a tiny script.
         let private launcher name (args: string) =
@@ -306,34 +400,142 @@ module DotNetFwk =
                 pexecSync ignore ignore "chmod" (sprintf "+x \"%s\"" path) [] None |> ignore
             path
 
-        let tryLocateFwk fwk =
-            match moniker fwk with
-            | None -> None, sprintf "'%s' is not a known .NET Framework profile" fwk
-            | Some moniker ->
-
-            match sdkDir () with
+        /// The compilers always come from the SDK; only the reference assemblies differ
+        /// between the profiles.
+        let private sdkFwkInfo projectRoot refDirs version =
+            match sdkDir projectRoot with
             | None -> None, "the .NET SDK is not found, cannot locate the compilers"
             | Some sdk ->
-
-            match refAssembliesDir moniker with
-            | None ->
-                None, sprintf "reference assemblies for '%s' are not available: failed to restore package Microsoft.NETFramework.ReferenceAssemblies.%s" moniker moniker
-            | Some refDir ->
                 let exe name = if Env.isWindows then name + ".exe" else name
                 Some {
-                    Version = moniker
+                    Version = version
                     InstallPath = sdk
                     ToolDir = sdk </> "Roslyn" </> "bincore"
-                    AssemblyDirs = [refDir; refDir </> "Facades"]
+                    AssemblyDirs = refDirs
                     CscTool = sdk </> "Roslyn" </> "bincore" </> exe "csc"
                     FscTool = fun _ -> Some (launcher "fsc" (sprintf "\"%s\"" (sdk </> "FSharp" </> "fsc.dll")))
                     MsbuildTool = launcher "msbuild" "msbuild"
                     EnvVars = []
                 }, null
 
+        let tryLocateFwk projectRoot fwk =
+            match netstandardMoniker fwk with
+            | Some moniker ->
+                match netstandardRefDir moniker with
+                | Some refDir -> sdkFwkInfo projectRoot [refDir] moniker
+                | None ->
+                    None, sprintf "reference assemblies for '%s' are not available: failed to restore package NETStandard.Library" moniker
+            | None ->
+
+            match moniker fwk with
+            | None -> None, sprintf "'%s' is not a known .NET Framework profile" fwk
+            | Some moniker ->
+
+            match refAssembliesDir moniker with
+            | None ->
+                None, sprintf "reference assemblies for '%s' are not available: failed to restore package Microsoft.NETFramework.ReferenceAssemblies.%s" moniker moniker
+            | Some refDir ->
+                sdkFwkInfo projectRoot [refDir; refDir </> "Facades"] moniker
+
+    /// The NuGet package cache (`NUGET_PACKAGES`, else `~/.nuget/packages`).
+    let nugetRoot () = sdkImpl.nugetRoot ()
+
+    /// The .NET SDK installation root, when one can be located: compilers, analyzers and
+    /// reference packs live under it.
+    let dotnetRoot () = sdkImpl.dotnetRoot ()
+
+    /// The synthesized restore project. `PackageDownload` rather than `PackageReference`: it
+    /// fetches exactly the listed version into the folder and nothing else -- no dependency
+    /// walk and, crucially, no framework compatibility check, so a package that targets only
+    /// `net472` downloads from this `netstandard2.0` project just as well.
+    /// `DisableImplicitFrameworkReferences` keeps the SDK from adding `NETStandard.Library` to
+    /// the folder as a side effect of the TFM.
+    let restoreProjectText (packages: (string * string) list) =
+        [ yield "<Project Sdk=\"Microsoft.NET.Sdk\">"
+          yield "  <PropertyGroup>"
+          yield "    <TargetFramework>netstandard2.0</TargetFramework>"
+          yield "    <DisableImplicitFrameworkReferences>true</DisableImplicitFrameworkReferences>"
+          yield "  </PropertyGroup>"
+          yield "  <ItemGroup>"
+          for (id, version) in packages do
+              yield sprintf "    <PackageDownload Include=\"%s\" Version=\"[%s]\" />" id version
+          yield "  </ItemGroup>"
+          yield "</Project>"
+          yield "" ]
+        |> String.concat "\n"
+
+    /// The package folder in effect, normalized to forward slashes without a trailing one:
+    /// `None` is the machine's own cache (`nugetRoot ()`), `Some dir` a folder of the build's
+    /// own.
+    let normalizedPackageRoot (packageRoot: string option) =
+        (packageRoot |> Option.defaultWith nugetRoot).Replace('\\', '/').TrimEnd '/'
+
+    let private downloadAttempts = ref 0
+
+    /// Fetches the named `(id, version)` packages into the package folder with **one**
+    /// `dotnet restore` of a synthesized project.
+    ///
+    /// The project lives under the build's own project root (`obj/xake/restore/<n>/`), not in a
+    /// temp directory, so that NuGet's settings discovery finds the repository's `nuget.config`
+    /// and its private feeds. The repository's own msbuild customizations are switched off on
+    /// the command line instead (`Directory.Build.props`/`.targets`, central package
+    /// management), because they are written for real projects and this one only downloads.
+    ///
+    /// Each call gets a numbered subdirectory of its own, removed once the restore succeeds, so
+    /// concurrent calls do not overwrite each other's project file. Concurrent restores into
+    /// one package folder are NuGet's own business, and it handles them. A failed attempt is
+    /// left on disk, named by the message, so it can be re-run by hand.
+    let downloadPackages (packageRoot: string option) (packages: (string * string) list) : Recipe<ExecContext, unit> =
+        recipe {
+            if not (List.isEmpty packages) then
+                let root = normalizedPackageRoot packageRoot
+                let! ctxOptions = getCtxOptions ()
+                let attempt = System.Threading.Interlocked.Increment downloadAttempts
+                let dir = ctxOptions.ProjectRoot </> "obj" </> "xake" </> "restore" </> string attempt
+                Directory.CreateDirectory dir |> ignore
+                let project = dir </> "restore.csproj"
+                File.WriteAllText (project, restoreProjectText packages)
+
+                let! exitCode =
+                    shell {
+                        cmd "dotnet"
+                        args [ "restore"; project
+                               "-v:quiet"; "-nologo"
+                               "-p:NuGetAudit=false"
+                               "-p:ImportDirectoryBuildProps=false"
+                               "-p:ImportDirectoryBuildTargets=false"
+                               "-p:ImportDirectoryPackagesProps=false"
+                               "-p:ManagePackageVersionsCentrally=false" ]
+                        env ("NUGET_PACKAGES", root)
+                        workdir dir
+                        logprefix "[restore]"
+                        stdoutlevel (Tool.diagnosticLevel Level.Verbose)
+                        erroutlevel (Tool.diagnosticLevel Level.Verbose)
+                    }
+
+                if exitCode <> 0 then
+                    failwithf "restoring %d package(s) into '%s' failed with exit code %d (see '%s'): %s"
+                        (List.length packages) root exitCode project
+                        (packages |> List.map (fun (id, v) -> id + " " + v) |> String.concat ", ")
+                try Directory.Delete (dir, true) with _ -> ()
+        }
+
+    /// The folder of one NuGet package (`<packageRoot>/<id lowercase>/<version>`), fetching it
+    /// into the package folder first when it is not there yet. `packageRoot` is `None` for the
+    /// machine's own cache (`nugetRoot ()`), `Some dir` (absolute) for a folder of the build's
+    /// own. Restoring cannot change *what* a version is, so this is safe to call from any
+    /// recipe; it starts no process when the folder already exists.
+    let restorePackage (packageRoot: string option) (packageId: string) (version: string) : Recipe<ExecContext, string> =
+        recipe {
+            let dir = normalizedPackageRoot packageRoot </> packageId.ToLowerInvariant() </> version
+            if not (Directory.Exists dir) then
+                do! downloadPackages packageRoot [ packageId, version ]
+            return dir
+        }
+
     module internal impl =
 
-        let locateFramework (fwk) : FrameworkInfo =
+        let locateFramework (projectRoot: string) (fwk) : FrameworkInfo =
             let startsWith fragment (s: string option) =
                 match s with
                 | None | Some null -> false
@@ -352,16 +554,16 @@ module DotNetFwk =
 
             let tryLocate =
                 if fwk |> startsWith "mono-" then monoFwkImpl.tryLocateFwk
-                elif fwk |> startsWith "sdk-" then sdkImpl.tryLocateFwk
+                elif fwk |> startsWith "sdk-" then sdkImpl.tryLocateFwk projectRoot
                 elif Env.isUnix then
                     // SDK compilers over reference assemblies from NuGet build for full
                     // framework on any OS; mono is just a fallback these days
-                    sdkImpl.tryLocateFwk |> orElse monoFwkImpl.tryLocateFwk
+                    sdkImpl.tryLocateFwk projectRoot |> orElse monoFwkImpl.tryLocateFwk
                 elif Env.isRunningOnMono then
-                    monoFwkImpl.tryLocateFwk |> orElse sdkImpl.tryLocateFwk
+                    monoFwkImpl.tryLocateFwk |> orElse (sdkImpl.tryLocateFwk projectRoot)
                 else
                     // a real Framework installation found through the registry wins on Windows
-                    msImpl.tryLocateFwk |> orElse sdkImpl.tryLocateFwk
+                    msImpl.tryLocateFwk |> orElse (sdkImpl.tryLocateFwk projectRoot)
 
             match fwk with
             | None ->
@@ -373,12 +575,29 @@ module DotNetFwk =
                 | None, err -> failwith err
                 | Some f,_ -> f
 
+    let private locateFrameworkMemo =
+        CommonLib.memoize (fun (projectRoot: string, fwk: string option) -> impl.locateFramework projectRoot fwk)
+
     /// <summary>
-    /// Attempts to locate either .NET or Mono framework.
+    /// Attempts to locate either .NET or Mono framework, for a build rooted at `projectRoot`:
+    /// the SDK provider takes the SDK the `dotnet` host selects there, so a `global.json` in
+    /// (or above) the project root is honoured. Memoized per (root, framework).
     /// </summary>
-    /// <param name="fwk"></param>
-    let locateFramework =
-        CommonLib.memoize impl.locateFramework
+    let locateFrameworkIn (projectRoot: string) (fwk: string option) : FrameworkInfo =
+        locateFrameworkMemo (Path.GetFullPath projectRoot, fwk)
+
+    /// <summary>
+    /// Attempts to locate either .NET or Mono framework. `locateFrameworkIn` with the current
+    /// directory as the project root -- for callers with no build context; the tasks pass
+    /// their `ProjectRoot`.
+    /// </summary>
+    let locateFramework (fwk: string option) : FrameworkInfo =
+        locateFrameworkIn (Directory.GetCurrentDirectory()) fwk
+
+    /// The warning the SDK probe left for `projectRoot` (a `global.json` pin that could not be
+    /// honoured), when the SDK has been probed there. The tasks trace it.
+    let sdkProbeWarning (projectRoot: string) : string option =
+        sdkImpl.probedWarning (Path.GetFullPath projectRoot)
 
     /// <summary>
     /// Locates "global" assembly for specific framework

@@ -36,7 +36,7 @@ type ``Dotnet tasks tests``() =
                     do! need ["hello.cs"]
 
                     do! trace Error "Rebuilding..."
-                    do! Csc {
+                    do! Csc.compile {
                     CscSettingsType.Default with
                         Src = !!"hello.cs"
                         Out = File.make "hello.exe"
@@ -62,6 +62,220 @@ type ``Dotnet tasks tests``() =
         // the source was generated and the compiler turned it into an assembly
         Assert.That(needExecuteCount.Value, Is.GreaterThanOrEqualTo 1)
         Assert.That(File.Exists "hello.exe", Is.True, "csc did not produce hello.exe")
+
+    // Composed mode with a `.resx` resource: `resolve` no longer compiles it into a random
+    // temp file (deleted after the compile, and unusable if the settings were instead
+    // recorded as a lock -- see `Csc.ofSettings` in Csc.fs and the csc-syntax.md
+    // "composed mode resx" paragraph). It records a permanent `(resx, .resources)` pair in
+    // `Csc.Resources` and `run`'s existing resource step compiles it, exactly as it
+    // already does for an imported project.
+    [<Test; Category("Integration")>]
+    member x.``runs csc task with a composed resx resource``() =
+
+        let compileCount = ref 0
+
+        let resx =
+            "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n" +
+            "<root>\n" +
+            "  <data name=\"Greeting\" xml:space=\"preserve\"><value>Hello, resx!</value></data>\n" +
+            "</root>\n"
+        File.WriteAllText ("Strings.resx", resx)
+
+        // both inputs are plain files on disk, not rules -- a rule with no dependencies of
+        // its own reruns on every build (there is nothing to check staleness against), which
+        // would make `helloresx.exe` rerun too since it `need`s it. Writing them once, like
+        // `CommandLineTests`' "input.txt", is what lets the second build be a genuine no-op.
+        File.WriteAllText ("helloresx.cs", """class Program
+        {
+            public static void Main()
+            {
+                System.Console.WriteLine("Hello world!");
+            }
+        }""")
+
+        // a file target, not a phony one: phony actions always rerun in Xake (like a `.PHONY`
+        // make target), so only a file rule's own up-to-date check can show the second build
+        // was a no-op
+        let runBuild () =
+            xake {x.TestOptions with FileLog="skipbuild.log"; ConLogLevel = Verbosity.Diag; ThrowOnError = true} {
+                wantOverride (["helloresx.exe"])
+
+                rules [
+                    "helloresx.exe" ..> recipe {
+                        do! need ["helloresx.cs"]
+                        compileCount.Value <- compileCount.Value + 1
+                        do! Csc.compile {
+                        CscSettingsType.Default with
+                            Src = !!"helloresx.cs"
+                            Out = File.make "helloresx.exe"
+                            TargetFramework = "net-4.6.2"
+                            RefGlobal = ["System.dll"]
+                            Resources = [
+                                resourceset {
+                                    prefix "Sample.Application"
+                                    files (fileset { includes "Strings.resx" })
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+
+        runBuild ()
+
+        let expectedResources = "obj" </> "xake" </> "helloresx" </> "Sample.Application.Strings.resources"
+        Assert.That(File.Exists "helloresx.exe", Is.True, "csc did not produce helloresx.exe")
+        Assert.That(File.Exists expectedResources, Is.True, sprintf "expected '%s' to exist" expectedResources)
+        Assert.That(compileCount.Value, Is.EqualTo 1)
+
+        // a second build with nothing changed must not recompile: the .resources file, the
+        // resx and the dll are all still up to date as far as the engine's dependency
+        // tracking is concerned
+        runBuild ()
+        Assert.That(compileCount.Value, Is.EqualTo 1, "second build should not rerun the rule")
+
+    // A reference produced by another rule of the same script has to be (re)built before
+    // `Csc.run` checks its hash, not after: the check is meant to verify what the compiler is
+    // about to read. The consuming rule records its compilation once, hashed (`rehash`, the
+    // step a lock makes), and replays that record on later builds -- base API only, no lock.
+    // The library compiles with /deterministic, so rebuilding it from the same source yields
+    // the same bytes and the recorded hash stays valid.
+    [<Test; Category("Integration")>]
+    member x.``csc builds a referenced library before checking its hash``() =
+
+        File.WriteAllText ("hashlib.cs", "public class Lib { public static string Name = \"lib\"; }")
+        File.WriteAllText ("hashapp.cs", "class Program { static void Main() { System.Console.WriteLine(Lib.Name); } }")
+        for f in ["hashlib.dll"; "hashapp.exe"] do try File.Delete f with _ -> ()
+
+        let recorded : Csc option ref = ref None
+        let libCompiles = ref 0
+        let appCompiles = ref 0
+
+        let libSettings =
+            { CscSettingsType.Default with
+                Src = !!"hashlib.cs"
+                Out = File.make "hashlib.dll"
+                TargetFramework = "net-4.6.2"
+                RefGlobal = ["System.dll"]
+                CommandArgs = ["/deterministic"] }
+        let appSettings =
+            { CscSettingsType.Default with
+                Src = !!"hashapp.cs"
+                Ref = !!"hashlib.dll"
+                Out = File.make "hashapp.exe"
+                TargetFramework = "net-4.6.2"
+                RefGlobal = ["System.dll"] }
+
+        let runBuild () =
+            xake {x.TestOptions with FileLog="csc-refhash.log"; ConLogLevel = Verbosity.Diag; ThrowOnError = true} {
+                wantOverride (["hashapp.exe"])
+
+                rules [
+                    "hashlib.dll" ..> recipe {
+                        do! need ["hashlib.cs"]
+                        libCompiles.Value <- libCompiles.Value + 1
+                        do! Csc.compile libSettings
+                    }
+                    "hashapp.exe" ..> recipe {
+                        do! need ["hashapp.cs"]
+                        appCompiles.Value <- appCompiles.Value + 1
+                        let! options = Csc.runOptions appSettings
+                        let! c =
+                            match recorded.Value with
+                            | Some c -> recipe { return c }
+                            | None ->
+                                recipe {
+                                    do! need ["hashlib.dll"]
+                                    let! c = Csc.ofSettings appSettings
+                                    let c = Csc.rehash c
+                                    recorded.Value <- Some c
+                                    return c
+                                }
+                        do! Csc.run options c
+                    }
+                ]
+            }
+
+        runBuild ()
+        Assert.That(File.Exists "hashapp.exe", Is.True, "csc did not produce hashapp.exe")
+        let libRef = recorded.Value.Value.Dependencies.References |> List.find (fun r -> r.Path.EndsWith "hashlib.dll")
+        Assert.That(libRef.Sha256, Is.Not.Empty, "the recorded compilation hashes the library")
+        Assert.That((libCompiles.Value, appCompiles.Value), Is.EqualTo ((1, 1)))
+
+        // the library source changes (timestamp): the library rebuilds and the application,
+        // which references it, recompiles against it
+        File.SetLastWriteTimeUtc ("hashlib.cs", System.DateTime.UtcNow.AddSeconds 2.0)
+        runBuild ()
+        Assert.That((libCompiles.Value, appCompiles.Value), Is.EqualTo ((2, 2)), "touching the library source rebuilds both")
+
+        // the library output is gone: checking its hash before building it would see it missing
+        File.Delete "hashlib.dll"
+        runBuild ()
+        Assert.That((libCompiles.Value, appCompiles.Value), Is.EqualTo ((3, 3)), "a missing library is rebuilt, then verified")
+        Assert.That(File.Exists "hashlib.dll", Is.True)
+
+    // The counterpart of the ordering above: a hashed reference that is missing and that no
+    // rule produces cannot be obtained by `needFiles`, so `run` reports every such file with
+    // the hash it was expected to have, before `needFiles` would stop at the first one.
+    [<Test; Category("Integration")>]
+    member x.``csc reports every missing hashed reference that no rule produces``() =
+
+        File.WriteAllText ("missingref.cs", "class C {}")
+        let expected = String.replicate 64 "a"
+        let missing = ["nothere1.dll"; "nothere2.dll"] |> List.map Path.GetFullPath
+        let settings =
+            { CscSettingsType.Default with
+                Src = !!"missingref.cs"
+                Out = File.make "missingref.dll"
+                TargetFramework = "net-4.6.2" }
+
+        let build () =
+            xake {x.TestOptions with FileLog="csc-missingref.log"; ThrowOnError = true} {
+                wantOverride (["missingref"])
+                rules [
+                    "missingref" => recipe {
+                        let! options = Csc.runOptions settings
+                        let! c = Csc.ofSettings settings
+                        let refs = missing |> List.map (fun p -> ({ Path = p; Sha256 = expected; Alias = "" } : Reference))
+                        let c = { c with Dependencies = { c.Dependencies with References = c.Dependencies.References @ refs } }
+                        do! Csc.run options c
+                    }
+                ]
+            }
+
+        let ex = Assert.Throws<XakeException> (fun () -> build () |> ignore)
+        for p in missing do
+            Assert.That(ex.ToString(), Does.Contain (sprintf "%s: expected %s, got missing" p expected))
+
+    // Same discovery, but for a profile rather than a framework version: the reference
+    // assembly comes from the SDK's netstandard pack or from the NETStandard.Library
+    // package. FSharp.Core is referenced explicitly since --noframework is in effect.
+    [<Test; Category("Integration")>]
+    member x.``runs fsc task targeting netstandard``() =
+
+        let fsharpCore = System.Reflection.Assembly.GetAssembly(typeof<option<int>>).Location
+
+        do xake {x.TestOptions with FileLog="fsc-netstandard.log"; ThrowOnError = true} {
+            wantOverride (["hi.dll"])
+
+            rules [
+                "hi.dll" ..> recipe {
+                    do! need ["hi.fs"]
+                    do! Fsc {
+                    FscSettingsType.Default with
+                        Src = !!"hi.fs"
+                        Out = File.make "hi.dll"
+                        Ref = Fileset.Empty ++ fsharpCore
+                        TargetFramework = "netstandard2.0"
+                    }
+                }
+                "hi.fs" ..> writeText """module Hi
+let greet name = sprintf "Hello, %s" name
+"""
+            ]
+        }
+
+        Assert.That(File.Exists "hi.dll", Is.True, "fsc did not produce hi.dll")
 
     [<Test>]
     member x.``resource set instantiation``() =
@@ -107,6 +321,49 @@ type ``Dotnet tasks tests``() =
             Assert.Ignore(sprintf "no C# compiler at '%s' -- .NET SDK not available?" fwk.CscTool)
         Assert.That(fwk.AssemblyDirs, Is.Not.Empty, "reference assembly directories")
 
+    // The SDK's `Roslyn/bincore` has a `csc` (`csc.exe` on Windows) apphost next to `csc.dll`;
+    // a composed compilation records the dll, the compiler an imported lock hashes. Where the
+    // probe finds no dll beside the compiler (the .NET Framework's own `csc.exe`, mono) the
+    // test is ignored: the path is kept as it is there.
+    [<Test; Category("Integration")>]
+    member x.``composed compilation records the SDK's csc.dll as the compiler``() =
+
+        let probed = (DotNetFwk.locateFramework (Some "netstandard2.0")).CscTool
+        if not (File.Exists (Path.GetDirectoryName probed </> "csc.dll")) then
+            Assert.Ignore(sprintf "no csc.dll next to '%s' (not the SDK's compiler)" probed)
+
+        File.WriteAllText ("managedcsc.cs", "public class C {}")
+        let resolved = ref ""
+        do xake {x.TestOptions with FileLog="csc-managed.log"; ThrowOnError = true} {
+            wantOverride (["managedcsc"])
+            rules [
+                "managedcsc" => recipe {
+                    let! c = Csc.ofSettings { CscSettingsType.Default with
+                                                Src = !!"managedcsc.cs"
+                                                Out = File.make "managedcsc.dll"
+                                                TargetFramework = "netstandard2.0" }
+                    resolved.Value <- c.Dependencies.Compiler.Path
+                }
+            ]
+        }
+        Assert.That(resolved.Value, Does.EndWith "csc.dll")
+        Assert.That(Path.GetDirectoryName resolved.Value, Is.EqualTo (Path.GetDirectoryName probed))
+
+    [<Test>]
+    member __.``managedCompiler replaces only a csc launcher that has csc.dll beside it``() =
+        let dir = Path.GetFullPath "managedcompiler"
+        Directory.CreateDirectory dir |> ignore
+        let launcher = dir </> "csc"
+        File.WriteAllText (launcher, "")
+        try File.Delete (dir </> "csc.dll") with _ -> ()
+        Assert.That(Csc.managedCompiler launcher, Is.EqualTo launcher, "no dll beside it")
+        File.WriteAllText (dir </> "csc.dll", "")
+        Assert.That(Csc.managedCompiler launcher, Is.EqualTo (dir </> "csc.dll"))
+        Assert.That(Csc.managedCompiler (dir </> "csc.exe"), Is.EqualTo (dir </> "csc.dll"))
+        Assert.That(Csc.managedCompiler (dir </> "csc.dll"), Is.EqualTo (dir </> "csc.dll"))
+        Assert.That(Csc.managedCompiler (dir </> "other"), Is.EqualTo (dir </> "other"))
+        Assert.That(Csc.managedCompiler "mcs", Is.EqualTo "mcs")
+
     [<Test>]
     member __.``escapes compiler arguments``() =
 
@@ -151,6 +408,25 @@ type ``Dotnet tasks tests``() =
         Assert.AreEqual(
             "Sample.App.Strings.resx",
             Impl.makeResourceName {dynamic with Prefix = Some "Sample.App"} None "sub/Strings.resx")
+
+    [<Test>]
+    member x.``csc without a target framework fails asking for one``() =
+
+        let build () =
+            xake {x.TestOptions with FileLog="csc-nofwk.log"; ThrowOnError = true} {
+                wantOverride (["nofwk"])
+                rules [
+                    "nofwk" => recipe {
+                        let! _ = Csc.ofSettings { CscSettingsType.Default with Src = !!"a.cs"; Out = File.make "nofwk.dll" }
+                        ()
+                    }
+                ]
+            }
+
+        let ex = Assert.Throws<XakeException> (fun () -> build () |> ignore)
+        Assert.That(ex.ToString(), Does.Contain "csc needs a target framework: set targetfwk in the csc block or the NETFX-TARGET script variable")
+        // the example has to be one composed mode accepts (a .NET Framework or netstandard moniker)
+        Assert.That(ex.ToString(), Does.Contain "targetfwk \"netstandard2.0\"")
 
     [<Test>]
     member __.``task builders produce recipes``() =

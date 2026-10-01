@@ -34,10 +34,22 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Compile Include="Tool.fs" />
+    <Compile Include="Hash.fs" />
     <Compile Include="DotNetFwk.fs" />
     <Compile Include="ResourceFileset.fs" />
+    <!-- Resx has no dependency on Fsproj/DotnetTasks; it is compiled here (ahead of
+         DotnetTasks.fs) because DotnetTasks.fs's Impl.compileResx calls into it on
+         netstandard2.0. -->
+    <Compile Include="Resx.fs" />
 
     <Compile Include="DotnetTasks.fs" />
+    <Compile Include="CscArgs.fs" />
+    <!-- The resolved compilation (`Csc`), its settings and the one runner; then the csc {}
+         builder over it. The lock, restore, SBOM, verification, packing and signing live in a
+         package of their own (Xake.Hermetic.Dotnet), which references this project, never the other
+         way round. -->
+    <Compile Include="Csc.fs" />
     <Compile Include="Dotnet.csc.fs" />
     <Compile Include="Dotnet.fsc.fs" />
     <Compile Include="Dotnet.resgen.fs" />

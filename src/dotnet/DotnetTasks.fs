@@ -64,20 +64,8 @@ module internal Impl =
     let platformStr = function
         |AnyCpu -> "anycpu" |AnyCpu32Preferred -> "anycpu32preferred" |ARM -> "arm" | X64 -> "x64" | X86 -> "x86" |Itanium -> "itanium"
 
-    /// <summary>
-    /// Classifies a line of compiler output by log level.
-    /// </summary>
-    /// <remarks>
-    /// Diagnostics tied to a source position read "file.cs(1,1): error CS0103: ...", while
-    /// whole-compilation ones read "error FS0084: ..." with no position at all. Both have to be
-    /// recognized, otherwise a failing compile reports nothing above the default verbosity.
-    /// </remarks>
-    let levelFromString defaultLevel (text:string) :Level =
-        let hasDiagnostic kind =
-            text.Contains ("): " + kind + " ") || text.TrimStart().StartsWith (kind + " ")
-        if hasDiagnostic "warning" then Level.Warning
-        else if hasDiagnostic "error" then Level.Error
-        else defaultLevel
+    /// Forwarder to `Tool.diagnosticLevel`.
+    let levelFromString defaultLevel (text:string) :Level = Tool.diagnosticLevel defaultLevel text
     let inline coalesce ls = //: 'a option list -> 'a option =
         ls |> List.fold (fun r a -> if Option.isSome r then r else a) None
 
@@ -110,7 +98,17 @@ module internal Impl =
             let (Filelist l) = Fileset (fo,fs) |> (toFileList pathRoot) in
             l |> List.map mapFile
 
+    /// Compiles a `.resx` to a `.resources` file. Deliberately two paths, not one (B7):
+    /// - net462 uses `ResXResourceReader` (System.Windows.Forms), which handles everything
+    ///   msbuild does: typed values (images, icons, serialized objects), `ResXFileRef` entries
+    ///   and the 4.0.0.0 -> 2.0.0.0 type-name rewrite below.
+    /// - netstandard2.0 has no `ResXResourceReader`, so it uses `Resx.compile`, which is
+    ///   strings only and fails loudly on a typed or file-ref entry.
+    /// `Resx.compile` cannot replace the net462 path without regressing those entries; the
+    /// string-only output is what `ResxTests` compares byte for byte against msbuild (on the
+    /// netstandard2.0 build). Unifying would need `Resx.read` to grow typed/ResXFileRef support.
     let compileResx (resxfile:File) (rcfile:File) =
+#if NETFRAMEWORK
         use writer = new ResourceWriter (rcfile.FullName)
 
         // TODO here we have deal with types somehow because we are running conversion under framework 4.5 but target could be 2.0
@@ -118,17 +116,20 @@ module internal Impl =
             fun(t:System.Type) ->
                 t.AssemblyQualifiedName.Replace("4.0.0.0", "2.0.0.0")
 
-#if NETFRAMEWORK
         use resxreader = new System.Resources.ResXResourceReader (resxfile.FullName)
         resxreader.BasePath <- File.getDirName resxfile
 
         let reader = resxreader.GetEnumerator()
         while reader.MoveNext() do
             writer.AddResource (reader.Key :?> string, reader.Value)
-#else
-        failwith "ERROR: resx compilation is not supported under netstandard target"
-#endif
         writer.Generate()
+#else
+        // netstandard2.0 has no ResXResourceReader (System.Windows.Forms, full framework
+        // only) but supports plain string resources via Xake.Dotnet.Resx, which reads the
+        // resx itself and writes with System.Resources.ResourceWriter -- typed values and
+        // ResXFileRef are not supported there.
+        Xake.Dotnet.Resx.compile resxfile.FullName rcfile.FullName
+#endif
 
     let compileResxFiles = function
         | (res,(file:File)) when file |> File.getFileName |> endsWith ".resx" ->
@@ -138,15 +139,5 @@ module internal Impl =
         | (res,file) ->
             (res,file,false)
 
-    /// <summary>
-    /// The exit-code epilogue shared by the compiler tasks: reports a non-zero exit code and
-    /// fails the build when the task is configured to.
-    /// </summary>
-    /// <param name="failOnError">Whether a non-zero exit code has to fail the build</param>
-    /// <param name="name">The target being built, for the diagnostic message</param>
-    /// <param name="exitCode">The tool's exit code</param>
-    let failOnExitCode failOnError (name: string) exitCode = recipe {
-        if exitCode <> 0 then
-            do! trace Error "('%s') failed with exit code '%i'" name exitCode
-            if failOnError then failwithf "Exiting due to FailOnError set on '%s'" name
-    }
+    /// Forwarder to `Tool.failOnExitCode`.
+    let failOnExitCode failOnError (name: string) exitCode = Tool.failOnExitCode failOnError name exitCode

@@ -36,3 +36,11 @@ This script compiles helloworld assembly from helloworld.cs file. See
 [samples/fullframework.fsx](../../samples/fullframework.fsx) for targeting a specific framework,
 and [docs/dotnet-build.md](../../docs/dotnet-build.md) for how the toolchain is discovered and
 how to switch between the SDK, a Framework installation and Mono.
+
+`csc` also takes `toolset "<version>"` (a pinned `Microsoft.Net.Compilers.Toolset`, see
+[samples/toolset.fsx](../../samples/toolset.fsx)), `noserver`/`keepalive` (compiler server; the
+script variable `CSC_SERVER` sets it for the whole script) and `resolve` (returns the resolved
+`Csc` for `Csc.run` instead of compiling). From record syntax use `Csc.compile settings`. All of
+it is in [docs/tasks.md](../../docs/tasks.md).
+
+The lock/restore/SBOM tooling ships as a separate package, `Xake.Hermetic.Dotnet`, see its docs.

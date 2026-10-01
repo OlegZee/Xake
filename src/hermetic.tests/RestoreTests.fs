@@ -74,6 +74,21 @@ type ``Restore``() =
 
     let scratchRoot () = Path.Combine (Path.GetTempPath (), "xake-restore-" + System.Guid.NewGuid().ToString("N"))
 
+    /// A package folder holding `Some.Package 1.0.0` with one reference file, and
+    /// `.nupkg.metadata` as given (`None`: no metadata file at all); the request names that
+    /// file with `sha512` as the lock's hash.
+    let presentFixture (metadata: string option) (sha512: string) =
+        let root = scratchRoot ()
+        let dir = Path.Combine (root, "some.package", "1.0.0")
+        Directory.CreateDirectory (Path.Combine (dir, "lib")) |> ignore
+        let file = Path.Combine (dir, "lib", "Some.Package.dll")
+        File.WriteAllText (file, "")
+        metadata |> Option.iter (fun text -> File.WriteAllText (Path.Combine (dir, ".nupkg.metadata"), text))
+        let request : Restore.Request =
+            { Packages = [ { Id = "Some.Package"; Version = "1.0.0"; Sha512 = sha512; Direct = true; DependsOn = [] } ]
+              Paths = [ file ] }
+        root, { Restore.Options.Default with PackageRoot = Some root }, request
+
     // ---- what is missing ----------------------------------------------------------------
 
     [<Test>]
@@ -134,6 +149,59 @@ type ``Restore``() =
             let absent = Restore.verify options [ package "Other.Package" "2.0.0" "aaa==" ]
             Assert.That(absent |> List.length, Is.EqualTo 1)
             Assert.That(absent.Head, Does.Contain "not restored")
+        finally
+            try Directory.Delete (root, true) with _ -> ()
+
+    // ---- packages already in the folder --------------------------------------------------
+
+    /// `Restore.ensure` in a build, returning its problems and the build log.
+    member x.EnsureInBuild (name: string) (options: Restore.Options) (request: Restore.Request) =
+        let problems = ref []
+        let log = name + ".log"
+        do xake {x.TestOptions with FileLog = log; FileLogLevel = Verbosity.Diag; ThrowOnError = true} {
+            wantOverride ([name])
+            rules [ name => recipe { let! p = Restore.ensure options request in problems.Value <- p } ]
+        }
+        problems.Value, File.ReadAllText (x.TestOptions.ProjectRoot </> log)
+
+    [<Test>]
+    member x.``a present package whose nupkg.metadata hash is not the lock's is reported``() =
+        let root, options, request = presentFixture (Some "{ \"version\": 2, \"contentHash\": \"tampered==\" }") "aaa=="
+        try
+            Assert.That(Restore.missing options request, Is.Empty, "nothing is missing -- the package is present")
+            let problems, _ = x.EnsureInBuild "present-tampered" options request
+            Assert.That(problems, Is.EqualTo [ "Some.Package 1.0.0: expected sha512 aaa==, got tampered==" ])
+        finally
+            try Directory.Delete (root, true) with _ -> ()
+
+    [<Test>]
+    member x.``a present package whose nupkg.metadata hash matches passes``() =
+        let root, options, request = presentFixture (Some "{ \"version\": 2, \"contentHash\": \"aaa==\" }") "aaa=="
+        try
+            Assert.That(Restore.checkPresent options request, Is.EqualTo [ ("Some.Package", "1.0.0"), Restore.Verified ])
+            let problems, _ = x.EnsureInBuild "present-matching" options request
+            Assert.That(problems, Is.Empty)
+        finally
+            try Directory.Delete (root, true) with _ -> ()
+
+    [<Test>]
+    member x.``a present package without nupkg.metadata is a warning, not a failure``() =
+        let root, options, request = presentFixture None "aaa=="
+        try
+            match Restore.checkPresent options request with
+            | [ _, Restore.Unverifiable msg ] -> Assert.That(msg, Does.Contain "Some.Package 1.0.0: sha512 not verified")
+            | other -> Assert.Fail(sprintf "expected one unverifiable package, got %A" other)
+            let problems, log = x.EnsureInBuild "present-nometadata" options request
+            Assert.That(problems, Is.Empty)
+            Assert.That(log, Does.Contain "Some.Package 1.0.0: sha512 not verified")
+        finally
+            try Directory.Delete (root, true) with _ -> ()
+
+    [<Test>]
+    member __.``a present package the lock records no sha512 for is not checked``() =
+        let root, options, request = presentFixture None ""
+        try
+            Assert.That(Restore.checkPresent options request, Is.Empty)
         finally
             try Directory.Delete (root, true) with _ -> ()
 

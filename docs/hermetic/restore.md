@@ -23,9 +23,12 @@ module Restore =
     type Missing = { Id: string; Version: string; Sha512: string; Files: string list }
     val missing  : Options -> Request -> Missing list              // File.Exists only
     val verify   : Options -> Missing list -> string list          // package directory + nupkg sha512
+    type PresentCheck = Verified | Mismatch of string | Unverifiable of string
+    val checkPresentPackage : Options -> id: string -> version: string -> sha512: string -> PresentCheck
+    val checkPresent : Options -> Request -> ((string * string) * PresentCheck) list   // packages already in the folder
 
     val download : Options -> (string * string) list -> Recipe<ExecContext, unit>
-    val ensure   : Options -> Request -> Recipe<ExecContext, string list>   // reports problems
+    val ensure   : Options -> Request -> Recipe<ExecContext, string list>   // reports problems, present and restored
 
 module Lock =
     val restoreRequest : Lock.Entry list -> Restore.Request        // every compiler, reference, analyzer path
@@ -131,6 +134,24 @@ the lock's graph does not carry (a reference-assemblies package the toolchain re
 never appears in `project.assets.json`) has no recorded hash and is only checked for presence;
 its files are still SHA-256-checked by the runner.
 
+**The sha512 is checked for present packages too, not only for those restored in this run.**
+`ensure` runs `checkPresent` first. It covers every package the request names whose files
+under the folder all exist and whose sha512 the lock's graph records. For each one it reads
+`.nupkg.metadata` and compares `contentHash` with the lock's `Sha512`. That is one small file
+read per package, memoized per process (folder + id + version), so a hundred entries naming one
+package read it once. A mismatch is reported the same way as a failed download verification:
+`<Id> <Version>: expected sha512 <lock>, got <metadata>`, in the list `ensure` returns.
+`Lock.compileWith` and `Lock.restore` therefore fail on it before anything compiles. A package
+with a file missing goes through `missing`, the restore, and `verify` as before.
+
+When `.nupkg.metadata` is missing, or has no `contentHash`, the package is **unverifiable**,
+and that is a warning rather than a failure. A cache written by an old NuGet, or a folder filled
+by hand, has no such file, and the per-file SHA-256 check still gates the compile. The warning
+is traced once per package per process:
+`<Id> <Version>: sha512 not verified, '<dir>/.nupkg.metadata' does not exist (a package cache
+written by an old NuGet?)`. A package the lock records no sha512 for (a composed lock, a
+reference-assemblies package) is not checked at all.
+
 **`ensureCompilerAvailable` is now one case of the general mechanism.** The compiler's path
 goes into the same missing-package scan as the references, so a toolset package is restored by
 the same single `dotnet restore` as everything else. What is left in `ensureCompilerAvailable`
@@ -197,7 +218,7 @@ by name.
   goes to the log at `Verbose`; the failure message names the packages and the exit code. A
   missing private-feed credential therefore reads as "restoring N package(s) … failed with
   exit code 1" with the detail one level down.
-- **The nupkg hash is checked, the nupkg is not re-hashed.** `verify` compares the lock's
+- **The nupkg hash is checked, the nupkg is not re-hashed.** `verify` and `checkPresent` compare the lock's
   `Sha512` with the `contentHash` NuGet itself wrote into `.nupkg.metadata`; it does not
   recompute SHA-512 over the `.nupkg` file. Someone who can write into the package folder can
   write both. This is a package-level sanity check sitting in front of the per-file SHA-256

@@ -64,3 +64,19 @@ open Xake.Hermetic.Dotnet
 `Lock.build` gates against the lock, restores what it names, resolves the revision token and
 then calls `Csc.run`. To update a lock deliberately, delete the file or run a target that calls
 `Lock.record`.
+
+## Building from source
+
+`src/hermetic` compiles against the published `Xake` package (the range above), not against
+`src/core` and `src/dotnet` in the same checkout. To work on it before the `Xake` it needs is on
+nuget.org, pack the base into a folder and hand that folder to the restore as an extra source;
+nothing in the repository points at it:
+
+```bash
+dotnet pack src/dotnet -c Release -p:Version=3.4.0 -o /tmp/xake-feed
+dotnet restore src/hermetic.tests -p:RestoreAdditionalProjectSources=/tmp/xake-feed
+dotnet test src/hermetic.tests -c Release --no-restore
+```
+
+The package lands in the NuGet global cache (`~/.nuget/packages/xake/3.4.0`) and is used from
+there on; delete that folder once the released package should take its place.

@@ -20,9 +20,15 @@ touched, so it is not re-litigated:
 - The mono provider built its `PATH` env var as `sdkroot </> ("bin" + ";" + PATH)` — `+` binds
   tighter than `</>`, and `;` is not the Unix separator. Fixed, but the mono path has no test
   coverage.
-- `build.fsx`'s `#r "nuget: Xake, 3.0.1"` bootstrap is deliberately behind the release; bump it
-  only after a release lands on nuget.org. Same for `samples/gettingstarted.fsx`, which
-  references the published package and therefore cannot be run until this release is out.
+- `build.fsx` bootstraps from `#r "nuget: Xake, 3.4.0.21"` (the 3.4.0 release as nuget.org
+  carries it). It stays behind the release being made; bump it only after a release lands on
+  nuget.org, to the exact published `X.Y.Z.<run>`. `samples/gettingstarted.fsx` references the
+  published package (`#r "nuget: Xake"`) and is checked against it after each release.
+- `src/hermetic` builds on the *published* `Xake` (PackageReference `[3.4.0.21, 4.0)`), not on
+  `src/core`/`src/dotnet`. The floor is the exact published version: `[3.4.0, 4.0)` warns NU1603
+  because no plain `3.4.0` exists. A local feed (`-d NUGET_SOURCE=<folder>`) is only for working
+  against an unreleased base; a packed `3.4.0.99` in `~/.nuget/packages/xake/` shadows the
+  release until deleted.
 - **The supported floor is .NET 8**, enforced in three places (`global.json`, the tests TFM, the
   CI matrix) and by an explicit `FSharp.Core` 8.0.100 pin with
   `DisableImplicitFSharpCoreReference`. Without the pin the SDK's own FSharp.Core lands in the
@@ -85,8 +91,9 @@ worth knowing before touching it again:
   concurrent demands. Covered by
   `builds a target requested twice in one run only once` and `builds a file needed and then
   needFiled only once`.
-- `build.fsx` builds `netstandard2.0` only; the `net462` asset comes from `dotnet build` /
-  `dotnet pack`.
+- `build.fsx` builds `netstandard2.0` only; the `net462` asset comes from `dotnet pack`. An
+  fsc-built net462 leg would need an FSharp.Core with a net4x assembly, which the pinned
+  package does not have.
 
 ## Trap: rule patterns with `..` never matched
 
@@ -111,13 +118,40 @@ goes to the recreate path. The `EndOfStreamException` warning in test runs is de
 
 ```bash
 dotnet build src/core -c Release && dotnet build src/dotnet -c Release   # both TFMs, 0 warnings
-dotnet test src/tests -c Release                                         # 248 passed, 1 skipped
-dotnet test src/tests --filter 'Category=Integration'                    # real csc and fsc runs (9)
-dotnet fsi build.fsx -- -- build test                                    # self-hosting
+dotnet restore src/hermetic.tests                                        # Xake 3.4.0.21 from nuget.org, no NU1603
+dotnet build src/hermetic -c Release --no-restore                        # Xake.Hermetic.Dotnet, both TFMs, 0 warnings
+dotnet test src/tests -c Release                                         # 258 passed, 1 skipped
+dotnet test src/hermetic.tests -c Release --no-restore                   # 118 passed
+dotnet test src/tests --filter 'Category=Integration'                    # real csc and fsc runs
+dotnet test src/hermetic.tests --filter 'Category=Integration'
+dotnet fsi build.fsx -- -- build test pack                               # self-hosting: 3 libraries, both test projects, both packages
 dotnet fsi samples/fullframework.fsx                                     # end-to-end csc
 ```
 
+Test counts are "258 + 118" as of the build-scripts PR; tests move between the two projects, so
+the split shifts. `pack` writes `out/pkg/Xake/` and `out/pkg/Xake.Hermetic.Dotnet/` (independent:
+the hermetic pack restores `Xake` from nuget.org; `pack-hermetic` packs only that one) and fails
+if the hermetic nuspec has no `Xake` dependency or names `Xake.Dotnet` (docs/devprocess.md).
+
 `samples/*.fsx` reference `out/netstandard2.0/*.dll`, so run the self-hosting build first.
+
+## Trap: `build.fsc.fsx` needs a staged `.bootstrap/`
+
+The fsc-based build (`build.fsc.fsx`, repo root) compiles all three libraries with the `fsc`
+task and loads Xake itself from `.bootstrap/` (gitignored), not from `out/`: it overwrites
+`out/`, and overwriting the assemblies fsi has loaded kills the run with a
+`BadImageFormatException`. Stage all three assemblies from a `build.fsx` build, keeping any
+`FSharp.Core.dll` already there, and re-stage whenever the libraries change:
+
+```bash
+dotnet fsi build.fsx -- -- build
+mkdir -p .bootstrap && cp out/netstandard2.0/*.dll .bootstrap/
+dotnet fsi build.fsc.fsx -- -- build test
+```
+
+What to compile is read from the msbuild evaluations kept in `projects/netstandard2.0/*.json`
+(tracked; regenerated when a project file changes). Its output is deterministic but not
+byte-identical to `dotnet build`. The package's own docs are in `docs/hermetic/`.
 
 ## Earlier work: delegated execution (merged, PR #15)
 

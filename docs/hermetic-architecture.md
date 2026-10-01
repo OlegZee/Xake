@@ -879,10 +879,10 @@ proven not to have changed the file format.
 
 ### Test suites
 
-`src/tests` (base) does not reference the hermetic package; `src/hermetic.tests` references all
-three assemblies. At the last recorded run: base 252 passed and 1 skipped, hermetic 118 passed,
-0 warnings in both libraries. `build.fsx` runs both test projects and asserts the packed nuspec
-range.
+`src/tests` (base) does not reference the hermetic package; `src/hermetic.tests` references
+`src/hermetic` and gets `Xake`/`Xake.Dotnet` from the published package. At the last recorded
+run: base 258 passed and 1 skipped, hermetic 118 passed, 0 warnings in both libraries.
+`build.fsx` runs both test projects and checks that the packed nuspec depends on `Xake`.
 
 ### Verified on macOS only
 
@@ -901,8 +901,8 @@ range.
 |---|---|
 | `fsc` is not through the runner | `Dotnet.fsc.fs` names no `Lock` or `RunOptions`. F# compilations are described by the kept evaluation (`Fsproj.evaluate`), not by a lock, and are not hash-gated. Planned after the 3.4.0 release as an `Fsc` record with `Fsc.ofSettings`/`Fsc.run` over a private runner core shared with `Csc.run`; then `Fsproj` retires into `Project.import`. Additive, not breaking |
 | The net462 resx path | `Impl.compileResx` has two bodies on purpose: net462 uses `ResXResourceReader` (typed values, file refs), netstandard2.0 uses `Resx.compile`, which reads plain string values only and throws on typed entries. The runner calls `Resx.compile` for a missing `.resources`. No byte-identity claim is made for net462 |
-| The nuspec range trick | `dotnet pack` would write the dependency on `Xake` as `>= 1.0.0` (or at the hermetic version under a global `/p:Version`). The target `XakeDependencyRange` rewrites `ProjectVersion` of NuGet's private item `_ProjectReferencesWithVersions` after `_GetProjectReferenceVersions`. If a future SDK renames that item, the range silently falls back; `build.fsx` therefore opens the packed nupkg and fails unless every `Xake` dependency is `[3.4.0, 4.0.0)` |
-| The fsx bootstrap | until both packages are on nuget.org, `build.fsc.fsx` and the maintainers' scripts on the feature branch load `.bootstrap/*.dll`, an ignored folder copied by hand from `out/` or `bin/`; a fix in `src/hermetic` takes effect there only after a re-copy. After the release they switch to `#r "nuget: Xake, 3.4.0"` and `#r "nuget: Xake.Hermetic.Dotnet, 0.1.0"`; `build.fsx` stays on the base package only |
+| The published base as a dependency | `src/hermetic` takes `Xake` as a PackageReference `[3.4.0.21, 4.0)`, so it compiles against the assemblies on nuget.org, not the `src/core`/`src/dotnet` of the same checkout, and the nuspec range is the reference's own (no pack-time rewriting). The lower bound must be a version that exists: the release run number makes 3.4.0 `3.4.0.21`, and `[3.4.0, 4.0)` warns NU1603 on every restore. A change the hermetic package needs from the base is released first; until then it is developed against a locally packed base passed as an extra restore source (`NUGET_SOURCE`) |
+| The fsx bootstrap | `build.fsx` bootstraps from `#r "nuget: Xake, 3.4.0.21"`. Until `Xake.Hermetic.Dotnet` is on nuget.org, `build.fsc.fsx` and the maintainers' scripts on the feature branch load `.bootstrap/*.dll`, an ignored folder copied by hand from `out/` or `bin/`; a fix in `src/hermetic` takes effect there only after a re-copy. After its release they switch to `#r "nuget: Xake, 3.4.0.21"` and `#r "nuget: Xake.Hermetic.Dotnet, 0.1.0.<run>"`; `build.fsx` stays on the base package only |
 | `sign` shadowing | `open Xake.Hermetic.Dotnet` brings the builder `sign` into scope, shadowing FSharp.Core's numeric `sign` (still `Operators.sign`). A value named like an operation (`signer`, `store`, `budget`) cannot be passed inside the block (FS3095); tests name them `theSigner` and so on |
 | SBOM tool identity | `metadata.tools.components[0]` is `Xake.Hermetic.Dotnet` with the executing assembly's version (the `AssemblyVersion`, for example `0.1.0.0`, not the package's full version), and the package-scope annotation's annotator is the same name (`Sbom.toolName`). There is no vendor field |
 | Vendor defaults in `PackageScopeOptions.Default` | `PackageScope.internalIds` is `DS.*`, `MESCIUS.*`, `GrapeCity.*`, the first user's prefixes; other users must override `IsInternal` |
@@ -933,29 +933,31 @@ range.
 | First version | 3.4.0 | 0.1.0 |
 | Version source | `/p:Version` from `build.fsx` or CI (`VERSION`) | fsproj `<Version>0.1.0</Version>`, overridden by `HERMETIC_VERSION` |
 | Tag | `v<X.Y.Z>` | `hermetic-v<X.Y.Z>` |
-| Dependencies | FSharp.Core; Microsoft.Win32.Registry on netstandard2.0 | `Xake [3.4.0, 4.0.0)`, FSharp.Core |
+| Dependencies | FSharp.Core; Microsoft.Win32.Registry on netstandard2.0 | `Xake [3.4.0.21, 4.0.0)` (PackageReference on the published package), FSharp.Core |
 
 The versions are independent. `Xake` stays semantic-versioned 3.x. `Xake.Hermetic.Dotnet` starts
-at 0.1.0, a preview: its API may break while it is 0.x. The range `[3.4.0, 4.0)` (written by
-NuGet as `[3.4.0, 4.0.0)`) holds only because the hermetic package uses no internals of the base;
+at 0.1.0, a preview: its API may break while it is 0.x. The range `[3.4.0.21, 4.0)` (written by
+NuGet as `[3.4.0.21, 4.0.0)`; the lower bound is the exact published 3.4.0, see section 8) holds only because the hermetic package uses no internals of the base;
 the base names it relies on (`Csc`, `RunOptions`, `Csc.run`, `Csc.ofSettings`, `resolve`,
 `CSC_SERVER`, `CSC_TOOLSET`, `Hash`, `Tool`, the `DotNetFwk` functions) become breaking to change after 3.4.0.
 Lockstep versions would have made CI simpler but forced a `Xake` release for every
 hermetic-only change.
 
-The build: `build.fsx` has a third library with `dotnet build -p:BuildProjectReferences=false`
-(a global `/p:Version` flows into project references and would otherwise rebuild `Xake.dll` at
-the hermetic version). Packages go to `out/pkg/<id>/<id>.<version>.nupkg`, one rule per package.
-The hermetic pack first builds `src/dotnet` at the Xake version, so the hermetic assembly
-references `Xake 3.4.0.0`, then packs with `BuildProjectReferences=false` and asserts the nuspec
-range. `publish.yml` maps the tag prefix to the package and the version variable, appends the
-run number as the fourth component, runs `build test pack` (a hermetic release also exports
-`VERSION=3.4.0`), and pushes only the tagged package with `--skip-duplicate`. `build.yml` runs
-`build test pack` on SDK 8.0.x and 10.0.x, so the range assertion runs on the floor SDK too.
+The build: `build.fsx` has a third library, built like the other two; it needs none of their
+outputs, since it compiles against the restored `Xake` package. Packages go to
+`out/pkg/<id>/<id>.<version>.nupkg`, one rule per package, and the two packs are independent:
+the hermetic one restores from nuget.org (plus `NUGET_SOURCE` when set), packs, and checks that
+the nuspec depends on `Xake` and not on `Xake.Dotnet`. `publish.yml` maps the tag prefix to the
+package and the version variable, appends the run number as the fourth component, runs
+`build test pack` for `v*` and `build test pack-hermetic` for `hermetic-v*` (the base is not
+packed), and pushes only the tagged package with `--skip-duplicate`. `build.yml` runs
+`build test pack` on SDK 8.0.x and 10.0.x.
 
-Order of release: `Xake` 3.4.0 first (it is the range floor), then `Xake.Hermetic.Dotnet` 0.1.0,
-then the bootstrap switch (section 8). The `Fsproj.evaluate` fix (restore as a separate msbuild
-call) is in the tree and must be in 0.1.0.
+Order of release: `Xake` first, then `Xake.Hermetic.Dotnet` against the published version.
+`Xake` 3.4.0 is out (as `3.4.0.21`, the range floor, and `build.fsx`'s bootstrap); next is
+`Xake.Hermetic.Dotnet` 0.1.0 (tag `hermetic-v0.1.0`), then the `build.fsc.fsx` bootstrap switch
+(section 8). The `Fsproj.evaluate` fix (restore as a separate msbuild call) is in the tree and
+must be in 0.1.0.
 
 Before the first hermetic release every hermetic name is free to change. After it, names may
 still change while the package is 0.x; each change should be listed in the release notes.

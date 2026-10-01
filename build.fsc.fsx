@@ -5,26 +5,30 @@
 // result. So the answer is msbuild's own -- conditions, imports, the resolved reference list
 // and the generated assembly attributes included -- while the compilation is ours.
 //
-// Bootstrap: `Fsproj` is not in a published package yet (Xake.Hermetic.Dotnet is not on
-// nuget.org), so this script runs against a frozen copy of what build.fsx produces. The copy matters -- this script overwrites `out/`,
-// and overwriting the assemblies fsi has loaded kills the run with a BadImageFormatException:
+// Bootstrap: the script runs on the *published* packages, as build.fsx does -- `Xake` (which
+// carries Xake.dll and Xake.Dotnet.dll) and `Xake.Hermetic.Dotnet` (`Fsproj`). Not on `out/`:
+// this script overwrites `out/`, and overwriting the assemblies fsi has loaded kills the run
+// with a BadImageFormatException.
 //
-//     dotnet fsi build.fsx -- -- build                                  # through dotnet build
-//     mkdir -p .bootstrap && cp out/netstandard2.0/*.dll .bootstrap/
-//     dotnet fsi build.fsc.fsx -- -- build test
+// The versions are the exact ones nuget.org carries, not `3.4.0`/`0.1.0`: publish.yml appends
+// the run number to the tag (`X.Y.Z.<run>`), so no plain `X.Y.Z` exists and a lower bound of
+// it resolves to the next one up with NU1603. Bump them only after a release has landed, to
+// the exact published version (docs/devprocess.md).
 //
-// `Fsproj` (the msbuild evaluation this script compiles from) lives in Xake.Hermetic.Dotnet,
-// so the bootstrap is all three assemblies. Xake itself is on nuget.org (3.4.0.21, which
-// build.fsx already bootstraps from); the switch waits for Xake.Hermetic.Dotnet: once that is
-// published, the three lines become `#r "nuget: Xake, <version>"` and
-// `#r "nuget: Xake.Hermetic.Dotnet, <version>"`, the staging goes away and this script takes
-// over as build.fsx (extraction-plan.md §4, E8, a later step than build.fsx's bump).
+// To work on this script against unreleased libraries, build them with build.fsx and swap the
+// two `#r "nuget: ..."` lines for the commented ones below -- after copying the dlls out of
+// `out/`, for the reason above (e.g. `cp out/netstandard2.0/*.dll /tmp/xake-dev/`). Or pack
+// them at a version nuget.org does not have into a folder, point fsi at it with
+// `#i "nuget: /tmp/xake-feed"` and `#r` that version. `NUGET_SOURCE` does not reach these
+// lines: it is only the extra restore source of the hermetic `pack` below.
 //
 // Testing and packing still shell out to the SDK: the test project is built by msbuild, and
 // the nupkg carries a net462 asset fsc cannot produce here (see docs/session.md).
-#r ".bootstrap/Xake.dll"
-#r ".bootstrap/Xake.Dotnet.dll"
-#r ".bootstrap/Xake.Hermetic.Dotnet.dll"
+#r "nuget: Xake, 3.4.0.21"
+#r "nuget: Xake.Hermetic.Dotnet, 0.1.0.22"
+// #r "/tmp/xake-dev/Xake.dll"
+// #r "/tmp/xake-dev/Xake.Dotnet.dll"
+// #r "/tmp/xake-dev/Xake.Hermetic.Dotnet.dll"
 
 open Xake
 open Xake.Dotnet

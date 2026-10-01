@@ -20,9 +20,12 @@ touched, so it is not re-litigated:
 - The mono provider built its `PATH` env var as `sdkroot </> ("bin" + ";" + PATH)` — `+` binds
   tighter than `</>`, and `;` is not the Unix separator. Fixed, but the mono path has no test
   coverage.
-- `build.fsx` bootstraps from `#r "nuget: Xake, 3.4.0.21"` (the 3.4.0 release as nuget.org
-  carries it). It stays behind the release being made; bump it only after a release lands on
-  nuget.org, to the exact published `X.Y.Z.<run>`. `samples/gettingstarted.fsx` references the
+- Both build scripts bootstrap from nuget.org: `build.fsx` from `#r "nuget: Xake, 3.4.0.21"`
+  (the 3.4.0 release as nuget.org carries it), `build.fsc.fsx` from that and
+  `#r "nuget: Xake.Hermetic.Dotnet, 0.1.0.22"`. They stay behind the release being made; bump
+  them only after a release lands on nuget.org, to the exact published `X.Y.Z.<run>`.
+  Developing against unreleased libraries: a temporary `#r` on dlls (or a `#i` local feed);
+  see docs/devprocess.md, "Bootstrapping note". `samples/gettingstarted.fsx` references the
   published package (`#r "nuget: Xake"`) and is checked against it after each release.
 - `src/hermetic` builds on the *published* `Xake` (PackageReference `[3.4.0.21, 4.0)`), not on
   `src/core`/`src/dotnet`. The floor is the exact published version: `[3.4.0, 4.0)` warns NU1603
@@ -135,17 +138,14 @@ if the hermetic nuspec has no `Xake` dependency or names `Xake.Dotnet` (docs/dev
 
 `samples/*.fsx` reference `out/netstandard2.0/*.dll`, so run the self-hosting build first.
 
-## Trap: `build.fsc.fsx` needs a staged `.bootstrap/`
+## The fsc build (`build.fsc.fsx`)
 
-The fsc-based build (`build.fsc.fsx`, repo root) compiles all three libraries with the `fsc`
-task and loads Xake itself from `.bootstrap/` (gitignored), not from `out/`: it overwrites
-`out/`, and overwriting the assemblies fsi has loaded kills the run with a
-`BadImageFormatException`. Stage all three assemblies from a `build.fsx` build, keeping any
-`FSharp.Core.dll` already there, and re-stage whenever the libraries change:
+The fsc-based build (repo root) compiles all three libraries with the `fsc` task, running on
+the published `Xake` and `Xake.Hermetic.Dotnet` (see above). It must not load Xake from `out/`:
+it overwrites `out/`, and overwriting the assemblies fsi has loaded kills the run with a
+`BadImageFormatException` -- so a dev `#r` points at a copy (docs/devprocess.md).
 
 ```bash
-dotnet fsi build.fsx -- -- build
-mkdir -p .bootstrap && cp out/netstandard2.0/*.dll .bootstrap/
 dotnet fsi build.fsc.fsx -- -- build test
 ```
 

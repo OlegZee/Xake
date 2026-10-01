@@ -10,7 +10,7 @@ separate NuGet package that depends on `Xake` (the engine and the `csc`/`fsc`/`m
 tasks of `Xake.Dotnet`, Xake 3.4.0.21 or later, below 4.0); nothing in `Xake` knows about it.
 
 ```fsharp
-#r "nuget: Xake.Hermetic.Dotnet"
+#r "nuget: Xake.Hermetic.Dotnet, 0.1.0.22"
 
 open Xake
 open Xake.Dotnet

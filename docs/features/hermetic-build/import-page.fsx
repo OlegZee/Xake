@@ -12,9 +12,6 @@
 //     cd <page copy> && dotnet fsi <xake>/docs/features/hermetic-build/import-page.fsx -- -- locks
 //     dotnet fsi .../import-page.fsx -- -- build
 //
-// Xake comes from `.bootstrap/` next to the Xake checkout (see build.fsc.fsx), not from a
-// released package: this branch is not released.
-//
 // Cross-repo roots. `$(ProjectRoot)` (one of the three built-in roots: `Roots.builtin`, which
 // `Roots.current`/`currentWith` apply to the engine's `ExecOptions.ProjectRoot`) is the build's
 // project root -- the page copy. dataengine's paths, and the
@@ -28,7 +25,7 @@
 // `..`-targets. dataengine's own compile outputs sit outside `$(ProjectRoot)` (this script's
 // cwd), e.g. `../ar-net-core-dataengine/src/ExpressionInfo/obj/xake/netstandard2.0/MESCIUS/
 // ExpressionInfo.dll`. A `target` pattern spelled with a leading `..` used to not match (engine
-// gap, now fixed in `.bootstrap/Xake.dll`: rule matching resolves the literal `..` in the
+// gap, now fixed in the engine: rule matching resolves the literal `..` in the
 // pattern the same way `File.make` resolves it away from the target's normalized absolute
 // path, so the two compare equal). The rule below is now a single relative pattern,
 // `../ar-net-core-dataengine/src/(proj:*)/obj/xake/(fwk:*)/(brand:*)/(name:*).dll`, matching
@@ -38,9 +35,8 @@
 // `Path.Combine`, which leaves an absolute argument alone), so every `need` call in this script
 // keeps passing dataengine's outputs as absolute paths (as expanded from the lock via
 // `$(DataEngineRoot)`), unchanged.
-#r "../../../.bootstrap/Xake.dll"
-#r "../../../.bootstrap/Xake.Dotnet.dll"
-#r "../../../.bootstrap/Xake.Hermetic.Dotnet.dll"
+#r "nuget: Xake, 3.4.0.21"
+#r "nuget: Xake.Hermetic.Dotnet, 0.1.0.22"
 
 open System.IO
 open Xake

@@ -13,12 +13,8 @@
 // `Frameworks: string list`, restores each project once (no `TargetFramework`) and runs a
 // design-time build per framework against that restore. Each `Lock.Entry` carries its own
 // `Framework`, so the lookup is `Lock.entryFor framework name lock`.
-//
-// Xake comes from `.bootstrap/` next to the Xake checkout (see build.fsc.fsx), not from a
-// released package: this branch is not released.
-#r "../../../.bootstrap/Xake.dll"
-#r "../../../.bootstrap/Xake.Dotnet.dll"
-#r "../../../.bootstrap/Xake.Hermetic.Dotnet.dll"
+#r "nuget: Xake, 3.4.0.21"
+#r "nuget: Xake.Hermetic.Dotnet, 0.1.0.22"
 
 open System.IO
 open Xake

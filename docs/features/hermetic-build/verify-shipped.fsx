@@ -1,8 +1,7 @@
 // Compares two PE assemblies (shipped nupkg dll vs local tag build) with the Verify module.
 // Usage: dotnet fsi verify-shipped.fsx -- <pathA> <pathB>
-#r "../../../.bootstrap/Xake.dll"
-#r "../../../.bootstrap/Xake.Dotnet.dll"
-#r "../../../.bootstrap/Xake.Hermetic.Dotnet.dll"
+#r "nuget: Xake, 3.4.0.21"
+#r "nuget: Xake.Hermetic.Dotnet, 0.1.0.22"
 
 open Xake.Dotnet
 open Xake.Hermetic.Dotnet

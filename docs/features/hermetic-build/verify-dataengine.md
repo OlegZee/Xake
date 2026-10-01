@@ -18,8 +18,7 @@ netstandard2.0 only; net472 was first verified in the 4-lock run this file used 
 
 ```bash
 cd <xake checkout>
-dotnet fsi build.fsx -- -- build && mkdir -p .bootstrap && cp out/netstandard2.0/*.dll .bootstrap/
-docs/features/hermetic-build/verify-dataengine.sh
+docs/features/hermetic-build/verify-dataengine.sh   # the scripts restore Xake 3.4.0.21 / Xake.Hermetic.Dotnet 0.1.0.22 from nuget.org
 ```
 
 That is the whole scenario: it makes its own fixture from
@@ -49,8 +48,7 @@ where `X=<xake checkout>/docs/features/hermetic-build/verify-dataengine.fsx`.
 
 ```bash
 cd <xake checkout>
-dotnet fsi build.fsx -- -- build            # this branch is unreleased: stage it
-mkdir -p .bootstrap && cp out/netstandard2.0/*.dll .bootstrap/
+# nothing to stage since 2026-10-01: the scripts restore the published packages from nuget.org
 ```
 
 The fixture is a `git archive origin/develop` copy — the working checkout is never touched, and
@@ -391,3 +389,7 @@ The whole machine reads faster this run than in §4 (msbuild's own clean build i
 is the measurement that counts: the compiler server takes ~25 % off the wall clock of a
 12-assembly build and ~1/3 off the engine time, and the per-assembly gap to msbuild that §4
 blamed on the missing `/shared` is now closed — both talk to the same warm `VBCSCompiler`.
+
+## 10. 2026-10-01: on the published packages
+
+`verify-dataengine.sh` re-run with the scripts restoring `Xake 3.4.0.21` and `Xake.Hermetic.Dotnet 0.1.0.22` from nuget.org (`#r "nuget: ..."`, no `.bootstrap/` staging, run straight from the checkout), fixture `origin/develop` `2db7eac`, host SDK 10.0.401. Result: byte-identical vs `dotnet build` 36/36, deterministic across runs 36/36, deterministic SBOMs 12/12, identical from a fresh package folder 36/36. Cold lock import 10.6 s, cold build 4.2 s, no-op build 0.9 s, SBOM 0.8 s on this machine.

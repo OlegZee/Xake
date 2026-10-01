@@ -159,3 +159,12 @@ to that rule rather than the deliverable. Items are ordered by what they unblock
 - [x] **Fsproj.evaluate: restore in its own msbuild call** (2026-09-30) -- `-t:Restore` runs as a separate `dotnet msbuild` call, the item query has no `-restore`; `repairEvaluation` removed from `build.fsc.fsx`, `projects/*.json` byte-identical to HEAD; test `evaluates a project with two project references against the project directory` (hermetic.tests 118).
 
 - [x] `publish.yml` `hermetic-v*` branch exports `VERSION=3.4.0` so the packed hermetic dll references Xake 3.4.0.0 (was 0.0.1.0).
+- [x] **Review stack merged** (2026-10-01): #17–#25 into `dev` (merge commits); `v3.4.0` → `Xake 3.4.0.21`, `hermetic-v0.1.0` → `Xake.Hermetic.Dotnet 0.1.0.22` on nuget.org
+- [ ] **E8**: `build.fsc.fsx` and the feature fsx scripts on the published packages, `.bootstrap/` retired (PR in flight; feature scripts on this branch)
+- [ ] **B6**: `Fsc` record through the shared runner core; then retire `Fsproj` into `Project.import`
+- [ ] **SBOM**: the six questions in `docs/hermetic/nuget-sbom.md` (user); default prefixes `DS.`/`MESCIUS.`/`GrapeCity.` out of the source into `PackageScopeOptions`
+- [ ] **`sign {}` shadows FSharp.Core `sign`** when `Xake.Hermetic.Dotnet` is open: rename the builder while 0.x?
+- [ ] **`csc` without `targetfwk`**: the error now suggests netstandard2.0; a .NET (net8.0) target in composed mode is still unsupported (only through `Project.import`)
+- [ ] **`Lock.build` one-call for imported locks** (plan §3 "fsx wiring as one call") not built; scripts use `Lock.load` + `Lock.compile`
+- [ ] **`StrongName.signFile` does not recompute the PE CheckSum**
+

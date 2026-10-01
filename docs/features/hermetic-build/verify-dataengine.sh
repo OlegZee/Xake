@@ -13,9 +13,7 @@
 # Defaults: work dir /tmp/xake-verify-de, source repo ~/Projects-work/ar/ar-net-core-dataengine
 # (a `git archive origin/develop` copy is made -- the source checkout is never touched).
 # Needs: .NET SDK 8 (dataengine pins 8.0.100 rollForward:latestFeature), network for the first
-# restore, and Xake staged in `.bootstrap/` next to this checkout (see build.fsc.fsx):
-#
-#   cd <xake> && dotnet fsi build.fsx -- -- build && mkdir -p .bootstrap && cp out/netstandard2.0/*.dll .bootstrap/
+# restore (Xake and Xake.Hermetic.Dotnet are restored from nuget.org by the scripts, `#r "nuget: ..."`).
 #
 # Everything it prints is a measurement of this machine; the numbers recorded in
 # verify-dataengine.md are from one run of this script, not a promise.
@@ -44,11 +42,6 @@ phase () {
     printf '%-46s %6.2fs  (exit %d, log %s)\n' "$label" "$(python3 -c "print($t1-$t0)")" "$rc" "$(basename "$log")"
     return $rc
 }
-
-if [ ! -f "$XAKE/.bootstrap/Xake.Dotnet.dll" ]; then
-    echo "no $XAKE/.bootstrap/Xake.Dotnet.dll -- stage it first (see the header of this script)" >&2
-    exit 1
-fi
 
 say "0. fixture: $SRC origin/develop -> $DE"
 rm -rf "$DE" "$SAVED" && mkdir -p "$DE"

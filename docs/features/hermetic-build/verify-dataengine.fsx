@@ -28,14 +28,8 @@
 // each entry carries its own `Framework` -- `Lock.entryFor framework name lock` is the lookup.
 // Importing the two brands concurrently is safe; `-t 1` is no longer needed.
 //
-// Xake comes from `.bootstrap/` next to the Xake checkout (see build.fsc.fsx), not from a
-// released package: this branch is not released. Stage it first:
-//
-//     cd <xake> && dotnet fsi build.fsx -- -- build && mkdir -p .bootstrap && cp out/netstandard2.0/*.dll .bootstrap/
-//
-#r "../../../.bootstrap/Xake.dll"
-#r "../../../.bootstrap/Xake.Dotnet.dll"
-#r "../../../.bootstrap/Xake.Hermetic.Dotnet.dll"
+#r "nuget: Xake, 3.4.0.21"
+#r "nuget: Xake.Hermetic.Dotnet, 0.1.0.22"
 
 open System.IO
 open Xake

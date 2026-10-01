@@ -956,3 +956,13 @@ local feed (`out/pkg`) in a `nuget.config` can stand in for nuget.org.
 **Exact next step**: the user reviews/merges #20 and tags `v3.4.0`; then push the prepared
 PackageReference rework to `pr/hermetic-a-lock`, rebase #22–#25, and bump `build.fsx` to
 `#r "nuget: Xake, 3.4.0"`.
+
+## 2026-10-01 — released
+
+Both packages are public: `Xake 3.4.0.21` and `Xake.Hermetic.Dotnet 0.1.0.22` (publish appends the
+run number; dependency ranges and `#r` lines use the exact published version to avoid NU1603).
+All nine PRs are merged into `dev` with merge commits; `dev` is merged back here (4607e38).
+`src/hermetic` depends on the published `Xake` package (`[3.4.0.21, 4.0)`), never on `src/dotnet`.
+**In flight**: E8 as a PR to `dev` (`build.fsc.fsx` on the packages, `.bootstrap/` retired) and the
+feature fsx scripts here. **Then**: the backlog in the tracker; B6 is the big one, the SBOM
+questions need the user.

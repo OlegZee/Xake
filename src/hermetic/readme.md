@@ -13,8 +13,8 @@ the release steps after the compile. It is a
 ## Usage
 
 ```fsharp
-#r "nuget: Xake"
-#r "nuget: Xake.Hermetic.Dotnet"
+#r "nuget: Xake, 3.4.0.21"
+#r "nuget: Xake.Hermetic.Dotnet, 0.1.0.22"
 
 open Xake
 open Xake.Dotnet

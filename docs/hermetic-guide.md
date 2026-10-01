@@ -24,17 +24,18 @@ The package depends on `Xake` 3.4.0.21 or later, below 4.0 (3.4.0 as published o
 open three namespaces:
 
 ```fsharp
-#r "nuget: Xake.Hermetic.Dotnet, 0.1.0"
+#r "nuget: Xake.Hermetic.Dotnet, 0.1.0.22"
 
 open Xake
 open Xake.Dotnet
 open Xake.Hermetic.Dotnet
 ```
 
-**(untested)**: `Xake` 3.4.0 is on nuget.org (as `3.4.0.21`), `Xake.Hermetic.Dotnet` 0.1.0 is
-not yet at the time of writing. The package brings `Xake` in as a dependency; add
-`#r "nuget: Xake, 3.4.0.21"` if you want to pin the base too (the published version carries the
-release run number as a fourth component, so `3.4.0` alone does not exist).
+Both are on nuget.org: `Xake` 3.4.0 as `3.4.0.21`, `Xake.Hermetic.Dotnet` 0.1.0 as `0.1.0.22`
+(the published version carries the release run number as a fourth component, so `0.1.0` or
+`3.4.0` alone does not exist and resolves to the next version up). The package brings `Xake` in
+as a dependency; add `#r "nuget: Xake, 3.4.0.21"` if you want to pin the base too. Both forms
+were run from nuget.org with the hello-world lock of section 2 below.
 
 Two things change when you open `Xake.Hermetic.Dotnet`:
 

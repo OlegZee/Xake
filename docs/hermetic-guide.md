@@ -20,7 +20,7 @@ loaded with `#r` on the dll files instead of the NuGet package.
 
 ## 1. Install
 
-The package depends on `Xake` 3.4 or later, below 4.0. Reference it from your build script and
+The package depends on `Xake` 3.4.0.21 or later, below 4.0 (3.4.0 as published on nuget.org). Reference it from your build script and
 open three namespaces:
 
 ```fsharp
@@ -31,8 +31,10 @@ open Xake.Dotnet
 open Xake.Hermetic.Dotnet
 ```
 
-**(untested)**: neither 3.4.0 nor 0.1.0 is on nuget.org at the time of writing. The package
-brings `Xake` in as a dependency; add `#r "nuget: Xake, 3.4.0"` if you want to pin the base too.
+**(untested)**: `Xake` 3.4.0 is on nuget.org (as `3.4.0.21`), `Xake.Hermetic.Dotnet` 0.1.0 is
+not yet at the time of writing. The package brings `Xake` in as a dependency; add
+`#r "nuget: Xake, 3.4.0.21"` if you want to pin the base too (the published version carries the
+release run number as a fourth component, so `3.4.0` alone does not exist).
 
 Two things change when you open `Xake.Hermetic.Dotnet`:
 

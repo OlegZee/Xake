@@ -28,6 +28,7 @@ open Xake.Hermetic.Dotnet
 | Pack | deterministic zip and `.nupkg` (sorted entries, fixed timestamps, content-derived ids) | [pack.md](pack.md) |
 | StrongName | PE timestamp and checksum normalisation, strong-name (re-)signing without `sn.exe` | [strongname.md](strongname.md) |
 | Sign | Authenticode and NuGet signing as a delegated rule with a pluggable signer | [signing.md](signing.md) |
+| Workflows | developer, teammate, CI (GitHub Actions, GitLab CI), release and offline flows end to end; what to commit; how a missing lock fails CI | [workflows.md](workflows.md) |
 
 The compilation itself, `csc {}`, `Csc.ofSettings` and the runner `Csc.run`, stay in `Xake.Dotnet`:
 [../csc-syntax.md](../csc-syntax.md), [../tasks.md](../tasks.md).

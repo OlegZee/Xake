@@ -349,6 +349,65 @@ let greet name = sprintf "Hello, %s" name
         Assert.That(resolved.Value, Does.EndWith "csc.dll")
         Assert.That(Path.GetDirectoryName resolved.Value, Is.EqualTo (Path.GetDirectoryName probed))
 
+    // netstandard2.0's reference assemblies come from the NETStandard.Library package at the
+    // exact version DotNetFwk pins (no "newest in the cache"), fetched through the restore
+    // mechanism (`restorePackage`) when absent, and end up in the resolved compilation as
+    // ordinary references under the package folder.
+    [<Test; Category("Integration")>]
+    member x.``composed netstandard2.0 references NETStandard.Library at the pinned version``() =
+
+        let version = DotNetFwk.defaultReferencePackVersions.NetStandardLibrary
+        Assert.That(DotNetFwk.referencePackage DotNetFwk.defaultReferencePackVersions "netstandard2.0",
+                    Is.EqualTo (Some ("NETStandard.Library", version)))
+        Assert.That(DotNetFwk.referencePackage DotNetFwk.defaultReferencePackVersions "netstandard2.1", Is.EqualTo None)
+        Assert.That(DotNetFwk.referencePackage DotNetFwk.defaultReferencePackVersions "net-4.6.2",
+                    Is.EqualTo (Some ("Microsoft.NETFramework.ReferenceAssemblies.net462", DotNetFwk.defaultReferencePackVersions.ReferenceAssemblies)))
+
+        File.WriteAllText ("refpack.cs", "public class C {}")
+        let resolved = ref None
+        do xake {x.TestOptions with FileLog="refpack.log"; ThrowOnError = true} {
+            wantOverride (["refpack"])
+            rules [
+                "refpack" => recipe {
+                    let! c = Csc.ofSettings { CscSettingsType.Default with
+                                                Src = !!"refpack.cs"
+                                                Out = File.make "refpack.dll"
+                                                TargetFramework = "netstandard2.0" }
+                    resolved.Value <- Some c
+                }
+            ]
+        }
+        let c = resolved.Value |> Option.get
+        let norm (p: string) = p.Replace('\\', '/')
+        let refDir = norm (DotNetFwk.nugetRoot () </> "netstandard.library" </> version </> "build" </> "netstandard2.0" </> "ref")
+        let refs = c.Dependencies.References |> List.map (fun r -> norm r.Path)
+        Assert.That(refs, Does.Contain (refDir + "/mscorlib.dll"))
+        Assert.That(c.Args, Does.Contain ("/reference:" + DotNetFwk.nugetRoot () </> "netstandard.library" </> version </> "build" </> "netstandard2.0" </> "ref" </> "mscorlib.dll"))
+
+    // A reference-pack version that does not exist fails the build, naming the package and
+    // the version, instead of being swallowed.
+    [<Test; Category("Integration")>]
+    member x.``a reference pack that cannot be restored fails the build naming it``() =
+
+        File.WriteAllText ("refpackbad.cs", "public class C {}")
+        let ex =
+            Assert.Catch(fun () ->
+                do xake {x.TestOptions with FileLog="refpackbad.log"; ThrowOnError = true
+                                            Vars = ["NETSTANDARD_LIBRARY_VERSION", "0.0.1-xake-missing"]} {
+                    wantOverride (["refpackbad"])
+                    rules [
+                        "refpackbad" => recipe {
+                            let! _ = Csc.ofSettings { CscSettingsType.Default with
+                                                        Src = !!"refpackbad.cs"
+                                                        Out = File.make "refpackbad.dll"
+                                                        TargetFramework = "netstandard2.0" }
+                            ()
+                        }
+                    ]
+                })
+        let rec messages (e: exn) = if isNull e then "" else e.Message + "\n" + messages e.InnerException
+        Assert.That(messages ex, Does.Contain "NETStandard.Library 0.0.1-xake-missing")
+
     [<Test>]
     member __.``managedCompiler replaces only a csc launcher that has csc.dll beside it``() =
         let dir = Path.GetFullPath "managedcompiler"

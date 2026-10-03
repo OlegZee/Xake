@@ -416,45 +416,33 @@ the script variable `CSC_SERVER`.
 4. Build from the committed locks.
 5. Fail when the build changed or created a lock.
 
-### The missing lock: today's behaviour
+### The missing lock
 
-`Lock.buildWith` records a missing lock and compiles. On CI that build passes with exit code 0
-and a lock file that exists only on the runner **(run, with no `locks/` in a fresh copy)**.
-This is the opposite of what CI needs. The library has no switch for it yet (Gaps, item 1).
-Three things work today:
+Under CI a missing lock fails the build, before anything is recorded or compiled
+(`Lock.buildWith`, hence `Lock.build` and `csc { lock }`; [lock.md](lock.md#what-happens-step-by-step)):
+
+```
+'app': the lock 'locks/app.json' is not there. Under CI a lock is never recorded: record it
+on a developer machine (build once, or run the target that calls Lock.record
+"locks/app.json", e.g. update-locks) and commit it.
+```
+
+"Under CI" is `Lock.underCi`: the script variable `CI` when set (`-d CI=on|off`), otherwise the
+environment variable `CI`, which GitHub Actions, GitLab CI and Azure Pipelines set. Nothing to
+configure on the runner; `-d CI=off` opts out (records as a developer machine would), and
+`nofailonerror` does not soften it. Off CI a missing lock is still recorded and compiled.
+
+Two more guards stay useful as extra safety:
 
 | Guard | Covers | Cost |
 |---|---|---|
-| run `check-locks` before `build` | composed locks (`Lock.verify` reads the lock; missing gives `Neither rule nor file is found for '<path>'`, exit 2) and imported ones | composed: free; imported: an msbuild import |
+| run `check-locks` before `build` | composed locks (`Lock.verify` fails on a missing lock naming it and `Lock.record`) and imported ones | composed: free; imported: an msbuild import |
 | the import as `update-locks`, not as a file rule (B) | imported locks: a missing lock fails `build` itself | none |
-| a script guard before `Lock.build` (below) | composed locks inside `build` | none |
-| `git status --porcelain locks/` after the build | anything that wrote a lock | none; a safety net |
+| `git status --porcelain locks/` after the build | anything that wrote a lock (e.g. a run with `-d CI=off`) | none; a safety net |
 
 Command-line targets run one after another, and a failure stops the rest, so
 `dotnet fsi build.fsx -- -- check-locks build` never reaches `build` when the lock is missing
 **(run)**. (Targets joined with `;` in one argument run in parallel; do not join these two.)
-
-The script guard **(run)**; both GitHub Actions and GitLab CI set `CI`:
-
-```fsharp
-/// CI never records a lock: a missing one is an error there
-let requireLock (path: string) = recipe {
-    let! options = getCtxOptions ()
-    let onCi = not (System.String.IsNullOrEmpty (System.Environment.GetEnvironmentVariable "CI"))
-    if onCi && not (System.IO.File.Exists (System.IO.Path.Combine (options.ProjectRoot, path))) then
-        failwithf "%s is missing: record it on a developer machine (build or update-locks) and commit it" path
-}
-
-"out/app.dll" ..> recipe {
-    do! requireLock "locks/app.json"
-    let! c = app
-    do! Lock.build "locks/app.json" c
-}
-```
-
-With `CI=true` and no lock: `locks/app.json is missing: record it on a developer machine
-(build or update-locks) and commit it`, exit 2, nothing written. Without `CI` the lock is
-recorded as before.
 
 ### Drift on CI
 
@@ -679,15 +667,11 @@ More messages: [../hermetic-guide.md](../hermetic-guide.md#12-troubleshooting).
 
 What the product does not do yet, with the smallest change that would close each.
 
-1. *(in progress, PRs open)* **A missing lock is recorded on CI.** `Lock.buildWith` records any missing lock, so a CI
-   build with no committed lock passes and leaves an uncommitted lock on the runner. Today:
-   `check-locks` first, the `requireLock` guard, or the `git status` step (D). Smallest fix:
-   in `Lock.buildWith`, before `recordEntry`, fail when recording is not allowed, with a message
-   naming the lock and "record it on a developer machine and commit it". The switch could be a
-   field (`Lock.Options.RecordMissing: bool`, default `true`) plus a default of `false` when
-   the environment variable `CI` is set, so `csc { lock }`, which always uses the default
-   options, is covered too. Note: `lock.md` records the 2026-09-24 decision "no engine mode, no
-   global variable" for *updating* a lock; the CI default is a policy choice for the owner.
+1. *(done)* **A missing lock is recorded on CI.** Under CI (`Lock.underCi`: the script variable
+   `CI`, else the environment variable `CI`) `Lock.buildWith` -- and so `Lock.build` and
+   `csc { lock }` -- fails on a missing lock naming it and "record it on a developer machine
+   and commit it"; `-d CI=off` opts out (D). `check-locks` and the `git status` step remain as
+   extra safety.
 2. *(in progress, PRs open)* **The import-as-file-rule pattern re-imports on every fresh clone** and overwrites the
    committed lock (B). The guide and `import.fsx` present it as the way to wire an import.
    Smallest fix: document the `update-locks` pattern as the default for committed locks; later,
@@ -699,10 +683,9 @@ What the product does not do yet, with the smallest change that would close each
    an imported lock needs a loop over `Lock.compile`, and with project references the
    per-output rule with `mapPaths` (B). Smallest fix: a `Lock.compileAll` that orders entries
    by project reference and maps references to the other entries' `/out:`.
-5. **`csc { lock }` cannot take `Restore.Options`.** It always uses `Lock.Options.Default`, so
-   no own package folder (other than through `NUGET_PACKAGES`) and no way to forbid the
-   network. Smallest fix: a `packageroot`/`norestore` operation, or `Lock.buildWith` with
-   options from the settings.
+5. *(done)* **`csc { lock }` cannot take `Restore.Options`.** `packageroot "<dir>"` and
+   `norestore` after `lock` set the package folder and forbid the network
+   ([lock.md](lock.md#restore-options-packageroot-norestore)).
 6. **Composed reference assemblies are restored outside the restore mechanism.**
    `DotNetFwk`'s reference-assembly restore (`Microsoft.NETFramework.ReferenceAssemblies.*`,
    `NETStandard.Library`) runs from the temp directory with a `PackageReference`, ignores the

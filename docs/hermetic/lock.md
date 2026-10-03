@@ -35,19 +35,17 @@ open Xake.Hermetic.Dotnet
 | `Lock.rehash entry` | pure (reads disk) | fill every empty `Sha256` from what is on disk now |
 | `Lock.diff a b` | pure | the differences between two entries, `[]` = identical |
 | `Lock.diffText roots a b` | pure | `diff` with every path tokenized against `roots`, as `buildWith`/`verify` print it |
-| `Lock.recordMissing` / `recordMissingPolicy ci var` | recipe / pure | whether a missing lock may be recorded here (`LOCK_RECORD_MISSING`, then `CI`) |
+| `Lock.underCi` | recipe | whether this build runs under CI (script variable `CI`, then the environment variable `CI`); under CI `buildWith` fails on a missing lock ([The CI flag](#the-ci-flag)) |
 | `Lock.mapPaths f entry` / `mapText f entry` | pure | rewrite paths / text of an entry |
 | `Lock.packagesOf cacheRoot assets` | pure | the package graph of an entry from a `Nuget.Assets` |
 | `Lock.restoreRequest entries` / `Lock.restore options doc` | pure / recipe | what a restore must provide for entries; populate the package folder from a whole lock ([restore.md](restore.md)) |
 | `Lock.compile entry` / `compileWith Lock.Options entry` | recipe | replay an entry: restore, compiler check, revision token, then `Csc.run` |
-| `Lock.build path c` / `buildWith Lock.Options path c` | recipe | build a `Csc` gated by the lock at `path` |
+| `Lock.build path c` / `buildWith Lock.Options path c` | recipe | build a `Csc` gated by the lock at `path`; a missing lock is recorded, or fails under CI |
 | `Lock.record path c` | recipe | hash `c` and (over)write the lock at `path`, compile nothing |
 | `Lock.verify path c` | recipe | the diff between the lock at `path` and `c`, write and compile nothing; a missing lock fails |
 | `csc { ...; lock "path" }` | operation | `Lock.build` as an operation of a `csc {}` block; only `packageroot`/`norestore` may follow |
 
-`Lock.Options = { Run: RunOptions; Restore: Restore.Options; RecordMissing: bool }` with
-`Lock.Options.Default` (`RecordMissing` from the `CI` environment variable, see
-[A missing lock on CI](#a-missing-lock-on-ci)).
+`Lock.Options = { Run: RunOptions; Restore: Restore.Options }` with `Lock.Options.Default`.
 
 The two routes to a lock, and both end in the same functions:
 
@@ -117,8 +115,7 @@ compiles (`Server` is whether csc runs as a thin client of the Roslyn compiler s
 [../csc-server.md](../csc-server.md); `Environment` is the compiler process's env vars). `Csc.compile`
 builds one with `Csc.runOptions settings` (the settings' `FailOnError`/`CscPath`, the server
 resolved through `CompilerServer.resolve`, the target framework's `EnvVars`).
-`Lock.compileWith` takes a `Lock.Options = { Run: RunOptions; Restore: Restore.Options; RecordMissing: bool }`
-(`RecordMissing` is read by `buildWith` only);
+`Lock.compileWith` takes a `Lock.Options = { Run: RunOptions; Restore: Restore.Options }`;
 `Lock.compile` uses `Lock.Options.Default` with the server resolved (`CSC_SERVER`, then
 `XAKE_CSC_SERVER`). Signatures: `Csc.run : RunOptions -> Csc -> Recipe<ExecContext, unit>`,
 `Lock.compile : Lock.Entry -> Recipe<ExecContext, unit>`, `Lock.compileWith : Lock.Options ->
@@ -581,26 +578,27 @@ open Xake.Hermetic.Dotnet
 stays where it is and gains a lock. It is a custom operation defined next to the lock, not in the
 base builder (`CscLockBuilder` in `Lock.fs`, an extension of `CscSettingsBuilder` with its own
 `Run`). Only `packageroot` and `norestore` may follow it (below); the block then means
-`Csc.ofSettings`, `Csc.runOptions`, `Lock.recordMissing`, `Lock.buildWith`. The same thing without the sugar is `Lock.build "locks/app.json" c` on a `Csc`
-from `resolve`. The path is relative to the project root, like every other target path, or
-absolute. There is no `Lock` field on `CscSettingsType`.
+`Csc.ofSettings`, `Csc.runOptions`, `Lock.buildWith`. The same thing without the sugar is
+`Lock.build "locks/app.json" c` on a `Csc` from `resolve`. The path is relative to the project
+root, like every other target path, or absolute. There is no `Lock` field on `CscSettingsType`.
 
-**The semantics are strict, and an update is always explicit** (the user's decision,
-2026-09-24 -- no engine mode, no global variable, no "follow the settings and warn" default).
-`Csc.ofSettings` runs as it always does, so the settings remain the source of truth for *what* is
-compiled; the lock decides whether this is the compilation that was recorded:
+The settings remain the source of truth for *what* is compiled (`Csc.ofSettings` runs on every
+build); the lock decides whether this is the compilation that was recorded. An update is always
+explicit (the user's decision, 2026-09-24: no "follow the settings and warn" default).
 
-1. **No lock file yet** -- when recording is allowed (`RecordMissing`, the default off CI;
-   [A missing lock on CI](#a-missing-lock-on-ci)), `Lock.rehash` the resolved entry (`Lock.ofCsc c`), write it as a one-entry
-   `Lock.Document` (`Configuration` "", `Properties` []; the entry's own `Framework` is the
-   settings' `targetfwk`, else the `NETFX-TARGET` var, else "") with `Lock.save`, and compile *that* entry. The hashes `run` verifies were
-   taken a moment earlier, so the check is trivially true -- it is the next build it is for.
-2. **Lock present, and the resolved settings match it** (`Lock.diff recorded resolved` empty)
-   -- compile the **recorded** entry, not the resolved one. That is the whole point: the
-   recorded entry carries hashes, and `run`'s hash check (step 6 of `Csc.run`, [../csc-syntax.md](../csc-syntax.md)) then gates the build,
-   so a reference swapped on disk after recording fails even though the settings did not move.
-3. **Lock present and different** -- the build **fails**, printing the diff and naming the two
-   ways to update:
+### What happens, step by step
+
+On a developer machine:
+
+1. **The first build records the lock.** There is no lock file yet: the resolved compilation is
+   hashed, written to `locks/app.json` and compiled. Commit the lock with the change that
+   introduced it.
+2. **The next builds compile the lock.** The settings still match it, so the *recorded* entry is
+   compiled and the lock file is not touched. Its hashes gate the build: a reference swapped on
+   disk after recording fails the hash check, although the settings did not move.
+3. **Drift fails the build.** When the settings move away from the lock (a source added, an
+   option changed, another reference), the build fails with the differences and the two ways to
+   update:
 
    ```
    'app': the resolved compilation differs from the lock 'locks/app.json':
@@ -609,75 +607,74 @@ compiled; the lock decides whether this is the compilation that was recorded:
    Lock.record "locks/app.json".
    ```
 
-   The lines are `Lock.diffText`: every path tokenized with the roots the lock file is written
-   with (`Roots.current`, the same `$(ProjectRoot)`, `$(NuGetPackageRoot)`, `$(DotnetRoot)` as
-   `Lock.format`), so the message is the same on every machine and names no checkout.
-   `Lock.diff` itself keeps the expanded paths.
+   Run `update-locks` (or delete the lock and build), review the lock's diff, commit it. Paths in
+   the message carry the same tokens as the lock file (`$(ProjectRoot)`, `$(NuGetPackageRoot)`,
+   `$(DotnetRoot)`), so it reads the same on every machine.
 
-   `nofailonerror` (`FailOnError = false`) turns that failure into a warning and compiles from
-   the **resolved** entry -- the settings are the source of truth, and nothing is written.
+On CI:
+
+4. **The committed lock is compiled.** The settings match it; the packages it names are restored
+   (into `packageroot` when given, below) and the recorded entry is compiled, its hashes checked.
+5. **Drift fails the build**, with the same message as step 3: CI never updates a lock.
+6. **A missing lock fails the build**, before anything is recorded or compiled:
+
+   ```
+   'app': the lock 'locks/app.json' is not there. Under CI a lock is never recorded: record it
+   on a developer machine (build once, or run the target that calls Lock.record
+   "locks/app.json", e.g. update-locks) and commit it.
+   ```
+
+   Recording it on the runner would pass the build and leave a lock that exists only there.
+   `nofailonerror` (`FailOnError = false`) does not turn this into a warning -- it would be a way
+   for CI to pass without a lock.
+
+`nofailonerror` turns the drift failure (steps 3 and 5) into a warning and compiles the
+**resolved** entry: the settings are the source of truth, and nothing is written.
 
 The comparison is structural, not hash-based: the resolved side never hashes anything
 (hashing every reference on every compile would tax the common case), and both `diffHashed`
 and `diffCompiler` skip a hash that is empty on either side -- an empty hash means "not
 computed", not "zero bytes". So `Lock.diff recorded resolved` reports what the settings and the
-filesets say: sources, options, defines, reference/analyzer paths, the compiler path.
+filesets say: sources, options, defines, reference/analyzer paths, the compiler path. The
+printed lines are `Lock.diffText roots`, the same diff with every path tokenized against the
+roots the lock is written with; `Lock.diff` itself keeps the expanded paths.
 
 **Updating.**
 
 | Way | What it is |
 |---|---|
 | `dotnet fsi build.fsx -- -- update-locks` | the script's own phony target calling `Lock.record`; the normal way |
-| `rm locks/app.json` | a missing lock means "record it" -- the same rule as any missing target; off CI, or with `LOCK_RECORD_MISSING=on` |
+| `rm locks/app.json` | a missing lock is recorded on the next build -- not under CI (step 6) |
 
 `Lock.record : string -> Csc -> Recipe<ExecContext, unit>` rehashes and overwrites
 the lock, compiling nothing. `Lock.verify : string -> Csc -> Recipe<ExecContext, string list>`
-returns the same diff `lock` fails on (`Lock.diffText roots (Lock.entry name doc) (Lock.ofCsc c)`,
-tokenized paths; an empty list means the lock is current), writing nothing and compiling
-nothing -- scenario 3 of `lock-from-settings.md` as a stand-alone check, e.g. a `check-locks`
-target in CI. A lock that does not exist fails `verify` with a message naming the path and
-`Lock.record` (it used to fail with the engine's `Neither rule nor file is found`).
-`Lock.compile` remains the entry point for a lock that came from `Project.import`.
+returns the same diff `lock` fails on (tokenized paths; an empty list means the lock is
+current), writing nothing and compiling nothing -- scenario 3 of `lock-from-settings.md` as a
+stand-alone check, e.g. a `check-locks` target in CI. A lock that does not exist fails `verify`
+with a message naming the path and `Lock.record` (it used to fail with the engine's
+`Neither rule nor file is found`). `Lock.compile` remains the entry point for a lock that came
+from `Project.import`.
 
-### A missing lock on CI
+### The CI flag
 
-Recording a missing lock is right on a developer machine and wrong on CI: a CI build with no
-committed lock would pass and leave a lock that exists only on the runner. `Lock.Options` has
-a switch for it:
+Whether a build is under CI is decided once per build, by `Lock.underCi : Recipe<ExecContext,
+bool>`:
 
-- `RecordMissing = true` -- a missing lock is recorded and compiled (step 1 above).
-- `RecordMissing = false` -- a missing lock fails the build before anything is recorded or
-  compiled, naming the lock path and the way out: record it where recording is allowed (build
-  there, or run the target that calls `Lock.record`, e.g. `update-locks`) and commit it.
+| Source | Value |
+|---|---|
+| script variable `CI` (`-d CI=on`, `xakeScript { var "CI" "on" }`, `Vars`), when set | `on`/`true`/`yes`/`1`: CI; `off`/`false`/`no`/`0`: not CI (case-insensitive); anything else fails |
+| otherwise the environment variable `CI` (set by GitHub Actions, GitLab CI, Azure Pipelines and most others) | non-empty and not `0`/`false`: CI |
+| neither | not CI |
 
-```
-'app': the lock 'locks/app.json' does not exist, and recording a missing lock is off here
-(Lock.Options.RecordMissing: the CI environment variable is set, or LOCK_RECORD_MISSING=off).
-Record it where recording is allowed -- build there, or run the target that calls
-Lock.record "locks/app.json" (e.g. update-locks) -- and commit it; -d LOCK_RECORD_MISSING=on
-records it here.
-```
+Same convention as `NETFX` and `CSC_SERVER`: `-d CI=off` builds as a developer machine would
+(records a missing lock) even on a runner, `-d CI=on` rehearses the CI behaviour locally. Reading
+the flag (`getVar`, then `getEnv`) makes it a tracked dependency of the target, so flipping it
+reruns the target.
 
-Where the value comes from, highest first:
-
-| Source | Applies to | Value |
-|---|---|---|
-| the field, set by the caller | `Lock.buildWith options` | as given |
-| script variable `LOCK_RECORD_MISSING` (`-d LOCK_RECORD_MISSING=on`, or `Vars`) | `Lock.build`, `csc { lock }` | `on`/`true`/`yes`/`1` records, `off`/`false`/`no`/`0` refuses, anything else fails |
-| environment variable `CI` | `Lock.Options.Default`, hence also `Lock.build`, `csc { lock }` | non-empty and not `0`/`false` (GitHub Actions and GitLab CI set `CI=true`): refuses |
-| nothing set | all | records |
-
-`Lock.recordMissing` is the recipe `build` and the sugar use (script variable, then `CI`); a
-script calling `buildWith` with options of its own gets the same with
-`{ options with RecordMissing = recordMissing }` (bound with `let!`). `recordMissingPolicy ci
-var` is the pure rule.
-
-**Decision: this is a policy, on by default on CI, overridable.** It is about *recording* a
-lock that is not there, not about *updating* one that is: the 2026-09-24 decision above (no
-engine mode, no global variable, no "follow the settings and warn" default) is about updates
-and stands -- a present lock is only ever rewritten by `Lock.record` or by deleting it.
-`LOCK_RECORD_MISSING` cannot update anything; it only says whether an absent lock may be
-written.
+`Lock.buildWith` reads the flag itself, so `Lock.build`, `csc { lock }` and every script calling
+`buildWith` with options of its own get the CI behaviour; there is no option for it. A script
+that must record on CI opts out with `-d CI=off`. The flag only says whether an *absent* lock may
+be written; a present lock is only ever rewritten by `Lock.record` or by deleting it.
 
 ### Restore options: `packageroot`, `norestore`
 
@@ -707,10 +704,11 @@ settings, package root, restore flag), and these two are operations on that stat
 before `lock` would need fields on `CscSettingsType`, which knows nothing about restore.
 
 With a package root, `buildWith` compares and writes the lock with the build's ordinary roots
-(so the lock file and the drift check do not depend on the folder) and reads the entry it
-compiles against the folder (`Roots.packageRootOverride`): `$(NuGetPackageRoot)/...` then names
-files in `.packages/`, which the restore fills. The same holds for `Lock.buildWith` called with
-`Restore = { ... PackageRoot = Some dir }`.
+(so the lock file and the drift check do not depend on the folder) and re-roots the entry it
+compiles at the folder, in memory: the entry is written with the ordinary roots and read back
+with `Roots.packageRootOverride` (`Lock.format`, then `Lock.parse`), so `$(NuGetPackageRoot)/...`
+names files in `.packages/`, which the restore fills. The same holds for `Lock.buildWith` called
+with `Restore = { ... PackageRoot = Some dir }`.
 
 **The lock file is not a target of the engine on this path.** It is written from inside the
 compile recipe, which is what lets the `csc { }` block stay in place; the engine neither
@@ -724,15 +722,18 @@ read-modify-write the same file and is an authoring error, not something the lib
 the compile and `Lock.record`/`Lock.verify` -- define the block once as a recipe and use its
 result. (Path B of §9, a second builder `cscSettings { ... }`, is not needed any more.)
 
-Tests: `src/hermetic.tests/CscLockTests.fs` (14; 13 Integration) -- first build records and compiles, second
-build leaves the lock byte-identical, an added source fails with the diff, `Lock.record`
+Tests: `src/hermetic.tests/CscLockTests.fs` (18, all Integration) -- first build records and compiles,
+second build leaves the lock byte-identical, an added source fails with the diff, `Lock.record`
 overwrites and the next build passes, a reference tampered after recording fails the hash check,
-and `Lock.verify` reports the difference without writing or compiling; the record-missing
-policy (pure), `CI=true` fails a missing lock naming it, `CI=true` with `LOCK_RECORD_MISSING=on`
-records, no `CI` records and `LOCK_RECORD_MISSING=off` refuses (sugar); drift messages and
-`verify` lines carry `$(ProjectRoot)`, not the absolute root; `verify` on a missing lock;
-`norestore` with an empty package folder fails before compiling; `packageroot` restores into a
-throwaway folder and compiles.
+and `Lock.verify` reports the difference without writing or compiling; under CI (script
+variable) a missing lock fails with the message above and nothing is recorded or compiled,
+`FailOnError = false` does not help, the environment variable `CI=true` fails it through
+`csc { lock }`, `-d CI=off` with `CI=true` in the environment records, not under CI records,
+drift under CI fails as before, an unrecognized `CI` value fails; drift messages and `verify`
+lines carry `$(ProjectRoot)`, not the absolute root; `verify` on a missing lock; `norestore`
+with an empty package folder fails before compiling; `packageroot` restores into a throwaway
+folder and compiles. The tests that record set the script variable `CI=off`, so the suite also
+passes with `CI=true` in the environment.
 
 ## Behaviour notes
 

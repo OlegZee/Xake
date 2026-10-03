@@ -166,6 +166,16 @@ module Nuget =
 
     let private text (el: XmlElement option) = el |> Option.map (fun e -> e.InnerText.Trim ()) |> Option.defaultValue ""
 
+    /// The nupkg's base64 sha512 as NuGet recorded it in the package directory's
+    /// `.nupkg.metadata` (`contentHash`): `None` when that file does not exist (a cache written
+    /// by an old NuGet, or a folder filled by hand), `Some ""` when it exists without a
+    /// `contentHash`. One small file read, nothing else (the nuspec is not touched).
+    let readContentHash (cacheRoot: string) (id: string) (version: string) : string option =
+        let metadataFile = cacheRoot </> id.ToLowerInvariant () </> version.ToLowerInvariant () </> ".nupkg.metadata"
+        if not (File.Exists metadataFile) then None else
+        File.ReadAllText metadataFile |> Json.parse
+        |> Json.field "contentHash" |> Option.bind Json.asString |> Option.defaultValue "" |> Some
+
     /// Reads one package's identity, license and provenance from the cache. Never throws: a
     /// missing package directory yields `Directory = ""` and every other field empty -- the
     /// caller decides whether that is fatal. A missing `.nupkg.metadata` or nuspec inside an

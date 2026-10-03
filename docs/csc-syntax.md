@@ -82,6 +82,43 @@ edit reruns the compile, not `resolve`. Non-resx resources are unaffected -- the
 the file the compiler reads and stay a plain `/res:` file input. `resolve` no longer produces any
 temp files of its own; the only temp file `run` still cleans up is its own response file.
 
+### Composed-mode reference assemblies
+
+`targetfwk` (or `NETFX-TARGET`) decides where the framework's reference assemblies come from.
+`mscorlib.dll` and every `grefs` name are looked up there and become ordinary `/reference:`
+entries of the resolved `Csc` (`Dependencies.References`), hashed and locked like any other
+reference.
+
+| `targetfwk` | Reference assemblies | Version |
+|---|---|---|
+| `netstandard2.0` | `NETStandard.Library/<v>/build/netstandard2.0/ref` in the package folder | `2.0.3`, or the script variable `NETSTANDARD_LIBRARY_VERSION` |
+| `netstandard2.1` | the SDK's `packs/NETStandard.Library.Ref/*/ref/netstandard2.1` | comes with the SDK; not restored |
+| `net-4.6.2`, `net472`, ... (SDK provider) | `Microsoft.NETFramework.ReferenceAssemblies.<moniker>/<v>/build/.NETFramework/v4.x` (and its `Facades`) | `1.0.3`, or the script variable `NETFX_REFERENCE_ASSEMBLIES_VERSION` |
+
+- The version is exact. A different version that happens to be in the cache is not used.
+  The defaults are constants in `DotNetFwk` (`defaultReferencePackVersions`): 2.0.3 is the
+  last `NETStandard.Library` 2.0 release and 1.0.3 the last
+  `Microsoft.NETFramework.ReferenceAssemblies` release, so a cache that already had the newest
+  version resolves the same paths as before. Both variables are read through `getVar`, so
+  changing one reruns the compile.
+- When the package is not in the folder, `DotNetFwk.resolveFramework` fetches it with
+  `DotNetFwk.restorePackage`, the same mechanism `toolset` uses: one synthesized
+  `PackageDownload` project under `<ProjectRoot>/obj/xake/restore/<n>/`, so the repository's
+  `nuget.config` and private feeds apply. The folder is `NUGET_PACKAGES`, else
+  `~/.nuget/packages`.
+- A failed download fails the build with
+  `restoring 1 package(s) into '<folder>' failed with exit code 1 (see '<project>'): NETStandard.Library 2.0.3`.
+  A package that downloads but has no reference assemblies where they are expected fails
+  with a message naming the package and version.
+- `DotNetFwk.locateFramework` (no build context, no script variables) uses the default
+  versions and restores the same way, from a synthesized project under the directory it was
+  given (the current directory for `locateFramework`).
+- On Windows a .NET Framework found through the registry still wins over the package, and
+  the package is fetched only when the SDK provider is the one consulted.
+- In a lock the references read
+  `$(NuGetPackageRoot)/netstandard.library/2.0.3/build/netstandard2.0/ref/...`. The path is
+  the same as before this change, as long as the cache held the default versions.
+
 ## Compiler sources
 
 ### Composed mode: three sources, first match wins
@@ -90,7 +127,7 @@ temp files of its own; the only temp file `run` still cleans up is its own respo
 |---|---|---|
 | `cscpath "<exe>"` | that executable | no framework or package lookup at all |
 | `toolset "<version>"` | `csc.dll` from `microsoft.net.compilers.toolset/<version>/tasks/netcore/bincore` in the NuGet cache | the package is fetched into the machine's NuGet cache if missing (`DotNetFwk.restorePackage`); still missing afterwards fails the build |
-| neither | whatever `targetfwk` / `NETFX-TARGET` resolves through `DotNetFwk.locateFramework` | the SDK's `csc.dll`, or `csc.exe` / `mcs` on a framework that ships one |
+| neither | whatever `targetfwk` / `NETFX-TARGET` resolves through `DotNetFwk.resolveFramework` | the SDK's `csc.dll`, or `csc.exe` / `mcs` on a framework that ships one |
 
 - `toolset` replaces only the compiler. References, defines and environment variables still
   come from the targeted framework.

@@ -86,18 +86,23 @@ Windows registry is consulted.
   `ProjectRoot`. `DotNetFwk.locateFramework`, which has no build context, probes from the
   current directory.
 - **Reference assemblies** come from the `Microsoft.NETFramework.ReferenceAssemblies.<moniker>`
-  NuGet package, version `1.0.3`, read straight out of the package cache
+  NuGet package at an exact version, `1.0.3` unless the script variable
+  `NETFX_REFERENCE_ASSEMBLIES_VERSION` says otherwise, read out of the package cache
   (`NUGET_PACKAGES`, or `~/.nuget/packages`) at
   `<pkg>/<version>/build/.NETFramework/<version>`. `AssemblyDirs` is that directory plus its
-  `Facades` subdirectory.
-- **First-run restore**: when the package is not in the cache, a throwaway
-  `refasm.csproj` is written to the temp directory and `dotnet restore` is run on it, then the
-  lookup is retried. A clean machine therefore needs no preparation, but the first
-  full-framework compile requires network access.
+  `Facades` subdirectory. Another version present in the cache is not used.
+- **First-run restore**: when the package is not in the cache, the tasks
+  (`DotNetFwk.resolveFramework`) fetch it with `DotNetFwk.restorePackage`: one synthesized
+  `PackageDownload` project under `<ProjectRoot>/obj/xake/restore/<n>/`, so the repository's
+  `nuget.config` applies. `locateFramework` without a build context does the same
+  synchronously from the directory it probes. A failed restore fails with a message naming the
+  package and version. A clean machine therefore needs no preparation, but the first
+  full-framework compile requires network access (or a feed).
 - **netstandard**, `netstandard2.0` and `netstandard2.1`, is resolved by the same provider but
-  against a different reference set: `<dotnet>/packs/NETStandard.Library.Ref/<ver>/ref/<moniker>`
-  when the SDK carries it (2.1 only, today), otherwise
-  `<pkg cache>/netstandard.library/2.0.3/build/<moniker>/ref`, restored the same way when
+  against a different reference set: 2.1 from `<dotnet>/packs/NETStandard.Library.Ref/<ver>/ref/netstandard2.1`
+  (it comes with the SDK), 2.0 from
+  `<pkg cache>/netstandard.library/<v>/build/netstandard2.0/ref`, `<v>` being `2.0.3` unless
+  the script variable `NETSTANDARD_LIBRARY_VERSION` says otherwise, restored the same way when
   missing. `netstandard.dll` alone carries the whole surface, so that single directory is the
   entire `AssemblyDirs`. The `fsc` task recognizes the profile and adds `--targetprofile:netstandard`
   and `-r:netstandard.dll` (instead of `mscorlib.dll`) on top of `--noframework`. `csc` has no

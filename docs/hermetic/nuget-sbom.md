@@ -280,7 +280,7 @@ supplier/license/hash of that package, what our assembly directly used), never w
 |---|---|
 | `metadata.component` (root) | the nupkg: `bom-ref = "nupkg:<file name>"`, `name`/`version`/`supplier`/`licenses`/`purl` from the nuspec inside it; property `xake:nuget:targetFramework`; **no hash of the nupkg** -- the document is packed *into* it at `Sbom.packageSbomPath tfm` = `sbom/<tfm>/bom.cdx.json`, so the nupkg bytes are not final when it is produced |
 | `metadata.component.components[]` (tier 1) | one per shipped file for the TFM: `lib/<tfm>/**` (satellites included), `runtimes/*/lib/<tfm>/**`, `runtimes/*/native/**`, `contentFiles/*/<tfm>\|any/**`, `analyzers/**`, `build*/[<tfm>/]**`, `tools/**`. `bom-ref = "<root ref>/<path>"`, property `xake:nuget:path`, SHA-256 **and** SHA-512 of the bytes in the zip. `.dll`/`.exe` are `library`, else `file`. A file whose SHA-256 equals an input BOM's root hash is one of ours: it takes that root's `name`/`version`. Not listed: `_rels/`, `[Content_Types].xml`, `package/`, the nuspec, `.signature.p7s`, `sbom/`, root-level icon/readme/license, `.xml` docs, `ref/`, any other TFM's folders |
-| `components[]` (tier 2) | the nuspec `<group>` for the TFM (`Nuget.nuspecDependenciesFor`: alias or `.NETStandard2.0`-style spelling, the ungrouped list as fallback, **never** the nearest-compatible group NuGet would pick): id verbatim, property `dt:nuget:declaredVersionRange` = the range as written, `version`/`purl` from the evidence BOMs' matching package (id, case-insensitive) -- `""`/`pkg:nuget/<id>` when nothing resolved it; supplier, license, package hash from that evidence too. Internal ids (`DS.*`, `MESCIUS.*`, `GrapeCity.*`) stay one line: version and purl, no enrichment. Tooling ids (`CycloneDX.*`, `Microsoft.SourceLink.*`, `Microsoft.NETFramework.ReferenceAssemblies*`) are dropped even if a nuspec lists them |
+| `components[]` (tier 2) | the nuspec `<group>` for the TFM (`Nuget.nuspecDependenciesFor`: alias or `.NETStandard2.0`-style spelling, the ungrouped list as fallback, **never** the nearest-compatible group NuGet would pick): id verbatim, property `dt:nuget:declaredVersionRange` = the range as written, `version`/`purl` from the evidence BOMs' matching package (id, case-insensitive) -- `""`/`pkg:nuget/<id>` when nothing resolved it; supplier, license, package hash from that evidence too. Internal ids (none by default; name your prefixes in `IsInternal`, for example `idPrefixes [ "DS."; "MESCIUS."; "GrapeCity." ]`) stay one line: version and purl, no enrichment. Tooling ids (`CycloneDX.*`, `Microsoft.SourceLink.*`, `Microsoft.NETFramework.ReferenceAssemblies*`) are dropped even if a nuspec lists them |
 | tier 3 | nothing. A package the restore graph carries but the nuspec does not declare -- transitive, SDK pack, analyzer -- does not appear anywhere |
 | `dependencies[]` | root -> its own shipped assemblies + every tier-2 component; each own assembly (matched by hash) -> the tier-2 components its restore-scope BOM had it depend on *directly*, matched by package id. No entry has a tier-2 ref |
 | `compositions[]` | `complete` / `assemblies: [root]`; `incomplete` / `dependencies: [root; own assemblies]` |
@@ -352,7 +352,9 @@ val Sbom.checkPackageScope : PackageScopeOptions -> nupkgPath: string -> framewo
 takes the options explicitly.
 The defaults are assembled from `Sbom.PackageScope`'s named predicates -- `plumbing`,
 `shippedFor`, `assembly`, `native`, `internalIds`, `toolingIds`, `idPrefixes [...]`,
-`boundaryText`, `timestamp` -- so an override usually *wraps* one rather than restating it:
+`boundaryText`, `timestamp` -- so an override usually *wraps* one rather than restating it.
+The default `IsInternal` matches no package id: no prefix is built in, so a supplier names its own
+(`idPrefixes [ "Acme." ]`) or every nuspec dependency is enriched from the restore evidence:
 
 ```fsharp
 open Xake.Dotnet
@@ -363,7 +365,7 @@ let acme =
         // props/targets are build glue for us, not shipped content
         IsPlumbing = fun path -> Sbom.PackageScope.plumbing path || path.EndsWith ".props"
         // our own id prefixes
-        IsInternal = Sbom.PackageScope.idPrefixes [ "DS."; "MESCIUS."; "GrapeCity."; "Acme." ]
+        IsInternal = Sbom.PackageScope.idPrefixes [ "Acme." ]
         // the vendored-code registry, once it exists: nupkg path -> what was merged into it
         Subcomponents = fun path -> Registry.mergedInto path
         RootProperties = [ { Name = "acme:brand"; Value = brand } ]

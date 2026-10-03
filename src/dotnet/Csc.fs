@@ -489,8 +489,8 @@ module Csc =
                 | _ -> null
             let! netfxVar = getVar "NETFX"
             let dotnetFwk = match netfxVar with | Some _ -> netfxVar | None -> Option.ofObj targetFramework
-            let! options = getCtxOptions()
-            return targetFramework, DotNetFwk.locateFrameworkIn options.ProjectRoot dotnetFwk
+            let! fwkInfo = DotNetFwk.resolveFramework dotnetFwk
+            return targetFramework, fwkInfo
         }
 
     /// The runner's options for composed settings: `FailOnError` and `CscPath` from the
@@ -571,14 +571,17 @@ module Csc =
             | Some warning -> do! trace Warning "%s" warning
             | None -> ()
 
-            let (globalRefPaths, nostdlib, noconfig) =
+            // the target framework's reference assemblies (for netstandard2.0 and .NET
+            // Framework a NuGet package at an exact version, fetched by `resolveFramework`)
+            // become ordinary `/reference:` entries
+            let! targetFwkInfo =
                 match targetFramework with
                 | null ->
                     failwithf "'%s': csc needs a target framework: set targetfwk in the csc block or the NETFX-TARGET script variable (e.g. targetfwk \"netstandard2.0\")" assemblyName
-                | tgt ->
-                    let fwk = Some tgt |> DotNetFwk.locateFrameworkIn options.ProjectRoot in
-                    let lookup = DotNetFwk.locateAssembly fwk
-                    (("mscorlib.dll" :: settings.RefGlobal) |> List.map lookup), true, true
+                | tgt -> DotNetFwk.resolveFramework (Some tgt)
+            let (globalRefPaths, nostdlib, noconfig) =
+                let lookup = DotNetFwk.locateAssembly targetFwkInfo
+                (("mscorlib.dll" :: settings.RefGlobal) |> List.map lookup), true, true
 
             let globalRefs = globalRefPaths |> List.map ((+) "/reference:")
 

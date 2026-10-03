@@ -378,7 +378,7 @@ Three ways to choose the folder:
 |---|---|---|
 | `NUGET_PACKAGES=<dir>` in the environment | everything: `dotnet fsi`'s own `#r "nuget:"`, `Lock.load`, every restore, `csc { lock }` | simplest; **(run)** |
 | `Restore.into ".packages"` + `Lock.loadWith (Roots.packageRootOverride ...)` + `Lock.compileWith` | imported locks compiled through `compileWith` | the folder is relative to the project root; must appear in both places |
-| `Restore.into` with `csc { lock }` | not possible | the sugar always uses `Lock.Options.Default` (Gaps) |
+| `Restore.into` with `csc { lock }` | `csc { ...; lock "p"; packageroot "<dir>" }` | the folder is created and restored into; `norestore` forbids downloads |
 
 The `Restore.into` form, from [restore.md](restore.md) (run by the maintainers on dataengine,
 not for this page):
@@ -416,45 +416,33 @@ the script variable `CSC_SERVER`.
 4. Build from the committed locks.
 5. Fail when the build changed or created a lock.
 
-### The missing lock: today's behaviour
+### The missing lock
 
-`Lock.buildWith` records a missing lock and compiles. On CI that build passes with exit code 0
-and a lock file that exists only on the runner **(run, with no `locks/` in a fresh copy)**.
-This is the opposite of what CI needs. The library has no switch for it yet (Gaps, item 1).
-Three things work today:
+Under CI a missing lock fails the build, before anything is recorded or compiled
+(`Lock.buildWith`, hence `Lock.build` and `csc { lock }`; [lock.md](lock.md#what-happens-step-by-step)):
+
+```
+'app': the lock 'locks/app.json' is not there. Under CI a lock is never recorded: record it
+on a developer machine (build once, or run the target that calls Lock.record
+"locks/app.json", e.g. update-locks) and commit it.
+```
+
+"Under CI" is `Lock.underCi`: the script variable `CI` when set (`-d CI=on|off`), otherwise the
+environment variable `CI`, which GitHub Actions, GitLab CI and Azure Pipelines set. Nothing to
+configure on the runner; `-d CI=off` opts out (records as a developer machine would), and
+`nofailonerror` does not soften it. Off CI a missing lock is still recorded and compiled.
+
+Two more guards stay useful as extra safety:
 
 | Guard | Covers | Cost |
 |---|---|---|
-| run `check-locks` before `build` | composed locks (`Lock.verify` reads the lock; missing gives `Neither rule nor file is found for '<path>'`, exit 2) and imported ones | composed: free; imported: an msbuild import |
+| run `check-locks` before `build` | composed locks (`Lock.verify` fails on a missing lock naming it and `Lock.record`) and imported ones | composed: free; imported: an msbuild import |
 | the import as `update-locks`, not as a file rule (B) | imported locks: a missing lock fails `build` itself | none |
-| a script guard before `Lock.build` (below) | composed locks inside `build` | none |
-| `git status --porcelain locks/` after the build | anything that wrote a lock | none; a safety net |
+| `git status --porcelain locks/` after the build | anything that wrote a lock (e.g. a run with `-d CI=off`) | none; a safety net |
 
 Command-line targets run one after another, and a failure stops the rest, so
 `dotnet fsi build.fsx -- -- check-locks build` never reaches `build` when the lock is missing
 **(run)**. (Targets joined with `;` in one argument run in parallel; do not join these two.)
-
-The script guard **(run)**; both GitHub Actions and GitLab CI set `CI`:
-
-```fsharp
-/// CI never records a lock: a missing one is an error there
-let requireLock (path: string) = recipe {
-    let! options = getCtxOptions ()
-    let onCi = not (System.String.IsNullOrEmpty (System.Environment.GetEnvironmentVariable "CI"))
-    if onCi && not (System.IO.File.Exists (System.IO.Path.Combine (options.ProjectRoot, path))) then
-        failwithf "%s is missing: record it on a developer machine (build or update-locks) and commit it" path
-}
-
-"out/app.dll" ..> recipe {
-    do! requireLock "locks/app.json"
-    let! c = app
-    do! Lock.build "locks/app.json" c
-}
-```
-
-With `CI=true` and no lock: `locks/app.json is missing: record it on a developer machine
-(build or update-locks) and commit it`, exit 2, nothing written. Without `CI` the lock is
-recorded as before.
 
 ### Drift on CI
 
@@ -654,7 +642,7 @@ What breaks offline:
 | `'<name>': the resolved compilation differs from the lock '<path>':` + diff lines | settings, files matched by a glob, the compiler or the SDK changed | review the diff; `update-locks` and commit, or revert the change |
 | `<path> is stale:` (your `check-locks`) | the same, found without compiling | the same |
 | `Neither rule nor file is found for '<root>/locks/<x>.json'` | the lock is not committed, or the path is wrong | record it locally (`build` or `update-locks`) and commit it |
-| `<path> is missing: record it on a developer machine ...` (the CI guard) | the same, from `requireLock` | the same |
+| `'<name>': the lock '<path>' is not there. Under CI a lock is never recorded: ...` | the build runs under CI (env `CI`, or `-d CI=on`) and the lock is not committed | record the lock on a developer machine (`update-locks` or a first build) and commit it; `-d CI=off` forces the developer behaviour |
 | `('<name>') hash mismatch:` / `<path>: expected <a>, got <b>` | a file on disk is not the recorded one: a different package build, a corrupted cache, a rebuilt reference | delete that package directory and rebuild; for a reference your script builds, see the guide |
 | `... expected <sha256>, got missing` for many files | restore off, or the lock was read against another package folder than the one restored into | use one folder for `Lock.loadWith` and `Restore` (C), or `NUGET_PACKAGES` |
 | `('<name>') restoring the packages the lock names failed:` + `<id> <v>: not restored (expected it at '<dir>')` | the restore ran but did not deliver | check the feed in `nuget.config`; NuGet's output is in the log at verbose level |
@@ -679,30 +667,25 @@ More messages: [../hermetic-guide.md](../hermetic-guide.md#12-troubleshooting).
 
 What the product does not do yet, with the smallest change that would close each.
 
-1. **A missing lock is recorded on CI.** `Lock.buildWith` records any missing lock, so a CI
-   build with no committed lock passes and leaves an uncommitted lock on the runner. Today:
-   `check-locks` first, the `requireLock` guard, or the `git status` step (D). Smallest fix:
-   in `Lock.buildWith`, before `recordEntry`, fail when recording is not allowed, with a message
-   naming the lock and "record it on a developer machine and commit it". The switch could be a
-   field (`Lock.Options.RecordMissing: bool`, default `true`) plus a default of `false` when
-   the environment variable `CI` is set, so `csc { lock }`, which always uses the default
-   options, is covered too. Note: `lock.md` records the 2026-09-24 decision "no engine mode, no
-   global variable" for *updating* a lock; the CI default is a policy choice for the owner.
-2. **The import-as-file-rule pattern re-imports on every fresh clone** and overwrites the
+1. *(done)* **A missing lock is recorded on CI.** Under CI (`Lock.underCi`: the script variable
+   `CI`, else the environment variable `CI`) `Lock.buildWith` -- and so `Lock.build` and
+   `csc { lock }` -- fails on a missing lock naming it and "record it on a developer machine
+   and commit it"; `-d CI=off` opts out (D). `check-locks` and the `git status` step remain as
+   extra safety.
+2. *(in progress, PRs open)* **The import-as-file-rule pattern re-imports on every fresh clone** and overwrites the
    committed lock (B). The guide and `import.fsx` present it as the way to wire an import.
    Smallest fix: document the `update-locks` pattern as the default for committed locks; later,
    a `Project.import` option that compares instead of writing (the imported `check-locks`).
-3. **No document-level diff.** An imported `check-locks` is 15 lines of script around
+3. *(in progress, PRs open)* **No document-level diff.** An imported `check-locks` is 15 lines of script around
    `Lock.diff` (B). Smallest fix: `Lock.diffDocuments : Document -> Document -> string list`,
    keyed by (name, framework), reporting added and removed entries.
-4. **No one-call build for an imported lock.** `Lock.build` is for composed compilations;
+4. *(in progress, PRs open)* **No one-call build for an imported lock.** `Lock.build` is for composed compilations;
    an imported lock needs a loop over `Lock.compile`, and with project references the
    per-output rule with `mapPaths` (B). Smallest fix: a `Lock.compileAll` that orders entries
    by project reference and maps references to the other entries' `/out:`.
-5. **`csc { lock }` cannot take `Restore.Options`.** It always uses `Lock.Options.Default`, so
-   no own package folder (other than through `NUGET_PACKAGES`) and no way to forbid the
-   network. Smallest fix: a `packageroot`/`norestore` operation, or `Lock.buildWith` with
-   options from the settings.
+5. *(done)* **`csc { lock }` cannot take `Restore.Options`.** `packageroot "<dir>"` and
+   `norestore` after `lock` set the package folder and forbid the network
+   ([lock.md](lock.md#restore-options-packageroot-norestore)).
 6. **Composed reference assemblies are restored outside the restore mechanism.**
    `DotNetFwk`'s reference-assembly restore (`Microsoft.NETFramework.ReferenceAssemblies.*`,
    `NETStandard.Library`) runs from the temp directory with a `PackageReference`, ignores the
@@ -713,11 +696,8 @@ What the product does not do yet, with the smallest change that would close each
    re-hashed: `.nupkg.metadata` is trusted (C). The per-file SHA-256 check still gates the
    compile. Smallest fix: compare `contentHash` for every package the entry names, present or
    not (one small file read each).
-8. **Drift messages print expanded, machine-specific paths** (`+ /private/tmp/.../Extra.cs`).
-   On CI they show the runner's checkout path. Smallest fix: tokenize the diff lines with the
-   build's roots before printing.
-9. **`Lock.verify` on a missing lock says only `Neither rule nor file is found`.** Smallest
-   fix: check `File.Exists` in `Lock.verify` and fail with "lock '<path>' does not exist".
+8. *(done in PR #30)* Drift messages are printed with tokenized paths (`$(ProjectRoot)/...`).
+9. *(done in PR #30)* `Lock.verify` on a missing lock fails naming the path and `Lock.record`.
 10. **SBOM package-scope defaults are product-specific.** `Sbom.PackageScopeOptions.Default`
     treats `DS.`, `MESCIUS.` and `GrapeCity.` as internal ids. Override `IsInternal` with
     `Sbom.PackageScope.idPrefixes [ ... ]`. Smallest fix: an empty default.

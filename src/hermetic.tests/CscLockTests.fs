@@ -13,7 +13,14 @@ open Xake.Hermetic.Dotnet
 /// runs), the lock decides whether this is the compilation that was recorded. No lock: record
 /// and compile. Lock present and matching: compile the *recorded* entry, so its hashes gate
 /// the build. Lock present and different: fail with the diff. Updating is explicit --
-/// `Lock.record`, or deleting the file.
+/// `Lock.record`, or deleting the file. Under CI (`Lock.underCi`) a missing lock fails.
+///
+/// Every test that records a lock runs with the script variable `CI=off` (`Build`, `Run`),
+/// so the suite passes with `CI=true` in the environment (GitHub Actions). The environment
+/// variable is process-wide: the tests that set it hold this.
+module private CscLockGate =
+    let gate = obj ()
+
 [<TestFixture>]
 type ``Csc lock``() =
     inherit XakeTestBase("csc-lock")
@@ -34,7 +41,7 @@ type ``Csc lock``() =
     /// Without a lock: `Csc.compile`. With one: `Lock.build`, through the same run options
     /// `csc { ...; lock }` uses (`Csc.runOptions`).
     member private x.Build (label: string) ((settings: CscSettingsType), (lockPath: string option)) =
-        xake {x.TestOptions with FileLog = label + ".log"; ThrowOnError = true} {
+        xake {x.TestOptions with FileLog = label + ".log"; ThrowOnError = true; Vars = [ "CI", "off" ]} {
             wantOverride ([label])
             rules [
                 label => recipe {
@@ -49,7 +56,11 @@ type ``Csc lock``() =
         }
 
     member private x.Run (label: string) (body: Recipe<ExecContext, unit>) =
-        xake {x.TestOptions with FileLog = label + ".log"; ThrowOnError = true} {
+        x.RunWith label [ "CI", "off" ] body
+
+    /// `Run` with explicit script variables (none: the environment variable `CI` decides).
+    member private x.RunWith (label: string) (vars: (string * string) list) (body: Recipe<ExecContext, unit>) =
+        xake {x.TestOptions with FileLog = label + ".log"; ThrowOnError = true; Vars = vars; FileLogLevel = Loud} {
             wantOverride ([label])
             rules [ label => body ]
         }
@@ -203,3 +214,220 @@ type ``Csc lock``() =
         Assert.That(unchanged, Is.Empty, "an unchanged compilation has to verify clean")
         Assert.That(changed |> List.exists (fun line -> line.Contains "LockF2.cs"), Is.True)
         Assert.That(File.ReadAllBytes lockPath, Is.EqualTo bytes, "verify must not write the lock")
+
+    // ---- a missing lock under CI ---------------------------------------------------------
+
+    /// Each test that sets the environment variable `CI` holds the gate: the variable is
+    /// process-wide.
+    member private x.WithCi (value: string) (body: unit -> unit) =
+        lock CscLockGate.gate (fun () ->
+            let saved = System.Environment.GetEnvironmentVariable "CI"
+            System.Environment.SetEnvironmentVariable ("CI", value)
+            try body ()
+            finally System.Environment.SetEnvironmentVariable ("CI", saved))
+
+    member private x.LockBuild (label: string) (vars: (string * string) list) (source: string) (lockPath: string) =
+        x.RunWith label vars (recipe {
+            let! c = Csc.ofSettings (fst (settings !!source (Path.ChangeExtension (source, ".dll")) None))
+            do! Lock.build lockPath c
+        })
+
+    static member private MissingUnderCi (name: string) (lockPath: string) =
+        sprintf "'%s': the lock '%s' is not there. Under CI a lock is never recorded: record it on a developer machine (build once, or run the target that calls Lock.record \"%s\", e.g. update-locks) and commit it."
+            name lockPath lockPath
+
+    member private x.Fresh (name: string) =
+        File.WriteAllText (name + ".cs", sprintf "public class %s {}\n" name)
+        let lockPath = sprintf "locks/%s.json" (name.ToLowerInvariant ())
+        if File.Exists lockPath then File.Delete lockPath
+        if File.Exists (name + ".dll") then File.Delete (name + ".dll")
+        lockPath
+
+    [<Test; Category("Integration")>]
+    member x.``under CI (script variable) a missing lock fails, nothing recorded or compiled``() =
+        let lockPath = x.Fresh "LockG"
+
+        let ex = Assert.Throws<XakeException> (fun () -> x.LockBuild "lock-g" [ "CI", "on" ] "LockG.cs" lockPath)
+        Assert.That(ex.Data0, Does.Contain (``Csc lock``.MissingUnderCi "LockG" lockPath))
+        Assert.That(File.Exists lockPath, Is.False, "under CI a missing lock must not be recorded")
+        Assert.That(File.Exists "LockG.dll", Is.False, "under CI a missing lock must not compile")
+
+    [<Test; Category("Integration")>]
+    member x.``under CI FailOnError = false does not let a missing lock pass``() =
+        let lockPath = x.Fresh "LockN"
+
+        let run () =
+            x.RunWith "lock-n" [ "CI", "true" ] (recipe {
+                let s = fst (settings !!"LockN.cs" "LockN.dll" None)
+                let! c = Csc.ofSettings s
+                let! run = Csc.runOptions s
+                do! Lock.buildWith { Lock.Options.Default with Run = { run with FailOnError = false } } lockPath c
+            })
+        let ex = Assert.Throws<XakeException> (fun () -> run ())
+        Assert.That(ex.Data0, Does.Contain (``Csc lock``.MissingUnderCi "LockN" lockPath))
+        Assert.That(File.Exists lockPath, Is.False)
+        Assert.That(File.Exists "LockN.dll", Is.False)
+
+    [<Test; Category("Integration")>]
+    member x.``under CI (environment variable) a missing lock fails through csc { lock }``() =
+        let lockPath = x.Fresh "LockH"
+
+        x.WithCi "true" (fun () ->
+            let run () =
+                x.RunWith "lock-h" [] (csc {
+                    src !!"LockH.cs"
+                    out (File.make "LockH.dll")
+                    target Library
+                    targetfwk "net-4.6.2"
+                    grefs ["System.dll"]
+                    lock lockPath
+                })
+            let ex = Assert.Throws<XakeException> (fun () -> run ())
+            Assert.That(ex.Data0, Does.Contain (``Csc lock``.MissingUnderCi "LockH" lockPath)))
+
+        Assert.That(File.Exists lockPath, Is.False)
+        Assert.That(File.Exists "LockH.dll", Is.False)
+
+    [<Test; Category("Integration")>]
+    member x.``-d CI=off with the environment variable set records as a developer would``() =
+        let lockPath = x.Fresh "LockO"
+
+        x.WithCi "true" (fun () -> x.LockBuild "lock-o" [ "CI", "off" ] "LockO.cs" lockPath)
+
+        Assert.That(File.Exists lockPath, Is.True, "CI=off did not record the lock")
+        Assert.That(File.Exists "LockO.dll", Is.True)
+
+    [<Test; Category("Integration")>]
+    member x.``not under CI a missing lock is recorded and compiled``() =
+        let lockPath = x.Fresh "LockI"
+
+        x.WithCi null (fun () -> x.LockBuild "lock-i" [] "LockI.cs" lockPath)
+
+        Assert.That(File.Exists lockPath, Is.True, "not under CI the missing lock has to be recorded")
+        Assert.That(File.Exists "LockI.dll", Is.True)
+
+    [<Test; Category("Integration")>]
+    member x.``under CI drift still fails with the differences``() =
+        let lockPath = x.Fresh "LockP"
+        File.WriteAllText ("LockP2.cs", "public class LockP2 {}\n")
+        x.Build "lock-p" (settings !!"LockP.cs" "LockP.dll" (Some lockPath))
+
+        let run () =
+            x.RunWith "lock-p2" [ "CI", "on" ] (recipe {
+                let! c = Csc.ofSettings (fst (settings (!!"LockP.cs" + "LockP2.cs") "LockP.dll" None))
+                do! Lock.build lockPath c
+            })
+        let ex = Assert.Throws<XakeException> (fun () -> run ())
+        Assert.That(ex.Data0, Does.Contain "differs from the lock")
+        Assert.That(ex.Data0, Does.Contain "$(ProjectRoot)/LockP2.cs")
+
+    [<Test; Category("Integration")>]
+    member x.``an unrecognized CI value fails``() =
+        let run () = x.RunWith "lock-q" [ "CI", "maybe" ] (recipe { let! _ = Lock.underCi in return () })
+        let ex = Assert.Throws<XakeException> (fun () -> run ())
+        Assert.That(ex.Data0, Does.Contain "CI='maybe'")
+
+    // ---- drift messages and a missing lock in verify -------------------------------------
+
+    [<Test; Category("Integration")>]
+    member x.``drift messages name paths by their root token, not this checkout``() =
+        File.WriteAllText ("LockJ.cs", "public class LockJ {}\n")
+        File.WriteAllText ("LockJ2.cs", "public class LockJ2 {}\n")
+        let lockPath = "locks/lockj.json"
+        if File.Exists lockPath then File.Delete lockPath
+
+        x.Build "lock-j" (settings !!"LockJ.cs" "LockJ.dll" (Some lockPath))
+
+        let build () = x.Build "lock-j2" (settings (!!"LockJ.cs" + "LockJ2.cs") "LockJ.dll" (Some lockPath))
+        let ex = Assert.Throws<XakeException> (fun () -> build () |> ignore)
+        let root = x.TestOptions.ProjectRoot.Replace('\\', '/').TrimEnd '/'
+        Assert.That(ex.Data0, Does.Contain "$(ProjectRoot)/LockJ2.cs")
+        Assert.That(ex.Data0, Does.Not.Contain root)
+
+        let mutable lines = []
+        x.Run "verify-j" (recipe {
+            let! moved = Csc.ofSettings (fst (settings (!!"LockJ.cs" + "LockJ2.cs") "LockJ.dll" None))
+            let! diff = Lock.verify lockPath moved
+            lines <- diff })
+        Assert.That(lines, Has.Some.Contains "$(ProjectRoot)/LockJ2.cs")
+        Assert.That(lines, Has.None.Contains root)
+
+    [<Test; Category("Integration")>]
+    member x.``Lock.verify on a missing lock fails naming it and Lock.record``() =
+        File.WriteAllText ("LockK.cs", "public class LockK {}\n")
+        let lockPath = "locks/lockk.json"
+        if File.Exists lockPath then File.Delete lockPath
+
+        let run () =
+            x.Run "verify-k" (recipe {
+                let! c = Csc.ofSettings (fst (settings !!"LockK.cs" "LockK.dll" None))
+                let! _ = Lock.verify lockPath c
+                return () })
+        let ex = Assert.Throws<XakeException> (fun () -> run ())
+        Assert.That(ex.Data0, Does.Contain lockPath)
+        Assert.That(ex.Data0, Does.Contain "Lock.record")
+        Assert.That(ex.Data0, Does.Not.Contain "Neither rule nor file")
+
+    // ---- packageroot / norestore ---------------------------------------------------------
+
+    member private x.LockedWith (label: string) (source: string) (lockPath: string) (packages: string) (restore: bool) =
+        let dll = File.make (Path.ChangeExtension (source, ".dll"))
+        if restore then
+            x.Run label (csc {
+                src !!source; out dll; target Library; targetfwk "net-4.6.2"; grefs ["System.dll"]
+                lock lockPath
+                packageroot packages
+            })
+        else
+            x.Run label (csc {
+                src !!source; out dll; target Library; targetfwk "net-4.6.2"; grefs ["System.dll"]
+                lock lockPath
+                packageroot packages
+                norestore
+            })
+
+    [<Test; Category("Integration")>]
+    member x.``norestore with a package the folder lacks fails before compiling``() =
+        File.WriteAllText ("LockL.cs", "public class LockL {}\n")
+        let lockPath = "locks/lockl.json"
+        if File.Exists lockPath then File.Delete lockPath
+        x.Build "lock-l" (settings !!"LockL.cs" "LockL.dll" (Some lockPath))
+        File.Delete "LockL.dll"
+
+        let packages = Path.Combine (Path.GetTempPath (), "xake-norestore-" + System.Guid.NewGuid().ToString("N"))
+        let doc = Lock.read (Roots.make (Directory.GetCurrentDirectory()) (Roots.packageRootOverride packages)) lockPath
+        let underFolder = doc.Entries.Head.Csc.Dependencies.References |> List.filter (fun r -> r.Path.StartsWith packages)
+        if List.isEmpty underFolder then Assert.Ignore "the composed compilation names no package reference here"
+
+        try
+            let ex = Assert.Throws<XakeException> (fun () -> x.LockedWith "lock-l2" "LockL.cs" lockPath packages false)
+            Assert.That(ex.Data0, Does.Contain "got missing")
+            Assert.That(ex.Data0, Does.Contain underFolder.Head.Path)
+            let log = File.ReadAllText "lock-l2.log"
+            Assert.That(log, Does.Contain "automatic restore is off", "the restore-disabled warning was not reported")
+            Assert.That(File.Exists "LockL.dll", Is.False, "nothing may be compiled")
+            Assert.That(Directory.Exists packages, Is.False, "restore was off, yet the package folder was written")
+        finally
+            try Directory.Delete (packages, true) with _ -> ()
+
+    [<Test; Category("Integration")>]
+    member x.``packageroot restores the lock's packages into the build's own folder``() =
+        File.WriteAllText ("LockM.cs", "public class LockM {}\n")
+        let lockPath = "locks/lockm.json"
+        if File.Exists lockPath then File.Delete lockPath
+        if File.Exists "LockM.dll" then File.Delete "LockM.dll"
+
+        let packages = Path.Combine (Path.GetTempPath (), "xake-packageroot-" + System.Guid.NewGuid().ToString("N"))
+        try
+            // no lock yet: recorded against the machine's cache, then read back against the
+            // folder and compiled from there
+            x.LockedWith "lock-m" "LockM.cs" lockPath packages true
+
+            let doc = Lock.read (Roots.make (Directory.GetCurrentDirectory()) (Roots.packageRootOverride packages)) lockPath
+            let underFolder = doc.Entries.Head.Csc.Dependencies.References |> List.filter (fun r -> r.Path.StartsWith packages)
+            if List.isEmpty underFolder then Assert.Ignore "the composed compilation names no package reference here"
+            for r in underFolder do
+                Assert.That(File.Exists r.Path, Is.True, sprintf "%s was not restored into the build's own folder" r.Path)
+            Assert.That(File.Exists "LockM.dll", Is.True, "csc did not produce LockM.dll")
+        finally
+            try Directory.Delete (packages, true) with _ -> ()

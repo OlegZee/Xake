@@ -297,6 +297,9 @@ type ``Sbom cycloneDx``() =
 type ``Sbom package scope``() =
     inherit XakeTestBase("sbom-scope")
 
+    // the default has no internal prefixes; the fixture's internal package is DS.Internal
+    let dsOptions = { Sbom.PackageScopeOptions.Default with IsInternal = Sbom.PackageScope.idPrefixes [ "DS." ] }
+
     let write (path: string) (content: string) =
         Directory.CreateDirectory (Path.GetDirectoryName path) |> ignore
         File.WriteAllText (path, content)
@@ -399,7 +402,7 @@ type ``Sbom package scope``() =
     [<Test>]
     member x.``tier 1 is the nupkg's shipped files for the framework, hashed``() =
         let nupkg, asmBom, asmDll = x.Fixture ()
-        let bom = Sbom.forPackageScoped nupkg "netstandard2.0" [ asmBom ]
+        let bom = Sbom.forPackageScopedWith dsOptions nupkg "netstandard2.0" [ asmBom ]
 
         Assert.That (bom.Root.BomRef, Is.EqualTo "nupkg:MyPkg.1.0.0")
         Assert.That (bom.Root.Name, Is.EqualTo "MyPkg")
@@ -428,7 +431,7 @@ type ``Sbom package scope``() =
     [<Test>]
     member x.``tier 2 is the nuspec group, verbatim, resolved from the evidence; nothing transitive``() =
         let nupkg, asmBom, _ = x.Fixture ()
-        let bom = Sbom.forPackageScoped nupkg "netstandard2.0" [ asmBom ]
+        let bom = Sbom.forPackageScopedWith dsOptions nupkg "netstandard2.0" [ asmBom ]
 
         Assert.That (bom.Components |> List.map (fun c -> c.Name), Is.EquivalentTo [ "Foo.Bar"; "DS.Internal"; "Unresolved.Pkg" ])
 
@@ -467,7 +470,7 @@ type ``Sbom package scope``() =
     [<Test>]
     member x.``declares the boundary and renders deterministically``() =
         let nupkg, asmBom, _ = x.Fixture ()
-        let bom = Sbom.forPackageScoped nupkg "netstandard2.0" [ asmBom ]
+        let bom = Sbom.forPackageScopedWith dsOptions nupkg "netstandard2.0" [ asmBom ]
 
         let complete = bom.Compositions |> List.find (fun c -> c.Aggregate = "complete")
         let incomplete = bom.Compositions |> List.find (fun c -> c.Aggregate = "incomplete")
@@ -481,7 +484,7 @@ type ``Sbom package scope``() =
         Assert.That (annotation.Timestamp, Does.Match @"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
 
         let json1 = Sbom.cycloneDx bom
-        let json2 = Sbom.cycloneDx (Sbom.forPackageScoped nupkg "netstandard2.0" [ asmBom ])
+        let json2 = Sbom.cycloneDx (Sbom.forPackageScopedWith dsOptions nupkg "netstandard2.0" [ asmBom ])
         Assert.That (json2, Is.EqualTo json1)
         Assert.That (json1, Does.Contain "\"compositions\"")
         Assert.That (json1, Does.Contain "\"annotations\"")
@@ -496,7 +499,7 @@ type ``Sbom package scope``() =
     [<Test>]
     member x.``one document per framework``() =
         let nupkg, asmBom, _ = x.Fixture ()
-        let bom = Sbom.forPackageScoped nupkg "net8.0" [ asmBom ]
+        let bom = Sbom.forPackageScopedWith dsOptions nupkg "net8.0" [ asmBom ]
         let paths = bom.Root.Components |> List.map (fun c -> c.Properties |> List.find (fun p -> p.Name = "xake:nuget:path") |> fun p -> p.Value)
         Assert.That (paths, Is.EquivalentTo [ "lib/net8.0/MyAsm.dll"; "runtimes/win-x64/native/native.dll"; "build/net8.0/MyPkg.props" ])
         // the net8.0 assembly matches no input BOM by hash: a plain library with the file's name
@@ -508,8 +511,8 @@ type ``Sbom package scope``() =
     [<Test>]
     member x.``the verifier passes the generated document and catches tampering``() =
         let nupkg, asmBom, _ = x.Fixture ()
-        let bom = Sbom.forPackageScoped nupkg "netstandard2.0" [ asmBom ]
-        Assert.That (Sbom.checkPackageScope Sbom.PackageScopeOptions.Default nupkg "netstandard2.0" bom, Is.Empty)
+        let bom = Sbom.forPackageScopedWith dsOptions nupkg "netstandard2.0" [ asmBom ]
+        Assert.That (Sbom.checkPackageScope dsOptions nupkg "netstandard2.0" bom, Is.Empty)
 
         // a shipped binary without a component (3.2), a tier-2 ref in dependencies[] (3.4),
         // a range that drifted from the nuspec (3.3), a component the nuspec never declared (3.1)
@@ -522,7 +525,7 @@ type ``Sbom package scope``() =
                 Components = (bom.Components |> List.map drift) @ [ undeclared ]
                 Dependencies = bom.Dependencies @ [ "pkg:nuget/Foo.Bar@1.2.3", [] ]
                 Compositions = [] }
-        let findings = Sbom.checkPackageScope Sbom.PackageScopeOptions.Default nupkg "netstandard2.0" tampered
+        let findings = Sbom.checkPackageScope dsOptions nupkg "netstandard2.0" tampered
         Assert.That (findings |> List.exists (fun f -> f.StartsWith "3.2" && f.Contains "native.dll"), Is.True, String.concat "\n" findings)
         Assert.That (findings |> List.exists (fun f -> f.StartsWith "3.3" && f.Contains "Foo.Bar"), Is.True)
         Assert.That (findings |> List.exists (fun f -> f.StartsWith "3.1" && f.Contains "Transitive.Pkg"), Is.True)

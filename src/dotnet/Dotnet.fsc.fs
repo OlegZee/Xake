@@ -111,14 +111,18 @@ module FscImpl =
             let isNetstandard =
                 targetFramework <> null && targetFramework.StartsWith("netstandard", System.StringComparison.OrdinalIgnoreCase)
 
+            let! targetFwkInfo =
+                match targetFramework with
+                | null -> recipe { return None }
+                | tgt -> recipe { let! f = DotNetFwk.resolveFramework (Some tgt) in return Some f }
+
             let (globalRefs,noframework) =
                 let mapfn = (+) refOpt
-                match targetFramework with
-                | null ->
+                match targetFwkInfo with
+                | None ->
                     // TODO provide an option for user to explicitly specify all grefs (currently csc.rsp is used)
                     (settings.RefGlobal |> List.map mapfn), false
-                | tgt ->
-                    let fwk = Some tgt |> DotNetFwk.locateFrameworkIn options.ProjectRoot in
+                | Some fwk ->
                     let lookup = DotNetFwk.locateAssembly fwk
                     let sysAssembly = if isNetstandard then "netstandard.dll" else "mscorlib.dll"
                     (sysAssembly :: settings.RefGlobal |> List.map (lookup >> mapfn)), true
@@ -158,7 +162,7 @@ module FscImpl =
             let! netfxVar = getVar "NETFX"
             // the compiler is taken from the framework being targeted, unless NETFX says otherwise
             let dotnetFwk = match netfxVar with | Some _ -> netfxVar | None -> Option.ofObj targetFramework
-            let fwkInfo = DotNetFwk.locateFrameworkIn options.ProjectRoot dotnetFwk
+            let! fwkInfo = DotNetFwk.resolveFramework dotnetFwk
 
             if settings.Doc <> File.undefined then
                 // fsc creates the directory for --out, but fails when the one for --doc is missing

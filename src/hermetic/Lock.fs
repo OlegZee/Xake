@@ -243,6 +243,14 @@ module Lock =
           yield! diffStringSet "ProjectRef" a.Evaluation.ProjectRefs b.Evaluation.ProjectRefs
           yield! diffPackages a.Packages b.Packages ]
 
+    /// `diff` as it is printed: every path in every line tokenized against `roots` (the
+    /// same tokens the lock file is written with, `format`), so a drift message reads
+    /// `$(ProjectRoot)/src/Extra.cs` on every machine instead of naming this checkout.
+    /// `buildWith` and `verify` report the differences this way; `diff` itself keeps the
+    /// expanded paths.
+    let diffText roots (a: Entry) (b: Entry) : string list =
+        diff a b |> List.map (Roots.tokenizeAll roots)
+
     open Json
 
     let private writeEntry roots (entry: Entry) =
@@ -477,6 +485,38 @@ module Lock =
             Restore = Restore.Options.Default
         }
 
+    /// <summary>
+    /// Whether this build runs under CI, decided once per build: the script variable `CI`
+    /// when set (`on`/`true`/`yes`/`1` is CI, `off`/`false`/`no`/`0` is not, case-insensitive,
+    /// anything else fails), otherwise the environment variable `CI` that GitHub Actions,
+    /// GitLab CI, Azure Pipelines and most other services set (non-empty and not `0`/`false`
+    /// is CI). Same convention as `NETFX` and `CSC_SERVER`: `-d CI=off` or
+    /// <c>xakeScript { var "CI" "on" }</c> forces either way. Reading it (`getVar`, then
+    /// `getEnv`) makes it a tracked dependency of the target, so changing it reruns the target.
+    /// Under CI, `buildWith` (and so `build` and `csc { lock }`) fails on a missing lock
+    /// instead of recording it.
+    /// </summary>
+    let underCi : Recipe<ExecContext, bool> =
+        recipe {
+            let! variable = getVar "CI"
+            match variable |> Option.map (fun v -> v.Trim().ToLowerInvariant ()) with
+            | Some ("on" | "true" | "yes" | "1") -> return true
+            | Some ("off" | "false" | "no" | "0") -> return false
+            | Some other -> return failwithf "CI='%s': expected on or off" other
+            | None ->
+                let! env = getEnv "CI"
+                match env |> Option.map (fun v -> v.Trim().ToLowerInvariant ()) with
+                | None | Some ("" | "0" | "false") -> return false
+                | Some _ -> return true
+        }
+
+    /// The extra roots that read a lock against the package folder the options restore into
+    /// (`Roots.packageRootOverride`); none for the machine's own cache.
+    let private packageRoots (options: Options) =
+        match options.Restore.PackageRoot with
+        | Some dir -> Roots.packageRootOverride dir
+        | None -> []
+
     /// What a restore of `entries` has to provide: every compiler, reference and analyzer
     /// path they name, looked up in their combined package graph.
     let restoreRequest (entries: Entry list) : Restore.Request =
@@ -666,39 +706,72 @@ module Lock =
     /// This is what `build` fails on, without compiling and without writing anything
     /// (`lock-from-settings.md` scenario 3). Hashes are not compared when `c` has none (a
     /// composed compilation); the recorded hashes are verified against disk by the runner
-    /// when a lock is actually compiled.
+    /// when a lock is actually compiled. The lines are `diffText`: paths tokenized the way
+    /// the lock file writes them. A lock that does not exist fails, naming the path and
+    /// `record`.
     /// </summary>
     let verify (path: string) (c: Csc) : Recipe<ExecContext, string list> =
         recipe {
-            let! doc = load path
-            return diff (entry c.Name doc) (ofCsc c)
+            let! full = fullPath path
+            if not (File.Exists full) then
+                failwithf "'%s': the lock '%s' does not exist, so there is nothing to verify. Record it (the target that calls Lock.record \"%s\", e.g. update-locks) and commit it."
+                    c.Name path path
+            let! doc = load full
+            let! roots = Roots.current
+            return diffText roots (entry c.Name doc) (ofCsc c)
         }
 
     /// <summary>
     /// Builds `c` gated by the lock at `path` (relative to the project root, or absolute).
-    /// Strict, `npm ci`-like semantics: missing -- record it and compile; present -- `c` must
-    /// match it or the build fails with the differences; matching -- compile the recorded
-    /// entry, whose hashes then gate the build. Compiling is `compileWith` (restore,
-    /// revision, `Csc.run`). Updating is explicit: delete the file, or call `record` from a
-    /// target of the script's own. With `FailOnError = false` a mismatch is a traced error
-    /// and `c` itself is compiled.
+    /// Strict, `npm ci`-like semantics: missing -- record it and compile, or, under CI
+    /// (`underCi`, read here, so every caller gets it), fail naming the lock before anything
+    /// is recorded or compiled; present -- `c` must match it or the build fails with the
+    /// differences (`diffText`, tokenized paths); matching -- compile the recorded entry,
+    /// whose hashes then gate the build. Compiling is `compileWith` (restore, revision,
+    /// `Csc.run`); with a package folder of the build's own (`Restore.PackageRoot`) the
+    /// recorded entry is re-rooted at that folder, so the packages it names are restored
+    /// there. Updating is explicit: delete the file, or call `record` from a target of the
+    /// script's own. With `FailOnError = false` a mismatch is a traced error and `c` itself is
+    /// compiled; a missing lock under CI fails regardless, or CI could pass without a lock.
     /// </summary>
     let buildWith (options: Options) (path: string) (c: Csc) : Recipe<ExecContext, unit> =
         recipe {
             let! full = fullPath path
+            // the roots the lock is written with (`save`), which are also the ones its
+            // differences are printed with
+            let! roots = Roots.current
+            let! compileRoots = Roots.currentWith (packageRoots options)
+            // the recorded entry as it is compiled: re-rooted in memory at the package folder
+            // the options restore into, when that is not the machine's cache -- written with
+            // the lock's own roots, read back with the build's
+            let forCompile (recorded: Entry) =
+                match options.Restore.PackageRoot with
+                | None -> recorded
+                | Some _ ->
+                    format roots { Configuration = ""; Properties = []; Entries = [ recorded ] }
+                    |> parse compileRoots
+                    |> entry recorded.Csc.Name
             if not (File.Exists full) then
+                let! ci = underCi
+                if ci then
+                    let msg =
+                        sprintf "'%s': the lock '%s' is not there. Under CI a lock is never recorded: record it on a developer machine (build once, or run the target that calls Lock.record \"%s\", e.g. update-locks) and commit it."
+                            c.Name path path
+                    do! trace Error "%s" msg
+                    // not `failStep`: `FailOnError = false` must not let CI pass without a lock
+                    failwith msg
                 // no lock yet: record what was just resolved and compile that -- the hashes
                 // `Csc.run` verifies are the ones taken a moment ago
                 let! recorded = recordEntry path (ofCsc c)
-                do! compileWith options recorded
+                do! compileWith options (forCompile recorded)
             else
                 let! doc = load full
                 let recorded = entry c.Name doc
-                match diff recorded (ofCsc c) with
+                match diffText roots recorded (ofCsc c) with
                 | [] ->
                     // compile the recorded entry, not the resolved one: its hashes are what
                     // gate the build
-                    do! compileWith options recorded
+                    do! compileWith options (forCompile recorded)
                 | differences ->
                     do! failStep options
                             (sprintf "'%s': the resolved compilation differs from the lock '%s':\n%s\nUpdate the lock deliberately: delete '%s', or run the target that calls Lock.record \"%s\"."
@@ -708,18 +781,26 @@ module Lock =
                     do! compileWith options (ofCsc c)
         }
 
-    /// `buildWith` with the default options, the compiler server resolved for this build.
+    /// `buildWith` with the default options and the compiler server resolved for this build
+    /// (`CompilerServer.resolve`); under CI a missing lock fails (`underCi`).
     let build (path: string) (c: Csc) : Recipe<ExecContext, unit> =
         recipe {
             let! server = CompilerServer.resolve None
             do! buildWith { Options.Default with Run = { Options.Default.Run with Server = server } } path c
         }
 
-/// The state of a `csc {}` block after `lock "path"`.
-type CscLocked = CscLocked of path: string * CscSettingsType
+/// The state of a `csc {}` block after `lock "path"`: the lock path, the settings, and the
+/// restore options the operations after `lock` set (`packageroot`, `norestore`).
+type CscLocked = CscLocked of path: string * settings: CscSettingsType * packageRoot: string option * restore: bool
 
 /// `csc { ...; lock "path" }`: the settings resolved, then built gated by that lock
-/// (`Lock.buildWith`) with the run options the settings imply (`Csc.runOptions`).
+/// (`Lock.buildWith`, so under CI a missing lock fails) with the run options the settings
+/// imply (`Csc.runOptions`) and the restore options `packageroot` and `norestore` give.
+/// Those two come *after* `lock` -- they are operations on the locked state, not on the
+/// settings:
+/// <code>
+/// csc { src !!"*.cs"; out (File.make "app.dll"); lock "locks/app.json"; packageroot ".packages"; norestore }
+/// </code>
 [<AutoOpen>]
 module CscLockBuilder =
     type CscSettingsBuilder with
@@ -728,13 +809,30 @@ module CscLockBuilder =
         /// the resolved settings must match the lock, or the build fails with the differences.
         /// A matching lock is what gets compiled, so its recorded hashes are verified against
         /// disk. To update it, delete the file or call `Lock.record` from a target of the
-        /// script's own. Must be the last operation.</summary>
+        /// script's own. A missing lock is recorded, except under CI (`Lock.underCi`), where
+        /// it fails the build. Only `packageroot` and `norestore` may follow it.</summary>
         [<CustomOperation("lock")>]
-        member _.Lock(s: CscSettingsType, path: string) = CscLocked (path, s)
+        member _.Lock(s: CscSettingsType, path: string) = CscLocked (path, s, None, true)
 
-        member _.Run(CscLocked (path, s)) =
+        /// <summary>After `lock`: the package folder the lock's packages are read from and
+        /// restored into (relative to the project root, or absolute), instead of the machine's
+        /// cache -- `Restore.into`.</summary>
+        [<CustomOperation("packageroot")>]
+        member _.PackageRoot(CscLocked (path, s, _, restore), dir: string) = CscLocked (path, s, Some dir, restore)
+
+        /// <summary>After `lock`: never download a package the lock names but the folder does
+        /// not have (`Restore.Options.Enabled = false`); the missing files are reported by
+        /// the hash check before anything is compiled.</summary>
+        [<CustomOperation("norestore")>]
+        member _.NoRestore(CscLocked (path, s, packageRoot, _)) = CscLocked (path, s, packageRoot, false)
+
+        member _.Run(CscLocked (path, s, packageRoot, restoreEnabled)) =
             recipe {
                 let! c = Csc.ofSettings s
                 let! run = Csc.runOptions s
-                do! Lock.buildWith { Lock.Options.Default with Run = run } path c
+                let! restore =
+                    match packageRoot with
+                    | Some dir -> Restore.into dir
+                    | None -> recipe { return Restore.Options.Default }
+                do! Lock.buildWith { Run = run; Restore = { restore with Enabled = restoreEnabled } } path c
             }

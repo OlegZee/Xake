@@ -39,7 +39,8 @@ type Package = {
 /// What it deliberately does not do: decide whether the *files* are the right ones. The
 /// SHA-256 check in `Csc.run` stays the authority on that, and runs after this
 /// step. This module only gets the bytes onto the disk and checks the nupkg against the
-/// sha512 the lock recorded.
+/// sha512 the lock recorded -- for a package it restores and for one already in the folder
+/// alike, as far as `.nupkg.metadata` (NuGet's record of the nupkg it extracted) tells.
 module Restore =
 
     /// Where the packages a lock names live on this machine, and whether a missing one may be
@@ -167,6 +168,64 @@ module Restore =
                     yield sprintf "%s %s: expected sha512 %s, got %s"
                         p.Id p.Version p.Sha512 (if actual = "" then "none" else actual) ]
 
+    /// The outcome of comparing a package that is already in the folder with the lock.
+    type PresentCheck =
+        /// `.nupkg.metadata`'s `contentHash` equals the lock's sha512
+        | Verified
+        /// it does not; the message has the same shape as `verify`'s
+        | Mismatch of string
+        /// nothing to compare: `.nupkg.metadata` is missing (an old cache) or has no
+        /// `contentHash`. A warning, not a failure: the per-file SHA-256 check still gates the
+        /// compile.
+        | Unverifiable of string
+
+    /// The `contentHash` of each package directory read so far, per process (folder + id +
+    /// version): a hundred entries naming one package read its `.nupkg.metadata` once.
+    let private contentHashes =
+        System.Collections.Concurrent.ConcurrentDictionary<string, string option> (System.StringComparer.OrdinalIgnoreCase)
+
+    /// Compares one package that is in the folder with the sha512 the lock recorded for it.
+    let checkPresentPackage (options: Options) (id: string) (version: string) (sha512: string) : PresentCheck =
+        let root = packageRoot options
+        let metadataFile = root </> id.ToLowerInvariant () </> version.ToLowerInvariant () </> ".nupkg.metadata"
+        let actual = contentHashes.GetOrAdd (root + "|" + id + "|" + version, fun _ -> Nuget.readContentHash root id version)
+        match actual with
+        | None ->
+            Unverifiable (sprintf "%s %s: sha512 not verified, '%s' does not exist (a package cache written by an old NuGet?)" id version metadataFile)
+        | Some "" ->
+            Unverifiable (sprintf "%s %s: sha512 not verified, '%s' has no contentHash" id version metadataFile)
+        | Some hash when hash <> sha512 ->
+            Mismatch (sprintf "%s %s: expected sha512 %s, got %s" id version sha512 hash)
+        | Some _ -> Verified
+
+    /// The packages `request` names that are already in the folder -- every file the request
+    /// names under the package directory exists -- and that the lock's package graph carries a
+    /// sha512 for, each compared with its `.nupkg.metadata` (`checkPresentPackage`). A package
+    /// with a file missing is `missing`'s business, and is checked by `verify` once restored; a
+    /// package the graph does not carry (a composed lock, a reference-assemblies package)
+    /// has nothing to compare against and is skipped.
+    let checkPresent (options: Options) (request: Request) : ((string * string) * PresentCheck) list =
+        let root = packageRoot options
+        let graph =
+            request.Packages
+            |> List.fold
+                (fun m (p: Package) -> Map.add (p.Id.ToLowerInvariant (), p.Version.ToLowerInvariant ()) p m)
+                Map.empty
+        request.Paths
+        |> List.distinct
+        |> List.choose (fun path -> Nuget.packageOf root path |> Option.map (fun idVersion -> idVersion, path))
+        |> List.groupBy fst
+        |> List.filter (fun (_, items) -> items |> List.forall (snd >> File.Exists))
+        |> List.choose (fun ((id, version), _) ->
+            match graph |> Map.tryFind (id.ToLowerInvariant (), version.ToLowerInvariant ()) with
+            | Some p when p.Sha512 <> "" -> Some ((p.Id, version), checkPresentPackage options p.Id version p.Sha512)
+            | _ -> None)
+        |> List.sortBy (fun ((id, version), _) -> id.ToLowerInvariant (), version)
+
+    /// Packages whose "unverifiable" warning has been traced already, so it is said once per
+    /// process rather than once per entry.
+    let private warnedUnverifiable = System.Collections.Concurrent.ConcurrentDictionary<string, unit> (System.StringComparer.OrdinalIgnoreCase)
+
     /// The synthesized restore project (see `DotNetFwk.downloadPackages`).
     let internal projectText (packages: (string * string) list) = DotNetFwk.restoreProjectText packages
 
@@ -201,8 +260,11 @@ module Restore =
 
     /// <summary>
     /// Makes every package `request` names available in the package folder, and reports what is
-    /// still wrong: `[]` means nothing was missing, or everything missing was restored and its
-    /// nupkg matched the sha512 the lock recorded.
+    /// still wrong: `[]` means every package the request names is in the folder and, where the
+    /// lock records a sha512, its nupkg matches it -- whether it was there already
+    /// (`checkPresent`, one `.nupkg.metadata` read per package per process) or was restored
+    /// now (`verify`). A present package whose `.nupkg.metadata` is missing or has no
+    /// `contentHash` is traced as a warning ("sha512 not verified"), once, and is not a problem.
     ///
     /// One restore for the whole set, once per process: the caller can hand it a single entry's
     /// request (what `Lock.compile` does) or every entry of a lock (what a script's "populate
@@ -219,14 +281,24 @@ module Restore =
             let root = packageRoot options
             let notMemoized = List.filter (fun p -> not (restored.ContainsKey (memoKey root p)))
 
+            // the packages already in the folder: their nupkg hash against the lock's, the same
+            // check `verify` makes for a package this run downloads
+            let presentChecks = checkPresent options request
+            for ((id, version), check) in presentChecks do
+                match check with
+                | Unverifiable msg when warnedUnverifiable.TryAdd (root + "|" + id + "|" + version, ()) ->
+                    do! trace Warning "%s" msg
+                | _ -> ()
+            let presentProblems = presentChecks |> List.choose (function _, Mismatch msg -> Some msg | _ -> None)
+
             match missing options request |> notMemoized with
-            | [] -> return []
+            | [] -> return presentProblems
             | wanted when not options.Enabled ->
                 do! trace Warning
                         "%d package(s) named by the lock are not in '%s' and automatic restore is off (Restore.Options.Enabled): %s"
                         (List.length wanted) root
                         (wanted |> List.map (fun p -> p.Id + " " + p.Version) |> String.concat ", ")
-                return []
+                return presentProblems
             | _ ->
                 let! problems =
                     withResource (Locks.forRoot root) 1 (recipe {
@@ -240,5 +312,5 @@ module Restore =
                             for p in wanted do restored.[memoKey root p] <- ()
                             return verify options wanted
                     })
-                return problems
+                return presentProblems @ problems
         }

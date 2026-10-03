@@ -40,8 +40,8 @@ by `global.json`; the net462 leg still comes from `dotnet pack`.
 
 From `docs/hermetic/workflows.md` ("Gaps"), in priority order:
 
-1. A missing lock must fail on CI instead of being recorded (`Lock.Options.RecordMissing`,
-   off when `CI` is set).
+1. *(done in PR #30)* A missing lock fails under CI (env `CI`, or `-d CI=on|off`) instead of being
+   recorded.
 2. `csc { lock }` cannot take `Restore.Options` (package root, no network).
 3. Reference assemblies of a composed block are downloaded outside the restore mechanism.
 4. The sha512 of a package already present in the package folder is not verified.

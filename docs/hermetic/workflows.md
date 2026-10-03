@@ -378,7 +378,7 @@ Three ways to choose the folder:
 |---|---|---|
 | `NUGET_PACKAGES=<dir>` in the environment | everything: `dotnet fsi`'s own `#r "nuget:"`, `Lock.load`, every restore, `csc { lock }` | simplest; **(run)** |
 | `Restore.into ".packages"` + `Lock.loadWith (Roots.packageRootOverride ...)` + `Lock.compileWith` | imported locks compiled through `compileWith` | the folder is relative to the project root; must appear in both places |
-| `Restore.into` with `csc { lock }` | not possible | the sugar always uses `Lock.Options.Default` (Gaps) |
+| `Restore.into` with `csc { lock }` | `csc { ...; lock "p"; packageroot "<dir>" }` | the folder is created and restored into; `norestore` forbids downloads |
 
 The `Restore.into` form, from [restore.md](restore.md) (run by the maintainers on dataengine,
 not for this page):
@@ -642,7 +642,7 @@ What breaks offline:
 | `'<name>': the resolved compilation differs from the lock '<path>':` + diff lines | settings, files matched by a glob, the compiler or the SDK changed | review the diff; `update-locks` and commit, or revert the change |
 | `<path> is stale:` (your `check-locks`) | the same, found without compiling | the same |
 | `Neither rule nor file is found for '<root>/locks/<x>.json'` | the lock is not committed, or the path is wrong | record it locally (`build` or `update-locks`) and commit it |
-| `<path> is missing: record it on a developer machine ...` (the CI guard) | the same, from `requireLock` | the same |
+| `'<name>': the lock '<path>' is not there. Under CI a lock is never recorded: ...` | the build runs under CI (env `CI`, or `-d CI=on`) and the lock is not committed | record the lock on a developer machine (`update-locks` or a first build) and commit it; `-d CI=off` forces the developer behaviour |
 | `('<name>') hash mismatch:` / `<path>: expected <a>, got <b>` | a file on disk is not the recorded one: a different package build, a corrupted cache, a rebuilt reference | delete that package directory and rebuild; for a reference your script builds, see the guide |
 | `... expected <sha256>, got missing` for many files | restore off, or the lock was read against another package folder than the one restored into | use one folder for `Lock.loadWith` and `Restore` (C), or `NUGET_PACKAGES` |
 | `('<name>') restoring the packages the lock names failed:` + `<id> <v>: not restored (expected it at '<dir>')` | the restore ran but did not deliver | check the feed in `nuget.config`; NuGet's output is in the log at verbose level |
@@ -696,11 +696,8 @@ What the product does not do yet, with the smallest change that would close each
    re-hashed: `.nupkg.metadata` is trusted (C). The per-file SHA-256 check still gates the
    compile. Smallest fix: compare `contentHash` for every package the entry names, present or
    not (one small file read each).
-8. **Drift messages print expanded, machine-specific paths** (`+ /private/tmp/.../Extra.cs`).
-   On CI they show the runner's checkout path. Smallest fix: tokenize the diff lines with the
-   build's roots before printing.
-9. **`Lock.verify` on a missing lock says only `Neither rule nor file is found`.** Smallest
-   fix: check `File.Exists` in `Lock.verify` and fail with "lock '<path>' does not exist".
+8. *(done in PR #30)* Drift messages are printed with tokenized paths (`$(ProjectRoot)/...`).
+9. *(done in PR #30)* `Lock.verify` on a missing lock fails naming the path and `Lock.record`.
 10. **SBOM package-scope defaults are product-specific.** `Sbom.PackageScopeOptions.Default`
     treats `DS.`, `MESCIUS.` and `GrapeCity.` as internal ids. Override `IsInternal` with
     `Sbom.PackageScope.idPrefixes [ ... ]`. Smallest fix: an empty default.

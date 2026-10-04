@@ -52,7 +52,7 @@ type ``Sbom cycloneDx``() =
     /// A lock entry with just what `forAssembly` reads: references, analyzers, packages, the
     /// compiler and the version property.
     let entryOf name (references: Lock.Hashed list) (analyzers: Lock.Hashed list) (packages: Lock.Package list) : Lock.Entry =
-        { Csc =
+        { Compilation = Lock.Compilation.Csc
             { Name = name
               Framework = "netstandard2.0"
               Directory = ""; Options = []; Defines = []; Sources = []; Generated = []; Resources = []
@@ -306,7 +306,7 @@ type ``Sbom package scope``() =
         path
 
     let entryOf name framework (references: Lock.Hashed list) (packages: Lock.Package list) : Lock.Entry =
-        { Csc =
+        { Compilation = Lock.Compilation.Csc
             { Name = name
               Framework = framework
               Directory = ""; Options = []; Defines = []; Sources = []; Generated = []; Resources = []

@@ -35,9 +35,9 @@
   </ItemGroup>
 
   <!-- Order follows the dependencies: the json reader and the root tokens first, then
-       Nuget (assets, nuspec, cache) and Restore (which names no lock type), the kept fsproj
-       evaluation, Git (revision token), the lock format and the lock's side of a build
-       (Lock.build/compile/record/verify, csc { lock }), the import, and the release
+       Nuget (assets, nuspec, cache) and Restore (which names no lock type), Git (revision
+       token), the lock format and the lock's side of a build (Lock.build/compile/record/verify,
+       csc { lock }, fsc { lock }), the import (csproj and fsproj), and the release
        pipeline. Signing is the one delegated rule (signing.md); it uses Verify, StrongName
        and Pack, so it compiles after all three. -->
   <ItemGroup>
@@ -45,7 +45,6 @@
     <Compile Include="Roots.fs" />
     <Compile Include="Nuget.fs" />
     <Compile Include="Restore.fs" />
-    <Compile Include="Fsproj.fs" />
     <Compile Include="Git.fs" />
     <Compile Include="Lock.fs" />
     <Compile Include="Project.fs" />
@@ -69,7 +68,7 @@
   </ItemGroup>
 
   <!-- Test assemblies only; no other package sees these internals. hermetic.tests tests the
-       parsers (Json, Project.parseImport, Nuget.frameworkFullName, the PE Layout, Fsproj). -->
+       parsers (Json, Project.parseImport, Nuget.frameworkFullName, the PE Layout). -->
   <ItemGroup>
     <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
       <_Parameter1>hermetic.tests</_Parameter1>

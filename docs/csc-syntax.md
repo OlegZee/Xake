@@ -37,13 +37,13 @@ last operation, and outside a file rule needs an explicit `out`. Every custom op
 |---|---|---|---|
 | `platform` | `TargetPlatform` | `/platform:` | `AnyCpu` |
 | `target` | `TargetType` | `/target:`, resolved from the output name when `Auto` | `Auto` |
-| `targetfwk` | `string` | target framework to compile against; see [`docs/dotnet-build.md`](dotnet-build.md) | `null` (falls back to the `NETFX-TARGET` var) |
+| `targetfwk` | `string` | target framework to compile against; see [`docs/dotnet-build.md`](dotnet-build.md) | `null`: the `NETFX-TARGET` var, else the SDK's own .NET framework (`net10.0` for SDK 10.0.x) |
 | `out` | `File` | output file; `/out:` | `File.undefined` (task infers a target file) |
 | `src` | `Fileset` | source files | `Fileset.Empty` |
 | `ref` | `Fileset` | adds to the reference fileset (`+`) | -- |
 | `refif` | `bool * Fileset` | adds the fileset conditionally (`+?`) | -- |
 | `refs` | `Fileset` | replaces the reference fileset | -- |
-| `grefs` | `string list` | GAC/framework-global references, resolved through the framework's `AssemblyDirs` when `targetfwk`/`NETFX-TARGET` is set | `[]` |
+| `grefs` | `string list` | framework references by file name, resolved against the target framework's reference directory | `[]` |
 | `resources` | `ResourceFileset` | adds one embedded-resource fileset (prepended) | -- |
 | `resourceslist` | `ResourceFileset list` | adds several at once | -- |
 | `define` | `string list` | `/define:`, joined with `;` | `[]` |
@@ -84,13 +84,21 @@ temp files of its own; the only temp file `run` still cleans up is its own respo
 
 ### Composed-mode reference assemblies
 
-`targetfwk` (or `NETFX-TARGET`) decides where the framework's reference assemblies come from.
-`mscorlib.dll` and every `grefs` name are looked up there and become ordinary `/reference:`
-entries of the resolved `Csc` (`Dependencies.References`), hashed and locked like any other
-reference.
+`targetfwk` (else `NETFX-TARGET`, else the SDK's own framework) decides where the framework's
+reference assemblies come from. For .NET (`net8.0`, `net10.0`) every `*.dll` of the targeting
+pack is referenced, as the SDK does; for netstandard and .NET Framework `mscorlib.dll` is. Every
+`grefs` name is looked up there too. They become ordinary `/reference:` entries of the
+resolved `Csc` (`Dependencies.References`), hashed and locked like any other reference.
+
+The default, with neither `targetfwk` nor `NETFX-TARGET`, is the .NET framework of the SDK the
+build runs on -- the one `dotnet --version` selects in the project root, `global.json`
+honoured -- read from the SDK's `Microsoft.NETCoreSdk.BundledVersions.props`
+(`BundledNETCoreAppTargetFrameworkVersion`): `net10.0` for SDK 10.0.x. Only when that cannot
+be determined (no SDK) does the compile fail with `csc needs a target framework`.
 
 | `targetfwk` | Reference assemblies | Version |
 |---|---|---|
+| `net10.0`, `net8.0`, ... (also `sdk-net10.0`) | `<dotnet>/packs/Microsoft.NETCore.App.Ref/<v>/ref/<moniker>`, the targeting pack installed with the SDK | for the SDK's own framework the exact version it bundles (`BundledNETCoreAppPackageVersion`); for another one the newest `<major>.<minor>.*` pack present. Never downloaded: a missing pack fails naming the folder |
 | `netstandard2.0` | `NETStandard.Library/<v>/build/netstandard2.0/ref` in the package folder | `2.0.3`, or the script variable `NETSTANDARD_LIBRARY_VERSION` |
 | `netstandard2.1` | the SDK's `packs/NETStandard.Library.Ref/*/ref/netstandard2.1` | comes with the SDK; not restored |
 | `net-4.6.2`, `net472`, ... (SDK provider) | `Microsoft.NETFramework.ReferenceAssemblies.<moniker>/<v>/build/.NETFramework/v4.x` (and its `Facades`) | `1.0.3`, or the script variable `NETFX_REFERENCE_ASSEMBLIES_VERSION` |
@@ -118,6 +126,8 @@ reference.
 - In a lock the references read
   `$(NuGetPackageRoot)/netstandard.library/2.0.3/build/netstandard2.0/ref/...`. The path is
   the same as before this change, as long as the cache held the default versions.
+- A .NET targeting pack is under the SDK installation, so in a lock its references read
+  `$(DotnetRoot)/packs/Microsoft.NETCore.App.Ref/10.0.12/ref/net10.0/...`.
 
 ## Compiler sources
 
@@ -138,10 +148,8 @@ reference.
 
 `Csc.run` (`Csc.fs`) is the one runner for C#, shared by every entry point. Obtaining anything
 that is missing (packages, a revision token) is not its business: `Lock.compile` does that before
-it hands the `Csc` here. Since 3.5 the steps below live in an internal `CompilerRunner.run` over
-a `RunPlan` record that `Csc.run` and `Fsc.run` each fill: fsc gets the same steps with its own
-dialect (`FscArgs.inputs`/`outputs`), no `/noconfig` and no compiler-server switches (fsc has no
-server), the `[fsc]` log prefix, and `FscRunOptions.FscPath` in place of `CscPath`. It does, in order (after a
+it hands the `Csc` here. Since 3.5 the steps below live in an internal `CompilerRunner.run`
+over a `RunPlan` record that `Csc.run` fills. It does, in order (after a
 `trace Info "compiling '<name>' (<tool> <version>)"`):
 
 1. A compiler that does not exist (with no `RunOptions.CscPath`) is traced as an error and fails
@@ -226,10 +234,6 @@ not temp files.
 
 ## Not yet
 
-- `fsc { lock }` and `Project.import` for `.fsproj`: `fsc` has the same shape (an `Fsc` record,
-  `Fsc.ofSettings`, `fsc { ...; resolve }`, `Fsc.run` through the shared runner, `FscArgs` for its
-  own `--name:value` dialect, see [tasks.md](tasks.md#fsc)); the lock side is the hermetic
-  package's.
 - `Resx.read`/`compile` only support plain string entries (`<data name="X"><value>...</value></data>`).
   A typed value (a `type` attribute) or a `ResXFileRef`/binary value (`mimetype`) fails with a
   clear message rather than being compiled; the real projects this targets have none.

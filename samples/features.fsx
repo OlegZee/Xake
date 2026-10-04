@@ -46,11 +46,11 @@ xake ExecOptions.Default {
     // the execution of the recipe is suspended until all demanded targets are built.
     // Targets are executed in parallel. Dependencies could be demanded in any part of recipe.
     command "main"  {
-        do! need ["tracetest"; "temp/a.exe"]
+        do! need ["tracetest"; "temp/a.exe"; "temp/app.dll"]
     }
 
     // this is shorter way to express the same. See also `<==` and '<<<' operators.
-    "main"  => need ["tracetest"; "temp/a.exe"]
+    "main"  => need ["tracetest"; "temp/a.exe"; "temp/app.dll"]
 
     // "phony" rule that produces no file but just removes the files
     // `rm` recipe (Xake.Tasks namespace) allow to remove files and folders
@@ -85,7 +85,8 @@ xake ExecOptions.Default {
     // build .net executable from C# sources using full .net framework (or mono under unix)
     // notice there's no "out" parameter: csc recipe will use the target file as an output
     // `targetfwk` selects the framework to compile against, and with it the reference
-    // assemblies -- without it csc is invoked with no framework references at all
+    // assemblies (here .NET Framework ones, fetched from NuGet) -- without it csc compiles
+    // for the .NET of the SDK the script runs on (net10.0 on SDK 10.0.x)
     "temp/a.exe" ..> csc {
         targetfwk "net-4.6.2"
         src (!!"temp/a.cs" + "temp/AssemblyInfo.cs")
@@ -114,27 +115,32 @@ xake ExecOptions.Default {
         }
 
 
+        // F# sources for the library below
+        "temp/hello.fs" ..> writeText
+            """
+            /// Greetings
+            module Hello
+
+            /// Says hello to `name`
+            let greet name = sprintf "Hello, %s!" name
+            """
+
         // defining the target which produces multiple files
         // recipe will be executed just once, regardless how many times its outcome was requested in other targets
         // notice the `*..>` operator is used
-        ["app.exe"; "app.xml"] *..> recipe {
+        ["temp/app.dll"; "temp/app.xml"] *..> recipe {
 
             let! [appfile; xmlfile] = getTargetFiles()
 
-            // fsc needs a target framework; for a .NET Framework one the referenced
-            // FSharp.Core.dll must be a net4x one (the SDK only ships a netstandard build)
+            // no `targetfwk` and no FSharp.Core reference: fsc compiles for the .NET of the SDK
+            // the script runs on (net10.0 on SDK 10.0.x) against the SDK's own reference
+            // assemblies and FSharp.Core, so nothing but the SDK is needed
             do! Fsc.compile {
                 FscSettings with
-                    TargetFramework = "net-4.6.2"
-                    Src = fileset {
-                        basedir "core"
-                        includes "Logging.fs"
-                        includes "Program.fs"
-                    }
+                    Src = !! "temp/hello.fs"
                     Out = appfile
-                    Ref = !! "bin/FSharp.Core.dll"
-                    RefGlobal = ["System.dll"; "System.Core.dll"]
-                    CommandArgs = ["--utf8output"; "--doc:" + xmlfile.FullName]
+                    Doc = xmlfile
+                    CommandArgs = ["--utf8output"]
             }
         }
     ]

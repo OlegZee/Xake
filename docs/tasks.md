@@ -115,10 +115,17 @@ With no `out`, the compiler writes to the rule's target file:
 "helloworld.exe" ..> csc { src !!"helloworld.cs" }
 ```
 
-`targetfwk` picks the framework to compile against. Either `targetfwk` or the `NETFX-TARGET` script variable is required: without one, `csc` fails. On Windows a Framework installation found
-through the registry wins; everywhere else -- and as a fallback -- the compiler comes from the
-.NET SDK and the reference assemblies from a NuGet package, so a full-framework binary can be
-built on any OS with nothing pre-installed beyond the SDK:
+`targetfwk` picks the framework to compile against; it is optional. The first that is set
+wins: `targetfwk`, the `NETFX-TARGET` script variable, the .NET framework of the SDK the build
+runs on (`net10.0` for SDK 10.0.x, the SDK a `global.json` in or above the project root
+selects). A .NET target (`net8.0`, `net10.0`, also spelled `sdk-net10.0`) compiles against
+the targeting pack installed with the SDK (`<dotnet>/packs/Microsoft.NETCore.App.Ref`), all
+of it, with nothing downloaded; the example above therefore needs nothing but the SDK.
+
+For a .NET Framework target, on Windows a Framework installation found through the registry
+wins; everywhere else -- and as a fallback -- the compiler comes from the .NET SDK and the
+reference assemblies from a NuGet package, so a full-framework binary can be built on any OS
+with nothing pre-installed beyond the SDK:
 
 ```fsharp
 "temp/helloworld.exe" ..> csc {
@@ -136,10 +143,10 @@ Every operation of `csc {}`:
 | `out` | `File` | output file (default: the rule's target) |
 | `target` | `TargetType` | `/target:`; resolved from the output name when left `Auto` |
 | `platform` | `TargetPlatform` | `/platform:` (default `AnyCpu`) |
-| `targetfwk` | `string` | framework to compile against (default: the `NETFX-TARGET` variable) |
+| `targetfwk` | `string` | framework to compile against: `net10.0`, `netstandard2.0`, `net-4.6.2`, ... (default: the `NETFX-TARGET` variable, else the SDK's own .NET framework) |
 | `src` | `Fileset` | source files |
 | `ref` / `refs` / `refif` | `Fileset`; `refs` replaces, `refif` takes `bool * Fileset` | references from files |
-| `grefs` | `string list` | framework/global references, e.g. `["System.dll"]` |
+| `grefs` | `string list` | framework references by file name (e.g. `["System.dll"]`), resolved against the target framework's reference directory; not needed for a .NET target, whose whole targeting pack is referenced |
 | `resources` / `resourceslist` | `ResourceFileset` / list | embedded resources; a `.resx` is compiled to `.resources` first |
 | `define` | `string list` | conditional compilation symbols |
 | `unsafe` | `bool` | allow unsafe code |
@@ -249,26 +256,38 @@ toolchain, is described in [dotnet-build.md](dotnet-build.md).
 
 ### fsc
 
-Same shape as `csc`: the operations below, `resolve`, record syntax through `Fsc.compile`. A
-target framework is required, as for csc.
+Same shape as `csc`: the operations below, `resolve`, record syntax through `Fsc.compile`.
+`targetfwk` is optional, as for csc: with none (and no `NETFX-TARGET`) the target is the SDK's
+own .NET framework, and the SDK's `FSharp.Core.dll` is referenced. This needs nothing but the
+SDK:
 
 ```fsharp
 "app.dll" ..> fsc {
-  targetfwk "netstandard2.0"
+  src (fileset { includes "src/*.fs" })
+  args ["--utf8output"]
+}
+```
+
+For netstandard or .NET Framework, name the framework, reference the `FSharp.Core` the code
+compiles against, and add framework assemblies by file name with `grefs`:
+
+```fsharp
+"app.dll" ..> fsc {
+  targetfwk "net-4.6.2"
   src (fileset { includes "src/*.fs" })
   ref !!"bin/FSharp.Core.dll"
-  args ["--utf8output"]
+  grefs ["System.dll"; "System.Core.dll"]
 }
 ```
 
 | Operation | Value | Meaning |
 |---|---|---|
-| `targetfwk` | `string` | target framework (`netstandard2.0`, `net-4.6.2`, ...); required here or in `NETFX-TARGET` |
+| `targetfwk` | `string` | target framework (`net10.0`, `netstandard2.0`, `net-4.6.2`, ...); default: `NETFX-TARGET`, else the SDK's own .NET framework |
 | `src` | `Fileset` | sources, in compile order |
 | `out` | `File` | output (default: the rule's target) |
 | `target` | `TargetType` | `Library`, `Exe`, ... (default: from the output's extension) |
 | `ref` / `refif` / `refs` | `Fileset` | add / add when / set references (`-r:`) |
-| `grefs` | `string list` | assemblies looked up in the target framework's reference assemblies |
+| `grefs` | `string list` | framework references by file name (`System.dll`, `System.Core.dll`, ...), resolved against the target framework's reference directory and passed as `-r:`; for a .NET target the whole targeting pack is referenced already |
 | `resources` / `resourceslist` | `ResourceFileset` | embedded resources; a `.resx` is compiled to `obj/xake/<name>/*.resources` |
 | `define` | `string list` | conditional compilation symbols, one `--define:` each |
 | `doc` | `File` | xml documentation file |
@@ -280,13 +299,17 @@ target framework is required, as for csc.
 | `nofailonerror` | -- | a compile error does not fail the build |
 | `resolve` | -- | return the resolved `Fsc` instead of compiling; must be the last operation |
 
-The arguments are always fsc's `--name:value` form (`-r:` for references), on every OS. With
-`targetfwk` the task passes `--noframework` and the framework's reference assemblies
-(`netstandard.dll` plus `--targetprofile:netstandard` for netstandard, `mscorlib.dll` for .NET
-Framework) as ordinary `-r:` references. `FSharp.Core` is never added: reference the one your
-code compiles against with `ref`. For a .NET Framework target that has to be a net4x
-`FSharp.Core.dll`, which the SDK does not ship. fsc creates the directory of `--out` and the
-task that of `doc`.
+The arguments are always fsc's `--name:value` form (`-r:` for references), on every OS. The
+task passes `--noframework` and the framework's reference assemblies as ordinary `-r:`
+references: for .NET (`net10.0`, the default) every assembly of the SDK's targeting pack plus
+`--targetprofile:netcore`, for netstandard `netstandard.dll` plus
+`--targetprofile:netstandard`, for .NET Framework `mscorlib.dll`. For a .NET target the SDK's
+`FSharp.Core.dll` (next to `fsc.dll`) is referenced unless a `ref` already names an
+`FSharp.Core.dll`; fsc copies it next to the output, as it does any referenced FSharp.Core
+(`args ["--nocopyfsharpcore"]` turns that off). For netstandard and .NET Framework
+`FSharp.Core` is not added: reference the one your code compiles against with `ref`; for a
+.NET Framework target that has to be a net4x `FSharp.Core.dll`, which the SDK does not ship.
+fsc creates the directory of `--out` and the task that of `doc`.
 
 `define` takes one symbol per switch: unlike `csc`, `fsc` reads `--define:A;B` as a single
 symbol named `A;B`, so the task emits a separate `--define:` for each.
@@ -303,7 +326,7 @@ that compiles; it is what `fsc { ... }` runs. It replaces the function `Fsc sett
 
 ```fsharp
 "hw.dll" ..> recipe {
-  do! Fsc.compile { FscSettings with TargetFramework = "netstandard2.0"; Src = !! "hw.fs"; Ref = !! "FSharp.Core.dll" }
+  do! Fsc.compile { FscSettings with Src = !! "hw.fs" }
 }
 ```
 
@@ -325,7 +348,7 @@ into a response file.
 
 ```fsharp
 recipe {
-  let! f = fsc { targetfwk "netstandard2.0"; src !!"hw.fs"; ref !!"FSharp.Core.dll"; out (File.make "out/hw.dll"); resolve }
+  let! f = fsc { src !!"hw.fs"; out (File.make "out/hw.dll"); resolve }
   do! Fsc.run FscRunOptions.Default f
 }
 ```
@@ -441,7 +464,7 @@ let strings = resourceset {
 | Variable | Effect |
 |----------|--------|
 | `NETFX` | Framework whose tools are used, overriding the target framework |
-| `NETFX-TARGET` | Default `targetfwk` for all compiler tasks |
+| `NETFX-TARGET` | Default `targetfwk` for all compiler tasks; unset, they target the SDK's own .NET framework |
 | `FSCVER` | F# compiler version `fsc` asks for (Windows registry provider only) |
 | `CSC_SERVER` | `csc` compiler server: `on`, `off` or keepalive seconds; overridden by a target's `noserver`/`keepalive`, overrides env `XAKE_CSC_SERVER` |
 | `CSC_TOOLSET` | `csc` compiler package version (`Microsoft.Net.Compilers.Toolset`) for targets with no `toolset`; empty or unset means the SDK's compiler |

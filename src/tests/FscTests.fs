@@ -102,21 +102,80 @@ type ``Fsc record tests``() =
                                  "/cache/netstandard.library/2.0.3/build/netstandard2.0/ref/netstandard.dll", "" ])
         Assert.That(moved.Options, Is.EqualTo f.Options)
 
+    // no `targetfwk` and no NETFX-TARGET: the .NET framework of the SDK the build runs on,
+    // referenced through the SDK's own targeting pack, plus the SDK's FSharp.Core
+    [<Test; Category("Integration")>]
+    member x.``fsc without a target framework defaults to the SDK framework``() =
+        File.WriteAllText ("a.fs", "module A\nlet a = 1\n")
+        let resolved = ref None
+        do xake {x.TestOptions with FileLog="fsc-nofwk.log"; ThrowOnError = true} {
+            wantOverride (["nofwk"])
+            rules [
+                "nofwk" => recipe {
+                    let! f = fsc { src !!"a.fs"; out (File.make "nofwk.dll"); resolve }
+                    resolved.Value <- Some f
+                }
+            ]
+        }
+        let f = resolved.Value |> Option.get
+        let sdkFwk = DotNetFwk.sdkFramework x.TestOptions.ProjectRoot |> Option.get
+        let norm (p: string) = p.Replace('\\', '/')
+        Assert.That(sdkFwk, Does.Match @"^net\d+\.\d+$")
+        Assert.That(f.Framework, Is.EqualTo sdkFwk)
+        Assert.That(f.Args, Does.Contain "--noframework")
+        Assert.That(f.Args, Does.Contain "--targetprofile:netcore")
+        let refs = f.Dependencies.References |> List.map (fun r -> norm r.Path)
+        let packRefs = refs |> List.filter (fun r -> r.Contains "/packs/Microsoft.NETCore.App.Ref/" && r.Contains ("/ref/" + sdkFwk + "/"))
+        Assert.That(packRefs |> List.map Path.GetFileName, Does.Contain "System.Runtime.dll")
+        Assert.That(packRefs |> List.map Path.GetFileName, Does.Contain "mscorlib.dll")
+        // the SDK's FSharp.Core, the one next to fsc.dll
+        let fsharpCore = refs |> List.filter (fun r -> Path.GetFileName r = "FSharp.Core.dll")
+        Assert.That(fsharpCore, Is.EqualTo [ norm (Path.GetDirectoryName f.Dependencies.Compiler.Path </> "FSharp.Core.dll") ])
+
+    // the default framework compiles with nothing but the SDK: no targetfwk, no FSharp.Core
+    [<Test; Category("Integration")>]
+    member x.``fsc compiles for the SDK framework with no targetfwk and no ref``() =
+        try File.Delete "sdkfwk/hello.dll" with _ -> ()
+        do xake {x.TestOptions with FileLog="fsc-sdkfwk.log"; ThrowOnError = true} {
+            wantOverride (["sdkfwk/hello.dll"])
+            rules [
+                "sdkfwk/hello.dll" ..> recipe {
+                    do! need ["hello.fs"]
+                    do! fsc { src !!"hello.fs" }
+                }
+                "hello.fs" ..> writeText "module Hello\nlet greet name = sprintf \"Hello, %s\" name\nlet now () = System.DateTime.Now\n"
+            ]
+        }
+        Assert.That(File.Exists "sdkfwk/hello.dll", Is.True, "fsc did not produce sdkfwk/hello.dll")
+
+    // an explicit .NET moniker, in both spellings, is resolved the same way
+    [<Test; Category("Integration")>]
+    member x.``fsc targetfwk names a .NET framework explicitly``() =
+        File.WriteAllText ("a.fs", "module A\nlet a = 1\n")
+        let sdkFwk = DotNetFwk.sdkFramework x.TestOptions.ProjectRoot |> Option.get
+        let resolved = ResizeArray<Fsc>()
+        do xake {x.TestOptions with FileLog="fsc-netfwk.log"; ThrowOnError = true} {
+            wantOverride (["explicit"])
+            rules [
+                "explicit" => recipe {
+                    let! f1 = fsc { targetfwk sdkFwk; src !!"a.fs"; out (File.make "explicit.dll"); resolve }
+                    let! f2 = fsc { targetfwk ("sdk-" + sdkFwk); src !!"a.fs"; out (File.make "explicit.dll"); resolve }
+                    resolved.Add f1
+                    resolved.Add f2
+                }
+            ]
+        }
+        Assert.That(resolved.[0].Framework, Is.EqualTo sdkFwk)
+        Assert.That(resolved.[1].Dependencies.References, Is.EqualTo resolved.[0].Dependencies.References)
+        Assert.That(resolved.[0].Args, Does.Contain "--targetprofile:netcore")
+
     [<Test>]
-    member x.``fsc without a target framework fails asking for one``() =
-        let build () =
-            xake {x.TestOptions with FileLog="fsc-nofwk.log"; ThrowOnError = true} {
-                wantOverride (["nofwk"])
-                rules [
-                    "nofwk" => recipe {
-                        let! _ = fsc { src !!"a.fs"; out (File.make "nofwk.dll"); resolve }
-                        ()
-                    }
-                ]
-            }
-        let ex = Assert.Throws<XakeException> (fun () -> build () |> ignore)
-        Assert.That(ex.ToString(), Does.Contain "fsc needs a target framework: set targetfwk in the fsc block or the NETFX-TARGET script variable")
-        Assert.That(ex.ToString(), Does.Contain "targetfwk \"netstandard2.0\"")
+    member __.``.NET monikers are told from .NET Framework and netstandard ones``() =
+        Assert.That(DotNetFwk.netcoreMoniker "net10.0", Is.EqualTo (Some "net10.0"))
+        Assert.That(DotNetFwk.netcoreMoniker "sdk-net8.0", Is.EqualTo (Some "net8.0"))
+        Assert.That(DotNetFwk.netcoreMoniker "NET9.0", Is.EqualTo (Some "net9.0"))
+        for other in [ "net472"; "net-4.6.2"; "netstandard2.0"; "net4.8"; "4.0"; "mono-4.5"; "" ] do
+            Assert.That(DotNetFwk.netcoreMoniker other, Is.EqualTo None, other)
 
     // `resolve` describes the compilation and stops: the SDK's fsc.dll is the compiler, the
     // sources keep their order, nothing is compiled.
@@ -204,6 +263,25 @@ type ``Fsc record tests``() =
         build ()
         Assert.That(built.Value, Is.EqualTo 2)
         Assert.That(File.ReadAllBytes "e2e/e2e.dll", Is.EqualTo first, "two clean builds differ")
+
+    // the default framework through the runner: a rehashed record (the whole targeting pack and
+    // the SDK's FSharp.Core hashed) compiles
+    [<Test; Category("Integration")>]
+    member x.``Fsc.run compiles a rehashed record for the SDK framework``() =
+        File.WriteAllText ("rh.fs", "module Rh\nlet now () = System.DateTime.Now\n")
+        if File.Exists "rh/rh.dll" then File.Delete "rh/rh.dll"
+        do xake {x.TestOptions with FileLog="fsc-rehash.log"; ThrowOnError = true} {
+            wantOverride (["rh"])
+            rules [
+                "rh" => recipe {
+                    let! f = fsc { src !!"rh.fs"; out (File.make "rh/rh.dll"); resolve }
+                    let f = Fsc.rehash f
+                    Assert.That(f.Dependencies.References |> List.forall (fun r -> r.Sha256 <> ""), Is.True, "every reference hashed")
+                    do! Fsc.run FscRunOptions.Default f
+                }
+            ]
+        }
+        Assert.That(File.Exists "rh/rh.dll", Is.True, "Fsc.run did not produce rh/rh.dll")
 
     // a recorded hash that no longer matches the file fails the build before the compiler
     // starts: no output appears

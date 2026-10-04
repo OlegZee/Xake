@@ -30,7 +30,8 @@ module FscTypes =
         Resources: ResourceFileset list
         /// Defines conditional compilation symbols.
         Define: string list
-        /// Target .NET framework; required (here or in the `NETFX-TARGET` script variable).
+        /// Target .NET framework; optional: `NETFX-TARGET` when not set, else the .NET framework
+        /// of the SDK the build runs on (`net10.0` for SDK 10.0.x).
         TargetFramework: string
         /// Use a specific F# compiler version (the Windows registry provider only).
         FscVersion: string option
@@ -40,8 +41,8 @@ module FscTypes =
         CommandArgs: string list
         /// Build fails on compile error.
         FailOnError: bool
-        /// Do not reference the default CLI assemblies. Always in effect now that a target
-        /// framework is required: its reference assemblies are passed explicitly.
+        /// Do not reference the default CLI assemblies. Always in effect: the target
+        /// framework's reference assemblies are passed explicitly.
         NoFramework: bool
 
         /// Generate tailcalls where possible (`--tailcalls-` when false).
@@ -237,15 +238,18 @@ module Fsc =
     /// <summary>
     /// Composes an `Fsc` from the settings at recipe time, without running the compiler (what
     /// `fsc { ...; resolve }` returns). The argument list, in order: `--nologo`, `--target:`,
-    /// `--noframework`, `--targetprofile:netstandard` (netstandard only), `--tailcalls-` (when
-    /// `Tailcalls` is off), `--out:`, `--doc:`, one `--define:` per symbol, the sources, `-r:`
-    /// per reference, the framework's references (`netstandard.dll` or `mscorlib.dll`, then
-    /// `RefGlobal`), `--resource:path,name`, `CommandArgs`. Always the `--` form, on every
+    /// `--noframework`, `--targetprofile:netstandard` (netstandard) or `--targetprofile:netcore`
+    /// (.NET), `--tailcalls-` (when `Tailcalls` is off), `--out:`, `--doc:`, one `--define:` per
+    /// symbol, the sources, `-r:` per reference, the SDK's `FSharp.Core.dll` (.NET only, when no
+    /// reference is an `FSharp.Core.dll`), the framework's references (the whole targeting pack
+    /// for .NET, else `netstandard.dll` or `mscorlib.dll`; then `RefGlobal`),
+    /// `--resource:path,name`, `CommandArgs`. Always the `--` form, on every
     /// OS. The list goes through `ofArgs` and the same round-trip check as `Csc.ofSettings`.
     ///
-    /// The target framework is required (`targetfwk` or `NETFX-TARGET`). `FSharp.Core` is
-    /// not added: the caller references the one the code compiles against, and it is recorded
-    /// like any other reference. The compiler is the SDK's `fsc.dll` (`DotNetFwk.fscCompiler`);
+    /// The target framework is `targetfwk`, else `NETFX-TARGET`, else the SDK's own .NET
+    /// framework (`net10.0` for SDK 10.0.x). For netstandard and .NET Framework `FSharp.Core`
+    /// is not added: the caller references the one the code compiles against. Every
+    /// reference, the defaulted one included, is recorded like any other. The compiler is the SDK's `fsc.dll` (`DotNetFwk.fscCompiler`);
     /// on the other providers, `FscTool` with `fscver`/`FSCVER`. A `.resx` resource becomes
     /// a permanent `(resx, .resources)` pair under `obj/xake/<name>/`, as for csc. With no
     /// `Out`, the output is the target of the rule this runs in.
@@ -290,16 +294,31 @@ module Fsc =
             let! targetFwkInfo =
                 match targetFramework with
                 | null ->
-                    failwithf "'%s': fsc needs a target framework: set targetfwk in the fsc block or the NETFX-TARGET script variable (e.g. targetfwk \"netstandard2.0\")" assemblyName
+                    failwithf "'%s': fsc needs a target framework: set targetfwk in the fsc block or the NETFX-TARGET script variable (e.g. targetfwk \"netstandard2.0\"); the SDK's own framework could not be determined" assemblyName
                 | tgt -> DotNetFwk.resolveFramework (Some tgt)
 
             // netstandard is a profile rather than a framework version: its whole surface
-            // lives in netstandard.dll, and fsc has to be told about it explicitly
+            // lives in netstandard.dll, and fsc has to be told about it explicitly. .NET
+            // (net5.0 and later) is the `netcore` profile, referenced as a whole targeting pack.
             let isNetstandard = targetFramework.StartsWith ("netstandard", System.StringComparison.OrdinalIgnoreCase)
+            let isNetcore = Option.isSome (DotNetFwk.netcoreMoniker targetFramework)
             let globalRefs =
                 let lookup = DotNetFwk.locateAssembly targetFwkInfo
-                let sysAssembly = if isNetstandard then "netstandard.dll" else "mscorlib.dll"
-                sysAssembly :: settings.RefGlobal |> List.map lookup
+                let frameworkRefs =
+                    match DotNetFwk.frameworkReferences targetFwkInfo with
+                    | [] -> [ lookup (if isNetstandard then "netstandard.dll" else "mscorlib.dll") ]
+                    | all -> all
+                frameworkRefs @ (settings.RefGlobal |> List.map lookup |> List.filter (fun r -> not (List.contains r frameworkRefs)))
+
+            // for .NET, the SDK's own FSharp.Core (next to fsc.dll) unless the settings
+            // reference one; netstandard2.0 and .NET Framework keep taking theirs from the caller
+            let isFSharpCore (path: string) =
+                System.String.Equals (Path.GetFileName path, "FSharp.Core.dll", System.StringComparison.OrdinalIgnoreCase)
+            let defaultFSharpCore =
+                if isNetcore && not (refs |> List.exists (fun f -> isFSharpCore f.FullName))
+                   && not (globalRefs |> List.exists isFSharpCore) then
+                    DotNetFwk.sdkFSharpCore targetFwkInfo |> Option.toList
+                else []
 
             let args =
                 seq {
@@ -309,6 +328,8 @@ module Fsc =
                     yield "--noframework"
                     if isNetstandard then
                         yield "--targetprofile:netstandard"
+                    elif isNetcore then
+                        yield "--targetprofile:netcore"
                     if not settings.Tailcalls then
                         yield "--tailcalls-"
                     if outFile <> File.undefined then
@@ -320,6 +341,7 @@ module Fsc =
                     yield! settings.Define |> List.map (fun symbol -> "--define:" + symbol)
                     yield! src |> List.map (fun f -> f.FullName)
                     yield! refs |> List.map (fun f -> "-r:" + f.FullName)
+                    yield! defaultFSharpCore |> List.map ((+) "-r:")
                     yield! globalRefs |> List.map ((+) "-r:")
                     yield! resArgs |> List.map (fun (name, path) -> sprintf "--resource:%s,%s" path name)
                     yield! settings.CommandArgs

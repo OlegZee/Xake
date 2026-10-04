@@ -82,6 +82,17 @@ edit reruns the compile, not `resolve`. Non-resx resources are unaffected -- the
 the file the compiler reads and stay a plain `/res:` file input. `resolve` no longer produces any
 temp files of its own; the only temp file `run` still cleans up is its own response file.
 
+### Composed-mode outputs: `runtimeconfig.json`
+
+A composed compilation of an executable (`target Exe`/`WinExe`, or `Auto` with an output ending in
+`.exe`) for `netN.0` (the SDK default included) also gets `<output>.runtimeconfig.json` next to it,
+without which `dotnet <output>.exe` cannot start. It is recorded as a `Generated` file of the
+compilation (so `run` writes it back whenever it is missing or changed, before the compiler runs)
+with the content `dotnet build` writes by default: `tfm`, the `Microsoft.NETCore.App` framework at
+`<major>.0.0`, and the `EnableUnsafeBinaryFormatterSerialization: false` config property; no
+roll-forward settings, no timestamps. Libraries, `netstandard` and .NET Framework targets get none;
+a lock or an imported project carries whatever its `Generated` list holds.
+
 ### Composed-mode reference assemblies
 
 `targetfwk` (else `NETFX-TARGET`, else the SDK's own framework) decides where the framework's

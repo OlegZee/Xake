@@ -393,6 +393,7 @@ module Fsc =
                     Fsc.Framework = targetFramework
                     Fsc.Directory = options.ProjectRoot
                     Fsc.Resources = resources
+                    Fsc.Generated = composed.Generated @ Impl.runtimeConfig targetFramework (File.getFullName outFile) settings.Target
                     Fsc.Dependencies =
                         { composed.Dependencies with
                             Compiler = { Tool = "fsc"; Path = compilerPath; Sha256 = ""; Version = Csc.compilerVersion compilerPath } } }

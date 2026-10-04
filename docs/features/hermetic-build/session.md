@@ -979,3 +979,16 @@ scripts bootstrap from nuget.org, `.bootstrap/` retired; the feature fsx scripts
 **Exact next step**: after the user merges #28–#31, merge `dev` here, fix the two stale Gaps
 lines in `workflows.md`, then start B6 from fresh `dev`: design note first (`Fsc` record,
 hashing `fsc.dll` from the SDK, `--` argument form, shared runner core with `Csc.run`).
+
+## 2026-10-04 — B6 base PRs, review on #32
+
+Design approved (`fsc-design.md` §10). #32 `pr/fsc-record` (Fsc record, FscArgs, resolve,
+`Fsc.compile`) and #33 `pr/fsc-runner` (CompilerRunner.RunPlan as data, `Fsc.run`) are open.
+Review on #32 reversed the 2026-09-30 "targetfwk required" decision: **`targetfwk` is optional,
+default = the probed SDK's own `netN.0`** (from `Microsoft.NETCoreSdk.BundledVersions.props`),
+for csc and fsc alike; composed mode now compiles for `netN.0` with references from the SDK's
+`packs/Microsoft.NETCore.App.Ref` (no download). fsc on `netN.0` references the SDK's
+FSharp.Core unless `ref` names one. `samples/features.fsx` runs on macOS with just the SDK.
+Tests: 271/1 on #32, 274/1 on #33. **Next**: the user merges #32, #33, releases Xake 3.5;
+then hermetic PRs D (union in `Lock.Entry`, `fsc { lock }`, fsproj import) and E
+(`build.fsc.fsx` on one imported lock, `Fsproj` deleted), release 0.2 on `[3.5.0.<run>, 4.0)`.

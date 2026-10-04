@@ -3,6 +3,15 @@
 Ideas and larger items that are agreed in direction but not scheduled. Working state of a
 feature lives in `docs/features/<name>/`; this page is the cross-feature list.
 
+## Principles
+
+- **Hosts: the .NET SDK only; targets: every platform.** No backports of the engine or the
+  tasks to the full framework or mono as build hosts. Composed `csc {}`/`fsc {}` must produce
+  `netN.0`, `netstandard2.x` and `.NET Framework 4.x` outputs from any host (macOS, Linux,
+  Windows) with no manual setup: reference packs and facades restored or taken from the SDK.
+  Verified 2026-10-04 on macOS: csc net462 works; fsc net462 needs an implicit `netstandard.dll`
+  facade and a default `FSharp.Core` (fix in 3.5).
+
 ## Engine
 
 ### Rules with arguments (idea, 2026-10-02)

@@ -396,3 +396,20 @@ uses the dev `#r` lines until 0.2 is out, then bumps them (docs/session.md:23-29
   reported, resx embedded, `--doc:` directory created, path with a space through the rsp);
   hermetic: fsproj import round trip, `fsc { lock }` record/match/drift/CI, mixed C#/F# lock
   read and write, csc lock byte-identity.
+
+## 10. Decisions (the user, 2026-10-04)
+
+1. Union `Compilation = Csc of Csc | Fsc of Fsc` in the hermetic `Lock.Entry`, discriminated in
+   JSON by `Compiler.Tool`; existing csc locks byte-identical.
+2. Explicit, no defaults: the shared part is a data record (`RunPlan`) the two runners fill;
+   the differences are separate types per compiler (`FscRunOptions`, `FscArgs`), never csc
+   options with ignored fields.
+3. Both 3.5 breaks for fsc: `targetfwk`/`NETFX-TARGET` required; `Fsc settings` becomes
+   `Fsc.compile settings`. The roadmap's "additive" line is corrected.
+4. Windows full-framework `fsc.exe` is out of scope (runs through the generic path, untested).
+5. `Fsproj` is deleted in Xake.Hermetic.Dotnet 0.2.
+
+On reproducibility: the lock detects a different fsc (hash) but cannot restore an SDK. The
+honest mode is an exact `global.json` pin; two roadmap candidates close the gap: an "SDK
+restore" step via the official `dotnet-install` into the project's `DOTNET_ROOT`, and an F#
+compiler host over the `FSharp.Compiler.Service` package as a `toolset` for fsc.

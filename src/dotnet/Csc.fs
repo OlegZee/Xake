@@ -658,6 +658,8 @@ module Csc =
                     Framework = (match targetFramework with null -> "" | fwk -> fwk)
                     Directory = options.ProjectRoot
                     Resources = resources
+                    // `dotnet <out>.exe` needs the runtimeconfig the SDK would have written
+                    Generated = composed.Generated @ Impl.runtimeConfig targetFramework (File.getFullName outFile) settings.Target
                     Dependencies =
                         { composed.Dependencies with
                             Compiler = { Tool = "csc"; Path = compilerPath; Sha256 = ""; Version = compilerVersion compilerPath } } }

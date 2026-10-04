@@ -61,6 +61,35 @@ module internal Impl =
         |AppContainerExe -> "appcontainerexe" |Exe -> "exe" |Library -> "library" |Module -> "module" |WinExe -> "winexe" |WinmdObj -> "winmdobj"
         |Auto -> fileName |> resolveTarget |> targetStr fileName
 
+    /// The `<output>.runtimeconfig.json` that `dotnet <output>.exe` needs, as a `Generated`
+    /// pair: for an executable (`Exe`/`WinExe`, `Auto` resolved from the output name) that
+    /// targets `netN.0` (N >= 5) only, `[]` otherwise. The content is what `dotnet build` writes
+    /// by default (no roll-forward settings): same keys, same order, no trailing newline.
+    let runtimeConfig (framework: string) (outPath: string) (target: TargetType) : (string * string) list =
+        let isExe =
+            match (match target with Auto -> resolveTarget outPath | t -> t) with
+            | Exe | WinExe -> true
+            | _ -> false
+        match Option.ofObj framework |> Option.bind DotNetFwk.sdkImpl.netcoreMoniker with
+        | Some moniker when isExe ->
+            let major = moniker.Substring(3).Split('.').[0]
+            let content =
+                String.concat "\n"
+                    [ "{"
+                      "  \"runtimeOptions\": {"
+                      sprintf "    \"tfm\": \"%s\"," moniker
+                      "    \"framework\": {"
+                      "      \"name\": \"Microsoft.NETCore.App\","
+                      sprintf "      \"version\": \"%s.0.0\"" major
+                      "    },"
+                      "    \"configProperties\": {"
+                      "      \"System.Runtime.Serialization.EnableUnsafeBinaryFormatterSerialization\": false"
+                      "    }"
+                      "  }"
+                      "}" ]
+            [ System.IO.Path.ChangeExtension (outPath, ".runtimeconfig.json"), content ]
+        | _ -> []
+
     let platformStr = function
         |AnyCpu -> "anycpu" |AnyCpu32Preferred -> "anycpu32preferred" |ARM -> "arm" | X64 -> "x64" | X86 -> "x86" |Itanium -> "itanium"
 

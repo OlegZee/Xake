@@ -148,6 +148,18 @@ type ``Fsc record tests``() =
         }
         Assert.That(File.Exists "sdkfwk/hello.dll", Is.True, "fsc did not produce sdkfwk/hello.dll")
 
+    [<Test; Category("Integration")>]
+    member x.``fsc exe for the default framework writes runtimeconfig.json``() =
+        if Directory.Exists "rc-fsc" then Directory.Delete ("rc-fsc", true)
+        Directory.CreateDirectory "rc-fsc" |> ignore
+        File.WriteAllText ("rc-fsc/hw.fs", "[<EntryPoint>]\nlet main _ = printfn \"Hello world!\"; 0\n")
+        do xake {x.TestOptions with FileLog="fsc-rc.log"; ThrowOnError = true} {
+            wantOverride (["rc-fsc/hw.exe"])
+            rules [ "rc-fsc/hw.exe" ..> recipe { do! fsc { src !!"rc-fsc/hw.fs" } } ]
+        }
+        let sdkFwk = DotNetFwk.sdkFramework x.TestOptions.ProjectRoot |> Option.get
+        Assert.That(File.ReadAllText "rc-fsc/hw.runtimeconfig.json", Does.Contain (sprintf "\"tfm\": \"%s\"" sdkFwk))
+
     // an explicit .NET moniker, in both spellings, is resolved the same way
     [<Test; Category("Integration")>]
     member x.``fsc targetfwk names a .NET framework explicitly``() =

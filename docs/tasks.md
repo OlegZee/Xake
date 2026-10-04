@@ -115,6 +115,10 @@ With no `out`, the compiler writes to the rule's target file:
 "helloworld.exe" ..> csc { src !!"helloworld.cs" }
 ```
 
+An executable for `netN.0` (the SDK default) also gets `helloworld.runtimeconfig.json` next to
+it, as `dotnet build` writes it, so `dotnet helloworld.exe` runs; libraries, `netstandard` and
+.NET Framework targets get none.
+
 `targetfwk` picks the framework to compile against; it is optional. The first that is set
 wins: `targetfwk`, the `NETFX-TARGET` script variable, the .NET framework of the SDK the build
 runs on (`net10.0` for SDK 10.0.x, the SDK a `global.json` in or above the project root
@@ -257,6 +261,7 @@ toolchain, is described in [dotnet-build.md](dotnet-build.md).
 ### fsc
 
 Same shape as `csc`: the operations below, `resolve`, record syntax through `Fsc.compile`.
+An executable for `netN.0` gets the `<output>.runtimeconfig.json` next to it, as for csc.
 `targetfwk` is optional, as for csc: with none (and no `NETFX-TARGET`) the target is the SDK's
 own .NET framework, and the SDK's `FSharp.Core.dll` is referenced. This needs nothing but the
 SDK:

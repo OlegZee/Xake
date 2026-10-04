@@ -493,6 +493,50 @@ let greet name = sprintf "Hello, %s" name
         Assert.That(refs |> List.map Path.GetFileName, Does.Contain "System.Runtime.dll")
         Assert.That(File.Exists "nofwk/nofwk.dll", Is.True, "csc did not produce nofwk/nofwk.dll")
 
+    // `dotnet <out>.exe` needs `<out>.runtimeconfig.json`, which csc does not write
+    member private x.CompileHw (dir: string) (name: string) (fwk: string option) (isExe: bool) =
+        if Directory.Exists dir then Directory.Delete (dir, true)
+        Directory.CreateDirectory dir |> ignore
+        File.WriteAllText (dir </> "hw.cs", "class P { static void Main() { System.Console.WriteLine(\"Hello world!\"); } }")
+        let target = dir </> name
+        do xake {x.TestOptions with FileLog= dir + ".log"; ThrowOnError = true} {
+            wantOverride ([target])
+            rules [
+                target ..> recipe {
+                    match fwk with
+                    | Some f -> do! csc { src !!(dir </> "hw.cs"); targetfwk f; grefs ["System.dll"; "mscorlib.dll"] }
+                    | None -> do! csc { src !!(dir </> "hw.cs") }
+                }
+            ]
+        }
+        target
+
+    [<Test; Category("Integration")>]
+    member x.``csc exe for the default framework writes runtimeconfig.json and runs``() =
+        let exe = x.CompileHw "rc-exe" "hw.exe" None true
+        let sdkFwk = DotNetFwk.sdkFramework x.TestOptions.ProjectRoot |> Option.get
+        let major = sdkFwk.Substring(3).Split('.').[0]
+        let expected =
+            "{\n  \"runtimeOptions\": {\n    \"tfm\": \"" + sdkFwk + "\",\n    \"framework\": {\n      \"name\": \"Microsoft.NETCore.App\",\n      \"version\": \"" + major + ".0.0\"\n    },\n    \"configProperties\": {\n      \"System.Runtime.Serialization.EnableUnsafeBinaryFormatterSerialization\": false\n    }\n  }\n}"
+        Assert.That(File.ReadAllText "rc-exe/hw.runtimeconfig.json", Is.EqualTo expected)
+        let psi = System.Diagnostics.ProcessStartInfo ("dotnet", "\"" + exe + "\"", RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false)
+        use p = System.Diagnostics.Process.Start psi
+        let out = p.StandardOutput.ReadToEnd()
+        p.WaitForExit()
+        Assert.That(out.Trim(), Is.EqualTo "Hello world!", p.StandardError.ReadToEnd())
+
+    [<Test; Category("Integration")>]
+    member x.``csc library writes no runtimeconfig.json``() =
+        x.CompileHw "rc-lib" "hw.dll" None false |> ignore
+        Assert.That(File.Exists "rc-lib/hw.dll", Is.True)
+        Assert.That(File.Exists "rc-lib/hw.runtimeconfig.json", Is.False)
+
+    [<Test; Category("Integration")>]
+    member x.``csc exe for .NET Framework writes no runtimeconfig.json``() =
+        x.CompileHw "rc-462" "hw.exe" (Some "net-4.6.2") true |> ignore
+        Assert.That(File.Exists "rc-462/hw.exe", Is.True)
+        Assert.That(File.Exists "rc-462/hw.runtimeconfig.json", Is.False)
+
     [<Test>]
     member __.``task builders produce recipes``() =
 

@@ -1,18 +1,13 @@
-#r "nuget: Xake, 1.1.4.427-beta"
-#r "nuget: Xake.Dotnet, 1.1.4.7-beta" (1)
+#r "nuget: Xake, 3.5.0"
 
+open Xake
+open Xake.Dotnet
 
-open Xake                          // (2)
-open Xake.Dotnet                   // (2.1)
-
-do xakeScript {                    // (3)
-    rule("main" <== ["hw.exe"])    // (4)
-    rule("hw.exe" ..> recipe {     // (5)
-        do! Csc.compile {
-            CscSettings with
-                Src = !! "hw.cs"
-        }
-    })
-
-    rule (PhonyRule ("greet", trace Info "hello"))
+do xakeScript {
+    "main" <== ["hw.exe"]
+    "hw.exe" ..> csc {
+        src !!"hw.cs"
+    }
+    
+    rule (PhonyRule ("greet", trace Message "hello"))
 }

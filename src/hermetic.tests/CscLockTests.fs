@@ -50,7 +50,7 @@ type ``Csc lock``() =
                     | Some path ->
                         let! c = Csc.ofSettings settings
                         let! run = Csc.runOptions settings
-                        do! Lock.buildWith { Lock.Options.Default with Run = run } path c
+                        do! Lock.buildWith { Lock.Options.Default with Run = run } path (Lock.Compilation.Csc c)
                 }
             ]
         }
@@ -146,7 +146,7 @@ type ``Csc lock``() =
         let updated = settings (!!"LockD.cs" + "LockD2.cs") "LockD.dll" (Some lockPath)
         x.Run "update-locks" (recipe {
             let! c = Csc.ofSettings (fst updated)
-            do! Lock.record lockPath c })
+            do! Lock.record lockPath (Lock.Compilation.Csc c) })
 
         Assert.That((readLock lockPath).Entries.Head.Csc.Sources |> List.exists (fun s -> s.EndsWith "LockD2.cs"), Is.True,
             "Lock.record did not overwrite the lock with the new settings")
@@ -204,10 +204,10 @@ type ``Csc lock``() =
 
         x.Run "verify-locks" (recipe {
             let! same = Csc.ofSettings (fst (settings !!"LockF.cs" "LockF.dll" None))
-            let! same = Lock.verify lockPath same
+            let! same = Lock.verify lockPath (Lock.Compilation.Csc same)
             unchanged <- same
             let! moved = Csc.ofSettings (fst (settings (!!"LockF.cs" + "LockF2.cs") "LockF.dll" None))
-            let! diff = Lock.verify lockPath moved
+            let! diff = Lock.verify lockPath (Lock.Compilation.Csc moved)
             changed <- diff
         })
 
@@ -229,7 +229,7 @@ type ``Csc lock``() =
     member private x.LockBuild (label: string) (vars: (string * string) list) (source: string) (lockPath: string) =
         x.RunWith label vars (recipe {
             let! c = Csc.ofSettings (fst (settings !!source (Path.ChangeExtension (source, ".dll")) None))
-            do! Lock.build lockPath c
+            do! Lock.build lockPath (Lock.Compilation.Csc c)
         })
 
     static member private MissingUnderCi (name: string) (lockPath: string) =
@@ -261,7 +261,7 @@ type ``Csc lock``() =
                 let s = fst (settings !!"LockN.cs" "LockN.dll" None)
                 let! c = Csc.ofSettings s
                 let! run = Csc.runOptions s
-                do! Lock.buildWith { Lock.Options.Default with Run = { run with FailOnError = false } } lockPath c
+                do! Lock.buildWith { Lock.Options.Default with Run = { run with FailOnError = false } } lockPath (Lock.Compilation.Csc c)
             })
         let ex = Assert.Throws<XakeException> (fun () -> run ())
         Assert.That(ex.Data0, Does.Contain (``Csc lock``.MissingUnderCi "LockN" lockPath))
@@ -315,7 +315,7 @@ type ``Csc lock``() =
         let run () =
             x.RunWith "lock-p2" [ "CI", "on" ] (recipe {
                 let! c = Csc.ofSettings (fst (settings (!!"LockP.cs" + "LockP2.cs") "LockP.dll" None))
-                do! Lock.build lockPath c
+                do! Lock.build lockPath (Lock.Compilation.Csc c)
             })
         let ex = Assert.Throws<XakeException> (fun () -> run ())
         Assert.That(ex.Data0, Does.Contain "differs from the lock")
@@ -347,7 +347,7 @@ type ``Csc lock``() =
         let mutable lines = []
         x.Run "verify-j" (recipe {
             let! moved = Csc.ofSettings (fst (settings (!!"LockJ.cs" + "LockJ2.cs") "LockJ.dll" None))
-            let! diff = Lock.verify lockPath moved
+            let! diff = Lock.verify lockPath (Lock.Compilation.Csc moved)
             lines <- diff })
         Assert.That(lines, Has.Some.Contains "$(ProjectRoot)/LockJ2.cs")
         Assert.That(lines, Has.None.Contains root)
@@ -361,7 +361,7 @@ type ``Csc lock``() =
         let run () =
             x.Run "verify-k" (recipe {
                 let! c = Csc.ofSettings (fst (settings !!"LockK.cs" "LockK.dll" None))
-                let! _ = Lock.verify lockPath c
+                let! _ = Lock.verify lockPath (Lock.Compilation.Csc c)
                 return () })
         let ex = Assert.Throws<XakeException> (fun () -> run ())
         Assert.That(ex.Data0, Does.Contain lockPath)

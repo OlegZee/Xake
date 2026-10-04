@@ -16,7 +16,7 @@ type ``Lock rehash and diff``() =
 
     let sampleEntry () : Lock.Entry =
         let c = Csc.ofArgs [ "/target:library"; "/define:TRACE"; "/out:/proj/obj/Sample.dll"; "/reference:/pkgs/a.dll"; "A.cs" ]
-        { Csc =
+        { Compilation = Lock.Compilation.Csc
             { c with
                 Name = "Sample"
                 Framework = "netstandard2.0"
@@ -42,7 +42,7 @@ type ``Lock rehash and diff``() =
             let entry =
                 { sample with
                     Evaluation = { sample.Evaluation with Imports = [ { Path = existing; Sha256 = "" } ] }
-                    Csc =
+                    Compilation = Lock.Compilation.Csc
                         { sample.Csc with
                             Dependencies =
                                 { References = [ { Path = existing; Sha256 = ""; Alias = "" } ]
@@ -70,7 +70,7 @@ type ``Lock rehash and diff``() =
         let a = sampleEntry ()
         let b =
             { a with
-                Csc =
+                Compilation = Lock.Compilation.Csc
                     { a.Csc with
                         Sources = [ "B.cs" ]
                         Defines = [ "DEBUG" ]
@@ -195,7 +195,7 @@ type ``Lock file format``() =
                   "/reference:ext=/r/proj/src/Other/bin/Other.dll"; "/analyzer:/r/dotnet/sdk/8.0.100/an.dll"
                   "/out:/r/proj/src/Sample/obj/Sample.dll"; "/r/proj/src/Sample/A.cs"; "/warnaserror+:NU1605" ]
         let entry : Lock.Entry =
-            { Csc =
+            { Compilation = Lock.Compilation.Csc
                 { c with
                     Name = "Sample"
                     Framework = "netstandard2.0"

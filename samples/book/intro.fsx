@@ -4,10 +4,10 @@ open Xake
 open Xake.Dotnet
 
 do xakeScript {
-    "main" <== ["hw.exe"]
-    "hw.exe" ..> csc {
+    "main" <== ["hw.dll"]
+    "hw.dll" ..> csc {
         src !!"hw.cs"
     }
     
-    rule (PhonyRule ("greet", trace Message "hello"))
+    "greet" => trace Error "hello"
 }

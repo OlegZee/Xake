@@ -146,9 +146,10 @@ be determined (no SDK) does the compile fail with `csc needs a target framework`
 
 ## The runner: `Csc.run`
 
-`Csc.run` (`Csc.fs`) is the one runner, shared by every entry point. Obtaining anything that is
-missing (packages, a revision token) is not its business: `Lock.compile` does that before it
-hands the `Csc` here. It does, in order (after a
+`Csc.run` (`Csc.fs`) is the one runner for C#, shared by every entry point. Obtaining anything
+that is missing (packages, a revision token) is not its business: `Lock.compile` does that before
+it hands the `Csc` here. Since 3.5 the steps below live in an internal `CompilerRunner.run`
+over a `RunPlan` record that `Csc.run` fills. It does, in order (after a
 `trace Info "compiling '<name>' (<tool> <version>)"`):
 
 1. A compiler that does not exist (with no `RunOptions.CscPath`) is traced as an error and fails

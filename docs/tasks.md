@@ -1,4 +1,4 @@
-# Xake tasks
+﻿# Xake tasks
 
 The examples below use current API style:
 
@@ -268,14 +268,14 @@ SDK:
 }
 ```
 
-For netstandard or .NET Framework, name the framework, reference the `FSharp.Core` the code
-compiles against, and add framework assemblies by file name with `grefs`:
+For netstandard or .NET Framework, name the framework and add framework assemblies by file
+name with `grefs`; `FSharp.Core` (and, for .NET Framework, a `netstandard.dll` facade) is
+referenced implicitly, so this too needs nothing but the SDK, on any OS:
 
 ```fsharp
-"app.dll" ..> fsc {
+"app.exe" ..> fsc {
   targetfwk "net-4.6.2"
   src (fileset { includes "src/*.fs" })
-  ref !!"bin/FSharp.Core.dll"
   grefs ["System.dll"; "System.Core.dll"]
 }
 ```
@@ -303,12 +303,24 @@ The arguments are always fsc's `--name:value` form (`-r:` for references), on ev
 task passes `--noframework` and the framework's reference assemblies as ordinary `-r:`
 references: for .NET (`net10.0`, the default) every assembly of the SDK's targeting pack plus
 `--targetprofile:netcore`, for netstandard `netstandard.dll` plus
-`--targetprofile:netstandard`, for .NET Framework `mscorlib.dll`. For a .NET target the SDK's
-`FSharp.Core.dll` (next to `fsc.dll`) is referenced unless a `ref` already names an
-`FSharp.Core.dll`; fsc copies it next to the output, as it does any referenced FSharp.Core
-(`args ["--nocopyfsharpcore"]` turns that off). For netstandard and .NET Framework
-`FSharp.Core` is not added: reference the one your code compiles against with `ref`; for a
-.NET Framework target that has to be a net4x `FSharp.Core.dll`, which the SDK does not ship.
+`--targetprofile:netstandard`, for .NET Framework `mscorlib.dll` and a `netstandard.dll` facade.
+Unless a `ref` already names an `FSharp.Core.dll`, one is referenced: for a .NET target the
+SDK's (next to `fsc.dll`, the version the compiler ships with); for netstandard and .NET
+Framework the `FSharp.Core` NuGet package at `DotNetFwk.fsharpCoreVersion` (8.0.100, what Xake
+itself pins) or the script variable `FSHARP_CORE_VERSION`, its `lib/netstandard2.0` build
+(`lib/netstandard2.1` for netstandard2.1), restored into the package cache on first use. That
+build references `netstandard 2.0.0.0`, so a .NET Framework target also gets a type-forwarding
+`netstandard.dll`: the reference assemblies' own `Facades/netstandard.dll` from 4.7.1 on, the
+SDK's `Microsoft/Microsoft.NET.Build.Extensions/net461/lib/netstandard.dll` below (unless a `ref`
+names a `netstandard.dll`). `NETStandard.Library`'s `netstandard.dll` is not used there: it
+defines the types rather than forwarding them, and fsc then fails on clashes with `mscorlib`.
+Every implicit reference is recorded in the resolved `Fsc` like any other. `csc` gets none of
+this: it needs no FSharp.Core, and C# compiles for .NET Framework without the facade.
+
+fsc copies the referenced `FSharp.Core.dll` next to the output (`args ["--nocopyfsharpcore"]`
+turns that off). It does not copy the facade, and neither does Xake: an fsc-built exe for
+.NET Framework below 4.7.2 needs a runtime `netstandard.dll` next to it (from 4.7.2 the
+runtime has one; msbuild copies the SDK's facades into such an output, Xake does not).
 fsc creates the directory of `--out` and the task that of `doc`.
 
 `define` takes one symbol per switch: unlike `csc`, `fsc` reads `--define:A;B` as a single
@@ -339,6 +351,31 @@ references; `Analyzers` is always empty). `Options` is in fsc's own spelling wit
 `@Sources`, `@References`, `@Defines`; `FscArgs` parses and formats fsc command lines the way
 `CscArgs` does csc's. `Fsc` has the labels of `Csc`, so constructing one by hand takes qualified
 labels (`{ Fsc.Name = ...; ... }`), and `Fsc.ofArgs` builds one from a command line.
+
+`Fsc.run options f` compiles such a record through the same runner as `Csc.run`: generated
+files written back, output directories created (`--doc:` included), resx compiled, every input
+`needFiles`d, and the SHA-256 of every hashed reference and of `fsc.dll` verified before the
+compiler starts (`Fsc.rehash` records them; an empty hash is not checked). The arguments go
+into a response file.
+
+```fsharp
+recipe {
+  let! f = fsc { src !!"hw.fs"; out (File.make "out/hw.dll"); resolve }
+  do! Fsc.run FscRunOptions.Default f
+}
+```
+
+`FscRunOptions` (default `FscRunOptions.Default`; `Fsc.runOptions settings` builds them from
+composed settings):
+
+| Field | Meaning | Default |
+|---|---|---|
+| `FailOnError` | a compile error fails the build | `true` |
+| `FscPath` | compiler executable overriding the one the `Fsc` names, run directly | `None` |
+| `Environment` | environment variables of the compiler process | `[]`; the framework's own on the mono and registry paths |
+
+There is no compiler server for fsc. Like `FscRunOptions`' labels, which overlap `RunOptions`',
+construct it with qualified labels or from `FscRunOptions.Default with ...`.
 
 #### Compiling what a project file describes
 

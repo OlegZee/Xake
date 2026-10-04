@@ -70,6 +70,27 @@ module FscTypes =
     /// </summary>
     let FscSettings = FscSettingsType.Default
 
+    /// What the fsc runner needs, as opposed to what is being compiled. fsc's own type: there
+    /// is no compiler server, so nothing here would be ignored. Its labels overlap
+    /// `RunOptions`', so it requires qualified construction (`{ FscRunOptions.FailOnError =
+    /// ... }`); `{ FscRunOptions.Default with ... }` needs none.
+    [<RequireQualifiedAccess>]
+    type FscRunOptions = {
+        /// Build fails on compile error.
+        FailOnError: bool
+        /// Path to the fsc executable, overriding the compiler the compilation names; it is
+        /// run directly (not through `dotnet`).
+        FscPath: string option
+        /// Environment variables the compiler process is started with: the framework's
+        /// (`DotNetFwk.FrameworkInfo.EnvVars`), empty on the SDK path. `Fsc.runOptions`
+        /// fills it for composed settings.
+        Environment: (string * string) list
+    } with static member Default = {
+            FscRunOptions.FailOnError = true
+            FscRunOptions.FscPath = None
+            FscRunOptions.Environment = []
+        }
+
 /// The section markers of `Fsc.Options` and the way back to the flat command line.
 module internal FscSections =
     let sourcesMarker = "@Sources"
@@ -219,16 +240,20 @@ module Fsc =
     /// `fsc { ...; resolve }` returns). The argument list, in order: `--nologo`, `--target:`,
     /// `--noframework`, `--targetprofile:netstandard` (netstandard) or `--targetprofile:netcore`
     /// (.NET), `--tailcalls-` (when `Tailcalls` is off), `--out:`, `--doc:`, one `--define:` per
-    /// symbol, the sources, `-r:` per reference, the SDK's `FSharp.Core.dll` (.NET only, when no
+    /// symbol, the sources, `-r:` per reference, the default `FSharp.Core.dll` (when no
     /// reference is an `FSharp.Core.dll`), the framework's references (the whole targeting pack
-    /// for .NET, else `netstandard.dll` or `mscorlib.dll`; then `RefGlobal`),
-    /// `--resource:path,name`, `CommandArgs`. Always the `--` form, on every
-    /// OS. The list goes through `ofArgs` and the same round-trip check as `Csc.ofSettings`.
+    /// for .NET; `netstandard.dll` for netstandard; `mscorlib.dll` and a forwarding
+    /// `netstandard.dll` facade for .NET Framework, `DotNetFwk.netstandardFacade`, unless a
+    /// reference is a `netstandard.dll`; then `RefGlobal`), `--resource:path,name`,
+    /// `CommandArgs`. Always the `--` form, on every OS. The list goes through `ofArgs` and the
+    /// same round-trip check as `Csc.ofSettings`.
     ///
     /// The target framework is `targetfwk`, else `NETFX-TARGET`, else the SDK's own .NET
-    /// framework (`net10.0` for SDK 10.0.x). For netstandard and .NET Framework `FSharp.Core`
-    /// is not added: the caller references the one the code compiles against. Every
-    /// reference, the defaulted one included, is recorded like any other. The compiler is the SDK's `fsc.dll` (`DotNetFwk.fscCompiler`);
+    /// framework (`net10.0` for SDK 10.0.x). The default `FSharp.Core` is the SDK's own (next
+    /// to `fsc.dll`) for .NET, and the `FSharp.Core` package at `FSHARP_CORE_VERSION`, else
+    /// `DotNetFwk.fsharpCoreVersion`, for netstandard and .NET Framework
+    /// (`DotNetFwk.fsharpCoreReference`). Every reference, the defaulted ones included, is
+    /// recorded like any other. The compiler is the SDK's `fsc.dll` (`DotNetFwk.fscCompiler`);
     /// on the other providers, `FscTool` with `fscver`/`FSCVER`. A `.resx` resource becomes
     /// a permanent `(resx, .resources)` pair under `obj/xake/<name>/`, as for csc. With no
     /// `Out`, the output is the target of the rule this runs in.
@@ -279,25 +304,46 @@ module Fsc =
             // netstandard is a profile rather than a framework version: its whole surface
             // lives in netstandard.dll, and fsc has to be told about it explicitly. .NET
             // (net5.0 and later) is the `netcore` profile, referenced as a whole targeting pack.
+            // Everything else is .NET Framework.
             let isNetstandard = targetFramework.StartsWith ("netstandard", System.StringComparison.OrdinalIgnoreCase)
             let isNetcore = Option.isSome (DotNetFwk.netcoreMoniker targetFramework)
+            let isNetFramework = not isNetstandard && not isNetcore
+            let fileNamed name (path: string) =
+                System.String.Equals (Path.GetFileName path, name, System.StringComparison.OrdinalIgnoreCase)
+            let refsNamed name = refs |> List.exists (fun f -> fileNamed name f.FullName)
             let globalRefs =
                 let lookup = DotNetFwk.locateAssembly targetFwkInfo
                 let frameworkRefs =
                     match DotNetFwk.frameworkReferences targetFwkInfo with
-                    | [] -> [ lookup (if isNetstandard then "netstandard.dll" else "mscorlib.dll") ]
+                    | [] when isNetstandard -> [ lookup "netstandard.dll" ]
+                    | [] ->
+                        // FSharp.Core (any of them: the SDK's, the package's netstandard
+                        // builds) references netstandard 2.0.0.0, which .NET Framework
+                        // reference assemblies below 4.7.1 lack: a forwarding facade
+                        // makes it resolve, unless the settings reference one themselves
+                        let facade =
+                            if isNetFramework && not (refsNamed "netstandard.dll") then
+                                DotNetFwk.netstandardFacade targetFwkInfo [ targetFwkInfo.InstallPath; fwkInfo.InstallPath ]
+                                |> Option.toList
+                            else []
+                        lookup "mscorlib.dll" :: facade
                     | all -> all
                 frameworkRefs @ (settings.RefGlobal |> List.map lookup |> List.filter (fun r -> not (List.contains r frameworkRefs)))
 
-            // for .NET, the SDK's own FSharp.Core (next to fsc.dll) unless the settings
-            // reference one; netstandard2.0 and .NET Framework keep taking theirs from the caller
-            let isFSharpCore (path: string) =
-                System.String.Equals (Path.GetFileName path, "FSharp.Core.dll", System.StringComparison.OrdinalIgnoreCase)
-            let defaultFSharpCore =
-                if isNetcore && not (refs |> List.exists (fun f -> isFSharpCore f.FullName))
-                   && not (globalRefs |> List.exists isFSharpCore) then
-                    DotNetFwk.sdkFSharpCore targetFwkInfo |> Option.toList
-                else []
+            // FSharp.Core unless the settings reference one: for .NET the SDK's own (next to
+            // fsc.dll, the version the compiler is built with and what `dotnet build` picks by
+            // default); for netstandard and .NET Framework the FSharp.Core package at a pinned
+            // version (`DotNetFwk.fsharpCoreReference`), restored into the machine's cache
+            let hasFSharpCore =
+                refsNamed "FSharp.Core.dll" || (globalRefs |> List.exists (fileNamed "FSharp.Core.dll"))
+            let! defaultFSharpCore =
+                if hasFSharpCore then recipe { return [] }
+                elif isNetcore then recipe { return DotNetFwk.sdkFSharpCore targetFwkInfo |> Option.toList }
+                else
+                    recipe {
+                        let! dll = DotNetFwk.fsharpCoreReference targetFramework
+                        return [ dll ]
+                    }
 
             let args =
                 seq {
@@ -358,48 +404,63 @@ module Fsc =
             return f
         }
 
-    /// Runs the compiler over a composed compilation, as the 3.4 `fsc {}` task did: inputs
-    /// `needFiles`d, output directories created, resx compiled, no hash check. Interim, until
-    /// `run` over the shared runner replaces it.
-    let private runComposed (failOnError: bool) (environment: (string * string) list) (f: Fsc) : Recipe<ExecContext, unit> =
+    /// The runner's options for composed settings: `FailOnError` from the settings and the
+    /// environment of the framework they target. What `compile` runs with.
+    let runOptions (settings: FscSettingsType) : Recipe<ExecContext, FscRunOptions> =
         recipe {
-            let compiler = f.Dependencies.Compiler
-            do! trace Info "compiling '%s' (%s %s)" f.Name compiler.Tool compiler.Version
-            let args = f.Args
-
-            for path in FscArgs.outputs args do
-                let dir = Path.GetDirectoryName path
-                if not (Impl.isEmpty dir) then Directory.CreateDirectory dir |> ignore
-
-            do! needFiles (Filelist (f.Resources |> List.map (fst >> File.make)))
-            for (resx, resourcesFile) in f.Resources do
-                if not (File.Exists resourcesFile) then
-                    Resx.compile resx resourcesFile
-
-            do! needFiles (Filelist (FscArgs.inputs args |> List.map File.make))
-
-            let tool, extraArgs =
-                if Impl.endsWith ".dll" compiler.Path then "dotnet", [compiler.Path]
-                else compiler.Path, []
-            let commandLineArgs = extraArgs @ (args |> List.map Impl.escapeArgument)
-            do! trace Debug "Command line: '%s %s'" tool (commandLineArgs |> String.concat " ")
-
-            let! exitCode =
-                shell {
-                    cmd tool
-                    args commandLineArgs
-                    envs environment
-                    workdir f.Directory
-                    logprefix "[fsc]"
-                    stdoutlevel (Tool.diagnosticLevel Level.Verbose)
-                    erroutlevel (Tool.diagnosticLevel Level.Verbose)
-                }
-            do! Tool.failOnExitCode failOnError f.Name exitCode
+            let! _, fwkInfo = Csc.frameworkFor settings.TargetFramework
+            return { FscRunOptions.FailOnError = settings.FailOnError
+                     FscRunOptions.FscPath = None
+                     FscRunOptions.Environment = fwkInfo.EnvVars }
         }
 
     /// <summary>
-    /// F# compiler task in record syntax: `ofSettings`, then the compiler. What `fsc { ... }`
-    /// runs; replaces the 3.4 function `Fsc settings`.
+    /// Runs the compiler over a resolved compilation -- composed by `ofSettings`, or built by
+    /// hand -- through the same runner as `Csc.run`: writes back missing or changed
+    /// `Generated` files, creates the output directories (`--doc:` included), compiles each
+    /// `.resx` whose `.resources` is missing, `needFiles` every input the command line names,
+    /// and verifies the SHA-256 of every hashed reference and of the compiler before starting
+    /// it; a mismatch fails the build. An empty hash (a composed compilation has none) is not
+    /// checked. All arguments go into a response file; a `.dll` compiler (the SDK's
+    /// `fsc.dll`) is started as `dotnet fsc.dll`.
+    /// </summary>
+    let run (options: FscRunOptions) (f: Fsc) : Recipe<ExecContext, unit> =
+        recipe {
+            let compiler = f.Dependencies.Compiler
+            let args = f.Args
+            let plan : CompilerRunner.RunPlan =
+                { Name = f.Name
+                  Tool = compiler.Tool
+                  LogPrefix = "[fsc]"
+                  CompilerPath = compiler.Path
+                  CompilerVersion = compiler.Version
+                  RequireCompiler = options.FscPath.IsNone
+                  Launch =
+                    match options.FscPath with
+                    | Some tool -> CompilerRunner.Native tool
+                    | None -> CompilerRunner.launchOf compiler.Path
+                  Leading = []
+                  ResponseArgs = args
+                  ClientSwitches = []
+                  ClientSwitchesNote = None
+                  Inputs = FscArgs.inputs args
+                  Outputs = FscArgs.outputs args
+                  Hashed =
+                    [ for r in f.Dependencies.References do yield r.Path, r.Sha256
+                      yield compiler.Path, compiler.Sha256 ]
+                  Generated = f.Generated
+                  Resources = f.Resources
+                  Environment = options.Environment
+                  Directory = f.Directory
+                  FailOnError = options.FailOnError
+                  Diagnostics = Tool.diagnosticLevel Level.Verbose }
+            do! CompilerRunner.run plan
+        }
+
+    /// <summary>
+    /// F# compiler task in record syntax: `ofSettings`, then `run` with the options the
+    /// settings imply (`runOptions`). What `fsc { ... }` runs; replaces the 3.4 function
+    /// `Fsc settings`.
     /// </summary>
     /// <param name="settings">Compiler settings</param>
     /// <returns>Recipe compiling the target</returns>
@@ -407,6 +468,6 @@ module Fsc =
         recipe {
             do! trace Level.Debug "Fsc: settings=%A" settings
             let! f = ofSettings settings
-            let! _, fwkInfo = Csc.frameworkFor settings.TargetFramework
-            do! runComposed settings.FailOnError fwkInfo.EnvVars f
+            let! options = runOptions settings
+            do! run options f
         }

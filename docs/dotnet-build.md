@@ -59,10 +59,11 @@ Windows registry is consulted.
 
 - **Compilers** come from the installed SDK:
   - `csc` — `<sdk>/Roslyn/bincore/csc` (a native apphost, launched directly).
-  - `fsc` — `<sdk>/FSharp/fsc.dll`, a managed dll. It cannot be executed directly, so a tiny
-    launcher script (`.cmd` on Windows, `sh` elsewhere) is written to the temp directory that
-    execs `dotnet <path>/fsc.dll "$@"`. The same trick wraps `dotnet msbuild`. The script name
-    embeds a hash of the host+arguments, so it is stable and re-created at most once.
+  - `fsc` — `<sdk>/FSharp/fsc.dll`, a managed dll. The `fsc` task records it
+    (`DotNetFwk.fscCompiler`) and starts it as `dotnet fsc.dll`. `FrameworkInfo.FscTool` still
+    returns a tiny launcher script (`.cmd` on Windows, `sh` elsewhere) in the temp directory
+    that execs `dotnet <path>/fsc.dll "$@"`; the same trick wraps `dotnet msbuild`. The script
+    name embeds a hash of the host+arguments, so it is stable and re-created at most once.
 - **SDK location** is probed in this order, taking the first directory that contains an `sdk`
   subdirectory, then the highest version inside it:
   1. the directory of `DOTNET_HOST_PATH`, or of the current process's main module when it is
@@ -117,7 +118,8 @@ Windows registry is consulted.
   along. A missing pack fails naming the folder looked in. `csc` and `fsc` reference every
   `*.dll` of that directory (`DotNetFwk.frameworkReferences`), as the SDK does; `fsc` adds
   `--targetprofile:netcore` and, unless a `ref` names an `FSharp.Core.dll`, the SDK's own
-  `<sdk>/FSharp/FSharp.Core.dll`. No other provider knows these monikers, so they go to the
+  `<sdk>/FSharp/FSharp.Core.dll` (for netstandard and .NET Framework it is the `FSharp.Core`
+  package instead, `DotNetFwk.fsharpCoreReference`). No other provider knows these monikers, so they go to the
   SDK provider on every OS.
 - **The default target framework** of `csc` and `fsc`, when neither `targetfwk` nor
   `NETFX-TARGET` is set, is the .NET framework of the probed SDK (`DotNetFwk.sdkFramework`):
@@ -224,6 +226,7 @@ SDK 10.0.x), and fail asking for one only when that cannot be determined.
 | `NETFX-TARGET` | Default `targetfwk` for every compiler task that does not set its own. |
 | `NETFX` | Framework whose **tools** are used, overriding whatever is being targeted. Also the only framework selector the `msbuild` task reads. |
 | `FSCVER` | F# compiler version `fsc` asks for, when not set per task via `fscver`; read only by the Windows registry provider. |
+| `FSHARP_CORE_VERSION` | Version of the `FSharp.Core` package `fsc` references for netstandard and .NET Framework when no `ref` names an `FSharp.Core.dll` (default 8.0.100). |
 
 Precedence inside a task: `targetfwk` → `NETFX-TARGET` → the SDK's own .NET framework. The toolchain is then
 `NETFX` if set, otherwise the resolved target framework, otherwise the default probe order.
@@ -244,17 +247,23 @@ dotnet fsi build.fsx -- -- build -d NETFX:mono-4.5
 |---|---|---|
 | `csc`, `fsc` → net5.0 and later (the default: the SDK's own) | yes, the SDK's targeting pack | yes, the SDK's targeting pack |
 | `csc` → net20…net48 | yes, SDK Roslyn + NuGet reference assemblies | yes, registry Framework first, SDK as fallback |
-| `fsc` → net4x | **no** (see below) | yes, when the Framework F# compiler is installed |
+| `fsc` → net4x | yes, SDK fsc + NuGet reference assemblies, FSharp.Core package and a netstandard facade (see below) | yes, as on Linux/macOS (the registry provider, when it knows the profile, takes the installed `fsc.exe`) |
 | `msbuild` | `dotnet msbuild` through a launcher script | registry `msbuild.exe`, else `dotnet msbuild` |
 | `resgen`, `.resx` embedded in `csc`/`fsc` | **no** — needs the full framework | yes, when Xake itself runs on net462 |
 | mono profiles 2.0/3.5/4.0/4.5 | yes, with mono + `pkg-config` | yes, with mono installed |
 
 ## Known limitations
 
-- **`fsc` cannot target full framework through the SDK.** It needs a net462-compatible
-  `FSharp.Core`, and the SDK ships only the netstandard2.0 one, which drags in a `netstandard`
-  facade that the net4x reference-assembly packages do not carry. Workaround: reference an
-  `FSharp.Core.dll` of your own. Targeting .NET (the default) has no such problem.
+- **An `fsc` exe for .NET Framework below 4.7.2 needs a runtime `netstandard.dll`.** fsc
+  compiles for .NET Framework from any host: the `FSharp.Core` package's netstandard2.0 build
+  (`FSHARP_CORE_VERSION`, default 8.0.100) and a type-forwarding `netstandard.dll` facade are
+  referenced implicitly (the reference assemblies' `Facades/netstandard.dll` from 4.7.1, else
+  the SDK's `Microsoft/Microsoft.NET.Build.Extensions/net461/lib/netstandard.dll`), so the
+  output references `netstandard 2.0.0.0`. The 4.7.2+ runtime resolves it; an older one needs
+  the facade next to the exe, and Xake does not copy it (msbuild does). fsc copies
+  `FSharp.Core.dll` next to the output unless `args ["--nocopyfsharpcore"]`. Before 3.5 this
+  failed with FS0074 ("You must add a reference to assembly 'netstandard'") unless the script
+  referenced both itself.
 - **`.resx` compilation requires the full framework.** `ResXResourceReader` lives in
   `System.Windows.Forms`; the netstandard2.0 build of `Xake.Dotnet` fails with an explicit
   message. Only the `net462` asset in the package can do it, i.e. this works when the build

@@ -69,6 +69,27 @@ module FscTypes =
     /// </summary>
     let FscSettings = FscSettingsType.Default
 
+    /// What the fsc runner needs, as opposed to what is being compiled. fsc's own type: there
+    /// is no compiler server, so nothing here would be ignored. Its labels overlap
+    /// `RunOptions`', so it requires qualified construction (`{ FscRunOptions.FailOnError =
+    /// ... }`); `{ FscRunOptions.Default with ... }` needs none.
+    [<RequireQualifiedAccess>]
+    type FscRunOptions = {
+        /// Build fails on compile error.
+        FailOnError: bool
+        /// Path to the fsc executable, overriding the compiler the compilation names; it is
+        /// run directly (not through `dotnet`).
+        FscPath: string option
+        /// Environment variables the compiler process is started with: the framework's
+        /// (`DotNetFwk.FrameworkInfo.EnvVars`), empty on the SDK path. `Fsc.runOptions`
+        /// fills it for composed settings.
+        Environment: (string * string) list
+    } with static member Default = {
+            FscRunOptions.FailOnError = true
+            FscRunOptions.FscPath = None
+            FscRunOptions.Environment = []
+        }
+
 /// The section markers of `Fsc.Options` and the way back to the flat command line.
 module internal FscSections =
     let sourcesMarker = "@Sources"
@@ -336,48 +357,63 @@ module Fsc =
             return f
         }
 
-    /// Runs the compiler over a composed compilation, as the 3.4 `fsc {}` task did: inputs
-    /// `needFiles`d, output directories created, resx compiled, no hash check. Interim, until
-    /// `run` over the shared runner replaces it.
-    let private runComposed (failOnError: bool) (environment: (string * string) list) (f: Fsc) : Recipe<ExecContext, unit> =
+    /// The runner's options for composed settings: `FailOnError` from the settings and the
+    /// environment of the framework they target. What `compile` runs with.
+    let runOptions (settings: FscSettingsType) : Recipe<ExecContext, FscRunOptions> =
         recipe {
-            let compiler = f.Dependencies.Compiler
-            do! trace Info "compiling '%s' (%s %s)" f.Name compiler.Tool compiler.Version
-            let args = f.Args
-
-            for path in FscArgs.outputs args do
-                let dir = Path.GetDirectoryName path
-                if not (Impl.isEmpty dir) then Directory.CreateDirectory dir |> ignore
-
-            do! needFiles (Filelist (f.Resources |> List.map (fst >> File.make)))
-            for (resx, resourcesFile) in f.Resources do
-                if not (File.Exists resourcesFile) then
-                    Resx.compile resx resourcesFile
-
-            do! needFiles (Filelist (FscArgs.inputs args |> List.map File.make))
-
-            let tool, extraArgs =
-                if Impl.endsWith ".dll" compiler.Path then "dotnet", [compiler.Path]
-                else compiler.Path, []
-            let commandLineArgs = extraArgs @ (args |> List.map Impl.escapeArgument)
-            do! trace Debug "Command line: '%s %s'" tool (commandLineArgs |> String.concat " ")
-
-            let! exitCode =
-                shell {
-                    cmd tool
-                    args commandLineArgs
-                    envs environment
-                    workdir f.Directory
-                    logprefix "[fsc]"
-                    stdoutlevel (Tool.diagnosticLevel Level.Verbose)
-                    erroutlevel (Tool.diagnosticLevel Level.Verbose)
-                }
-            do! Tool.failOnExitCode failOnError f.Name exitCode
+            let! _, fwkInfo = Csc.frameworkFor settings.TargetFramework
+            return { FscRunOptions.FailOnError = settings.FailOnError
+                     FscRunOptions.FscPath = None
+                     FscRunOptions.Environment = fwkInfo.EnvVars }
         }
 
     /// <summary>
-    /// F# compiler task in record syntax: `ofSettings`, then the compiler. What `fsc { ... }`
-    /// runs; replaces the 3.4 function `Fsc settings`.
+    /// Runs the compiler over a resolved compilation -- composed by `ofSettings`, or built by
+    /// hand -- through the same runner as `Csc.run`: writes back missing or changed
+    /// `Generated` files, creates the output directories (`--doc:` included), compiles each
+    /// `.resx` whose `.resources` is missing, `needFiles` every input the command line names,
+    /// and verifies the SHA-256 of every hashed reference and of the compiler before starting
+    /// it; a mismatch fails the build. An empty hash (a composed compilation has none) is not
+    /// checked. All arguments go into a response file; a `.dll` compiler (the SDK's
+    /// `fsc.dll`) is started as `dotnet fsc.dll`.
+    /// </summary>
+    let run (options: FscRunOptions) (f: Fsc) : Recipe<ExecContext, unit> =
+        recipe {
+            let compiler = f.Dependencies.Compiler
+            let args = f.Args
+            let plan : CompilerRunner.RunPlan =
+                { Name = f.Name
+                  Tool = compiler.Tool
+                  LogPrefix = "[fsc]"
+                  CompilerPath = compiler.Path
+                  CompilerVersion = compiler.Version
+                  RequireCompiler = options.FscPath.IsNone
+                  Launch =
+                    match options.FscPath with
+                    | Some tool -> CompilerRunner.Native tool
+                    | None -> CompilerRunner.launchOf compiler.Path
+                  Leading = []
+                  ResponseArgs = args
+                  ClientSwitches = []
+                  ClientSwitchesNote = None
+                  Inputs = FscArgs.inputs args
+                  Outputs = FscArgs.outputs args
+                  Hashed =
+                    [ for r in f.Dependencies.References do yield r.Path, r.Sha256
+                      yield compiler.Path, compiler.Sha256 ]
+                  Generated = f.Generated
+                  Resources = f.Resources
+                  Environment = options.Environment
+                  Directory = f.Directory
+                  FailOnError = options.FailOnError
+                  Diagnostics = Tool.diagnosticLevel Level.Verbose }
+            do! CompilerRunner.run plan
+        }
+
+    /// <summary>
+    /// F# compiler task in record syntax: `ofSettings`, then `run` with the options the
+    /// settings imply (`runOptions`). What `fsc { ... }` runs; replaces the 3.4 function
+    /// `Fsc settings`.
     /// </summary>
     /// <param name="settings">Compiler settings</param>
     /// <returns>Recipe compiling the target</returns>
@@ -385,6 +421,6 @@ module Fsc =
         recipe {
             do! trace Level.Debug "Fsc: settings=%A" settings
             let! f = ofSettings settings
-            let! _, fwkInfo = Csc.frameworkFor settings.TargetFramework
-            do! runComposed settings.FailOnError fwkInfo.EnvVars f
+            let! options = runOptions settings
+            do! run options f
         }

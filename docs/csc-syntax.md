@@ -136,9 +136,12 @@ reference.
 
 ## The runner: `Csc.run`
 
-`Csc.run` (`Csc.fs`) is the one runner, shared by every entry point. Obtaining anything that is
-missing (packages, a revision token) is not its business: `Lock.compile` does that before it
-hands the `Csc` here. It does, in order (after a
+`Csc.run` (`Csc.fs`) is the one runner for C#, shared by every entry point. Obtaining anything
+that is missing (packages, a revision token) is not its business: `Lock.compile` does that before
+it hands the `Csc` here. Since 3.5 the steps below live in an internal `CompilerRunner.run` over
+a `RunPlan` record that `Csc.run` and `Fsc.run` each fill: fsc gets the same steps with its own
+dialect (`FscArgs.inputs`/`outputs`), no `/noconfig` and no compiler-server switches (fsc has no
+server), the `[fsc]` log prefix, and `FscRunOptions.FscPath` in place of `CscPath`. It does, in order (after a
 `trace Info "compiling '<name>' (<tool> <version>)"`):
 
 1. A compiler that does not exist (with no `RunOptions.CscPath`) is traced as an error and fails
@@ -223,9 +226,10 @@ not temp files.
 
 ## Not yet
 
-- Running `fsc` through the same runner -- `fsc` has the same shape (an `Fsc` record, `Fsc.ofSettings`,
-  `fsc { ...; resolve }`, `FscArgs` for its own `--name:value` dialect, see
-  [tasks.md](tasks.md#fsc)), but it is not yet hash-checked by a runner.
+- `fsc { lock }` and `Project.import` for `.fsproj`: `fsc` has the same shape (an `Fsc` record,
+  `Fsc.ofSettings`, `fsc { ...; resolve }`, `Fsc.run` through the shared runner, `FscArgs` for its
+  own `--name:value` dialect, see [tasks.md](tasks.md#fsc)); the lock side is the hermetic
+  package's.
 - `Resx.read`/`compile` only support plain string entries (`<data name="X"><value>...</value></data>`).
   A typed value (a `type` attribute) or a `ResXFileRef`/binary value (`mimetype`) fails with a
   clear message rather than being compiled; the real projects this targets have none.

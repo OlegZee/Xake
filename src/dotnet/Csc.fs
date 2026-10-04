@@ -680,147 +680,47 @@ module Csc =
     let run (options: RunOptions) (c: Csc) : Recipe<ExecContext, unit> =
         recipe {
             let compiler = c.Dependencies.Compiler
-            do! trace Info "compiling '%s' (%s %s)" c.Name compiler.Tool compiler.Version
-
-            if options.CscPath.IsNone && not (File.Exists compiler.Path) then
-                let msg = sprintf "'%s': the compiler %s does not exist" c.Name compiler.Path
-                do! trace Error "%s" msg
-                if options.FailOnError then failwith msg
-
-            // the compiler is hashed (below) but was never a tracked dependency, so an SDK or
-            // toolset update that changes csc.dll's bytes left the target looking up to date
-            // and the hash check never ran (conceptual-review.md 2.4)
-            do! needFiles (Filelist [File.make compiler.Path])
-
             let args = c.Args
-
-            // the resolved compilation is the source of truth for what msbuild (or the
-            // composed front end) generated (assembly attributes, TFM defines): write it back
-            // whenever it is missing or someone touched it
-            for (path, content) in c.Generated do
-                let upToDate = File.Exists path && File.ReadAllText path = content
-                if not upToDate then
-                    let dir = Path.GetDirectoryName path
-                    if not (Impl.isEmpty dir) then Directory.CreateDirectory dir |> ignore
-                    File.WriteAllText (path, content)
-
-            for path in CscArgs.outputs args do
-                let dir = Path.GetDirectoryName path
-                if not (Impl.isEmpty dir) then Directory.CreateDirectory dir |> ignore
-
-            // a resx `PrepareResources` compiled is named by a `/resource:` switch as the
-            // `.resources` file it produced, not the resx itself -- that file has to exist
-            // before the `needFiles` of the inputs below sees it. The resx is `needFiles`d
-            // so the engine decides whether an edit reruns this recipe; regenerating only when
-            // the `.resources` output is missing (not on a timestamp comparison) keeps `run`
-            // from being a second rebuilder next to the engine's (conceptual-review.md 2.3).
-            do! needFiles (Filelist (c.Resources |> List.map (fst >> File.make)))
-            for (resx, resourcesFile) in c.Resources do
-                if not (File.Exists resourcesFile) then
-                    Resx.compile resx resourcesFile
-
-            // everything that carries a hash has to be exactly what was recorded, or the
-            // compilation is not the one described
-            let hashedFiles =
-                [ for r in c.Dependencies.References do yield r.Path, r.Sha256
-                  for a in c.Dependencies.Analyzers do yield a.Path, a.Sha256
-                  yield compiler.Path, compiler.Sha256 ]
-                |> List.filter (fun (_, expected) -> expected <> "")
-            let verify files =
-                recipe {
-                    let mismatches =
-                        files |> List.choose (fun (path: string, expected) ->
-                            let actual = if File.Exists path then sha256 path else "missing"
-                            if actual = expected then None else Some (path, expected, actual))
-                    if not (List.isEmpty mismatches) then
-                        let detail =
-                            mismatches
-                            |> List.map (fun (path, expected, actual) -> sprintf "%s: expected %s, got %s" path expected actual)
-                            |> String.concat "\n"
-                        do! trace Error "('%s') hash mismatch:\n%s" c.Name detail
-                        if options.FailOnError then
-                            failwithf "('%s') hash mismatch:\n%s" c.Name detail
-                }
-
-            // a hashed file that is missing and that no rule of the script produces cannot be
-            // obtained by the `needFiles` below, which would stop at the first one with "Neither
-            // rule nor file"; report all of them now, each with the hash it was expected to have
-            let! ctxOptions = getCtxOptions()
-            let hasRule path =
-                ExecCore.locateRule ctxOptions.Rules ctxOptions.ProjectRoot (FileTarget (File.make path)) |> Option.isSome
-            do! verify (hashedFiles |> List.filter (fun (path, _) -> not (File.Exists path) && not (hasRule path)))
-
-            // the generated files and the `.resources` outputs have to exist before the inputs
-            // are demanded (neither has a rule, so the engine takes them as plain files). Note:
-            // for the composed mode this needs everything the args name -- including the
-            // framework's global references (mscorlib.dll etc) -- not only the sources, refs and
-            // resource files. That is intended. It also has to come before the full hash check:
-            // a reference another rule of the script produces is (re)built here, and the check
-            // verifies what the compiler is about to read, not what was on disk before.
-            do! needFiles (Filelist (CscArgs.inputs args |> List.map File.make))
-
-            do! verify hashedFiles
-
-            // csc warns CS2023 and ignores /noconfig when it is inside the response file, so
-            // it has to stay on the command line and everything else goes into the rsp
-            let noconfig = args |> List.contains "/noconfig"
-            let rspArgs = args |> List.filter ((<>) "/noconfig")
-
-            let rspFile = Path.GetTempFileName()
-            File.WriteAllLines (rspFile, rspArgs |> List.map Impl.escapeArgument)
-            let commandLineArgs =
-                seq {
-                    if noconfig then yield "/noconfig"
-                    yield "@" + rspFile
-                }
-
-            // the response file has to go regardless of how the compilation ends
-            let deleteTempFiles () =
-                try System.IO.File.Delete rspFile with _ -> ()
-
-            let cscTool, compilerFile, extraArgs =
-                match options.CscPath with
-                | Some tool -> tool, tool, []
-                // the compiler path from `DotNetFwk` may be a native launcher rather than a
-                // managed dll (the "run directly" branch below covers that case too)
-                | None when Impl.endsWith ".dll" compiler.Path -> "dotnet", compiler.Path, [compiler.Path]
-                | None -> compiler.Path, compiler.Path, []
-
+            // the compiler path from `DotNetFwk` may be a native launcher rather than a
+            // managed dll; `cscpath` replaces whatever the compilation names
+            let compilerFile = options.CscPath |> Option.defaultValue compiler.Path
             // client-side switches, on the command line and never in the rsp or a lock: the
-            // client strips them before the arguments reach the server (`serverArgs` says when
-            // they are safe to add)
+            // client strips them before the arguments reach the server (`serverArgs` says
+            // when they are safe to add)
             let serverSwitches = serverArgs options compilerFile
-            match options.Server, serverSwitches with
-            | Shared _, [] -> do! trace Debug "compiler server not used for '%s' (no VBCSCompiler next to it, under the temp directory, or env vars in play)" compilerFile
-            | _ -> ()
-            let commandLineArgs = Seq.append serverSwitches commandLineArgs
-
-            do! trace Debug "Command line: '%s %s'" cscTool
-                    ((extraArgs @ List.ofSeq commandLineArgs) |> String.concat " ")
-
-            try
-                let! exitCode =
-                    shell {
-                        cmd cscTool
-                        args (Seq.append extraArgs commandLineArgs)
-                        envs options.Environment
-                        // `dotnet build` runs csc with cwd = the project's directory; some
-                        // compiler inputs are resolved against it rather than against an
-                        // argument on the command line -- an XML-doc `<include file='../..'>`
-                        // path is resolved relative to the *compiler's* working directory, not
-                        // per source file. `Csc.Directory` records exactly that; without it, a
-                        // project compiled from a different cwd than its own directory can
-                        // fail with CS1589 even though every file the args name is absolute
-                        // and present.
-                        workdir c.Directory
-                        logprefix "[csc]"
-                        stdoutlevel (Tool.diagnosticLevel Level.Verbose)
-                        erroutlevel (Tool.diagnosticLevel Level.Verbose)
-                    }
-
-                do! Tool.failOnExitCode options.FailOnError c.Name exitCode
-            finally
-                deleteTempFiles ()
+            let plan : CompilerRunner.RunPlan =
+                { Name = c.Name
+                  Tool = compiler.Tool
+                  LogPrefix = "[csc]"
+                  CompilerPath = compiler.Path
+                  CompilerVersion = compiler.Version
+                  RequireCompiler = options.CscPath.IsNone
+                  Launch =
+                    match options.CscPath with
+                    | Some tool -> CompilerRunner.Native tool
+                    | None -> CompilerRunner.launchOf compiler.Path
+                  // csc warns CS2023 and ignores /noconfig when it is inside the response
+                  // file, so it stays on the command line and everything else goes into the rsp
+                  Leading = if args |> List.contains "/noconfig" then ["/noconfig"] else []
+                  ResponseArgs = args |> List.filter ((<>) "/noconfig")
+                  ClientSwitches = serverSwitches
+                  ClientSwitchesNote =
+                    match options.Server, serverSwitches with
+                    | Shared _, [] -> Some (sprintf "compiler server not used for '%s' (no VBCSCompiler next to it, under the temp directory, or env vars in play)" compilerFile)
+                    | _ -> None
+                  Inputs = CscArgs.inputs args
+                  Outputs = CscArgs.outputs args
+                  Hashed =
+                    [ for r in c.Dependencies.References do yield r.Path, r.Sha256
+                      for a in c.Dependencies.Analyzers do yield a.Path, a.Sha256
+                      yield compiler.Path, compiler.Sha256 ]
+                  Generated = c.Generated
+                  Resources = c.Resources
+                  Environment = options.Environment
+                  Directory = c.Directory
+                  FailOnError = options.FailOnError
+                  Diagnostics = Tool.diagnosticLevel Level.Verbose }
+            do! CompilerRunner.run plan
         }
 
     /// <summary>

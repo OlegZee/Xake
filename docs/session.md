@@ -75,8 +75,18 @@ worth knowing before touching it again:
 - **`fsc` cannot target full framework on macOS through the SDK.** It needs a
   net462-compatible `FSharp.Core`, and the SDK only supplies the netstandard2.0 one, which
   drags in a `netstandard` facade that the net4x reference-assembly packages do not carry.
-  Hence there is no `fsc` end-to-end test; `samples/features.fsx` works around it by
-  referencing an `FSharp.Core.dll` of its own.
+  The fsc end-to-end tests (`FscTests.fs`, `DotnetTasksTests.fs`) therefore target
+  netstandard2.0 with the test host's own FSharp.Core; `samples/features.fsx` targets net462
+  and has to reference a net4x `FSharp.Core.dll` of its own.
+- **fsc through the shared runner (3.5, B6).** `Fsc` is the twin of `Csc` (fsc's own
+  `--name:value` dialect in `FscArgs`, over `ArgsCore`, shared with `CscArgs`); `Csc.run` and
+  `Fsc.run` both fill an internal `CompilerRunner.RunPlan` and call `CompilerRunner.run`, so the
+  gate (generated files, `needFiles`, hash check, rsp) is one piece of code. `Fsc` and
+  `FscRunOptions` are `[<RequireQualifiedAccess>]`: their labels equal `Csc`'s/`RunOptions`',
+  and an unqualified record expression would otherwise infer the F# type. fsc reads the
+  response file `Impl.escapeArgument` writes (a source path with a space is tested). The
+  composed line has no `--nocopyfsharpcore`, so fsc copies the referenced `FSharp.Core.dll`
+  next to the output unless `args ["--nocopyfsharpcore"]`.
 - **A target requested twice in one run used to be built twice** — `need ["x"]` followed by
   `needFiles` on the same `x` rebuilt it. Fixed in `WorkerPool.fs`; what actually went wrong
   took two mechanisms, so it is worth writing down:

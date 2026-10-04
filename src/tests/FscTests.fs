@@ -160,3 +160,82 @@ type ``Fsc record tests``() =
         Assert.That(f.Args |> List.forall (fun a -> not (a.StartsWith "/") || File.Exists a), Is.True, "no '/' switches")
         Assert.That(f.Output |> Option.map norm, Is.EqualTo (Some (norm (Path.GetFullPath "resolved/r.dll"))))
         Assert.That(File.Exists "resolved/r.dll", Is.False, "resolve must not compile")
+
+    // `Fsc.run` end to end on the SDK's fsc.dll: netstandard2.0 against the FSharp.Core the
+    // tests run on (the SDK has no net4x FSharp.Core, so this is the one target that works on
+    // every OS). A source directory with a space checks the response file's quoting, a doc file
+    // in a missing directory the runner's output step, and two clean builds have to produce
+    // the same bytes.
+    [<Test; Category("Integration")>]
+    member x.``Fsc.run compiles netstandard2.0 deterministically``() =
+        Directory.CreateDirectory "src dir" |> ignore
+        File.WriteAllText ("src dir/b.fs", "module B\n/// doc\nlet b = 1\n")
+        File.WriteAllText ("src dir/a.fs", "module A\nlet a = B.b + 1\n")
+        let fsharpCore = System.Reflection.Assembly.GetAssembly(typeof<option<int>>).Location
+        let built = ref 0
+        let build () =
+            xake {x.TestOptions with FileLog="fsc-run.log"; ThrowOnError = true} {
+                wantOverride (["e2e/e2e.dll"])
+                rules [
+                    "e2e/e2e.dll" ..> recipe {
+                        built.Value <- built.Value + 1
+                        do! fsc {
+                            targetfwk "netstandard2.0"
+                            src (Fileset.Empty ++ "src dir/b.fs" ++ "src dir/a.fs")
+                            ref (Fileset.Empty ++ fsharpCore)
+                            doc (File.make "e2e/docs/e2e.xml")
+                            args ["--deterministic+"; "--nocopyfsharpcore"]
+                        }
+                    }
+                ]
+            }
+        let clean () =
+            for p in ["e2e"; "src dir/../e2e"] do
+                if Directory.Exists p then Directory.Delete (p, true)
+            try File.Delete ".xake" with _ -> ()
+
+        clean ()
+        build ()
+        Assert.That(File.Exists "e2e/e2e.dll", Is.True, "fsc did not produce e2e.dll")
+        Assert.That(File.Exists "e2e/docs/e2e.xml", Is.True, "the doc directory was not created")
+        let first = File.ReadAllBytes "e2e/e2e.dll"
+
+        clean ()
+        build ()
+        Assert.That(built.Value, Is.EqualTo 2)
+        Assert.That(File.ReadAllBytes "e2e/e2e.dll", Is.EqualTo first, "two clean builds differ")
+
+    // a recorded hash that no longer matches the file fails the build before the compiler
+    // starts: no output appears
+    [<Test; Category("Integration")>]
+    member x.``Fsc.run fails on a reference hash mismatch before compiling``() =
+        File.WriteAllText ("hm.fs", "module Hm\nlet x = 1\n")
+        let fsharpCore = System.Reflection.Assembly.GetAssembly(typeof<option<int>>).Location
+        let tampered = String.replicate 64 "0"
+        if File.Exists "hm/hm.dll" then File.Delete "hm/hm.dll"
+        let build () =
+            xake {x.TestOptions with FileLog="fsc-hash.log"; ThrowOnError = true} {
+                wantOverride (["hm"])
+                rules [
+                    "hm" => recipe {
+                        let! f = fsc {
+                            targetfwk "netstandard2.0"
+                            src !!"hm.fs"
+                            ref (Fileset.Empty ++ fsharpCore)
+                            out (File.make "hm/hm.dll")
+                            resolve
+                        }
+                        let f = Fsc.rehash f
+                        Assert.That(f.Dependencies.Compiler.Sha256, Is.Not.Empty, "rehash hashes fsc.dll")
+                        let refs =
+                            f.Dependencies.References |> List.map (fun r ->
+                                if r.Path.EndsWith "FSharp.Core.dll" then { r with Sha256 = tampered } else r)
+                        let f = { f with Fsc.Dependencies = { f.Dependencies with References = refs } }
+                        do! Fsc.run FscRunOptions.Default f
+                    }
+                ]
+            }
+        let ex = Assert.Throws<XakeException> (fun () -> build () |> ignore)
+        Assert.That(ex.ToString(), Does.Contain "hash mismatch")
+        Assert.That(ex.ToString(), Does.Contain (sprintf "FSharp.Core.dll: expected %s, got " tampered))
+        Assert.That(File.Exists "hm/hm.dll", Is.False, "the compiler must not have run")

@@ -1,4 +1,4 @@
-# Xake tasks
+﻿# Xake tasks
 
 The examples below use current API style:
 
@@ -316,6 +316,31 @@ references; `Analyzers` is always empty). `Options` is in fsc's own spelling wit
 `@Sources`, `@References`, `@Defines`; `FscArgs` parses and formats fsc command lines the way
 `CscArgs` does csc's. `Fsc` has the labels of `Csc`, so constructing one by hand takes qualified
 labels (`{ Fsc.Name = ...; ... }`), and `Fsc.ofArgs` builds one from a command line.
+
+`Fsc.run options f` compiles such a record through the same runner as `Csc.run`: generated
+files written back, output directories created (`--doc:` included), resx compiled, every input
+`needFiles`d, and the SHA-256 of every hashed reference and of `fsc.dll` verified before the
+compiler starts (`Fsc.rehash` records them; an empty hash is not checked). The arguments go
+into a response file.
+
+```fsharp
+recipe {
+  let! f = fsc { targetfwk "netstandard2.0"; src !!"hw.fs"; ref !!"FSharp.Core.dll"; out (File.make "out/hw.dll"); resolve }
+  do! Fsc.run FscRunOptions.Default f
+}
+```
+
+`FscRunOptions` (default `FscRunOptions.Default`; `Fsc.runOptions settings` builds them from
+composed settings):
+
+| Field | Meaning | Default |
+|---|---|---|
+| `FailOnError` | a compile error fails the build | `true` |
+| `FscPath` | compiler executable overriding the one the `Fsc` names, run directly | `None` |
+| `Environment` | environment variables of the compiler process | `[]`; the framework's own on the mono and registry paths |
+
+There is no compiler server for fsc. Like `FscRunOptions`' labels, which overlap `RunOptions`',
+construct it with qualified labels or from `FscRunOptions.Default with ...`.
 
 #### Compiling what a project file describes
 

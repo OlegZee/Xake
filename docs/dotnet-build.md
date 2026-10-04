@@ -59,10 +59,11 @@ Windows registry is consulted.
 
 - **Compilers** come from the installed SDK:
   - `csc` — `<sdk>/Roslyn/bincore/csc` (a native apphost, launched directly).
-  - `fsc` — `<sdk>/FSharp/fsc.dll`, a managed dll. It cannot be executed directly, so a tiny
-    launcher script (`.cmd` on Windows, `sh` elsewhere) is written to the temp directory that
-    execs `dotnet <path>/fsc.dll "$@"`. The same trick wraps `dotnet msbuild`. The script name
-    embeds a hash of the host+arguments, so it is stable and re-created at most once.
+  - `fsc` — `<sdk>/FSharp/fsc.dll`, a managed dll. The `fsc` task records it
+    (`DotNetFwk.fscCompiler`) and starts it as `dotnet fsc.dll`. `FrameworkInfo.FscTool` still
+    returns a tiny launcher script (`.cmd` on Windows, `sh` elsewhere) in the temp directory
+    that execs `dotnet <path>/fsc.dll "$@"`; the same trick wraps `dotnet msbuild`. The script
+    name embeds a hash of the host+arguments, so it is stable and re-created at most once.
 - **SDK location** is probed in this order, taking the first directory that contains an `sdk`
   subdirectory, then the highest version inside it:
   1. the directory of `DOTNET_HOST_PATH`, or of the current process's main module when it is

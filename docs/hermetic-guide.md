@@ -1,17 +1,18 @@
 # Reproducible .NET builds with Xake.Hermetic.Dotnet
 
-Draft of the user guide. Status: package version 0.1.0, a preview; the API may change while the
+Draft of the user guide. Status: package version 0.2.0, a preview; the API may change while the
 package is 0.x.
 
-`Xake.Hermetic.Dotnet` adds a **lock** to Xake's `csc` task. A lock is a JSON file, kept in git,
-that records exactly what the C# compiler is handed and the SHA-256 of every file it reads from
+`Xake.Hermetic.Dotnet` adds a **lock** to Xake's `csc` and `fsc` tasks. A lock is a JSON file,
+kept in git, that records exactly what the C# or F# compiler is handed and the SHA-256 of every file it reads from
 outside your repository: the compiler itself, every reference, every analyzer. Later builds
 compile from the lock and fail when anything differs. On top of the lock the package can
 restore missing packages, write a CycloneDX SBOM, compare two binaries, pack a deterministic
 nupkg and run a signing step.
 
 What it does not do: it does not replace msbuild's evaluation (importing a project still runs
-msbuild once), it does not work offline by default, and it does not lock F# compilations yet.
+msbuild once), it does not work offline by default, and it cannot restore an F# compiler: fsc
+ships only inside the SDK, so an F# lock is as reproducible as the SDK pin in `global.json`.
 The design and its limits are in [hermetic-architecture.md](hermetic-architecture.md).
 
 Snippets marked **(untested)** were written against the source but not run for this guide. The
@@ -20,26 +21,26 @@ loaded with `#r` on the dll files instead of the NuGet package.
 
 ## 1. Install
 
-The package depends on `Xake` 3.4.0.21 or later, below 4.0 (3.4.0 as published on nuget.org). Reference it from your build script and
+The package depends on `Xake` 3.5.0.23 or later, below 4.0 (3.5.0 as published on nuget.org). Reference it from your build script and
 open three namespaces:
 
 ```fsharp
-#r "nuget: Xake.Hermetic.Dotnet, 0.1.0.22"
+#r "nuget: Xake.Hermetic.Dotnet, 0.2.0.<run>"   // the version nuget.org lists for 0.2.0
 
 open Xake
 open Xake.Dotnet
 open Xake.Hermetic.Dotnet
 ```
 
-Both are on nuget.org: `Xake` 3.4.0 as `3.4.0.21`, `Xake.Hermetic.Dotnet` 0.1.0 as `0.1.0.22`
-(the published version carries the release run number as a fourth component, so `0.1.0` or
-`3.4.0` alone does not exist and resolves to the next version up). The package brings `Xake` in
-as a dependency; add `#r "nuget: Xake, 3.4.0.21"` if you want to pin the base too. Both forms
-were run from nuget.org with the hello-world lock of section 2 below.
+Both are on nuget.org with the release run number as a fourth component: `Xake` 3.5.0 as
+`3.5.0.23`, `Xake.Hermetic.Dotnet` 0.2.0 as `0.2.0.<run>` (so `0.2.0` or `3.5.0` alone does not
+exist and resolves to the next version up). The package brings `Xake` in as a dependency; add
+`#r "nuget: Xake, 3.5.0.23"` if you want to pin the base too. (0.1.0 was published as
+`0.1.0.22`, on Xake `3.4.0.21`; it has no F# support.)
 
 Two things change when you open `Xake.Hermetic.Dotnet`:
 
-- `csc {}` gains the operation `lock`.
+- `csc {}` and `fsc {}` gain the operation `lock`.
 - `sign` becomes the signing rule builder. FSharp.Core's numeric `sign` is still available as
   `Operators.sign`.
 
@@ -120,12 +121,49 @@ The same thing without the builder sugar, with the resolved compilation in hand:
         grefs ["System.dll"]
         out (File.make "out/app.dll")
         resolve }
-    do! Lock.build "locks/app.json" c
+    do! Lock.build "locks/app.json" (Lock.Compilation.Csc c)
 }
 ```
 
 `resolve` makes the block return the resolved `Csc` instead of compiling it. Outside a file rule
-it needs an explicit `out`. `Lock.build` gates `c` against the lock and then compiles.
+it needs an explicit `out`. `Lock.build` gates the compilation against the lock and then
+compiles. It takes a `Lock.Compilation`, C# or F#: `Lock.Compilation.Csc c` here,
+`Lock.Compilation.Fsc f` for the `Fsc` of an `fsc { ...; resolve }`.
+
+### An F# library
+
+`fsc {}` takes the same `lock`. The same tests that cover the C# gate cover this shape
+(`src/hermetic.tests/FscLockTests.fs`):
+
+```fsharp
+"out/lib.dll" ..> fsc {
+    targetfwk "net8.0"          // optional: the SDK's own .NET when left out
+    target Library
+    src !!"src/Lib.fs"
+    lock "locks/lib.json"
+}
+```
+
+The F# entry in the lock has the C# entry's shape, with fsc's own options and `"Tool": "fsc"`:
+
+```json
+"Compilation": {
+  "Options": [ "--nologo", "--target:library", "--noframework", "--targetprofile:netcore",
+               "--out:$(ProjectRoot)/out/lib.dll", "@Sources", "@References" ],
+  "Sources": [ "$(ProjectRoot)/src/Lib.fs" ], ...
+},
+"Dependencies": {
+  "Compiler": { "Tool": "fsc", "Path": "$(DotnetRoot)/sdk/10.0.401/FSharp/fsc.dll", "Sha256": "...", "Version": "15.2.401-servicing.26423.113" },
+  "References": [ { "Path": "$(DotnetRoot)/sdk/10.0.401/FSharp/FSharp.Core.dll", "Sha256": "99f9..." }, ... ],
+  "Analyzers": [ ]
+}
+```
+
+The compiler is the SDK's `fsc.dll`; there is no `toolset` for fsc, because no package carries a
+current F# compiler. Pin the SDK exactly (`global.json` with `"rollForward": "disable"`), or the
+lock fails on every machine that does not have the SDK it names. Without a `ref` to an
+`FSharp.Core.dll`, the block references the SDK's own for .NET and the `FSharp.Core` package for
+netstandard and .NET Framework; either way the file is hashed like any other reference.
 
 ## 3. The second run, and a drift
 
@@ -188,7 +226,7 @@ let app = recipe {
         grefs ["System.dll"]
         out (File.make "out/app.dll")
         resolve }
-    return c }
+    return Lock.Compilation.Csc c }
 
 do xakeScript {
     rules [
@@ -222,9 +260,14 @@ differences `Lock.build` would fail on, `[]` when the lock is current.
 
 ## 5. Importing an msbuild project
 
-For an existing `.csproj`, do not rewrite it as `csc {}` settings. Import it: `Project.import`
+For an existing `.csproj` or `.fsproj`, do not rewrite it as `csc {}`/`fsc {}` settings. Import
+it: `Project.import`
 asks msbuild, once, what it would hand the compiler (a design-time build: the compiler reports
-its command line instead of running) and writes that into a lock.
+its command line instead of running) and writes that into a lock. C# and F# projects are
+imported the same way and may share one lock; an fsproj's entry is an F# entry (`"Tool": "fsc"`,
+the SDK's `fsc.dll`), and `Lock.compile` replays it with `Fsc.run`. A C# library and an F#
+application referencing it, imported and compiled from the lock, are byte-identical to `dotnet
+build` into the same intermediate directory (`src/hermetic.tests/FsprojImportTests.fs`).
 
 Wire the import as a deliberate update target, and read the committed lock as a plain file.
 The lock is reviewed and committed like source; `update-locks` is the only thing that writes it:
@@ -333,11 +376,11 @@ target "src/(proj:*)/obj/xake/(fwk:*)/(brand:*)/(name:*).dll" {
 
     // the output of another entry of the same lock, by project file name
     let outputOf (refPath: string) =
-        (Lock.entryFor fwk (System.IO.Path.GetFileNameWithoutExtension refPath) lock).Csc.Output
+        (Lock.entryFor fwk (System.IO.Path.GetFileNameWithoutExtension refPath) lock).Output
         |> Option.defaultWith (fun () -> failwithf "'%s' has no /out: in the lock" refPath)
 
     let unbuilt =
-        entry.Csc.Dependencies.References
+        entry.Dependencies.References
         |> List.filter (fun r -> r.Sha256 = "")
         |> List.map (fun r -> r.Path) |> Set.ofList
     let mapped = entry |> Lock.mapPaths (fun p -> if unbuilt.Contains p then outputOf p else p)
@@ -415,7 +458,7 @@ analyzers under `formulation` (this was run):
 "sbom/hello.cdx.json" ..> recipe {
     let! lock = Lock.load "locks/hello.json"
     let entry = Lock.entryFor "netstandard2.0" "Hello" lock
-    let assembly = entry.Csc.Output.Value
+    let assembly = entry.Output.Value
     do! need [ assembly ]                                  // however your script builds it
     let bom = Sbom.forAssembly (Roots.nugetRoot ()) entry assembly
     let! target = getTargetFullName ()

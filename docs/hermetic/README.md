@@ -1,16 +1,18 @@
 # Xake.Hermetic.Dotnet
 
-Version **0.1.0, preview**: the API may break while the package is 0.x.
+Version **0.2.0, preview**: the API may break while the package is 0.x. 0.2 adds F#: a lock
+entry holds a C# or an F# compilation (`Lock.Compilation`), `fsc { lock }` gates an `fsc {}`
+block, and `Project.import` imports an fsproj like a csproj.
 
 `Xake.Hermetic.Dotnet` builds .NET assemblies and packages so that what shipped can be
 explained and checked: a **lock** file records exactly what the compiler was handed and the hash
 of everything it read, the build compiles from the lock and fails when anything differs, and the
 result can be turned into a deterministic package with an SBOM and a signing step. It is a
 separate NuGet package that depends on `Xake` (the engine and the `csc`/`fsc`/`msbuild`/`resgen`
-tasks of `Xake.Dotnet`, Xake 3.4.0.21 or later, below 4.0); nothing in `Xake` knows about it.
+tasks of `Xake.Dotnet`, Xake 3.5.0.23 or later, below 4.0); nothing in `Xake` knows about it.
 
 ```fsharp
-#r "nuget: Xake.Hermetic.Dotnet, 0.1.0.22"
+#r "nuget: Xake.Hermetic.Dotnet, 0.2.0"
 
 open Xake
 open Xake.Dotnet
@@ -21,7 +23,7 @@ open Xake.Hermetic.Dotnet
 
 | Piece | What it is | Page |
 |---|---|---|
-| Lock | the lock file format, `Lock.build` / `compile` / `record` / `verify`, `csc { lock }`, `Project.import` (msbuild design-time build into a lock) | [lock.md](lock.md) |
+| Lock | the lock file format (C# and F# entries), `Lock.build` / `compile` / `record` / `verify`, `csc { lock }`, `fsc { lock }`, `Project.import` (msbuild design-time build of a csproj or fsproj into a lock) | [lock.md](lock.md) |
 | Restore | fetch the packages a lock names into a folder of the build's choice, one `dotnet restore` for the whole set | [restore.md](restore.md) |
 | Nuget and Sbom | read the restore graph and package cache; write a deterministic CycloneDX 1.6 SBOM per assembly and per package | [nuget-sbom.md](nuget-sbom.md) |
 | Verify | Authenticode PE hash and labelled byte differences between two binaries | [verify.md](verify.md) |
@@ -30,7 +32,8 @@ open Xake.Hermetic.Dotnet
 | Sign | Authenticode and NuGet signing as a delegated rule with a pluggable signer | [signing.md](signing.md) |
 | Workflows | developer, teammate, CI (GitHub Actions, GitLab CI), release and offline flows end to end; what to commit; how a missing lock fails CI | [workflows.md](workflows.md) |
 
-The compilation itself, `csc {}`, `Csc.ofSettings` and the runner `Csc.run`, stay in `Xake.Dotnet`:
+The compilation itself, `csc {}`/`fsc {}`, `Csc.ofSettings`/`Fsc.ofSettings` and the runners
+`Csc.run`/`Fsc.run`, stay in `Xake.Dotnet`:
 [../csc-syntax.md](../csc-syntax.md), [../tasks.md](../tasks.md).
 
 - [Architecture](../hermetic-architecture.md): the design, where it meets `Xake`, the evidence
@@ -68,17 +71,28 @@ open Xake.Hermetic.Dotnet
 "out/app.dll" ..> recipe {
     let! c = csc { targetfwk "net-4.6.2"; src !!"src/*.cs"; grefs ["System.dll"]
                    out (File.make "out/app.dll"); resolve }
-    do! Lock.build "locks/app.json" c
+    do! Lock.build "locks/app.json" (Lock.Compilation.Csc c)
 }
 ```
 
 `Lock.build` gates against the lock, restores what it names, resolves the revision token and
-then calls `Csc.run`. To update a lock deliberately, delete the file or run a target that calls
+then calls `Csc.run` (`Fsc.run` for `Lock.Compilation.Fsc f`).
+
+An F# library the same way. The compiler is the SDK's `fsc.dll`, so pin the SDK
+(`global.json` with `rollForward: disable`):
+
+```fsharp
+"out/lib.dll" ..> fsc {
+    targetfwk "net8.0"
+    src !!"src/Lib.fs"
+    lock "locks/lib.json"
+}
+``` To update a lock deliberately, delete the file or run a target that calls
 `Lock.record`.
 
 ## Building from source
 
-`src/hermetic` compiles against the published `Xake` package (the range above, `[3.4.0.21, 4.0)`),
+`src/hermetic` compiles against the published `Xake` package (the range above, `[3.5.0.23, 4.0)`),
 not against `src/core` and `src/dotnet` in the same checkout. A plain restore takes it from
 nuget.org; nothing else is needed:
 
@@ -89,7 +103,7 @@ dotnet test src/hermetic.tests -c Release --no-restore
 ```
 
 The lower bound is the exact version nuget.org carries (the release pipeline appends the run
-number to the version, so 3.4.0 is published as 3.4.0.21). A bound with no published package at
+number to the version, so 3.5.0 is published as 3.5.0.23). A bound with no published package at
 it makes NuGet pick the next one up and warn NU1603 on every restore.
 
 Only when working against an *unreleased* base (a change in `src/core` or `src/dotnet` that
@@ -98,11 +112,11 @@ the range and hand that folder to the restore as an extra source; nothing in the
 points at it:
 
 ```bash
-dotnet pack src/dotnet -c Release -p:Version=3.4.0.99 -o /tmp/xake-feed
+dotnet pack src/dotnet -c Release -p:Version=3.5.0.99 -o /tmp/xake-feed
 dotnet restore src/hermetic.tests -p:RestoreAdditionalProjectSources=/tmp/xake-feed
 dotnet test src/hermetic.tests -c Release --no-restore
 ```
 
-The package lands in the NuGet global cache (`~/.nuget/packages/xake/3.4.0.99`) and wins over
+The package lands in the NuGet global cache (`~/.nuget/packages/xake/3.5.0.99`) and wins over
 the released one from there on; delete that folder when done, and raise the lower bound in
 `Xake.Hermetic.Dotnet.fsproj` to the released version once the base is published.

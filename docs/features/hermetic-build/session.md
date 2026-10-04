@@ -992,3 +992,15 @@ FSharp.Core unless `ref` names one. `samples/features.fsx` runs on macOS with ju
 Tests: 271/1 on #32, 274/1 on #33. **Next**: the user merges #32, #33, releases Xake 3.5;
 then hermetic PRs D (union in `Lock.Entry`, `fsc { lock }`, fsproj import) and E
 (`build.fsc.fsx` on one imported lock, `Fsproj` deleted), release 0.2 on `[3.5.0.<run>, 4.0)`.
+
+## 2026-10-04 — Xake 3.5 released; hermetic PR D in flight
+
+#32 and #33 merged (merge commits), `v3.5.0` → `Xake 3.5.0.23` on nuget.org. Along the way:
+`targetfwk` optional with the SDK default (review on #32), composed `netN.0` support from the
+SDK's targeting pack, fsc for .NET Framework from any host (implicit `netstandard.dll` facade:
+the SDK's net461 one for net462 and below, the reference pack's `Facades/` for net471+; the
+`NETStandard.Library` ref stub is NOT a facade and breaks on `lazy`/attributes), default
+`FSharp.Core` package (`FSHARP_CORE_VERSION`). `dev` merged here (7f68499).
+**In flight**: PR D `pr/hermetic-fsc` (0.2 on `[3.5.0.23, 4.0)`, union `Compilation` in
+`Lock.Entry`, `fsc { lock }`, fsproj import, `Fsproj` deleted). **Then** PR E: `build.fsc.fsx`
+on one imported lock, then `hermetic-v0.2.0`.

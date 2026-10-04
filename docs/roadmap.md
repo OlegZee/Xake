@@ -60,6 +60,18 @@ SDK as restorable as a package.
 thin host over it. A small host shipped with Xake.Dotnet would give `fsc` a restorable
 `toolset` like csc's `Microsoft.Net.Compilers.Toolset`.
 
+### Small base fixes found while writing workflows-ru (2026-10-04)
+
+- Composed `csc {}` does not pass `/deterministic` (fsc `--deterministic+`): lock-built outputs
+  are not byte-reproducible unless the script adds it. Make it the default in composed mode.
+- `norestore`/`packageroot` do not cover `toolset`/`CSC_TOOLSET`, the framework reference
+  packages or fsc's default `FSharp.Core`: those resolve through `restorePackage None` into the
+  machine cache before the lock is read. Offline builds need them routed through the same
+  options.
+- With the `netN.0` default the lock names the SDK's targeting pack under `$(DotnetRoot)`, so
+  `CSC_TOOLSET` alone does not make a lock portable; `global.json` is still required. Document
+  loudly; the "SDK restore" idea above is the real fix.
+
 ## Xake.Hermetic.Dotnet
 
 From `docs/hermetic/workflows.md` ("Gaps"), in priority order:

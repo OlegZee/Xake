@@ -13,6 +13,7 @@
     <Compile Include="LockDiffTests.fs" />
     <Compile Include="FromLockTests.fs" />
     <Compile Include="CscLockTests.fs" />
+    <Compile Include="FscLockTests.fs" />
     <Compile Include="NugetTests.fs" />
     <Compile Include="RestoreTests.fs" />
     <Compile Include="SbomTests.fs" />
@@ -22,6 +23,7 @@
     <Compile Include="SignTests.fs" />
     <Compile Include="ToolsetImportTests.fs" />
     <Compile Include="ResxImportTests.fs" />
+    <Compile Include="FsprojImportTests.fs" />
   </ItemGroup>
   <ItemGroup>
     <!-- The `Xake` package (engine and Xake.Dotnet) flows in through this reference. -->

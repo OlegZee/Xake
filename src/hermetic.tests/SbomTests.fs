@@ -199,6 +199,47 @@ type ``Sbom cycloneDx``() =
         Assert.That (bom.Formulation |> List.exists (fun c -> c.BomRef = "tool:csc" && c.Version = "4.11.0"), Is.True)
         Assert.That (bom.Formulation |> List.exists (fun c -> c.BomRef = "tool:dotnet-sdk" && c.Version = "8.0.100"), Is.True)
 
+    /// An F# entry: the same join, the compiler named by its own tool (`tool:fsc`), no
+    /// analyzers in the formulation.
+    [<Test>]
+    member x.``builds the bom of an F# assembly, naming fsc as the compiler``() =
+        let cacheRoot = Directory.GetCurrentDirectory() </> "pkgs-fsharp"
+        let coreDir = cacheRoot </> "fsharp.core" </> "8.0.100"
+        Directory.CreateDirectory (coreDir </> "lib" </> "netstandard2.1") |> ignore
+        File.WriteAllText (coreDir </> ".nupkg.metadata", fooBarMetadata)
+        File.WriteAllText (coreDir </> "fsharp.core.nuspec", fooBarNuspec.Replace("Foo.Bar", "FSharp.Core").Replace("1.2.3", "8.0.100"))
+        let coreDll = coreDir </> "lib" </> "netstandard2.1" </> "FSharp.Core.dll"
+        File.WriteAllText (coreDll, "fsharp core contents")
+        let assemblyFile = Directory.GetCurrentDirectory() </> "MyLibrary.dll"
+        File.WriteAllText (assemblyFile, "the shipped F# assembly")
+
+        let f = Fsc.ofArgs [ "-o:" + assemblyFile; "-r:" + coreDll; "Lib.fs" ]
+        let entry : Lock.Entry =
+            { Compilation = Lock.Compilation.Fsc
+                { f with
+                    Fsc.Name = "MyLibrary"
+                    Fsc.Framework = "netstandard2.1"
+                    Fsc.Dependencies =
+                        { f.Dependencies with
+                            Compiler = { Tool = "fsc"; Path = "/sdk/FSharp/fsc.dll"; Sha256 = "f5"; Version = "12.8.0" }
+                            References = [ { Path = coreDll; Sha256 = Csc.sha256 coreDll; Alias = "" } ] } }
+              Evaluation = { Project = ""; ProjectRefs = []; Imports = []; Sdk = "8.0.100"; SdkPin = None; Properties = Map.ofList [ "Version", "2.0.0" ] }
+              Packages = [ { Id = "FSharp.Core"; Version = "8.0.100"; Sha512 = "AAAA"; Direct = true; DependsOn = [] } ] }
+
+        let bom = Sbom.forAssembly cacheRoot entry assemblyFile
+
+        Assert.That (bom.Root.BomRef, Is.EqualTo "asm:MyLibrary")
+        Assert.That (bom.Root.Version, Is.EqualTo "2.0.0")
+        let core = bom.Components |> List.find (fun c -> c.BomRef = "pkg:nuget/FSharp.Core@8.0.100")
+        Assert.That (core.Scope, Is.EqualTo "required")
+        Assert.That (bom.Dependencies |> List.find (fun (r, _) -> r = "asm:MyLibrary") |> snd, Is.EqualTo [ "pkg:nuget/FSharp.Core@8.0.100" ])
+        let compiler = bom.Formulation |> List.find (fun c -> c.Type = "application" && c.BomRef <> "tool:dotnet-sdk")
+        Assert.That (compiler.BomRef, Is.EqualTo "tool:fsc")
+        Assert.That (compiler.Name, Is.EqualTo "fsc")
+        Assert.That (compiler.Version, Is.EqualTo "12.8.0")
+        Assert.That (compiler.Hashes, Is.EqualTo [ { Alg = "SHA-256"; Content = "f5" } ])
+        Assert.That (bom.Formulation |> List.map (fun c -> c.BomRef), Is.EqualTo [ "tool:fsc"; "tool:dotnet-sdk" ])
+
     [<Test>]
     member x.``the emitted json parses``() =
         let bom = sampleBom "112233"

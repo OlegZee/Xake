@@ -1,209 +1,15 @@
-﻿namespace Xake.Dotnet
+namespace Xake.Dotnet
 
+/// The `fsc {}` builder. What it builds -- the settings, the resolved `Fsc` and its runner --
+/// lives in `Fsc.fs`; this file only names the operations.
 [<AutoOpen>]
-module FscImpl =
+module FscBuilder =
 
-    open System.IO
     open Xake
-    open Xake.Tasks
 
-    /// <summary>
-    /// Fsc (F# compiler) task settings.
-    /// </summary>
-    type FscSettingsType = {
-        /// Limits which platforms this code can run on. The default is anycpu.
-        Platform: TargetPlatform
-        /// Specifies the format of the output file.
-        Target: TargetType
-        /// Specifies the output file name (default: base name of file with main class or first file).
-        Out: File
-        /// Source files.
-        Src: Fileset
-        /// References metadata from the specified assembly files.
-        Ref: Fileset
-        /// References the specified assemblies from GAC.
-        RefGlobal: string list
-        /// Embeds the specified resource.
-        Resources: ResourceFileset list
-        /// Defines conditional compilation symbols.
-        Define: string list
-        /// Target .NET framework
-        TargetFramework: string
-        /// Use specific FSC compiler version (only dotnet)
-        FscVersion: string option
-        /// Xml documentation file to produce alongside the assembly.
-        Doc: File
-        /// Custom command-line arguments
-        CommandArgs: string list
-        /// Build fails on compile error.
-        FailOnError: bool
-        /// Do not reference the default CLI assemblies by default
-        NoFramework: bool
-
-        /// Generate tailcalls where possible.
-        Tailcalls: bool
-    } with static member Default = {
-            Platform = AnyCpu
-            Target = Auto
-            Out = File.undefined
-            Src = Fileset.Empty
-            Ref = Fileset.Empty
-            RefGlobal = []
-            Resources = []
-            Define = []
-            TargetFramework = null
-            FscVersion = None
-            Doc = File.undefined
-            CommandArgs = []
-            FailOnError = true
-            NoFramework = false
-            Tailcalls = true
-        }
-
-    /// <summary>
-    /// Default settings for the Fsc task, so that you could only override required settings.
-    /// </summary>
-    let FscSettings = FscSettingsType.Default
-
-    /// <summary>
-    /// F# compiler task. Compiles the source fileset into the target assembly.
-    /// </summary>
-    /// <param name="settings">Compiler settings</param>
-    /// <returns>Recipe compiling the target</returns>
-    let Fsc (settings:FscSettingsType) =
-
-        recipe {
-            do! trace Level.Debug "Fsc: settings=%A" settings
-
-            let! options = getCtxOptions()
-            let getFiles = toFileList options.ProjectRoot
-
-            let! outFile =
-                if settings.Out = File.undefined then
-                    getTargetFile()
-                else
-                    settings.Out |> recipe.Return
-
-            let resinfos = settings.Resources |> List.collect (Impl.collectResInfo options.ProjectRoot) |> List.map Impl.compileResxFiles
-            let resfiles = resinfos |> List.choose (fun (_, file, istemp) -> if istemp then None else Some file)
-
-            let (Filelist src)  = settings.Src |> getFiles
-            let (Filelist refs) = settings.Ref |> getFiles
-
-            do! needFiles (Filelist (src @ refs @ resfiles))
-
-            let! globalTargetFwk = getVar "NETFX-TARGET"
-            let targetFramework =
-                match settings.TargetFramework, globalTargetFwk with
-                | s, _ when not (System.String.IsNullOrWhiteSpace s) -> s
-                | _, Some s when s <> "" -> s
-                | _ -> null
-
-            do! trace Debug "targetFramework: %s" targetFramework
-
-            // fsc reads a leading '/' as a path on Unix, so long options must use '--' there;
-            // '-r:' is understood on both platforms
-            let opt (name: string) = (if Env.isWindows then "/" else "--") + name
-            let refOpt = if Env.isWindows then "/r:" else "-r:"
-
-            // netstandard is a profile rather than a framework version: its whole surface
-            // lives in netstandard.dll, and fsc has to be told about it explicitly
-            let isNetstandard =
-                targetFramework <> null && targetFramework.StartsWith("netstandard", System.StringComparison.OrdinalIgnoreCase)
-
-            let! targetFwkInfo =
-                match targetFramework with
-                | null -> recipe { return None }
-                | tgt -> recipe { let! f = DotNetFwk.resolveFramework (Some tgt) in return Some f }
-
-            let (globalRefs,noframework) =
-                let mapfn = (+) refOpt
-                match targetFwkInfo with
-                | None ->
-                    // TODO provide an option for user to explicitly specify all grefs (currently csc.rsp is used)
-                    (settings.RefGlobal |> List.map mapfn), false
-                | Some fwk ->
-                    let lookup = DotNetFwk.locateAssembly fwk
-                    let sysAssembly = if isNetstandard then "netstandard.dll" else "mscorlib.dll"
-                    (sysAssembly :: settings.RefGlobal |> List.map (lookup >> mapfn)), true
-
-            let args =
-                seq {
-                    yield opt "nologo"
-
-                    yield opt "target:" + Impl.targetStr outFile.Name settings.Target
-                    //yield opt "platform:" + Impl.platformStr settings.Platform
-
-                    if settings.NoFramework || noframework then
-                        yield opt "noframework"
-
-                    if isNetstandard then
-                        yield opt "targetprofile:netstandard"
-
-                    if outFile <> File.undefined then
-                        yield sprintf "%sout:%s" (opt "") (File.getFullName outFile)
-
-                    if settings.Doc <> File.undefined then
-                        yield sprintf "%sdoc:%s" (opt "") (File.getFullName settings.Doc)
-
-                    // one symbol per switch: fsc, unlike csc, takes '--define:A;B' as a
-                    // single (and useless) symbol named "A;B"
-                    yield! settings.Define |> List.map (fun symbol -> opt "define:" + symbol)
-
-                    yield! src |> List.map (fun f -> f.FullName)
-
-                    yield! refs |> List.map ((fun f -> f.FullName) >> (+) refOpt)
-                    yield! globalRefs
-
-                    yield! resinfos |> List.map (fun(name,file,_) -> sprintf "%sresource:%s,%s" (opt "") file.FullName name)
-                    yield! settings.CommandArgs
-                }
-
-            let! netfxVar = getVar "NETFX"
-            // the compiler is taken from the framework being targeted, unless NETFX says otherwise
-            let dotnetFwk = match netfxVar with | Some _ -> netfxVar | None -> Option.ofObj targetFramework
-            let! fwkInfo = DotNetFwk.resolveFramework dotnetFwk
-
-            if settings.Doc <> File.undefined then
-                // fsc creates the directory for --out, but fails when the one for --doc is missing
-                System.IO.Directory.CreateDirectory (System.IO.Path.GetDirectoryName (File.getFullName settings.Doc)) |> ignore
-
-            let commandLineArgs = args |> Seq.map Impl.escapeArgument
-
-            // the resx files compiled to a temporary location have to go regardless of how the
-            // compilation ends
-            let deleteTempFiles () =
-                resinfos
-                |> List.choose (fun (_, file, istemp) -> if istemp then Some file.FullName else None)
-                |> List.iter (fun file -> try System.IO.File.Delete file with _ -> ())
-
-            let! fscVer = getVar "FSCVER"
-            match fwkInfo.FscTool ([settings.FscVersion; fscVer] |> Impl.coalesce) with
-            | None ->
-                // there is nothing to run -- carrying on would shell out with an empty command
-                deleteTempFiles ()
-                do! trace Error "('%s') failed: F# compiler not found" outFile.Name
-                if settings.FailOnError then failwithf "Exiting due to FailOnError set on '%s'" outFile.Name
-
-            | Some fsc ->
-                do! trace Info "compiling '%s' using framework '%s'" outFile.Name fwkInfo.Version
-                do! trace Debug "Command line: '%s %s'" fsc (commandLineArgs |> String.concat "\r\n\t")
-
-                try
-                    let! exitCode =
-                        shell {
-                            cmd fsc
-                            args commandLineArgs
-                            envs fwkInfo.EnvVars
-                            logprefix "[fsc]"
-                            stdoutlevel (Tool.diagnosticLevel Level.Verbose)
-                            erroutlevel (Tool.diagnosticLevel Level.Verbose)
-                        }
-
-                    do! Tool.failOnExitCode settings.FailOnError outFile.Name exitCode
-                finally
-                    deleteTempFiles ()
-        }
+    /// The state of an `fsc {}` block after `resolve`: "resolve, do not run". `Run` on it
+    /// returns the `Fsc` instead of compiling.
+    type FscRequest = FscRequest of FscSettingsType
 
     /// Computation expression builder for the fsc task.
     type FscSettingsBuilder() =
@@ -253,7 +59,14 @@ module FscImpl =
         member __.For(x, f) = f x
 
         member __.Zero() = FscSettingsType.Default
-        member __.Run(s:FscSettingsType) = Fsc s
+        /// <summary>Stops short of compiling: the block returns the resolved `Fsc`
+        /// (`Fsc.ofSettings`) instead of a recipe that compiles it. Must be the last
+        /// operation -- the ones after it do not type-check. Outside a file rule it needs an
+        /// explicit `out`, since the output otherwise defaults to the rule's target.</summary>
+        [<CustomOperation("resolve")>]    member __.Resolve(s:FscSettingsType) = FscRequest s
+
+        member __.Run(s:FscSettingsType) = Fsc.compile s
+        member __.Run(FscRequest s) = Fsc.ofSettings s
 
     /// The fsc task builder instance.
     let fsc = FscSettingsBuilder()

@@ -189,13 +189,14 @@ Failure to resolve is fatal: `locateFramework` raises with the accumulated error
 ```
 
 `csc` also takes `cscpath` to bypass discovery of the C# compiler entirely (`fsc` has no
-equivalent — use `fscver`, or the `NETFX` variable). `fsc` takes `fscver` to pin the F#
-compiler version the registry lookup asks for.
+equivalent: its compiler is the SDK's `<sdk>/FSharp/fsc.dll`, `DotNetFwk.fscCompiler`). `fsc`
+takes `fscver` (or `FSCVER`) to pin the F# compiler version, which only the Windows registry
+lookup reads (untested); the SDK path ignores it.
 
 Setting a target framework has two side effects beyond tool selection: `grefs` are resolved to
 absolute paths under the framework's `AssemblyDirs`, `mscorlib.dll` is added, and the compiler
-is invoked with `/nostdlib+ /noconfig` (`--noframework` for `fsc`). Without it, `grefs` are
-passed through verbatim and the compiler's default response file applies.
+is invoked with `/nostdlib+ /noconfig` (`--noframework` for `fsc`). Both `csc` and `fsc`
+require a target framework (`targetfwk` or `NETFX-TARGET`) and fail asking for one otherwise.
 
 ### Per script, via variables
 
@@ -203,7 +204,7 @@ passed through verbatim and the compiler's default response file applies.
 |---|---|
 | `NETFX-TARGET` | Default `targetfwk` for every compiler task that does not set its own. |
 | `NETFX` | Framework whose **tools** are used, overriding whatever is being targeted. Also the only framework selector the `msbuild` task reads. |
-| `FSCVER` | F# compiler version `fsc` asks for, when not set per task via `fscver`. |
+| `FSCVER` | F# compiler version `fsc` asks for, when not set per task via `fscver`; read only by the Windows registry provider. |
 
 Precedence inside a task: `targetfwk` → `NETFX-TARGET` → none. The toolchain is then
 `NETFX` if set, otherwise the resolved target framework, otherwise the default probe order.

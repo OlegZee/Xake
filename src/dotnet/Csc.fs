@@ -479,11 +479,11 @@ module Csc =
     /// The target framework the settings name (`targetfwk`, else the script variable
     /// `NETFX-TARGET`; null for none) and the framework the compiler and its env vars come
     /// from (that one, unless `NETFX` says otherwise).
-    let private frameworkOf (settings: CscSettingsType) =
+    let internal frameworkFor (settingsFramework: string) =
         recipe {
             let! globalTargetFwk = getVar "NETFX-TARGET"
             let targetFramework =
-                match settings.TargetFramework, globalTargetFwk with
+                match settingsFramework, globalTargetFwk with
                 | s, _ when not <| System.String.IsNullOrWhiteSpace(s) -> s
                 | _, Some s when s <> "" -> s
                 | _ -> null
@@ -492,6 +492,8 @@ module Csc =
             let! fwkInfo = DotNetFwk.resolveFramework dotnetFwk
             return targetFramework, fwkInfo
         }
+
+    let private frameworkOf (settings: CscSettingsType) = frameworkFor settings.TargetFramework
 
     /// The runner's options for composed settings: `FailOnError` and `CscPath` from the
     /// settings, the server resolved (`CompilerServer.resolve`), and the environment of the

@@ -88,7 +88,7 @@ open Xake.Dotnet
 
 // the target file is the output; `targetfwk` selects the reference assemblies
 "hello.exe" ..> csc { targetfwk "net-4.6.2"; src !!"hello.cs"; grefs ["System.dll"] }
-"app.exe"   ..> fsc { src !!"src/*.fs"; ref !!"bin/FSharp.Core.dll" }
+"app.dll"   ..> fsc { targetfwk "netstandard2.0"; src !!"src/*.fs"; ref !!"bin/FSharp.Core.dll" }
 "build"      => msbuild { buildfile "a.sln"; target "Rebuild"; prop ("Configuration","Release") }
 "res"        => resgen { resources (resourceset { prefix "App"; files !!"**/*.resx" }) }
 ```

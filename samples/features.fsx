@@ -121,8 +121,11 @@ xake ExecOptions.Default {
 
             let! [appfile; xmlfile] = getTargetFiles()
 
-            do! Fsc {
+            // fsc needs a target framework; for a .NET Framework one the referenced
+            // FSharp.Core.dll must be a net4x one (the SDK only ships a netstandard build)
+            do! Fsc.compile {
                 FscSettings with
+                    TargetFramework = "net-4.6.2"
                     Src = fileset {
                         basedir "core"
                         includes "Logging.fs"

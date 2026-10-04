@@ -698,6 +698,16 @@ module DotNetFwk =
     let sdkProbeWarning (projectRoot: string) : string option =
         sdkImpl.probedWarning (Path.GetFullPath projectRoot)
 
+    /// The managed F# compiler of an SDK framework, `<InstallPath>/FSharp/fsc.dll` (the SDK
+    /// provider's `InstallPath` is the SDK directory), when it exists; `None` for the other
+    /// providers (the registry's `fsc.exe`, mono's `fsharpc`), whose compiler `FscTool` finds.
+    /// This is the file a resolved `Fsc` records and hashes -- `FscTool` on the SDK path is a
+    /// temporary launcher script around it.
+    let fscCompiler (fwkInfo: FrameworkInfo) : string option =
+        if System.String.IsNullOrEmpty fwkInfo.InstallPath then None else
+        let dll = fwkInfo.InstallPath </> "FSharp" </> "fsc.dll"
+        if File.Exists dll then Some dll else None
+
     /// <summary>
     /// Locates "global" assembly for specific framework
     /// </summary>

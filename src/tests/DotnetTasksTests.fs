@@ -261,7 +261,7 @@ type ``Dotnet tasks tests``() =
             rules [
                 "hi.dll" ..> recipe {
                     do! need ["hi.fs"]
-                    do! Fsc {
+                    do! Fsc.compile {
                     FscSettingsType.Default with
                         Src = !!"hi.fs"
                         Out = File.make "hi.dll"

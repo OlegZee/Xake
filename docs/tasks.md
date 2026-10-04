@@ -249,24 +249,73 @@ toolchain, is described in [dotnet-build.md](dotnet-build.md).
 
 ### fsc
 
-Same shape as `csc`, plus `fscver`, `noframework` and `notailcalls` (there is no `fscpath`
-counterpart to `cscpath` — pin the toolchain with `fscver` or the `NETFX` variable instead):
+Same shape as `csc`: the operations below, `resolve`, record syntax through `Fsc.compile`. A
+target framework is required, as for csc.
 
 ```fsharp
-"app.exe" ..> fsc {
+"app.dll" ..> fsc {
+  targetfwk "netstandard2.0"
   src (fileset { includes "src/*.fs" })
   ref !!"bin/FSharp.Core.dll"
-  grefs ["System.dll"; "System.Core.dll"]
   args ["--utf8output"]
 }
 ```
 
-`targetfwk` also takes `netstandard2.0` and `netstandard2.1`: the task then compiles against
-`netstandard.dll` with `--noframework --targetprofile:netstandard`. `doc` writes the xml
-documentation file, creating its directory — fsc creates the one for `--out` only.
+| Operation | Value | Meaning |
+|---|---|---|
+| `targetfwk` | `string` | target framework (`netstandard2.0`, `net-4.6.2`, ...); required here or in `NETFX-TARGET` |
+| `src` | `Fileset` | sources, in compile order |
+| `out` | `File` | output (default: the rule's target) |
+| `target` | `TargetType` | `Library`, `Exe`, ... (default: from the output's extension) |
+| `ref` / `refif` / `refs` | `Fileset` | add / add when / set references (`-r:`) |
+| `grefs` | `string list` | assemblies looked up in the target framework's reference assemblies |
+| `resources` / `resourceslist` | `ResourceFileset` | embedded resources; a `.resx` is compiled to `obj/xake/<name>/*.resources` |
+| `define` | `string list` | conditional compilation symbols, one `--define:` each |
+| `doc` | `File` | xml documentation file |
+| `notailcalls` | -- | `--tailcalls-` |
+| `noframework` | -- | kept for compatibility; `--noframework` is always passed now |
+| `fscver` | `string` | compiler version, Windows registry provider only (also `FSCVER`) |
+| `platform` | `TargetPlatform` | recorded, not passed to fsc (it never was) |
+| `args` | `string list` | extra arguments, appended last |
+| `nofailonerror` | -- | a compile error does not fail the build |
+| `resolve` | -- | return the resolved `Fsc` instead of compiling; must be the last operation |
+
+The arguments are always fsc's `--name:value` form (`-r:` for references), on every OS. With
+`targetfwk` the task passes `--noframework` and the framework's reference assemblies
+(`netstandard.dll` plus `--targetprofile:netstandard` for netstandard, `mscorlib.dll` for .NET
+Framework) as ordinary `-r:` references. `FSharp.Core` is never added: reference the one your
+code compiles against with `ref`. For a .NET Framework target that has to be a net4x
+`FSharp.Core.dll`, which the SDK does not ship. fsc creates the directory of `--out` and the
+task that of `doc`.
 
 `define` takes one symbol per switch: unlike `csc`, `fsc` reads `--define:A;B` as a single
 symbol named `A;B`, so the task emits a separate `--define:` for each.
+
+The compiler is the SDK's `<sdk>/FSharp/fsc.dll` (the SDK a `global.json` in or above the project
+root selects), started as `dotnet fsc.dll`. There is no `fscpath`, and `fscver`/`FSCVER` only
+matter to the Windows registry provider (an installed full-framework `fsc.exe`, untested).
+
+#### Record syntax: `Fsc.compile`
+
+`Fsc.compile` takes an `FscSettingsType` (`FscSettings` holds the defaults) and returns the recipe
+that compiles; it is what `fsc { ... }` runs. It replaces the function `Fsc settings` of 3.4:
+`do! Fsc settings` is now `do! Fsc.compile settings`.
+
+```fsharp
+"hw.dll" ..> recipe {
+  do! Fsc.compile { FscSettings with TargetFramework = "netstandard2.0"; Src = !! "hw.fs"; Ref = !! "FSharp.Core.dll" }
+}
+```
+
+#### Resolving without compiling: `resolve`
+
+`fsc { ...; resolve }` (or `Fsc.ofSettings settings`) stops before the compiler and returns the
+resolved compilation, an `Fsc` record with the same fields as `Csc` (name, framework, directory,
+options, defines, sources, generated files, resx pairs, dependencies with the compiler and the
+references; `Analyzers` is always empty). `Options` is in fsc's own spelling with the markers
+`@Sources`, `@References`, `@Defines`; `FscArgs` parses and formats fsc command lines the way
+`CscArgs` does csc's. `Fsc` has the labels of `Csc`, so constructing one by hand takes qualified
+labels (`{ Fsc.Name = ...; ... }`), and `Fsc.ofArgs` builds one from a command line.
 
 #### Compiling what a project file describes
 
@@ -368,7 +417,7 @@ let strings = resourceset {
 |----------|--------|
 | `NETFX` | Framework whose tools are used, overriding the target framework |
 | `NETFX-TARGET` | Default `targetfwk` for all compiler tasks |
-| `FSCVER` | F# compiler version `fsc` asks for |
+| `FSCVER` | F# compiler version `fsc` asks for (Windows registry provider only) |
 | `CSC_SERVER` | `csc` compiler server: `on`, `off` or keepalive seconds; overridden by a target's `noserver`/`keepalive`, overrides env `XAKE_CSC_SERVER` |
 | `CSC_TOOLSET` | `csc` compiler package version (`Microsoft.Net.Compilers.Toolset`) for targets with no `toolset`; empty or unset means the SDK's compiler |
 
@@ -409,5 +458,5 @@ recipe {
 
 - Prefer `Xake.Tasks` namespace in new scripts
 - Prefer `sh`, `cp`, and `rm` builders over older legacy APIs
-- Prefer the `csc`/`fsc`/`msbuild`/`resgen` builders over calling `Fsc`/`MSBuild`/`ResGen` with a settings record (`Csc` is the record of a resolved compilation; use `Csc.compile` for settings)
+- Prefer the `csc`/`fsc`/`msbuild`/`resgen` builders over calling `MSBuild`/`ResGen` with a settings record (`Csc` and `Fsc` are the records of a resolved compilation; use `Csc.compile`/`Fsc.compile` for settings)
 - Prefer typed variables with `Var.*` and `varschema` for better help output

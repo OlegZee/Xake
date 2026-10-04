@@ -240,16 +240,20 @@ module Fsc =
     /// `fsc { ...; resolve }` returns). The argument list, in order: `--nologo`, `--target:`,
     /// `--noframework`, `--targetprofile:netstandard` (netstandard) or `--targetprofile:netcore`
     /// (.NET), `--tailcalls-` (when `Tailcalls` is off), `--out:`, `--doc:`, one `--define:` per
-    /// symbol, the sources, `-r:` per reference, the SDK's `FSharp.Core.dll` (.NET only, when no
+    /// symbol, the sources, `-r:` per reference, the default `FSharp.Core.dll` (when no
     /// reference is an `FSharp.Core.dll`), the framework's references (the whole targeting pack
-    /// for .NET, else `netstandard.dll` or `mscorlib.dll`; then `RefGlobal`),
-    /// `--resource:path,name`, `CommandArgs`. Always the `--` form, on every
-    /// OS. The list goes through `ofArgs` and the same round-trip check as `Csc.ofSettings`.
+    /// for .NET; `netstandard.dll` for netstandard; `mscorlib.dll` and a forwarding
+    /// `netstandard.dll` facade for .NET Framework, `DotNetFwk.netstandardFacade`, unless a
+    /// reference is a `netstandard.dll`; then `RefGlobal`), `--resource:path,name`,
+    /// `CommandArgs`. Always the `--` form, on every OS. The list goes through `ofArgs` and the
+    /// same round-trip check as `Csc.ofSettings`.
     ///
     /// The target framework is `targetfwk`, else `NETFX-TARGET`, else the SDK's own .NET
-    /// framework (`net10.0` for SDK 10.0.x). For netstandard and .NET Framework `FSharp.Core`
-    /// is not added: the caller references the one the code compiles against. Every
-    /// reference, the defaulted one included, is recorded like any other. The compiler is the SDK's `fsc.dll` (`DotNetFwk.fscCompiler`);
+    /// framework (`net10.0` for SDK 10.0.x). The default `FSharp.Core` is the SDK's own (next
+    /// to `fsc.dll`) for .NET, and the `FSharp.Core` package at `FSHARP_CORE_VERSION`, else
+    /// `DotNetFwk.fsharpCoreVersion`, for netstandard and .NET Framework
+    /// (`DotNetFwk.fsharpCoreReference`). Every reference, the defaulted ones included, is
+    /// recorded like any other. The compiler is the SDK's `fsc.dll` (`DotNetFwk.fscCompiler`);
     /// on the other providers, `FscTool` with `fscver`/`FSCVER`. A `.resx` resource becomes
     /// a permanent `(resx, .resources)` pair under `obj/xake/<name>/`, as for csc. With no
     /// `Out`, the output is the target of the rule this runs in.
@@ -300,25 +304,46 @@ module Fsc =
             // netstandard is a profile rather than a framework version: its whole surface
             // lives in netstandard.dll, and fsc has to be told about it explicitly. .NET
             // (net5.0 and later) is the `netcore` profile, referenced as a whole targeting pack.
+            // Everything else is .NET Framework.
             let isNetstandard = targetFramework.StartsWith ("netstandard", System.StringComparison.OrdinalIgnoreCase)
             let isNetcore = Option.isSome (DotNetFwk.netcoreMoniker targetFramework)
+            let isNetFramework = not isNetstandard && not isNetcore
+            let fileNamed name (path: string) =
+                System.String.Equals (Path.GetFileName path, name, System.StringComparison.OrdinalIgnoreCase)
+            let refsNamed name = refs |> List.exists (fun f -> fileNamed name f.FullName)
             let globalRefs =
                 let lookup = DotNetFwk.locateAssembly targetFwkInfo
                 let frameworkRefs =
                     match DotNetFwk.frameworkReferences targetFwkInfo with
-                    | [] -> [ lookup (if isNetstandard then "netstandard.dll" else "mscorlib.dll") ]
+                    | [] when isNetstandard -> [ lookup "netstandard.dll" ]
+                    | [] ->
+                        // FSharp.Core (any of them: the SDK's, the package's netstandard
+                        // builds) references netstandard 2.0.0.0, which .NET Framework
+                        // reference assemblies below 4.7.1 lack: a forwarding facade
+                        // makes it resolve, unless the settings reference one themselves
+                        let facade =
+                            if isNetFramework && not (refsNamed "netstandard.dll") then
+                                DotNetFwk.netstandardFacade targetFwkInfo [ targetFwkInfo.InstallPath; fwkInfo.InstallPath ]
+                                |> Option.toList
+                            else []
+                        lookup "mscorlib.dll" :: facade
                     | all -> all
                 frameworkRefs @ (settings.RefGlobal |> List.map lookup |> List.filter (fun r -> not (List.contains r frameworkRefs)))
 
-            // for .NET, the SDK's own FSharp.Core (next to fsc.dll) unless the settings
-            // reference one; netstandard2.0 and .NET Framework keep taking theirs from the caller
-            let isFSharpCore (path: string) =
-                System.String.Equals (Path.GetFileName path, "FSharp.Core.dll", System.StringComparison.OrdinalIgnoreCase)
-            let defaultFSharpCore =
-                if isNetcore && not (refs |> List.exists (fun f -> isFSharpCore f.FullName))
-                   && not (globalRefs |> List.exists isFSharpCore) then
-                    DotNetFwk.sdkFSharpCore targetFwkInfo |> Option.toList
-                else []
+            // FSharp.Core unless the settings reference one: for .NET the SDK's own (next to
+            // fsc.dll, the version the compiler is built with and what `dotnet build` picks by
+            // default); for netstandard and .NET Framework the FSharp.Core package at a pinned
+            // version (`DotNetFwk.fsharpCoreReference`), restored into the machine's cache
+            let hasFSharpCore =
+                refsNamed "FSharp.Core.dll" || (globalRefs |> List.exists (fileNamed "FSharp.Core.dll"))
+            let! defaultFSharpCore =
+                if hasFSharpCore then recipe { return [] }
+                elif isNetcore then recipe { return DotNetFwk.sdkFSharpCore targetFwkInfo |> Option.toList }
+                else
+                    recipe {
+                        let! dll = DotNetFwk.fsharpCoreReference targetFramework
+                        return [ dll ]
+                    }
 
             let args =
                 seq {

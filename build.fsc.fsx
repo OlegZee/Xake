@@ -23,7 +23,7 @@
 // lines: it is only the extra restore source of the hermetic `pack` below.
 //
 // Testing and packing still shell out to the SDK: the test project is built by msbuild, and
-// the nupkg carries a net462 asset fsc cannot produce here (see docs/session.md).
+// the nupkg's net462 asset comes from `dotnet pack` (see docs/session.md).
 #r "nuget: Xake, 3.4.0.21"
 #r "nuget: Xake.Hermetic.Dotnet, 0.1.0.22"
 // #r "/tmp/xake-dev/Xake.dll"
@@ -51,9 +51,8 @@ let vars = {|
     NugetSource = Var.string(cliArg = "NUGET_SOURCE", envVar = "NUGET_SOURCE", description = "Extra NuGet source for restoring Xake.Hermetic.Dotnet, for developing against an unreleased Xake")
 |}
 
-/// Only netstandard2.0 is compiled here. A net462 leg would need an FSharp.Core carrying a
-/// net4x assembly, which the version the projects pin does not have -- the nupkg gets its
-/// net462 asset from `dotnet pack`.
+/// Only netstandard2.0 is compiled here; the nupkg gets its net462 asset from `dotnet pack`.
+/// A net462 leg would need msbuild evaluations for net462 under `projects/` (docs/session.md).
 let frameworks = ["netstandard2.0"]
 
 /// The libraries this script builds: the assembly each one produces, and the project it is

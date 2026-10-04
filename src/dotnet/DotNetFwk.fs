@@ -801,6 +801,59 @@ module DotNetFwk =
         let dll = fwkInfo.InstallPath </> "FSharp" </> "FSharp.Core.dll"
         if File.Exists dll then Some dll else None
 
+    /// The `FSharp.Core` package version an fsc compilation for netstandard or .NET Framework
+    /// references when it names none: the one `src/core/Xake.fsproj` pins. The script variable
+    /// `FSHARP_CORE_VERSION` overrides it (`fsharpCoreReference`).
+    let fsharpCoreVersion = "8.0.100"
+
+    /// <summary>
+    /// The default `FSharp.Core.dll` of an fsc compilation for netstandard or .NET Framework:
+    /// the NuGet package `FSharp.Core` at `FSHARP_CORE_VERSION` (read, and so a dependency,
+    /// only here), else `fsharpCoreVersion`, fetched through `restorePackage` into the machine's
+    /// cache; its `lib/netstandard2.1` build for netstandard2.1 when the package has one, else
+    /// `lib/netstandard2.0`. Fails naming the package when neither exists.
+    /// </summary>
+    let fsharpCoreReference (targetFramework: string) : Recipe<ExecContext, string> =
+        recipe {
+            let! v = getVar "FSHARP_CORE_VERSION"
+            let version =
+                v |> Option.map (fun s -> s.Trim()) |> Option.filter ((<>) "") |> Option.defaultValue fsharpCoreVersion
+            let! dir = restorePackage None "FSharp.Core" version
+            let libs =
+                match sdkImpl.netstandardMoniker (if isNull targetFramework then "" else targetFramework) with
+                | Some "netstandard2.1" -> [ "netstandard2.1"; "netstandard2.0" ]
+                | _ -> [ "netstandard2.0" ]
+            match libs |> List.map (fun lib -> dir </> "lib" </> lib </> "FSharp.Core.dll") |> List.tryFind File.Exists with
+            | Some dll -> return dll
+            | None ->
+                return failwithf "package FSharp.Core %s in '%s' has no lib/netstandard2.0/FSharp.Core.dll (set FSHARP_CORE_VERSION to a version that has, or reference an FSharp.Core.dll)" version dir
+        }
+
+    /// <summary>
+    /// The `netstandard.dll` a .NET Framework compilation references so that the types of a
+    /// netstandard2.0 assembly it uses (FSharp.Core's netstandard build) resolve to the
+    /// framework's own: a type-forwarding facade, never `NETStandard.Library`'s
+    /// `build/netstandard2.0/ref/netstandard.dll`, which *defines* the types and so clashes with
+    /// `mscorlib` (fsc reports FS3242 on every attribute and FS0193 on `lazy`). The framework's
+    /// own `Facades/netstandard.dll` when its reference assemblies carry one (4.7.1 and later),
+    /// else the .NET SDK's facade for .NET Framework 4.6.1+,
+    /// `<sdk>/Microsoft/Microsoft.NET.Build.Extensions/net461/lib/netstandard.dll` -- the one
+    /// msbuild uses -- from the first of `sdkDirs` that has it. `None` when neither exists.
+    /// </summary>
+    let netstandardFacade (fwkInfo: FrameworkInfo) (sdkDirs: string list) : string option =
+        let own =
+            fwkInfo.AssemblyDirs |> List.tryPick (fun dir ->
+                let dll = dir </> "netstandard.dll"
+                if File.Exists dll then Some dll else None)
+        match own with
+        | Some _ -> own
+        | None ->
+            sdkDirs
+            |> List.filter (System.String.IsNullOrEmpty >> not)
+            |> List.tryPick (fun sdk ->
+                let dll = sdk </> "Microsoft" </> "Microsoft.NET.Build.Extensions" </> "net461" </> "lib" </> "netstandard.dll"
+                if File.Exists dll then Some dll else None)
+
     /// The managed F# compiler of an SDK framework, `<InstallPath>/FSharp/fsc.dll` (the SDK
     /// provider's `InstallPath` is the SDK directory), when it exists; `None` for the other
     /// providers (the registry's `fsc.exe`, mono's `fsharpc`), whose compiler `FscTool` finds.

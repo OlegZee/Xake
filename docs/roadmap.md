@@ -68,6 +68,10 @@ thin host over it. A small host shipped with Xake.Dotnet would give `fsc` a rest
   packages or fsc's default `FSharp.Core`: those resolve through `restorePackage None` into the
   machine cache before the lock is read. Offline builds need them routed through the same
   options.
+- Decided against (2026-10-04, PR #35 closed): the composed task does not write
+  `runtimeconfig.json` for `netN.0` executables; that is the runtime's rule and `dotnet build`'s
+  job. An exe built this way runs with a hand-written runtimeconfig or when targeting .NET
+  Framework.
 - With the `netN.0` default the lock names the SDK's targeting pack under `$(DotnetRoot)`, so
   `CSC_TOOLSET` alone does not make a lock portable; `global.json` is still required. Document
   loudly; the "SDK restore" idea above is the real fix.

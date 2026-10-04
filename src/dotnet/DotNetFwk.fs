@@ -294,6 +294,15 @@ module DotNetFwk =
             let m = fwk.ToLowerInvariant().Replace("sdk-", "")
             if ["netstandard2.0"; "netstandard2.1"] |> List.contains m then Some m else None
 
+        /// "net10.0" | "sdk-net10.0" | "NET8.0" -> Some "net10.0" / "net8.0": the .NET (Core)
+        /// target frameworks, `net5.0` and later, whose reference assemblies are the SDK's
+        /// `Microsoft.NETCore.App.Ref` targeting pack. Kept apart from `moniker`, which knows
+        /// only the .NET Framework ones (`net472`, no dot).
+        let netcoreMoniker (fwk: string) =
+            let m = fwk.ToLowerInvariant().Replace("sdk-", "")
+            let rx = System.Text.RegularExpressions.Regex.Match(m, @"^net(\d+)\.(\d+)$")
+            if rx.Success && int rx.Groups.[1].Value >= 5 then Some m else None
+
         /// Numeric-aware pick of the latest subdirectory: "10.0.400" beats "8.0.424",
         /// and a released version beats a preview one.
         let private latestDir path =
@@ -452,6 +461,61 @@ module DotNetFwk =
 
         let private sdkDir projectRoot = sdkProbe projectRoot |> fst
 
+        /// The .NET target framework the SDK in `sdkDir` is for and the version of the
+        /// targeting pack it bundles, from its `Microsoft.NETCoreSdk.BundledVersions.props`
+        /// (`BundledNETCoreAppTargetFrameworkVersion`, `BundledNETCoreAppPackageVersion`):
+        /// ("net10.0", "10.0.12") for SDK 10.0.401.
+        let internal bundledFramework (sdkDir: string) =
+            let props = sdkDir </> "Microsoft.NETCoreSdk.BundledVersions.props"
+            if not (File.Exists props) then None else
+            let text = File.ReadAllText props
+            let element name =
+                let m = System.Text.RegularExpressions.Regex.Match(text, sprintf "<%s>\\s*([^<\\s]+)\\s*</%s>" name name)
+                if m.Success then Some m.Groups.[1].Value else None
+            match element "BundledNETCoreAppTargetFrameworkVersion", element "BundledNETCoreAppPackageVersion" with
+            | Some tfv, Some packVersion -> Some ("net" + tfv, packVersion)
+            | _ -> None
+
+        /// The target framework of the SDK the `dotnet` host selects in `projectRoot`
+        /// ("net10.0"), when it can be determined.
+        let sdkFramework (projectRoot: string) =
+            sdkDir projectRoot |> Option.bind bundledFramework |> Option.map fst
+
+        /// The reference assemblies of a .NET target framework (`net8.0`, `net10.0`), from the
+        /// targeting pack that ships with the SDK -- `<dotnet>/packs/Microsoft.NETCore.App.Ref/
+        /// <version>/ref/<moniker>`, no download. For the SDK's own framework that is exactly
+        /// the version the SDK bundles; for another one the newest `<major>.<minor>.*` pack
+        /// present (one an installed SDK of that major brought along). A missing pack fails,
+        /// naming the folder looked in.
+        let private netcoreRefDir projectRoot moniker =
+            match sdkDir projectRoot with
+            | None -> failwithf "reference assemblies for '%s': the .NET SDK is not found" moniker
+            | Some sdk ->
+                let packRoot = Path.GetDirectoryName (Path.GetDirectoryName sdk) </> "packs" </> "Microsoft.NETCore.App.Ref"
+                let refDir version = packRoot </> version </> "ref" </> moniker
+                match bundledFramework sdk with
+                | Some (tfm, packVersion) when tfm = moniker ->
+                    let dir = refDir packVersion
+                    if Directory.Exists dir then dir
+                    else failwithf "reference assemblies for '%s' are not available: the SDK %s bundles targeting pack %s, but '%s' does not exist"
+                            moniker (Path.GetFileName sdk) packVersion dir
+                | _ ->
+                    let prefix = moniker.Substring 3 + "."
+                    let candidates =
+                        if Directory.Exists packRoot then
+                            Directory.GetDirectories packRoot
+                            |> Array.filter (fun d -> (Path.GetFileName d).StartsWith prefix && Directory.Exists (d </> "ref" </> moniker))
+                        else [||]
+                    let versionKey (dir: string) =
+                        (Path.GetFileName dir).Split([| '.'; '-' |])
+                        |> Array.map (fun part -> match System.Int32.TryParse part with | true, v -> v | _ -> -1)
+                        |> List.ofArray
+                    match candidates |> Array.sortBy versionKey |> Array.tryLast with
+                    | Some dir -> dir </> "ref" </> moniker
+                    | None ->
+                        failwithf "reference assemblies for '%s' are not available: no targeting pack under '%s' has ref/%s (install a %s SDK, or target the SDK's own framework)"
+                            moniker packRoot moniker (moniker.Substring 3)
+
         /// netstandard reference assemblies: 2.1 ships with the SDK as a pack, 2.0 only
         /// exists in the NETStandard.Library package, taken at the exact version asked for.
         let private netstandardRefDir projectRoot versions moniker =
@@ -501,6 +565,11 @@ module DotNetFwk =
                 }, null
 
         let tryLocateFwk projectRoot versions fwk =
+            match netcoreMoniker fwk with
+            | Some moniker ->
+                sdkFwkInfo projectRoot [netcoreRefDir projectRoot moniker] moniker
+            | None ->
+
             match netstandardMoniker fwk with
             | Some moniker ->
                 sdkFwkInfo projectRoot [netstandardRefDir projectRoot versions moniker] moniker
@@ -598,7 +667,9 @@ module DotNetFwk =
 
             let tryLocate =
                 if fwk |> startsWith "mono-" then monoFwkImpl.tryLocateFwk
-                elif fwk |> startsWith "sdk-" then sdkImpl.tryLocateFwk projectRoot versions
+                elif fwk |> startsWith "sdk-" || (fwk |> Option.bind sdkImpl.netcoreMoniker |> Option.isSome) then
+                    // .NET (net5.0 and later) has no provider but the SDK's targeting pack
+                    sdkImpl.tryLocateFwk projectRoot versions
                 elif Env.isUnix then
                     // SDK compilers over reference assemblies from NuGet build for full
                     // framework on any OS; mono is just a fallback these days
@@ -697,6 +768,38 @@ module DotNetFwk =
     /// honoured), when the SDK has been probed there. The tasks trace it.
     let sdkProbeWarning (projectRoot: string) : string option =
         sdkImpl.probedWarning (Path.GetFullPath projectRoot)
+
+    /// The .NET target framework of the SDK the `dotnet` host selects in `projectRoot`
+    /// (`global.json` honoured, as for `locateFrameworkIn`): "net10.0" for SDK 10.0.x, read from
+    /// the SDK's `Microsoft.NETCoreSdk.BundledVersions.props`. `None` when there is no SDK or
+    /// the file says nothing. The default target framework of the composed csc and fsc.
+    let sdkFramework (projectRoot: string) : string option =
+        sdkImpl.sdkFramework (Path.GetFullPath projectRoot)
+
+    /// "net8.0" | "net10.0" | "sdk-net10.0" -> Some "net8.0" / "net10.0": a .NET (net5.0 and
+    /// later) target framework, normalized; `None` for .NET Framework, netstandard, anything else.
+    let netcoreMoniker (fwk: string) : string option =
+        if System.String.IsNullOrEmpty fwk then None else sdkImpl.netcoreMoniker fwk
+
+    /// Every reference assembly of a .NET (net5.0 and later) framework located by the SDK
+    /// provider: the `*.dll` files of its targeting pack's `ref/<moniker>` directory, in
+    /// ordinal order -- what the SDK itself passes the compiler. Empty for other frameworks,
+    /// whose references stay opt-in (`grefs`).
+    let frameworkReferences (fwkInfo: FrameworkInfo) : string list =
+        match netcoreMoniker fwkInfo.Version with
+        | None -> []
+        | Some _ ->
+            fwkInfo.AssemblyDirs
+            |> List.filter Directory.Exists
+            |> List.collect (fun dir -> Directory.GetFiles (dir, "*.dll") |> List.ofArray)
+            |> List.sortWith (fun a b -> System.String.CompareOrdinal (Path.GetFileName a, Path.GetFileName b))
+
+    /// The `FSharp.Core.dll` shipped next to the SDK's F# compiler (`<sdk>/FSharp/`), when the
+    /// framework comes from the SDK provider and the file exists.
+    let sdkFSharpCore (fwkInfo: FrameworkInfo) : string option =
+        if System.String.IsNullOrEmpty fwkInfo.InstallPath then None else
+        let dll = fwkInfo.InstallPath </> "FSharp" </> "FSharp.Core.dll"
+        if File.Exists dll then Some dll else None
 
     /// The managed F# compiler of an SDK framework, `<InstallPath>/FSharp/fsc.dll` (the SDK
     /// provider's `InstallPath` is the SDK directory), when it exists; `None` for the other

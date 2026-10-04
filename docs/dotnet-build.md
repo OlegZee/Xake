@@ -17,7 +17,7 @@ Keep these apart, because they are chosen independently:
 | | What it is | How it is chosen |
 |---|---|---|
 | **Host runtime** | The runtime the build script itself runs on — `dotnet fsi`, i.e. .NET 8/9/10. | The `dotnet` on `PATH`, constrained by `global.json`. |
-| **Target framework** | The framework a compiled assembly is built *against* — `net462`, `net40`, mono 4.5, … | `targetfwk` on the task, or the `NETFX-TARGET` script variable. |
+| **Target framework** | The framework a compiled assembly is built *against* — `net10.0`, `net462`, `netstandard2.0`, mono 4.5, … | `targetfwk` on the task, else the `NETFX-TARGET` script variable, else (csc, fsc) the SDK's own .NET framework. |
 | **Toolchain** | The compiler binaries and reference assemblies actually invoked. | Derived from the target framework, or overridden by the `NETFX` script variable. |
 
 The host runtime is always modern .NET. Nothing in Xake runs on the full framework any more;
@@ -107,10 +107,27 @@ Windows registry is consulted.
   entire `AssemblyDirs`. The `fsc` task recognizes the profile and adds `--targetprofile:netstandard`
   and `-r:netstandard.dll` (instead of `mscorlib.dll`) on top of `--noframework`. `csc` has no
   netstandard support.
+- **.NET** (`net5.0` and later: `net8.0`, `net10.0`; also spelled `sdk-net10.0`) is resolved
+  against the targeting pack that comes with the SDK,
+  `<dotnet>/packs/Microsoft.NETCore.App.Ref/<ver>/ref/<moniker>`, never downloaded. For the
+  SDK's own framework `<ver>` is exactly the pack the SDK bundles, as its
+  `Microsoft.NETCoreSdk.BundledVersions.props` says (`BundledNETCoreAppTargetFrameworkVersion`
+  10.0 and `BundledNETCoreAppPackageVersion` 10.0.12 for SDK 10.0.401); for another .NET it is
+  the newest `<major>.<minor>.*` pack present, which an installed SDK of that major brought
+  along. A missing pack fails naming the folder looked in. `csc` and `fsc` reference every
+  `*.dll` of that directory (`DotNetFwk.frameworkReferences`), as the SDK does; `fsc` adds
+  `--targetprofile:netcore` and, unless a `ref` names an `FSharp.Core.dll`, the SDK's own
+  `<sdk>/FSharp/FSharp.Core.dll`. No other provider knows these monikers, so they go to the
+  SDK provider on every OS.
+- **The default target framework** of `csc` and `fsc`, when neither `targetfwk` nor
+  `NETFX-TARGET` is set, is the .NET framework of the probed SDK (`DotNetFwk.sdkFramework`):
+  `net10.0` when `dotnet --version` in the project root prints 10.0.x. Only when it cannot be
+  determined does the task fail asking for a target framework.
 
 Accepted framework names — anything that normalizes to one of the known monikers
 `net20 net35 net40 net45 net451 net452 net46 net461 net462 net47 net471 net472 net48`, plus
-`netstandard2.0` and `netstandard2.1` (which accept no abbreviations beyond an `sdk-` prefix).
+`netstandard2.0` and `netstandard2.1` and the .NET monikers `net<major>.<minor>` from `net5.0`
+on (these three kinds accept no abbreviations beyond an `sdk-` prefix).
 Normalization lowercases and strips `sdk-`, `net-`, `net`, `-full`, dots and dashes, so all of
 these mean `net462`: `net-4.6.2`, `4.6.2`, `net462`, `sdk-net462`. Likewise `4.5-full`, `4.5`
 and `net-4.5` all mean `net45`.
@@ -160,7 +177,7 @@ exception) tries `B`, concatenating both error messages if neither works:
 | Condition | Provider chain |
 |---|---|
 | name starts with `mono-` | mono only |
-| name starts with `sdk-` | SDK only |
+| name starts with `sdk-`, or is a .NET moniker (`net8.0`, `net10.0`) | SDK only |
 | host is Unix (Linux, macOS) | **SDK**, then mono |
 | host is Windows running on mono | mono, then SDK |
 | host is Windows | **registry**, then SDK |
@@ -169,8 +186,8 @@ So the two prefixes are the explicit escape hatches: `mono-4.5` forces mono even
 would work, and `sdk-net462` forces the SDK path even on a Windows box that has the Framework
 installed.
 
-When no framework is requested at all (no `targetfwk`, no `NETFX-TARGET`, no `NETFX` — which is
-the case for a bare `msbuild` task), the profiles `4.0`, `3.5`, `3.0`, `2.0` are tried in that
+When no framework is requested at all (no `NETFX` for a bare `msbuild` task; `csc` and `fsc`
+always request one, the SDK's own .NET by default), the profiles `4.0`, `3.5`, `3.0`, `2.0` are tried in that
 order and the first one that resolves wins. Note that `3.0` is not a known SDK moniker, so on
 Unix the practical outcome is `net40`.
 
@@ -195,8 +212,10 @@ lookup reads (untested); the SDK path ignores it.
 
 Setting a target framework has two side effects beyond tool selection: `grefs` are resolved to
 absolute paths under the framework's `AssemblyDirs`, `mscorlib.dll` is added, and the compiler
-is invoked with `/nostdlib+ /noconfig` (`--noframework` for `fsc`). Both `csc` and `fsc`
-require a target framework (`targetfwk` or `NETFX-TARGET`) and fail asking for one otherwise.
+is invoked with `/nostdlib+ /noconfig` (`--noframework` for `fsc`); a .NET target references its
+whole targeting pack instead of `mscorlib.dll`. Neither `csc` nor `fsc` needs a target framework
+named: with no `targetfwk` and no `NETFX-TARGET` they target the SDK's own .NET (`net10.0` on
+SDK 10.0.x), and fail asking for one only when that cannot be determined.
 
 ### Per script, via variables
 
@@ -206,7 +225,7 @@ require a target framework (`targetfwk` or `NETFX-TARGET`) and fail asking for o
 | `NETFX` | Framework whose **tools** are used, overriding whatever is being targeted. Also the only framework selector the `msbuild` task reads. |
 | `FSCVER` | F# compiler version `fsc` asks for, when not set per task via `fscver`; read only by the Windows registry provider. |
 
-Precedence inside a task: `targetfwk` → `NETFX-TARGET` → none. The toolchain is then
+Precedence inside a task: `targetfwk` → `NETFX-TARGET` → the SDK's own .NET framework. The toolchain is then
 `NETFX` if set, otherwise the resolved target framework, otherwise the default probe order.
 
 ```bash
@@ -223,6 +242,7 @@ dotnet fsi build.fsx -- -- build -d NETFX:mono-4.5
 
 | Target | Linux / macOS | Windows |
 |---|---|---|
+| `csc`, `fsc` → net5.0 and later (the default: the SDK's own) | yes, the SDK's targeting pack | yes, the SDK's targeting pack |
 | `csc` → net20…net48 | yes, SDK Roslyn + NuGet reference assemblies | yes, registry Framework first, SDK as fallback |
 | `fsc` → net4x | **no** (see below) | yes, when the Framework F# compiler is installed |
 | `msbuild` | `dotnet msbuild` through a launcher script | registry `msbuild.exe`, else `dotnet msbuild` |
@@ -234,7 +254,7 @@ dotnet fsi build.fsx -- -- build -d NETFX:mono-4.5
 - **`fsc` cannot target full framework through the SDK.** It needs a net462-compatible
   `FSharp.Core`, and the SDK ships only the netstandard2.0 one, which drags in a `netstandard`
   facade that the net4x reference-assembly packages do not carry. Workaround: reference an
-  `FSharp.Core.dll` of your own, as `samples/features.fsx` does.
+  `FSharp.Core.dll` of your own. Targeting .NET (the default) has no such problem.
 - **`.resx` compilation requires the full framework.** `ResXResourceReader` lives in
   `System.Windows.Forms`; the netstandard2.0 build of `Xake.Dotnet` fails with an explicit
   message. Only the `net462` asset in the package can do it, i.e. this works when the build

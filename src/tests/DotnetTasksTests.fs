@@ -468,24 +468,30 @@ let greet name = sprintf "Hello, %s" name
             "Sample.App.Strings.resx",
             Impl.makeResourceName {dynamic with Prefix = Some "Sample.App"} None "sub/Strings.resx")
 
-    [<Test>]
-    member x.``csc without a target framework fails asking for one``() =
-
-        let build () =
-            xake {x.TestOptions with FileLog="csc-nofwk.log"; ThrowOnError = true} {
-                wantOverride (["nofwk"])
-                rules [
-                    "nofwk" => recipe {
-                        let! _ = Csc.ofSettings { CscSettingsType.Default with Src = !!"a.cs"; Out = File.make "nofwk.dll" }
-                        ()
-                    }
-                ]
-            }
-
-        let ex = Assert.Throws<XakeException> (fun () -> build () |> ignore)
-        Assert.That(ex.ToString(), Does.Contain "csc needs a target framework: set targetfwk in the csc block or the NETFX-TARGET script variable")
-        // the example has to be one composed mode accepts (a .NET Framework or netstandard moniker)
-        Assert.That(ex.ToString(), Does.Contain "targetfwk \"netstandard2.0\"")
+    // no targetfwk and no NETFX-TARGET: the SDK's own .NET framework, its targeting pack
+    // passed whole, as the SDK does
+    [<Test; Category("Integration")>]
+    member x.``csc without a target framework defaults to the SDK framework``() =
+        File.WriteAllText ("a.cs", "public class A { public static string Now() => System.DateTime.Now.ToString(); }")
+        let resolved = ref None
+        do xake {x.TestOptions with FileLog="csc-nofwk.log"; ThrowOnError = true} {
+            wantOverride (["nofwk"])
+            rules [
+                "nofwk" => recipe {
+                    let! c = Csc.ofSettings { CscSettingsType.Default with Src = !!"a.cs"; Out = File.make "nofwk/nofwk.dll" }
+                    resolved.Value <- Some c
+                    do! Csc.compile { CscSettingsType.Default with Src = !!"a.cs"; Out = File.make "nofwk/nofwk.dll" }
+                }
+            ]
+        }
+        let c = resolved.Value |> Option.get
+        let sdkFwk = DotNetFwk.sdkFramework x.TestOptions.ProjectRoot |> Option.get
+        Assert.That(c.Framework, Is.EqualTo sdkFwk)
+        let refs = c.Dependencies.References |> List.map (fun r -> r.Path.Replace('\\', '/'))
+        Assert.That(refs, Is.Not.Empty)
+        Assert.That(refs |> List.forall (fun r -> r.Contains "/packs/Microsoft.NETCore.App.Ref/"), Is.True, "references come from the targeting pack")
+        Assert.That(refs |> List.map Path.GetFileName, Does.Contain "System.Runtime.dll")
+        Assert.That(File.Exists "nofwk/nofwk.dll", Is.True, "csc did not produce nofwk/nofwk.dll")
 
     [<Test>]
     member __.``task builders produce recipes``() =

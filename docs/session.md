@@ -40,7 +40,7 @@ touched, so it is not re-litigated:
   and is what the docs, samples and tests use.
 - `csc` with no `targetfwk` (and no `NETFX-TARGET`) is an error now: `Csc.ofSettings` fails asking
   for one. The old fallback passed no framework references at all and only worked on Windows via
-  `csc.rsp`. `fsc` still has that fallback.
+  `csc.rsp`. Since 3.5 `fsc` requires one too (`Fsc.ofSettings`, same message).
 - `samples/features.fsx` had a catch-all `"(dir:*)/(file:*).(ext:c*)"` rule declared *after*
   `temp/AssemblyInfo.cs`; since the last matching rule wins, it shadowed it and the sample had
   been failing for a long time. The catch-all now comes first.

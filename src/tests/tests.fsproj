@@ -32,6 +32,7 @@
     <Compile Include="SdkProbeTests.fs" />
     <Compile Include="CscServerTests.fs" />
     <Compile Include="ResxTests.fs" />
+    <Compile Include="FscTests.fs" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\core\Xake.fsproj" />

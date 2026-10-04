@@ -223,7 +223,9 @@ not temp files.
 
 ## Not yet
 
-- Running `fsc` through the same `Csc`/runner pair -- today only `csc` does.
+- Running `fsc` through the same runner -- `fsc` has the same shape (an `Fsc` record, `Fsc.ofSettings`,
+  `fsc { ...; resolve }`, `FscArgs` for its own `--name:value` dialect, see
+  [tasks.md](tasks.md#fsc)), but it is not yet hash-checked by a runner.
 - `Resx.read`/`compile` only support plain string entries (`<data name="X"><value>...</value></data>`).
   A typed value (a `type` attribute) or a `ResXFileRef`/binary value (`mimetype`) fails with a
   clear message rather than being compiled; the real projects this targets have none.

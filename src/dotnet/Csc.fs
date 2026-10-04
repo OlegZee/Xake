@@ -476,17 +476,20 @@ module Csc =
             return cscDll
         }
 
-    /// The target framework the settings name (`targetfwk`, else the script variable
-    /// `NETFX-TARGET`; null for none) and the framework the compiler and its env vars come
-    /// from (that one, unless `NETFX` says otherwise).
+    /// The target framework of a composed compilation: `targetfwk` from the settings, else the
+    /// script variable `NETFX-TARGET`, else the .NET framework of the SDK the build runs on
+    /// (`DotNetFwk.sdkFramework`, e.g. "net10.0"); null only when none of them gives one.
+    /// Returned with the framework the compiler and its env vars come from (that one, unless
+    /// `NETFX` says otherwise).
     let internal frameworkFor (settingsFramework: string) =
         recipe {
+            let! options = getCtxOptions ()
             let! globalTargetFwk = getVar "NETFX-TARGET"
             let targetFramework =
                 match settingsFramework, globalTargetFwk with
                 | s, _ when not <| System.String.IsNullOrWhiteSpace(s) -> s
                 | _, Some s when s <> "" -> s
-                | _ -> null
+                | _ -> DotNetFwk.sdkFramework options.ProjectRoot |> Option.toObj
             let! netfxVar = getVar "NETFX"
             let dotnetFwk = match netfxVar with | Some _ -> netfxVar | None -> Option.ofObj targetFramework
             let! fwkInfo = DotNetFwk.resolveFramework dotnetFwk
@@ -574,16 +577,22 @@ module Csc =
             | None -> ()
 
             // the target framework's reference assemblies (for netstandard2.0 and .NET
-            // Framework a NuGet package at an exact version, fetched by `resolveFramework`)
-            // become ordinary `/reference:` entries
+            // Framework a NuGet package at an exact version, fetched by `resolveFramework`; for
+            // .NET the SDK's targeting pack) become ordinary `/reference:` entries
             let! targetFwkInfo =
                 match targetFramework with
                 | null ->
-                    failwithf "'%s': csc needs a target framework: set targetfwk in the csc block or the NETFX-TARGET script variable (e.g. targetfwk \"netstandard2.0\")" assemblyName
+                    failwithf "'%s': csc needs a target framework: set targetfwk in the csc block or the NETFX-TARGET script variable (e.g. targetfwk \"netstandard2.0\"); the SDK's own framework could not be determined" assemblyName
                 | tgt -> DotNetFwk.resolveFramework (Some tgt)
             let (globalRefPaths, nostdlib, noconfig) =
                 let lookup = DotNetFwk.locateAssembly targetFwkInfo
-                (("mscorlib.dll" :: settings.RefGlobal) |> List.map lookup), true, true
+                // .NET: the whole targeting pack, as the SDK passes it; the others: mscorlib
+                // and what `grefs` names
+                let frameworkRefs =
+                    match DotNetFwk.frameworkReferences targetFwkInfo with
+                    | [] -> ["mscorlib.dll"] |> List.map lookup
+                    | all -> all
+                frameworkRefs @ (settings.RefGlobal |> List.map lookup |> List.filter (fun r -> not (List.contains r frameworkRefs))), true, true
 
             let globalRefs = globalRefPaths |> List.map ((+) "/reference:")
 

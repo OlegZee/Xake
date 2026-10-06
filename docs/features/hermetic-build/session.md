@@ -1004,3 +1004,19 @@ the SDK's net461 one for net462 and below, the reference pack's `Facades/` for n
 **In flight**: PR D `pr/hermetic-fsc` (0.2 on `[3.5.0.23, 4.0)`, union `Compilation` in
 `Lock.Entry`, `fsc { lock }`, fsproj import, `Fsproj` deleted). **Then** PR E: `build.fsc.fsx`
 on one imported lock, then `hermetic-v0.2.0`.
+
+## 2026-10-07 — HERMETIC mode decided; review stack in flight
+
+Open PRs to dev: #34 (hermetic 0.2 on Xake 3.5, F# in the lock), #35 (runtimeconfig only as a
+declared multi-file target, the user's model), #36 (book sample, superseded by #35), #37
+(targeting packs restored from NuGet; `NETCORE_REF_VERSION` as a list, one per major.minor, pinned
+TFMs always from NuGet; the `NETCORE_REF` switch was tried and dropped), #38 (`NUGET_PACKAGES` and
+`NUGET_RESTORE` as script variables). #37/#38 conflict in `DotNetFwk.fs`; fix after the first merge.
+Found: the released hermetic 0.1.0.22 fails against the new base (`Csc` gained `RuntimeConfig`):
+F# records are not binary-compatible; proposed minor-range dependency (roadmap).
+**Decided**: a global `HERMETIC=on` mode, independent of `CI`: no path outside `$(ProjectRoot)` /
+`$(NuGetPackageRoot)` except declared **prerequisites** (today: the SDK by exact pin, which is the
+fsc compromise level); requires `NUGET_PACKAGES`, `CSC_TOOLSET`, a `NETCORE_REF_VERSION` entry per
+`netN.0` target used; does not touch restore or the compiler server. Design note
+`hermetic-mode.md` and a key section in `workflows-ru.md` in flight; code after the user reads
+the note. Lesson recorded in memory: a question is a prompt to think, not to change a PR.

@@ -115,9 +115,19 @@ With no `out`, the compiler writes to the rule's target file:
 "helloworld.exe" ..> csc { src !!"helloworld.cs" }
 ```
 
-An executable for `netN.0` (the SDK default) also gets `helloworld.runtimeconfig.json` next to
-it, as `dotnet build` writes it, so `dotnet helloworld.exe` runs; libraries, `netstandard` and
-.NET Framework targets get none.
+csc writes only the output. An application for `netN.0` (the SDK default) also needs
+`<output>.runtimeconfig.json` for `dotnet <output>` to start it; Xake writes it when, and only
+when, the rule declares it as a target next to the output:
+
+```fsharp
+["hw.dll"; "hw.runtimeconfig.json"] *..> csc { src !!"hw.cs" }   // dotnet hw.dll
+```
+
+The content is what `dotnet build` writes. Declaring it makes the compilation an executable
+(`target Auto` with a `.dll` output included); it fails for a library target, for a
+`netstandard` or .NET Framework target ("'hw.runtimeconfig.json' is declared as a target, but
+net-4.6.2 applications do not use one"), and for a name that is not the output's. A single
+target, or record syntax with `out` outside a file rule, writes none.
 
 `targetfwk` picks the framework to compile against; it is optional. The first that is set
 wins: `targetfwk`, the `NETFX-TARGET` script variable, the .NET framework of the SDK the build
@@ -261,7 +271,8 @@ toolchain, is described in [dotnet-build.md](dotnet-build.md).
 ### fsc
 
 Same shape as `csc`: the operations below, `resolve`, record syntax through `Fsc.compile`.
-An executable for `netN.0` gets the `<output>.runtimeconfig.json` next to it, as for csc.
+A `.runtimeconfig.json` declared as a target next to the output is written as for csc
+(`["hw.dll"; "hw.runtimeconfig.json"] *..> fsc { src !!"hw.fs" }`).
 `targetfwk` is optional, as for csc: with none (and no `NETFX-TARGET`) the target is the SDK's
 own .NET framework, and the SDK's `FSharp.Core.dll` is referenced. This needs nothing but the
 SDK:

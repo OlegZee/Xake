@@ -493,49 +493,56 @@ let greet name = sprintf "Hello, %s" name
         Assert.That(refs |> List.map Path.GetFileName, Does.Contain "System.Runtime.dll")
         Assert.That(File.Exists "nofwk/nofwk.dll", Is.True, "csc did not produce nofwk/nofwk.dll")
 
-    // `dotnet <out>.exe` needs `<out>.runtimeconfig.json`, which csc does not write
-    member private x.CompileHw (dir: string) (name: string) (fwk: string option) (isExe: bool) =
+    // `dotnet <out>.dll` needs `<out>.runtimeconfig.json`, which csc does not write: it is
+    // written when the rule declares it as one of its targets, and only then
+    member private x.CompileHw (dir: string) (targets: string list) (fwk: string option) =
         if Directory.Exists dir then Directory.Delete (dir, true)
         Directory.CreateDirectory dir |> ignore
         File.WriteAllText (dir </> "hw.cs", "class P { static void Main() { System.Console.WriteLine(\"Hello world!\"); } }")
-        let target = dir </> name
-        do xake {x.TestOptions with FileLog= dir + ".log"; ThrowOnError = true} {
-            wantOverride ([target])
-            rules [
-                target ..> recipe {
-                    match fwk with
-                    | Some f -> do! csc { src !!(dir </> "hw.cs"); targetfwk f; grefs ["System.dll"; "mscorlib.dll"] }
-                    | None -> do! csc { src !!(dir </> "hw.cs") }
-                }
-            ]
+        let targets = targets |> List.map (fun t -> dir </> t)
+        let body = recipe {
+            match fwk with
+            | Some f -> do! csc { src !!(dir </> "hw.cs"); targetfwk f; grefs ["System.dll"; "mscorlib.dll"] }
+            | None -> do! csc { src !!(dir </> "hw.cs") }
         }
-        target
+        do xake {x.TestOptions with FileLog= dir + ".log"; ThrowOnError = true} {
+            wantOverride [List.head targets]
+            rules [ match targets with [ t ] -> t ..> body | ts -> ts *..> body ]
+        }
 
     [<Test; Category("Integration")>]
-    member x.``csc exe for the default framework writes runtimeconfig.json and runs``() =
-        let exe = x.CompileHw "rc-exe" "hw.exe" None true
+    member x.``csc app declaring its runtimeconfig.json as a target writes it and runs``() =
+        x.CompileHw "rc-app" ["hw.dll"; "hw.runtimeconfig.json"] None
         let sdkFwk = DotNetFwk.sdkFramework x.TestOptions.ProjectRoot |> Option.get
         let major = sdkFwk.Substring(3).Split('.').[0]
         let expected =
             "{\n  \"runtimeOptions\": {\n    \"tfm\": \"" + sdkFwk + "\",\n    \"framework\": {\n      \"name\": \"Microsoft.NETCore.App\",\n      \"version\": \"" + major + ".0.0\"\n    },\n    \"configProperties\": {\n      \"System.Runtime.Serialization.EnableUnsafeBinaryFormatterSerialization\": false\n    }\n  }\n}"
-        Assert.That(File.ReadAllText "rc-exe/hw.runtimeconfig.json", Is.EqualTo expected)
-        let psi = System.Diagnostics.ProcessStartInfo ("dotnet", "\"" + exe + "\"", RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false)
+        Assert.That(File.ReadAllText "rc-app/hw.runtimeconfig.json", Is.EqualTo expected)
+        let psi = System.Diagnostics.ProcessStartInfo ("dotnet", "rc-app/hw.dll", RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false)
         use p = System.Diagnostics.Process.Start psi
         let out = p.StandardOutput.ReadToEnd()
+        let err = p.StandardError.ReadToEnd()
         p.WaitForExit()
-        Assert.That(out.Trim(), Is.EqualTo "Hello world!", p.StandardError.ReadToEnd())
+        Assert.That(out.Trim(), Is.EqualTo "Hello world!", err)
 
     [<Test; Category("Integration")>]
-    member x.``csc library writes no runtimeconfig.json``() =
-        x.CompileHw "rc-lib" "hw.dll" None false |> ignore
-        Assert.That(File.Exists "rc-lib/hw.dll", Is.True)
-        Assert.That(File.Exists "rc-lib/hw.runtimeconfig.json", Is.False)
+    member x.``csc single target writes no runtimeconfig.json``() =
+        x.CompileHw "rc-single" ["hw.exe"] None
+        Assert.That(File.Exists "rc-single/hw.exe", Is.True)
+        Assert.That(File.Exists "rc-single/hw.runtimeconfig.json", Is.False)
 
     [<Test; Category("Integration")>]
-    member x.``csc exe for .NET Framework writes no runtimeconfig.json``() =
-        x.CompileHw "rc-462" "hw.exe" (Some "net-4.6.2") true |> ignore
-        Assert.That(File.Exists "rc-462/hw.exe", Is.True)
+    member x.``csc runtimeconfig.json declared for .NET Framework fails``() =
+        let ex = Assert.Catch(fun () -> x.CompileHw "rc-462" ["hw.exe"; "hw.runtimeconfig.json"] (Some "net-4.6.2"))
+        let rec messages (e: exn) = if isNull e then "" else e.Message + "\n" + messages e.InnerException
+        Assert.That(messages ex, Does.Contain "'hw.runtimeconfig.json' is declared as a target, but net-4.6.2 applications do not use one")
         Assert.That(File.Exists "rc-462/hw.runtimeconfig.json", Is.False)
+
+    [<Test; Category("Integration")>]
+    member x.``csc runtimeconfig.json named for another output fails naming both``() =
+        let ex = Assert.Catch(fun () -> x.CompileHw "rc-other" ["app.dll"; "other.runtimeconfig.json"] None)
+        let rec messages (e: exn) = if isNull e then "" else e.Message + "\n" + messages e.InnerException
+        Assert.That(messages ex, Does.Contain "'other.runtimeconfig.json' is declared as a target, but the output is 'app.dll', whose runtimeconfig is 'app.runtimeconfig.json'")
 
     [<Test>]
     member __.``task builders produce recipes``() =

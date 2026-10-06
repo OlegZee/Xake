@@ -6,10 +6,11 @@ open Xake
 open Xake.Tasks
 open Xake.Dotnet
 
-/// Imports a C# project the way Visual Studio learns a project's compiler switches: a
-/// design-time build in which the compiler task is asked to report its command line instead
-/// of running (`ProvideCommandLineArgs`, `SkipCompilerExecution`). Nothing about the
-/// compilation is reconstructed; what msbuild would have run is what the lock holds.
+/// Imports a C# or F# project the way Visual Studio learns a project's compiler switches: a
+/// design-time build in which the compiler task (`Csc` or `Fsc`) is asked to report its
+/// command line instead of running (`ProvideCommandLineArgs`, `SkipCompilerExecution`).
+/// Nothing about the compilation is reconstructed; what msbuild would have run is what the
+/// lock holds.
 module Project =
 
     open Lock
@@ -136,10 +137,13 @@ module Project =
     /// `Compile` (not `CoreCompile`) so that everything hooked before it -- generated
     /// assembly attributes, `BeforeCompile` extensions -- has run.
     let internal targets = "PrepareResources;Compile"
-    let internal items = "CscCommandLineArgs,ReferencePath,Analyzer,ProjectReference,EmbeddedResource"
+    /// Both compilers' command-line items: a csproj fills `CscCommandLineArgs`, an fsproj
+    /// `FscCommandLineArgs` (the F# targets' `Fsc` task honours the same
+    /// `ProvideCommandLineArgs`/`SkipCompilerExecution` contract); the other one is empty.
+    let internal items = "CscCommandLineArgs,FscCommandLineArgs,ReferencePath,Analyzer,ProjectReference,EmbeddedResource"
     let internal wantedProperties =
         "AssemblyName,MSBuildProjectFullPath,MSBuildProjectDirectory,IntermediateOutputPath,BaseIntermediateOutputPath,TargetPath," +
-        "CscToolPath,CscToolExe,CSharpCoreTargetsPath,RoslynTargetsPath,NETCoreSdkVersion,NetCoreRoot,NuGetPackageRoot,ProjectAssetsFile," +
+        "CscToolPath,CscToolExe,CSharpCoreTargetsPath,RoslynTargetsPath,DotnetFscCompilerPath,NETCoreSdkVersion,NetCoreRoot,NuGetPackageRoot,ProjectAssetsFile," +
         "TargetFrameworkMoniker,LangVersion,Version,InformationalVersion,SignAssembly,AssemblyOriginatorKeyFile,Deterministic,SourceRevisionId"
 
     /// Every file msbuild imported, from a preprocessed project (`-pp`): each import is
@@ -175,9 +179,15 @@ module Project =
         let prop name = properties |> Map.tryFind name |> Option.defaultValue ""
 
         let directory = (prop "MSBuildProjectDirectory").Replace ('\\', '/')
-        let args = items "CscCommandLineArgs" |> List.map identity |> CscArgs.absolutize directory
+        // the compiler is whichever of the two items came back: an fsproj reports
+        // `FscCommandLineArgs`, a csproj `CscCommandLineArgs`
+        let fscArgs = items "FscCommandLineArgs" |> List.map identity
+        let isFSharp = not (List.isEmpty fscArgs)
+        let args =
+            if isFSharp then fscArgs |> FscArgs.absolutize directory
+            else items "CscCommandLineArgs" |> List.map identity |> CscArgs.absolutize directory
         if List.isEmpty args then
-            failwithf "'%s': the design-time build reported no compiler command line -- CoreCompile did not run (skipped as up to date, or the project has no C# compile step)" (prop "MSBuildProjectFullPath")
+            failwithf "'%s': the design-time build reported no compiler command line -- CoreCompile did not run (skipped as up to date, or the project has no C# or F# compile step)" (prop "MSBuildProjectFullPath")
         let slash (p: string) = p.Replace ('\\', '/')
 
         // A project that pins the compiler via the `Microsoft.Net.Compilers.Toolset` package
@@ -192,7 +202,14 @@ module Project =
         // did; for a pinned one it is
         // `<nuget>/microsoft.net.compilers.toolset/<version>/build/../tasks/netcore/Microsoft.CSharp.Core.targets`,
         // so this resolves to the package's own compiler.
-        let compilerPath =
+        //
+        // fsc: `DotnetFscCompilerPath` is the SDK's `fsc.dll`, as the F# targets hand it to
+        // `dotnet` -- quoted (`"<sdk>/FSharp/fsc.dll"`), so the quotes are stripped.
+        let fscCompilerPath () =
+            match (prop "DotnetFscCompilerPath").Trim().Trim '"' with
+            | "" -> failwithf "'%s': the design-time build reported no DotnetFscCompilerPath -- not an SDK-style F# project?" (prop "MSBuildProjectFullPath")
+            | path -> Path.GetFullPath path |> slash
+        let cscCompilerPath () =
             match prop "CscToolPath" with
             | "" ->
                 match prop "CSharpCoreTargetsPath" with
@@ -203,6 +220,7 @@ module Project =
                     Path.GetFullPath (Path.GetDirectoryName (slash csTargets) </> "bincore" </> "csc.dll")
             | toolPath -> toolPath </> (match prop "CscToolExe" with | "" -> "csc.dll" | exe -> exe)
             |> slash
+        let compilerPath = if isFSharp then fscCompilerPath () else cscCompilerPath ()
 
         let absoluteDir (dir: string) =
             let dir = slash dir
@@ -249,7 +267,7 @@ module Project =
         // `resources` -- reading one with `File.ReadAllText` here would corrupt it (and `run`
         // would then write the mangled text back over the real file).
         let generated =
-            CscArgs.inputs args
+            (if isFSharp then FscArgs.inputs args else CscArgs.inputs args)
             |> List.filter (fun path -> path.StartsWith intermediate && File.Exists path && not (resourceOutputs.Contains path))
             |> List.map (fun path -> path, File.ReadAllText path)
 
@@ -261,19 +279,33 @@ module Project =
             imports |> List.map slash
             |> List.filter (fun path -> not (sdkRoot <> "" && path.StartsWith (sdkRoot + "/")) && not (path.StartsWith baseIntermediate))
 
-        let composed = Csc.ofArgs args
+        let dependencies tool (parsed: Dependencies) : Dependencies =
+            { Compiler = { Tool = tool; Path = compilerPath; Sha256 = Csc.sha256 compilerPath; Version = Csc.compilerVersion compilerPath }
+              References = parsed.References |> List.map (fun r -> { r with Sha256 = Csc.sha256 r.Path })
+              Analyzers = parsed.Analyzers |> List.map (fun a -> Csc.hashed a.Path) }
+        let compilation =
+            if isFSharp then
+                let composed = Fsc.ofArgs args
+                Compilation.Fsc
+                    { composed with
+                        Fsc.Name = prop "AssemblyName"
+                        Fsc.Framework = framework
+                        Fsc.Directory = directory
+                        Fsc.Generated = generated
+                        Fsc.Resources = resources
+                        Fsc.Dependencies = dependencies "fsc" composed.Dependencies }
+            else
+                let composed = Csc.ofArgs args
+                Compilation.Csc
+                    { composed with
+                        Name = prop "AssemblyName"
+                        Framework = framework
+                        Directory = directory
+                        Generated = generated
+                        Resources = resources
+                        Dependencies = dependencies "csc" composed.Dependencies }
         let entry : Lock.Entry = {
-            Csc =
-                { composed with
-                    Name = prop "AssemblyName"
-                    Framework = framework
-                    Directory = directory
-                    Generated = generated
-                    Resources = resources
-                    Dependencies =
-                        { Compiler = { Tool = "csc"; Path = compilerPath; Sha256 = Csc.sha256 compilerPath; Version = Csc.compilerVersion compilerPath }
-                          References = composed.Dependencies.References |> List.map (fun r -> { r with Sha256 = Csc.sha256 r.Path })
-                          Analyzers = composed.Dependencies.Analyzers |> List.map (fun a -> Csc.hashed a.Path) } }
+            Compilation = compilation
             Evaluation =
                 { Project = prop "MSBuildProjectFullPath" |> slash
                   ProjectRefs = items "ProjectReference" |> List.map (identity >> resolveAgainstProject)
@@ -288,10 +320,10 @@ module Project =
         }
         // the round trip: the structured entry must give back msbuild's command line exactly,
         // or the lock would describe a compilation other than the one msbuild ran
-        let rebuilt = entry.Csc.Args
+        let rebuilt = entry.Args
         if rebuilt <> args then
             failwithf "'%s': the command line rebuilt from the lock entry differs from msbuild's (structured form lost fidelity):\n%s"
-                entry.Csc.Name (Csc.diffList args rebuilt |> String.concat "\n")
+                entry.Name (Csc.diffList args rebuilt |> String.concat "\n")
         // SourceLink's `sourcelink.json` (captured above, now that `sourcelink` is an input
         // switch) embeds the commit msbuild resolved via `SourceRevisionId` -- tokenize it out
         // so the lock's content, hence the lock file, does not change on every commit
@@ -457,21 +489,24 @@ module Project =
                     let sdk = entry.Evaluation.Sdk
                     match pin with
                     | Pinned v when sdk <> "" && sdk <> v ->
-                        do! trace Warning "'%s': the SDK is pinned to %s but msbuild ran %s -- the pinned SDK is not installed on this machine" entry.Csc.Name v sdk
+                        do! trace Warning "'%s': the SDK is pinned to %s but msbuild ran %s -- the pinned SDK is not installed on this machine" entry.Name v sdk
                     | Pinned _ -> ()
                     | other ->
-                        do! trace Warning "'%s': the SDK is not pinned (%s) -- the lock's compiler (%s, SDK %s) will drift with every SDK the machine picks; pin it with global.json { sdk: { version, rollForward: \"disable\" } }" entry.Csc.Name (sdkPinText other) entry.Csc.Dependencies.Compiler.Version sdk
+                        do! trace Warning "'%s': the SDK is not pinned (%s) -- the lock's compiler (%s, SDK %s) will drift with every SDK the machine picks; pin it with global.json { sdk: { version, rollForward: \"disable\" } }" entry.Name (sdkPinText other) entry.Dependencies.Compiler.Version sdk
 
                     // the evaluation's inputs, so that a Directory.Build.props edit re-imports
                     // and nothing else does
                     do! needFiles (Filelist (entry.Evaluation.Imports |> List.map (fun (h: Lock.Hashed) -> File.make h.Path)))
 
-                    // every resx output has to be named by a /resource: switch, or `run` would
+                    // every resx output has to be named by a resource switch, or `run` would
                     // regenerate a file the compiler never reads
-                    let resourceInputs = CscArgs.switchValues "resource" entry.Csc.Options
-                    for (resx, resourcesFile) in entry.Csc.Resources do
+                    let resourceInputs =
+                        match entry.Compilation with
+                        | Compilation.Csc c -> CscArgs.switchValues "resource" c.Options
+                        | Compilation.Fsc f -> FscArgs.switchValues "resource" f.Options
+                    for (resx, resourcesFile) in entry.Compilation.Resources do
                         if not (List.contains resourcesFile resourceInputs) then
-                            do! trace Warning "'%s' compiles to '%s' but no /resource: switch names that path" resx resourcesFile
+                            do! trace Warning "'%s' compiles to '%s' but no resource switch names that path" resx resourcesFile
 
                     entries.Add entry
 

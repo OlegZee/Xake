@@ -384,63 +384,12 @@ construct it with qualified labels or from `FscRunOptions.Default with ...`.
 
 #### Compiling what a project file describes
 
-A script that drives the compiler itself still has to know what to compile, what to reference
-and what to define. `Fsproj` asks msbuild, which is the only thing that reads a project file
-correctly — conditions, imports, the resolved reference list and the generated assembly
-attributes included — and the answer is cached in a file, so msbuild runs only when the project
-file changes:
-
-```fsharp
-// the one rule that runs msbuild
-"out/obj/(fwk:*)/(lib:*).json" ..> recipe {
-    let! framework = getRuleMatch "fwk"
-    let! name = getRuleMatch "lib"
-    let! result = getTargetFile()
-    do! needFiles (Filelist [File.make (projectOf name)])
-    do! Fsproj.evaluate {
-        Fsproj.EvalOptions.Default with
-            Project = projectOf name
-            Framework = framework
-            Configuration = "Release"
-            Properties = ["Version", "1.2.3"]
-            Output = result.FullName
-    }
-}
-
-// ... and the compile, which only reads the result
-let! project = Fsproj.load (evaluated name framework)
-do! fsc {
-    targetfwk framework
-    out (File.make outputPath)
-    doc (File.make docPath)
-    src (project.Sources |> List.fold (fun fs f -> fs ++ f) Fileset.Empty)
-    refs (project.References |> List.fold (fun fs f -> fs ++ f) Fileset.Empty)
-    define project.Defines
-}
-```
-
-`Fsproj.evaluate` runs `dotnet msbuild -restore -t:PrepareForBuild;GenerateAssemblyInfo;
-ResolveReferences` with `-getItem`/`-getProperty`. msbuild answers with every metadata field of
-every item — some 200 KB and 3600 lines per project, of which the build reads one field — so
-that dump goes to a scratch file and what is kept is only what gets consumed: a ~15 KB file of
-plain lists, readable and diffable. Paths in it are written against `$(NuGetPackageRoot)` and
-`$(ProjectRoot)` and expanded again on read, so the file is byte-identical on every machine and
-belongs in the repository — a lockfile for the compilation, whose diff shows what a project
-change did. The roots are the build's own: `$(ProjectRoot)` is the engine's
-`ExecOptions.ProjectRoot`, not the process's current directory (see the `Roots` module).
-`Fsproj.load` — a recipe, so that it can take those roots — turns the file back into a record:
-
-| Field | What is in it |
-|---|---|
-| `Sources` | `CompileBefore`, `Compile`, `CompileAfter` in that order — the generated `AssemblyInfo.fs` (`InternalsVisibleTo`, copyright, the versions from the `Version` property) is the `CompileBefore` item, so it comes first |
-| `References` | `ReferencePath`: every assembly resolved, framework references and packages alike |
-| `ProjectRefs` | `ProjectReference` items — msbuild points `References` at the referenced project's own `bin/`, so a build with its own layout substitutes them |
-| `Defines` | `DefineConstants`, including the symbols msbuild derives from the framework (`NETSTANDARD2_0`, the `_OR_GREATER` chain) |
-| `Properties` | whatever was asked for: `AssemblyName`, `Optimize`, `DebugType`, ... |
-
-`BuildProjectReferences=false` is passed for you: resolving a project reference must not make
-msbuild build the very thing the script is about to compile. Nothing else is compiled either —
-the evaluation only reads the project and writes the assembly attributes.
+A script that wants exactly what `dotnet build` would compile for an existing `.fsproj` does not
+re-describe it as `fsc {}` settings: `Project.import` in `Xake.Hermetic.Dotnet` asks msbuild
+for the compiler's own command line (a design-time build) and records it in a lock, and
+`Lock.compile` replays it through `Fsc.run`. See [hermetic/lock.md](hermetic/lock.md). (The
+`Fsproj` module of Xake.Hermetic.Dotnet 0.1, which evaluated a project's items for a composed
+`fsc {}`, is gone in 0.2.)
 
 ### msbuild
 

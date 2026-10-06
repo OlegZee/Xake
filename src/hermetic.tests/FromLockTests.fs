@@ -47,7 +47,7 @@ type ``Csc fromlock``() =
                   assemblyInfoCs
                   helloCs ]
         let project : Lock.Entry = {
-            Csc =
+            Compilation = Lock.Compilation.Csc
                 { c with
                     Name = "Hello"
                     Framework = "netstandard2.0"
@@ -89,7 +89,7 @@ type ``Csc fromlock``() =
         let project, _, _, _ = makeLock dir
         let tampered =
             { project with
-                Csc =
+                Compilation = Lock.Compilation.Csc
                     { project.Csc with
                         Dependencies =
                             { project.Csc.Dependencies with
@@ -145,7 +145,7 @@ type ``Csc fromlock``() =
             let scratchCscDll = Path.Combine (scratchNuget, "microsoft.net.compilers.toolset", version, "tasks", "netcore", "bincore", "csc.dll")
             let project =
                 { project with
-                    Csc = { project.Csc with Dependencies = { project.Csc.Dependencies with Compiler = { project.Csc.Dependencies.Compiler with Path = scratchCscDll; Sha256 = Csc.sha256 userCscDll } } } }
+                    Compilation = Lock.Compilation.Csc { project.Csc with Dependencies = { project.Csc.Dependencies with Compiler = { project.Csc.Dependencies.Compiler with Path = scratchCscDll; Sha256 = Csc.sha256 userCscDll } } } }
 
             Assert.That(File.Exists scratchCscDll, Is.False, "the scratch NuGet cache already has the package -- test setup is wrong")
 
@@ -175,7 +175,7 @@ type ``Csc fromlock``() =
             | Some root -> root
             | None -> Assert.Ignore("no .NET SDK root found on this machine"); failwith "unreachable"
         let sdkCompilerPath = Path.Combine (dotnetRoot, "sdk", "0.0.1", "Roslyn", "bincore", "csc.dll")
-        let project = { project with Csc = { project.Csc with Dependencies = { project.Csc.Dependencies with Compiler = { project.Csc.Dependencies.Compiler with Path = sdkCompilerPath; Sha256 = "" } } } }
+        let project = { project with Compilation = Lock.Compilation.Csc { project.Csc with Dependencies = { project.Csc.Dependencies with Compiler = { project.Csc.Dependencies.Compiler with Path = sdkCompilerPath; Sha256 = "" } } } }
 
         let build () =
             xake {x.TestOptions with FileLog="csc-fromlock-missing-sdk.log"; ThrowOnError = true} {
@@ -197,7 +197,7 @@ type ``Csc fromlock``() =
         let dir = Directory.GetCurrentDirectory()
         let project, _, _, _ = makeLock dir
         let nowhere = if Env.isUnix then "/nonexistent/csc.dll" else "C:\\nonexistent\\csc.dll"
-        let project = { project with Csc = { project.Csc with Dependencies = { project.Csc.Dependencies with Compiler = { project.Csc.Dependencies.Compiler with Path = nowhere; Sha256 = "" } } } }
+        let project = { project with Compilation = Lock.Compilation.Csc { project.Csc with Dependencies = { project.Csc.Dependencies with Compiler = { project.Csc.Dependencies.Compiler with Path = nowhere; Sha256 = "" } } } }
 
         let build () =
             xake {x.TestOptions with FileLog="csc-fromlock-missing-anywhere.log"; ThrowOnError = true} {
@@ -218,7 +218,7 @@ type ``Csc fromlock``() =
 
         let c = Csc.ofArgs [ "/reference:/a/Old.dll"; "/out:/a/Old.dll.out"; "/a/A.cs" ]
         let project : Lock.Entry = {
-            Csc =
+            Compilation = Lock.Compilation.Csc
                 { c with
                     Name = "Sample"
                     Framework = "netstandard2.0"
@@ -415,7 +415,7 @@ type ``Csc fromlock``() =
             let sourcelinkContent = "{\"documents\":{\"/x/*\":\"https://h/src/$(SourceRevisionId)/*\"}}"
             let project =
                 { project with
-                    Csc =
+                    Compilation = Lock.Compilation.Csc
                         { project.Csc with
                             // `/sourcelink:` is only accepted when a PDB is emitted
                             Options = project.Csc.Options @ [ "/debug:portable"; "/sourcelink:" + sourcelinkPath ]
@@ -459,7 +459,7 @@ type ``Csc fromlock``() =
             let sourcelinkContent = "{\"documents\":{\"/x/*\":\"https://h/src/$(SourceRevisionId)/*\"}}"
             let project =
                 { project with
-                    Csc =
+                    Compilation = Lock.Compilation.Csc
                         { project.Csc with
                             Options = project.Csc.Options @ [ "/sourcelink:" + sourcelinkPath ]
                             Generated = project.Csc.Generated @ [ sourcelinkPath, sourcelinkContent ] } }

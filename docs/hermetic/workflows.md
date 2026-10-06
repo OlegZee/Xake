@@ -39,7 +39,8 @@ cache location.
 
 ### What happens
 
-`Lock.build path c` (and its sugar `csc { ...; lock path }`) has three cases
+`Lock.build path c` (and its sugar `csc { ...; lock path }` / `fsc { ...; lock path }`; `c` is a
+`Lock.Compilation`, C# or F#) has three cases
 (`Lock.buildWith` in `src/hermetic/Lock.fs`):
 
 | State of the lock file | What the build does |
@@ -73,7 +74,7 @@ let app = recipe {
         args ["/deterministic"]
         out (File.make "out/app.dll")
         resolve }
-    return c }
+    return Lock.Compilation.Csc c }
 
 do xakeScript {
     var "CSC_TOOLSET" "4.12.0"          // the compiler is a NuGet package, see below
@@ -230,15 +231,15 @@ do xakeScript {
             let! roots = Roots.current
             let read (p: string) = Lock.read roots (System.IO.Path.Combine (options.ProjectRoot, p))
             let committed, current = read lockPath, read fresh
-            let key (e: Lock.Entry) = e.Csc.Name, e.Csc.Framework
+            let key (e: Lock.Entry) = e.Name, e.Framework
             let diffs =
                 [ for e in current.Entries do
                     match committed.Entries |> List.tryFind (fun c -> key c = key e) with
-                    | Some c -> for d in Lock.diff c e -> sprintf "%s (%s): %s" e.Csc.Name e.Csc.Framework d
-                    | None -> yield sprintf "+ entry %s (%s)" e.Csc.Name e.Csc.Framework
+                    | Some c -> for d in Lock.diff c e -> sprintf "%s (%s): %s" e.Name e.Framework d
+                    | None -> yield sprintf "+ entry %s (%s)" e.Name e.Framework
                   for c in committed.Entries do
                     if not (current.Entries |> List.exists (fun e -> key e = key c)) then
-                        yield sprintf "- entry %s (%s)" c.Csc.Name c.Csc.Framework ]
+                        yield sprintf "- entry %s (%s)" c.Name c.Framework ]
             if not (List.isEmpty diffs) then
                 failwithf "%s is stale; run update-locks and commit:\n%s" lockPath (String.concat "\n" diffs)
         }

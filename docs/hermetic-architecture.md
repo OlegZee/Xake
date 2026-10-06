@@ -323,12 +323,14 @@ plus `toolset`, `noserver`, `keepalive` and `resolve`, the marker `CscRequest`, 
 
 | Name | What it does |
 |---|---|
-| `nugetRoot ()` | `NUGET_PACKAGES`, else `~/.nuget/packages` |
+| `nugetRoot ()` | the environment variable `NUGET_PACKAGES`, else `~/.nuget/packages` (no build context) |
+| `packageRoot ()` | recipe: the build's package folder -- the script variable `NUGET_PACKAGES` (relative to the project root, or absolute), else `nugetRoot ()` |
+| `restoreEnabled ()` | recipe: `false` when the script variable `NUGET_RESTORE` is `off`/`false`/`no`/`0`; what `Restore.Options.Enabled` is to default to |
 | `dotnetRoot ()` | the SDK installation root, when one can be located |
 | `normalizedPackageRoot root` | the package folder in effect (`None` = the machine's cache), forward slashes, no trailing slash |
 | `restoreProjectText packages` | the synthesized restore project: `netstandard2.0`, `DisableImplicitFrameworkReferences`, one `PackageDownload` per package at an exact `[version]` |
-| `downloadPackages root packages` | one `dotnet restore` of that project under `obj/xake/restore/<n>/` of the project root (so `nuget.config` is found), with the repository's `Directory.Build.*` and central package management switched off, `NUGET_PACKAGES` pointed at the folder |
-| `restorePackage root id version` | the package directory, downloading it first when absent; `csc { toolset }` and `CSC_TOOLSET` use it |
+| `downloadPackages root packages` | (`None` = `packageRoot ()`; with restore off, fails naming the missing packages) one `dotnet restore` of that project under `obj/xake/restore/<n>/` of the project root (so `nuget.config` is found), with the repository's `Directory.Build.*` and central package management switched off, `NUGET_PACKAGES` pointed at the folder |
+| `restorePackage root id version` | the package directory (`None` = `packageRoot ()`), downloading it first when absent (failing when restore is off); `csc { toolset }` and `CSC_TOOLSET` use it |
 | `locateFrameworkIn root fwk` | the toolchain for a framework, the SDK being the one `dotnet --version` reports in `root` (`global.json`); memoized per (root, framework) |
 | `locateFramework fwk` | `locateFrameworkIn` with the current directory as the root |
 | `sdkProbeWarning root` | the probe's warning for `root` (a `global.json` pin it could not honour), once that root has been probed |

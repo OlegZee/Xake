@@ -167,7 +167,7 @@ Every operation of `csc {}`:
 | `args` | `string list` | extra compiler arguments, appended last |
 | `nofailonerror` | -- | a compile error does not fail the build |
 | `cscpath` | `string` | run this compiler instead of the one the framework provides; overrides `toolset` |
-| `toolset` | `string` (version) | take `csc.dll` from `Microsoft.Net.Compilers.Toolset/<version>` in the NuGet cache, restoring the package first when it is missing, instead of the SDK's own compiler; overrides the `CSC_TOOLSET` variable |
+| `toolset` | `string` (version) | take `csc.dll` from `Microsoft.Net.Compilers.Toolset/<version>` in the build's package folder, restoring the package first when it is missing, instead of the SDK's own compiler; overrides the `CSC_TOOLSET` variable |
 | `noserver` | -- | compile in a fresh compiler process instead of through the Roslyn compiler server |
 | `keepalive` | `int` (seconds) | idle time after which a compiler server this build starts exits (`/keepalive`; Roslyn's default is 600) |
 | `resolve` | -- | return the resolved `Csc` instead of compiling; must be the last operation (see below) |
@@ -445,6 +445,8 @@ let strings = resourceset {
 | `FSCVER` | F# compiler version `fsc` asks for (Windows registry provider only) |
 | `CSC_SERVER` | `csc` compiler server: `on`, `off` or keepalive seconds; overridden by a target's `noserver`/`keepalive`, overrides env `XAKE_CSC_SERVER` |
 | `CSC_TOOLSET` | `csc` compiler package version (`Microsoft.Net.Compilers.Toolset`) for targets with no `toolset`; empty or unset means the SDK's compiler |
+| `NUGET_PACKAGES` | The build's package folder, relative to the project root or absolute; overrides the environment variable of the same name for everything Xake restores or reads there (see below) |
+| `NUGET_RESTORE` | `off` turns off every restore into the package folder (a missing package fails the build); default `on` |
 
 ```bash
 dotnet fsi build.fsx -- -- build -d NETFX-TARGET:net-4.6.2
@@ -454,6 +456,34 @@ dotnet fsi build.fsx -- -- build -d CSC_SERVER:off
 Names such as `net-4.6.2`, `sdk-net462` and `mono-4.5` select both the framework and, through
 the prefix, the provider that supplies the tools. See
 [dotnet-build.md](dotnet-build.md#how-to-switch).
+
+#### Where packages go
+
+Xake restores a few NuGet packages itself: the `toolset` compiler (`toolset`, `CSC_TOOLSET`),
+the reference packs (`NETStandard.Library` for netstandard2.0,
+`Microsoft.NETFramework.ReferenceAssemblies.*` for .NET Framework) and `fsc`'s default
+`FSharp.Core`. They go to, and are read from, one package folder:
+
+1. the script variable `NUGET_PACKAGES` -- `var "NUGET_PACKAGES" ".nuget/packages"` in
+   `xakeScript`, or `-d NUGET_PACKAGES:.nuget/packages` on the command line; a relative path is
+   under the project root. The child `dotnet restore` gets it as the environment variable, so
+   NuGet puts the packages there. Every compile reads it, so changing it rebuilds them;
+2. else the environment variable `NUGET_PACKAGES`;
+3. else `~/.nuget/packages`.
+
+`csc { ...; lock "app.json"; packageroot ".packages" }` (Xake.Hermetic.Dotnet) sets the
+folder for one locked target, overriding both. `DotNetFwk.locateFramework` and
+`locateFrameworkIn`, which run without a build, have no script variables and use the
+environment's folder.
+
+Turning restore off: `-d NUGET_RESTORE:off` (or `var "NUGET_RESTORE" "off"`) makes Xake restore
+nothing, for CI with a warm cache; a package missing from the folder then fails the build before
+the compiler runs, naming the package and version and saying restore is off. `norestore` after
+`lock` is the same for one locked target.
+
+The packages an F# script itself references with `#r "nuget: ..."` are restored by `dotnet
+fsi` before the script, and so before Xake, runs: the script variable cannot reach them. Set the
+environment variable `NUGET_PACKAGES` for those.
 
 ## Inner recipe helpers
 

@@ -345,7 +345,7 @@ module Fsc =
             // FSharp.Core unless the settings reference one: for .NET the SDK's own (next to
             // fsc.dll, the version the compiler is built with and what `dotnet build` picks by
             // default); for netstandard and .NET Framework the FSharp.Core package at a pinned
-            // version (`DotNetFwk.fsharpCoreReference`), restored into the machine's cache
+            // version (`DotNetFwk.fsharpCoreReference`), restored into the build's package folder
             let hasFSharpCore =
                 refsNamed "FSharp.Core.dll" || (globalRefs |> List.exists (fileNamed "FSharp.Core.dll"))
             let! defaultFSharpCore =

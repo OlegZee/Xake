@@ -84,14 +84,30 @@ temp files of its own; the only temp file `run` still cleans up is its own respo
 
 ### Composed-mode outputs: `runtimeconfig.json`
 
-A composed compilation of an executable (`target Exe`/`WinExe`, or `Auto` with an output ending in
-`.exe`) for `netN.0` (the SDK default included) also gets `<output>.runtimeconfig.json` next to it,
-without which `dotnet <output>.exe` cannot start. It is recorded as a `Generated` file of the
-compilation (so `run` writes it back whenever it is missing or changed, before the compiler runs)
-with the content `dotnet build` writes by default: `tfm`, the `Microsoft.NETCore.App` framework at
-`<major>.0.0`, and the `EnableUnsafeBinaryFormatterSerialization: false` config property; no
-roll-forward settings, no timestamps. Libraries, `netstandard` and .NET Framework targets get none;
-a lock or an imported project carries whatever its `Generated` list holds.
+A rule is declared for the files it produces, and a compilation writes no file the rule did not
+declare. The output is the first of the rule's targets that is not a `.runtimeconfig.json` (or
+`out`); a `<output>.runtimeconfig.json` among the targets, as in
+`["hw.dll"; "hw.runtimeconfig.json"] *..> csc { ... }`, is the one extra output a composed
+compilation knows how to write -- without it `dotnet hw.dll` cannot start.
+
+`resolve` (`Csc.ofSettings`/`Fsc.ofSettings`) checks it against the output and the framework and
+records its absolute path in the compilation's `RuntimeConfig` field (`None` when none is
+declared; not part of `Generated`, which holds inputs). The checks, all at resolve time:
+
+- the name must be the output's: `app.dll` goes with `app.runtimeconfig.json`, anything else
+  fails naming both;
+- the framework must be `netN.0`: for `netstandard` or .NET Framework it fails with
+  "'hw.runtimeconfig.json' is declared as a target, but net-4.6.2 applications do not use one";
+- the compilation must be an application: `target Auto` becomes `Exe` (so a `.dll` output is
+  an executable), `Exe`/`WinExe`/`AppContainerExe` stay, a library or module target fails.
+
+`run` writes the file after the compiler succeeds, only when it is missing or its content
+differs, with the content `dotnet build` writes by default: `tfm`, the `Microsoft.NETCore.App`
+framework at `<major>.0.0`, and the `EnableUnsafeBinaryFormatterSerialization: false` config
+property; no roll-forward settings, no timestamps.
+
+There is no declaration outside a file rule: record syntax with `out` in a phony action writes
+no runtimeconfig, and neither does a single-target rule (`"hw.exe" ..> csc { ... }`).
 
 ### Composed-mode reference assemblies
 

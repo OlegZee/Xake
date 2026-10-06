@@ -141,6 +141,10 @@ type Fsc = {
     /// `.resx` files this compilation embeds: (resx path, `.resources` output path), both
     /// absolute; the runner compiles the output whenever it is missing
     Resources: (string * string) list
+    /// The `<output>.runtimeconfig.json` the rule declares as a target next to the output
+    /// (absolute), `None` when it declares none; the runner writes it after a successful
+    /// compile, with the content `dotnet build` writes for `Framework`
+    RuntimeConfig: string option
     Dependencies: Dependencies
 } with
     /// The exact command line, paths absolute (rebuilt from `Options` and the sections)
@@ -191,6 +195,7 @@ module Fsc =
           Fsc.Sources = List.ofSeq sources
           Fsc.Generated = []
           Fsc.Resources = []
+          Fsc.RuntimeConfig = None
           Fsc.Dependencies =
             { Compiler = { Tool = "fsc"; Path = ""; Sha256 = ""; Version = "" }
               References = List.ofSeq references
@@ -224,6 +229,7 @@ module Fsc =
             Fsc.Sources = c.Sources |> List.map f
             Fsc.Generated = c.Generated |> List.map (fun (path, content) -> f path, content)
             Fsc.Resources = c.Resources |> List.map (fun (resx, resources) -> f resx, f resources)
+            Fsc.RuntimeConfig = c.RuntimeConfig |> Option.map f
             Fsc.Dependencies =
                 { c.Dependencies with References = c.Dependencies.References |> List.map rewriteReference } }
 
@@ -263,9 +269,15 @@ module Fsc =
             let! options = getCtxOptions()
             let getFiles = toFileList options.ProjectRoot
 
+            // the output is the first of the rule's targets that is not a runtimeconfig, as
+            // for csc
+            let! ctx = getCtx()
+            let targetFiles = Impl.fileTargets ctx.Targets
             let! outFile =
                 if settings.Out = File.undefined then
-                    getTargetFile()
+                    match targetFiles |> List.filter (Impl.isRuntimeConfig >> not) with
+                    | file :: _ -> recipe.Return file
+                    | [] -> getTargetFile()
                 else
                     settings.Out |> recipe.Return
 
@@ -345,10 +357,11 @@ module Fsc =
                         return [ dll ]
                     }
 
+            let runtimeConfig, targetType = Impl.declaredRuntimeConfig targetFiles outFile targetFramework settings.Target
             let args =
                 seq {
                     yield "--nologo"
-                    yield "--target:" + Impl.targetStr outFile.Name settings.Target
+                    yield "--target:" + Impl.targetStr outFile.Name targetType
                     // the framework's references are passed explicitly, below
                     yield "--noframework"
                     if isNetstandard then
@@ -393,7 +406,7 @@ module Fsc =
                     Fsc.Framework = targetFramework
                     Fsc.Directory = options.ProjectRoot
                     Fsc.Resources = resources
-                    Fsc.Generated = composed.Generated @ Impl.runtimeConfig targetFramework (File.getFullName outFile) settings.Target
+                    Fsc.RuntimeConfig = runtimeConfig
                     Fsc.Dependencies =
                         { composed.Dependencies with
                             Compiler = { Tool = "fsc"; Path = compilerPath; Sha256 = ""; Version = Csc.compilerVersion compilerPath } } }
@@ -451,6 +464,7 @@ module Fsc =
                       yield compiler.Path, compiler.Sha256 ]
                   Generated = f.Generated
                   Resources = f.Resources
+                  RuntimeConfig = f.RuntimeConfig |> Option.map (fun path -> path, CompilerRunner.runtimeConfigContent f.Name f.Framework)
                   Environment = options.Environment
                   Directory = f.Directory
                   FailOnError = options.FailOnError

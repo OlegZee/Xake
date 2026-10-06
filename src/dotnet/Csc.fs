@@ -285,6 +285,10 @@ type Csc = {
     /// whenever it is missing, so the exact input the `/resource:` switch names can always be
     /// reproduced.
     Resources: (string * string) list
+    /// The `<output>.runtimeconfig.json` the rule declares as a target next to the output
+    /// (absolute), `None` when it declares none; `run` writes it after a successful compile,
+    /// with the content `dotnet build` writes for `Framework`
+    RuntimeConfig: string option
     Dependencies: Dependencies
 } with
     /// The exact command line, paths absolute (rebuilt from `Options` and the sections)
@@ -388,6 +392,7 @@ module Csc =
           Sources = List.ofSeq sources
           Generated = []
           Resources = []
+          RuntimeConfig = None
           Dependencies =
             { Compiler = { Tool = "csc"; Path = ""; Sha256 = ""; Version = "" }
               References = List.ofSeq references
@@ -429,6 +434,7 @@ module Csc =
             Sources = c.Sources |> List.map f
             Generated = c.Generated |> List.map (fun (path, content) -> f path, content)
             Resources = c.Resources |> List.map (fun (resx, resources) -> f resx, f resources)
+            RuntimeConfig = c.RuntimeConfig |> Option.map f
             Dependencies =
                 { c.Dependencies with
                     References = c.Dependencies.References |> List.map rewriteReference
@@ -531,9 +537,15 @@ module Csc =
             let! options = getCtxOptions()
             let getFiles = toFileList options.ProjectRoot
 
+            // the rule's targets: the output (the first that is not a runtimeconfig) and a
+            // `.runtimeconfig.json` the rule may declare next to it
+            let! ctx = getCtx()
+            let targetFiles = Impl.fileTargets ctx.Targets
             let! outFile =
                 if settings.Out = File.undefined then
-                    getTargetFile()
+                    match targetFiles |> List.filter (Impl.isRuntimeConfig >> not) with
+                    | file :: _ -> recipe.Return file
+                    | [] -> getTargetFile()
                 else
                     settings.Out |> recipe.Return
 
@@ -595,6 +607,7 @@ module Csc =
                 frameworkRefs @ (settings.RefGlobal |> List.map lookup |> List.filter (fun r -> not (List.contains r frameworkRefs))), true, true
 
             let globalRefs = globalRefPaths |> List.map ((+) "/reference:")
+            let runtimeConfig, targetType = Impl.declaredRuntimeConfig targetFiles outFile targetFramework settings.Target
 
             let args =
                 seq {
@@ -603,7 +616,7 @@ module Csc =
 
                     yield "/nologo"
 
-                    yield "/target:" + Impl.targetStr outFile.Name settings.Target
+                    yield "/target:" + Impl.targetStr outFile.Name targetType
                     yield "/platform:" + Impl.platformStr settings.Platform
 
                     if settings.Unsafe then
@@ -658,8 +671,7 @@ module Csc =
                     Framework = (match targetFramework with null -> "" | fwk -> fwk)
                     Directory = options.ProjectRoot
                     Resources = resources
-                    // `dotnet <out>.exe` needs the runtimeconfig the SDK would have written
-                    Generated = composed.Generated @ Impl.runtimeConfig targetFramework (File.getFullName outFile) settings.Target
+                    RuntimeConfig = runtimeConfig
                     Dependencies =
                         { composed.Dependencies with
                             Compiler = { Tool = "csc"; Path = compilerPath; Sha256 = ""; Version = compilerVersion compilerPath } } }
@@ -727,6 +739,7 @@ module Csc =
                       yield compiler.Path, compiler.Sha256 ]
                   Generated = c.Generated
                   Resources = c.Resources
+                  RuntimeConfig = c.RuntimeConfig |> Option.map (fun path -> path, CompilerRunner.runtimeConfigContent c.Name c.Framework)
                   Environment = options.Environment
                   Directory = c.Directory
                   FailOnError = options.FailOnError

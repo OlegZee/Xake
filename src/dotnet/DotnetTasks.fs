@@ -61,34 +61,64 @@ module internal Impl =
         |AppContainerExe -> "appcontainerexe" |Exe -> "exe" |Library -> "library" |Module -> "module" |WinExe -> "winexe" |WinmdObj -> "winmdobj"
         |Auto -> fileName |> resolveTarget |> targetStr fileName
 
-    /// The `<output>.runtimeconfig.json` that `dotnet <output>.exe` needs, as a `Generated`
-    /// pair: for an executable (`Exe`/`WinExe`, `Auto` resolved from the output name) that
-    /// targets `netN.0` (N >= 5) only, `[]` otherwise. The content is what `dotnet build` writes
-    /// by default (no roll-forward settings): same keys, same order, no trailing newline.
-    let runtimeConfig (framework: string) (outPath: string) (target: TargetType) : (string * string) list =
-        let isExe =
-            match (match target with Auto -> resolveTarget outPath | t -> t) with
-            | Exe | WinExe -> true
-            | _ -> false
-        match Option.ofObj framework |> Option.bind DotNetFwk.sdkImpl.netcoreMoniker with
-        | Some moniker when isExe ->
+    /// The content of the `<output>.runtimeconfig.json` that `dotnet <output>` needs, for a
+    /// `netN.0` framework (N >= 5); `None` for anything else (netstandard, .NET Framework, "").
+    /// It is what `dotnet build` writes by default (no roll-forward settings): same keys, same
+    /// order, no trailing newline.
+    let runtimeConfigContent (framework: string) : string option =
+        Option.ofObj framework
+        |> Option.bind DotNetFwk.sdkImpl.netcoreMoniker
+        |> Option.map (fun moniker ->
             let major = moniker.Substring(3).Split('.').[0]
-            let content =
-                String.concat "\n"
-                    [ "{"
-                      "  \"runtimeOptions\": {"
-                      sprintf "    \"tfm\": \"%s\"," moniker
-                      "    \"framework\": {"
-                      "      \"name\": \"Microsoft.NETCore.App\","
-                      sprintf "      \"version\": \"%s.0.0\"" major
-                      "    },"
-                      "    \"configProperties\": {"
-                      "      \"System.Runtime.Serialization.EnableUnsafeBinaryFormatterSerialization\": false"
-                      "    }"
-                      "  }"
-                      "}" ]
-            [ System.IO.Path.ChangeExtension (outPath, ".runtimeconfig.json"), content ]
-        | _ -> []
+            String.concat "\n"
+                [ "{"
+                  "  \"runtimeOptions\": {"
+                  sprintf "    \"tfm\": \"%s\"," moniker
+                  "    \"framework\": {"
+                  "      \"name\": \"Microsoft.NETCore.App\","
+                  sprintf "      \"version\": \"%s.0.0\"" major
+                  "    },"
+                  "    \"configProperties\": {"
+                  "      \"System.Runtime.Serialization.EnableUnsafeBinaryFormatterSerialization\": false"
+                  "    }"
+                  "  }"
+                  "}" ])
+
+    let isRuntimeConfig (file: File) = file |> File.getFileName |> endsWith ".runtimeconfig.json"
+
+    /// The rule's file targets (none for a phony action or outside a rule).
+    let fileTargets (targets: Target list) =
+        targets |> List.choose (function FileTarget f -> Some f | _ -> None)
+
+    /// The `.runtimeconfig.json` the rule declares among its targets, checked against the
+    /// output and the framework, with the compilation's target type: `None` and the target as
+    /// given when the rule declares none (a single-file rule, record syntax with `Out` outside
+    /// a rule). A declared one makes an `Auto` target an executable (the runtimeconfig is what
+    /// `dotnet <output>` starts it with); it fails for a library target, a framework that is not
+    /// `netN.0`, a name that is not the output's (`app.dll` -> `app.runtimeconfig.json`), and
+    /// more than one declared.
+    let declaredRuntimeConfig (targets: File list) (outFile: File) (framework: string) (target: TargetType) : string option * TargetType =
+        match targets |> List.filter isRuntimeConfig with
+        | [] -> None, target
+        | [ rc ] ->
+            let rcName = File.getFileName rc
+            let outPath = File.getFullName outFile
+            let expected = System.IO.Path.ChangeExtension (outPath, ".runtimeconfig.json")
+            if File.make expected <> rc then
+                failwithf "'%s' is declared as a target, but the output is '%s', whose runtimeconfig is '%s'"
+                    rcName (File.getFileName outFile) (System.IO.Path.GetFileName expected)
+            let effective =
+                match target with
+                | Auto -> Exe
+                | Exe | WinExe | AppContainerExe -> target
+                | other -> failwithf "'%s' is declared as a target, but '%s' is compiled as a %A, not an application" rcName (File.getFileName outFile) other
+            match runtimeConfigContent framework with
+            | None ->
+                failwithf "'%s' is declared as a target, but %s applications do not use one"
+                    rcName (match framework with null | "" -> "this framework's" | f -> f)
+            | Some _ -> Some (File.getFullName rc), effective
+        | many ->
+            failwithf "more than one runtimeconfig is declared as a target: %s" (many |> List.map File.getFileName |> String.concat ", ")
 
     let platformStr = function
         |AnyCpu -> "anycpu" |AnyCpu32Preferred -> "anycpu32preferred" |ARM -> "arm" | X64 -> "x64" | X86 -> "x86" |Itanium -> "itanium"

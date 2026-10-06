@@ -76,6 +76,15 @@ thin host over it. A small host shipped with Xake.Dotnet would give `fsc` a rest
   `CSC_TOOLSET` alone does not make a lock portable; `global.json` is still required. Document
   loudly; the "SDK restore" idea above is the real fix.
 
+### Binary compatibility between the packages (found 2026-10-07)
+
+Adding a field to the `Csc`/`Fsc` records (`RuntimeConfig`, PR #35) makes the released
+`Xake.Hermetic.Dotnet 0.1.0.22` fail at run time against the new base (`Method not found:
+Csc..ctor`), although its nuspec range `[3.4.0.21, 4.0)` says it is compatible. F# records are not
+binary-compatible across field changes. Proposed rule: the hermetic package depends on the base
+**within one minor** (`[3.5.0.23, 3.6)`), and every base release that touches `Csc`/`Fsc`/
+`RunOptions`/`FscRunOptions` is followed by a hermetic release. To be decided by the user.
+
 ## Xake.Hermetic.Dotnet
 
 From `docs/hermetic/workflows.md` ("Gaps"), in priority order:

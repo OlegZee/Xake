@@ -228,7 +228,7 @@ SDK 10.0.x), and fail asking for one only when that cannot be determined.
 | `FSCVER` | F# compiler version `fsc` asks for, when not set per task via `fscver`; read only by the Windows registry provider. |
 | `FSHARP_CORE_VERSION` | Version of the `FSharp.Core` package `fsc` references for netstandard and .NET Framework when no `ref` names an `FSharp.Core.dll` (default 8.0.100). |
 | `NUGET_PACKAGES` | The build's package folder (relative to the project root, or absolute), overriding the environment variable; see [Where packages go](#where-packages-go). |
-| `NUGET_RESTORE` | `off` stops Xake from restoring anything into the package folder; a missing package then fails the compile. Default `on`. |
+| `NUGET_FETCH` | `off` stops Xake from downloading anything into the package folder; a missing package then fails the compile. Default `on`. |
 
 Precedence inside a task: `targetfwk` → `NETFX-TARGET` → the SDK's own .NET framework. The toolchain is then
 `NETFX` if set, otherwise the resolved target framework, otherwise the default probe order.
@@ -261,12 +261,12 @@ explicitly (what `packageroot` after `lock` does in Xake.Hermetic.Dotnet, per ta
 no build context -- `DotNetFwk.nugetRoot`, `normalizedPackageRoot None`, `locateFramework`,
 `locateFrameworkIn`, `locateFrameworkWith` -- see only the environment.
 
-**Turning restore off.** The script variable `NUGET_RESTORE=off` (`-d NUGET_RESTORE:off`, e.g.
+**Turning fetching off.** The script variable `NUGET_FETCH=off` (`-d NUGET_FETCH:off`, e.g.
 on CI with a warm cache) stops every download into the package folder: `restorePackage` and
 `downloadPackages` start no `dotnet restore`, and a package that is not there fails the build
-before the compiler runs, naming the package id and version and saying restore is off. Values
+before the compiler runs, naming the package id and version and saying fetching is off. Values
 `off`, `false`, `no`, `0` turn it off; anything else, or unset, leaves it on.
-`DotNetFwk.restoreEnabled ()` is the decision as a recipe (what `Restore.Options.Enabled` of
+`DotNetFwk.fetchEnabled ()` is the decision as a recipe (what `Restore.Options.Enabled` of
 Xake.Hermetic.Dotnet is to default to); `norestore` after `lock` is the per-target form.
 
 `#r "nuget: ..."` in the build script is restored by `dotnet fsi` before Xake runs; only the

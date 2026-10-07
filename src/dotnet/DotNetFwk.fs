@@ -611,23 +611,23 @@ module DotNetFwk =
     let dotnetRoot () = sdkImpl.dotnetRoot ()
 
     /// <summary>
-    /// Whether Xake may restore into the package folder: the script variable `NUGET_RESTORE`
-    /// (read, and so a dependency, here) -- `off`, `false`, `no` or `0` turn restore off,
+    /// Whether Xake may download packages into the package folder: the script variable `NUGET_FETCH`
+    /// (read, and so a dependency, here) -- `off`, `false`, `no` or `0` turn fetching off,
     /// anything else, or unset, leaves it on. `restorePackage` and `downloadPackages` honour it:
-    /// with restore off a package missing from the folder fails the build, naming it. This is
+    /// with fetching off a package missing from the folder fails the build, naming it. This is
     /// what `Restore.Options.Enabled` of Xake.Hermetic.Dotnet is to default to.
     /// </summary>
-    let restoreEnabled () : Recipe<ExecContext, bool> =
+    let fetchEnabled () : Recipe<ExecContext, bool> =
         recipe {
-            let! var = getVar "NUGET_RESTORE"
+            let! var = getVar "NUGET_FETCH"
             match var |> Option.map (fun v -> v.Trim().ToLowerInvariant()) with
             | Some ("off" | "false" | "no" | "0") -> return false
             | _ -> return true
         }
 
-    /// The failure of a package that is missing while restore is off.
-    let internal restoreOffFailure (root: string) (packages: (string * string) list) =
-        sprintf "package(s) %s not found in '%s' and restore is off (NUGET_RESTORE=off): restore them, or turn restore on"
+    /// The failure of a package that is missing while fetching is off.
+    let internal fetchOffFailure (root: string) (packages: (string * string) list) =
+        sprintf "package(s) %s not found in '%s' and fetching packages is off (NUGET_FETCH=off): put them in the folder, or turn fetching on"
             (packages |> List.map (fun (id, v) -> id + " " + v) |> String.concat ", ") root
 
     /// `packageRoot ()`, under a name the `packageRoot` parameters below do not shadow.
@@ -657,7 +657,7 @@ module DotNetFwk =
     /// `packageRoot` `None` is the build's package folder (`packageRoot ()`: the script variable
     /// `NUGET_PACKAGES`, else the environment's), `Some dir` (absolute) a folder of the caller's
     /// choosing. The child `dotnet restore` gets it as the environment variable `NUGET_PACKAGES`.
-    /// With restore off (`restoreEnabled`, the script variable `NUGET_RESTORE`) nothing is
+    /// With fetching off (`fetchEnabled`, the script variable `NUGET_FETCH`) nothing is
     /// started: packages already in the folder pass, a missing one fails naming it.
     let downloadPackages (packageRoot: string option) (packages: (string * string) list) : Recipe<ExecContext, unit> =
         recipe {
@@ -667,12 +667,12 @@ module DotNetFwk =
                     | Some dir -> recipe { return dir }
                     | None -> buildPackageRoot ()
                 let root = normalizedPackageRoot (Some buildRoot)
-                let! enabled = restoreEnabled ()
+                let! enabled = fetchEnabled ()
                 if not enabled then
                     let missing =
                         packages |> List.filter (fun (id, v) -> not (Directory.Exists (root </> id.ToLowerInvariant() </> v)))
                     if not (List.isEmpty missing) then
-                        failwith (restoreOffFailure root missing)
+                        failwith (fetchOffFailure root missing)
                 else
                     let! ctxOptions = getCtxOptions ()
                     let dir = nextRestoreDir ctxOptions.ProjectRoot
@@ -702,7 +702,7 @@ module DotNetFwk =
     /// environment's), `Some dir` (absolute) for a folder of the caller's choosing. Restoring
     /// cannot change *what* a version is, so this is safe to call from any recipe; it starts no
     /// process when the folder already exists, and fails naming the package when it does not
-    /// and restore is off (`restoreEnabled`).
+    /// and fetching is off (`fetchEnabled`).
     let restorePackage (packageRoot: string option) (packageId: string) (version: string) : Recipe<ExecContext, string> =
         recipe {
             let! root =
@@ -711,7 +711,7 @@ module DotNetFwk =
                 | None -> buildPackageRoot ()
             let dir = normalizedPackageRoot (Some root) </> packageId.ToLowerInvariant() </> version
             if not (Directory.Exists dir) then
-                // `downloadPackages` reads `NUGET_RESTORE`, only when something is missing
+                // `downloadPackages` reads `NUGET_FETCH`, only when something is missing
                 do! downloadPackages (Some root) [ packageId, version ]
             return dir
         }

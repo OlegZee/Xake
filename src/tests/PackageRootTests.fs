@@ -122,14 +122,14 @@ type ``Package folder script variable``() =
                     Does.Contain (root + "netstandard.library/2.0.3/build/netstandard2.0/ref/mscorlib.dll"))
 
     [<Test; Category("Integration")>]
-    member x.``with NUGET_RESTORE off a missing toolset fails naming it and restores nothing``() =
+    member x.``with NUGET_FETCH off a missing toolset fails naming it and downloads nothing``() =
         let pkgs = freshDir "pkgs-off"
         Directory.CreateDirectory pkgs |> ignore
         File.WriteAllText ("PkgOff.cs", "public class PkgOff {}\n")
         let ex =
             Assert.Catch(fun () ->
                 do xake {x.TestOptions with FileLog = "pkgroot-off.log"; ThrowOnError = true
-                                            Vars = ["NUGET_PACKAGES", pkgs; "NUGET_RESTORE", "off"]} {
+                                            Vars = ["NUGET_PACKAGES", pkgs; "NUGET_FETCH", "off"]} {
                     wantOverride (["PkgOff.dll"])
                     rules [
                         "PkgOff.dll" ..> csc {
@@ -142,7 +142,7 @@ type ``Package folder script variable``() =
                 })
         let rec messages (e: exn) = if isNull e then "" else e.Message + "\n" + messages e.InnerException
         let text = messages ex
-        Assert.That(text, Does.Contain "restore is off (NUGET_RESTORE=off)")
+        Assert.That(text, Does.Contain "fetching packages is off (NUGET_FETCH=off)")
         // the first package the compile needs is the reference pack; the toolset is named when
         // that one is present (next test)
         Assert.That(text, Does.Contain "NETStandard.Library 2.0.3")
@@ -150,7 +150,7 @@ type ``Package folder script variable``() =
         Assert.That(File.Exists "PkgOff.dll", Is.False)
 
     [<Test; Category("Integration")>]
-    member x.``with NUGET_RESTORE off packages already in the folder compile without a restore``() =
+    member x.``with NUGET_FETCH off packages already in the folder compile without a download``() =
         let pkgs = freshDir "pkgs-warm"
         let restoreDir = x.TestOptions.ProjectRoot </> "obj" </> "xake" </> "restore"
         File.WriteAllText ("PkgWarm.cs", "public class PkgWarm {}\n")
@@ -171,17 +171,17 @@ type ``Package folder script variable``() =
         // the reference pack only: the toolset is still missing, and named
         build "PkgWarm0.dll" []
         Assert.That(packageIds pkgs, Is.EqualTo [ "netstandard.library" ])
-        let ex = Assert.Catch(fun () -> build "PkgWarm1.dll" (toolset @ [ "NUGET_RESTORE", "off" ]))
+        let ex = Assert.Catch(fun () -> build "PkgWarm1.dll" (toolset @ [ "NUGET_FETCH", "off" ]))
         let rec messages (e: exn) = if isNull e then "" else e.Message + "\n" + messages e.InnerException
         Assert.That(messages ex, Does.Contain ("Microsoft.Net.Compilers.Toolset " + toolsetVersion))
-        Assert.That(messages ex, Does.Contain "restore is off (NUGET_RESTORE=off)")
+        Assert.That(messages ex, Does.Contain "fetching packages is off (NUGET_FETCH=off)")
         Assert.That(packageIds pkgs, Is.EqualTo [ "netstandard.library" ])
 
-        // warm: restore on once, then off with no restore project written
+        // warm: fetch on once, then off with no restore project written
         build "PkgWarm2.dll" toolset
         if Directory.Exists restoreDir then Directory.Delete (restoreDir, true)
-        build "PkgWarm3.dll" (toolset @ [ "NUGET_RESTORE", "off" ])
+        build "PkgWarm3.dll" (toolset @ [ "NUGET_FETCH", "off" ])
         Assert.That(File.Exists "PkgWarm3.dll", Is.True)
         let projects =
             if Directory.Exists restoreDir then Directory.GetFiles (restoreDir, "restore.csproj", SearchOption.AllDirectories) else [||]
-        Assert.That(projects, Is.Empty, "no restore project is written with restore off")
+        Assert.That(projects, Is.Empty, "no restore project is written with fetching off")

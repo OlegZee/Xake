@@ -446,7 +446,7 @@ let strings = resourceset {
 | `CSC_SERVER` | `csc` compiler server: `on`, `off` or keepalive seconds; overridden by a target's `noserver`/`keepalive`, overrides env `XAKE_CSC_SERVER` |
 | `CSC_TOOLSET` | `csc` compiler package version (`Microsoft.Net.Compilers.Toolset`) for targets with no `toolset`; empty or unset means the SDK's compiler |
 | `NUGET_PACKAGES` | The build's package folder, relative to the project root or absolute; overrides the environment variable of the same name for everything Xake restores or reads there (see below) |
-| `NUGET_RESTORE` | `off` turns off every restore into the package folder (a missing package fails the build); default `on` |
+| `NUGET_FETCH` | `off` turns off every download into the package folder (a missing package fails the build); default `on` |
 
 ```bash
 dotnet fsi build.fsx -- -- build -d NETFX-TARGET:net-4.6.2
@@ -476,9 +476,9 @@ folder for one locked target, overriding both. `DotNetFwk.locateFramework` and
 `locateFrameworkIn`, which run without a build, have no script variables and use the
 environment's folder.
 
-Turning restore off: `-d NUGET_RESTORE:off` (or `var "NUGET_RESTORE" "off"`) makes Xake restore
+Turning fetching off: `-d NUGET_FETCH:off` (or `var "NUGET_FETCH" "off"`) makes Xake download
 nothing, for CI with a warm cache; a package missing from the folder then fails the build before
-the compiler runs, naming the package and version and saying restore is off. `norestore` after
+the compiler runs, naming the package and version and saying fetching is off. `norestore` after
 `lock` is the same for one locked target.
 
 The packages an F# script itself references with `#r "nuget: ..."` are restored by `dotnet

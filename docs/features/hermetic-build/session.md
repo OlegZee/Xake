@@ -1007,6 +1007,16 @@ on one imported lock, then `hermetic-v0.2.0`.
 
 ## 2026-10-07 — HERMETIC mode decided; review stack in flight
 
+Later the same day: `NUGET_RESTORE` renamed to **`NUGET_FETCH=on|off`** on the user's decision
+("restore" suggested a project restore, which only happens at import; the switch governs
+`DotNetFwk.downloadPackages`, the shim `PackageDownload` project; `NORESTORE=true|false`
+rejected as a negative boolean keeping the misleading word). **#38 squash-merged to `dev`**
+(6c20185). Follow-up for hermetic 0.2.x: `norestore` after `lock` → `nofetch`,
+`Restore.Options.Enabled` reads `NUGET_FETCH`; `docs/hermetic/*`, `src/hermetic/Restore.fs`
+still say "restore off". **Next**: the user rebases #37 on `dev` (conflicts in
+`DotNetFwk.fs`, `DotnetTasksTests.fs`, `FscTests.fs`; `sdkImpl.packageDir` now takes the
+package folder, so #37's targeting-pack lookup must thread it); then `HERMETIC=on` code.
+
 Open PRs to dev: #34 (hermetic 0.2 on Xake 3.5, F# in the lock), #35 (runtimeconfig only as a
 declared multi-file target, the user's model), #36 (book sample, superseded by #35), #37
 (targeting packs restored from NuGet; `NETCORE_REF_VERSION` as a list, one per major.minor, pinned

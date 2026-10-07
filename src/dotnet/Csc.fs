@@ -471,7 +471,8 @@ module Csc =
 
     /// The path `csc.dll` would have under a `Microsoft.Net.Compilers.Toolset`-shaped package
     /// (`<packageRoot>/<packageId>/<version>/tasks/netcore/bincore/csc.dll`), fetching the
-    /// package into the folder first when it is not there yet. This is `ofSettings`'s
+    /// package into the build's package folder (`DotNetFwk.packageRoot`: the script variable
+    /// `NUGET_PACKAGES`, else the environment's) first when it is not there yet. This is `ofSettings`'s
     /// `toolset` operation.
     let private restoreToolsetCompiler (packageId: string) (version: string) =
         recipe {
@@ -641,8 +642,8 @@ module Csc =
                 } |> List.ofSeq
 
             // references and env vars always come from the targeted framework -- `toolset`
-            // only replaces the compiler executable, fetching the package into the machine's
-            // package cache first when it is not there yet. The block's `toolset` wins over the
+            // only replaces the compiler executable, fetching the package into the build's
+            // package folder (`DotNetFwk.packageRoot`) first when it is not there yet. The block's `toolset` wins over the
             // script variable `CSC_TOOLSET`, which is only read (and so only becomes a
             // dependency) when the block names none.
             let! toolset =

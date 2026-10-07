@@ -323,12 +323,14 @@ plus `toolset`, `noserver`, `keepalive` and `resolve`, the marker `CscRequest`, 
 
 | Name | What it does |
 |---|---|
-| `nugetRoot ()` | `NUGET_PACKAGES`, else `~/.nuget/packages` |
+| `nugetRoot ()` | the environment variable `NUGET_PACKAGES`, else `~/.nuget/packages` (no build context) |
+| `packageRoot ()` | recipe: the build's package folder -- the script variable `NUGET_PACKAGES` (relative to the project root, or absolute), else `nugetRoot ()` |
+| `fetchEnabled ()` | recipe: `false` when the script variable `NUGET_FETCH` is `off`/`false`/`no`/`0`; what `Restore.Options.Enabled` is to default to |
 | `dotnetRoot ()` | the SDK installation root, when one can be located |
 | `normalizedPackageRoot root` | the package folder in effect (`None` = the machine's cache), forward slashes, no trailing slash |
 | `restoreProjectText packages` | the synthesized restore project: `netstandard2.0`, `DisableImplicitFrameworkReferences`, one `PackageDownload` per package at an exact `[version]` |
-| `downloadPackages root packages` | one `dotnet restore` of that project under `obj/xake/restore/<n>/` of the project root (so `nuget.config` is found), with the repository's `Directory.Build.*` and central package management switched off, `NUGET_PACKAGES` pointed at the folder |
-| `restorePackage root id version` | the package directory, downloading it first when absent; `csc { toolset }` and `CSC_TOOLSET` use it |
+| `downloadPackages root packages` | (`None` = `packageRoot ()`; with fetching off, fails naming the missing packages) one `dotnet restore` of that project under `obj/xake/restore/<n>/` of the project root (so `nuget.config` is found), with the repository's `Directory.Build.*` and central package management switched off, `NUGET_PACKAGES` pointed at the folder |
+| `restorePackage root id version` | the package directory (`None` = `packageRoot ()`), downloading it first when absent (failing when fetching is off); `csc { toolset }` and `CSC_TOOLSET` use it |
 | `locateFrameworkIn root fwk` | the toolchain for a framework, the SDK being the one `dotnet --version` reports in `root` (`global.json`); memoized per (root, framework) |
 | `locateFramework fwk` | `locateFrameworkIn` with the current directory as the root |
 | `sdkProbeWarning root` | the probe's warning for `root` (a `global.json` pin it could not honour), once that root has been probed |
@@ -844,7 +846,7 @@ Behaviour observed on the same fixture:
 
 - A build from committed locks starts no msbuild and no restore (`[msbuild]` count 0 in the log).
 - An empty package folder triggers exactly one restore for the whole run, then all twelve
-  compiles; with restore off, the build stops before the compiler listing every missing file.
+  compiles; with fetching off, the build stops before the compiler listing every missing file.
 - A tampered reference stops the build with `expected <sha>, got <sha>`, all mismatches at once.
 - Timings (macOS, 8 cores): importing both locks 13.4 s (30 msbuild runs); a cold build 7.3 s;
   a no-op 1.1 s wall (0.12 s engine). With the compiler server, the build phase median was

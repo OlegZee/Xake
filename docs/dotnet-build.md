@@ -88,8 +88,8 @@ Windows registry is consulted.
   current directory.
 - **Reference assemblies** come from the `Microsoft.NETFramework.ReferenceAssemblies.<moniker>`
   NuGet package at an exact version, `1.0.3` unless the script variable
-  `NETFX_REFERENCE_ASSEMBLIES_VERSION` says otherwise, read out of the package cache
-  (`NUGET_PACKAGES`, or `~/.nuget/packages`) at
+  `NETFX_REFERENCE_ASSEMBLIES_VERSION` says otherwise, read out of the build's package
+  folder ([Where packages go](#where-packages-go)) at
   `<pkg>/<version>/build/.NETFramework/<version>`. `AssemblyDirs` is that directory plus its
   `Facades` subdirectory. Another version present in the cache is not used.
 - **First-run restore**: when the package is not in the cache, the tasks
@@ -227,6 +227,8 @@ SDK 10.0.x), and fail asking for one only when that cannot be determined.
 | `NETFX` | Framework whose **tools** are used, overriding whatever is being targeted. Also the only framework selector the `msbuild` task reads. |
 | `FSCVER` | F# compiler version `fsc` asks for, when not set per task via `fscver`; read only by the Windows registry provider. |
 | `FSHARP_CORE_VERSION` | Version of the `FSharp.Core` package `fsc` references for netstandard and .NET Framework when no `ref` names an `FSharp.Core.dll` (default 8.0.100). |
+| `NUGET_PACKAGES` | The build's package folder (relative to the project root, or absolute), overriding the environment variable; see [Where packages go](#where-packages-go). |
+| `NUGET_FETCH` | `off` stops Xake from downloading anything into the package folder; a missing package then fails the compile. Default `on`. |
 
 Precedence inside a task: `targetfwk` → `NETFX-TARGET` → the SDK's own .NET framework. The toolchain is then
 `NETFX` if set, otherwise the resolved target framework, otherwise the default probe order.
@@ -239,7 +241,36 @@ dotnet fsi build.fsx -- -- build -d NETFX:mono-4.5
 ### Relevant environment variables
 
 `DOTNET_HOST_PATH`, `DOTNET_ROOT` — where the SDK is looked for.
-`NUGET_PACKAGES` — where reference-assembly packages are read from and restored to.
+`NUGET_PACKAGES` — where reference-assembly packages are read from and restored to, unless the
+script variable of the same name says otherwise.
+
+### Where packages go
+
+The packages Xake restores or reads itself -- reference packs, the `toolset` compiler, `fsc`'s
+default `FSharp.Core` -- live in one folder, `DotNetFwk.packageRoot ()` inside a recipe:
+
+1. the script variable `NUGET_PACKAGES` (relative to the project root, or absolute), read and
+   recorded as a dependency by every compile that resolves a framework;
+2. else the environment variable `NUGET_PACKAGES`;
+3. else `~/.nuget/packages`.
+
+`DotNetFwk.restorePackage None` and `downloadPackages None` use that folder and pass it to the
+child `dotnet restore` as the environment variable `NUGET_PACKAGES`; `Some dir` names a folder
+explicitly (what `packageroot` after `lock` does in Xake.Hermetic.Dotnet, per target).
+`resolveFramework` reads its reference packs from it and memoizes per folder. The functions with
+no build context -- `DotNetFwk.nugetRoot`, `normalizedPackageRoot None`, `locateFramework`,
+`locateFrameworkIn`, `locateFrameworkWith` -- see only the environment.
+
+**Turning fetching off.** The script variable `NUGET_FETCH=off` (`-d NUGET_FETCH:off`, e.g.
+on CI with a warm cache) stops every download into the package folder: `restorePackage` and
+`downloadPackages` start no `dotnet restore`, and a package that is not there fails the build
+before the compiler runs, naming the package id and version and saying fetching is off. Values
+`off`, `false`, `no`, `0` turn it off; anything else, or unset, leaves it on.
+`DotNetFwk.fetchEnabled ()` is the decision as a recipe (what `Restore.Options.Enabled` of
+Xake.Hermetic.Dotnet is to default to); `norestore` after `lock` is the per-target form.
+
+`#r "nuget: ..."` in the build script is restored by `dotnet fsi` before Xake runs; only the
+environment variable reaches it.
 
 ## Support matrix
 

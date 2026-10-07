@@ -338,15 +338,18 @@ module DotNetFwk =
                 moniker fwk
                 |> Option.map (fun m -> "Microsoft.NETFramework.ReferenceAssemblies." + m, versions.ReferenceAssemblies)
 
-        let internal packageDir (packageId: string) (version: string) =
-            nugetRoot () </> packageId.ToLowerInvariant() </> version
+        /// `<packageRoot>/<id lowercase>/<version>`. Every function below that reads or restores
+        /// a package takes the package folder as its first argument: `nugetRoot ()` for a caller
+        /// with no build, the build's own folder (`DotNetFwk.packageRoot`) from a recipe.
+        let internal packageDir (packageRoot: string) (packageId: string) (version: string) =
+            packageRoot </> packageId.ToLowerInvariant() </> version
 
         /// The synchronous twin of `downloadPackages`, for a caller with no build context
         /// (`locateFramework`): the same synthesized project under `projectRoot`, the same
         /// arguments, and a failure that names the package and version. A build goes through
         /// `resolveFramework`, which downloads with the recipe before this is reached.
-        let internal restoreSync (projectRoot: string) (packageId: string) (version: string) =
-            let root = (nugetRoot ()).Replace('\\', '/').TrimEnd '/'
+        let internal restoreSync (packageRoot: string) (projectRoot: string) (packageId: string) (version: string) =
+            let root = packageRoot.Replace('\\', '/').TrimEnd '/'
             let dir = nextRestoreDir projectRoot
             Directory.CreateDirectory dir |> ignore
             let project = dir </> "restore.csproj"
@@ -360,23 +363,23 @@ module DotNetFwk =
             try Directory.Delete (dir, true) with _ -> ()
 
         /// `locate ()`, restoring `packageId version` first when it finds nothing.
-        let private locateOrRestore projectRoot packageId version (locate: unit -> string option) =
+        let private locateOrRestore packageRoot projectRoot packageId version (locate: unit -> string option) =
             match locate () with
             | Some dir -> dir
             | None ->
-                restoreSync projectRoot packageId version
+                restoreSync packageRoot projectRoot packageId version
                 match locate () with
                 | Some dir -> dir
                 | None ->
                     failwithf "package %s %s was restored into '%s' but has no reference assemblies where expected"
-                        packageId version (packageDir packageId version)
+                        packageId version (packageDir packageRoot packageId version)
 
-        let private refAssembliesDir projectRoot versions moniker =
+        let private refAssembliesDir packageRoot projectRoot versions moniker =
             let packageId = "Microsoft.NETFramework.ReferenceAssemblies." + moniker
             let version = versions.ReferenceAssemblies
-            locateOrRestore projectRoot packageId version (fun () ->
+            locateOrRestore packageRoot projectRoot packageId version (fun () ->
                 // one `v4.x` directory under `build/.NETFramework` in the package
-                latestDir (packageDir packageId version </> "build" </> ".NETFramework"))
+                latestDir (packageDir packageRoot packageId version </> "build" </> ".NETFramework"))
 
         let private dotnetHost () =
             match %"DOTNET_HOST_PATH" with
@@ -518,12 +521,12 @@ module DotNetFwk =
 
         /// netstandard reference assemblies: 2.1 ships with the SDK as a pack, 2.0 only
         /// exists in the NETStandard.Library package, taken at the exact version asked for.
-        let private netstandardRefDir projectRoot versions moniker =
+        let private netstandardRefDir packageRoot projectRoot versions moniker =
             match moniker with
             | "netstandard2.0" ->
                 let version = versions.NetStandardLibrary
-                locateOrRestore projectRoot "NETStandard.Library" version (fun () ->
-                    let dir = packageDir "NETStandard.Library" version </> "build" </> moniker </> "ref"
+                locateOrRestore packageRoot projectRoot "NETStandard.Library" version (fun () ->
+                    let dir = packageDir packageRoot "NETStandard.Library" version </> "build" </> moniker </> "ref"
                     if Directory.Exists dir then Some dir else None)
             | _ ->
                 dotnetRoot ()
@@ -564,7 +567,7 @@ module DotNetFwk =
                     EnvVars = []
                 }, null
 
-        let tryLocateFwk projectRoot versions fwk =
+        let tryLocateFwk packageRoot projectRoot versions fwk =
             match netcoreMoniker fwk with
             | Some moniker ->
                 sdkFwkInfo projectRoot [netcoreRefDir projectRoot moniker] moniker
@@ -572,25 +575,68 @@ module DotNetFwk =
 
             match netstandardMoniker fwk with
             | Some moniker ->
-                sdkFwkInfo projectRoot [netstandardRefDir projectRoot versions moniker] moniker
+                sdkFwkInfo projectRoot [netstandardRefDir packageRoot projectRoot versions moniker] moniker
             | None ->
 
             match moniker fwk with
             | None -> None, sprintf "'%s' is not a known .NET Framework profile" fwk
             | Some moniker ->
-                let refDir = refAssembliesDir projectRoot versions moniker
+                let refDir = refAssembliesDir packageRoot projectRoot versions moniker
                 sdkFwkInfo projectRoot [refDir; refDir </> "Facades"] moniker
 
-    /// The NuGet package cache (`NUGET_PACKAGES`, else `~/.nuget/packages`).
+    /// The machine's NuGet package cache: the environment variable `NUGET_PACKAGES`, else
+    /// `~/.nuget/packages`. This is the package folder of a caller with no build; a recipe asks
+    /// `packageRoot ()`, which honours the script variable `NUGET_PACKAGES` first.
     let nugetRoot () = sdkImpl.nugetRoot ()
+
+    /// <summary>
+    /// The package folder of the build: the script variable `NUGET_PACKAGES` (relative to the
+    /// project root, or absolute; read, and so a dependency, here), else `nugetRoot ()` (the
+    /// environment variable, else `~/.nuget/packages`). Everything Xake restores or looks up in
+    /// the package folder from a recipe goes here: `restorePackage None`, `downloadPackages None`,
+    /// the reference packs `resolveFramework` reads, the `toolset` compiler, fsc's default
+    /// `FSharp.Core`.
+    /// </summary>
+    let packageRoot () : Recipe<ExecContext, string> =
+        recipe {
+            let! options = getCtxOptions ()
+            let! var = getVar "NUGET_PACKAGES"
+            match var |> Option.map (fun v -> v.Trim()) |> Option.filter ((<>) "") with
+            | Some dir -> return Path.GetFullPath (Path.Combine (Path.GetFullPath options.ProjectRoot, dir))
+            | None -> return nugetRoot ()
+        }
 
     /// The .NET SDK installation root, when one can be located: compilers, analyzers and
     /// reference packs live under it.
     let dotnetRoot () = sdkImpl.dotnetRoot ()
 
+    /// <summary>
+    /// Whether Xake may download packages into the package folder: the script variable `NUGET_FETCH`
+    /// (read, and so a dependency, here) -- `off`, `false`, `no` or `0` turn fetching off,
+    /// anything else, or unset, leaves it on. `restorePackage` and `downloadPackages` honour it:
+    /// with fetching off a package missing from the folder fails the build, naming it. This is
+    /// what `Restore.Options.Enabled` of Xake.Hermetic.Dotnet is to default to.
+    /// </summary>
+    let fetchEnabled () : Recipe<ExecContext, bool> =
+        recipe {
+            let! var = getVar "NUGET_FETCH"
+            match var |> Option.map (fun v -> v.Trim().ToLowerInvariant()) with
+            | Some ("off" | "false" | "no" | "0") -> return false
+            | _ -> return true
+        }
+
+    /// The failure of a package that is missing while fetching is off.
+    let internal fetchOffFailure (root: string) (packages: (string * string) list) =
+        sprintf "package(s) %s not found in '%s' and fetching packages is off (NUGET_FETCH=off): put them in the folder, or turn fetching on"
+            (packages |> List.map (fun (id, v) -> id + " " + v) |> String.concat ", ") root
+
+    /// `packageRoot ()`, under a name the `packageRoot` parameters below do not shadow.
+    let private buildPackageRoot () = packageRoot ()
+
     /// The package folder in effect, normalized to forward slashes without a trailing one:
-    /// `None` is the machine's own cache (`nugetRoot ()`), `Some dir` a folder of the build's
-    /// own.
+    /// `None` is the machine's own cache (`nugetRoot ()`, the environment only: this function
+    /// has no build to read the script variable from -- a recipe passes `packageRoot ()`),
+    /// `Some dir` a folder of the build's own.
     let normalizedPackageRoot (packageRoot: string option) =
         (packageRoot |> Option.defaultWith nugetRoot).Replace('\\', '/').TrimEnd '/'
 
@@ -607,48 +653,72 @@ module DotNetFwk =
     /// concurrent calls do not overwrite each other's project file. Concurrent restores into
     /// one package folder are NuGet's own business, and it handles them. A failed attempt is
     /// left on disk, named by the message, so it can be re-run by hand.
+    ///
+    /// `packageRoot` `None` is the build's package folder (`packageRoot ()`: the script variable
+    /// `NUGET_PACKAGES`, else the environment's), `Some dir` (absolute) a folder of the caller's
+    /// choosing. The child `dotnet restore` gets it as the environment variable `NUGET_PACKAGES`.
+    /// With fetching off (`fetchEnabled`, the script variable `NUGET_FETCH`) nothing is
+    /// started: packages already in the folder pass, a missing one fails naming it.
     let downloadPackages (packageRoot: string option) (packages: (string * string) list) : Recipe<ExecContext, unit> =
         recipe {
             if not (List.isEmpty packages) then
-                let root = normalizedPackageRoot packageRoot
-                let! ctxOptions = getCtxOptions ()
-                let dir = nextRestoreDir ctxOptions.ProjectRoot
-                Directory.CreateDirectory dir |> ignore
-                let project = dir </> "restore.csproj"
-                File.WriteAllText (project, restoreProjectText packages)
+                let! buildRoot =
+                    match packageRoot with
+                    | Some dir -> recipe { return dir }
+                    | None -> buildPackageRoot ()
+                let root = normalizedPackageRoot (Some buildRoot)
+                let! enabled = fetchEnabled ()
+                if not enabled then
+                    let missing =
+                        packages |> List.filter (fun (id, v) -> not (Directory.Exists (root </> id.ToLowerInvariant() </> v)))
+                    if not (List.isEmpty missing) then
+                        failwith (fetchOffFailure root missing)
+                else
+                    let! ctxOptions = getCtxOptions ()
+                    let dir = nextRestoreDir ctxOptions.ProjectRoot
+                    Directory.CreateDirectory dir |> ignore
+                    let project = dir </> "restore.csproj"
+                    File.WriteAllText (project, restoreProjectText packages)
 
-                let! exitCode =
-                    shell {
-                        cmd "dotnet"
-                        args (restoreArgs project)
-                        env ("NUGET_PACKAGES", root)
-                        workdir dir
-                        logprefix "[restore]"
-                        stdoutlevel (Tool.diagnosticLevel Level.Verbose)
-                        erroutlevel (Tool.diagnosticLevel Level.Verbose)
-                    }
+                    let! exitCode =
+                        shell {
+                            cmd "dotnet"
+                            args (restoreArgs project)
+                            env ("NUGET_PACKAGES", root)
+                            workdir dir
+                            logprefix "[restore]"
+                            stdoutlevel (Tool.diagnosticLevel Level.Verbose)
+                            erroutlevel (Tool.diagnosticLevel Level.Verbose)
+                        }
 
-                if exitCode <> 0 then
-                    failwith (restoreFailure root exitCode project packages)
-                try Directory.Delete (dir, true) with _ -> ()
+                    if exitCode <> 0 then
+                        failwith (restoreFailure root exitCode project packages)
+                    try Directory.Delete (dir, true) with _ -> ()
         }
 
     /// The folder of one NuGet package (`<packageRoot>/<id lowercase>/<version>`), fetching it
     /// into the package folder first when it is not there yet. `packageRoot` is `None` for the
-    /// machine's own cache (`nugetRoot ()`), `Some dir` (absolute) for a folder of the build's
-    /// own. Restoring cannot change *what* a version is, so this is safe to call from any
-    /// recipe; it starts no process when the folder already exists.
+    /// build's package folder (`packageRoot ()`: the script variable `NUGET_PACKAGES`, else the
+    /// environment's), `Some dir` (absolute) for a folder of the caller's choosing. Restoring
+    /// cannot change *what* a version is, so this is safe to call from any recipe; it starts no
+    /// process when the folder already exists, and fails naming the package when it does not
+    /// and fetching is off (`fetchEnabled`).
     let restorePackage (packageRoot: string option) (packageId: string) (version: string) : Recipe<ExecContext, string> =
         recipe {
-            let dir = normalizedPackageRoot packageRoot </> packageId.ToLowerInvariant() </> version
+            let! root =
+                match packageRoot with
+                | Some dir -> recipe { return dir }
+                | None -> buildPackageRoot ()
+            let dir = normalizedPackageRoot (Some root) </> packageId.ToLowerInvariant() </> version
             if not (Directory.Exists dir) then
-                do! downloadPackages packageRoot [ packageId, version ]
+                // `downloadPackages` reads `NUGET_FETCH`, only when something is missing
+                do! downloadPackages (Some root) [ packageId, version ]
             return dir
         }
 
     module internal impl =
 
-        let locateFramework (projectRoot: string) (versions: ReferencePackVersions) (fwk) : FrameworkInfo =
+        let locateFramework (packageRoot: string) (projectRoot: string) (versions: ReferencePackVersions) (fwk) : FrameworkInfo =
             let startsWith fragment (s: string option) =
                 match s with
                 | None | Some null -> false
@@ -669,16 +739,16 @@ module DotNetFwk =
                 if fwk |> startsWith "mono-" then monoFwkImpl.tryLocateFwk
                 elif fwk |> startsWith "sdk-" || (fwk |> Option.bind sdkImpl.netcoreMoniker |> Option.isSome) then
                     // .NET (net5.0 and later) has no provider but the SDK's targeting pack
-                    sdkImpl.tryLocateFwk projectRoot versions
+                    sdkImpl.tryLocateFwk packageRoot projectRoot versions
                 elif Env.isUnix then
                     // SDK compilers over reference assemblies from NuGet build for full
                     // framework on any OS; mono is just a fallback these days
-                    sdkImpl.tryLocateFwk projectRoot versions |> orElse monoFwkImpl.tryLocateFwk
+                    sdkImpl.tryLocateFwk packageRoot projectRoot versions |> orElse monoFwkImpl.tryLocateFwk
                 elif Env.isRunningOnMono then
-                    monoFwkImpl.tryLocateFwk |> orElse (sdkImpl.tryLocateFwk projectRoot versions)
+                    monoFwkImpl.tryLocateFwk |> orElse (sdkImpl.tryLocateFwk packageRoot projectRoot versions)
                 else
                     // a real Framework installation found through the registry wins on Windows
-                    msImpl.tryLocateFwk |> orElse (sdkImpl.tryLocateFwk projectRoot versions)
+                    msImpl.tryLocateFwk |> orElse (sdkImpl.tryLocateFwk packageRoot projectRoot versions)
 
             match fwk with
             | None ->
@@ -691,25 +761,29 @@ module DotNetFwk =
                 | Some f,_ -> f
 
     let private locateFrameworkMemo =
-        CommonLib.memoize (fun (projectRoot: string, versions: ReferencePackVersions, fwk: string option) ->
-            impl.locateFramework projectRoot versions fwk)
+        CommonLib.memoize (fun (packageRoot: string, projectRoot: string, versions: ReferencePackVersions, fwk: string option) ->
+            impl.locateFramework packageRoot projectRoot versions fwk)
 
     /// <summary>
     /// Attempts to locate either .NET or Mono framework, for a build rooted at `projectRoot`:
     /// the SDK provider takes the SDK the `dotnet` host selects there, so a `global.json` in
-    /// (or above) the project root is honoured. Memoized per (root, framework).
+    /// (or above) the project root is honoured. Memoized per (package folder, root, framework).
+    ///
+    /// For callers with no build: reference packages are read from (and restored into) the
+    /// machine's cache, `nugetRoot ()` -- the environment variable `NUGET_PACKAGES`, never the
+    /// script variable. A recipe calls `resolveFramework`, which honours the script variable.
     /// </summary>
     let locateFrameworkIn (projectRoot: string) (fwk: string option) : FrameworkInfo =
-        locateFrameworkMemo (Path.GetFullPath projectRoot, sdkImpl.defaultVersions, fwk)
+        locateFrameworkMemo (nugetRoot (), Path.GetFullPath projectRoot, sdkImpl.defaultVersions, fwk)
 
     /// The default reference-pack versions: `NETStandard.Library` 2.0.3 and
     /// `Microsoft.NETFramework.ReferenceAssemblies.*` 1.0.3.
     let defaultReferencePackVersions = sdkImpl.defaultVersions
 
-    /// `locateFrameworkIn` with the reference-pack versions given. Memoized per (root,
-    /// versions, framework).
+    /// `locateFrameworkIn` with the reference-pack versions given (the machine's package cache,
+    /// as there). Memoized per (package folder, root, versions, framework).
     let locateFrameworkWith (projectRoot: string) (versions: ReferencePackVersions) (fwk: string option) : FrameworkInfo =
-        locateFrameworkMemo (Path.GetFullPath projectRoot, versions, fwk)
+        locateFrameworkMemo (nugetRoot (), Path.GetFullPath projectRoot, versions, fwk)
 
     /// The reference package (id, exact version) the SDK provider reads `fwk`'s reference
     /// assemblies from: `NETStandard.Library` for netstandard2.0,
@@ -739,21 +813,24 @@ module DotNetFwk =
     /// and version) whenever the SDK provider is the one that reads it -- an `sdk-` name, any
     /// netstandard, and everything but `mono-` on Unix. On Windows a .NET Framework found
     /// through the registry still wins, and the package is fetched only if it is consulted.
+    /// The package folder is the build's, `packageRoot ()` (the script variable
+    /// `NUGET_PACKAGES`, else the environment's), and part of the memo key.
     /// </summary>
     let resolveFramework (fwk: string option) : Recipe<ExecContext, FrameworkInfo> =
         recipe {
             let! options = getCtxOptions ()
+            let! root = packageRoot ()
             let! versions = referencePackVersions ()
             match fwk with
             | Some name when not (name.StartsWith "mono-")
                              && (name.StartsWith "sdk-" || Env.isUnix || Option.isSome (sdkImpl.netstandardMoniker name)) ->
                 match referencePackage versions name with
                 | Some (packageId, version) ->
-                    let! _ = restorePackage None packageId version
+                    let! _ = restorePackage (Some root) packageId version
                     ()
                 | None -> ()
             | _ -> ()
-            return locateFrameworkWith options.ProjectRoot versions fwk
+            return locateFrameworkMemo (root, Path.GetFullPath options.ProjectRoot, versions, fwk)
         }
 
     /// <summary>
@@ -809,8 +886,8 @@ module DotNetFwk =
     /// <summary>
     /// The default `FSharp.Core.dll` of an fsc compilation for netstandard or .NET Framework:
     /// the NuGet package `FSharp.Core` at `FSHARP_CORE_VERSION` (read, and so a dependency,
-    /// only here), else `fsharpCoreVersion`, fetched through `restorePackage` into the machine's
-    /// cache; its `lib/netstandard2.1` build for netstandard2.1 when the package has one, else
+    /// only here), else `fsharpCoreVersion`, fetched through `restorePackage` into the build's
+    /// package folder (`packageRoot ()`); its `lib/netstandard2.1` build for netstandard2.1 when the package has one, else
     /// `lib/netstandard2.0`. Fails naming the package when neither exists.
     /// </summary>
     let fsharpCoreReference (targetFramework: string) : Recipe<ExecContext, string> =

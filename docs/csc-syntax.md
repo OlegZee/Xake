@@ -125,7 +125,7 @@ be determined (no SDK) does the compile fail with `csc needs a target framework`
 
 | `targetfwk` | Reference assemblies | Version |
 |---|---|---|
-| `net10.0`, `net8.0`, ... (also `sdk-net10.0`) | `<dotnet>/packs/Microsoft.NETCore.App.Ref/<v>/ref/<moniker>`, the targeting pack installed with the SDK | for the SDK's own framework the exact version it bundles (`BundledNETCoreAppPackageVersion`); for another one the newest `<major>.<minor>.*` pack present. Never downloaded: a missing pack fails naming the folder |
+| `net10.0`, `net6.0`, ... (also `sdk-net10.0`) | `<dotnet>/packs/Microsoft.NETCore.App.Ref/<v>/ref/<moniker>`, the targeting pack installed with the SDK, when there is one; else `microsoft.netcore.app.ref/<v>/ref/<moniker>` in the package folder, restored | the `TargetingPackVersion` the SDK's `BundledVersions.props` names for the framework, a `NETCORE_REF_VERSION` entry (a list such as `6.0.36;7.0.20`, one per major.minor) pins that framework's pack to the NuGet package at exactly that version, never an installed one (under the planned `HERMETIC` mode every `netN.0` target used must have an entry); otherwise an installed pack of another patch version is used rather than downloading. A framework the SDK does not know fails |
 | `netstandard2.0` | `NETStandard.Library/<v>/build/netstandard2.0/ref` in the package folder | `2.0.3`, or the script variable `NETSTANDARD_LIBRARY_VERSION` |
 | `netstandard2.1` | the SDK's `packs/NETStandard.Library.Ref/*/ref/netstandard2.1` | comes with the SDK; not restored |
 | `net-4.6.2`, `net472`, ... (SDK provider) | `Microsoft.NETFramework.ReferenceAssemblies.<moniker>/<v>/build/.NETFramework/v4.x` (and its `Facades`) | `1.0.3`, or the script variable `NETFX_REFERENCE_ASSEMBLIES_VERSION` |
@@ -153,8 +153,14 @@ be determined (no SDK) does the compile fail with `csc needs a target framework`
 - In a lock the references read
   `$(NuGetPackageRoot)/netstandard.library/2.0.3/build/netstandard2.0/ref/...`. The path is
   the same as before this change, as long as the cache held the default versions.
-- A .NET targeting pack is under the SDK installation, so in a lock its references read
-  `$(DotnetRoot)/packs/Microsoft.NETCore.App.Ref/10.0.12/ref/net10.0/...`.
+- An installed .NET targeting pack is under the SDK installation, so in a lock its references
+  read `$(DotnetRoot)/packs/Microsoft.NETCore.App.Ref/10.0.12/ref/net10.0/...`; a restored
+  one (e.g. `net6.0` on a machine with only SDK 8 and 10) reads
+  `$(NuGetPackageRoot)/microsoft.netcore.app.ref/6.0.36/ref/net6.0/...`. The lock therefore
+  depends on where the pack came from; pin the framework with `NETCORE_REF_VERSION` (for
+  example `6.0.36;7.0.20`) for a lock whose references are all NuGet-restorable: a pinned
+  framework's pack always comes from NuGet, installed or not. See
+  [dotnet-build.md](dotnet-build.md).
 
 ## Compiler sources
 

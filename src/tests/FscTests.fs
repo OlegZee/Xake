@@ -1,4 +1,4 @@
-namespace Tests
+﻿namespace Tests
 
 open System.IO
 open NUnit.Framework
@@ -147,6 +147,38 @@ type ``Fsc record tests``() =
             ]
         }
         Assert.That(File.Exists "sdkfwk/hello.dll", Is.True, "fsc did not produce sdkfwk/hello.dll")
+
+    // a .NET framework with no installed targeting pack: the pack restored from NuGet, and
+    // the SDK's FSharp.Core
+    [<Test; Category("Integration")>]
+    member x.``fsc targetfwk net6.0 references the restored targeting pack``() =
+        let packs = (DotNetFwk.dotnetRoot () |> Option.get) </> "packs" </> "Microsoft.NETCore.App.Ref"
+        let installed6 =
+            Directory.Exists packs
+            && (Directory.GetDirectories packs |> Array.exists (fun d -> (Path.GetFileName d).StartsWith "6.0." && Directory.Exists (d </> "ref" </> "net6.0")))
+        Assume.That(installed6, Is.False, "a 6.0 targeting pack is installed, nothing to restore")
+        File.WriteAllText ("a.fs", "module A\nlet a = 1\n")
+        let resolved = ref None
+        do xake {x.TestOptions with FileLog="fsc-net6.log"; ThrowOnError = true} {
+            wantOverride (["net6"])
+            rules [
+                "net6" => recipe {
+                    let! f = fsc { targetfwk "net6.0"; src !!"a.fs"; out (File.make "net6.dll"); resolve }
+                    resolved.Value <- Some f
+                }
+            ]
+        }
+        let f = resolved.Value |> Option.get
+        let norm (p: string) = p.Replace('\\', '/')
+        let refs = f.Dependencies.References |> List.map (fun r -> norm r.Path)
+        let pkgRoot = norm (DotNetFwk.nugetRoot ()) + "/microsoft.netcore.app.ref/"
+        Assert.That(f.Framework, Is.EqualTo "net6.0")
+        Assert.That(f.Args, Does.Contain "--targetprofile:netcore")
+        let packRefs = refs |> List.filter (fun r -> r.StartsWith pkgRoot && r.Contains "/ref/net6.0/")
+        Assert.That(packRefs |> List.map Path.GetFileName, Does.Contain "System.Runtime.dll")
+        let fsharpCore = refs |> List.filter (fun r -> Path.GetFileName r = "FSharp.Core.dll")
+        Assert.That(fsharpCore, Is.EqualTo [ norm (Path.GetDirectoryName f.Dependencies.Compiler.Path </> "FSharp.Core.dll") ])
+        Assert.That(refs |> List.except (packRefs @ fsharpCore), Is.Empty)
 
     [<Test; Category("Integration")>]
     member x.``fsc app declaring its runtimeconfig.json as a target writes it``() =

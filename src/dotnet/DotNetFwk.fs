@@ -261,6 +261,11 @@ module DotNetFwk =
         /// `Microsoft.NETFramework.ReferenceAssemblies.*`, script variable
         /// `NETFX_REFERENCE_ASSEMBLIES_VERSION`
         ReferenceAssemblies: string
+        /// `Microsoft.NETCore.App.Ref` pins, script variable `NETCORE_REF_VERSION`: exact
+        /// 3-part versions, at most one per major.minor. A .NET (`netN.0`) target with an
+        /// entry for its major.minor always takes the NuGet package at that version, never
+        /// `<dotnet>/packs`; the others follow the unpinned rule.
+        NetCoreRef: string list
     }
 
     /// Locates the compilers shipped with the .NET SDK and the .NET Framework reference
@@ -274,6 +279,9 @@ module DotNetFwk =
         /// The package carrying the netstandard2.0 reference assemblies. 2.1 ships with the
         /// SDK instead, see netstandardRefDir.
         let netstandardLibraryVersion = "2.0.3"
+
+        /// The package (and the `packs/` folder) carrying the .NET targeting pack.
+        let netcoreRefPackageId = "Microsoft.NETCore.App.Ref"
 
         let private knownMonikers =
             [ "net20"; "net35"; "net40"; "net45"; "net451"; "net452"; "net46"
@@ -325,7 +333,7 @@ module DotNetFwk =
             | dir -> dir
 
         let defaultVersions =
-            { NetStandardLibrary = netstandardLibraryVersion; ReferenceAssemblies = referenceAssembliesVersion }
+            { NetStandardLibrary = netstandardLibraryVersion; ReferenceAssemblies = referenceAssembliesVersion; NetCoreRef = [] }
 
         /// The package (id, exact version) the SDK provider reads `fwk`'s reference assemblies
         /// from; `None` when they come with the SDK (netstandard2.1) or `fwk` is not a known
@@ -484,27 +492,90 @@ module DotNetFwk =
         let sdkFramework (projectRoot: string) =
             sdkDir projectRoot |> Option.bind bundledFramework |> Option.map fst
 
-        /// The reference assemblies of a .NET target framework (`net8.0`, `net10.0`), from the
-        /// targeting pack that ships with the SDK -- `<dotnet>/packs/Microsoft.NETCore.App.Ref/
-        /// <version>/ref/<moniker>`, no download. For the SDK's own framework that is exactly
-        /// the version the SDK bundles; for another one the newest `<major>.<minor>.*` pack
-        /// present (one an installed SDK of that major brought along). A missing pack fails,
-        /// naming the folder looked in.
-        let private netcoreRefDir projectRoot moniker =
+        /// The `TargetingPackVersion` the SDK in `sdkDir` names for `moniker`, from the
+        /// `KnownFrameworkReference` item of its `Microsoft.NETCoreSdk.BundledVersions.props`
+        /// with `Include="Microsoft.NETCore.App"`, `TargetFramework="<moniker>"` and
+        /// `TargetingPackName="Microsoft.NETCore.App.Ref"` -- the version `dotnet build`
+        /// restores when the pack is not installed ("6.0.36" for net6.0 on SDK 10.0.401).
+        /// `None` when the SDK does not know the framework (one newer than the SDK).
+        let internal knownTargetingPackVersion (sdkDir: string) (moniker: string) =
+            let props = sdkDir </> "Microsoft.NETCoreSdk.BundledVersions.props"
+            if not (File.Exists props) then None else
+            let text = File.ReadAllText props
+            let attr (item: string) name =
+                let m = System.Text.RegularExpressions.Regex.Match(item, sprintf "\\b%s\\s*=\\s*\"([^\"]*)\"" name)
+                if m.Success then Some (m.Groups.[1].Value.Trim()) else None
+            System.Text.RegularExpressions.Regex.Matches(text, "<KnownFrameworkReference\\s[^>]*>")
+            |> Seq.cast<System.Text.RegularExpressions.Match>
+            |> Seq.map (fun m -> m.Value)
+            |> Seq.filter (fun item ->
+                attr item "Include" = Some "Microsoft.NETCore.App"
+                && (attr item "TargetFramework" |> Option.map (fun s -> s.ToLowerInvariant())) = Some moniker
+                && attr item "TargetingPackName" = Some netcoreRefPackageId)
+            |> Seq.tryPick (fun item -> attr item "TargetingPackVersion" |> Option.filter ((<>) ""))
+
+        /// Where the reference assemblies of a .NET target framework come from.
+        type internal NetcoreRefSource =
+            /// an installed targeting pack, `<dotnet>/packs/Microsoft.NETCore.App.Ref/<v>/ref/<moniker>`
+            | InstalledPack of dir: string
+            /// the NuGet package `Microsoft.NETCore.App.Ref` at this exact version
+            | NugetPack of version: string
+
+        /// Parses `NETCORE_REF_VERSION`: versions separated by `;`, `,` or whitespace. Each must
+        /// be a 3-part version (`6.0.36`) and no two may share a major.minor; otherwise it fails
+        /// naming the variable and the offending entry.
+        let internal parseNetcoreRefVersions (value: string option) : string list =
+            let entries =
+                (defaultArg value "").Split([| ';'; ','; ' '; '\t'; '\r'; '\n' |], System.StringSplitOptions.RemoveEmptyEntries)
+                |> List.ofArray
+            let majorMinor (v: string) = v.Substring(0, v.LastIndexOf '.')
+            for e in entries do
+                if not (System.Text.RegularExpressions.Regex.IsMatch(e, @"^\d+\.\d+\.\d+$")) then
+                    failwithf "NETCORE_REF_VERSION: '%s' is not a 3-part version such as 6.0.36" e
+            for (k, group) in entries |> List.groupBy majorMinor do
+                if List.length group > 1 then
+                    failwithf "NETCORE_REF_VERSION: '%s' and '%s' pin the same major.minor %s" group.[0] group.[1] k
+            entries
+
+        /// The pinned `Microsoft.NETCore.App.Ref` version for a `netN.0` moniker: the entry with
+        /// the same major.minor, if any.
+        let internal netcoreRefPin (moniker: string) (versions: string list) : string option =
+            let mm = moniker.Substring 3
+            versions |> List.tryFind (fun v -> v.Substring(0, v.LastIndexOf '.') = mm)
+
+        /// The resolution rule for a .NET (`netN.0`) target framework; the version of a NuGet
+        /// pack is always the one the probed SDK's `BundledVersions.props` names for it:
+        ///  1. a `NETCORE_REF_VERSION` entry for the framework's major.minor: always the NuGet
+        ///     package `Microsoft.NETCore.App.Ref` at that version, never an installed pack, so
+        ///     the lock path is `$(NuGetPackageRoot)/microsoft.netcore.app.ref/<ver>/...` on
+        ///     every machine whatever SDKs it has;
+        ///  2. else (no entry) an installed pack
+        ///     (`<dotnet>/packs/Microsoft.NETCore.App.Ref/<v>/ref/<moniker>`) at the SDK's
+        ///     version, else the newest installed pack of that major.minor -- no download when
+        ///     the machine has one;
+        ///  3. else the NuGet package at the SDK's version;
+        ///  4. with no version at all (a framework the SDK does not know), a failure.
+        let internal netcoreRefSource projectRoot (versions: ReferencePackVersions) moniker =
             match sdkDir projectRoot with
             | None -> failwithf "reference assemblies for '%s': the .NET SDK is not found" moniker
             | Some sdk ->
-                let packRoot = Path.GetDirectoryName (Path.GetDirectoryName sdk) </> "packs" </> "Microsoft.NETCore.App.Ref"
+                let packRoot = Path.GetDirectoryName (Path.GetDirectoryName sdk) </> "packs" </> netcoreRefPackageId
                 let refDir version = packRoot </> version </> "ref" </> moniker
-                match bundledFramework sdk with
-                | Some (tfm, packVersion) when tfm = moniker ->
-                    let dir = refDir packVersion
-                    if Directory.Exists dir then dir
-                    else failwithf "reference assemblies for '%s' are not available: the SDK %s bundles targeting pack %s, but '%s' does not exist"
-                            moniker (Path.GetFileName sdk) packVersion dir
+                let wanted =
+                    match knownTargetingPackVersion sdk moniker with
+                    | Some v -> Some v
+                    | None ->
+                        match bundledFramework sdk with
+                        | Some (tfm, packVersion) when tfm = moniker -> Some packVersion
+                        | _ -> None
+                match netcoreRefPin moniker versions.NetCoreRef with
+                | Some pinned -> NugetPack pinned
+                | None ->
+                match wanted with
+                | Some v when Directory.Exists (refDir v) -> InstalledPack (refDir v)
                 | _ ->
                     let prefix = moniker.Substring 3 + "."
-                    let candidates =
+                    let installed =
                         if Directory.Exists packRoot then
                             Directory.GetDirectories packRoot
                             |> Array.filter (fun d -> (Path.GetFileName d).StartsWith prefix && Directory.Exists (d </> "ref" </> moniker))
@@ -513,11 +584,23 @@ module DotNetFwk =
                         (Path.GetFileName dir).Split([| '.'; '-' |])
                         |> Array.map (fun part -> match System.Int32.TryParse part with | true, v -> v | _ -> -1)
                         |> List.ofArray
-                    match candidates |> Array.sortBy versionKey |> Array.tryLast with
-                    | Some dir -> dir </> "ref" </> moniker
-                    | None ->
-                        failwithf "reference assemblies for '%s' are not available: no targeting pack under '%s' has ref/%s (install a %s SDK, or target the SDK's own framework)"
-                            moniker packRoot moniker (moniker.Substring 3)
+                    match installed |> Array.sortBy versionKey |> Array.tryLast, wanted with
+                    | Some dir, _ -> InstalledPack (dir </> "ref" </> moniker)
+                    | None, Some v -> NugetPack v
+                    | None, None ->
+                        failwithf "reference assemblies for '%s' are not available: the SDK %s does not know target framework '%s' (its Microsoft.NETCoreSdk.BundledVersions.props names no %s for it) and no targeting pack under '%s' has ref/%s; use an SDK that supports it"
+                            moniker (Path.GetFileName sdk) moniker netcoreRefPackageId packRoot moniker
+
+        /// The reference assemblies of a .NET target framework (`net6.0`, `net10.0`):
+        /// `netcoreRefSource` decides; a NuGet pack not in the cache yet is restored (normally
+        /// `resolveFramework` has done that already, with the build's recipe).
+        let private netcoreRefDir packageRoot projectRoot versions moniker =
+            match netcoreRefSource projectRoot versions moniker with
+            | InstalledPack dir -> dir
+            | NugetPack version ->
+                locateOrRestore packageRoot projectRoot netcoreRefPackageId version (fun () ->
+                    let dir = packageDir packageRoot netcoreRefPackageId version </> "ref" </> moniker
+                    if Directory.Exists dir then Some dir else None)
 
         /// netstandard reference assemblies: 2.1 ships with the SDK as a pack, 2.0 only
         /// exists in the NETStandard.Library package, taken at the exact version asked for.
@@ -570,7 +653,7 @@ module DotNetFwk =
         let tryLocateFwk packageRoot projectRoot versions fwk =
             match netcoreMoniker fwk with
             | Some moniker ->
-                sdkFwkInfo projectRoot [netcoreRefDir projectRoot moniker] moniker
+                sdkFwkInfo projectRoot [netcoreRefDir packageRoot projectRoot versions moniker] moniker
             | None ->
 
             match netstandardMoniker fwk with
@@ -793,17 +876,22 @@ module DotNetFwk =
         sdkImpl.referencePackage versions fwk
 
     /// The reference-pack versions in effect for the build: the defaults, overridden by the
-    /// script variables `NETSTANDARD_LIBRARY_VERSION` and `NETFX_REFERENCE_ASSEMBLIES_VERSION`
-    /// (each read, and so a dependency, of every compile that resolves a framework).
+    /// script variables `NETSTANDARD_LIBRARY_VERSION`, `NETFX_REFERENCE_ASSEMBLIES_VERSION` and
+    /// `NETCORE_REF_VERSION` (each read, and so a dependency, of every compile that resolves a framework).
     let referencePackVersions () : Recipe<ExecContext, ReferencePackVersions> =
         recipe {
             let pick (v: string option) dflt =
                 v |> Option.map (fun s -> s.Trim()) |> Option.filter ((<>) "") |> Option.defaultValue dflt
             let! ns = getVar "NETSTANDARD_LIBRARY_VERSION"
             let! refasm = getVar "NETFX_REFERENCE_ASSEMBLIES_VERSION"
+            let! netcoreRef = getVar "NETCORE_REF_VERSION"
             return { NetStandardLibrary = pick ns sdkImpl.defaultVersions.NetStandardLibrary
-                     ReferenceAssemblies = pick refasm sdkImpl.defaultVersions.ReferenceAssemblies }
+                     ReferenceAssemblies = pick refasm sdkImpl.defaultVersions.ReferenceAssemblies
+                     NetCoreRef = sdkImpl.parseNetcoreRefVersions netcoreRef }
         }
+
+    let private netcoreMonikerOf (fwk: string) =
+        if System.String.IsNullOrEmpty fwk then None else sdkImpl.netcoreMoniker fwk
 
     /// <summary>
     /// `locateFrameworkWith` for a build: the reference-pack versions from
@@ -813,6 +901,9 @@ module DotNetFwk =
     /// and version) whenever the SDK provider is the one that reads it -- an `sdk-` name, any
     /// netstandard, and everything but `mono-` on Unix. On Windows a .NET Framework found
     /// through the registry still wins, and the package is fetched only if it is consulted.
+    /// For a .NET (`netN.0`) target the targeting pack `Microsoft.NETCore.App.Ref` is restored
+    /// the same way when `NETCORE_REF_VERSION` pins it or no installed pack will do (see
+    /// `sdkImpl.netcoreRefSource`).
     /// The package folder is the build's, `packageRoot ()` (the script variable
     /// `NUGET_PACKAGES`, else the environment's), and part of the memo key.
     /// </summary>
@@ -821,15 +912,22 @@ module DotNetFwk =
             let! options = getCtxOptions ()
             let! root = packageRoot ()
             let! versions = referencePackVersions ()
-            match fwk with
-            | Some name when not (name.StartsWith "mono-")
-                             && (name.StartsWith "sdk-" || Env.isUnix || Option.isSome (sdkImpl.netstandardMoniker name)) ->
-                match referencePackage versions name with
-                | Some (packageId, version) ->
-                    let! _ = restorePackage (Some root) packageId version
-                    ()
-                | None -> ()
-            | _ -> ()
+            let package =
+                match fwk with
+                | Some name when Option.isSome (netcoreMonikerOf name) ->
+                    // .NET: the targeting pack, restored from NuGet when pinned or when no installed one will do
+                    match sdkImpl.netcoreRefSource options.ProjectRoot versions (Option.get (netcoreMonikerOf name)) with
+                    | sdkImpl.NugetPack version -> Some (sdkImpl.netcoreRefPackageId, version)
+                    | sdkImpl.InstalledPack _ -> None
+                | Some name when not (name.StartsWith "mono-")
+                                 && (name.StartsWith "sdk-" || Env.isUnix || Option.isSome (sdkImpl.netstandardMoniker name)) ->
+                    referencePackage versions name
+                | _ -> None
+            match package with
+            | Some (packageId, version) ->
+                let! _ = restorePackage (Some root) packageId version
+                ()
+            | None -> ()
             return locateFrameworkMemo (root, Path.GetFullPath options.ProjectRoot, versions, fwk)
         }
 

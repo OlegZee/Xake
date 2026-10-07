@@ -132,9 +132,17 @@ target, or record syntax with `out` outside a file rule, writes none.
 `targetfwk` picks the framework to compile against; it is optional. The first that is set
 wins: `targetfwk`, the `NETFX-TARGET` script variable, the .NET framework of the SDK the build
 runs on (`net10.0` for SDK 10.0.x, the SDK a `global.json` in or above the project root
-selects). A .NET target (`net8.0`, `net10.0`, also spelled `sdk-net10.0`) compiles against
-the targeting pack installed with the SDK (`<dotnet>/packs/Microsoft.NETCore.App.Ref`), all
-of it, with nothing downloaded; the example above therefore needs nothing but the SDK.
+selects). A .NET target `netN.0` (`net6.0`, `net8.0`, `net10.0`, also spelled `sdk-net10.0`)
+works for any N the SDK knows, and compiles against all of that framework's targeting pack:
+the one installed with the SDK (`<dotnet>/packs/Microsoft.NETCore.App.Ref`) when there is
+one, else the NuGet package `Microsoft.NETCore.App.Ref` at the version the SDK names for the
+framework, restored once into the package cache as `dotnet build` does (the script variable
+`NETCORE_REF_VERSION`, a list such as `6.0.36;7.0.20` separated by `;`, `,` or whitespace, pins the
+pack of the framework with the same major.minor: it always comes from NuGet at that version, never
+from an installed pack, so lock paths are the same on every machine; a framework without an
+entry follows the rule above; under the planned `HERMETIC` mode every `netN.0` target used must
+have an entry; see [dotnet-build.md](dotnet-build.md)). The example above, on the SDK's own framework,
+therefore needs nothing but the SDK.
 
 For a .NET Framework target, on Windows a Framework installation found through the registry
 wins; everywhere else -- and as a fallback -- the compiler comes from the .NET SDK and the
@@ -317,7 +325,8 @@ referenced implicitly, so this too needs nothing but the SDK, on any OS:
 
 The arguments are always fsc's `--name:value` form (`-r:` for references), on every OS. The
 task passes `--noframework` and the framework's reference assemblies as ordinary `-r:`
-references: for .NET (`net10.0`, the default) every assembly of the SDK's targeting pack plus
+references: for .NET (`net10.0`, the default, or any `netN.0` the SDK knows) every assembly
+of the targeting pack -- installed with the SDK, else restored from NuGet as for `csc` -- plus
 `--targetprofile:netcore`, for netstandard `netstandard.dll` plus
 `--targetprofile:netstandard`, for .NET Framework `mscorlib.dll` and a `netstandard.dll` facade.
 Unless a `ref` already names an `FSharp.Core.dll`, one is referenced: for a .NET target the
@@ -447,6 +456,7 @@ let strings = resourceset {
 | `CSC_TOOLSET` | `csc` compiler package version (`Microsoft.Net.Compilers.Toolset`) for targets with no `toolset`; empty or unset means the SDK's compiler |
 | `NUGET_PACKAGES` | The build's package folder, relative to the project root or absolute; overrides the environment variable of the same name for everything Xake restores or reads there (see below) |
 | `NUGET_FETCH` | `off` turns off every download into the package folder (a missing package fails the build); default `on` |
+| `NETCORE_REF_VERSION` | Pins of the `Microsoft.NETCore.App.Ref` targeting pack, one per major.minor (`6.0.36;7.0.20`); a pinned `netN.0` target always compiles against the NuGet package at that version, never an installed pack (see [csc](#csc)) |
 
 ```bash
 dotnet fsi build.fsx -- -- build -d NETFX-TARGET:net-4.6.2

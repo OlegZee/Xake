@@ -493,6 +493,136 @@ let greet name = sprintf "Hello, %s" name
         Assert.That(refs |> List.map Path.GetFileName, Does.Contain "System.Runtime.dll")
         Assert.That(File.Exists "nofwk/nofwk.dll", Is.True, "csc did not produce nofwk/nofwk.dll")
 
+    // a .NET framework with no installed targeting pack: Microsoft.NETCore.App.Ref restored
+    // from NuGet at the version the SDK's BundledVersions.props names, as `dotnet build` does
+    // (downloads ~30 MB once into the machine's cache)
+    [<Test; Category("Integration")>]
+    member x.``csc targetfwk net6.0 restores the targeting pack when it is not installed``() =
+        let dotnet = DotNetFwk.dotnetRoot () |> Option.get
+        let installed6 =
+            let packs = dotnet </> "packs" </> "Microsoft.NETCore.App.Ref"
+            Directory.Exists packs
+            && (Directory.GetDirectories packs |> Array.exists (fun d -> (Path.GetFileName d).StartsWith "6.0." && Directory.Exists (d </> "ref" </> "net6.0")))
+        Assume.That(installed6, Is.False, "a 6.0 targeting pack is installed, nothing to restore")
+
+        File.WriteAllText ("hw6.cs", "public static class P { public static void Main() { System.Console.WriteLine(\"Hello\"); } }")
+        try File.Delete "net6/hw6.exe" with _ -> ()
+        let resolved = ref None
+        do xake {x.TestOptions with FileLog="csc-net6.log"; ThrowOnError = true} {
+            wantOverride (["net6"])
+            rules [
+                "net6" => recipe {
+                    let! c = csc { targetfwk "net6.0"; src !!"hw6.cs"; out (File.make "net6/hw6.exe"); resolve }
+                    resolved.Value <- Some c
+                    do! csc { targetfwk "net6.0"; src !!"hw6.cs"; out (File.make "net6/hw6.exe") }
+                }
+            ]
+        }
+        let c = resolved.Value |> Option.get
+        let norm (p: string) = p.Replace('\\', '/')
+        let pkgRoot = norm (DotNetFwk.nugetRoot ()) + "/microsoft.netcore.app.ref/"
+        let refs = c.Dependencies.References |> List.map (fun r -> norm r.Path)
+        Assert.That(c.Framework, Is.EqualTo "net6.0")
+        Assert.That(refs, Is.Not.Empty)
+        Assert.That(refs |> List.forall (fun r -> r.StartsWith pkgRoot), Is.True, sprintf "references come from the restored package under %s: %A" pkgRoot refs)
+        Assert.That(refs |> List.forall (fun r -> System.Text.RegularExpressions.Regex.IsMatch(r.Substring pkgRoot.Length, @"^6\.0\.\d+/ref/net6\.0/[^/]+\.dll$")), Is.True)
+        Assert.That(refs |> List.map Path.GetFileName, Does.Contain "System.Runtime.dll")
+        Assert.That(File.Exists "net6/hw6.exe", Is.True, "csc did not produce net6/hw6.exe")
+
+    // a framework the SDK does not know has no version to restore: a clear failure
+    [<Test; Category("Integration")>]
+    member x.``csc targetfwk unknown to the SDK fails naming the framework``() =
+        File.WriteAllText ("hw99.cs", "public static class P { public static void Main() { } }")
+        let errorlist = System.Collections.Generic.List<string>()
+        let ex =
+            Assert.Throws<XakeException> (fun () ->
+                do xake {x.TestOptions with FileLog="csc-net99.log"; ThrowOnError = true; CustomLogger = CustomLogger ((=) Level.Error) errorlist.Add} {
+                    wantOverride (["net99"])
+                    rules [
+                        "net99" => recipe {
+                            do! csc { targetfwk "net99.0"; src !!"hw99.cs"; out (File.make "net99/hw99.exe") }
+                        }
+                    ]
+                })
+        let all = ex.ToString() + String.concat "\n" errorlist
+        Assert.That(all, Does.Contain "does not know target framework 'net99.0'")
+        Assert.That(all, Does.Contain "use an SDK that supports it")
+
+    // the version the SDK names for a framework, read from KnownFrameworkReference
+    [<Test>]
+    member x.``reads the targeting pack version the SDK names for a framework``() =
+        let sdk = Path.Combine(Path.GetTempPath(), "xake-props-" + string (System.Guid.NewGuid()))
+        Directory.CreateDirectory sdk |> ignore
+        try
+            File.WriteAllText (sdk </> "Microsoft.NETCoreSdk.BundledVersions.props", """<Project><ItemGroup>
+    <KnownFrameworkReference Include="Microsoft.NETCore.App"
+                              TargetFramework="net6.0"
+                              TargetingPackName="Microsoft.NETCore.App.Ref"
+                              TargetingPackVersion="6.0.36" />
+    <KnownFrameworkReference Include="Microsoft.AspNetCore.App"
+                              TargetFramework="net7.0"
+                              TargetingPackName="Microsoft.AspNetCore.App.Ref"
+                              TargetingPackVersion="7.0.99" />
+</ItemGroup></Project>""")
+            Assert.That(DotNetFwk.sdkImpl.knownTargetingPackVersion sdk "net6.0", Is.EqualTo (Some "6.0.36"))
+            Assert.That(DotNetFwk.sdkImpl.knownTargetingPackVersion sdk "net7.0", Is.EqualTo None)
+            Assert.That(DotNetFwk.sdkImpl.knownTargetingPackVersion sdk "net99.0", Is.EqualTo None)
+        finally
+            try Directory.Delete (sdk, true) with _ -> ()
+
+    // NETCORE_REF_VERSION: a list of pins, one per major.minor
+    [<Test>]
+    member x.``NETCORE_REF_VERSION list parsing``() =
+        let parse = DotNetFwk.sdkImpl.parseNetcoreRefVersions
+        Assert.That(parse None, Is.Empty)
+        Assert.That(parse (Some "  "), Is.Empty)
+        Assert.That(parse (Some "6.0.36;7.0.20"), Is.EqualTo ["6.0.36"; "7.0.20"])
+        Assert.That(parse (Some "6.0.36, 7.0.20 8.0.31"), Is.EqualTo ["6.0.36"; "7.0.20"; "8.0.31"])
+        let dup = Assert.Throws<exn>(fun () -> parse (Some "6.0.36;6.0.40") |> ignore)
+        Assert.That(dup.Message, Does.Contain "NETCORE_REF_VERSION")
+        Assert.That(dup.Message, Does.Contain "6.0.40")
+        let bad = Assert.Throws<exn>(fun () -> parse (Some "6.0.36;7.0") |> ignore)
+        Assert.That(bad.Message, Does.Contain "NETCORE_REF_VERSION")
+        Assert.That(bad.Message, Does.Contain "'7.0'")
+        let pins = parse (Some "6.0.36;8.0.31")
+        let pin m = DotNetFwk.sdkImpl.netcoreRefPin m pins
+        Assert.That(pin "net6.0", Is.EqualTo (Some "6.0.36"))
+        Assert.That(pin "net8.0", Is.EqualTo (Some "8.0.31"))
+        Assert.That(pin "net7.0", Is.EqualTo None)
+        Assert.That(pin "net10.0", Is.EqualTo None)
+
+    // pinned frameworks: references from the package folder at the pinned version, not <dotnet>/packs
+    [<Test; Category("Integration")>]
+    member x.``csc with NETCORE_REF_VERSION references the pinned NuGet packs``() =
+        File.WriteAllText ("pin.cs", "public static class P { public static void Main() { System.Console.WriteLine(\"Hello\"); } }")
+        let resolveWith fwk (vars: (string * string) list) =
+            let resolved = ref None
+            // a fresh database: the recipe must run, whatever an earlier run left behind
+            try File.Delete (sprintf "pinned/pin-%s.exe" fwk) with _ -> ()
+            try File.Delete x.TestOptions.DbFileName with _ -> ()
+            do xake {x.TestOptions with FileLog="csc-pinned.log"; ThrowOnError = true; Vars = vars} {
+                wantOverride (["pinned"])
+                rules [
+                    "pinned" => recipe {
+                        let! c = csc { targetfwk fwk; src !!"pin.cs"; out (File.make (sprintf "pinned/pin-%s.exe" fwk)); resolve }
+                        resolved.Value <- Some c
+                    }
+                ]
+            }
+            resolved.Value |> Option.get |> fun c -> c.Dependencies.References |> List.map (fun r -> r.Path.Replace('\\', '/'))
+        let nugetRoot = (DotNetFwk.nugetRoot ()).Replace('\\', '/')
+        let pins = ["NETCORE_REF_VERSION", "6.0.36;8.0.31"]
+        for fwk, version in ["net6.0", "6.0.36"; "net8.0", "8.0.31"] do
+            let refs = resolveWith fwk pins
+            let prefix = sprintf "%s/microsoft.netcore.app.ref/%s/" nugetRoot version
+            Assert.That(refs, Is.Not.Empty)
+            Assert.That(refs |> List.forall (fun r -> r.StartsWith prefix), Is.True, sprintf "%s: %A" fwk refs)
+            Assert.That(refs |> List.exists (fun r -> r.Contains "/packs/"), Is.False)
+        // without the variable the SDK's own framework comes from the installed pack
+        let sdkFwk = DotNetFwk.sdkFramework (Path.GetFullPath x.TestOptions.ProjectRoot) |> Option.get
+        let refs0 = resolveWith sdkFwk []
+        Assert.That(refs0 |> List.forall (fun r -> r.Contains "/packs/Microsoft.NETCore.App.Ref/"), Is.True, sprintf "%A" refs0)
+
     // `dotnet <out>.dll` needs `<out>.runtimeconfig.json`, which csc does not write: it is
     // written when the rule declares it as one of its targets, and only then
     member private x.CompileHw (dir: string) (targets: string list) (fwk: string option) =

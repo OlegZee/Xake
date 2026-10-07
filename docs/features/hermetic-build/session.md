@@ -1013,9 +1013,13 @@ Later the same day: `NUGET_RESTORE` renamed to **`NUGET_FETCH=on|off`** on the u
 rejected as a negative boolean keeping the misleading word). **#38 squash-merged to `dev`**
 (6c20185). Follow-up for hermetic 0.2.x: `norestore` after `lock` → `nofetch`,
 `Restore.Options.Enabled` reads `NUGET_FETCH`; `docs/hermetic/*`, `src/hermetic/Restore.fs`
-still say "restore off". **Next**: the user rebases #37 on `dev` (conflicts in
-`DotNetFwk.fs`, `DotnetTasksTests.fs`, `FscTests.fs`; `sdkImpl.packageDir` now takes the
-package folder, so #37's targeting-pack lookup must thread it); then `HERMETIC=on` code.
+still say "restore off". #37 rebuilt on `dev` as one commit (c43c12e: the package folder threaded through
+`netcoreRefDir`/`locateOrRestore`/`packageDir`; the pinned-packs test's two `File.Delete` split
+into separate `try`s — the first threw on a missing `pinned/` and the database was never
+cleared) and **merged by the user (4ef64e1)**. The review queue is empty.
+**Next**: `HERMETIC=on` code per `hermetic-mode.md` (after the user reads the note), then the
+hermetic 0.2.x follow-ups (`nofetch`, `Restore.Options.Enabled` on `NUGET_FETCH`, hermetic
+reading `DotNetFwk.packageRoot ()`), PR E (`build.fsc.fsx` on one imported lock), `hermetic-v0.2.0`.
 
 Open PRs to dev: #34 (hermetic 0.2 on Xake 3.5, F# in the lock), #35 (runtimeconfig only as a
 declared multi-file target, the user's model), #36 (book sample, superseded by #35), #37

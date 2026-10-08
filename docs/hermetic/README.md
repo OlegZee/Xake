@@ -4,6 +4,20 @@ Version **0.2.0, preview**: the API may break while the package is 0.x. 0.2 adds
 entry holds a C# or an F# compilation (`Lock.Compilation`), `fsc { lock }` gates an `fsc {}`
 block, and `Project.import` imports an fsproj like a csproj.
 
+Changes in 0.2 (breaking against 0.1 and the earlier 0.2 previews):
+
+- **`Entry.Prerequisites`**: a lock entry records what the environment must provide by itself,
+  today the .NET SDK at an exact version (`{ "Kind": "dotnet-sdk", "Version": "<v>", "Pin":
+  "$(ProjectRoot)/global.json" }`), written at record time when the entry depends on an SDK that
+  `global.json` pins exactly, and checked before every replay with a message naming what to
+  install. Written only when not empty, so existing locks stay byte-identical. Code that builds a
+  `Lock.Entry` record by hand adds `Prerequisites = []`. See
+  [lock.md](lock.md#prerequisites).
+- **`packageroot` removed** from `csc { lock }` / `fsc { lock }`: the package folder is the
+  build's one (`NUGET_PACKAGES`). `Restore.into` and `Lock.loadWith (Roots.packageRootOverride
+  dir)` stay for scripts that read a lock against another folder.
+- **`norestore` renamed `nofetch`**, after the base's `NUGET_FETCH`.
+
 `Xake.Hermetic.Dotnet` builds .NET assemblies and packages so that what shipped can be
 explained and checked: a **lock** file records exactly what the compiler was handed and the hash
 of everything it read, the build compiles from the lock and fails when anything differs, and the

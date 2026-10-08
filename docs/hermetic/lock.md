@@ -27,8 +27,11 @@ open Xake.Hermetic.Dotnet
 | Name | Kind | What it does |
 |---|---|---|
 | `Lock.Compilation = Csc of Csc \| Fsc of Fsc` | type | what the compiler is handed, C# or F#; `[<RequireQualifiedAccess>]`, so `Lock.Compilation.Csc c`. Members `Name`, `Framework`, `Directory`, `Options`, `Defines`, `Sources`, `Generated`, `Resources`, `Dependencies`, `Args`, `Output` |
-| `Lock.Entry = { Compilation; Evaluation; Packages }` | type | one project's compilation, where the answer came from, the restore graph. Members `Name`, `Framework`, `Dependencies`, `Args`, `Output` (the compilation's), and `Csc` / `Fsc`, which return that case and fail for the other |
+| `Lock.Entry = { Compilation; Evaluation; Packages; Prerequisites }` | type | one project's compilation, where the answer came from, the restore graph, what the environment must provide ([Prerequisites](#prerequisites)). Members `Name`, `Framework`, `Dependencies`, `Args`, `Output` (the compilation's), and `Csc` / `Fsc`, which return that case and fail for the other |
 | `Lock.Document = { Configuration; Properties; Entries }` | type | one lock file |
+| `Lock.Prerequisite = { Kind; Version; Pin }` | type | an input no restore fetches, checked before a replay; `Kind` is `Lock.DotnetSdk` (`"dotnet-sdk"`) today ([Prerequisites](#prerequisites)) |
+| `Lock.sdkPinAt dir` | pure (reads disk) | the `global.json` found from `dir` upwards and the `SdkPin` it states (`Project.sdkPin` is its second half) |
+| `Lock.sdkVersionsOf roots paths` / `prerequisitesFor roots pinFile pin versions` | pure | the SDK versions paths depend on (`$(DotnetRoot)/sdk/<v>/...`); the prerequisites under a pin, and the versions left without one |
 | `Project.import ImportOptions` | recipe | msbuild design-time build per project and framework, writes the lock ([below](#where-a-lockentry-comes-from)) |
 | `Lock.load` / `loadWith extraRoots` | recipe | read a lock, `needFiles` it, expand paths for this machine |
 | `Lock.save` / `saveWith extraRoots` | recipe | write a lock, tokenizing paths |
@@ -46,7 +49,7 @@ open Xake.Hermetic.Dotnet
 | `Lock.build path c` / `buildWith Lock.Options path c` | recipe | build a `Lock.Compilation` gated by the lock at `path`; a missing lock is recorded, or fails under CI |
 | `Lock.record path c` | recipe | hash `c` (a `Lock.Compilation`) and (over)write the lock at `path`, compile nothing |
 | `Lock.verify path c` | recipe | the diff between the lock at `path` and `c`, write and compile nothing; a missing lock fails |
-| `csc { ...; lock "path" }` | operation | `Lock.build` as an operation of a `csc {}` block; only `packageroot`/`norestore` may follow |
+| `csc { ...; lock "path" }` | operation | `Lock.build` as an operation of a `csc {}` block; only `nofetch` may follow |
 | `fsc { ...; lock "path" }` | operation | the same for an `fsc {}` block |
 
 `Lock.Options = { Run: RunOptions; FscRun: FscRunOptions; Restore: Restore.Options }` with
@@ -135,14 +138,82 @@ in 0.1). An F# entry:
   entry that lists one is refused when read.
 - `FSharp.Core` is an ordinary reference, hashed like any other.
 - The compiler is the SDK's own `fsc.dll`: no package carries a current F# compiler, so the only
-  way to fix it is to fix the SDK. Pin it (`global.json` with `rollForward: disable`); otherwise
-  a lock fails, naming the SDK, on every machine that does not have that SDK.
+  way to fix it is to fix the SDK. Pin it (`global.json` with `rollForward: disable`): the lock
+  then records the SDK as a prerequisite ([below](#prerequisites)), checked before every
+  replay. Without the pin the recording warns, and a lock fails, naming the SDK, on every
+  machine that does not have that SDK.
 
 `entry.Csc` and `entry.Fsc` return the record of their case and fail with `'<name>' is an F#
 entry; use entry.Compilation` (or the C# counterpart) for the other; code that handles both
 matches on `entry.Compilation` or uses the common members (`entry.Name`, `entry.Framework`,
 `entry.Dependencies`, `entry.Args`, `entry.Output`). `Lock.diff` reports a change of tool as
 `~ Compiler.Tool: csc -> fsc`. The SBOM names the compiler by its tool (`tool:csc`, `tool:fsc`).
+
+## Prerequisites
+
+A prerequisite is an input the environment must provide by itself: no restore step fetches it,
+and a replay checks it before doing any work, with a message that says what to install. There
+is one kind, the **.NET SDK at an exact version** (`"dotnet-sdk"`), covering the paths under
+`$(DotnetRoot)/sdk/<v>/` -- the SDK's `fsc.dll`, the compiler and analyzers of an imported
+project. Not `$(DotnetRoot)/packs/`.
+
+**Written always, at record time**, when the entry depends on the SDK: `Lock.record`, the first
+`Lock.build` / `csc { lock }` / `fsc { lock }` (the recording branch of `buildWith`), and
+`Project.import`. The signal is a tokenized path under `$(DotnetRoot)/sdk/<v>/`: the compiler
+for a composed entry, the compiler and the analyzers for an imported one. Then:
+
+- the `global.json` found from the project root upwards (for an import: from the project's
+  directory, `Evaluation.SdkPin`) pins exactly `<v>` (`"version": "<v>", "rollForward":
+  "disable"`): the entry gets `{ "Kind": "dotnet-sdk", "Version": "<v>", "Pin":
+  "$(ProjectRoot)/global.json" }`;
+- otherwise no prerequisite, and a warning:
+  `'<name>': depends on the .NET SDK <v> but global.json does not pin it exactly; the lock will
+  only build where that SDK is installed`.
+
+A composed csc with the toolset compiler (`toolset`, `CSC_TOOLSET`) names nothing under `sdk/`,
+so it has none. The same derivation runs on the resolved side of `buildWith` and `verify`, so a
+pin loosened (or tightened) after recording is a difference:
+`- Prerequisite dotnet-sdk 10.0.401 ($(ProjectRoot)/global.json)`.
+
+**On disk** a key under `Dependencies`, after `Packages`, written **only when the list is not
+empty**: every lock without one, including every lock written before the key existed, is
+byte-identical to what 0.1 and 0.2 previews wrote. Read back when present.
+
+```json
+"Dependencies": {
+  "Compiler": { "Tool": "fsc", "Path": "$(DotnetRoot)/sdk/10.0.401/FSharp/fsc.dll", ... },
+  "References": [ ... ],
+  "Analyzers": [ ],
+  "Packages": [ ... ],
+  "Prerequisites": [
+    { "Kind": "dotnet-sdk", "Version": "10.0.401", "Pin": "$(ProjectRoot)/global.json" }
+  ]
+}
+```
+
+`Pin` is kept tokenized in memory too: it says where the requirement comes from and is never
+opened by a replay. `Lock.mapText` applies to it; `mapPaths` and `rehash` leave it alone.
+`Lock.diff` reports `+`/`-` by kind and version and `~` for a moved pin.
+
+**Checked before a replay** (`Lock.compileWith`, step 0 below): an entry with a `dotnet-sdk`
+prerequisite whose `<DotnetRoot>/sdk/<v>` folder does not exist fails before anything is
+restored:
+
+```
+'<name>': the lock needs the .NET SDK <v> (prerequisite from $(ProjectRoot)/global.json), which
+is not installed under '<root>'; install it (dotnet-install --version <v> --install-dir <root>)
+```
+
+`HERMETIC=on` (design note `hermetic-mode.md`) builds on this: under it a lock may name nothing
+outside `$(ProjectRoot)` and `$(NuGetPackageRoot)` that a prerequisite does not cover. That gate
+reads the base's `HERMETIC` variable and arrives once this package builds on Xake 3.6; this
+release writes and checks the prerequisites only.
+
+Tests: `LockDiffTests.fs` (`Lock prerequisites`: the key written only when not empty and the
+golden lock unchanged, the round trip, `diff`, `mapText`/`mapPaths`/`rehash`, the derivation)
+and `FscLockTests.fs` (an exact pin records the prerequisite, the replay compiles, a loosened
+pin is a difference; no pin, no prerequisite and the warning; a missing SDK fails the replay
+with the install message).
 
 ## The compiler a lock names
 
@@ -203,6 +274,9 @@ record `Csc`); the 3.3 function `Csc settings` no longer exists, `Csc.compile se
 
 `Lock.compileWith` does, before handing the entry to `Csc.run` or `Fsc.run` (`Lock.fs`):
 
+0. **Checks the prerequisites** ([Prerequisites](#prerequisites)): a `dotnet-sdk <v>` whose SDK
+   is not installed under the .NET root fails here, naming the version, the pin and the
+   `dotnet-install` command, before any restore.
 1. **Restores what the lock names and this machine lacks** (`Restore.ensure options.Restore
    (Lock.restoreRequest [entry])`, see [restore.md](restore.md)): the compiler when it lives in a
    `Microsoft.Net.Compilers.Toolset`-shaped package, and every reference and analyzer under the
@@ -550,12 +624,16 @@ is not inside a repository.
 (version, policy)` (any other policy, or the absent-policy default `latestPatch`), or `NoVersion
 file` (a `global.json` with no `sdk.version`). `import` computes it per project before calling
 `parseImport`, which records it typed in `Evaluation.SdkPin` (written as `Lock.sdkPinText`, read
-back with `Lock.parseSdkPin`), next to `Evaluation.Sdk`. When the pin is anything but `Pinned`,
-`import` warns once per project: `"'<name>': the SDK is not pinned (<pin>) -- the lock's
-compiler (<version>, SDK <sdk>) will drift with every SDK the machine picks; pin it with
-global.json { sdk: { version, rollForward: "disable" } }"`. When it is `Pinned v` but msbuild's
-`NETCoreSdkVersion` differs from `v` -- the pinned SDK is not installed and a different one ran
--- it warns separately with both versions named.
+back with `Lock.parseSdkPin`), next to `Evaluation.Sdk`. An entry whose compiler or analyzers lie
+under `$(DotnetRoot)/sdk/<v>/` gets the `dotnet-sdk <v>` prerequisite when the pin is exactly
+`v`, and otherwise the warning `'<name>': depends on the .NET SDK <v> but global.json does not
+pin it exactly; the lock will only build where that SDK is installed`
+([Prerequisites](#prerequisites)). An unpinned project whose entry names nothing under the SDK
+(a `Microsoft.Net.Compilers.Toolset` project) still gets the older warning `"'<name>': the SDK is
+not pinned (<pin>) -- the lock's compiler (<version>, SDK <sdk>) will drift with every SDK the
+machine picks; pin it with global.json { sdk: { version, rollForward: "disable" } }"`. When the
+pin is `Pinned v` but msbuild's `NETCoreSdkVersion` differs from `v` -- the pinned SDK is not
+installed and a different one ran -- it warns separately with both versions named.
 
 The project-reference pattern, from `import.fsx`:
 
@@ -674,7 +752,7 @@ open Xake.Hermetic.Dotnet
 `lock "<path>"` is the migration path for an existing script: a tuned `csc { }` block
 stays where it is and gains a lock. It is a custom operation defined next to the lock, not in the
 base builder (`CscLockBuilder` in `Lock.fs`, an extension of `CscSettingsBuilder` with its own
-`Run`). Only `packageroot` and `norestore` may follow it (below); the block then means
+`Run`). Only `nofetch` may follow it (below); the block then means
 `Csc.ofSettings`, `Csc.runOptions`, `Lock.buildWith`. The same thing without the sugar is
 `Lock.build "locks/app.json" (Lock.Compilation.Csc c)` on a `Csc` from `resolve`. The path is
 relative to the project root, like every other target path, or absolute. There is no `Lock`
@@ -714,7 +792,8 @@ On a developer machine:
 On CI:
 
 4. **The committed lock is compiled.** The settings match it; the packages it names are restored
-   (into `packageroot` when given, below) and the recorded entry is compiled, its hashes checked.
+   (into the build's package folder, `NUGET_PACKAGES`) and the recorded entry is compiled, its
+   hashes checked.
 5. **Drift fails the build**, with the same message as step 3: CI never updates a lock.
 6. **A missing lock fails the build**, before anything is recorded or compiled:
 
@@ -776,11 +855,11 @@ reruns the target.
 that must record on CI opts out with `-d CI=off`. The flag only says whether an *absent* lock may
 be written; a present lock is only ever rewritten by `Lock.record` or by deleting it.
 
-### Restore options: `packageroot`, `norestore`
+### Fetching: `nofetch`
 
-`csc { lock }` compiles through `Lock.buildWith`, whose restore step needs to know where the
-lock's packages live and whether a missing one may be downloaded (`Restore.Options`,
-[restore.md](restore.md)). Two operations set that, and they come **after** `lock`:
+`csc { lock }` compiles through `Lock.buildWith`, whose restore step needs to know whether a
+package the lock names but the package folder lacks may be downloaded (`Restore.Options`,
+[restore.md](restore.md)). One operation sets that, and it comes **after** `lock`:
 
 ```fsharp
 "out/app.dll" ..> csc {
@@ -789,26 +868,28 @@ lock's packages live and whether a missing one may be downloaded (`Restore.Optio
     targetfwk "net-4.6.2"
     out (File.make "out/app.dll")
     lock "locks/app.json"
-    packageroot ".packages"     // Restore.into ".packages": a folder of the build's own
-    norestore                   // Restore.Options.Enabled = false: never download
+    nofetch                     // Restore.Options.Enabled = false: never download
 }
 ```
 
 | Operation | Effect |
 |---|---|
-| `packageroot "<dir>"` | the package folder, relative to the project root or absolute (`Restore.into`); default the machine cache |
-| `norestore` | a package the folder lacks is not downloaded: a warning (`automatic restore is off`), then the hash check fails naming every missing file, before anything is compiled |
+| `nofetch` | a package the folder lacks is not downloaded: a warning (`fetching is off (nofetch / NUGET_FETCH=off)`), then the hash check fails naming every missing file, before anything is compiled |
 
-Why after: `lock` turns the block's state from `CscSettingsType` into `CscLocked` (path,
-settings, package root, restore flag), and these two are operations on that state. Putting them
-before `lock` would need fields on `CscSettingsType`, which knows nothing about restore.
+It was called `norestore` before 0.2; renamed with the base's `NUGET_FETCH` variable, of which it
+is the per-target form. Why after `lock`: `lock` turns the block's state from `CscSettingsType`
+into `CscLocked` (path, settings, fetch flag), and `nofetch` is an operation on that state.
 
-With a package root, `buildWith` compares and writes the lock with the build's ordinary roots
-(so the lock file and the drift check do not depend on the folder) and re-roots the entry it
-compiles at the folder, in memory: the entry is written with the ordinary roots and read back
-with `Roots.packageRootOverride` (`Lock.format`, then `Lock.parse`), so `$(NuGetPackageRoot)/...`
-names files in `.packages/`, which the restore fills. The same holds for `Lock.buildWith` called
-with `Restore = { ... PackageRoot = Some dir }`.
+**The package folder is the build's** (`NUGET_PACKAGES`, else `~/.nuget/packages`); there is no
+per-target folder. `packageroot "<dir>"` after `lock` was removed in 0.2 (decided 2026-10-09: one
+package folder per build, and a per-target one makes no sense under `HERMETIC=on`). A script
+that reads a lock against another folder still can, outside the builder: `Restore.into dir`,
+`Lock.loadWith (Roots.packageRootOverride dir)`, and `Lock.buildWith` with `Restore = { ...
+PackageRoot = Some dir }`, which compares and writes the lock with the build's ordinary roots and
+re-roots the entry it compiles at the folder, in memory (`Lock.format`, then `Lock.parse` with
+`Roots.packageRootOverride`). In 0.2.x, on Xake 3.6, the default folder becomes the base's
+`DotNetFwk.packageRoot ()` (the `NUGET_PACKAGES` script variable) and the default of
+`Restore.Options.Enabled` its `fetchEnabled ()`.
 
 **The lock file is not a target of the engine on this path.** It is written from inside the
 compile recipe, which is what lets the `csc { }` block stay in place; the engine neither
@@ -822,7 +903,7 @@ read-modify-write the same file and is an authoring error, not something the lib
 the compile and `Lock.record`/`Lock.verify` -- define the block once as a recipe and use its
 result. (Path B of §9, a second builder `cscSettings { ... }`, is not needed any more.)
 
-Tests: `src/hermetic.tests/CscLockTests.fs` (18, all Integration) -- first build records and compiles,
+Tests: `src/hermetic.tests/CscLockTests.fs` (18, all Integration but the `nofetch` one) -- first build records and compiles,
 second build leaves the lock byte-identical, an added source fails with the diff, `Lock.record`
 overwrites and the next build passes, a reference tampered after recording fails the hash check,
 and `Lock.verify` reports the difference without writing or compiling; under CI (script
@@ -830,9 +911,9 @@ variable) a missing lock fails with the message above and nothing is recorded or
 `FailOnError = false` does not help, the environment variable `CI=true` fails it through
 `csc { lock }`, `-d CI=off` with `CI=true` in the environment records, not under CI records,
 drift under CI fails as before, an unrecognized `CI` value fails; drift messages and `verify`
-lines carry `$(ProjectRoot)`, not the absolute root; `verify` on a missing lock; `norestore`
-with an empty package folder fails before compiling; `packageroot` restores into a throwaway
-folder and compiles. The tests that record set the script variable `CI=off`, so the suite also
+lines carry `$(ProjectRoot)`, not the absolute root; `verify` on a missing lock; `nofetch` turns
+fetching off for csc and fsc, and with fetching off an empty package folder fails before
+compiling. The tests that record set the script variable `CI=off`, so the suite also
 passes with `CI=true` in the environment.
 
 ## Behaviour notes

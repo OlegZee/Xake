@@ -37,8 +37,9 @@ module Lock =
 
 and, around it:
 
-- `Lock.Options = { Run: RunOptions; Restore: Restore.Options }`, so `Lock.compileWith` carries
-  the folder and the policy into the replay (`Restore.ensure` runs before `Csc.run`, which
+- `Lock.Options = { Run: RunOptions; FscRun: FscRunOptions; Restore: Restore.Options }`, so
+  `Lock.compileWith` carries the folder and the policy into the replay (`Restore.ensure` runs
+  before `Csc.run` or `Fsc.run`, which
   restores nothing itself; `RunOptions` has no restore field). `Lock.Options.Default` is
   today's behaviour exactly.
 - `Roots.nugetPackageRootToken`, `Roots.packageRootOverride dir` -- the extra-root list that

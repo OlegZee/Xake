@@ -88,8 +88,8 @@ Windows registry is consulted.
   current directory.
 - **Reference assemblies** come from the `Microsoft.NETFramework.ReferenceAssemblies.<moniker>`
   NuGet package at an exact version, `1.0.3` unless the script variable
-  `NETFX_REFERENCE_ASSEMBLIES_VERSION` says otherwise, read out of the package cache
-  (`NUGET_PACKAGES`, or `~/.nuget/packages`) at
+  `NETFX_REFERENCE_ASSEMBLIES_VERSION` says otherwise, read out of the build's package
+  folder ([Where packages go](#where-packages-go)) at
   `<pkg>/<version>/build/.NETFramework/<version>`. `AssemblyDirs` is that directory plus its
   `Facades` subdirectory. Another version present in the cache is not used.
 - **First-run restore**: when the package is not in the cache, the tasks
@@ -108,14 +108,43 @@ Windows registry is consulted.
   entire `AssemblyDirs`. The `fsc` task recognizes the profile and adds `--targetprofile:netstandard`
   and `-r:netstandard.dll` (instead of `mscorlib.dll`) on top of `--noframework`. `csc` has no
   netstandard support.
-- **.NET** (`net5.0` and later: `net8.0`, `net10.0`; also spelled `sdk-net10.0`) is resolved
-  against the targeting pack that comes with the SDK,
-  `<dotnet>/packs/Microsoft.NETCore.App.Ref/<ver>/ref/<moniker>`, never downloaded. For the
-  SDK's own framework `<ver>` is exactly the pack the SDK bundles, as its
-  `Microsoft.NETCoreSdk.BundledVersions.props` says (`BundledNETCoreAppTargetFrameworkVersion`
-  10.0 and `BundledNETCoreAppPackageVersion` 10.0.12 for SDK 10.0.401); for another .NET it is
-  the newest `<major>.<minor>.*` pack present, which an installed SDK of that major brought
-  along. A missing pack fails naming the folder looked in. `csc` and `fsc` reference every
+- **.NET** (`net5.0` and later: `net6.0`, `net8.0`, `net10.0`; also spelled `sdk-net10.0`) is
+  resolved against the targeting pack `Microsoft.NETCore.App.Ref`
+  (`DotNetFwk.sdkImpl.netcoreRefSource`):
+  1. **A `NETCORE_REF_VERSION` entry for the framework's major.minor**: always the NuGet package
+     `Microsoft.NETCore.App.Ref` at exactly that version, restored by `DotNetFwk.restorePackage`
+     like the other reference packs (synthesized project under the project root, the repository's
+     `nuget.config`, exact version) and read from
+     `<pkg cache>/microsoft.netcore.app.ref/<ver>/ref/<moniker>`. An installed pack under
+     `<dotnet>/packs` is never used then, not even one of that very version.
+  2. **Else (no entry) the installed pack**:
+     `<dotnet>/packs/Microsoft.NETCore.App.Ref/<ver>/ref/<moniker>` at the SDK's version (the
+     `TargetingPackVersion` of the `KnownFrameworkReference` with `Include="Microsoft.NETCore.App"`,
+     `TargetFramework="<moniker>"` in the probed SDK's
+     `Microsoft.NETCoreSdk.BundledVersions.props`: 10.0.12 for net10.0 and 6.0.36 for net6.0 on SDK
+     10.0.401), else the newest installed pack of that major.minor (one an installed SDK of that
+     major brought along), so a machine that has a pack downloads nothing.
+  3. **Else the NuGet package** at the SDK's version, restored as in 1.
+  4. **A framework the SDK does not know** (one newer than the SDK, e.g. `net99.0`) has no
+     version to restore and fails: `the SDK <v> does not know target framework 'net99.0' ...;
+     use an SDK that supports it`. A pin makes such a framework usable.
+
+  `NETCORE_REF_VERSION` is a script variable read through `getVar`: a list of versions separated
+  by `;`, `,` or whitespace, e.g. `var "NETCORE_REF_VERSION" "6.0.36;7.0.20"`. Each entry pins
+  the pack of the framework with the same major.minor (`6.0.36` pins `net6.0`); a framework
+  without an entry follows rule 2. Two entries for one major.minor, or an entry that is not a
+  3-part version, fail with a message naming `NETCORE_REF_VERSION` and the entry. Changing it
+  reruns the compile. Under the planned `HERMETIC` mode (not implemented yet) every `netN.0`
+  target used must have an entry.
+
+  **Locks.** Without a pin the lock depends on where the pack came from: an installed pack is
+  under the SDK (`$(DotnetRoot)/packs/Microsoft.NETCore.App.Ref/<ver>/...`), a restored one under
+  the package cache (`$(NuGetPackageRoot)/microsoft.netcore.app.ref/<ver>/...`), so the same
+  script can lock different paths on different machines. A pinned framework's references are
+  always `$(NuGetPackageRoot)/microsoft.netcore.app.ref/<ver>/ref/<moniker>/...`, on every machine
+  whatever SDKs it has installed -- a lock the restore step can always fetch.
+
+  `csc` and `fsc` reference every
   `*.dll` of that directory (`DotNetFwk.frameworkReferences`), as the SDK does; `fsc` adds
   `--targetprofile:netcore` and, unless a `ref` names an `FSharp.Core.dll`, the SDK's own
   `<sdk>/FSharp/FSharp.Core.dll` (for netstandard and .NET Framework it is the `FSharp.Core`
@@ -129,7 +158,8 @@ Windows registry is consulted.
 Accepted framework names — anything that normalizes to one of the known monikers
 `net20 net35 net40 net45 net451 net452 net46 net461 net462 net47 net471 net472 net48`, plus
 `netstandard2.0` and `netstandard2.1` and the .NET monikers `net<major>.<minor>` from `net5.0`
-on (these three kinds accept no abbreviations beyond an `sdk-` prefix).
+on, as far as the probed SDK knows them (these three kinds accept no abbreviations beyond an
+`sdk-` prefix).
 Normalization lowercases and strips `sdk-`, `net-`, `net`, `-full`, dots and dashes, so all of
 these mean `net462`: `net-4.6.2`, `4.6.2`, `net462`, `sdk-net462`. Likewise `4.5-full`, `4.5`
 and `net-4.5` all mean `net45`.
@@ -227,6 +257,9 @@ SDK 10.0.x), and fail asking for one only when that cannot be determined.
 | `NETFX` | Framework whose **tools** are used, overriding whatever is being targeted. Also the only framework selector the `msbuild` task reads. |
 | `FSCVER` | F# compiler version `fsc` asks for, when not set per task via `fscver`; read only by the Windows registry provider. |
 | `FSHARP_CORE_VERSION` | Version of the `FSharp.Core` package `fsc` references for netstandard and .NET Framework when no `ref` names an `FSharp.Core.dll` (default 8.0.100). |
+| `NUGET_PACKAGES` | The build's package folder (relative to the project root, or absolute), overriding the environment variable; see [Where packages go](#where-packages-go). |
+| `NUGET_FETCH` | `off` stops Xake from downloading anything into the package folder; a missing package then fails the compile. Default `on`. |
+| `NETCORE_REF_VERSION` | Pins of the `Microsoft.NETCore.App.Ref` targeting pack, one per major.minor (`6.0.36;7.0.20`): a pinned `netN.0` framework always takes the NuGet package at that version, never an installed pack; see [the SDK provider](#1-sdkimpl--net-sdk-compilers-over-nuget-reference-assemblies-default). |
 
 Precedence inside a task: `targetfwk` → `NETFX-TARGET` → the SDK's own .NET framework. The toolchain is then
 `NETFX` if set, otherwise the resolved target framework, otherwise the default probe order.
@@ -239,7 +272,36 @@ dotnet fsi build.fsx -- -- build -d NETFX:mono-4.5
 ### Relevant environment variables
 
 `DOTNET_HOST_PATH`, `DOTNET_ROOT` — where the SDK is looked for.
-`NUGET_PACKAGES` — where reference-assembly packages are read from and restored to.
+`NUGET_PACKAGES` — where reference-assembly packages are read from and restored to, unless the
+script variable of the same name says otherwise.
+
+### Where packages go
+
+The packages Xake restores or reads itself -- reference packs, the `toolset` compiler, `fsc`'s
+default `FSharp.Core` -- live in one folder, `DotNetFwk.packageRoot ()` inside a recipe:
+
+1. the script variable `NUGET_PACKAGES` (relative to the project root, or absolute), read and
+   recorded as a dependency by every compile that resolves a framework;
+2. else the environment variable `NUGET_PACKAGES`;
+3. else `~/.nuget/packages`.
+
+`DotNetFwk.restorePackage None` and `downloadPackages None` use that folder and pass it to the
+child `dotnet restore` as the environment variable `NUGET_PACKAGES`; `Some dir` names a folder
+explicitly (what `packageroot` after `lock` does in Xake.Hermetic.Dotnet, per target).
+`resolveFramework` reads its reference packs from it and memoizes per folder. The functions with
+no build context -- `DotNetFwk.nugetRoot`, `normalizedPackageRoot None`, `locateFramework`,
+`locateFrameworkIn`, `locateFrameworkWith` -- see only the environment.
+
+**Turning fetching off.** The script variable `NUGET_FETCH=off` (`-d NUGET_FETCH:off`, e.g.
+on CI with a warm cache) stops every download into the package folder: `restorePackage` and
+`downloadPackages` start no `dotnet restore`, and a package that is not there fails the build
+before the compiler runs, naming the package id and version and saying fetching is off. Values
+`off`, `false`, `no`, `0` turn it off; anything else, or unset, leaves it on.
+`DotNetFwk.fetchEnabled ()` is the decision as a recipe (what `Restore.Options.Enabled` of
+Xake.Hermetic.Dotnet is to default to); `norestore` after `lock` is the per-target form.
+
+`#r "nuget: ..."` in the build script is restored by `dotnet fsi` before Xake runs; only the
+environment variable reaches it.
 
 ## Support matrix
 

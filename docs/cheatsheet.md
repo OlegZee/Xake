@@ -90,6 +90,8 @@ open Xake.Dotnet
 // by default the SDK's own .NET (net10.0 on SDK 10.0.x)
 "hello.exe" ..> csc { targetfwk "net-4.6.2"; src !!"hello.cs"; grefs ["System.dll"] }
 "app.dll"   ..> fsc { src !!"src/*.fs" }
+// an app `dotnet hw.dll` runs: declare the runtimeconfig as a target too
+["hw.dll"; "hw.runtimeconfig.json"] *..> csc { src !!"hw.cs" }
 "build"      => msbuild { buildfile "a.sln"; target "Rebuild"; prop ("Configuration","Release") }
 "res"        => resgen { resources (resourceset { prefix "App"; files !!"**/*.resx" }) }
 ```

@@ -5,12 +5,14 @@ is handed (the command line, generated inputs, resx pairs) and the SHA-256 of ev
 reads that is not in the repository: the compiler, references, analyzers, the msbuild files
 that produced the answer, and the package graph. `Lock.build` and `Lock.compile` then compile
 *from* the lock and fail when anything differs. This page is the reference for the file
-format, the `Lock` module, `Project.import` and the `csc { ...; lock "path" }` operation.
+format, the `Lock` module, `Project.import` (csproj and fsproj) and the `csc { ...; lock "path" }`
+and `fsc { ...; lock "path" }` operations. A lock entry holds a C# or an F# compilation
+([F# entries](#f-entries)).
 
 Everything here is in the package `Xake.Hermetic.Dotnet` (`src/hermetic/`: `Lock.fs`,
-`Project.fs`, `Roots.fs`, `Git.fs`, `Fsproj.fs`, `Json.fs`); the compilation a lock entry wraps,
-`Csc`, and the runner `Csc.run` belong to `Xake.Dotnet` (inside the `Xake` package) and are
-described in [../csc-syntax.md](../csc-syntax.md). Scripts open both:
+`Project.fs`, `Roots.fs`, `Git.fs`, `Json.fs`); the compilations a lock entry wraps, `Csc` and
+`Fsc`, and their runners `Csc.run` and `Fsc.run` belong to `Xake.Dotnet` (inside the `Xake`
+package, 3.5 or later) and are described in [../csc-syntax.md](../csc-syntax.md). Scripts open both:
 
 ```fsharp
 #r "nuget: Xake.Hermetic.Dotnet"
@@ -24,14 +26,15 @@ open Xake.Hermetic.Dotnet
 
 | Name | Kind | What it does |
 |---|---|---|
-| `Lock.Entry = { Csc; Evaluation; Packages }` | type | one project's compilation: the `Csc` the compiler is handed, where the answer came from, the restore graph |
+| `Lock.Compilation = Csc of Csc \| Fsc of Fsc` | type | what the compiler is handed, C# or F#; `[<RequireQualifiedAccess>]`, so `Lock.Compilation.Csc c`. Members `Name`, `Framework`, `Directory`, `Options`, `Defines`, `Sources`, `Generated`, `Resources`, `Dependencies`, `Args`, `Output` |
+| `Lock.Entry = { Compilation; Evaluation; Packages }` | type | one project's compilation, where the answer came from, the restore graph. Members `Name`, `Framework`, `Dependencies`, `Args`, `Output` (the compilation's), and `Csc` / `Fsc`, which return that case and fail for the other |
 | `Lock.Document = { Configuration; Properties; Entries }` | type | one lock file |
 | `Project.import ImportOptions` | recipe | msbuild design-time build per project and framework, writes the lock ([below](#where-a-lockentry-comes-from)) |
 | `Lock.load` / `loadWith extraRoots` | recipe | read a lock, `needFiles` it, expand paths for this machine |
 | `Lock.save` / `saveWith extraRoots` | recipe | write a lock, tokenizing paths |
 | `Lock.format roots doc` / `parse roots text` / `read roots path` | pure | the file format, with the roots passed explicitly |
 | `Lock.entry name doc` / `entryFor framework name doc` | pure | look an entry up (`entryFor` is the unambiguous one) |
-| `Lock.ofCsc c` | pure | a composed `Csc` as an entry: empty `Evaluation`, no packages |
+| `Lock.ofCompilation c` / `ofCsc c` / `ofFsc f` | pure | a composed compilation as an entry: empty `Evaluation`, no packages |
 | `Lock.rehash entry` | pure (reads disk) | fill every empty `Sha256` from what is on disk now |
 | `Lock.diff a b` | pure | the differences between two entries, `[]` = identical |
 | `Lock.diffText roots a b` | pure | `diff` with every path tokenized against `roots`, as `buildWith`/`verify` print it |
@@ -39,13 +42,16 @@ open Xake.Hermetic.Dotnet
 | `Lock.mapPaths f entry` / `mapText f entry` | pure | rewrite paths / text of an entry |
 | `Lock.packagesOf cacheRoot assets` | pure | the package graph of an entry from a `Nuget.Assets` |
 | `Lock.restoreRequest entries` / `Lock.restore options doc` | pure / recipe | what a restore must provide for entries; populate the package folder from a whole lock ([restore.md](restore.md)) |
-| `Lock.compile entry` / `compileWith Lock.Options entry` | recipe | replay an entry: restore, compiler check, revision token, then `Csc.run` |
-| `Lock.build path c` / `buildWith Lock.Options path c` | recipe | build a `Csc` gated by the lock at `path`; a missing lock is recorded, or fails under CI |
-| `Lock.record path c` | recipe | hash `c` and (over)write the lock at `path`, compile nothing |
+| `Lock.compile entry` / `compileWith Lock.Options entry` | recipe | replay an entry: restore, compiler check, revision token, then `Csc.run` or `Fsc.run` |
+| `Lock.build path c` / `buildWith Lock.Options path c` | recipe | build a `Lock.Compilation` gated by the lock at `path`; a missing lock is recorded, or fails under CI |
+| `Lock.record path c` | recipe | hash `c` (a `Lock.Compilation`) and (over)write the lock at `path`, compile nothing |
 | `Lock.verify path c` | recipe | the diff between the lock at `path` and `c`, write and compile nothing; a missing lock fails |
 | `csc { ...; lock "path" }` | operation | `Lock.build` as an operation of a `csc {}` block; only `packageroot`/`norestore` may follow |
+| `fsc { ...; lock "path" }` | operation | the same for an `fsc {}` block |
 
-`Lock.Options = { Run: RunOptions; Restore: Restore.Options }` with `Lock.Options.Default`.
+`Lock.Options = { Run: RunOptions; FscRun: FscRunOptions; Restore: Restore.Options }` with
+`Lock.Options.Default`. `Run` is read for a C# entry and `FscRun` for an F# one; each runner has
+its own options type (fsc has no compiler server), and neither is derived from the other.
 
 The two routes to a lock, and both end in the same functions:
 
@@ -64,9 +70,79 @@ open Xake.Hermetic.Dotnet
 // 2. the same thing without the sugar: resolve, then Lock.build
 "out/app.dll" ..> recipe {
     let! c = csc { src !!"src/*.cs"; targetfwk "net-4.6.2"; grefs ["System.dll"]; out (File.make "out/app.dll"); resolve }
-    do! Lock.build "locks/app.json" c        // gate against the lock, restore, revision, Csc.run
+    do! Lock.build "locks/app.json" (Lock.Compilation.Csc c)   // gate, restore, revision, Csc.run
+}
+
+// 3. an F# library, the same way
+"out/lib.dll" ..> fsc {
+    targetfwk "net8.0"
+    src !!"src/Lib.fs"
+    lock "locks/lib.json"
 }
 ```
+
+## F# entries
+
+An entry holds `Lock.Compilation.Csc c` or `Lock.Compilation.Fsc f`. The two records have the
+same fields with the same meaning (`Name`, `Framework`, `Directory`, `Options`, `Defines`,
+`Sources`, `Generated`, `Resources`, `Dependencies`); they differ in the argument dialect
+(`CscArgs` and `FscArgs`) and the runner (`Csc.run` with `RunOptions`, `Fsc.run` with
+`FscRunOptions`). So the file has one shape for both, and the case is the compiler's
+`Dependencies.Compiler.Tool`: `"fsc"` reads back as `Fsc`, anything else as `Csc` (every lock
+written before 0.2 says `"csc"`, and reads as before; a C# entry is written byte for byte as
+in 0.1). An F# entry:
+
+```json
+"Compilation": {
+  "Directory": "$(ProjectRoot)/App",
+  "Options": [
+    "-o:$(ProjectRoot)/App/obj/xake/net10.0/App.dll",
+    "--debug:portable",
+    "--noframework",
+    "@Defines",
+    "--doc:$(ProjectRoot)/App/obj/xake/net10.0/App.xml",
+    "--optimize+",
+    "@References",
+    "--target:library",
+    "--targetprofile:netcore",
+    "--nocopyfsharpcore",
+    "--deterministic+",
+    "--simpleresolution",
+    "@Sources"
+  ],
+  "Defines": [ "TRACE", "RELEASE", "NET", ... ],
+  "Sources": [ "$(ProjectRoot)/App/obj/xake/net10.0/App.AssemblyInfo.fs", ..., "$(ProjectRoot)/App/Program.fs" ],
+  "Generated": { ... }, "Resources": { }
+},
+"Dependencies": {
+  "Compiler": { "Tool": "fsc", "Path": "$(DotnetRoot)/sdk/10.0.401/FSharp/fsc.dll", "Sha256": "...", "Version": "15.2.401-servicing.26423.113" },
+  "References": [
+    { "Path": "$(NuGetPackageRoot)/fsharp.core/.../lib/netstandard2.1/FSharp.Core.dll", "Sha256": "..." },
+    ...
+  ],
+  "Analyzers": [
+
+  ],
+  "Packages": [ ... ]
+}
+```
+
+- `Options` are fsc's own spelling (`-o:`, `--optimize+`), exactly as msbuild or `Fsc.ofSettings`
+  gave them; the markers are `@Sources`, `@References` (one `-r:path` per reference) and
+  `@Defines` (one `--define:X` per symbol). There is no `@Analyzers`: fsc has no analyzers.
+- `Sources` are in compile order, which for F# is semantic.
+- `Analyzers` is always written, empty, exactly as for a C# entry without analyzers; an F#
+  entry that lists one is refused when read.
+- `FSharp.Core` is an ordinary reference, hashed like any other.
+- The compiler is the SDK's own `fsc.dll`: no package carries a current F# compiler, so the only
+  way to fix it is to fix the SDK. Pin it (`global.json` with `rollForward: disable`); otherwise
+  a lock fails, naming the SDK, on every machine that does not have that SDK.
+
+`entry.Csc` and `entry.Fsc` return the record of their case and fail with `'<name>' is an F#
+entry; use entry.Compilation` (or the C# counterpart) for the other; code that handles both
+matches on `entry.Compilation` or uses the common members (`entry.Name`, `entry.Framework`,
+`entry.Dependencies`, `entry.Args`, `entry.Output`). `Lock.diff` reports a change of tool as
+`~ Compiler.Tool: csc -> fsc`. The SBOM names the compiler by its tool (`tool:csc`, `tool:fsc`).
 
 ## The compiler a lock names
 
@@ -103,6 +179,7 @@ open Xake.Hermetic.Dotnet
 do! Lock.compile entry                              // entry : Lock.Entry
 do! Lock.compileWith { Lock.Options.Default with Run = { RunOptions.Default with FailOnError = false } } entry
 do! Csc.run RunOptions.Default entry.Csc            // the runner alone: no restore, no revision token
+do! Fsc.run FscRunOptions.Default entry.Fsc         // the same for an F# entry
 ```
 
 `Lock.compile` hands a lock entry's `Csc` to the runner after the two hermetic steps that must
@@ -115,14 +192,16 @@ compiles (`Server` is whether csc runs as a thin client of the Roslyn compiler s
 [../csc-server.md](../csc-server.md); `Environment` is the compiler process's env vars). `Csc.compile`
 builds one with `Csc.runOptions settings` (the settings' `FailOnError`/`CscPath`, the server
 resolved through `CompilerServer.resolve`, the target framework's `EnvVars`).
-`Lock.compileWith` takes a `Lock.Options = { Run: RunOptions; Restore: Restore.Options }`;
-`Lock.compile` uses `Lock.Options.Default` with the server resolved (`CSC_SERVER`, then
-`XAKE_CSC_SERVER`). Signatures: `Csc.run : RunOptions -> Csc -> Recipe<ExecContext, unit>`,
+`Lock.compileWith` takes a `Lock.Options = { Run: RunOptions; FscRun: FscRunOptions; Restore:
+Restore.Options }` and hands a C# entry to `Csc.run options.Run`, an F# entry to `Fsc.run
+options.FscRun` (`FscRunOptions = { FailOnError; FscPath; Environment }`); the failures of the
+steps below follow the `FailOnError` of the entry's own runner options. `Lock.compile` uses
+`Lock.Options.Default` with the csc server resolved (`CSC_SERVER`, then `XAKE_CSC_SERVER`). Signatures: `Csc.run : RunOptions -> Csc -> Recipe<ExecContext, unit>`,
 `Lock.compile : Lock.Entry -> Recipe<ExecContext, unit>`, `Lock.compileWith : Lock.Options ->
 Lock.Entry -> Recipe<ExecContext, unit>`. The module is `Csc` (`[<ModuleSuffix>]` next to the
 record `Csc`); the 3.3 function `Csc settings` no longer exists, `Csc.compile settings` replaces it.
 
-`Lock.compileWith` does, before handing the entry to `Csc.run` (`Lock.fs`):
+`Lock.compileWith` does, before handing the entry to `Csc.run` or `Fsc.run` (`Lock.fs`):
 
 1. **Restores what the lock names and this machine lacks** (`Restore.ensure options.Restore
    (Lock.restoreRequest [entry])`, see [restore.md](restore.md)): the compiler when it lives in a
@@ -149,8 +228,8 @@ record `Csc`); the 3.3 function `Csc settings` no longer exists, `Csc.compile se
    (`failStep`) as the hash-mismatch check and `Tool.failOnExitCode`.
 3. **Resolves `$(SourceRevisionId)`**: the lock never
    carries a commit sha itself (see `Generated` and `Git.tokenize` below) -- when
-   `Generated`'s content or `Csc.Args` carries the literal token `$(SourceRevisionId)`,
-   it is replaced everywhere `Csc.mapText` reaches (`Generated` content, `Options`, `Defines`)
+   `Generated`'s content or the compilation's `Args` carries the literal token `$(SourceRevisionId)`,
+   it is replaced everywhere `Csc.mapText` (`Fsc.mapText`) reaches (`Generated` content, `Options`, `Defines`)
    with `Git.headSha c.Directory` (walking up from the
    project's own directory for a `.git`; no `git` executable). No token anywhere -- nothing
    happens, the composed mode included, since it never populates `Generated`. A token present but no
@@ -167,7 +246,13 @@ this same `compileWith`.
 `Project.import` (`src/hermetic/Project.fs`) runs an msbuild design-time build per project and
 target framework -- `ProvideCommandLineArgs`/`SkipCompilerExecution`, so the compiler reports
 its command line instead of running -- and writes **one lock file per variant, holding every
-framework**. `ImportOptions`:
+framework**. A csproj and an fsproj are imported the same way and may share a lock: msbuild
+answers with `CscCommandLineArgs` for C# and `FscCommandLineArgs` for F# (the F# targets' `Fsc`
+task honours the same two properties); the import asks for both and parses whichever came back
+with `CscArgs`/`Csc.ofArgs` or `FscArgs`/`Fsc.ofArgs`. The F# compiler is msbuild's
+`DotnetFscCompilerPath`, the SDK's `fsc.dll`. Imported and compiled from the lock, a C# library
+and an F# application referencing it come out byte-identical to `dotnet build` into the same
+intermediate directory (`FsprojImportTests.fs`). `ImportOptions`:
 
 | Field | Meaning |
 |---|---|
@@ -242,12 +327,11 @@ extra) path` outside one. `Lock.load`/`save` use the built-in three only.
 not the process's current directory. The `Roots` module holds the whole thing: `nugetRoot ()`,
 `dotnetRoot ()`, `nugetPackageRootToken`, `builtinTokens`, `packageRootOverride dir`, the pure `builtin projectRoot` / `make projectRoot extra`,
 and the recipes `current` / `currentWith extra` that read the root from `getCtxOptions()`. The
-recipe-level lock and evaluation entry points (`Lock.load`/`loadWith`/`save`/`saveWith`,
-`Fsproj.load`) are recipes for exactly this reason; the pure `format`/`parse`/`read`
-still take a roots list. The json reader lives in its own `Json` module. Neither is under
-`Fsproj` any more, which is again just the F# project evaluation it is named for.
+recipe-level lock entry points (`Lock.load`/`loadWith`/`save`/`saveWith`) are recipes for
+exactly this reason; the pure `format`/`parse`/`read` still take a roots list. The json reader
+lives in its own `Json` module.
 
-`Lock.Entry`, one per project, is `{ Csc; Evaluation; Packages }` : the `Csc` record holds identity (`Name`, `Framework`), what is compiled and its `Dependencies`; `Evaluation` and `Packages` are the provenance only the lock has. The three sections of the file  are:
+`Lock.Entry`, one per project, is `{ Compilation; Evaluation; Packages }` : the compilation (`Csc` or `Fsc`) holds identity (`Name`, `Framework`), what is compiled and its `Dependencies`; `Evaluation` and `Packages` are the provenance only the lock has. The three sections of the file  are:
 
 - `Name` -- `AssemblyName`
 - `Framework` -- the target framework this compilation is for. With every framework in one
@@ -268,7 +352,7 @@ still take a roots list. The json reader lives in its own `Json` module. Neither
     `Version`, `InformationalVersion`, `SignAssembly`, `AssemblyOriginatorKeyFile`,
     `Deterministic`, `TargetPath`, `IntermediateOutputPath`); `SdkPin` and `NETCoreSdkVersion`
     have their own fields now and are no longer in it
-- `Compilation` -- what is compiled; changes with every PR (in memory these are fields of `Csc` -- `Directory`, `Options`, `Defines`, `Sources`, `Generated`, `Resources` -- the file's `"Compilation"` key groups them):
+- `Compilation` -- what is compiled; changes with every PR (in memory these are fields of `Csc` or `Fsc` -- `Directory`, `Options`, `Defines`, `Sources`, `Generated`, `Resources` -- the file's `"Compilation"` key groups them):
   - `Directory` -- the compiler's working directory
   - `Options` -- every argument that is not a source, a reference, an analyzer or a define, in
     msbuild's order, with the four **section markers** in place (below)
@@ -317,7 +401,7 @@ order without storing the flat list, so the structured form and the verbatim one
 information.
 
 **The round-trip check (the fidelity guarantee: what the lock describes is what msbuild reported).** `parseImport` builds the entry
-through `ofArgs`, then requires `entry.Csc.Args = msbuild's absolute args` -- otherwise it fails,
+through `ofArgs`, then requires `entry.Args = msbuild's absolute args` -- otherwise it fails,
 naming the project and printing `Lock.diffList` of the two lists (`- <msbuild's>` / `+
 <rebuilt>`), and nothing is written. So the lock never describes a compilation other than the
 one msbuild reported: "do not reconstruct" is checked at import rather than trusted. `resolve`
@@ -438,7 +522,7 @@ occurrence of `sha` in `Generated` content, `Options`, `Defines` and the evaluat
 values is replaced with the literal token `$(SourceRevisionId)`. The sha itself is **not** recorded anywhere in the lock --
 `SourceRevisionId` is asked from msbuild only to drive this substitution, never added to the
 `Properties` whitelist. `Lock.compileWith` (step 3 of "Replaying a lock") resolves the token back at
-compile time, from the project's own repository (`Git.headSha entry.Csc.Directory`) -- see below.
+compile time, from the project's own repository (`Git.headSha entry.Compilation.Directory`) -- see below.
 
 `Project.import` also `needFiles`s `Git.headFiles (project's directory)` -- `.git/HEAD` and the
 ref file (or `packed-refs`) it resolves through -- for every project, whether or not it uses the
@@ -479,7 +563,7 @@ The project-reference pattern, from `import.fsx`:
 open Xake.Dotnet
 open Xake.Hermetic.Dotnet
 
-let unbuilt = project.Csc.Dependencies.References |> List.filter (fun r -> r.Sha256 = "") |> List.map (fun r -> r.Path) |> Set.ofList
+let unbuilt = project.Dependencies.References |> List.filter (fun r -> r.Sha256 = "") |> List.map (fun r -> r.Path) |> Set.ofList
 let mapped = project |> Lock.mapPaths (fun p -> if unbuilt.Contains p then outputOf p else p)
 
 do! need (unbuilt |> Set.toList |> List.map (outputOf >> relative))
@@ -495,12 +579,13 @@ maps those references to the path its own rule will produce them at, `need`s tho
 first, and only then runs `Lock.compile mapped` -- the runner itself does not `need` the
 mapped outputs, it only `needFiles` what the (already-mapped) args name.
 
-## Recording a lock from composed `csc` settings
+## Recording a lock from composed `csc` or `fsc` settings
 
 `Project.import` produces a `Lock.Entry` from an msbuild project; `csc { ...; resolve }` produces
-the `Csc` of one from composed settings (`Csc.ofSettings` for record syntax), and `Lock.ofCsc`
-wraps it in an entry with an empty `Evaluation` and no `Packages`, so a lock-recording rule can
-write it out the way an import rule does.
+the `Csc` of one from composed settings (`Csc.ofSettings` for record syntax), `fsc { ...; resolve }`
+the `Fsc` (`Fsc.ofSettings`), and `Lock.ofCsc`/`Lock.ofFsc` wrap it in an entry with an empty
+`Evaluation` and no `Packages`, so a lock-recording rule can write it out the way an import rule
+does.
 The API:
 
 ```fsharp
@@ -508,15 +593,21 @@ open Xake.Dotnet
 open Xake.Hermetic.Dotnet
 
 let! c = csc { src !!"*.cs"; out (File.make "app.dll"); resolve }   // Csc
-do! Lock.record "locks/app.json" c
+do! Lock.record "locks/app.json" (Lock.Compilation.Csc c)
+let! f = fsc { src !!"*.fs"; out (File.make "lib.dll"); resolve }   // Fsc
+do! Lock.record "locks/lib.json" (Lock.Compilation.Fsc f)
 ```
 
 ```fsharp
 module Csc =
     val ofSettings : CscSettingsType -> Recipe<ExecContext, Csc>
+module Fsc =
+    val ofSettings : FscSettingsType -> Recipe<ExecContext, Fsc>
 
 module Lock =
+    val ofCompilation : Compilation -> Entry
     val ofCsc : Csc -> Entry
+    val ofFsc : Fsc -> Entry
     val rehash : Entry -> Entry
     val diff : Entry -> Entry -> string list
 ```
@@ -538,7 +629,7 @@ in Xake.
 project: `[]` means identical. In order: `Framework` (`~ Framework: <a> -> <b>`), then `Options` and `Sources` as ordered lists (bare `+`/`-`
 lines from an LCS diff -- a moved argument shows as a removal at its old position and an
 addition at its new one, there being no separate "moved" marker in an ordered diff), `Defines`
-as a set, `Compiler` (`Path`/`Sha256`/`Version`, one line per differing field), `Evaluation.Sdk`,
+as a set, `Compiler` (`Tool`/`Path`/`Sha256`/`Version`, one line per differing field), `Evaluation.Sdk`,
 each hashed list (`References`, `Analyzers`, `Imports`) by path (added, removed, or `~ <label>
 <path>: <old> -> <new>` when both sides have a hash and they differ), `Generated`/`Resources` by
 key (added, removed, or `~ <label> <key>: content changed`), `ProjectRefs` as a set
@@ -570,7 +661,13 @@ open Xake.Hermetic.Dotnet
 "update-locks" => recipe {
     let! c = csc { src !!"src/*.cs"; grefs ["System.dll"]; targetfwk "net-4.6.2"
                    out (File.make "out/app.dll"); resolve }
-    do! Lock.record "locks/app.json" c
+    do! Lock.record "locks/app.json" (Lock.Compilation.Csc c)
+}
+
+"out/lib.dll" ..> fsc {
+    src !!"src/Lib.fs"
+    targetfwk "net8.0"
+    lock "locks/lib.json"
 }
 ```
 
@@ -579,8 +676,11 @@ stays where it is and gains a lock. It is a custom operation defined next to the
 base builder (`CscLockBuilder` in `Lock.fs`, an extension of `CscSettingsBuilder` with its own
 `Run`). Only `packageroot` and `norestore` may follow it (below); the block then means
 `Csc.ofSettings`, `Csc.runOptions`, `Lock.buildWith`. The same thing without the sugar is
-`Lock.build "locks/app.json" c` on a `Csc` from `resolve`. The path is relative to the project
-root, like every other target path, or absolute. There is no `Lock` field on `CscSettingsType`.
+`Lock.build "locks/app.json" (Lock.Compilation.Csc c)` on a `Csc` from `resolve`. The path is
+relative to the project root, like every other target path, or absolute. There is no `Lock`
+field on `CscSettingsType`. `fsc { lock }` is the same operation for F# (`FscLockBuilder`, an
+extension of `FscSettingsBuilder`, with `FscLocked`): `Fsc.ofSettings`, `Fsc.runOptions` into
+`Lock.Options.FscRun`, `Lock.buildWith`; everything below holds for it unchanged.
 
 The settings remain the source of truth for *what* is compiled (`Csc.ofSettings` runs on every
 build); the lock decides whether this is the compilation that was recorded. An update is always
@@ -646,8 +746,8 @@ roots the lock is written with; `Lock.diff` itself keeps the expanded paths.
 | `dotnet fsi build.fsx -- -- update-locks` | the script's own phony target calling `Lock.record`; the normal way |
 | `rm locks/app.json` | a missing lock is recorded on the next build -- not under CI (step 6) |
 
-`Lock.record : string -> Csc -> Recipe<ExecContext, unit>` rehashes and overwrites
-the lock, compiling nothing. `Lock.verify : string -> Csc -> Recipe<ExecContext, string list>`
+`Lock.record : string -> Lock.Compilation -> Recipe<ExecContext, unit>` rehashes and overwrites
+the lock, compiling nothing. `Lock.verify : string -> Lock.Compilation -> Recipe<ExecContext, string list>`
 returns the same diff `lock` fails on (tokenized paths; an empty list means the lock is
 current), writing nothing and compiling nothing -- scenario 3 of `lock-from-settings.md` as a
 stand-alone check, e.g. a `check-locks` target in CI. A lock that does not exist fails `verify`

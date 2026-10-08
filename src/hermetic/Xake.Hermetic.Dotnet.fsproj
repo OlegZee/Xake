@@ -8,7 +8,7 @@
          break. Same mechanism as src/dotnet: the build script and CI override it with
          /p:Version=...; this is the value a plain `dotnet pack` produces. -->
     <PackageId>Xake.Hermetic.Dotnet</PackageId>
-    <Version>0.1.0</Version>
+    <Version>0.2.0</Version>
     <OutputType>Library</OutputType>
     <!-- The SDK would otherwise reference its own FSharp.Core, see the pin below. -->
     <DisableImplicitFSharpCoreReference>true</DisableImplicitFSharpCoreReference>
@@ -35,9 +35,9 @@
   </ItemGroup>
 
   <!-- Order follows the dependencies: the json reader and the root tokens first, then
-       Nuget (assets, nuspec, cache) and Restore (which names no lock type), the kept fsproj
-       evaluation, Git (revision token), the lock format and the lock's side of a build
-       (Lock.build/compile/record/verify, csc { lock }), the import, and the release
+       Nuget (assets, nuspec, cache) and Restore (which names no lock type), Git (revision
+       token), the lock format and the lock's side of a build (Lock.build/compile/record/verify,
+       csc { lock }, fsc { lock }), the import (csproj and fsproj), and the release
        pipeline. Signing is the one delegated rule (signing.md); it uses Verify, StrongName
        and Pack, so it compiles after all three. -->
   <ItemGroup>
@@ -45,7 +45,6 @@
     <Compile Include="Roots.fs" />
     <Compile Include="Nuget.fs" />
     <Compile Include="Restore.fs" />
-    <Compile Include="Fsproj.fs" />
     <Compile Include="Git.fs" />
     <Compile Include="Lock.fs" />
     <Compile Include="Project.fs" />
@@ -59,16 +58,17 @@
   <ItemGroup>
     <!-- Built on the published package, not on src/dotnet and src/core: the `Xake` package
          carries both Xake.dll and Xake.Dotnet.dll, and the range is what the nuspec
-         dependency says. 3.4.0 is the first release with the base this package needs;
-         nuget.org carries it as 3.4.0.21 (publish.yml appends the run number). The lower
-         bound is that exact published version: with `[3.4.0, 4.0)` NuGet finds no 3.4.0,
-         resolves 3.4.0.21 instead and warns NU1603 ("depends on Xake (>= 3.4.0) but Xake
-         3.4.0 was not found"), on every restore here and in every consumer. -->
-    <PackageReference Include="Xake" Version="[3.4.0.21, 4.0)" />
+         dependency says. 3.5.0 is the first release with the base this package needs (the
+         `Fsc` record, `Fsc.run`, `FscArgs`); nuget.org carries it as 3.5.0.23 (publish.yml
+         appends the run number). The lower bound is that exact published version: with
+         `[3.5.0, 4.0)` NuGet finds no 3.5.0, resolves 3.5.0.23 instead and warns NU1603
+         ("depends on Xake (>= 3.5.0) but Xake 3.5.0 was not found"), on every restore here
+         and in every consumer. -->
+    <PackageReference Include="Xake" Version="[3.5.0.23, 4.0)" />
   </ItemGroup>
 
   <!-- Test assemblies only; no other package sees these internals. hermetic.tests tests the
-       parsers (Json, Project.parseImport, Nuget.frameworkFullName, the PE Layout, Fsproj). -->
+       parsers (Json, Project.parseImport, Nuget.frameworkFullName, the PE Layout). -->
   <ItemGroup>
     <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
       <_Parameter1>hermetic.tests</_Parameter1>

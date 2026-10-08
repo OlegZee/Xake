@@ -55,6 +55,9 @@ module internal CompilerRunner =
         Generated: (string * string) list
         /// (resx, .resources) pairs; the output is compiled when missing
         Resources: (string * string) list
+        /// (path, content) of the `.runtimeconfig.json` the rule declares; written after a
+        /// successful compile when missing or different
+        RuntimeConfig: (string * string) option
         /// Environment variables of the compiler process
         Environment: (string * string) list
         /// The compiler's working directory
@@ -66,6 +69,12 @@ module internal CompilerRunner =
 
     /// The launch for a compiler file: a `.dll` through `dotnet`, anything else directly.
     let launchOf (path: string) = if Impl.endsWith ".dll" path then Dotnet path else Native path
+
+    /// The runtimeconfig content for a compilation's framework; fails when it is not `netN.0`.
+    let runtimeConfigContent (name: string) (framework: string) =
+        match Impl.runtimeConfigContent framework with
+        | Some content -> content
+        | None -> failwithf "'%s': a runtimeconfig is declared, but %s applications do not use one" name (if Impl.isEmpty framework then "this framework's" else framework)
 
     let private sha256 (path: string) = if File.Exists path then Hash.sha256 path else ""
 
@@ -188,6 +197,14 @@ module internal CompilerRunner =
                     }
 
                 do! Tool.failOnExitCode plan.FailOnError plan.Name exitCode
+
+                // an output next to the compiler's, declared by the rule; rewritten only when it
+                // differs, so an up-to-date one keeps its timestamp
+                match plan.RuntimeConfig with
+                | Some (path, content) when exitCode = 0 ->
+                    if not (File.Exists path && File.ReadAllText path = content) then
+                        File.WriteAllText (path, content)
+                | _ -> ()
             finally
                 deleteTempFiles ()
         }

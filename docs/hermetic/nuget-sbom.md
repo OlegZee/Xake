@@ -15,10 +15,10 @@ what do we know about each one from the cache.
 
 Both files are parsed with the existing `Json` module (a hand-written JSON parser --
 `parse`, `field`, `asString`, `asArray`), not `System.Text.Json`: the assembly stays
-dependency-free on netstandard2.0, same reasoning as `Fsproj.fs`.
+dependency-free on netstandard2.0.
 
 Names like `Dependencies.References` and `Dependencies.Packages` in this page are the lock file's
-sections; in memory they are `entry.Csc.Dependencies.References` and `entry.Packages` of a
+sections; in memory they are `entry.Dependencies.References` and `entry.Packages` of a
 `Lock.Entry` ([lock.md](lock.md)).
 
 The nuspec is XML; it is read
@@ -121,7 +121,7 @@ tests can drive with a hand-built `Bom` and no lock at all.
 
 | BOM field | Source |
 |---|---|
-| `metadata.component` (root) | the shipped assembly: `Name = entry.Csc.Name`; `Version` from `entry.Evaluation.Properties.["Version"]`, falling back to `InformationalVersion`; one SHA-256 hash of the assembly file (`Csc.sha256`) |
+| `metadata.component` (root) | the shipped assembly: `Name = entry.Name`; `Version` from `entry.Evaluation.Properties.["Version"]`, falling back to `InformationalVersion`; one SHA-256 hash of the assembly file (`Csc.sha256`) |
 | `metadata.tools.components[0]` | `{ type: application, name: "Xake.Hermetic.Dotnet", version }`, version from the `Xake.Hermetic.Dotnet` assembly's own version |
 | `components[].purl` | `pkg:nuget/<Id>@<Version>`, one component per package in `entry.Packages` -- every package the restore graph carried at import, not just the ones a compiled reference happens to be attributed to; `<Id>`/`<Version>` keep `project.assets.json`'s own casing |
 | `components[].supplier`, `.licenses` | `Nuget.readCache`'s `Supplier`/`License` -- matched to the package's cache directory case-insensitively (the cache always lowercases `id`/`version`, the lock usually does not) |
@@ -129,7 +129,7 @@ tests can drive with a hand-built `Bom` and no lock at all.
 | `components[].components[]` (nested) | the package's own referenced files, `type: file`, SHA-256 from the matching `Dependencies.References` entry; only files with a non-empty hash are listed |
 | top-level `components[]` (non-nested `file`) | `Dependencies.References` entries `Nuget.packageOf` cannot place under `cacheRoot` -- a project reference, or an SDK reference pack under `$(DotnetRoot)` -- `scope: "required"`, hash omitted when the lock has none yet |
 | `dependencies[]` | root depends on every *direct* (`Package.Direct`), *`scope: required`* package; package-to-package edges come from `Package.DependsOn` (a dependency's version resolved by id within the same `Packages` list), kept only where both ends are packages already in the BOM |
-| `formulation[0].components[]` | one `file` per `Dependencies.Analyzers` entry, one `application` for the compiler (`csc`, `Compiler.Sha256`, version `Compiler.Version`), one for the SDK (`.NET SDK`, `Evaluation.Sdk`) -- all `scope: "excluded"` |
+| `formulation[0].components[]` | one `file` per `Dependencies.Analyzers` entry, one `application` for the compiler (named by `Compiler.Tool`: `tool:csc`/`csc` or `tool:fsc`/`fsc`; `Compiler.Sha256`, version `Compiler.Version`), one for the SDK (`.NET SDK`, `Evaluation.Sdk`) -- all `scope: "excluded"` |
 
 ### Scope: every restore-graph package is a component
 

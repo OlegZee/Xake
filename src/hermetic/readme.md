@@ -3,18 +3,19 @@
 Reproducible .NET builds for [Xake](https://github.com/OlegZee/Xake): lock files, package
 restore, CycloneDX SBOMs, verification of built binaries, deterministic packing and signing.
 
-The package builds on the `csc {}` task of `Xake` (`Xake.Dotnet`; Xake 3.4.0.21 or later,
-below 4.0) and adds what a build needs to be repeatable and auditable: a lock file that records
+The package builds on the `csc {}` and `fsc {}` tasks of `Xake` (`Xake.Dotnet`; Xake 3.5.0.23
+or later, below 4.0) and adds what a build needs to be repeatable and auditable: a lock file that records
 exactly what the compiler is handed, with the SHA-256 of every reference, analyzer and the
 compiler itself; a restore of the packages that lock names; an SBOM generated from the lock; and
-the release steps after the compile. It is a
-0.x preview: names may still change between minor versions.
+the release steps after the compile. C# and F# alike: 0.2 locks F# compilations, from `fsc {}`
+or from an imported `.fsproj`. It is a 0.x preview: names may still change between minor
+versions.
 
 ## Usage
 
 ```fsharp
-#r "nuget: Xake, 3.4.0.21"
-#r "nuget: Xake.Hermetic.Dotnet, 0.1.0.22"
+#r "nuget: Xake, 3.5.0.23"
+#r "nuget: Xake.Hermetic.Dotnet, 0.2.0"
 
 open Xake
 open Xake.Dotnet
@@ -32,8 +33,15 @@ The same with the resolved compilation in hand:
 ```fsharp
 "out/app.dll" ..> recipe {
     let! c = csc { targetfwk "net472"; src !!"src/*.cs"; resolve }
-    do! Lock.build "locks/app.json" c
+    do! Lock.build "locks/app.json" (Lock.Compilation.Csc c)
 }
+```
+
+An F# library, gated the same way (the compiler is the SDK's `fsc.dll`: pin the SDK in
+`global.json`):
+
+```fsharp
+"out/lib.dll" ..> fsc { targetfwk "net8.0"; src !!"src/*.fs"; lock "locks/lib.json" }
 ```
 
 Restore the packages a lock names, checked against their recorded sha512:
@@ -62,4 +70,5 @@ sign {
 ```
 
 See the [documentation](https://github.com/OlegZee/Xake/tree/dev/docs/hermetic) for the lock
-format, `Project.import` (locks from existing `.csproj` files), verification and packing.
+format, `Project.import` (locks from existing `.csproj` and `.fsproj` files), verification and
+packing.

@@ -115,12 +115,34 @@ With no `out`, the compiler writes to the rule's target file:
 "helloworld.exe" ..> csc { src !!"helloworld.cs" }
 ```
 
+csc writes only the output. An application for `netN.0` (the SDK default) also needs
+`<output>.runtimeconfig.json` for `dotnet <output>` to start it; Xake writes it when, and only
+when, the rule declares it as a target next to the output:
+
+```fsharp
+["hw.dll"; "hw.runtimeconfig.json"] *..> csc { src !!"hw.cs" }   // dotnet hw.dll
+```
+
+The content is what `dotnet build` writes. Declaring it makes the compilation an executable
+(`target Auto` with a `.dll` output included); it fails for a library target, for a
+`netstandard` or .NET Framework target ("'hw.runtimeconfig.json' is declared as a target, but
+net-4.6.2 applications do not use one"), and for a name that is not the output's. A single
+target, or record syntax with `out` outside a file rule, writes none.
+
 `targetfwk` picks the framework to compile against; it is optional. The first that is set
 wins: `targetfwk`, the `NETFX-TARGET` script variable, the .NET framework of the SDK the build
 runs on (`net10.0` for SDK 10.0.x, the SDK a `global.json` in or above the project root
-selects). A .NET target (`net8.0`, `net10.0`, also spelled `sdk-net10.0`) compiles against
-the targeting pack installed with the SDK (`<dotnet>/packs/Microsoft.NETCore.App.Ref`), all
-of it, with nothing downloaded; the example above therefore needs nothing but the SDK.
+selects). A .NET target `netN.0` (`net6.0`, `net8.0`, `net10.0`, also spelled `sdk-net10.0`)
+works for any N the SDK knows, and compiles against all of that framework's targeting pack:
+the one installed with the SDK (`<dotnet>/packs/Microsoft.NETCore.App.Ref`) when there is
+one, else the NuGet package `Microsoft.NETCore.App.Ref` at the version the SDK names for the
+framework, restored once into the package cache as `dotnet build` does (the script variable
+`NETCORE_REF_VERSION`, a list such as `6.0.36;7.0.20` separated by `;`, `,` or whitespace, pins the
+pack of the framework with the same major.minor: it always comes from NuGet at that version, never
+from an installed pack, so lock paths are the same on every machine; a framework without an
+entry follows the rule above; under the planned `HERMETIC` mode every `netN.0` target used must
+have an entry; see [dotnet-build.md](dotnet-build.md)). The example above, on the SDK's own framework,
+therefore needs nothing but the SDK.
 
 For a .NET Framework target, on Windows a Framework installation found through the registry
 wins; everywhere else -- and as a fallback -- the compiler comes from the .NET SDK and the
@@ -153,7 +175,7 @@ Every operation of `csc {}`:
 | `args` | `string list` | extra compiler arguments, appended last |
 | `nofailonerror` | -- | a compile error does not fail the build |
 | `cscpath` | `string` | run this compiler instead of the one the framework provides; overrides `toolset` |
-| `toolset` | `string` (version) | take `csc.dll` from `Microsoft.Net.Compilers.Toolset/<version>` in the NuGet cache, restoring the package first when it is missing, instead of the SDK's own compiler; overrides the `CSC_TOOLSET` variable |
+| `toolset` | `string` (version) | take `csc.dll` from `Microsoft.Net.Compilers.Toolset/<version>` in the build's package folder, restoring the package first when it is missing, instead of the SDK's own compiler; overrides the `CSC_TOOLSET` variable |
 | `noserver` | -- | compile in a fresh compiler process instead of through the Roslyn compiler server |
 | `keepalive` | `int` (seconds) | idle time after which a compiler server this build starts exits (`/keepalive`; Roslyn's default is 600) |
 | `resolve` | -- | return the resolved `Csc` instead of compiling; must be the last operation (see below) |
@@ -257,6 +279,8 @@ toolchain, is described in [dotnet-build.md](dotnet-build.md).
 ### fsc
 
 Same shape as `csc`: the operations below, `resolve`, record syntax through `Fsc.compile`.
+A `.runtimeconfig.json` declared as a target next to the output is written as for csc
+(`["hw.dll"; "hw.runtimeconfig.json"] *..> fsc { src !!"hw.fs" }`).
 `targetfwk` is optional, as for csc: with none (and no `NETFX-TARGET`) the target is the SDK's
 own .NET framework, and the SDK's `FSharp.Core.dll` is referenced. This needs nothing but the
 SDK:
@@ -301,7 +325,8 @@ referenced implicitly, so this too needs nothing but the SDK, on any OS:
 
 The arguments are always fsc's `--name:value` form (`-r:` for references), on every OS. The
 task passes `--noframework` and the framework's reference assemblies as ordinary `-r:`
-references: for .NET (`net10.0`, the default) every assembly of the SDK's targeting pack plus
+references: for .NET (`net10.0`, the default, or any `netN.0` the SDK knows) every assembly
+of the targeting pack -- installed with the SDK, else restored from NuGet as for `csc` -- plus
 `--targetprofile:netcore`, for netstandard `netstandard.dll` plus
 `--targetprofile:netstandard`, for .NET Framework `mscorlib.dll` and a `netstandard.dll` facade.
 Unless a `ref` already names an `FSharp.Core.dll`, one is referenced: for a .NET target the
@@ -379,63 +404,12 @@ construct it with qualified labels or from `FscRunOptions.Default with ...`.
 
 #### Compiling what a project file describes
 
-A script that drives the compiler itself still has to know what to compile, what to reference
-and what to define. `Fsproj` asks msbuild, which is the only thing that reads a project file
-correctly — conditions, imports, the resolved reference list and the generated assembly
-attributes included — and the answer is cached in a file, so msbuild runs only when the project
-file changes:
-
-```fsharp
-// the one rule that runs msbuild
-"out/obj/(fwk:*)/(lib:*).json" ..> recipe {
-    let! framework = getRuleMatch "fwk"
-    let! name = getRuleMatch "lib"
-    let! result = getTargetFile()
-    do! needFiles (Filelist [File.make (projectOf name)])
-    do! Fsproj.evaluate {
-        Fsproj.EvalOptions.Default with
-            Project = projectOf name
-            Framework = framework
-            Configuration = "Release"
-            Properties = ["Version", "1.2.3"]
-            Output = result.FullName
-    }
-}
-
-// ... and the compile, which only reads the result
-let! project = Fsproj.load (evaluated name framework)
-do! fsc {
-    targetfwk framework
-    out (File.make outputPath)
-    doc (File.make docPath)
-    src (project.Sources |> List.fold (fun fs f -> fs ++ f) Fileset.Empty)
-    refs (project.References |> List.fold (fun fs f -> fs ++ f) Fileset.Empty)
-    define project.Defines
-}
-```
-
-`Fsproj.evaluate` runs `dotnet msbuild -restore -t:PrepareForBuild;GenerateAssemblyInfo;
-ResolveReferences` with `-getItem`/`-getProperty`. msbuild answers with every metadata field of
-every item — some 200 KB and 3600 lines per project, of which the build reads one field — so
-that dump goes to a scratch file and what is kept is only what gets consumed: a ~15 KB file of
-plain lists, readable and diffable. Paths in it are written against `$(NuGetPackageRoot)` and
-`$(ProjectRoot)` and expanded again on read, so the file is byte-identical on every machine and
-belongs in the repository — a lockfile for the compilation, whose diff shows what a project
-change did. The roots are the build's own: `$(ProjectRoot)` is the engine's
-`ExecOptions.ProjectRoot`, not the process's current directory (see the `Roots` module).
-`Fsproj.load` — a recipe, so that it can take those roots — turns the file back into a record:
-
-| Field | What is in it |
-|---|---|
-| `Sources` | `CompileBefore`, `Compile`, `CompileAfter` in that order — the generated `AssemblyInfo.fs` (`InternalsVisibleTo`, copyright, the versions from the `Version` property) is the `CompileBefore` item, so it comes first |
-| `References` | `ReferencePath`: every assembly resolved, framework references and packages alike |
-| `ProjectRefs` | `ProjectReference` items — msbuild points `References` at the referenced project's own `bin/`, so a build with its own layout substitutes them |
-| `Defines` | `DefineConstants`, including the symbols msbuild derives from the framework (`NETSTANDARD2_0`, the `_OR_GREATER` chain) |
-| `Properties` | whatever was asked for: `AssemblyName`, `Optimize`, `DebugType`, ... |
-
-`BuildProjectReferences=false` is passed for you: resolving a project reference must not make
-msbuild build the very thing the script is about to compile. Nothing else is compiled either —
-the evaluation only reads the project and writes the assembly attributes.
+A script that wants exactly what `dotnet build` would compile for an existing `.fsproj` does not
+re-describe it as `fsc {}` settings: `Project.import` in `Xake.Hermetic.Dotnet` asks msbuild
+for the compiler's own command line (a design-time build) and records it in a lock, and
+`Lock.compile` replays it through `Fsc.run`. See [hermetic/lock.md](hermetic/lock.md). (The
+`Fsproj` module of Xake.Hermetic.Dotnet 0.1, which evaluated a project's items for a composed
+`fsc {}`, is gone in 0.2.)
 
 ### msbuild
 
@@ -480,6 +454,9 @@ let strings = resourceset {
 | `FSCVER` | F# compiler version `fsc` asks for (Windows registry provider only) |
 | `CSC_SERVER` | `csc` compiler server: `on`, `off` or keepalive seconds; overridden by a target's `noserver`/`keepalive`, overrides env `XAKE_CSC_SERVER` |
 | `CSC_TOOLSET` | `csc` compiler package version (`Microsoft.Net.Compilers.Toolset`) for targets with no `toolset`; empty or unset means the SDK's compiler |
+| `NUGET_PACKAGES` | The build's package folder, relative to the project root or absolute; overrides the environment variable of the same name for everything Xake restores or reads there (see below) |
+| `NUGET_FETCH` | `off` turns off every download into the package folder (a missing package fails the build); default `on` |
+| `NETCORE_REF_VERSION` | Pins of the `Microsoft.NETCore.App.Ref` targeting pack, one per major.minor (`6.0.36;7.0.20`); a pinned `netN.0` target always compiles against the NuGet package at that version, never an installed pack (see [csc](#csc)) |
 
 ```bash
 dotnet fsi build.fsx -- -- build -d NETFX-TARGET:net-4.6.2
@@ -489,6 +466,34 @@ dotnet fsi build.fsx -- -- build -d CSC_SERVER:off
 Names such as `net-4.6.2`, `sdk-net462` and `mono-4.5` select both the framework and, through
 the prefix, the provider that supplies the tools. See
 [dotnet-build.md](dotnet-build.md#how-to-switch).
+
+#### Where packages go
+
+Xake restores a few NuGet packages itself: the `toolset` compiler (`toolset`, `CSC_TOOLSET`),
+the reference packs (`NETStandard.Library` for netstandard2.0,
+`Microsoft.NETFramework.ReferenceAssemblies.*` for .NET Framework) and `fsc`'s default
+`FSharp.Core`. They go to, and are read from, one package folder:
+
+1. the script variable `NUGET_PACKAGES` -- `var "NUGET_PACKAGES" ".nuget/packages"` in
+   `xakeScript`, or `-d NUGET_PACKAGES:.nuget/packages` on the command line; a relative path is
+   under the project root. The child `dotnet restore` gets it as the environment variable, so
+   NuGet puts the packages there. Every compile reads it, so changing it rebuilds them;
+2. else the environment variable `NUGET_PACKAGES`;
+3. else `~/.nuget/packages`.
+
+`csc { ...; lock "app.json"; packageroot ".packages" }` (Xake.Hermetic.Dotnet) sets the
+folder for one locked target, overriding both. `DotNetFwk.locateFramework` and
+`locateFrameworkIn`, which run without a build, have no script variables and use the
+environment's folder.
+
+Turning fetching off: `-d NUGET_FETCH:off` (or `var "NUGET_FETCH" "off"`) makes Xake download
+nothing, for CI with a warm cache; a package missing from the folder then fails the build before
+the compiler runs, naming the package and version and saying fetching is off. `norestore` after
+`lock` is the same for one locked target.
+
+The packages an F# script itself references with `#r "nuget: ..."` are restored by `dotnet
+fsi` before the script, and so before Xake, runs: the script variable cannot reach them. Set the
+environment variable `NUGET_PACKAGES` for those.
 
 ## Inner recipe helpers
 

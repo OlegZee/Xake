@@ -55,7 +55,7 @@ type ``Restore``() =
                   "/out:" + outDll
                   helloCs ]
         let entry : Lock.Entry = {
-            Csc =
+            Compilation = Lock.Compilation.Csc
                 { c with
                     Name = "Hello"
                     Framework = "netstandard2.0"
@@ -113,7 +113,7 @@ type ``Restore``() =
         // point the folder at the machine's own cache: `netstandard.dll` and the compiler are
         // either outside it (ignored) or in it (present), and no reference is absent
         let entry, _ = makeEntry (Directory.GetCurrentDirectory()) userNugetRoot "" ""
-        let entry = { entry with Csc = { entry.Csc with Dependencies = { entry.Csc.Dependencies with References = entry.Csc.Dependencies.References |> List.filter (fun r -> File.Exists r.Path) } } }
+        let entry = { entry with Compilation = Lock.Compilation.Csc { entry.Csc with Dependencies = { entry.Csc.Dependencies with References = entry.Csc.Dependencies.References |> List.filter (fun r -> File.Exists r.Path) } } }
         Assert.That(Restore.missing Restore.Options.Default (Lock.restoreRequest [entry]), Is.Empty)
 
     [<Test>]

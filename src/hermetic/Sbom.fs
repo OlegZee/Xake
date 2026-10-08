@@ -264,11 +264,12 @@ module Sbom =
     /// `Dependencies` has the root depending on every *direct*, *required* package, plus every
     /// package-to-package edge from `DependsOn` whose two ends are both packages in this BOM
     /// (a dependency's version is resolved by id within the same graph). `Formulation` records
-    /// what compiled it but did not ship: the analyzers, `csc` (its own `Compiler.Version`) and
+    /// what compiled it but did not ship: the analyzers, the compiler (`csc` or `fsc`, named by
+    /// `Compiler.Tool`, with its own `Compiler.Version`) and
     /// the SDK (`Evaluation.Sdk`), all `scope: "excluded"`.
     let forAssembly (cacheRoot: string) (entry: Lock.Entry) (assemblyPath: string) : Bom =
         let packages = entry.Packages
-        let references = entry.Csc.Dependencies.References |> List.map (fun r -> ({ Path = r.Path; Sha256 = r.Sha256 } : Hashed))
+        let references = entry.Dependencies.References |> List.map (fun r -> ({ Path = r.Path; Sha256 = r.Sha256 } : Hashed))
         let refsWithPackage = references |> List.map (fun r -> r, Nuget.packageOf cacheRoot r.Path)
         let nonPackageRefs = refsWithPackage |> List.choose (fun (r, pkg) -> if pkg.IsNone then Some r else None)
 
@@ -337,9 +338,9 @@ module Sbom =
             [ "Version"; "InformationalVersion" ]
             |> List.tryPick (fun k -> entry.Evaluation.Properties |> Map.tryFind k |> Option.filter ((<>) ""))
             |> Option.defaultValue ""
-        let rootBomRef = "asm:" + entry.Csc.Name
+        let rootBomRef = "asm:" + entry.Name
         let root =
-            { Type = "library"; BomRef = rootBomRef; Name = entry.Csc.Name; Version = version
+            { Type = "library"; BomRef = rootBomRef; Name = entry.Name; Version = version
               Supplier = ""; Purl = ""; Hashes = rootHash; License = ""; Scope = ""; Components = []; Properties = [] }
 
         // (id, version), case-insensitive -> the package's own bom-ref (== its purl, with the
@@ -365,11 +366,13 @@ module Sbom =
             (rootBomRef, rootDeps)
             :: (graphEdges |> List.groupBy fst |> List.map (fun (f, edges) -> f, edges |> List.map snd))
 
-        let compiler = entry.Csc.Dependencies.Compiler
+        let compiler = entry.Dependencies.Compiler
+        // the compiler's own tool name (`csc`, `fsc`); a lock without one is a csc lock
+        let tool = if compiler.Tool = "" then "csc" else compiler.Tool
         let analyzerComponents =
-            entry.Csc.Dependencies.Analyzers |> List.map (fileComponent "excluded")
+            entry.Dependencies.Analyzers |> List.map (fileComponent "excluded")
         let compilerComponent =
-            { Type = "application"; BomRef = "tool:csc"; Name = "csc"; Version = compiler.Version
+            { Type = "application"; BomRef = "tool:" + tool; Name = tool; Version = compiler.Version
               Supplier = ""; Purl = ""
               Hashes = (if compiler.Sha256 = "" then [] else [ { Alg = "SHA-256"; Content = compiler.Sha256 } ])
               License = ""; Scope = "excluded"; Components = []; Properties = [] }

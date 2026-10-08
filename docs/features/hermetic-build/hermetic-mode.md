@@ -2,7 +2,7 @@
 
 Status: proposed 2026-10-07, decisions by the user the same day. Nothing below is implemented
 yet; the implementation plan is at the end. Builds on PR #37 (`NETCORE_REF_VERSION`, a list of
-targeting-pack versions) and PR #38 (`NUGET_PACKAGES`, `NUGET_RESTORE`).
+targeting-pack versions) and PR #38 (`NUGET_PACKAGES`, `NUGET_FETCH`).
 
 ## Purpose
 
@@ -131,13 +131,12 @@ locations and names the variable; anything it does not recognize gets 8.
 
 - **`CI`.** Independent. `CI=on` alone: a missing lock fails, content unchecked. `HERMETIC=on`
   alone: a developer records locks, but only complete ones. Both: the recommended CI setting.
-- **`NUGET_RESTORE`.** Unchanged and separate. `HERMETIC=on` with `NUGET_RESTORE=off` and a warm
+- **`NUGET_FETCH`.** Unchanged and separate. `HERMETIC=on` with `NUGET_FETCH=off` and a warm
   folder is the offline / cached-CI build: everything the lock names is either in the folder
   or a prerequisite that was checked first.
-- **`packageroot`.** Still a per-target override of the folder, and the folder it names is the
-  `$(NuGetPackageRoot)` of that entry. Recommended under `HERMETIC=on`: none, one folder from
-  `NUGET_PACKAGES` (until the roadmap gap "`norestore`/`packageroot` do not cover toolset and
-  the reference packs" is closed, a second folder only splits the packages).
+- **`packageroot`.** Proposed removal before 0.2 ships: the package folder is one per build
+  (`NUGET_PACKAGES`); a per-target folder is a leftover of the lock-centric design and makes no
+  sense under `HERMETIC=on`. `norestore` is renamed `nofetch` with `NUGET_FETCH` (PR C).
 - **Compiler server.** Not touched. `CSC_SERVER` works as before with the toolset's compiler.
 
 ## The fsc compromise, spelled out
@@ -173,7 +172,7 @@ a prompt (it should; the flag is enforced by IDEs), and an fsc net462 build with
   analyzers), which the SDK prerequisite does not cover. Candidate fix: import with
   `-p:NetCoreTargetingPackRoot=<empty dir>` so msbuild downloads the pack as a package
   (unverified).
-- **fsc locks** do not exist yet (B6); the lock-side gate applies to them when they land.
+- **fsc locks** exist since Xake.Hermetic.Dotnet 0.2 (PR #34); the lock-side gate applies to them.
 
 ## Implementation plan (small PRs)
 
@@ -213,3 +212,20 @@ recorded without `HERMETIC` that names `$(DotnetRoot)/packs` is refused under it
    (identical bytes, but a deprecated package). Alternative: keep the SDK facade and let the
    `dotnet-sdk` prerequisite cover it (then fsc net462 needs no extra package, but references
    would come from the SDK).
+
+## Notes from the review (2026-10-09)
+
+- Who writes prerequisites: the hermetic package at record time (`Lock.record`, the first
+  `Lock.build`, `Project.import`). Signal: a path under `$(DotnetRoot)/sdk/<v>/` in an allowed
+  role (fsc compiler; the import's compiler and analyzers). With an exact `global.json` pin on
+  `<v>` the entry gets `{ "Kind": "dotnet-sdk", "Version": "<v>", "Pin": "$(ProjectRoot)/global.json" }`;
+  without one, an error under `HERMETIC=on` and a warning under `off`. Open: write prerequisites
+  always when an entry depends on the SDK (proposed), or only under `HERMETIC=on`.
+- Imports: a project that references `Microsoft.Net.Compilers.Toolset` itself imports with a
+  compiler under `$(NuGetPackageRoot)`, so both paths (exact SDK pin as prerequisite, or the
+  Toolset in the project) already work; the user defers the decision.
+- Hermeticity is a property of the configuration: only the script variable `NUGET_PACKAGES`
+  satisfies the mode (decided).
+- The net462 facade from `Microsoft.NET.Build.Extensions 2.2.101` is acceptable (decided).
+- An F# compiler toolset (`Xake.Fsc`, a small host over the `FSharp.Compiler.Service` package)
+  would remove the fsc prerequisite; roadmap.

@@ -1034,3 +1034,15 @@ fsc compromise level); requires `NUGET_PACKAGES`, `CSC_TOOLSET`, a `NETCORE_REF_
 `netN.0` target used; does not touch restore or the compiler server. Design note
 `hermetic-mode.md` and a key section in `workflows-ru.md` in flight; code after the user reads
 the note. Lesson recorded in memory: a question is a prompt to think, not to change a PR.
+
+## 2026-10-09 — HERMETIC mode PRs
+
+Decisions: prerequisites written always; `packageroot` removed; `norestore` → `nofetch`;
+only the script variable `NUGET_PACKAGES` satisfies the mode; imports may use an exact SDK pin or
+a Toolset PackageReference in the project (deferred). Open PRs: #39 (base: netstandard2.1 and the
+net461 facade from byte-identical packages, FSharp.Core package for netN.0 under
+`FSHARP_CORE_VERSION`), #40 stacked on #39 (base: `HERMETIC`, `HermeticMode.check/enforce`,
+`DotNetFwk.sdkPrerequisite/globalJsonPin/packageRootWithSource`), #41 (hermetic 0.2:
+`Entry.Prerequisites`, replay check, `nofetch`). **Next**: merge #39, #40 → Xake 3.6; merge #41;
+wire the hermetic side to the 3.6 helpers (lock-side gate, messages 9–11, base docs cleanup of
+`packageroot`/`norestore`); PR E (`build.fsc.fsx` on one imported lock); `hermetic-v0.2.0`.

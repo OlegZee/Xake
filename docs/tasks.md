@@ -140,7 +140,7 @@ framework, restored once into the package cache as `dotnet build` does (the scri
 `NETCORE_REF_VERSION`, a list such as `6.0.36;7.0.20` separated by `;`, `,` or whitespace, pins the
 pack of the framework with the same major.minor: it always comes from NuGet at that version, never
 from an installed pack, so lock paths are the same on every machine; a framework without an
-entry follows the rule above; under the planned `HERMETIC` mode every `netN.0` target used must
+entry follows the rule above; under `HERMETIC=on` every `netN.0` target used must
 have an entry; see [dotnet-build.md](dotnet-build.md)). The example above, on the SDK's own framework,
 therefore needs nothing but the SDK.
 
@@ -334,8 +334,8 @@ Framework the `FSharp.Core` NuGet package at `DotNetFwk.fsharpCoreVersion` (8.0.
 itself pins) or the script variable `FSHARP_CORE_VERSION`, its `lib/netstandard2.0` build
 (`lib/netstandard2.1` for netstandard2.1), restored into the package cache on first use; for a
 .NET target the same package's `lib/netstandard2.1` build when `FSHARP_CORE_VERSION` is set,
-else the SDK's (next to `fsc.dll`, the version the compiler ships with; the planned `HERMETIC`
-mode will require the variable, since the SDK's file cannot be restored). The package build
+else the SDK's (next to `fsc.dll`, the version the compiler ships with; `HERMETIC=on` requires
+the variable, since the SDK's file cannot be restored). The package build
 references `netstandard 2.0.0.0`, so a .NET Framework target also gets a type-forwarding
 `netstandard.dll`: the reference assemblies' own `Facades/netstandard.dll` from 4.7.1 on, below
 that the one in the `Microsoft.NET.Build.Extensions` 2.2.101 package
@@ -461,6 +461,9 @@ let strings = resourceset {
 | `NUGET_PACKAGES` | The build's package folder, relative to the project root or absolute; overrides the environment variable of the same name for everything Xake restores or reads there (see below) |
 | `NUGET_FETCH` | `off` turns off every download into the package folder (a missing package fails the build); default `on` |
 | `NETCORE_REF_VERSION` | Pins of the `Microsoft.NETCore.App.Ref` targeting pack, one per major.minor (`6.0.36;7.0.20`); a pinned `netN.0` target always compiles against the NuGet package at that version, never an installed pack (see [csc](#csc)) |
+| `NETSTANDARD_LIBRARY_VERSION` / `NETSTANDARD_LIBRARY_REF_VERSION` | Versions of the `NETStandard.Library` (netstandard2.0, default 2.0.3) and `NETStandard.Library.Ref` (netstandard2.1, default 2.1.0) reference packages |
+| `FSHARP_CORE_VERSION` | `FSharp.Core` package version `fsc` references by default (8.0.100); for a `netN.0` target only when set, else the SDK's own |
+| `HERMETIC` | `on`: every composed `csc`/`fsc` compilation must name only paths under the project root and the `NUGET_PACKAGES` script variable's folder; fsc's compiler may come from an SDK `global.json` pins exactly (`rollForward: disable`). Missing configuration fails at resolve time naming the variable that fixes it. `on`/`off` (also `true`/`yes`/`1`, `false`/`no`/`0`), default `off`; see [dotnet-build.md](dotnet-build.md#hermetic-mode) |
 
 ```bash
 dotnet fsi build.fsx -- -- build -d NETFX-TARGET:net-4.6.2

@@ -134,7 +134,7 @@ locations and names the variable; anything it does not recognize gets 8.
 - **`NUGET_FETCH`.** Unchanged and separate. `HERMETIC=on` with `NUGET_FETCH=off` and a warm
   folder is the offline / cached-CI build: everything the lock names is either in the folder
   or a prerequisite that was checked first.
-- **`packageroot`.** Proposed removal before 0.2 ships: the package folder is one per build
+- **`packageroot`.** Decided 2026-10-09, removed before 0.2 ships: the package folder is one per build
   (`NUGET_PACKAGES`); a per-target folder is a leftover of the lock-centric design and makes no
   sense under `HERMETIC=on`. `norestore` is renamed `nofetch` with `NUGET_FETCH` (PR C).
 - **Compiler server.** Not touched. `CSC_SERVER` works as before with the toolset's compiler.
@@ -219,8 +219,8 @@ recorded without `HERMETIC` that names `$(DotnetRoot)/packs` is refused under it
   `Lock.build`, `Project.import`). Signal: a path under `$(DotnetRoot)/sdk/<v>/` in an allowed
   role (fsc compiler; the import's compiler and analyzers). With an exact `global.json` pin on
   `<v>` the entry gets `{ "Kind": "dotnet-sdk", "Version": "<v>", "Pin": "$(ProjectRoot)/global.json" }`;
-  without one, an error under `HERMETIC=on` and a warning under `off`. Open: write prerequisites
-  always when an entry depends on the SDK (proposed), or only under `HERMETIC=on`.
+  without one, an error under `HERMETIC=on` and a warning under `off`. Decided 2026-10-09: prerequisites are written
+  always when an entry depends on the SDK; the gate enforces only under `HERMETIC=on`.
 - Imports: a project that references `Microsoft.Net.Compilers.Toolset` itself imports with a
   compiler under `$(NuGetPackageRoot)`, so both paths (exact SDK pin as prerequisite, or the
   Toolset in the project) already work; the user defers the decision.

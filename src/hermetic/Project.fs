@@ -16,7 +16,8 @@ module Project =
     open Lock
 
     /// Walks up from `projectDir` looking for `global.json` and reads its `sdk.version` /
-    /// `sdk.rollForward` into a `Lock.SdkPin` (`Lock.sdkPinAt`). Pure: no msbuild involved.
+    /// `sdk.rollForward` into a `Lock.SdkPin` (`Lock.sdkPinAt`, on the base's
+    /// `DotNetFwk.globalJsonPin`). Pure: no msbuild involved.
     let sdkPin (projectDir: string) : SdkPin = Lock.sdkPinAt projectDir |> snd
 
     type ImportOptions = {
@@ -381,12 +382,19 @@ module Project =
             do! needFiles (Filelist (options.Projects |> List.map File.make))
             Directory.CreateDirectory (Path.GetDirectoryName (Path.GetFullPath options.Output)) |> ignore
 
+            // the build's package folder: with the script variable `NUGET_PACKAGES` set, msbuild
+            // restores into it too (it only sees the environment), so the lock's packages are
+            // under the `$(NuGetPackageRoot)` it is written against
+            let! packageRoot, packageSource = DotNetFwk.packageRootWithSource ()
+            let msbuildEnv = if packageSource = DotNetFwk.ScriptVariable then [ "NUGET_PACKAGES", packageRoot ] else []
+
             let msbuild (arguments: string list) name =
                 recipe {
                     let! exitCode =
                         shell {
                             cmd "dotnet"
                             args ("msbuild" :: arguments)
+                            envs msbuildEnv
                             logprefix "[msbuild]"
                             stdoutlevel (Tool.diagnosticLevel Level.Verbose)
                             erroutlevel (Tool.diagnosticLevel Level.Error)
@@ -399,6 +407,11 @@ module Project =
             let! roots = Roots.currentWith options.Roots
 
             let entries = ResizeArray<Lock.Entry>()
+            // HERMETIC=on: what an import is refused for besides the lock-wide gate -- the SDK
+            // not pinned (message 11) or pinned but not the one msbuild ran (message 7)
+            let! hermetic = HermeticMode.enabled ()
+            let sdkRefusals = ResizeArray<string>()
+            let sdkRefused = System.Collections.Generic.Dictionary<string, string list>()
             for project in options.Projects do
                 let projectDir = Path.GetDirectoryName (Path.GetFullPath project)
                 let pinFile, pin = Lock.sdkPinAt projectDir
@@ -455,7 +468,7 @@ module Project =
                             match readDumpProperty dump "ProjectAssetsFile" with
                             | Some assetsFile when File.Exists assetsFile ->
                                 let cacheRoot =
-                                    readDumpProperty dump "NuGetPackageRoot" |> Option.defaultWith Roots.nugetRoot
+                                    readDumpProperty dump "NuGetPackageRoot" |> Option.defaultValue packageRoot
                                 Nuget.readAssets assetsFile framework |> Lock.packagesOf cacheRoot
                             | _ -> []
 
@@ -485,13 +498,32 @@ module Project =
                     let entry = { importedEntry with Prerequisites = prerequisites }
                     match pin with
                     | Pinned v when sdk <> "" && sdk <> v ->
-                        do! trace Warning "'%s': the SDK is pinned to %s but msbuild ran %s -- the pinned SDK is not installed on this machine" entry.Name v sdk
+                        if hermetic then
+                            sdkRefused.[entry.Name] <- sdkVersions
+                            let root = DotNetFwk.dotnetRoot () |> Option.defaultValue "<no .NET installation found>"
+                            sdkRefusals.Add (
+                                sprintf "'%s': HERMETIC=on: global.json (%s) pins the .NET SDK %s, but '%s' does not have it; install it (dotnet-install --version %s --install-dir %s)"
+                                    entry.Name (pinFile |> Option.defaultValue "") v root v root)
+                        else
+                            do! trace Warning "'%s': the SDK is pinned to %s but msbuild ran %s -- the pinned SDK is not installed on this machine" entry.Name v sdk
                     | Pinned _ -> ()
                     | other when List.isEmpty sdkVersions ->
                         do! trace Warning "'%s': the SDK is not pinned (%s) -- the lock's compiler (%s, SDK %s) will drift with every SDK the machine picks; pin it with global.json { sdk: { version, rollForward: \"disable\" } }" entry.Name (sdkPinText other) entry.Dependencies.Compiler.Version sdk
+                    | other when hermetic ->
+                        sdkRefused.[entry.Name] <- sdkVersions
+                        // the compiler and analyzers come from an SDK the machine picks: under
+                        // HERMETIC=on an error, not the warning below
+                        let pinText =
+                            match pinFile with
+                            | Some file when other <> NoGlobalJson -> sprintf "%s (%s)" (sdkPinText other) file
+                            | _ -> sdkPinText other
+                        sdkRefusals.Add (
+                            sprintf "'%s': HERMETIC=on: the project's SDK is not pinned (%s); the import's compiler and analyzers come from the SDK, so pin it in global.json: { \"sdk\": { \"version\": \"%s\", \"rollForward\": \"disable\" } }"
+                                entry.Name pinText (if sdk <> "" then sdk else List.head sdkVersions))
                     | _ -> ()
-                    for v in unpinned do
-                        do! trace Warning "%s" (Lock.sdkUnpinnedWarning entry.Name v)
+                    if not hermetic then
+                        for v in unpinned do
+                            do! trace Warning "%s" (Lock.sdkUnpinnedWarning entry.Name v)
 
                     // the evaluation's inputs, so that a Directory.Build.props edit re-imports
                     // and nothing else does
@@ -522,5 +554,22 @@ module Project =
                 Properties = options.Properties
                 Entries = List.ofSeq entries
             }
+            // HERMETIC=on: the SDK refusals above, then the lock-wide gate (messages 2 and 9);
+            // all of them at once, and nothing is written. The SDK paths of an entry refused
+            // for its pin are not reported again: the gate sees them as covered by the
+            // prerequisite the pin would have given
+            let gated =
+                entries |> Seq.map (fun e ->
+                    match sdkRefused.TryGetValue e.Name with
+                    | true, versions ->
+                        { e with Prerequisites = e.Prerequisites @ [ for v in versions -> { Kind = Lock.DotnetSdk; Version = v; Pin = "" } ] }
+                    | _ -> e)
+                |> List.ofSeq
+            let! refused = Lock.hermeticRecordGate options.Output roots gated
+            let refusals = List.ofSeq sdkRefusals @ refused
+            if not (List.isEmpty refusals) then
+                let msg = refusals |> String.concat "\n"
+                do! trace Error "%s" msg
+                failwith msg
             File.WriteAllText (options.Output, Lock.format roots lock)
         }

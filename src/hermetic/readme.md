@@ -3,18 +3,20 @@
 Reproducible .NET builds for [Xake](https://github.com/OlegZee/Xake): lock files, package
 restore, CycloneDX SBOMs, verification of built binaries, deterministic packing and signing.
 
-The package builds on the `csc {}` and `fsc {}` tasks of `Xake` (`Xake.Dotnet`; Xake 3.5.0.23
-or later, below 4.0) and adds what a build needs to be repeatable and auditable: a lock file that records
+The package builds on the `csc {}` and `fsc {}` tasks of `Xake` (`Xake.Dotnet`; Xake 3.6.0.24
+or later, below 3.7) and adds what a build needs to be repeatable and auditable: a lock file that records
 exactly what the compiler is handed, with the SHA-256 of every reference, analyzer and the
 compiler itself; a restore of the packages that lock names; an SBOM generated from the lock; and
 the release steps after the compile. C# and F# alike: 0.2 locks F# compilations, from `fsc {}`
-or from an imported `.fsproj`. It is a 0.x preview: names may still change between minor
+or from an imported `.fsproj`. With `HERMETIC=on` (the base's script variable) a lock that
+names anything outside the checkout and the build's package folder, other than an exactly
+pinned .NET SDK, is neither written nor replayed. It is a 0.x preview: names may still change between minor
 versions.
 
 ## Usage
 
 ```fsharp
-#r "nuget: Xake, 3.5.0.23"
+#r "nuget: Xake, 3.6.0.24"
 #r "nuget: Xake.Hermetic.Dotnet, 0.2.0"
 
 open Xake

@@ -488,15 +488,16 @@ the reference packs (`NETStandard.Library` for netstandard2.0,
 2. else the environment variable `NUGET_PACKAGES`;
 3. else `~/.nuget/packages`.
 
-`csc { ...; lock "app.json"; packageroot ".packages" }` (Xake.Hermetic.Dotnet) sets the
-folder for one locked target, overriding both. `DotNetFwk.locateFramework` and
+`csc { ...; lock "app.json" }` and `fsc { lock }` (Xake.Hermetic.Dotnet) use the same folder
+and write it in the lock as `$(NuGetPackageRoot)`; there is no per-target folder.
+`DotNetFwk.locateFramework` and
 `locateFrameworkIn`, which run without a build, have no script variables and use the
 environment's folder.
 
 Turning fetching off: `-d NUGET_FETCH:off` (or `var "NUGET_FETCH" "off"`) makes Xake download
 nothing, for CI with a warm cache; a package missing from the folder then fails the build before
-the compiler runs, naming the package and version and saying fetching is off. `norestore` after
-`lock` is the same for one locked target.
+the compiler runs, naming the package and version and saying fetching is off. `nofetch` after
+`lock` (Xake.Hermetic.Dotnet) is the same for one locked target.
 
 The packages an F# script itself references with `#r "nuget: ..."` are restored by `dotnet
 fsi` before the script, and so before Xake, runs: the script variable cannot reach them. Set the

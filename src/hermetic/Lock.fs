@@ -80,45 +80,23 @@ module Lock =
             | -1 -> failwithf "'%s' is not a recognized SdkPin" t
             | i -> Some (RollsForward (t.Substring (0, i), t.Substring (i + 13)))
 
-    /// The `global.json` the .NET host would use for `dir`: searched upwards from it, the
-    /// first one found.
-    let internal findGlobalJson (dir: string) : string option =
-        let rec find (dir: string) =
-            let path = Path.Combine (dir, "global.json")
-            if File.Exists path then Some path
-            else
-                match Path.GetDirectoryName (dir: string) with
-                | null | "" -> None
-                | parent when parent = dir -> None
-                | parent -> find parent
-        find (Path.GetFullPath dir)
-
-    /// The pin a `global.json` file states: `sdk.version` plus `sdk.rollForward` (default
-    /// `latestPatch` when a version is set and the policy is absent); only `"disable"` is
-    /// `Pinned`.
-    let internal readSdkPin (file: string) : SdkPin =
-        let root = File.ReadAllText file |> Json.parse
-        let sdk = Json.field "sdk" root
-        match sdk |> Option.bind (Json.field "version") |> Option.bind Json.asString with
-        | None -> NoVersion file
-        | Some version ->
-            match sdk |> Option.bind (Json.field "rollForward") |> Option.bind Json.asString with
-            | Some "disable" -> Pinned version
-            | Some policy -> RollsForward (version, policy)
-            | None -> RollsForward (version, "latestPatch")
+    /// The base's reading of a `global.json` pin (`DotNetFwk.GlobalJsonPin`) as the lock writes
+    /// it: the file that states it (`None` with `NoGlobalJson`) and the `SdkPin`.
+    let ofGlobalJsonPin (pin: DotNetFwk.GlobalJsonPin) : string option * SdkPin =
+        match pin with
+        | DotNetFwk.NoGlobalJson -> None, NoGlobalJson
+        | DotNetFwk.Exact (version, file) -> Some file, Pinned version
+        | DotNetFwk.RollsForward (version, policy, file) -> Some file, RollsForward (version, policy)
+        | DotNetFwk.NoVersion file -> Some file, NoVersion file
 
     /// <summary>
     /// The SDK pin in effect for `dir` and the `global.json` that states it (`None` with
-    /// `NoGlobalJson`): `findGlobalJson`, then `readSdkPin`. Pure but for reading the file.
+    /// `NoGlobalJson`): the `global.json` found searching upwards from `dir`, as the .NET host
+    /// does, read by the base (`DotNetFwk.globalJsonPin`, the same reader `HERMETIC=on` uses)
+    /// and mapped to the lock's `SdkPin` (`ofGlobalJsonPin`). Pure but for reading the file.
     /// </summary>
-    /// <remarks>
-    /// The exact-pin reader of this package. Xake 3.6 exposes one in the base
-    /// (`DotNetFwk`); once this package builds on 3.6 this one is to be replaced by it.
-    /// </remarks>
     let sdkPinAt (dir: string) : string option * SdkPin =
-        match findGlobalJson dir with
-        | None -> None, NoGlobalJson
-        | Some file -> Some file, readSdkPin file
+        DotNetFwk.globalJsonPin dir |> ofGlobalJsonPin
 
     /// <summary>
     /// An input the environment must provide by itself -- no restore step fetches it -- and
@@ -146,21 +124,13 @@ module Lock =
     [<Literal>]
     let DotnetSdk = "dotnet-sdk"
 
-    /// The SDK versions a list of paths depends on: every path that, tokenized against
-    /// `roots`, starts with <c>$(DotnetRoot)/sdk/&lt;v&gt;/</c>. Distinct, in order of first
-    /// appearance. Pure.
+    /// The SDK versions a list of paths depends on: every path under
+    /// <c>&lt;root&gt;/sdk/&lt;v&gt;/</c>, where the root is the `$(DotnetRoot)` of `roots`
+    /// (`DotNetFwk.sdkVersionOf`). Distinct, in order of first appearance. Pure.
     let sdkVersionsOf roots (paths: string list) : string list =
-        let prefix = "$(DotnetRoot)/sdk/"
-        paths
-        |> List.map (Roots.tokenize roots)
-        |> List.choose (fun p ->
-            if p.StartsWith prefix then
-                match p.Substring(prefix.Length).Split('/') with
-                | [| _ |] -> None
-                | parts when parts.[0] <> "" -> Some parts.[0]
-                | _ -> None
-            else None)
-        |> List.distinct
+        match roots |> List.tryFind (fst >> (=) "$(DotnetRoot)") with
+        | None -> []
+        | Some (_, dotnetRoot) -> paths |> List.choose (DotNetFwk.sdkVersionOf dotnetRoot) |> List.distinct
 
     /// The prerequisites an entry naming the SDK `versions` gets under `pin` (read from
     /// `pinFile`), and the versions left without one -- each of those is a warning for the
@@ -216,6 +186,8 @@ module Lock =
         member this.Sources = match this with Compilation.Csc c -> c.Sources | Compilation.Fsc f -> f.Sources
         member this.Generated = match this with Compilation.Csc c -> c.Generated | Compilation.Fsc f -> f.Generated
         member this.Resources = match this with Compilation.Csc c -> c.Resources | Compilation.Fsc f -> f.Resources
+        /// The `.runtimeconfig.json` the rule declares next to the output, if any
+        member this.RuntimeConfig = match this with Compilation.Csc c -> c.RuntimeConfig | Compilation.Fsc f -> f.RuntimeConfig
         member this.Dependencies = match this with Compilation.Csc c -> c.Dependencies | Compilation.Fsc f -> f.Dependencies
         /// The exact command line, in the compiler's own dialect
         member this.Args = match this with Compilation.Csc c -> c.Args | Compilation.Fsc f -> f.Args
@@ -407,6 +379,9 @@ module Lock =
           yield! diffHashed "Import" a.Evaluation.Imports b.Evaluation.Imports
           yield! diffPairs "Generated" ca.Generated cb.Generated
           yield! diffPairs "Resources" ca.Resources cb.Resources
+          if ca.RuntimeConfig <> cb.RuntimeConfig then
+              let text = Option.defaultValue "none"
+              yield sprintf "~ RuntimeConfig: %s -> %s" (text ca.RuntimeConfig) (text cb.RuntimeConfig)
           yield! diffStringSet "ProjectRef" a.Evaluation.ProjectRefs b.Evaluation.ProjectRefs
           yield! diffPackages a.Packages b.Packages
           yield! diffPrerequisites a.Prerequisites b.Prerequisites ]
@@ -472,7 +447,11 @@ module Lock =
               strings "Defines" c.Defines
               strings "Sources" c.Sources
               pairs "Generated" c.Generated
-              pairs "Resources" c.Resources ]
+              pairs "Resources" c.Resources
+              // only when the rule declares one: every other lock stays byte-identical to what
+              // was written before the key existed
+              if c.RuntimeConfig.IsSome then
+                  sprintf "%s\"RuntimeConfig\": %s" indent (str c.RuntimeConfig.Value) ]
           section "Dependencies"
             [ sprintf "%s\"Compiler\": { \"Tool\": %s, \"Path\": %s, \"Sha256\": %s, \"Version\": %s }" indent
                 (escape d.Compiler.Tool) (str d.Compiler.Path) (escape d.Compiler.Sha256) (escape d.Compiler.Version)
@@ -536,6 +515,9 @@ module Lock =
             { Compiler = { Tool = str "Tool" compiler; Path = str "Path" compiler |> expand; Sha256 = str "Sha256" compiler; Version = str "Version" compiler }
               References = referenceList "References" d
               Analyzers = hashedList "Analyzers" d }
+        // absent in every lock written before the key existed, and whenever the rule declares
+        // no runtimeconfig
+        let runtimeConfig = field "RuntimeConfig" c |> Option.bind asString |> Option.filter ((<>) "") |> Option.map expand
         // the case is the compiler's tool: "fsc" is F#, anything else (every lock written
         // before F# entries existed says "csc") is C#
         let compilation =
@@ -552,6 +534,7 @@ module Lock =
                       Fsc.Sources = strings "Sources" c
                       Fsc.Generated = pairs "Generated" c
                       Fsc.Resources = pairs "Resources" c
+                      Fsc.RuntimeConfig = runtimeConfig
                       Fsc.Dependencies = dependencies }
             | _ ->
                 Compilation.Csc
@@ -563,6 +546,7 @@ module Lock =
                       Sources = strings "Sources" c
                       Generated = pairs "Generated" c
                       Resources = pairs "Resources" c
+                      RuntimeConfig = runtimeConfig
                       Dependencies = dependencies }
         {
             Compilation = compilation
@@ -681,7 +665,9 @@ module Lock =
     /// What a lock-gated build needs besides the compilation: the runner's options, one per
     /// compiler (`Run` for a C# entry, `FscRun` for an F# one; each is read only for its own
     /// case), and where the packages the lock names live (and whether a missing one may be
-    /// fetched).
+    /// fetched). `Restore` is applied as the build says (`Restore.resolve`): with
+    /// `Options.Default` the packages live in the build's package folder (the script variable
+    /// `NUGET_PACKAGES` first) and are fetched unless `NUGET_FETCH` turns fetching off.
     type Options = {
         /// The csc runner's options (`Csc.run`)
         Run: RunOptions
@@ -824,6 +810,93 @@ module Lock =
                     yield sprintf "'%s': the lock needs the .NET SDK %s (prerequisite from %s), which is not installed under '%s'; install it (dotnet-install --version %s --install-dir %s)"
                             entry.Name p.Version p.Pin rootText p.Version rootText ]
 
+    /// The compilation's inputs as `HERMETIC=on` sees them (`Csc.hermeticInputs`,
+    /// `Fsc.hermeticInputs`): the compiler, references, analyzers and every other path.
+    let hermeticInputs (c: Compilation) : HermeticMode.Input list =
+        match c with
+        | Compilation.Csc c -> Csc.hermeticInputs c
+        | Compilation.Fsc f -> Fsc.hermeticInputs f
+
+    /// <summary>
+    /// The paths of `entry`, tokenized against `roots` (the roots its lock is written with),
+    /// that break the `HERMETIC=on` invariant on the lock side: outside `$(ProjectRoot)` (and
+    /// any extra root a script declared, `Roots.make`) and `$(NuGetPackageRoot)`, and not
+    /// covered by one of the entry's prerequisites. A <c>dotnet-sdk &lt;v&gt;</c> prerequisite
+    /// covers <c>$(DotnetRoot)/sdk/&lt;v&gt;/</c> -- fsc's compiler always, and an imported
+    /// entry's compiler and analyzers (msbuild chose them); never a reference, and never
+    /// <c>$(DotnetRoot)/packs/</c>. The comparison itself is `HermeticMode.check` over the
+    /// tokenized roots. Pure.
+    /// </summary>
+    let hermeticViolations roots (entry: Entry) : string list =
+        let builtinOther = set [ Roots.nugetPackageRootToken; "$(DotnetRoot)" ]
+        let hermeticRoots : HermeticMode.Roots = {
+            ProjectRoots = "$(ProjectRoot)" :: (roots |> List.map fst |> List.filter (fun t -> t <> "$(ProjectRoot)" && not (builtinOther.Contains t)))
+            PackageRoot = Roots.nugetPackageRootToken
+            // the package folder's own requirement (message 2) is the caller's
+            PackageRootDeclared = true
+            DotnetRoot = Some "$(DotnetRoot)"
+            // what covers an SDK path is the entry's prerequisites, not the pin found now
+            SdkPin = DotNetFwk.NoGlobalJson
+            SdkInstalled = fun _ -> true
+            TargetingPackVersion = fun _ -> None
+        }
+        let imported = entry.Evaluation.Project <> ""
+        let sdks = entry.Prerequisites |> List.filter (fun p -> p.Kind = DotnetSdk) |> List.map (fun p -> p.Version) |> Set.ofList
+        let covered (input: HermeticMode.Input) =
+            let role =
+                match input.Role with
+                | HermeticMode.Compiler "fsc" -> true
+                | HermeticMode.Compiler _ | HermeticMode.Analyzer -> imported
+                | _ -> false
+            role && (DotNetFwk.sdkVersionOf "$(DotnetRoot)" input.Path |> Option.exists sdks.Contains)
+        hermeticInputs entry.Compilation
+        |> List.map (fun i -> { i with Path = Roots.tokenize roots i.Path })
+        |> List.filter (fun i -> not (covered i))
+        |> List.filter (fun i -> not (List.isEmpty (HermeticMode.check entry.Name hermeticRoots [ i ])))
+        |> List.map (fun i -> i.Path)
+        |> List.distinct
+
+    /// Message 9 of the hermetic mode: refusing to write a lock that names `path` (tokenized).
+    let hermeticRecordMessage (name: string) (lockPath: string) (path: string) =
+        sprintf "'%s': HERMETIC=on: refusing to write the lock '%s': %s is outside $(ProjectRoot) and $(NuGetPackageRoot), and no prerequisite covers it"
+            name lockPath path
+
+    /// Message 10 of the hermetic mode: a lock (at `lockPath`, when known) that names `path`
+    /// (tokenized) is not replayed.
+    let hermeticReplayMessage (name: string) (lockPath: string option) (path: string) =
+        let lock = match lockPath with Some p -> sprintf "the lock '%s'" p | None -> "the lock"
+        sprintf "'%s': HERMETIC=on: %s names %s, outside $(ProjectRoot) and $(NuGetPackageRoot) and not covered by a prerequisite; re-record it with HERMETIC=on"
+            name lock path
+
+    /// <summary>
+    /// The record-time gate (`record`, the recording branch of `buildWith`, `Project.import`):
+    /// under `HERMETIC=on`, every reason not to write the lock at `lockPath` with `entries`,
+    /// tokenized against `roots` -- the package folder not being the build's own (message 2,
+    /// `DotNetFwk.packageRootWithSource`), then one line per offending path (message 9,
+    /// `hermeticViolations`). Empty, and reading nothing but `HERMETIC`, with the mode off.
+    /// </summary>
+    let hermeticRecordGate (lockPath: string) roots (entries: Entry list) : Recipe<ExecContext, string list> =
+        recipe {
+            let! on = HermeticMode.enabled ()
+            match on, entries with
+            | false, _ | _, [] -> return []
+            | true, first :: _ ->
+                let! _, source = DotNetFwk.packageRootWithSource ()
+                let package =
+                    if source = DotNetFwk.ScriptVariable then []
+                    else
+                        // the base's own message 2, by asking its check with nothing but an
+                        // undeclared folder
+                        HermeticMode.check first.Name
+                            { ProjectRoots = []; PackageRoot = ""; PackageRootDeclared = false; DotnetRoot = None
+                              SdkPin = DotNetFwk.NoGlobalJson; SdkInstalled = (fun _ -> true); TargetingPackVersion = (fun _ -> None) }
+                            []
+                return
+                    package
+                    @ [ for e in entries do
+                          for path in hermeticViolations roots e -> hermeticRecordMessage e.Name lockPath path ]
+        }
+
     /// <summary>
     /// Replays a lock entry -- one imported by `Project.import`, read back from a lock, or
     /// recorded from composed settings -- exactly as recorded, with the runner and restore
@@ -843,20 +916,29 @@ module Lock =
     ///  4. `Csc.run` with `options.Run` for a C# entry, `Fsc.run` with `options.FscRun` for
     ///     an F# one; the runner's hash check makes the replay trustworthy.
     /// </summary>
-    let compileWith (options: Options) (entry: Entry) : Recipe<ExecContext, unit> =
+    let private compileEntry (lockPath: string option) (options: Options) (entry: Entry) : Recipe<ExecContext, unit> =
         recipe {
             let c = entry.Compilation
+            // the build's package folder and NUGET_FETCH, for `Options.Default` (`Restore.resolve`)
+            let! restore = Restore.resolve options.Restore
+            let options = { options with Restore = restore }
 
             // the prerequisites first: nothing a restore fetches can stand in for a missing SDK
             match unmetPrerequisites entry with
             | [] -> ()
             | unmet -> do! failStep options c (unmet |> String.concat "\n")
 
-            // TODO(Xake 3.6): the HERMETIC=on gate of the lock side (hermetic-mode.md, messages
-            // 9-11: refuse to record, or to replay, an entry naming a path outside
-            // $(ProjectRoot) and $(NuGetPackageRoot) not covered by a prerequisite) goes here and
-            // in `recordEntry`, reading the base's `HERMETIC` variable; this package does not
-            // read the variable itself
+            // HERMETIC=on: a lock naming a path outside the roots, and not covered by a
+            // prerequisite, is not replayed (message 10) -- a hard failure, like the base's gate
+            let! hermetic = HermeticMode.enabled ()
+            if hermetic then
+                let! roots = Roots.currentWith (Roots.packageRootOverride (Restore.packageRoot restore))
+                match hermeticViolations roots entry with
+                | [] -> ()
+                | paths ->
+                    let msg = paths |> List.map (hermeticReplayMessage c.Name lockPath) |> String.concat "\n"
+                    do! trace Error "%s" msg
+                    failwith msg
 
             let! restoreProblems = Restore.ensure options.Restore (restoreRequest [entry])
             if not (List.isEmpty restoreProblems) then
@@ -901,6 +983,16 @@ module Lock =
             | Compilation.Fsc f -> do! Fsc.run options.FscRun f
         }
 
+    /// <summary>
+    /// `compileEntry` of an entry whose lock file is not known here; see the steps above.
+    /// Under `HERMETIC=on` an entry naming a path outside `$(ProjectRoot)` and
+    /// `$(NuGetPackageRoot)` that no prerequisite covers fails before anything else is done
+    /// (`hermeticViolations`, message 10). `options.Restore` is applied as the build says
+    /// (`Restore.resolve`: the build's package folder, `NUGET_FETCH`).
+    /// </summary>
+    let compileWith (options: Options) (entry: Entry) : Recipe<ExecContext, unit> =
+        compileEntry None options entry
+
     /// `compileWith` with the default options, the compiler server resolved for this build
     /// (`CompilerServer.resolve`: `CSC_SERVER`, then `XAKE_CSC_SERVER`; csc only, fsc has no
     /// server).
@@ -937,8 +1029,10 @@ module Lock =
         }
 
     /// Writes `entry`, hashed (`rehash`, the record-time step) and with its prerequisites
-    /// (`withPrerequisites`), as a one-entry lock at `path` and returns what was written. There is no msbuild configuration or property set behind
-    /// a composed compilation, so those stay empty in the document.
+    /// (`withPrerequisites`), as a one-entry lock at `path` and returns what was written. There
+    /// is no msbuild configuration or property set behind a composed compilation, so those stay
+    /// empty in the document. Under `HERMETIC=on` an incomplete entry is not written
+    /// (`hermeticRecordGate`, messages 2 and 9).
     let private recordEntry (path: string) (entry: Entry) =
         recipe {
             let! full = fullPath path
@@ -955,6 +1049,13 @@ module Lock =
                 |> List.filter File.Exists
             do! needFiles (Filelist (hashedPaths |> List.map File.make))
             let! entry = withPrerequisites true entry
+            // HERMETIC=on: a lock that is not complete is not written (messages 2 and 9)
+            let! roots = Roots.current
+            let! refused = hermeticRecordGate path roots [ entry ]
+            if not (List.isEmpty refused) then
+                let msg = refused |> String.concat "\n"
+                do! trace Error "%s" msg
+                failwith msg
             let rehashed = rehash entry
             do! save full { Configuration = ""; Properties = []; Entries = [ rehashed ] }
             return rehashed
@@ -969,7 +1070,9 @@ module Lock =
     ///     let! c = csc { src !!"*.cs"; out "app.dll"; resolve }
     ///     do! Lock.record "locks/app.json" (Lock.Compilation.Csc c) }
     /// </code>
-    /// Nothing is compiled here.
+    /// Nothing is compiled here. Under `HERMETIC=on` a lock naming a path outside
+    /// `$(ProjectRoot)` and `$(NuGetPackageRoot)` that no prerequisite covers, or recorded
+    /// without the script variable `NUGET_PACKAGES`, is refused (`hermeticRecordGate`).
     /// </summary>
     let record (path: string) (c: Compilation) : Recipe<ExecContext, unit> =
         recipe {
@@ -1010,6 +1113,8 @@ module Lock =
     /// there. Updating is explicit: delete the file, or call `record` from a target of the
     /// script's own. With `FailOnError = false` a mismatch is a traced error and `c` itself is
     /// compiled; a missing lock under CI fails regardless, or CI could pass without a lock.
+    /// Under `HERMETIC=on` recording refuses an incomplete lock (`hermeticRecordGate`) and
+    /// compiling refuses a lock that names a path outside the roots (`compileWith`).
     /// </summary>
     let buildWith (options: Options) (path: string) (c: Compilation) : Recipe<ExecContext, unit> =
         recipe {
@@ -1040,7 +1145,7 @@ module Lock =
                 // no lock yet: record what was just resolved and compile that -- the hashes
                 // `Csc.run` verifies are the ones taken a moment ago
                 let! recorded = recordEntry path (ofCompilation c)
-                do! compileWith options (forCompile recorded)
+                do! compileEntry (Some path) options (forCompile recorded)
             else
                 let! doc = load full
                 let recorded = entry c.Name doc
@@ -1049,7 +1154,7 @@ module Lock =
                 | [] ->
                     // compile the recorded entry, not the resolved one: its hashes are what
                     // gate the build
-                    do! compileWith options (forCompile recorded)
+                    do! compileEntry (Some path) options (forCompile recorded)
                 | differences ->
                     do! failStep options c
                             (sprintf "'%s': the resolved compilation differs from the lock '%s':\n%s\nUpdate the lock deliberately: delete '%s', or run the target that calls Lock.record \"%s\"."
@@ -1078,8 +1183,9 @@ type CscLocked = CscLocked of path: string * settings: CscSettingsType * fetch: 
 /// <code>
 /// csc { src !!"*.cs"; out (File.make "app.dll"); lock "locks/app.json"; nofetch }
 /// </code>
-/// The packages are read from and restored into the build's package folder (the
-/// `NUGET_PACKAGES` environment variable, else `~/.nuget/packages`); there is no per-target
+/// The packages are read from and restored into the build's package folder (the script
+/// variable `NUGET_PACKAGES`, else the environment variable, else `~/.nuget/packages`), and
+/// fetched unless `NUGET_FETCH` (or `nofetch`) turns fetching off; there is no per-target
 /// folder (`packageroot` was removed in 0.2). A script that reads a lock against another
 /// folder uses `Lock.loadWith (Roots.packageRootOverride dir)` and `Restore.into dir`.
 [<AutoOpen>]

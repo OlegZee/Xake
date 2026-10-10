@@ -17,7 +17,13 @@ open Xake.Dotnet
 /// `builtin` / `make`.
 module Roots =
 
-    /// The NuGet package cache (`NUGET_PACKAGES`, else `~/.nuget/packages`).
+    /// The machine's NuGet package cache: the *environment* variable `NUGET_PACKAGES`, else
+    /// `~/.nuget/packages` (`DotNetFwk.nugetRoot`). This is the package folder of the
+    /// context-free functions here (`builtin`, `make`), which have no build to read the script
+    /// variable from. A recipe takes the build's folder instead -- `current`/`currentWith`,
+    /// which follow `DotNetFwk.packageRoot ()`: the script variable `NUGET_PACKAGES` first --
+    /// so a lock recorded in a build with its own package folder tokenizes that folder as
+    /// `$(NuGetPackageRoot)`.
     let nugetRoot () = DotNetFwk.nugetRoot ()
 
     /// The .NET SDK installation root, when one can be located: compilers, analyzers and
@@ -106,17 +112,22 @@ module Roots =
     let internal expand roots (path: string) =
         roots |> List.fold (fun (path: string) (token: string, root: string) -> path.Replace(token, root)) path
 
-    /// The built-in roots for the project root this build runs with -- the engine's
-    /// `ExecOptions.ProjectRoot`, not the process's current directory.
-    let current : Recipe<ExecContext, (string * string) list> =
-        recipe {
-            let! options = getCtxOptions()
-            return builtin options.ProjectRoot
-        }
-
-    /// `current` plus the extra roots a script declares (see `make`).
+    /// `current` plus the extra roots a script declares (see `make`). An extra
+    /// `$(NuGetPackageRoot)` (`packageRootOverride`) wins over the build's package folder.
     let currentWith (extra: (string * string) list) : Recipe<ExecContext, (string * string) list> =
         recipe {
             let! options = getCtxOptions()
+            // the build's package folder (the script variable `NUGET_PACKAGES`, else the
+            // environment's), read -- and so a dependency -- here; an explicit override wins
+            let! packageRoot = DotNetFwk.packageRoot ()
+            let extra =
+                if extra |> List.exists (fst >> (=) nugetPackageRootToken) then extra
+                else (nugetPackageRootToken, packageRoot) :: extra
             return make options.ProjectRoot extra
         }
+
+    /// The built-in roots for the project root this build runs with -- the engine's
+    /// `ExecOptions.ProjectRoot`, not the process's current directory -- with
+    /// `$(NuGetPackageRoot)` at the build's package folder (`DotNetFwk.packageRoot ()`: the
+    /// script variable `NUGET_PACKAGES`, else the environment's, else `~/.nuget/packages`).
+    let current : Recipe<ExecContext, (string * string) list> = currentWith []

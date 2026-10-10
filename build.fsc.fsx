@@ -1,46 +1,51 @@
-// Hermetic self-hosting build: both assemblies are compiled by the `fsc` task, with no
-// `dotnet build` and no msbuild compiling anything. What to compile, what to reference and
-// what to define is asked of msbuild once per project and cached: a file rule evaluates the
-// `.fsproj` (`dotnet msbuild -getItem/-getProperty`), and everything downstream reads that
-// result. So the answer is msbuild's own -- conditions, imports, the resolved reference list
-// and the generated assembly attributes included -- while the compilation is ours.
+// Hermetic self-hosting build: the three libraries are compiled by fsc from one lock,
+// `locks/xake.json`, with no `dotnet build` and no msbuild compiling anything. The lock is
+// msbuild's own answer -- `Project.import` runs a design-time build per project and records the
+// exact fsc command line, the generated assembly attributes, and the SHA-256 of the compiler,
+// every reference and every msbuild file that took part -- and `build` replays it
+// (`Lock.compile`), failing if any of those inputs differs from what was recorded.
+//
+// The lock is committed and written by one target only, `update-locks`: run it after a change
+// to a project file, a package version or global.json, review the diff, commit. `check-locks`
+// re-imports into obj/ and fails if the committed lock is stale. `build` reads the lock as a
+// plain file and never runs msbuild or a restore of the projects.
+//
+// The F# compiler is the SDK's own `fsc.dll` (no NuGet package carries a current one), so the
+// SDK is a prerequisite of the lock: global.json pins it exactly (`rollForward: disable`), the
+// import records that pin, and the replay checks the SDK is installed before anything else.
 //
 // Bootstrap: the script runs on the *published* packages, as build.fsx does -- `Xake` (which
-// carries Xake.dll and Xake.Dotnet.dll) and `Xake.Hermetic.Dotnet` (`Fsproj`). Not on `out/`:
+// carries Xake.dll and Xake.Dotnet.dll) and `Xake.Hermetic.Dotnet` (the lock). Not on `out/`:
 // this script overwrites `out/`, and overwriting the assemblies fsi has loaded kills the run
 // with a BadImageFormatException.
 //
-// The versions are the exact ones nuget.org carries, not `3.4.0`/`0.1.0`: publish.yml appends
-// the run number to the tag (`X.Y.Z.<run>`), so no plain `X.Y.Z` exists and a lower bound of
-// it resolves to the next one up with NU1603. Bump them only after a release has landed, to
-// the exact published version (docs/devprocess.md).
+// The versions are the exact ones nuget.org carries: publish.yml appends the run number to
+// the tag (`X.Y.Z.<run>`), so no plain `X.Y.Z` exists and a lower bound of it resolves to the
+// next one up with NU1603. Bump them only after a release has landed (docs/devprocess.md).
+// TODO(after hermetic-v0.2.0): `0.2.0` below is a placeholder until the 0.2 release is on
+// nuget.org; replace it with the exact published `0.2.0.<run>`. Until then this script runs
+// only against a local feed (`#i "nuget: <folder>"` with `dotnet pack src/hermetic
+// -p:Version=0.2.0 -o <folder>`, docs/devprocess.md).
 //
-// To work on this script against unreleased libraries, build them with build.fsx and swap the
-// two `#r "nuget: ..."` lines for the commented ones below -- after copying the dlls out of
-// `out/`, for the reason above (e.g. `cp out/netstandard2.0/*.dll /tmp/xake-dev/`). Or pack
-// them at a version nuget.org does not have into a folder, point fsi at it with
-// `#i "nuget: /tmp/xake-feed"` and `#r` that version. `NUGET_SOURCE` does not reach these
-// lines: it is only the extra restore source of the hermetic `pack` below.
-//
-// Testing and packing still shell out to the SDK: the test project is built by msbuild, and
+// Testing and packing still shell out to the SDK: the test projects are built by msbuild, and
 // the nupkg's net462 asset comes from `dotnet pack` (see docs/session.md).
-#r "nuget: Xake, 3.4.0.21"
-#r "nuget: Xake.Hermetic.Dotnet, 0.1.0.22"
-// #r "/tmp/xake-dev/Xake.dll"
-// #r "/tmp/xake-dev/Xake.Dotnet.dll"
-// #r "/tmp/xake-dev/Xake.Hermetic.Dotnet.dll"
+#r "nuget: Xake, 3.6.0.24"
+#r "nuget: Xake.Hermetic.Dotnet, 0.2.0"
 
+open System.IO
 open Xake
 open Xake.Dotnet
-open Xake.Hermetic.Dotnet   // Fsproj
+open Xake.Hermetic.Dotnet   // Project.import, Lock
 open Xake.Tasks
 
 /// The literal `<Version>` a project file declares, if any.
 let projectVersion (path: string) =
-    let m = System.Text.RegularExpressions.Regex.Match(System.IO.File.ReadAllText path, "<Version>([^<]+)</Version>")
+    let m = System.Text.RegularExpressions.Regex.Match(File.ReadAllText path, "<Version>([^<]+)</Version>")
     if m.Success then m.Groups.[1].Value.Trim() else "0.0.1"
 
 let vars = {|
+    // the package versions; `pack` hands them to `dotnet pack`. The assemblies `build` compiles
+    // carry the version the lock was imported with (the projects' own, see `update-locks`)
     Version    = Var.create<string>(description = "Version number for the Xake package, e.g. 1.2.3") |> withDefault "0.0.1"
     // versioned on its own, as in build.fsx; the default is what its project file says
     HermeticVersion = Var.create<string>(description = "Version number for the Xake.Hermetic.Dotnet package, e.g. 0.1.0") |> withDefault (projectVersion "src/hermetic/Xake.Hermetic.Dotnet.fsproj")
@@ -52,26 +57,16 @@ let vars = {|
 |}
 
 /// Only netstandard2.0 is compiled here; the nupkg gets its net462 asset from `dotnet pack`.
-/// A net462 leg would need msbuild evaluations for net462 under `projects/` (docs/session.md).
 let frameworks = ["netstandard2.0"]
 
-/// The libraries this script builds: the assembly each one produces, and the project it is
-/// described by. Everything else about them is read out of the project file.
+/// The libraries this script builds: the assembly each one produces, and its project.
 let libraries =
     [ "Xake",                 "src/core/Xake.fsproj"
       "Xake.Dotnet",          "src/dotnet/Xake.Dotnet.fsproj"
       "Xake.Hermetic.Dotnet", "src/hermetic/Xake.Hermetic.Dotnet.fsproj" ]
 
-/// The version a library is compiled at: the package it ships in decides.
-let versionOf name =
-    if name = "Xake.Hermetic.Dotnet" then vars.HermeticVersion else vars.Version
-
-let projectOf name = libraries |> List.find (fst >> (=) name) |> snd
-
-/// The library a project file belongs to, if this script builds it.
-let libraryOf projectFile =
-    let fullPath (path: string) = System.IO.Path.GetFullPath path
-    libraries |> List.tryFind (snd >> fullPath >> (=) (fullPath projectFile)) |> Option.map fst
+/// The lock of all three, every framework in it. Committed; only `update-locks` writes it.
+let lockPath = "locks/xake.json"
 
 /// Assembly and doc file every library produces, for every target framework.
 let binaries =
@@ -81,29 +76,21 @@ let binaries =
         -> $"out/%s{fwk}/%s{name}.%s{ext}"
     ]
 
-/// What msbuild answered about a project, kept in the repository: paths in it are written
-/// against `$(NuGetPackageRoot)` and `$(ProjectRoot)`, so the file is the same on every
-/// machine and its diff shows what a project change did to the compilation. Its rule is the
-/// only thing that runs msbuild, and only when the project file or the version changed.
-let evaluated name framework = $"projects/%s{framework}/%s{name}.json"
-
-/// A fileset made of exact paths, in the order given -- unlike a mask, this preserves the
-/// compile order fsc is handed.
-let filesetOf (files: string list) = files |> List.fold (fun fs file -> fs ++ file) Fileset.Empty
-
-/// The two NuGet packages, versioned independently.
-/// `Xake` is packed from src/dotnet, which pulls the core's assembly into the same nupkg (see
-/// src/dotnet/Xake.Dotnet.fsproj). `Xake.Hermetic.Dotnet` is packed from src/hermetic and
-/// depends on the published `Xake` through its PackageReference (the range is in the fsproj);
-/// its evaluation references that package's assemblies, not the ones this script compiles.
-///
-/// Each package is packed into a folder of its own, `out/pkg/<id>/<id>.<version>.nupkg`: a
-/// single mask such as `out/(id:*).(ver:*).nupkg` cannot tell `Xake.Hermetic.Dotnet.0.1.0` from
-/// a Xake version `Hermetic.Dotnet.0.1.0` (and the last matching rule wins), and a folder per
-/// id also lets CI push `out/pkg/<id>/*.nupkg` without picking up the other package.
-let xakePackage = "Xake"
-let hermeticPackage = "Xake.Hermetic.Dotnet"
-let packagePath id version = $"out/pkg/%s{id}/%s{id}.%s{version}.nupkg"
+/// One `Project.import` of the three projects into `output` (relative to the project root).
+/// No `Version` property: the lock carries the version each project declares, the generated
+/// `AssemblyInfo.fs` included (its commit sha stays a `$(SourceRevisionId)` token, resolved
+/// from HEAD when the lock is compiled). The hermetic project references the *published* Xake
+/// package, so its entry compiles against that, not against the Xake.dll built here.
+let importInto (output: string) = recipe {
+    let! options = getCtxOptions ()
+    do! Project.import {
+        Project.ImportOptions.Default with
+            Projects = libraries |> List.map snd
+            Frameworks = frameworks
+            Configuration = "Release"
+            Output = Path.Combine (options.ProjectRoot, output)
+    }
+}
 
 /// The nuspec dependencies of the hermetic package must name `Xake` (the package that carries
 /// both Xake.dll and Xake.Dotnet.dll) and never `Xake.Dotnet`, which is not a package; returns
@@ -111,7 +98,7 @@ let packagePath id version = $"out/pkg/%s{id}/%s{id}.%s{version}.nupkg"
 let checkXakeDependency (nupkg: string) =
     use zip = System.IO.Compression.ZipFile.OpenRead nupkg
     let entry = zip.Entries |> Seq.find (fun e -> e.FullName.EndsWith ".nuspec" && not (e.FullName.Contains "/"))
-    use reader = new System.IO.StreamReader(entry.Open())
+    use reader = new StreamReader(entry.Open())
     let doc = System.Xml.Linq.XDocument.Parse(reader.ReadToEnd())
     let ids =
         doc.Descendants()
@@ -120,6 +107,19 @@ let checkXakeDependency (nupkg: string) =
         |> List.ofSeq
     [ if not (List.contains "Xake" ids) then yield "no dependency on package Xake"
       if List.contains "Xake.Dotnet" ids then yield "depends on Xake.Dotnet, which is not a package" ]
+
+/// The two NuGet packages, versioned independently.
+/// `Xake` is packed from src/dotnet, which pulls the core's assembly into the same nupkg (see
+/// src/dotnet/Xake.Dotnet.fsproj). `Xake.Hermetic.Dotnet` is packed from src/hermetic and
+/// depends on the published `Xake` through its PackageReference (the range is in the fsproj).
+///
+/// Each package is packed into a folder of its own, `out/pkg/<id>/<id>.<version>.nupkg`: a
+/// single mask such as `out/(id:*).(ver:*).nupkg` cannot tell `Xake.Hermetic.Dotnet.0.1.0` from
+/// a Xake version `Hermetic.Dotnet.0.1.0` (and the last matching rule wins), and a folder per
+/// id also lets CI push `out/pkg/<id>/*.nupkg` without picking up the other package.
+let xakePackage = "Xake"
+let hermeticPackage = "Xake.Hermetic.Dotnet"
+let packagePath id version = $"out/pkg/%s{id}/%s{id}.%s{version}.nupkg"
 
 /// `-p:RestoreAdditionalProjectSources=...` when NUGET_SOURCE is set, nothing otherwise.
 let restoreSource = recipe {
@@ -132,6 +132,11 @@ let dotnet arglist = sh "dotnet" { args arglist; failonerror }
 do xakeScript {
     filelog "build.log" Verbosity.Diag
     varschema vars
+
+    // every compilation names only paths under the checkout, the build's own package folder
+    // and the pinned SDK's fsc (the one prerequisite)
+    var "HERMETIC" "on"
+    var "NUGET_PACKAGES" ".packages"
 
     rules [
         "main" <<< ["build"; "test"]
@@ -147,67 +152,75 @@ do xakeScript {
             do! sh "dotnet test src/hermetic.tests -c Release" { args where; failonerror }
         }
 
-        // ask msbuild what the project says: sources in compile order (the generated
-        // assembly attributes first), the resolved references, the define symbols
-        target "projects/(fwk:*)/(lib:*).json" {
+        (* The lock *)
+        // the only place that writes the lock: one restore and one msbuild design-time build
+        // per project; run it after a project change, review the diff, commit
+        "update-locks" => importInto lockPath
 
-            let! framework = getRuleMatch "fwk"
-            let! name = getRuleMatch "lib"
-            let! version = versionOf name
-            let! result = getTargetFile()
-
-            let project = projectOf name
-            do! needFiles (Filelist [File.make project])
-
-            do! Fsproj.evaluate {
-                Fsproj.EvalOptions.Default with
-                    Project = project
-                    Framework = framework
-                    Configuration = "Release"
-                    Properties = ["Version", version]
-                    Output = result.FullName
-            }
+        // a fresh import (under obj/, nothing committed is touched) against the committed lock
+        "check-locks" => recipe {
+            let fresh = "obj/xake/check/xake.json"
+            do! importInto fresh
+            let! options = getCtxOptions ()
+            let! roots = Roots.current
+            let read (p: string) = Lock.read roots (Path.Combine (options.ProjectRoot, p))
+            let committed, current = read lockPath, read fresh
+            let key (e: Lock.Entry) = e.Name, e.Framework
+            let diffs =
+                [ for e in current.Entries do
+                    match committed.Entries |> List.tryFind (fun c -> key c = key e) with
+                    | Some c -> for d in Lock.diffText roots c e -> sprintf "%s (%s): %s" e.Name e.Framework d
+                    | None -> yield sprintf "+ entry %s (%s)" e.Name e.Framework
+                  for c in committed.Entries do
+                    if not (current.Entries |> List.exists (fun e -> key e = key c)) then
+                        yield sprintf "- entry %s (%s)" c.Name c.Framework ]
+            match diffs with
+            | [] -> do! trace Level.Info "%s is up to date (%d entries)" lockPath current.Entries.Length
+            | _ -> failwithf "%s is stale; run update-locks and commit:\n%s" lockPath (String.concat "\n" diffs)
         }
 
-        // one rule compiles them all: which library and which framework is asked for
-        // is read off the target being built
+        // one rule compiles them all, from the lock: which library and which framework is read
+        // off the target being built
         targets ["out/(fwk:*)/(lib:*).dll"; "out/(fwk:*)/(lib:*).xml"] {
-
-            let! [outdll; outdoc] | OtherwiseFailErr "Expected two target files (dll and xml)" (outdoc, outdll)
-                = getTargetFiles()
             let! framework = getRuleMatch "fwk"
             let! name = getRuleMatch "lib"
+            let! options = getCtxOptions ()
+            let ours library ext = Path.Combine (options.ProjectRoot, "out", framework, $"%s{library}.%s{ext}")
 
-            do! need [evaluated name framework]
-            let! project = Fsproj.load (evaluated name framework)
+            // the build's own package folder (NUGET_PACKAGES, below): the lock's
+            // $(NuGetPackageRoot) is read as that folder, and the replay restores into it what
+            // the lock names and the folder lacks
+            let! packageRoot = DotNetFwk.packageRoot ()
+            let! lock = Lock.loadWith (Roots.packageRootOverride packageRoot) lockPath
+            let entry = Lock.entryFor framework name lock
 
-            // msbuild points a project reference at that project's own bin/; this build has
-            // its own layout, so those references are swapped for the artifacts it produces.
-            // They are not `need`ed here: the fsc task does that for everything it references.
-            let referenced = project.ProjectRefs |> List.choose libraryOf
-            let ours = [for library in referenced -> $"out/%s{framework}/%s{library}.dll"]
+            // msbuild compiles into the project's obj/ and points a project reference at the
+            // referenced project's output there; this build has its own layout. The outputs
+            // (`-o:`, `--doc:`) go to out/<fwk>/, and a project reference -- the one reference
+            // the lock leaves unhashed, as it is not built yet -- to the assembly this rule
+            // builds for it. Every other reference keeps its path and its hash.
+            let intermediate = entry.Output |> Option.map Path.GetDirectoryName
+            let unbuilt =
+                entry.Dependencies.References
+                |> List.filter (fun r -> r.Sha256 = "")
+                |> List.map (fun r -> r.Path)
+            let produced (p: string) =
+                Some (Path.GetDirectoryName p) = intermediate
+                && Path.GetFileNameWithoutExtension p = name
+                && List.contains (Path.GetExtension p) [".dll"; ".xml"; ".pdb"]
+            let mapped =
+                entry |> Lock.mapPaths (fun p ->
+                    if List.contains p unbuilt then ours (Path.GetFileNameWithoutExtension p) "dll"
+                    elif produced p then ours name (Path.GetExtension(p).TrimStart '.')
+                    else p)
 
-            let references =
-                project.References
-                |> List.filter (fun path ->
-                    referenced |> List.contains (System.IO.Path.GetFileNameWithoutExtension path) |> not)
-
-            do! fsc {
-                targetfwk framework
-
-                out outdll
-                doc outdoc
-                src (filesetOf project.Sources)
-                refs (filesetOf (references @ ours))
-                define project.Defines
-
-                args [
-                    "--optimize+"
-                    "--debug:portable"
-                    // same binary from the same sources, wherever it is built
-                    "--deterministic+"
-                ]
-            }
+            do! need [ for r in unbuilt -> Path.GetRelativePath (options.ProjectRoot, ours (Path.GetFileNameWithoutExtension r) "dll") ]
+            // HERMETIC=on: Lock.compile (0.2) does not run the base's gate itself yet, so it is
+            // applied here, over the compilation exactly as it is about to be replayed
+            do! HermeticMode.enforce name (Fsc.hermeticInputs mapped.Fsc)
+            do! Lock.compileWith
+                    { Lock.Options.Default with Restore = { Restore.Options.Default with PackageRoot = Some packageRoot } }
+                    mapped
         }
 
         (* Nuget publishing rules *)
@@ -249,9 +262,9 @@ do xakeScript {
               ] @ source)
 
             match checkXakeDependency nupkg with
-            | [] -> do! trace Level.Info "%s: depends on package Xake" (System.IO.Path.GetFileName nupkg)
+            | [] -> do! trace Level.Info "%s: depends on package Xake" (Path.GetFileName nupkg)
             | problems ->
-                System.IO.File.Delete nupkg
+                File.Delete nupkg
                 failwithf "%s: %s" nupkg (String.concat "; " problems)
         }
 

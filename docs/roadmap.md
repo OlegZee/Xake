@@ -25,16 +25,20 @@ through `getRuleMatch` for existing scripts. `build.fsc.fsx` is the first custom
 
 ## Xake.Dotnet
 
-### B6: `Fsc` through the shared runner (planned after 3.4)
+### B6: `Fsc` through the shared runner (done; one idea left)
 
-`fsc {}` has no resolved record, no `resolve` operation and no hash-checked runner, so there is
-no `fsc { lock }` and `build.fsc.fsx` (the build of record) is hermetic only through its kept
-msbuild evaluations and `--deterministic+`. Plan: an `Fsc` record next to `Csc` with
-`ofSettings`/`run`/`compile`, a private runner core shared with `Csc.run`, `fsc { ...; resolve }`,
-then `fsc { lock }` as an extension in Xake.Hermetic.Dotnet, `Project.import` for `.fsproj`
-(retiring `Fsproj`), and `build.fsc.fsx` rewritten on a lock. Limits to document: the F#
-compiler is not a NuGet package, so the only reproducible compiler path for fsc is the SDK pinned
-by `global.json`; the net462 leg still comes from `dotnet pack`.
+Done in Xake 3.5/3.6 and Xake.Hermetic.Dotnet 0.2: the `Fsc` record next to `Csc` with
+`ofSettings`/`run`/`compile` over the runner core shared with `Csc.run`, `fsc { ...; resolve }`,
+`fsc { lock }`, `Project.import` for `.fsproj` (`Fsproj` retired), and `build.fsc.fsx` on one
+imported lock (`locks/xake.json`, `update-locks`/`check-locks`, `HERMETIC=on`), with `global.json`
+pinning the SDK exactly since the F# compiler is the SDK's `fsc.dll`. The net462 leg still comes
+from `dotnet pack`.
+
+Left, as an idea: **an F# toolset** -- a compiler host over the `FSharp.Compiler.Service`
+package as a `toolset` for fsc, so the F# compiler becomes a restorable package like csc's
+`Microsoft.Net.Compilers.Toolset` and the exact SDK pin (with its cost to contributors) is no
+longer the only reproducible path. The alternative is an "SDK restore" step (`dotnet-install`
+into the project's own `DOTNET_ROOT`).
 
 ## Xake.Hermetic.Dotnet
 

@@ -4,8 +4,10 @@ This document describes the practical workflow for developing and releasing Xake
 
 ## Requirements
 
-- .NET SDK 8.0 or newer. `global.json` pins `8.0.0` with `rollForward: latestMajor`, so
-  the newest installed SDK is used and 8.0 is the lowest one that works.
+- .NET SDK **10.0.401 exactly**: `global.json` pins it with `rollForward: disable` (see
+  [The SDK pin](#the-sdk-pin)); `dotnet` refuses to run in the repository without it. The
+  tests also need the .NET 8 runtime (they target `net8.0`). The supported floor for building
+  `build.fsx` is still SDK 8.0, checked by CI with `global.json` removed.
 - GitHub access to the repository
 
 ## Branch workflow
@@ -60,6 +62,49 @@ Run filtered tests through Xake variable:
 ```bash
 dotnet fsi build.fsx -- -- test -d FILTER=Rm
 ```
+
+### The fsc build of record (`build.fsc.fsx`)
+
+`build.fsc.fsx` compiles the three libraries (`Xake`, `Xake.Dotnet`, `Xake.Hermetic.Dotnet`,
+netstandard2.0) with fsc from one committed lock, `locks/xake.json`: msbuild's own command line
+for each project, recorded by `Project.import` together with the SHA-256 of the compiler, every
+reference and every msbuild file that took part ([hermetic/lock.md](hermetic/lock.md)). `build`
+replays the lock and fails if any of those inputs differs; it runs neither msbuild nor a restore
+of the projects.
+
+```bash
+dotnet fsi build.fsc.fsx -- -- build test       # compile from the lock into out/netstandard2.0/, run both test projects
+dotnet fsi build.fsc.fsx -- -- update-locks     # re-import the three fsproj into locks/xake.json
+dotnet fsi build.fsc.fsx -- -- check-locks      # re-import under obj/xake/check/ and fail if the lock is stale
+dotnet fsi build.fsc.fsx -- -- pack             # as build.fsx: dotnet pack of both packages
+```
+
+- **Run `update-locks` after any change to a project file** (a source added, removed or
+  reordered, a define, a package version), to `Directory.Build.*`, or to `global.json`; review
+  the lock's diff and commit it with the change. `check-locks` says whether that is needed.
+- The script sets `HERMETIC=on` and `NUGET_PACKAGES=.packages`: the replay restores what the
+  lock names into `.packages/` (gitignored) and fails if a compilation names a path outside
+  the checkout and that folder, other than the pinned SDK's `fsc.dll`.
+- The assemblies carry the version the lock was imported with, the projects' own `<Version>`;
+  `-d Version=`/`-d HermeticVersion=` only reach `pack`.
+
+### The SDK pin
+
+`global.json` is `{ "sdk": { "version": "10.0.401", "rollForward": "disable" } }`. No NuGet
+package carries a current F# compiler, so the lock's compiler is the SDK's own
+`sdk/10.0.401/FSharp/fsc.dll`; only an exact pin makes that a fixed input (the lock records it
+as the `dotnet-sdk 10.0.401` prerequisite, checked before every replay, and `HERMETIC=on`
+accepts it only under an exact pin).
+
+Consequences:
+
+- Contributors need exactly that SDK (`dotnet-install --version 10.0.401`); with any other SDK
+  `dotnet` fails in the repository with "A compatible .NET SDK was not found".
+- CI installs it from the file: `actions/setup-dotnet` with `global-json-file: global.json`
+  (plus `8.0.x` for the test runtime) in `build.yml`'s `pinned` leg and in `publish.yml`. The
+  `floor` leg of `build.yml` deletes `global.json` and builds `build.fsx` on SDK 8.0.
+- Bumping the SDK is one change: edit `global.json`, run `update-locks` (the compiler path,
+  hash and prerequisite change), commit both.
 
 ## Command line style
 
@@ -161,14 +206,14 @@ dotnet fsi build.fsx -- -- push-hermetic -d HermeticVersion=0.A.B -d NUGET_KEY=$
 
 ## Supported baseline and the dependency floor
 
-The lowest supported SDK is **.NET 8.0**. Three things enforce it, and they have to move
+The lowest supported SDK for `build.fsx` and the tests is **.NET 8.0**. These have to move
 together:
 
 | Where | Setting |
 |---|---|
-| `global.json` | `version: 8.0.0`, `rollForward: latestMajor` — 8.0 is the minimum, the newest installed SDK is what gets used |
+| `global.json` | not any more: it pins `10.0.401` exactly for the fsc build ([The SDK pin](#the-sdk-pin)) |
 | `src/tests/tests.fsproj`, `src/hermetic.tests/hermetic.tests.fsproj` | `net8.0` |
-| `.github/workflows/build.yml` | builds on both `8.0.x` and `10.0.x` |
+| `.github/workflows/build.yml` | the `floor` leg removes `global.json` and builds on `8.0.x`; the `pinned` leg uses the pinned SDK |
 
 Separately, all three library projects set `DisableImplicitFSharpCoreReference` and pin
 `FSharp.Core` to `8.0.100`. Without the pin the SDK injects its own FSharp.Core, that version
@@ -238,26 +283,32 @@ means the nuget.org version and the git tag never match exactly. Pushing uses
 ### Bootstrapping note
 
 Both build scripts bootstrap from nuget.org: the build builds Xake with an already published
-Xake. `build.fsx` starts with `#r "nuget: Xake, 3.4.0.21"`; `build.fsc.fsx` (the fsc-based build,
-which needs `Fsproj` from the hermetic package) with `#r "nuget: Xake, 3.4.0.21"` and
-`#r "nuget: Xake.Hermetic.Dotnet, 0.1.0.22"`. Those references are intentionally *behind* the
+Xake. `build.fsx` starts with `#r "nuget: Xake, 3.4.0.21"`; `build.fsc.fsx` (the fsc build of
+record, which needs the lock API of the hermetic package) with `#r "nuget: Xake, 3.6.0.24"` and
+`#r "nuget: Xake.Hermetic.Dotnet, 0.2.0.<run>"` (until `hermetic-v0.2.0` is on nuget.org, the placeholder `0.2.0`, which only a local feed provides). Those references are intentionally *behind* the
 version being released: bump them only after a release has landed on nuget.org, to the exact
 published version (`X.Y.Z.<run>`, not the tag; a bare `X.Y.Z` does not exist and resolves
-upwards with NU1603), and only when the script needs what it brings. Bump `Xake` in both
-scripts together, so the fsc build does not run on an older engine than the msbuild one.
+upwards with NU1603), and only when the script needs what it brings. `build.fsc.fsx` needs a
+`Xake` at least as new as the one the hermetic package was built on (0.2 needs 3.6), so its
+`Xake` can be ahead of `build.fsx`'s; never behind.
+
+After a `hermetic-vX.Y.Z` release, bump `build.fsc.fsx`'s `Xake.Hermetic.Dotnet` `#r` to the
+published `X.Y.Z.<run>` (and its `Xake` `#r` to the floor that release needs), run
+`dotnet fsi build.fsc.fsx -- -- check-locks build`, commit. The lock itself does not depend on
+the script's references, only on the projects and the SDK.
 
 To work on a script against *unreleased* libraries, there are two ways; `NUGET_SOURCE` is not
 one of them (it is only the extra restore source of the hermetic `pack`, see above):
 
 - a temporary `#r` on built dlls. `build.fsx` carries it as the commented
-  `// #r "out/netstandard2.0/Xake.dll"`; `build.fsc.fsx` carries commented `#r` lines on a copy
-  (`/tmp/xake-dev/*.dll`), because it overwrites `out/` and overwriting assemblies fsi has
-  loaded kills the run with a `BadImageFormatException`:
+  `// #r "out/netstandard2.0/Xake.dll"`; for `build.fsc.fsx` point the `#r` lines at a copy
+  (`/tmp/xake-dev/*.dll`), never at `out/`, because it overwrites `out/` and overwriting
+  assemblies fsi has loaded kills the run with a `BadImageFormatException`:
 
   ```bash
   dotnet fsi build.fsx -- -- build
   mkdir -p /tmp/xake-dev && cp out/netstandard2.0/*.dll /tmp/xake-dev/
-  # swap the #r "nuget: ..." lines of build.fsc.fsx for the commented ones, then
+  # replace the #r "nuget: ..." lines of build.fsc.fsx with #r "/tmp/xake-dev/<name>.dll", then
   dotnet fsi build.fsc.fsx -- -- build test
   ```
 

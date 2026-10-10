@@ -62,6 +62,9 @@ module Restore =
         /// SHA-256 check that follows fails the build if the bytes are not the recorded ones.
         /// A build that must never reach the network sets it to `false` and gets the old
         /// behaviour: the missing files are reported, in full, by that same check.
+        /// `nofetch` after `csc { lock }` / `fsc { lock }` sets it. In 0.2.x, on Xake 3.6, the
+        /// default is to follow the base's `NUGET_FETCH` script variable
+        /// (`DotNetFwk.fetchEnabled ()`); the name of this field stays.
         Enabled: bool
     } with static member Default = {
             PackageRoot = None
@@ -295,7 +298,7 @@ module Restore =
             | [] -> return presentProblems
             | wanted when not options.Enabled ->
                 do! trace Warning
-                        "%d package(s) named by the lock are not in '%s' and automatic restore is off (Restore.Options.Enabled): %s"
+                        "%d package(s) named by the lock are not in '%s' and fetching is off (nofetch / NUGET_FETCH=off): %s"
                         (List.length wanted) root
                         (wanted |> List.map (fun p -> p.Id + " " + p.Version) |> String.concat ", ")
                 return presentProblems

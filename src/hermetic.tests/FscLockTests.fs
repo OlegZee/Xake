@@ -164,3 +164,84 @@ type ``Fsc lock``() =
         // the untampered entry replays
         x.Run "flock-e3" (Lock.compile entry)
         Assert.That(File.Exists "FLockE.dll", Is.True, "Lock.compile did not produce FLockE.dll")
+
+    // ---- prerequisites -------------------------------------------------------------------
+
+    /// `Run` against another project root (one with a `global.json` of the test's own).
+    member private x.RunIn (root: string) (label: string) (body: Recipe<ExecContext, unit>) =
+        xake {x.TestOptions with ProjectRoot = root; FileLog = label + ".log"; ThrowOnError = true; Vars = [ "CI", "off" ]; FileLogLevel = Loud} {
+            wantOverride ([label])
+            rules [ label => body ]
+        }
+
+    [<Test; Category("Integration")>]
+    member x.``an fsc lock under an exact global.json pin records the SDK as a prerequisite``() =
+        let root = Path.Combine (Directory.GetCurrentDirectory (), "pinned-" + System.Guid.NewGuid().ToString("N"))
+        Directory.CreateDirectory root |> ignore
+        File.WriteAllText (Path.Combine (root, "FLockP.fs"), "module FLockP\nlet value = 1\n")
+        let globalJson = Path.Combine (root, "global.json")
+        let lockPath = "locks/flockp.json"
+        if File.Exists "FLockP.dll" then File.Delete "FLockP.dll"
+        let mutable version = ""
+        let mutable same : string list = [ "not run" ]
+        let mutable unpinned : string list = []
+        try
+            x.RunIn root "flock-p" (recipe {
+                let! f = Fsc.ofSettings (settings !!"FLockP.fs" "FLockP.dll")
+                let! roots = Roots.current
+                version <- Lock.sdkVersionsOf roots [ f.Dependencies.Compiler.Path ] |> List.exactlyOne
+                File.WriteAllText (globalJson, sprintf "{ \"sdk\": { \"version\": \"%s\", \"rollForward\": \"disable\" } }" version)
+                do! Lock.record lockPath (Lock.Compilation.Fsc f)
+                let! diff = Lock.verify lockPath (Lock.Compilation.Fsc f)
+                same <- diff
+                // the prerequisite is met here: the recorded entry replays
+                let! doc = Lock.load lockPath
+                do! Lock.compile doc.Entries.Head
+                // the pin loosened: the configuration no longer makes the SDK a prerequisite
+                File.WriteAllText (globalJson, sprintf "{ \"sdk\": { \"version\": \"%s\", \"rollForward\": \"latestFeature\" } }" version)
+                let! diff = Lock.verify lockPath (Lock.Compilation.Fsc f)
+                unpinned <- diff })
+
+            let text = File.ReadAllText (Path.Combine (root, lockPath))
+            Assert.That(text, Does.Contain (sprintf "\"Prerequisites\": [\n          { \"Kind\": \"dotnet-sdk\", \"Version\": \"%s\", \"Pin\": \"$(ProjectRoot)/global.json\" }\n        ]" version))
+            let entry = (Lock.read (Roots.builtin root) (Path.Combine (root, lockPath))).Entries |> List.exactlyOne
+            Assert.That(entry.Prerequisites, Is.EqualTo [ ({ Kind = "dotnet-sdk"; Version = version; Pin = "$(ProjectRoot)/global.json" }: Lock.Prerequisite) ])
+            Assert.That(same, Is.Empty, "the same configuration has to verify clean")
+            Assert.That(File.Exists "FLockP.dll", Is.True, "the entry with a met prerequisite did not compile")
+            Assert.That(unpinned, Is.EqualTo [ sprintf "- Prerequisite dotnet-sdk %s ($(ProjectRoot)/global.json)" version ])
+            Assert.That(File.ReadAllText "flock-p.log", Does.Not.Contain "does not pin it exactly")
+        finally
+            try Directory.Delete (root, true) with _ -> ()
+
+    [<Test; Category("Integration")>]
+    member x.``without an exact pin no prerequisite is written and the recording warns``() =
+        // the fixture's project root finds the repository's global.json (rollForward
+        // latestMajor): not an exact pin
+        let lockPath = x.Fresh "FLockQ"
+        x.Run "flock-q" (recipe {
+            let! f = Fsc.ofSettings (settings !!"FLockQ.fs" "FLockQ.dll")
+            do! Lock.record lockPath (Lock.Compilation.Fsc f) })
+
+        let entry = (readLock lockPath).Entries |> List.exactlyOne
+        Assert.That(entry.Prerequisites, Is.Empty)
+        Assert.That(File.ReadAllText lockPath, Does.Not.Contain "Prerequisites")
+        Assert.That(File.ReadAllText "flock-q.log", Does.Match "'FLockQ': depends on the \\.NET SDK [^ ]+ but global\\.json does not pin it exactly; the lock will only build where that SDK is installed")
+
+    [<Test; Category("Integration")>]
+    member x.``replay fails before anything else when the prerequisite SDK is not installed``() =
+        let lockPath = x.Fresh "FLockR"
+        x.Run "flock-r" (recipe {
+            let! f = Fsc.ofSettings (settings !!"FLockR.fs" "FLockR.dll")
+            do! Lock.record lockPath (Lock.Compilation.Fsc f) })
+        let entry = (readLock lockPath).Entries |> List.exactlyOne
+        let bogus = { entry with Prerequisites = [ { Kind = Lock.DotnetSdk; Version = "0.0.1-xake-missing"; Pin = "$(ProjectRoot)/global.json" } ] }
+
+        let ex = Assert.Throws<XakeException> (fun () -> x.Run "flock-r2" (Lock.compile bogus))
+        let root = (DotNetFwk.dotnetRoot () |> Option.defaultValue "").Replace('\\', '/')
+        Assert.That(ex.Data0, Does.Contain (sprintf "'FLockR': the lock needs the .NET SDK 0.0.1-xake-missing (prerequisite from $(ProjectRoot)/global.json), which is not installed under '%s'; install it (dotnet-install --version 0.0.1-xake-missing --install-dir %s)" root root))
+        Assert.That(File.Exists "FLockR.dll", Is.False, "nothing may be compiled")
+
+        // the same entry written to a lock file and read back fails the same way
+        File.WriteAllText (lockPath, Lock.format (Roots.builtin (Directory.GetCurrentDirectory ())) { Configuration = ""; Properties = []; Entries = [ bogus ] })
+        Assert.That((readLock lockPath).Entries.Head.Prerequisites, Is.EqualTo bogus.Prerequisites)
+

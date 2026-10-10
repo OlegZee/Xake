@@ -55,6 +55,7 @@ type ``Project import``() =
                   { c.Dependencies with
                       Compiler = { Tool = "csc"; Path = "/dotnet/sdk/8.0.425/Roslyn/bincore/csc.dll"; Sha256 = "ab01"; Version = "4.11.0-3.25569.22" } } }
           Evaluation = { Project = project; ProjectRefs = []; Imports = []; Sdk = "8.0.425"; SdkPin = Some (Lock.Pinned "8.0.425"); Properties = Map.empty }
+          Prerequisites = []
           Packages = [] }
 
     [<Test>]

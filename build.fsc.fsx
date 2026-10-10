@@ -22,15 +22,11 @@
 // The versions are the exact ones nuget.org carries: publish.yml appends the run number to
 // the tag (`X.Y.Z.<run>`), so no plain `X.Y.Z` exists and a lower bound of it resolves to the
 // next one up with NU1603. Bump them only after a release has landed (docs/devprocess.md).
-// TODO(after hermetic-v0.2.0): `0.2.0` below is a placeholder until the 0.2 release is on
-// nuget.org; replace it with the exact published `0.2.0.<run>`. Until then this script runs
-// only against a local feed (`#i "nuget: <folder>"` with `dotnet pack src/hermetic
-// -p:Version=0.2.0 -o <folder>`, docs/devprocess.md).
 //
 // Testing and packing still shell out to the SDK: the test projects are built by msbuild, and
 // the nupkg's net462 asset comes from `dotnet pack` (see docs/session.md).
 #r "nuget: Xake, 3.6.0.24"
-#r "nuget: Xake.Hermetic.Dotnet, 0.2.0"
+#r "nuget: Xake.Hermetic.Dotnet, 0.2.0.25"
 
 open System.IO
 open Xake

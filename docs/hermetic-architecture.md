@@ -54,9 +54,14 @@ The brief calls the result "mostly hermetic", and that is the honest word.
 - **msbuild is still the evaluator.** `Project.import` asks msbuild what it would run. The lock
   records the result of the evaluation, not the evaluator. Replaying a lock starts no msbuild,
   but producing one does.
-- **The network.** Restore is allowed by default (`Restore.Options.Enabled = true`). A build can
-  turn it off, and then a missing package fails the build before the compiler runs. There is no
-  offline or vendored package source mode.
+- **The network.** Restore is allowed by default (`Restore.Options.Enabled = true`, which
+  follows the base's `NUGET_FETCH`). A build can turn it off (`-d NUGET_FETCH=off`, `nofetch`),
+  and then a missing package fails the build before the compiler runs. There is no vendored
+  package source mode.
+- **Completeness is opt-in.** Without `HERMETIC=on` a lock may name files under `$(DotnetRoot)`
+  (the SDK's csc, the targeting pack) that no restore brings to a clean machine. With it, the base
+  refuses such a resolve and this package refuses to write or replay such a lock
+  ([hermetic/hermetic-mode.md](hermetic/hermetic-mode.md)).
 - **The package cache is trusted by path and checked by hash.** The per-file SHA-256 check is the
   real gate. The package-level check compares the lock's SHA-512 with the `contentHash` NuGet
   wrote into `.nupkg.metadata`; it does not re-hash the `.nupkg`.
@@ -327,7 +332,10 @@ plus `toolset`, `noserver`, `keepalive` and `resolve`, the marker `CscRequest`, 
 |---|---|
 | `nugetRoot ()` | the environment variable `NUGET_PACKAGES`, else `~/.nuget/packages` (no build context) |
 | `packageRoot ()` | recipe: the build's package folder -- the script variable `NUGET_PACKAGES` (relative to the project root, or absolute), else `nugetRoot ()` |
-| `fetchEnabled ()` | recipe: `false` when the script variable `NUGET_FETCH` is `off`/`false`/`no`/`0`; what `Restore.Options.Enabled` is to default to |
+| `fetchEnabled ()` | recipe: `false` when the script variable `NUGET_FETCH` is `off`/`false`/`no`/`0`; what `Restore.Options.Enabled = true` follows (`Restore.resolve`) |
+| `packageRootWithSource ()` | recipe: `packageRoot ()` and where it came from (`ScriptVariable`, `EnvironmentVariable`, `UserProfile`); only the script variable satisfies `HERMETIC=on` |
+| `globalJsonPin dir`, `sdkVersionOf root path`, `sdkPrerequisite`, `sdkTargetingPackVersion` | the `global.json` pin (`Exact`, `RollsForward`, `NoVersion`, `NoGlobalJson`); the SDK version a path belongs to; read by `Lock.sdkPinAt`/`sdkVersionsOf` |
+| `HermeticMode.enabled ()`, `check name roots inputs`, `enforce`, `roots ()` | the `HERMETIC` variable; the rule over a list of `Input` (role, path) against `Roots` (tokenized ones work too); the gate of `ofSettings`; this build's roots. `Csc.hermeticInputs`/`Fsc.hermeticInputs` list a compilation's inputs |
 | `dotnetRoot ()` | the SDK installation root, when one can be located |
 | `normalizedPackageRoot root` | the package folder in effect (`None` = the machine's cache), forward slashes, no trailing slash |
 | `restoreProjectText packages` | the synthesized restore project: `netstandard2.0`, `DisableImplicitFrameworkReferences`, one `PackageDownload` per package at an exact `[version]` |
@@ -346,13 +354,13 @@ plus `toolset`, `noserver`, `keepalive` and `resolve`, the marker `CscRequest`, 
 
 | Name | Kind | What it does |
 |---|---|---|
-| `nugetRoot ()`, `dotnetRoot ()` | forwarders | `DotNetFwk.nugetRoot`, `DotNetFwk.dotnetRoot` |
+| `nugetRoot ()`, `dotnetRoot ()` | forwarders | `DotNetFwk.nugetRoot` (the environment only: the folder of the context-free `builtin`/`make`), `DotNetFwk.dotnetRoot` |
 | `nugetPackageRootToken` | value | `"$(NuGetPackageRoot)"` |
 | `builtinTokens` | value | `$(NuGetPackageRoot)`, `$(ProjectRoot)`, `$(DotnetRoot)` |
 | `packageRootOverride dir` | pure | `[ "$(NuGetPackageRoot)", dir ]`, the extra-root list that points the package token at a folder of the build's own |
 | `builtin projectRoot` | pure | the three built-in roots, longest root first |
 | `make projectRoot extra` | pure | built-in plus extra roots; validates `$(Name)`, resolves relative paths against the project root, an extra root replaces a built-in of the same token |
-| `current`, `currentWith extra` | recipes | the same, with the project root from `ExecOptions.ProjectRoot` |
+| `current`, `currentWith extra` | recipes | the same, with the project root from `ExecOptions.ProjectRoot` and `$(NuGetPackageRoot)` at the build's folder (`DotNetFwk.packageRoot ()`, the script variable `NUGET_PACKAGES` first); an extra `$(NuGetPackageRoot)` wins |
 
 `Nuget`:
 
@@ -370,14 +378,15 @@ plus `toolset`, `noserver`, `keepalive` and `resolve`, the marker `CscRequest`, 
 
 | Name | Kind | What it does |
 |---|---|---|
-| `Options` / `Options.Default` | record | `PackageRoot: string option` (`None` = machine cache), `Enabled: bool` (default `true`) |
-| `packageRoot options` | pure | the folder in effect |
+| `Options` / `Options.Default` | record | `PackageRoot: string option` (`None` = the build's folder, resolved where a build context exists), `Enabled: bool` (default `true` = follow `NUGET_FETCH`) |
+| `packageRoot options` | pure | the folder in effect (`None` = the environment's here) |
+| `resolve options` | recipe | `PackageRoot = None` to `DotNetFwk.packageRoot ()`, `Enabled` and `DotNetFwk.fetchEnabled ()`; called by `ensure`, `Lock.compileWith`, `Lock.buildWith` |
 | `into dir` | recipe | options with the folder relative to the project root |
 | `Request`, `Missing` | records | what must exist (graph + paths); one missing package with its files |
 | `missing options request` | reads disk | missing packages, grouped; one `File.Exists` per path, nothing else |
 | `verify options missing` | reads disk | absent package directories and nupkg SHA-512 mismatches |
 | `download options packages` | recipe | `DotNetFwk.downloadPackages`, ignoring `Enabled` |
-| `ensure options request` | recipe | restore what is missing once per process, serialized per folder by a `Resource`; returns the problems |
+| `ensure options request` | recipe | `resolve`, then restore what is missing once per process, serialized per folder by a `Resource`; returns the problems |
 
 `Git`:
 
@@ -395,10 +404,12 @@ plus `toolset`, `noserver`, `keepalive` and `resolve`, the marker `CscRequest`, 
 | `Hashed`, `Reference`, `Compiler`, `Package` | abbreviations | the base and `Restore` types, kept reachable as `Lock.*` |
 | `SdkPin`, `sdkPinText`, `parseSdkPin` | union, pure | `NoGlobalJson`, `Pinned`, `RollsForward`, `NoVersion`; the text form written in the lock |
 | `Evaluation` / `Evaluation.Empty` | record | `Project`, `ProjectRefs`, `Imports`, `Sdk`, `SdkPin`, `Properties`; all empty when composed |
-| `Compilation` | union | `Csc of Csc \| Fsc of Fsc`, `RequireQualifiedAccess`; common members `Name`, `Framework`, `Directory`, `Options`, `Defines`, `Sources`, `Generated`, `Resources`, `Dependencies`, `Args`, `Output` |
+| `Compilation` | union | `Csc of Csc \| Fsc of Fsc`, `RequireQualifiedAccess`; common members `Name`, `Framework`, `Directory`, `Options`, `Defines`, `Sources`, `Generated`, `Resources`, `RuntimeConfig`, `Dependencies`, `Args`, `Output` |
 | `Prerequisite` / `DotnetSdk` | record, literal | `{ Kind; Version; Pin }`, `Pin` kept tokenized; `"dotnet-sdk"` |
-| `sdkPinAt dir` | reads disk | the `global.json` found upwards from `dir` and its `SdkPin`; to be replaced by the base's reader in 0.2.x (Xake 3.6) |
-| `sdkVersionsOf roots paths`, `prerequisitesFor roots pinFile pin versions`, `sdkUnpinnedWarning` | pure | the SDK versions paths depend on; the prerequisites under a pin and the versions left without one; the warning text |
+| `sdkPinAt dir`, `ofGlobalJsonPin` | reads disk, pure | the `global.json` found upwards from `dir` and its `SdkPin`, read by the base (`DotNetFwk.globalJsonPin`) and mapped to the lock's type |
+| `sdkVersionsOf roots paths`, `prerequisitesFor roots pinFile pin versions`, `sdkUnpinnedWarning` | pure | the SDK versions paths depend on (`DotNetFwk.sdkVersionOf` against the roots' `$(DotnetRoot)`); the prerequisites under a pin and the versions left without one; the warning text |
+| `hermeticInputs c`, `hermeticViolations roots entry` | pure | the compilation's inputs (`Csc`/`Fsc.hermeticInputs`); its tokenized paths outside `$(ProjectRoot)`/extra roots and `$(NuGetPackageRoot)` not covered by a `dotnet-sdk` prerequisite (fsc's compiler; an import's compiler and analyzers), through `HermeticMode.check` |
+| `hermeticRecordGate lock roots entries`, `hermeticRecordMessage`, `hermeticReplayMessage` | recipe, pure | under `HERMETIC=on` the reasons not to write a lock (message 2, then message 9 per path); the texts of messages 9 and 10 |
 | `Entry`, `Document` | records | `{ Compilation; Evaluation; Packages; Prerequisites }` (members `Name`, `Framework`, `Dependencies`, `Args`, `Output`, and `Csc`/`Fsc`, which fail for the other case); `{ Configuration; Properties; Entries }` |
 | `packagesOf cacheRoot assets` | reads disk | the entry's package graph from `Nuget.Assets` and the cache's SHA-512 |
 | `ofCompilation c`, `ofCsc c`, `ofFsc f` | pure | a composed compilation as an entry |
@@ -412,12 +423,12 @@ plus `toolset`, `noserver`, `keepalive` and `resolve`, the marker `CscRequest`, 
 | `Options` / `Options.Default` | record | `{ Run: RunOptions; FscRun: FscRunOptions; Restore: Restore.Options }` |
 | `restoreRequest entries` | pure | every compiler, reference and analyzer path, plus the combined graph |
 | `restore options doc` | recipe | `Restore.ensure` over a whole lock; fails on a problem |
-| `compileWith options entry`, `compile entry` | recipes | the replay (section 2); `compile` resolves the server first |
-| `record path c` | recipe | `c: Compilation`; `needFiles` what it hashes, derive the prerequisites (warn without an exact pin), rehash, overwrite a one-entry lock; compiles nothing |
+| `compileWith options entry`, `compile entry` | recipes | the replay (section 2): prerequisites, the `HERMETIC=on` gate (message 10), restore with `Restore.resolve`d options; `compile` resolves the server first |
+| `record path c` | recipe | `c: Compilation`; `needFiles` what it hashes, derive the prerequisites (warn without an exact pin), the `HERMETIC=on` gate (messages 2, 9), rehash, overwrite a one-entry lock; compiles nothing |
 | `verify path c` | recipe | `diff (entry c.Name doc) (ofCompilation c with its prerequisites)`; writes and compiles nothing |
 | `buildWith options path c`, `build path c` | recipes | the strict gate (section 2), over a `Compilation` |
 | `lock "path"` | builder operation | `CscLockBuilder`: `Csc.ofSettings`, `Csc.runOptions`, `Lock.buildWith`; `FscLockBuilder`: the same with `Fsc.ofSettings`, `Fsc.runOptions` |
-| `nofetch` | builder operation, after `lock` | `Restore.Options.Enabled = false` (was `norestore`); `packageroot` was removed in 0.2, the folder is the build's (`NUGET_PACKAGES`) |
+| `nofetch` | builder operation, after `lock` | `Restore.Options.Enabled = false` (was `norestore`), the per-target form of `NUGET_FETCH=off`; `packageroot` was removed in 0.2, the folder is the build's (`NUGET_PACKAGES`) |
 
 `Project`:
 
@@ -425,7 +436,7 @@ plus `toolset`, `noserver`, `keepalive` and `resolve`, the marker `CscRequest`, 
 |---|---|---|
 | `sdkPin projectDir` | reads disk | the `global.json` pin, searched upwards (`Lock.sdkPinAt`); only `rollForward: "disable"` is `Pinned` |
 | `ImportOptions` / `ImportOptions.Default` | record | `Projects`, `Frameworks`, `Configuration` (default `Release`), `Properties`, `Variant`, `Output`, `Roots` |
-| `import options` | recipe | per project: one restore without `TargetFramework` and with `RestoreRecursive=false`, then per framework a design-time build and a `-pp` preprocess; writes one lock |
+| `import options` | recipe | per project: one restore without `TargetFramework` and with `RestoreRecursive=false`, then per framework a design-time build and a `-pp` preprocess; msbuild gets the build's package folder (`NUGET_PACKAGES`) when it is the script variable's; under `HERMETIC=on` an SDK not pinned exactly (message 11) or not installed (message 7) and the record gate (messages 2, 9) fail before anything is written; writes one lock |
 
 Internals of `Project` that tests use: `withProjectLock` (one `Resource` per project path, so two
 variants cannot restore over each other's `obj/project.assets.json`), `frameworksToImport` (only
@@ -530,7 +541,7 @@ on every machine and a diff means a change of inputs.
 
 | Token | Root |
 |---|---|
-| `$(NuGetPackageRoot)` | `DotNetFwk.nugetRoot ()`, or a folder of the build's own via `Roots.packageRootOverride` |
+| `$(NuGetPackageRoot)` | inside a recipe the build's folder (`DotNetFwk.packageRoot ()`: the script variable `NUGET_PACKAGES`, else the environment's); outside one `DotNetFwk.nugetRoot ()`; or a folder via `Roots.packageRootOverride` |
 | `$(ProjectRoot)` | the engine's `ExecOptions.ProjectRoot`, not the process's current directory |
 | `$(DotnetRoot)` | the SDK installation root, when found |
 | `$(Name)` (extra) | one per sibling repository, declared in `ImportOptions.Roots` |
@@ -909,7 +920,7 @@ run: base 258 passed and 1 skipped, hermetic 118 passed, 0 warnings in both libr
 |---|---|
 | The F# compiler is the SDK's | done in Xake 3.5 / hermetic 0.2: `Fsc.run` shares the runner with `Csc.run`, F# entries are in the lock, `Project.import` reads an fsproj, `Fsproj` is gone. What remains: no package carries a current F# compiler, so an F# lock names `<sdk>/FSharp/fsc.dll` and is reproducible only under an exact SDK pin; `FscArgs` does not treat `--embed:` as a path switch, so an imported fsproj keeps msbuild's relative `--embed:obj/...` values (they resolve against the entry's `Directory`, and the output is byte-identical) |
 | The net462 resx path | `Impl.compileResx` has two bodies on purpose: net462 uses `ResXResourceReader` (typed values, file refs), netstandard2.0 uses `Resx.compile`, which reads plain string values only and throws on typed entries. The runner calls `Resx.compile` for a missing `.resources`. No byte-identity claim is made for net462 |
-| The published base as a dependency | `src/hermetic` takes `Xake` as a PackageReference `[3.5.0.23, 4.0)`, so it compiles against the assemblies on nuget.org, not the `src/core`/`src/dotnet` of the same checkout, and the nuspec range is the reference's own (no pack-time rewriting). The lower bound must be a version that exists: the release run number makes 3.5.0 `3.5.0.23`, and `[3.5.0, 4.0)` warns NU1603 on every restore. A change the hermetic package needs from the base is released first; until then it is developed against a locally packed base passed as an extra restore source (`NUGET_SOURCE`) |
+| The published base as a dependency | `src/hermetic` takes `Xake` as a PackageReference `[3.6.0.24, 3.7)`, so it compiles against the assemblies on nuget.org, not the `src/core`/`src/dotnet` of the same checkout, and the nuspec range is the reference's own (no pack-time rewriting). The lower bound must be a version that exists: the release run number makes 3.6.0 `3.6.0.24`, and `[3.6.0, 3.7)` warns NU1603 on every restore. The upper bound is the next minor: the `Csc`/`Fsc` records gain fields in base minors, and F# records are not binary-compatible across that (3.6 added `RuntimeConfig`), so each base minor gets a release of this package. A change the hermetic package needs from the base is released first; until then it is developed against a locally packed base passed as an extra restore source (`NUGET_SOURCE`) |
 | The fsx bootstrap | `build.fsx` bootstraps from `#r "nuget: Xake, 3.4.0.21"`, `build.fsc.fsx` from that and `#r "nuget: Xake.Hermetic.Dotnet, 0.1.0.22"` (exact published versions); `build.fsx` stays on the base package only. A fix in `src/hermetic` reaches `build.fsc.fsx` only after a release and a bump, or through a temporary `#r` on a copy of the built dlls (docs/devprocess.md) |
 | `sign` shadowing | `open Xake.Hermetic.Dotnet` brings the builder `sign` into scope, shadowing FSharp.Core's numeric `sign` (still `Operators.sign`). A value named like an operation (`signer`, `store`, `budget`) cannot be passed inside the block (FS3095); tests name them `theSigner` and so on |
 | SBOM tool identity | `metadata.tools.components[0]` is `Xake.Hermetic.Dotnet` with the executing assembly's version (the `AssemblyVersion`, for example `0.1.0.0`, not the package's full version), and the package-scope annotation's annotator is the same name (`Sbom.toolName`). There is no vendor field |

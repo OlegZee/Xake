@@ -12,7 +12,7 @@ and `fsc { ...; lock "path" }` operations. A lock entry holds a C# or an F# comp
 Everything here is in the package `Xake.Hermetic.Dotnet` (`src/hermetic/`: `Lock.fs`,
 `Project.fs`, `Roots.fs`, `Git.fs`, `Json.fs`); the compilations a lock entry wraps, `Csc` and
 `Fsc`, and their runners `Csc.run` and `Fsc.run` belong to `Xake.Dotnet` (inside the `Xake`
-package, 3.5 or later) and are described in [../csc-syntax.md](../csc-syntax.md). Scripts open both:
+package, 3.6 or later) and are described in [../csc-syntax.md](../csc-syntax.md). Scripts open both:
 
 ```fsharp
 #r "nuget: Xake.Hermetic.Dotnet"
@@ -204,16 +204,80 @@ restored:
 is not installed under '<root>'; install it (dotnet-install --version <v> --install-dir <root>)
 ```
 
-`HERMETIC=on` (design note `hermetic-mode.md`) builds on this: under it a lock may name nothing
-outside `$(ProjectRoot)` and `$(NuGetPackageRoot)` that a prerequisite does not cover. That gate
-reads the base's `HERMETIC` variable and arrives once this package builds on Xake 3.6; this
-release writes and checks the prerequisites only.
+`HERMETIC=on` builds on this: under it a lock may name nothing outside `$(ProjectRoot)` and
+`$(NuGetPackageRoot)` that a prerequisite does not cover ([Hermetic mode](#hermetic-mode)).
 
 Tests: `LockDiffTests.fs` (`Lock prerequisites`: the key written only when not empty and the
 golden lock unchanged, the round trip, `diff`, `mapText`/`mapPaths`/`rehash`, the derivation)
 and `FscLockTests.fs` (an exact pin records the prerequisite, the replay compiles, a loosened
 pin is a difference; no pin, no prerequisite and the warning; a missing SDK fails the replay
 with the install message).
+
+## Hermetic mode
+
+`HERMETIC=on` (the base's script variable: `var "HERMETIC" "on"`, or `-d HERMETIC=on`; see
+[hermetic-mode.md](hermetic-mode.md)) makes completeness a checked property. The base gates the
+*resolve* (`Csc.ofSettings`/`Fsc.ofSettings`, messages 1-8); this package gates the *lock*:
+
+> A lock entry names no path outside `$(ProjectRoot)` and `$(NuGetPackageRoot)`, except paths
+> covered by a prerequisite the entry declares.
+
+The comparison is `HermeticMode.check` over the lock's tokenized paths (`Lock.hermeticViolations`):
+the project root and any extra root a script declared (`Roots.make`, `ImportOptions.Roots`)
+count as the checkout; `$(NuGetPackageRoot)` is the build's package folder; a `dotnet-sdk <v>`
+prerequisite covers `$(DotnetRoot)/sdk/<v>/` for fsc's compiler, and for an imported entry's
+compiler and analyzers -- never a reference, never `$(DotnetRoot)/packs/`, and never a composed
+csc's compiler (the toolset replaces it: `CSC_TOOLSET`).
+
+| Where | Under `HERMETIC=on` |
+|---|---|
+| `Lock.record`, the recording branch of `Lock.build`/`buildWith` (`csc { lock }`, `fsc { lock }`) | the lock is not written when the package folder is not the script variable `NUGET_PACKAGES` (the base's message 2) or when a path breaks the invariant (message 9, one line per path) |
+| `Lock.compileWith`, `Lock.compile`, the replay in `buildWith` | after the prerequisite check, a lock that names a path outside the roots fails before any restore (message 10) |
+| `Project.import` | the SDK not pinned exactly is an error (message 11; a warning with the mode off); pinned but not the SDK msbuild ran is message 7; then the gate of `record` over every entry. Nothing is written when anything fails |
+
+The messages (`<lock>` as the caller wrote it; `compileWith` without a lock path says "the lock"):
+
+```
+'<name>': HERMETIC=on: refusing to write the lock '<lock>': <tokenized path> is outside $(ProjectRoot) and $(NuGetPackageRoot), and no prerequisite covers it
+'<name>': HERMETIC=on: the lock '<lock>' names <tokenized path>, outside $(ProjectRoot) and $(NuGetPackageRoot) and not covered by a prerequisite; re-record it with HERMETIC=on
+'<name>': HERMETIC=on: the project's SDK is not pinned (<pin>); the import's compiler and analyzers come from the SDK, so pin it in global.json: { "sdk": { "version": "<v>", "rollForward": "disable" } }
+```
+
+These are hard failures (`FailOnError = false` does not turn them into warnings), like the base's
+gate. With the mode off nothing changes: the locks, the warnings and the replay are as before;
+only the variable `HERMETIC` is read (and so is a dependency).
+
+`Options.Default` follows the build: `Restore.Options.Default` (`PackageRoot = None`, `Enabled =
+true`) means the build's package folder (`DotNetFwk.packageRoot ()`, the script variable
+`NUGET_PACKAGES` first) and fetching unless `NUGET_FETCH=off` (`DotNetFwk.fetchEnabled ()`),
+applied by `Restore.resolve` in `Restore.ensure`, `Lock.compileWith` and `Lock.buildWith`.
+`Enabled = false` (`nofetch`) turns fetching off whatever `NUGET_FETCH` says. And the lock's
+roots inside a recipe (`Roots.current`, `currentWith`) put `$(NuGetPackageRoot)` at that same
+folder, so a lock recorded with `var "NUGET_PACKAGES" ".nuget/packages"` names
+`$(NuGetPackageRoot)/...`, not the absolute path. `Project.import` hands the folder to msbuild
+as the environment variable `NUGET_PACKAGES`, so the imported packages are there too.
+
+A minimal hermetic script ([../hermetic-guide.md](../hermetic-guide.md#hermetic-mode)):
+
+```fsharp
+do xakeScript {
+    var "HERMETIC" "on"
+    var "NUGET_PACKAGES" ".nuget/packages"
+    var "CSC_TOOLSET" "4.12.0"
+    var "NETCORE_REF_VERSION" "8.0.0"
+    rules [
+        "out/app.dll" ..> csc { targetfwk "net8.0"; src !!"src/*.cs"; lock "locks/app.json" }
+    ]
+}
+```
+
+Tests: `HermeticLockTests.fs` (a csc lock records with `NUGET_PACKAGES`, `CSC_TOOLSET`,
+`NETCORE_REF_VERSION` and names nothing under `$(DotnetRoot)`; the SDK compiler is refused with
+message 9 and the package folder with message 2, and records with the mode off; an fsc lock under
+an exact pin records the prerequisite and replays; a lock naming `$(DotnetRoot)/packs/` is not
+replayed, message 10; an unpinned import fails with message 11 and writes nothing) and
+`LockDiffTests.fs` (`Lock runtimeconfig and hermetic rule`: the coverage rules of
+`hermeticViolations`).
 
 ## The compiler a lock names
 
@@ -276,7 +340,10 @@ record `Csc`); the 3.3 function `Csc settings` no longer exists, `Csc.compile se
 
 0. **Checks the prerequisites** ([Prerequisites](#prerequisites)): a `dotnet-sdk <v>` whose SDK
    is not installed under the .NET root fails here, naming the version, the pin and the
-   `dotnet-install` command, before any restore.
+   `dotnet-install` command, before any restore. Under `HERMETIC=on` a lock that names a path
+   outside the roots then fails with message 10 ([Hermetic mode](#hermetic-mode)). The restore
+   options are applied as the build says (`Restore.resolve`: the build's package folder,
+   `NUGET_FETCH`).
 1. **Restores what the lock names and this machine lacks** (`Restore.ensure options.Restore
    (Lock.restoreRequest [entry])`, see [restore.md](restore.md)): the compiler when it lives in a
    `Microsoft.Net.Compilers.Toolset`-shaped package, and every reference and analyzer under the
@@ -880,16 +947,17 @@ It was called `norestore` before 0.2; renamed with the base's `NUGET_FETCH` vari
 is the per-target form. Why after `lock`: `lock` turns the block's state from `CscSettingsType`
 into `CscLocked` (path, settings, fetch flag), and `nofetch` is an operation on that state.
 
-**The package folder is the build's** (`NUGET_PACKAGES`, else `~/.nuget/packages`); there is no
+**The package folder is the build's** (the script variable `NUGET_PACKAGES`, else the
+environment variable, else `~/.nuget/packages`), and fetching follows `NUGET_FETCH` unless
+`nofetch` turns it off; there is no
 per-target folder. `packageroot "<dir>"` after `lock` was removed in 0.2 (decided 2026-10-09: one
 package folder per build, and a per-target one makes no sense under `HERMETIC=on`). A script
 that reads a lock against another folder still can, outside the builder: `Restore.into dir`,
 `Lock.loadWith (Roots.packageRootOverride dir)`, and `Lock.buildWith` with `Restore = { ...
 PackageRoot = Some dir }`, which compares and writes the lock with the build's ordinary roots and
 re-roots the entry it compiles at the folder, in memory (`Lock.format`, then `Lock.parse` with
-`Roots.packageRootOverride`). In 0.2.x, on Xake 3.6, the default folder becomes the base's
-`DotNetFwk.packageRoot ()` (the `NUGET_PACKAGES` script variable) and the default of
-`Restore.Options.Enabled` its `fetchEnabled ()`.
+`Roots.packageRootOverride`). The default folder is the base's `DotNetFwk.packageRoot ()` and
+the default `Restore.Options.Enabled = true` follows its `fetchEnabled ()` (`Restore.resolve`).
 
 **The lock file is not a target of the engine on this path.** It is written from inside the
 compile recipe, which is what lets the `csc { }` block stay in place; the engine neither

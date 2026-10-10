@@ -21,7 +21,7 @@ loaded with `#r` on the dll files instead of the NuGet package.
 
 ## 1. Install
 
-The package depends on `Xake` 3.5.0.23 or later, below 4.0 (3.5.0 as published on nuget.org). Reference it from your build script and
+The package depends on `Xake` 3.6.0.24 or later, below 3.7 (3.6.0 as published on nuget.org). Reference it from your build script and
 open three namespaces:
 
 ```fsharp
@@ -32,10 +32,10 @@ open Xake.Dotnet
 open Xake.Hermetic.Dotnet
 ```
 
-Both are on nuget.org with the release run number as a fourth component: `Xake` 3.5.0 as
-`3.5.0.23`, `Xake.Hermetic.Dotnet` 0.2.0 as `0.2.0.<run>` (so `0.2.0` or `3.5.0` alone does not
+Both are on nuget.org with the release run number as a fourth component: `Xake` 3.6.0 as
+`3.6.0.24`, `Xake.Hermetic.Dotnet` 0.2.0 as `0.2.0.<run>` (so `0.2.0` or `3.6.0` alone does not
 exist and resolves to the next version up). The package brings `Xake` in as a dependency; add
-`#r "nuget: Xake, 3.5.0.23"` if you want to pin the base too. (0.1.0 was published as
+`#r "nuget: Xake, 3.6.0.24"` if you want to pin the base too. (0.1.0 was published as
 `0.1.0.22`, on Xake `3.4.0.21`; it has no F# support.)
 
 Two things change when you open `Xake.Hermetic.Dotnet`:
@@ -445,10 +445,12 @@ do! Lock.compileWith { Lock.Options.Default with Restore = options } entry
 The same folder has to appear in both places; otherwise `$(NuGetPackageRoot)` in the lock
 expands to the machine cache and the restore fills a folder nobody reads. `csc { lock }` and
 `fsc { lock }` have no folder of their own (`packageroot` was removed in 0.2): they use the
-build's package folder, `NUGET_PACKAGES`.
+build's package folder -- the script variable `NUGET_PACKAGES` (`var "NUGET_PACKAGES"
+".packages"`), else the environment variable, else `~/.nuget/packages` -- which the lock then
+writes as `$(NuGetPackageRoot)`.
 
-To forbid the network, turn fetching off (`nofetch` after `lock` in a `csc {}` / `fsc {}` block;
-it was `norestore` before 0.2). A missing package then fails the build before the compiler
+To forbid the network, turn fetching off: `-d NUGET_FETCH=off` for the whole build, or `nofetch`
+after `lock` in a `csc {}` / `fsc {}` block (it was `norestore` before 0.2). A missing package then fails the build before the compiler
 runs, listing every missing file with its expected hash:
 
 ```fsharp
@@ -470,6 +472,52 @@ Foo.Bar 1.2.3: expected sha512 <base64>, got <base64>
 
 Only what the compiler reads is restored (the packages behind references, analyzers and the
 compiler), not the whole restore graph. Details: [hermetic/restore.md](hermetic/restore.md).
+
+## Hermetic mode
+
+A lock is already exact: the build reads only what it names and fails on any difference. With
+`HERMETIC=on` it is also *complete*: it names nothing a clean machine cannot get from the
+checkout and the build's package folder, except an exactly pinned .NET SDK, which the lock
+declares as a prerequisite and checks first. Missing configuration fails when the compilation is
+resolved, naming the variable that fixes it.
+
+The minimal script for a C# library (the values are examples; `NETCORE_REF_VERSION` is the
+`Microsoft.NETCore.App.Ref` version for the `netN.0` you target):
+
+```fsharp
+do xakeScript {
+    var "HERMETIC" "on"                       // the gate (or -d HERMETIC=on)
+    var "NUGET_PACKAGES" ".nuget/packages"    // the build's own package folder
+    var "CSC_TOOLSET" "4.12.0"                // csc from Microsoft.Net.Compilers.Toolset
+    var "NETCORE_REF_VERSION" "8.0.0"         // net8.0 references from the NuGet package
+    rules [
+        "out/app.dll" ..> csc {
+            targetfwk "net8.0"
+            src !!"src/*.cs"
+            lock "locks/app.json"
+        }
+    ]
+}
+```
+
+The recorded `locks/app.json` names `$(ProjectRoot)` and `$(NuGetPackageRoot)` only. Commit it
+with `.nuget/` ignored; on a clean machine the build restores the folder and compiles.
+
+What changes under the mode:
+
+| Missing | Message |
+|---|---|
+| `NUGET_PACKAGES` as a script variable | `HERMETIC=on needs a package folder of the build's own: set the NUGET_PACKAGES script variable ...` |
+| `CSC_TOOLSET` | `the compiler <path> comes from the .NET SDK; set CSC_TOOLSET ...` |
+| `NETCORE_REF_VERSION` for a `netN.0` | `the reference assemblies for net8.0 come from <path> under the .NET SDK; add a 8.0 version to NETCORE_REF_VERSION ...` |
+| an exact SDK pin, for `fsc {}` and `Project.import` | `... pin it in global.json: { "sdk": { "version": "<v>", "rollForward": "disable" } }` |
+| a lock recorded without the mode that names the SDK | `the lock '<lock>' names <path>, outside $(ProjectRoot) and $(NuGetPackageRoot) and not covered by a prerequisite; re-record it with HERMETIC=on` |
+
+F# (`fsc {}`) has no compiler package: pin the SDK exactly in `global.json` and set
+`FSHARP_CORE_VERSION` for a `netN.0` target; the lock records `{ "Kind": "dotnet-sdk",
+"Version": "<v>", ... }` and a machine without that SDK fails first, with the `dotnet-install`
+command. Put `HERMETIC=on` and `CI` together on the build server. Details:
+[hermetic/hermetic-mode.md](hermetic/hermetic-mode.md), [hermetic/lock.md](hermetic/lock.md#hermetic-mode).
 
 ## 8. Producing an SBOM
 

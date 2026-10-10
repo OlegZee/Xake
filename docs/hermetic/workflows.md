@@ -380,20 +380,22 @@ runner, which is the check that gates the compile. The nupkg itself is not re-ha
 
 | Field | Default | Meaning |
 |---|---|---|
-| `PackageRoot` | `None` | the package folder; `None` is the machine cache, `NUGET_PACKAGES` or `~/.nuget/packages` |
-| `Enabled` | `true` | whether a missing package may be downloaded |
+| `PackageRoot` | `None` | the package folder; `None` is the build's: the script variable `NUGET_PACKAGES`, else the environment variable, else `~/.nuget/packages` |
+| `Enabled` | `true` | whether a missing package may be downloaded; `true` follows the script variable `NUGET_FETCH` (off when it says `off`), `false` is off regardless |
 
 Three ways to choose the folder:
 
 | How | Covers | Notes |
 |---|---|---|
-| `NUGET_PACKAGES=<dir>` in the environment | everything: `dotnet fsi`'s own `#r "nuget:"`, `Lock.load`, every restore, `csc { lock }`, `fsc { lock }` | simplest; **(run)**; the one way for `csc { lock }` since 0.2 |
+| `var "NUGET_PACKAGES" ".nuget/packages"` (or `-d NUGET_PACKAGES=<dir>`) | the build: `Lock.load`, every restore, `csc { lock }`, `fsc { lock }`, `Project.import`, the base's reference packs and toolset; the lock writes it as `$(NuGetPackageRoot)` | the recommended way; the only one `HERMETIC=on` accepts |
+| `NUGET_PACKAGES=<dir>` in the environment | the same, plus `dotnet fsi`'s own `#r "nuget:"` | **(run)**; the script variable wins over it |
 | `Restore.into ".packages"` + `Lock.loadWith (Roots.packageRootOverride ...)` + `Lock.compileWith` | imported locks compiled through `compileWith` | the folder is relative to the project root; must appear in both places |
 
 `csc { ...; lock "p"; nofetch }` forbids downloads (`Enabled = false`; it was `norestore`
-before 0.2). The per-target `packageroot "<dir>"` was removed in 0.2: the package folder is one
-per build. In 0.2.x, on Xake 3.6, the `NUGET_PACKAGES` and `NUGET_FETCH` *script variables* of
-the base reach this side too (`DotNetFwk.packageRoot`, `fetchEnabled`).
+before 0.2); `-d NUGET_FETCH=off` does the same for the whole build. The per-target
+`packageroot "<dir>"` was removed in 0.2: the package folder is one per build. The base's
+`NUGET_PACKAGES` and `NUGET_FETCH` *script variables* reach this side too (`Restore.resolve`:
+`DotNetFwk.packageRoot`, `fetchEnabled`).
 
 The `Restore.into` form, from [restore.md](restore.md) (run by the maintainers on dataengine,
 not for this page):
@@ -422,6 +424,18 @@ do! Lock.compileWith { Lock.Options.Default with Restore = options } entry
 the script variable `CSC_SERVER`.
 
 ## D. CI: GitHub Actions and GitLab CI
+
+### The recommended setup: `HERMETIC=on`
+
+Set `HERMETIC=on` for CI (with `CI`, which the runner sets): every lock is then *complete* --
+it names nothing outside the checkout and the build's package folder except an exactly pinned
+.NET SDK, declared as a prerequisite -- and the runner needs only the checkout, the package
+folder (cached, or fetched) and that SDK. A lock recorded without the mode that names
+`$(DotnetRoot)/packs/...` or the SDK's csc fails on CI with
+`... re-record it with HERMETIC=on`. The minimal configuration is in
+[../hermetic-guide.md](../hermetic-guide.md#hermetic-mode) and the rules in
+[hermetic-mode.md](hermetic-mode.md); developers set it too (in the script, `var "HERMETIC"
+"on"`), so the locks they record pass on CI.
 
 ### What CI must do
 
@@ -476,7 +490,9 @@ a fresh database is what makes every target rebuild and every gate run.
 
 An imported lock also names SDK reference packs and analyzers under `$(DotnetRoot)` (for
 `net8.0` and similar targets). Those exist only with the same SDK, so for imported locks the
-SDK must match on every machine. Install it from `global.json`.
+SDK must match on every machine. Install it from `global.json`. Under `HERMETIC=on` an import
+needs an exact pin (`rollForward: disable`), and one of a `netN.0` project that names
+`$(DotnetRoot)/packs/` is refused ([hermetic-mode.md](hermetic-mode.md#pending)).
 
 ### The compiler server on CI
 
@@ -618,14 +634,17 @@ as build artifacts, the per-assembly and per-package SBOMs, the unsigned outputs
 The lock fixes every package by id, version and hash, so an offline build needs only a
 pre-populated package folder.
 
-1. On a connected machine, fill a folder from the locks. Either
+1. On a connected machine, fill a folder from the locks. Either build with the script variable
+   (`var "NUGET_PACKAGES" ".nuget/packages"`, or `-d NUGET_PACKAGES=<dir>`), or with
    `NUGET_PACKAGES=/path/pkgs dotnet fsi build.fsx -- -- build`, or a `restore` target with
-   `Restore.into` and `Lock.restore` (C). Include the `Xake` packages: `dotnet fsi` needs them
+   `Restore.into` and `Lock.restore` (C). With `HERMETIC=on` the locks name nothing else, so the
+   folder plus the pinned SDK is the whole input. Include the `Xake` packages: `dotnet fsi` needs them
    too, and they land in the same folder when `NUGET_PACKAGES` points there.
 2. Move the folder to the offline machine.
-3. Build with the same folder, and with fetching off so nothing tries the network (`nofetch`
-   after `lock` in a `csc {}` / `fsc {}` block, with `NUGET_PACKAGES` pointing at the folder;
-   or, for an imported lock compiled through `compileWith`):
+3. Build with the same folder, and with fetching off so nothing tries the network:
+   `-d NUGET_FETCH=off` for the whole build (the base's downloads and every lock's restore), or
+   `nofetch` after `lock` in a `csc {}` / `fsc {}` block for one target; or, for an imported
+   lock compiled through `compileWith`:
 
 ```fsharp
 let! options = Restore.into ".packages"
@@ -648,9 +667,9 @@ What breaks offline:
 | Piece | Why |
 |---|---|
 | `Project.import`, imported `check-locks` | msbuild restores the project from the feeds |
-| `csc { toolset }` / `CSC_TOOLSET` on a folder without the package | resolved before any lock, always restores, ignores `Enabled` |
-| composed reference assemblies missing | `DotNetFwk` tries a restore from a temp folder, ignores `Enabled`, and swallows the error; the message is then `reference assemblies for '<moniker>' are not available: failed to restore package ...` |
-| `csc { lock }` without `nofetch` | fetches what the folder lacks; add `nofetch` after `lock` (or use an offline NuGet config) |
+| `csc { toolset }` / `CSC_TOOLSET` on a folder without the package | resolved before any lock; with `NUGET_FETCH=off` it fails naming the package instead of restoring (`nofetch` does not reach it) |
+| composed reference assemblies missing | resolved before any lock; with `NUGET_FETCH=off` the build fails naming the package and saying fetching is off |
+| `csc { lock }` without `nofetch` or `NUGET_FETCH=off` | fetches what the folder lacks; add either (or use an offline NuGet config) |
 | `dotnet fsi` `#r "nuget:"` | needs `Xake` and `Xake.Hermetic.Dotnet` in the folder |
 
 ## G. Troubleshooting

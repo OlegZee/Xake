@@ -46,9 +46,14 @@ module Restore =
     /// Where the packages a lock names live on this machine, and whether a missing one may be
     /// fetched.
     type Options = {
-        /// The package folder: `None` is the machine's own cache (`Roots.nugetRoot ()`, i.e.
-        /// `NUGET_PACKAGES` or `~/.nuget/packages`), `Some dir` a folder of the build's own --
-        /// what a build agent points at `.packages/` so it can cache that one directory. The
+        /// The package folder: `None` is the build's package folder, resolved where a build
+        /// context exists (`resolve`, which `ensure`, `Lock.compileWith` and `Lock.buildWith`
+        /// call): `DotNetFwk.packageRoot ()`, the script variable `NUGET_PACKAGES`, else the
+        /// environment variable, else `~/.nuget/packages`. The context-free functions below
+        /// (`missing`, `verify`, `checkPresent`) read `None` as the environment's folder only
+        /// (`Roots.nugetRoot ()`); pass them resolved options. `Some dir` is a folder of the
+        /// caller's choosing -- what a build agent points at `.packages/` so it can cache that
+        /// one directory. The
         /// path must be absolute; `into` builds these options from a path written relative to
         /// the project root, the way a script writes every other path.
         ///
@@ -57,23 +62,43 @@ module Restore =
         /// `Lock.loadWith`.
         PackageRoot: string option
         /// Whether a package the lock names but the folder does not have may be downloaded.
-        /// Default `true`: this is what the compiler restore has always done, and restoring
+        /// Default `true`, which means "follow the build": fetching then happens unless the
+        /// script variable `NUGET_FETCH` turns it off (`DotNetFwk.fetchEnabled ()`, applied by
+        /// `resolve` where a build context exists); `false` turns it off whatever
+        /// `NUGET_FETCH` says. Restoring
         /// cannot change *what* gets compiled -- the lock fixes the version, and the per-file
         /// SHA-256 check that follows fails the build if the bytes are not the recorded ones.
         /// A build that must never reach the network sets it to `false` and gets the old
         /// behaviour: the missing files are reported, in full, by that same check.
-        /// `nofetch` after `csc { lock }` / `fsc { lock }` sets it. In 0.2.x, on Xake 3.6, the
-        /// default is to follow the base's `NUGET_FETCH` script variable
-        /// (`DotNetFwk.fetchEnabled ()`); the name of this field stays.
+        /// `nofetch` after `csc { lock }` / `fsc { lock }` sets it.
         Enabled: bool
     } with static member Default = {
             PackageRoot = None
             Enabled = true
         }
 
-    /// The package folder in effect, normalized the way `Roots` writes paths.
+    /// The package folder in effect, normalized the way `Roots` writes paths. Context-free:
+    /// `PackageRoot = None` is the environment's folder here; `resolve` first for the build's.
     let packageRoot (options: Options) =
         DotNetFwk.normalizedPackageRoot options.PackageRoot
+
+    /// <summary>
+    /// The options as this build applies them: `PackageRoot = None` becomes the build's
+    /// package folder (`DotNetFwk.packageRoot ()`, the script variable `NUGET_PACKAGES`
+    /// first), and `Enabled` is turned off when the script variable `NUGET_FETCH` turns
+    /// fetching off (`DotNetFwk.fetchEnabled ()`). Both variables are read, and so are
+    /// dependencies, here. Idempotent. `Options.Default` therefore means "the build's folder,
+    /// fetching as `NUGET_FETCH` says".
+    /// </summary>
+    let resolve (options: Options) : Recipe<ExecContext, Options> =
+        recipe {
+            let! root =
+                match options.PackageRoot with
+                | Some dir -> recipe { return dir }
+                | None -> DotNetFwk.packageRoot ()
+            let! fetch = DotNetFwk.fetchEnabled ()
+            return { PackageRoot = Some root; Enabled = options.Enabled && fetch }
+        }
 
     /// <summary>
     /// Default options with the package folder at <c>dir</c>, taken relative to the build's
@@ -275,12 +300,14 @@ module Restore =
     /// nothing missing it starts no
     /// process and touches no network -- see `missing`.
     ///
-    /// Restoring is skipped, with a warning naming the count, when `Options.Enabled` is
-    /// `false`; the caller's own check then reports each missing file with its expected hash,
+    /// The options are applied as this build says (`resolve`: the build's package folder,
+    /// `NUGET_FETCH`). Restoring is skipped, with a warning naming the count, when fetching is
+    /// off; the caller's own check then reports each missing file with its expected hash,
     /// exactly as it did before this module existed.
     /// </summary>
     let ensure (options: Options) (request: Request) : Recipe<ExecContext, string list> =
         recipe {
+            let! options = resolve options
             let root = packageRoot options
             let notMemoized = List.filter (fun p -> not (restored.ContainsKey (memoKey root p)))
 

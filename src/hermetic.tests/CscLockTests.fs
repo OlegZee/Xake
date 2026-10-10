@@ -368,66 +368,49 @@ type ``Csc lock``() =
         Assert.That(ex.Data0, Does.Contain "Lock.record")
         Assert.That(ex.Data0, Does.Not.Contain "Neither rule nor file")
 
-    // ---- packageroot / norestore ---------------------------------------------------------
+    // ---- nofetch -------------------------------------------------------------------------
+    // `packageroot` is gone in 0.2: the package folder is the build's one (`NUGET_PACKAGES`);
+    // `nofetch` (formerly `norestore`) forbids fetching what that folder lacks.
 
-    member private x.LockedWith (label: string) (source: string) (lockPath: string) (packages: string) (restore: bool) =
-        let dll = File.make (Path.ChangeExtension (source, ".dll"))
-        if restore then
-            x.Run label (csc {
-                src !!source; out dll; target Library; targetfwk "net-4.6.2"; grefs ["System.dll"]
-                lock lockPath
-                packageroot packages
-            })
-        else
-            x.Run label (csc {
-                src !!source; out dll; target Library; targetfwk "net-4.6.2"; grefs ["System.dll"]
-                lock lockPath
-                packageroot packages
-                norestore
-            })
+    [<Test>]
+    member x.``nofetch after lock turns fetching off, for csc and fsc``() =
+        let (CscLocked (cscPath, _, cscFetch)) = csc.Lock (CscSettingsType.Default, "locks/a.json")
+        let (CscLocked (_, _, cscNoFetch)) = csc.NoFetch (csc.Lock (CscSettingsType.Default, "locks/a.json"))
+        Assert.That((cscPath, cscFetch, cscNoFetch), Is.EqualTo (("locks/a.json", true, false)))
+        let (FscLocked (fscPath, _, fscFetch)) = fsc.Lock (FscSettingsType.Default, "locks/b.json")
+        let (FscLocked (_, _, fscNoFetch)) = fsc.NoFetch (fsc.Lock (FscSettingsType.Default, "locks/b.json"))
+        Assert.That((fscPath, fscFetch, fscNoFetch), Is.EqualTo (("locks/b.json", true, false)))
 
+    /// What `nofetch` sets (`Restore.Options.Enabled = false`), against a package folder that
+    /// lacks the lock's packages: the folder is a throwaway one (`Restore.into`, the lock read
+    /// against it), so nothing in the machine's cache is touched.
     [<Test; Category("Integration")>]
-    member x.``norestore with a package the folder lacks fails before compiling``() =
+    member x.``with fetching off a package the folder lacks fails before compiling``() =
         File.WriteAllText ("LockL.cs", "public class LockL {}\n")
         let lockPath = "locks/lockl.json"
         if File.Exists lockPath then File.Delete lockPath
         x.Build "lock-l" (settings !!"LockL.cs" "LockL.dll" (Some lockPath))
         File.Delete "LockL.dll"
 
-        let packages = Path.Combine (Path.GetTempPath (), "xake-norestore-" + System.Guid.NewGuid().ToString("N"))
+        let packages = Path.Combine (Path.GetTempPath (), "xake-nofetch-" + System.Guid.NewGuid().ToString("N"))
         let doc = Lock.read (Roots.make (Directory.GetCurrentDirectory()) (Roots.packageRootOverride packages)) lockPath
         let underFolder = doc.Entries.Head.Csc.Dependencies.References |> List.filter (fun r -> r.Path.StartsWith packages)
         if List.isEmpty underFolder then Assert.Ignore "the composed compilation names no package reference here"
 
         try
-            let ex = Assert.Throws<XakeException> (fun () -> x.LockedWith "lock-l2" "LockL.cs" lockPath packages false)
+            let ex =
+                Assert.Throws<XakeException> (fun () ->
+                    x.Run "lock-l2" (recipe {
+                        let s = fst (settings !!"LockL.cs" "LockL.dll" None)
+                        let! c = Csc.ofSettings s
+                        let! run = Csc.runOptions s
+                        let! restore = Restore.into packages
+                        do! Lock.buildWith { Lock.Options.Default with Run = run; Restore = { restore with Enabled = false } } lockPath (Lock.Compilation.Csc c) }))
             Assert.That(ex.Data0, Does.Contain "got missing")
             Assert.That(ex.Data0, Does.Contain underFolder.Head.Path)
             let log = File.ReadAllText "lock-l2.log"
-            Assert.That(log, Does.Contain "automatic restore is off", "the restore-disabled warning was not reported")
+            Assert.That(log, Does.Contain "fetching is off (nofetch / NUGET_FETCH=off)", "the fetching-off warning was not reported")
             Assert.That(File.Exists "LockL.dll", Is.False, "nothing may be compiled")
-            Assert.That(Directory.Exists packages, Is.False, "restore was off, yet the package folder was written")
-        finally
-            try Directory.Delete (packages, true) with _ -> ()
-
-    [<Test; Category("Integration")>]
-    member x.``packageroot restores the lock's packages into the build's own folder``() =
-        File.WriteAllText ("LockM.cs", "public class LockM {}\n")
-        let lockPath = "locks/lockm.json"
-        if File.Exists lockPath then File.Delete lockPath
-        if File.Exists "LockM.dll" then File.Delete "LockM.dll"
-
-        let packages = Path.Combine (Path.GetTempPath (), "xake-packageroot-" + System.Guid.NewGuid().ToString("N"))
-        try
-            // no lock yet: recorded against the machine's cache, then read back against the
-            // folder and compiled from there
-            x.LockedWith "lock-m" "LockM.cs" lockPath packages true
-
-            let doc = Lock.read (Roots.make (Directory.GetCurrentDirectory()) (Roots.packageRootOverride packages)) lockPath
-            let underFolder = doc.Entries.Head.Csc.Dependencies.References |> List.filter (fun r -> r.Path.StartsWith packages)
-            if List.isEmpty underFolder then Assert.Ignore "the composed compilation names no package reference here"
-            for r in underFolder do
-                Assert.That(File.Exists r.Path, Is.True, sprintf "%s was not restored into the build's own folder" r.Path)
-            Assert.That(File.Exists "LockM.dll", Is.True, "csc did not produce LockM.dll")
+            Assert.That(Directory.Exists packages, Is.False, "fetching was off, yet the package folder was written")
         finally
             try Directory.Delete (packages, true) with _ -> ()

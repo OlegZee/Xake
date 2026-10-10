@@ -359,7 +359,10 @@ let greet name = sprintf "Hello, %s" name
         let version = DotNetFwk.defaultReferencePackVersions.NetStandardLibrary
         Assert.That(DotNetFwk.referencePackage DotNetFwk.defaultReferencePackVersions "netstandard2.0",
                     Is.EqualTo (Some ("NETStandard.Library", version)))
-        Assert.That(DotNetFwk.referencePackage DotNetFwk.defaultReferencePackVersions "netstandard2.1", Is.EqualTo None)
+        Assert.That(DotNetFwk.referencePackage DotNetFwk.defaultReferencePackVersions "netstandard2.1",
+                    Is.EqualTo (Some ("NETStandard.Library.Ref", "2.1.0")))
+        Assert.That(DotNetFwk.referencePackage { DotNetFwk.defaultReferencePackVersions with NetStandardLibraryRef = "2.1.7" } "netstandard2.1",
+                    Is.EqualTo (Some ("NETStandard.Library.Ref", "2.1.7")))
         Assert.That(DotNetFwk.referencePackage DotNetFwk.defaultReferencePackVersions "net-4.6.2",
                     Is.EqualTo (Some ("Microsoft.NETFramework.ReferenceAssemblies.net462", DotNetFwk.defaultReferencePackVersions.ReferenceAssemblies)))
 

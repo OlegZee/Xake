@@ -61,6 +61,7 @@ type ``Sbom cycloneDx``() =
                   References = references |> List.map (fun r -> { Path = r.Path; Sha256 = r.Sha256; Alias = "" })
                   Analyzers = analyzers } }
           Evaluation = { Project = ""; ProjectRefs = []; Imports = []; Sdk = "8.0.100"; SdkPin = None; Properties = Map.ofList [ "Version", "1.0.0" ] }
+          Prerequisites = []
           Packages = packages }
 
     let sampleBom hashContent : Bom =
@@ -224,6 +225,7 @@ type ``Sbom cycloneDx``() =
                             Compiler = { Tool = "fsc"; Path = "/sdk/FSharp/fsc.dll"; Sha256 = "f5"; Version = "12.8.0" }
                             References = [ { Path = coreDll; Sha256 = Csc.sha256 coreDll; Alias = "" } ] } }
               Evaluation = { Project = ""; ProjectRefs = []; Imports = []; Sdk = "8.0.100"; SdkPin = None; Properties = Map.ofList [ "Version", "2.0.0" ] }
+              Prerequisites = []
               Packages = [ { Id = "FSharp.Core"; Version = "8.0.100"; Sha512 = "AAAA"; Direct = true; DependsOn = [] } ] }
 
         let bom = Sbom.forAssembly cacheRoot entry assemblyFile
@@ -356,6 +358,7 @@ type ``Sbom package scope``() =
                   References = references |> List.map (fun r -> { Path = r.Path; Sha256 = r.Sha256; Alias = "" })
                   Analyzers = [] } }
           Evaluation = { Project = ""; ProjectRefs = []; Imports = []; Sdk = "8.0.100"; SdkPin = None; Properties = Map.ofList [ "Version", "1.0.0" ] }
+          Prerequisites = []
           Packages = packages }
 
     let myPkgNuspec = """<?xml version="1.0" encoding="utf-8"?>

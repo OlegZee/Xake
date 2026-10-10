@@ -160,8 +160,23 @@ The F# entry in the lock has the C# entry's shape, with fsc's own options and `"
 ```
 
 The compiler is the SDK's `fsc.dll`; there is no `toolset` for fsc, because no package carries a
-current F# compiler. Pin the SDK exactly (`global.json` with `"rollForward": "disable"`), or the
-lock fails on every machine that does not have the SDK it names. Without a `ref` to an
+current F# compiler. Pin the SDK exactly (`global.json` with `"rollForward": "disable"`): the
+lock then records the SDK as a **prerequisite**, under `Dependencies`:
+
+```json
+"Prerequisites": [
+  { "Kind": "dotnet-sdk", "Version": "10.0.401", "Pin": "$(ProjectRoot)/global.json" }
+]
+```
+
+and every build from the lock checks first that this SDK is installed, failing with what to
+install when it is not. Without the exact pin there is no prerequisite, the recording warns
+
+```
+[WARN] 'lib': depends on the .NET SDK 10.0.401 but global.json does not pin it exactly; the lock will only build where that SDK is installed
+```
+
+and the lock fails on every machine that does not have the SDK it names. Without a `ref` to an
 `FSharp.Core.dll`, the block references the SDK's own for .NET and the `FSharp.Core` package for
 netstandard and .NET Framework; either way the file is hashed like any other reference.
 
@@ -318,11 +333,17 @@ included, and it re-imports after every commit. Use it only for a lock that is n
 A frameworks list may name frameworks some projects do not target; those are skipped with a
 message.
 
-The import warns when the SDK is not pinned:
+An entry whose compiler or analyzers come from the SDK (`$(DotnetRoot)/sdk/<v>/`) records the
+SDK as a prerequisite when `global.json` pins it exactly (section 2), and otherwise the import
+warns:
 
 ```
-[WARN] 'Hello': the SDK is not pinned (none) -- the lock's compiler (5.9.0-1.26423.113, SDK 10.0.401) will drift with every SDK the machine picks; pin it with global.json { sdk: { version, rollForward: "disable" } }
+[WARN] 'Hello': depends on the .NET SDK 10.0.401 but global.json does not pin it exactly; the lock will only build where that SDK is installed
 ```
+
+A project that takes its compiler from the `Microsoft.Net.Compilers.Toolset` package needs no
+SDK prerequisite; unpinned, it gets the older warning `the SDK is not pinned (...) -- the lock's
+compiler (...) will drift with every SDK the machine picks`.
 
 Several variants of the same projects (brands, editions) are several locks: one import target
 each, with its own `Properties`, `Variant` and `Output`. See the `ImportOptions` reference in
@@ -422,17 +443,20 @@ do! Lock.compileWith { Lock.Options.Default with Restore = options } entry
 ```
 
 The same folder has to appear in both places; otherwise `$(NuGetPackageRoot)` in the lock
-expands to the machine cache and the restore fills a folder nobody reads.
+expands to the machine cache and the restore fills a folder nobody reads. `csc { lock }` and
+`fsc { lock }` have no folder of their own (`packageroot` was removed in 0.2): they use the
+build's package folder, `NUGET_PACKAGES`.
 
-To forbid the network, turn restore off. A missing package then fails the build before the
-compiler runs, listing every missing file with its expected hash:
+To forbid the network, turn fetching off (`nofetch` after `lock` in a `csc {}` / `fsc {}` block;
+it was `norestore` before 0.2). A missing package then fails the build before the compiler
+runs, listing every missing file with its expected hash:
 
 ```fsharp
 do! Lock.compileWith { Lock.Options.Default with Restore = { options with Enabled = false } } entry
 ```
 
 ```
-[WARN] 1 package(s) named by the lock are not in '/home/me/repo/.packages' and automatic restore is off (Restore.Options.Enabled): microsoft.netframework.referenceassemblies.net462 1.0.3
+[WARN] 1 package(s) named by the lock are not in '/home/me/repo/.packages' and fetching is off (nofetch / NUGET_FETCH=off): microsoft.netframework.referenceassemblies.net462 1.0.3
 [ERROR] ('app') hash mismatch:
 .../mscorlib.dll: expected f8b1..., got missing
 ```
@@ -620,6 +644,7 @@ explain why. `<name>` is the assembly name.
 
 | Message | Cause | Fix |
 |---|---|---|
+| `'<name>': the lock needs the .NET SDK <v> (prerequisite from $(ProjectRoot)/global.json), which is not installed under '<root>'; install it (dotnet-install --version <v> --install-dir <root>)` | the lock's entry has the SDK as a prerequisite (an exact `global.json` pin) and this machine lacks it; checked before anything else | run the `dotnet-install` command from the message |
 | `'<name>': the lock names the compiler of SDK <version> (<path>), which is not installed; install that SDK or re-import with the installed one` | the lock was made with another SDK | install that SDK, or re-import (or re-record) and commit the new lock; pin the SDK in `global.json` |
 | `'<name>': the compiler <path> is not available and restoring <id> <version> did not provide it` | a compiler package (`toolset "<version>"`) could not be restored | check the feed and credentials; delete a partial package folder |
 | `'<name>': the compiler <path> named by the lock is not installed` | a path under the SDK root, but not under `sdk/` | re-import on this machine |
@@ -636,7 +661,7 @@ explain why. `<name>` is the assembly name.
 
 | Pattern | Cause |
 |---|---|
-| `got missing` for many files under the package folder | restore is off, or the lock is read against a different package folder than the one restored into (section 7) |
+| `got missing` for many files under the package folder | fetching is off (`nofetch`), or the lock is read against a different package folder than the one restored into (section 7) |
 | a single package file with a different hash | the package in the cache is not the one recorded; clear that package directory and build again |
 | the compiler | a different SDK or toolset build under the same path |
 | a file your own script builds | a locally built reference was recorded with its hash; prefer the imported-lock pattern (section 6), or keep such references out of a `csc { lock }` block |

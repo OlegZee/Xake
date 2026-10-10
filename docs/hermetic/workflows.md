@@ -160,6 +160,14 @@ not have makes `dotnet fsi` fail before Xake starts: "A compatible .NET SDK was 
 Requested SDK version: ..." **(run)**. With `CSC_TOOLSET` the composed compile no longer
 depends on the SDK's compiler, but `dotnet fsi` still does.
 
+A lock entry that names the SDK's compiler (an `fsc {}` block, a composed `csc {}` without a
+toolset, an imported project) records the exactly pinned SDK as a **prerequisite**
+(`"Prerequisites": [ { "Kind": "dotnet-sdk", "Version": "8.0.425", "Pin":
+"$(ProjectRoot)/global.json" } ]` under `Dependencies`), and a build from the lock checks it
+first ([lock.md](lock.md#prerequisites)). Without the exact pin the recording warns `'<name>':
+depends on the .NET SDK <v> but global.json does not pin it exactly; the lock will only build
+where that SDK is installed`.
+
 ## B. Developer: an imported msbuild project
 
 ### What the lock records
@@ -176,9 +184,11 @@ project set ([lock.md](lock.md)). Per entry, i.e. per (project, framework):
 | `Dependencies.Packages` | the restore graph from `project.assets.json`: id, version, nupkg sha512 from the cache, direct or transitive, edges |
 | `Evaluation` | project file, imported msbuild files with SHA-256, `Sdk` (the SDK that evaluated it), `SdkPin` (from `global.json`), a few properties |
 
-The import warns when the SDK is not pinned exactly: `the SDK is not pinned (...) -- the
-lock's compiler (...) will drift with every SDK the machine picks; pin it with global.json { sdk:
-{ version, rollForward: "disable" } }`.
+An entry whose compiler or analyzers come from the SDK gets the SDK as a prerequisite
+(`Dependencies.Prerequisites`) when `global.json` pins it exactly; otherwise the import warns
+`'<name>': depends on the .NET SDK <v> but global.json does not pin it exactly; the lock will
+only build where that SDK is installed`. A toolset project that is not pinned gets `the SDK is
+not pinned (...) -- the lock's compiler (...) will drift with every SDK the machine picks`.
 
 ### Two ways to wire the import
 
@@ -377,9 +387,13 @@ Three ways to choose the folder:
 
 | How | Covers | Notes |
 |---|---|---|
-| `NUGET_PACKAGES=<dir>` in the environment | everything: `dotnet fsi`'s own `#r "nuget:"`, `Lock.load`, every restore, `csc { lock }` | simplest; **(run)** |
+| `NUGET_PACKAGES=<dir>` in the environment | everything: `dotnet fsi`'s own `#r "nuget:"`, `Lock.load`, every restore, `csc { lock }`, `fsc { lock }` | simplest; **(run)**; the one way for `csc { lock }` since 0.2 |
 | `Restore.into ".packages"` + `Lock.loadWith (Roots.packageRootOverride ...)` + `Lock.compileWith` | imported locks compiled through `compileWith` | the folder is relative to the project root; must appear in both places |
-| `Restore.into` with `csc { lock }` | `csc { ...; lock "p"; packageroot "<dir>" }` | the folder is created and restored into; `norestore` forbids downloads |
+
+`csc { ...; lock "p"; nofetch }` forbids downloads (`Enabled = false`; it was `norestore`
+before 0.2). The per-target `packageroot "<dir>"` was removed in 0.2: the package folder is one
+per build. In 0.2.x, on Xake 3.6, the `NUGET_PACKAGES` and `NUGET_FETCH` *script variables* of
+the base reach this side too (`DotNetFwk.packageRoot`, `fetchEnabled`).
 
 The `Restore.into` form, from [restore.md](restore.md) (run by the maintainers on dataengine,
 not for this page):
@@ -457,6 +471,7 @@ a fresh database is what makes every target rebuild and every gate run.
 |---|---|---|
 | composed, SDK compiler | `global.json` selects another SDK | fails with `~ Compiler.Path: .../sdk/8.0.425/... -> .../sdk/10.0.401/...` and `~ Compiler.Version: 4.11.0-3.25569.22 -> 5.9.0-1.26423.113` **(run)** |
 | imported, SDK compiler | the SDK is not installed | `'<name>': the lock names the compiler of SDK <v> (<path>), which is not installed; install that SDK or re-import with the installed one` (covered by a test) |
+| any entry with a `dotnet-sdk` prerequisite (exact pin at record time) | the SDK is not installed | before anything else: `'<name>': the lock needs the .NET SDK <v> (prerequisite from $(ProjectRoot)/global.json), which is not installed under '<root>'; install it (dotnet-install --version <v> --install-dir <root>)` (covered by a test) |
 | toolset (`toolset`, `CSC_TOOLSET`) | any | the compiler package is restored; the SDK only has to run `dotnet fsi` |
 
 An imported lock also names SDK reference packs and analyzers under `$(DotnetRoot)` (for
@@ -608,7 +623,9 @@ pre-populated package folder.
    `Restore.into` and `Lock.restore` (C). Include the `Xake` packages: `dotnet fsi` needs them
    too, and they land in the same folder when `NUGET_PACKAGES` points there.
 2. Move the folder to the offline machine.
-3. Build with the same folder, and with restore off so nothing tries the network:
+3. Build with the same folder, and with fetching off so nothing tries the network (`nofetch`
+   after `lock` in a `csc {}` / `fsc {}` block, with `NUGET_PACKAGES` pointing at the folder;
+   or, for an imported lock compiled through `compileWith`):
 
 ```fsharp
 let! options = Restore.into ".packages"
@@ -621,7 +638,7 @@ With a package missing, the build fails before the compiler runs (covered by
 `RestoreTests`):
 
 ```
-[WARN] N package(s) named by the lock are not in '<folder>' and automatic restore is off (Restore.Options.Enabled): <id> <version>, ...
+[WARN] N package(s) named by the lock are not in '<folder>' and fetching is off (nofetch / NUGET_FETCH=off): <id> <version>, ...
 [ERROR] ('<name>') hash mismatch:
 <folder>/<id>/<version>/.../X.dll: expected <sha256>, got missing
 ```
@@ -633,7 +650,7 @@ What breaks offline:
 | `Project.import`, imported `check-locks` | msbuild restores the project from the feeds |
 | `csc { toolset }` / `CSC_TOOLSET` on a folder without the package | resolved before any lock, always restores, ignores `Enabled` |
 | composed reference assemblies missing | `DotNetFwk` tries a restore from a temp folder, ignores `Enabled`, and swallows the error; the message is then `reference assemblies for '<moniker>' are not available: failed to restore package ...` |
-| `csc { lock }` | always `Restore.Options.Default`; it cannot be switched off (use `NUGET_PACKAGES` and an offline NuGet config) |
+| `csc { lock }` without `nofetch` | fetches what the folder lacks; add `nofetch` after `lock` (or use an offline NuGet config) |
 | `dotnet fsi` `#r "nuget:"` | needs `Xake` and `Xake.Hermetic.Dotnet` in the folder |
 
 ## G. Troubleshooting
@@ -645,11 +662,12 @@ What breaks offline:
 | `Neither rule nor file is found for '<root>/locks/<x>.json'` | the lock is not committed, or the path is wrong | record it locally (`build` or `update-locks`) and commit it |
 | `'<name>': the lock '<path>' is not there. Under CI a lock is never recorded: ...` | the build runs under CI (env `CI`, or `-d CI=on`) and the lock is not committed | record the lock on a developer machine (`update-locks` or a first build) and commit it; `-d CI=off` forces the developer behaviour |
 | `('<name>') hash mismatch:` / `<path>: expected <a>, got <b>` | a file on disk is not the recorded one: a different package build, a corrupted cache, a rebuilt reference | delete that package directory and rebuild; for a reference your script builds, see the guide |
-| `... expected <sha256>, got missing` for many files | restore off, or the lock was read against another package folder than the one restored into | use one folder for `Lock.loadWith` and `Restore` (C), or `NUGET_PACKAGES` |
+| `... expected <sha256>, got missing` for many files | fetching off (`nofetch`), or the lock was read against another package folder than the one restored into | use one folder for `Lock.loadWith` and `Restore` (C), or `NUGET_PACKAGES` |
 | `('<name>') restoring the packages the lock names failed:` + `<id> <v>: not restored (expected it at '<dir>')` | the restore ran but did not deliver | check the feed in `nuget.config`; NuGet's output is in the log at verbose level |
 | `<id> <v>: expected sha512 <a>, got <b>` | the feed served a different nupkg than the one recorded | a republished package: find out why before re-importing |
 | `restoring N package(s) into '<folder>' failed with exit code <n> (see '<project>'): <ids>` | `dotnet restore` failed: feed unreachable, credentials, package absent | fix the source or credentials; re-run the left `restore.csproj` by hand to see NuGet's message |
-| `N package(s) named by the lock are not in '<folder>' and automatic restore is off` (warning) | `Restore.Options.Enabled = false` | pre-populate the folder, or enable restore |
+| `N package(s) named by the lock are not in '<folder>' and fetching is off (nofetch / NUGET_FETCH=off)` (warning) | `nofetch`, or `Restore.Options.Enabled = false` | pre-populate the folder, or allow fetching |
+| `'<name>': the lock needs the .NET SDK <v> (prerequisite from <pin>), which is not installed under '<root>'; install it (...)` | the entry's `dotnet-sdk` prerequisite is not met | run the `dotnet-install` command from the message |
 | `'<name>': the lock names the compiler of SDK <v> (<path>), which is not installed; install that SDK or re-import with the installed one` | imported lock, other SDK on this machine | install the SDK from `global.json` |
 | `'<name>': the compiler <path> is not available and restoring <id> <v> did not provide it` | a toolset compiler the restore could not provide | check the feed; delete a partial package folder |
 | `toolset <id> <v>: the package folder <dir> has no compiler at <path> (a partial restore? ...)` | composed `toolset`, broken package directory | delete `<dir>` and rebuild |
@@ -661,6 +679,7 @@ What breaks offline:
 | `project '<name>' is in the lock for N frameworks (...); ask for one with Lock.entryFor` | multi-framework lock | `Lock.entryFor framework name` |
 | `A compatible .NET SDK was not found. Requested SDK version: <v>` (from `dotnet`, before Xake) | `global.json` pins an SDK the machine lacks | install it (`setup-dotnet` with `global-json-file`, the matching image tag) |
 | `the SDK is not pinned (...) -- the lock's compiler (...) will drift ...` (import warning) | no exact pin | `global.json` with `rollForward: "disable"` |
+| `'<name>': depends on the .NET SDK <v> but global.json does not pin it exactly; ...` (recording warning) | the entry names the SDK, no exact pin, so no prerequisite | `global.json` with `"version": "<v>", "rollForward": "disable"`, then re-record |
 
 More messages: [../hermetic-guide.md](../hermetic-guide.md#12-troubleshooting).
 
@@ -684,9 +703,9 @@ What the product does not do yet, with the smallest change that would close each
    an imported lock needs a loop over `Lock.compile`, and with project references the
    per-output rule with `mapPaths` (B). Smallest fix: a `Lock.compileAll` that orders entries
    by project reference and maps references to the other entries' `/out:`.
-5. *(done)* **`csc { lock }` cannot take `Restore.Options`.** `packageroot "<dir>"` and
-   `norestore` after `lock` set the package folder and forbid the network
-   ([lock.md](lock.md#restore-options-packageroot-norestore)).
+5. *(done)* **`csc { lock }` cannot take `Restore.Options`.** `nofetch` after `lock` forbids
+   the network ([lock.md](lock.md#fetching-nofetch)); the folder is the build's
+   (`NUGET_PACKAGES`). `packageroot "<dir>"`, the per-target folder, was removed in 0.2.
 6. **Composed reference assemblies are restored outside the restore mechanism.**
    `DotNetFwk`'s reference-assembly restore (`Microsoft.NETFramework.ReferenceAssemblies.*`,
    `NETStandard.Library`) runs from the temp directory with a `PackageReference`, ignores the

@@ -124,7 +124,12 @@ reasoning, since requirement 4 asks for it explicitly:
 
 `Enabled = false` restores the pre-change failure exactly — every missing file listed with
 `expected <sha256>, got missing` — plus one `Warning` naming the package count and the folder,
-so the reason is visible instead of inferred. Verified on the fixture: 339 missing lines, and
+so the reason is visible instead of inferred: `N package(s) named by the lock are not in
+'<folder>' and fetching is off (nofetch / NUGET_FETCH=off): <id> <version>, ...`. `nofetch`
+after `csc { lock }` / `fsc { lock }` sets it (called `norestore` before 0.2,
+[lock.md](lock.md#fetching-nofetch)). The field keeps its name; in 0.2.x, on Xake 3.6, its
+default is to follow the base's `NUGET_FETCH` script variable (`DotNetFwk.fetchEnabled ()`)
+instead of `true`. Verified on the fixture: 339 missing lines, and
 the folder is never created.
 
 **Verification stays at the level each layer can actually see.** This module checks the
@@ -206,10 +211,12 @@ by name.
 
 ## Left open
 
-- **The composed `csc { toolset "x" }` path has no package folder of its own.** It always uses
-  the machine's cache, because composed settings carry no folder — only a lock does, through
-  `Lock.Options.Restore`. Adding `packageroot` to `CscSettingsType` would close it; nothing
-  needs it yet.
+- **The package folder is one per build.** `csc { lock }` and `fsc { lock }` restore into the
+  build's folder (`NUGET_PACKAGES`, else `~/.nuget/packages`); the per-target `packageroot`
+  after `lock` was removed in 0.2. `Restore.into dir` with `Lock.loadWith
+  (Roots.packageRootOverride dir)` stays, for a script that reads a lock against another
+  folder. In 0.2.x, on Xake 3.6, `Options.PackageRoot = None` becomes the base's
+  `DotNetFwk.packageRoot ()` (the `NUGET_PACKAGES` script variable, not only the environment).
 - **Only what a compilation reads is restored**, i.e. the packages behind `References`,
   `Analyzers` and `Compiler`. The lock's `Dependencies.Packages` graph carries more than that
   (runtime-only packages, build-time-only packages); a build that wants to *publish* from the

@@ -45,6 +45,7 @@ comparator and a signing rule.
 | Packages missing on this machine | fetched by exact id and version, the nupkg SHA-512 compared with the lock |
 | The commit | kept out of the lock as the token `$(SourceRevisionId)`, resolved from `.git` at compile time |
 | The SDK choice | recorded (`Evaluation.Sdk`, `Evaluation.SdkPin`); the import warns when `global.json` does not pin it exactly |
+| The SDK an entry depends on | an exactly pinned SDK under `$(DotnetRoot)/sdk/<v>/` (fsc, an import's compiler and analyzers) is a `dotnet-sdk` prerequisite (`Entry.Prerequisites`), checked before a replay; without the exact pin the recording warns |
 
 ### What is not controlled
 
@@ -124,11 +125,12 @@ out of the runner into `Lock.compileWith`, which runs them and then hands the `C
 
 ```
 Lock.buildWith options path c
-  lock missing   -> record (rehash, save) -> compileWith recorded
+  lock missing   -> record (prerequisites, rehash, save) -> compileWith recorded
   lock matches   -> compileWith recorded            (the recorded hashes gate the build)
   lock differs   -> fail with Lock.diff              (FailOnError = false: warn, compileWith resolved)
 
 Lock.compileWith options entry
+  0. Entry.Prerequisites                            (a dotnet-sdk <v> not installed fails here)
   1. Restore.ensure options.Restore (Lock.restoreRequest [entry])
   2. ensureCompilerAvailable                       (explain a compiler still missing)
   3. $(SourceRevisionId) -> Git.headSha c.Directory (only when the token occurs)
@@ -394,11 +396,14 @@ plus `toolset`, `noserver`, `keepalive` and `resolve`, the marker `CscRequest`, 
 | `SdkPin`, `sdkPinText`, `parseSdkPin` | union, pure | `NoGlobalJson`, `Pinned`, `RollsForward`, `NoVersion`; the text form written in the lock |
 | `Evaluation` / `Evaluation.Empty` | record | `Project`, `ProjectRefs`, `Imports`, `Sdk`, `SdkPin`, `Properties`; all empty when composed |
 | `Compilation` | union | `Csc of Csc \| Fsc of Fsc`, `RequireQualifiedAccess`; common members `Name`, `Framework`, `Directory`, `Options`, `Defines`, `Sources`, `Generated`, `Resources`, `Dependencies`, `Args`, `Output` |
-| `Entry`, `Document` | records | `{ Compilation; Evaluation; Packages }` (members `Name`, `Framework`, `Dependencies`, `Args`, `Output`, and `Csc`/`Fsc`, which fail for the other case); `{ Configuration; Properties; Entries }` |
+| `Prerequisite` / `DotnetSdk` | record, literal | `{ Kind; Version; Pin }`, `Pin` kept tokenized; `"dotnet-sdk"` |
+| `sdkPinAt dir` | reads disk | the `global.json` found upwards from `dir` and its `SdkPin`; to be replaced by the base's reader in 0.2.x (Xake 3.6) |
+| `sdkVersionsOf roots paths`, `prerequisitesFor roots pinFile pin versions`, `sdkUnpinnedWarning` | pure | the SDK versions paths depend on; the prerequisites under a pin and the versions left without one; the warning text |
+| `Entry`, `Document` | records | `{ Compilation; Evaluation; Packages; Prerequisites }` (members `Name`, `Framework`, `Dependencies`, `Args`, `Output`, and `Csc`/`Fsc`, which fail for the other case); `{ Configuration; Properties; Entries }` |
 | `packagesOf cacheRoot assets` | reads disk | the entry's package graph from `Nuget.Assets` and the cache's SHA-512 |
 | `ofCompilation c`, `ofCsc c`, `ofFsc f` | pure | a composed compilation as an entry |
 | `rehash entry` | reads disk | `Csc.rehash`/`Fsc.rehash` plus the `Imports` hashes |
-| `mapPaths`, `mapText` | pure | `Csc.mapPaths`/`Fsc.mapPaths`; `mapText` of the case plus the evaluation's property values |
+| `mapPaths`, `mapText` | pure | `Csc.mapPaths`/`Fsc.mapPaths`; `mapText` of the case plus the evaluation's property values and the prerequisites' `Pin` |
 | `diffList`, `diff a b` | pure | the ordered diff; the full entry diff (section 4) |
 | `format roots doc`, `parse roots text`, `read roots path` | pure | the file format |
 | `load path`, `loadWith extra path` | recipes | read against the build's roots; `needFiles` the lock itself |
@@ -408,16 +413,17 @@ plus `toolset`, `noserver`, `keepalive` and `resolve`, the marker `CscRequest`, 
 | `restoreRequest entries` | pure | every compiler, reference and analyzer path, plus the combined graph |
 | `restore options doc` | recipe | `Restore.ensure` over a whole lock; fails on a problem |
 | `compileWith options entry`, `compile entry` | recipes | the replay (section 2); `compile` resolves the server first |
-| `record path c` | recipe | `c: Compilation`; `needFiles` what it hashes, rehash, overwrite a one-entry lock; compiles nothing |
-| `verify path c` | recipe | `diff (entry c.Name doc) (ofCompilation c)`; writes and compiles nothing |
+| `record path c` | recipe | `c: Compilation`; `needFiles` what it hashes, derive the prerequisites (warn without an exact pin), rehash, overwrite a one-entry lock; compiles nothing |
+| `verify path c` | recipe | `diff (entry c.Name doc) (ofCompilation c with its prerequisites)`; writes and compiles nothing |
 | `buildWith options path c`, `build path c` | recipes | the strict gate (section 2), over a `Compilation` |
 | `lock "path"` | builder operation | `CscLockBuilder`: `Csc.ofSettings`, `Csc.runOptions`, `Lock.buildWith`; `FscLockBuilder`: the same with `Fsc.ofSettings`, `Fsc.runOptions` |
+| `nofetch` | builder operation, after `lock` | `Restore.Options.Enabled = false` (was `norestore`); `packageroot` was removed in 0.2, the folder is the build's (`NUGET_PACKAGES`) |
 
 `Project`:
 
 | Name | Kind | What it does |
 |---|---|---|
-| `sdkPin projectDir` | reads disk | the `global.json` pin, searched upwards; only `rollForward: "disable"` is `Pinned` |
+| `sdkPin projectDir` | reads disk | the `global.json` pin, searched upwards (`Lock.sdkPinAt`); only `rollForward: "disable"` is `Pinned` |
 | `ImportOptions` / `ImportOptions.Default` | record | `Projects`, `Frameworks`, `Configuration` (default `Release`), `Properties`, `Variant`, `Output`, `Roots` |
 | `import options` | recipe | per project: one restore without `TargetFramework` and with `RestoreRecursive=false`, then per framework a design-time build and a `-pp` preprocess; writes one lock |
 
@@ -470,7 +476,7 @@ framework is a property of the entry: `(Csc.Name, Csc.Framework)` identifies an 
       "Framework": "netstandard2.0",
       "Evaluation":   { "Project", "ProjectRefs", "Imports", "Sdk", "SdkPin", "Properties" },
       "Compilation":  { "Directory", "Options", "Defines", "Sources", "Generated", "Resources" },
-      "Dependencies": { "Compiler", "References", "Analyzers", "Packages" }
+      "Dependencies": { "Compiler", "References", "Analyzers", "Packages", "Prerequisites" (only when not empty) }
     }
   ]
 }
@@ -497,6 +503,7 @@ three sections, so the file kept the shape it had before the record split.
 | | `References` | `{ Path; Sha256 }`, plus `Alias` only when set |
 | | `Analyzers` | `{ Path; Sha256 }` |
 | | `Packages` | `{ Id; Version; Sha512; Direct; DependsOn }` on one line each |
+| | `Prerequisites` | `{ Kind; Version; Pin }` on one line each; the key only when the list is not empty, so a lock without prerequisites is byte-identical to one written before the key existed |
 
 ### Section markers and the round trip
 
@@ -599,8 +606,8 @@ Line shapes are `+ x`, `- x`, `~ Label path: old -> new`.
 
 Limits:
 
-- A lock changes when the SDK changes (the compiler path and hash), and the import warns when
-  the SDK is not pinned exactly.
+- A lock changes when the SDK changes (the compiler path and hash). An entry that depends on the
+  SDK records it as a prerequisite under an exact pin; without one, the recording warns.
 - A lock records absolute paths under `$(ProjectRoot)`; a lock is portable, but byte-identical
   *output* also needs the same checkout path or a `/pathmap`.
 - An older lock with a document-level `"Framework"` still reads (the value goes into every entry
@@ -628,8 +635,9 @@ then compares each restored package's `.nupkg.metadata` SHA-512 with the lock.
 - A package is memoized per process after a restore attempt, so a hundred entries naming a
   package the restore could not provide do not start a hundred restores. The runner's hash
   check then reports what is still missing.
-- With `Enabled = false` nothing is fetched; a warning names the packages, and the runner reports
-  every missing file with its expected hash.
+- With `Enabled = false` (`nofetch`) nothing is fetched; a warning names the packages (`fetching is
+  off (nofetch / NUGET_FETCH=off)`), and the runner reports every missing file with its expected
+  hash.
 - The folder used to read the lock and the folder restored into must be the same:
   `Restore.into dir` and `Lock.loadWith (Roots.packageRootOverride (Restore.packageRoot o))`.
 

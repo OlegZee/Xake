@@ -37,6 +37,7 @@
     <Compile Include="Tool.fs" />
     <Compile Include="Hash.fs" />
     <Compile Include="DotNetFwk.fs" />
+    <Compile Include="HermeticMode.fs" />
     <Compile Include="ResourceFileset.fs" />
     <!-- Resx has no dependency on Fsproj/DotnetTasks; it is compiled here (ahead of
          DotnetTasks.fs) because DotnetTasks.fs's Impl.compileResx calls into it on

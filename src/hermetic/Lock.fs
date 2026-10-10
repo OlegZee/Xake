@@ -80,6 +80,102 @@ module Lock =
             | -1 -> failwithf "'%s' is not a recognized SdkPin" t
             | i -> Some (RollsForward (t.Substring (0, i), t.Substring (i + 13)))
 
+    /// The `global.json` the .NET host would use for `dir`: searched upwards from it, the
+    /// first one found.
+    let internal findGlobalJson (dir: string) : string option =
+        let rec find (dir: string) =
+            let path = Path.Combine (dir, "global.json")
+            if File.Exists path then Some path
+            else
+                match Path.GetDirectoryName (dir: string) with
+                | null | "" -> None
+                | parent when parent = dir -> None
+                | parent -> find parent
+        find (Path.GetFullPath dir)
+
+    /// The pin a `global.json` file states: `sdk.version` plus `sdk.rollForward` (default
+    /// `latestPatch` when a version is set and the policy is absent); only `"disable"` is
+    /// `Pinned`.
+    let internal readSdkPin (file: string) : SdkPin =
+        let root = File.ReadAllText file |> Json.parse
+        let sdk = Json.field "sdk" root
+        match sdk |> Option.bind (Json.field "version") |> Option.bind Json.asString with
+        | None -> NoVersion file
+        | Some version ->
+            match sdk |> Option.bind (Json.field "rollForward") |> Option.bind Json.asString with
+            | Some "disable" -> Pinned version
+            | Some policy -> RollsForward (version, policy)
+            | None -> RollsForward (version, "latestPatch")
+
+    /// <summary>
+    /// The SDK pin in effect for `dir` and the `global.json` that states it (`None` with
+    /// `NoGlobalJson`): `findGlobalJson`, then `readSdkPin`. Pure but for reading the file.
+    /// </summary>
+    /// <remarks>
+    /// The exact-pin reader of this package. Xake 3.6 exposes one in the base
+    /// (`DotNetFwk`); once this package builds on 3.6 this one is to be replaced by it.
+    /// </remarks>
+    let sdkPinAt (dir: string) : string option * SdkPin =
+        match findGlobalJson dir with
+        | None -> None, NoGlobalJson
+        | Some file -> Some file, readSdkPin file
+
+    /// <summary>
+    /// An input the environment must provide by itself -- no restore step fetches it -- and
+    /// which a replay of the lock checks before doing any work (`compileWith`). One kind
+    /// today: `"dotnet-sdk"`, the .NET SDK at exactly `Version`, which covers the paths
+    /// under <c>$(DotnetRoot)/sdk/&lt;Version&gt;/</c> (the SDK's fsc, an imported project's
+    /// compiler and analyzers). It is written only when `global.json` pins that version
+    /// exactly (`rollForward: "disable"`); `Pin` names that file.
+    /// </summary>
+    /// <remarks>
+    /// `Pin` is kept tokenized (<c>$(ProjectRoot)/global.json</c>) in memory as well as on
+    /// disk: it is where the requirement comes from, quoted in messages, never opened by a
+    /// replay. So `mapPaths` and `rehash` leave it alone and `mapText` applies to it.
+    /// </remarks>
+    type Prerequisite = {
+        /// `"dotnet-sdk"`
+        Kind: string
+        /// The exact version (`10.0.401`)
+        Version: string
+        /// Where the requirement comes from, tokenized (`$(ProjectRoot)/global.json`)
+        Pin: string
+    }
+
+    /// The `Kind` of the .NET SDK prerequisite.
+    [<Literal>]
+    let DotnetSdk = "dotnet-sdk"
+
+    /// The SDK versions a list of paths depends on: every path that, tokenized against
+    /// `roots`, starts with <c>$(DotnetRoot)/sdk/&lt;v&gt;/</c>. Distinct, in order of first
+    /// appearance. Pure.
+    let sdkVersionsOf roots (paths: string list) : string list =
+        let prefix = "$(DotnetRoot)/sdk/"
+        paths
+        |> List.map (Roots.tokenize roots)
+        |> List.choose (fun p ->
+            if p.StartsWith prefix then
+                match p.Substring(prefix.Length).Split('/') with
+                | [| _ |] -> None
+                | parts when parts.[0] <> "" -> Some parts.[0]
+                | _ -> None
+            else None)
+        |> List.distinct
+
+    /// The prerequisites an entry naming the SDK `versions` gets under `pin` (read from
+    /// `pinFile`), and the versions left without one -- each of those is a warning for the
+    /// caller to trace (`sdkUnpinnedWarning`). A version is a prerequisite only when the pin is
+    /// exactly it. Pure.
+    let prerequisitesFor roots (pinFile: string option) (pin: SdkPin) (versions: string list) : Prerequisite list * string list =
+        let pinned, unpinned =
+            versions |> List.partition (fun v -> match pin, pinFile with Pinned p, Some _ -> p = v | _ -> false)
+        let pinText = pinFile |> Option.map (Roots.tokenize roots) |> Option.defaultValue ""
+        [ for v in pinned -> { Kind = DotnetSdk; Version = v; Pin = pinText } ], unpinned
+
+    /// The warning for an entry that depends on an SDK `global.json` does not pin exactly.
+    let sdkUnpinnedWarning (name: string) (version: string) =
+        sprintf "'%s': depends on the .NET SDK %s but global.json does not pin it exactly; the lock will only build where that SDK is installed" name version
+
     /// Where the entry came from: the msbuild evaluation. `run` never reads it; the import
     /// rule `needFiles` the `Imports`, and the SBOM reads `Sdk` and `Properties`. For a
     /// compilation composed from `csc {}` settings every field is empty.
@@ -137,6 +233,10 @@ module Lock =
         Evaluation: Evaluation
         /// The restore graph (`project.assets.json`) at import time; empty when composed
         Packages: Package list
+        /// What the environment must provide by itself (`Prerequisite`), checked before a
+        /// replay; written at record time when the entry depends on an exactly pinned SDK,
+        /// empty otherwise
+        Prerequisites: Prerequisite list
     } with
         member this.Name = this.Compilation.Name
         member this.Framework = this.Compilation.Framework
@@ -165,7 +265,8 @@ module Lock =
     }
 
     /// A composed compilation as a lock entry: no evaluation, no package graph.
-    let ofCompilation (c: Compilation) : Entry = { Compilation = c; Evaluation = Evaluation.Empty; Packages = [] }
+    let ofCompilation (c: Compilation) : Entry =
+        { Compilation = c; Evaluation = Evaluation.Empty; Packages = []; Prerequisites = [] }
 
     /// A composed C# compilation as a lock entry (`ofCompilation`).
     let ofCsc (c: Csc) : Entry = ofCompilation (Compilation.Csc c)
@@ -199,13 +300,15 @@ module Lock =
         { entry with Compilation = entry.Compilation |> mapCompilation (Csc.mapPaths f) (Fsc.mapPaths f) }
 
     /// Applies `f` to every piece of text that may embed a value rather than name a file:
-    /// the compilation's (`Csc.mapText`, `Fsc.mapText`) and the evaluation's property values. Used to
+    /// the compilation's (`Csc.mapText`, `Fsc.mapText`), the evaluation's property values and
+    /// each prerequisite's (tokenized) `Pin`. Used to
     /// tokenize the commit sha out of a lock (`Git.tokenize`) and to resolve it
     /// back at compile time (`compile`).
     let mapText (f: string -> string) (entry: Entry) : Entry =
         { entry with
             Compilation = entry.Compilation |> mapCompilation (Csc.mapText f) (Fsc.mapText f)
-            Evaluation = { entry.Evaluation with Properties = entry.Evaluation.Properties |> Map.map (fun _ v -> f v) } }
+            Evaluation = { entry.Evaluation with Properties = entry.Evaluation.Properties |> Map.map (fun _ v -> f v) }
+            Prerequisites = entry.Prerequisites |> List.map (fun p -> { p with Pin = f p.Pin }) }
 
     /// See `Csc.diffList`.
     let diffList (a: string list) (b: string list) : string list = Csc.diffList a b
@@ -272,12 +375,24 @@ module Lock =
 
     let private toHashed (r: Reference) : Hashed = { Path = r.Path; Sha256 = r.Sha256 }
 
+    /// Prerequisites by (kind, version): added, removed, or the pin moved. Sorted.
+    let private diffPrerequisites (a: Prerequisite list) (b: Prerequisite list) : string list =
+        let ofList items = items |> List.map (fun (p: Prerequisite) -> (p.Kind, p.Version), p) |> Map.ofList
+        let mapA, mapB = ofList a, ofList b
+        let keys = (a @ b) |> List.map (fun p -> p.Kind, p.Version) |> List.distinct |> List.sort
+        keys |> List.choose (fun ((kind, version) as key) ->
+            match Map.tryFind key mapA, Map.tryFind key mapB with
+            | Some p, None -> Some (sprintf "- Prerequisite %s %s (%s)" kind version p.Pin)
+            | None, Some p -> Some (sprintf "+ Prerequisite %s %s (%s)" kind version p.Pin)
+            | Some pa, Some pb when pa.Pin <> pb.Pin -> Some (sprintf "~ Prerequisite %s %s: %s -> %s" kind version pa.Pin pb.Pin)
+            | _ -> None)
+
     /// Human-readable differences between two lock entries of the same project: `Framework`,
     /// `Options` and
     /// `Sources` as ordered lists (`diffList`, bare `+`/`-` lines), `Defines` as a set,
     /// `Compiler` (path, hash, version), `Evaluation.Sdk`, each hashed list (`References`,
     /// `Analyzers`, `Imports`) by path, `Generated`/`Resources` by key, `ProjectRefs` as a
-    /// set, `Packages` by id. Empty list means identical. Pure, deterministic order (fixed
+    /// set, `Packages` by id, `Prerequisites` by kind and version. Empty list means identical. Pure, deterministic order (fixed
     /// section order, sorted within each section save the two ordered ones).
     let diff (a: Entry) (b: Entry) : string list =
         let ca, cb = a.Compilation, b.Compilation
@@ -293,7 +408,8 @@ module Lock =
           yield! diffPairs "Generated" ca.Generated cb.Generated
           yield! diffPairs "Resources" ca.Resources cb.Resources
           yield! diffStringSet "ProjectRef" a.Evaluation.ProjectRefs b.Evaluation.ProjectRefs
-          yield! diffPackages a.Packages b.Packages ]
+          yield! diffPackages a.Packages b.Packages
+          yield! diffPrerequisites a.Prerequisites b.Prerequisites ]
 
     /// `diff` as it is printed: every path in every line tokenized against `roots` (the
     /// same tokens the lock file is written with, `format`), so a drift message reads
@@ -362,7 +478,15 @@ module Lock =
                 (escape d.Compiler.Tool) (str d.Compiler.Path) (escape d.Compiler.Sha256) (escape d.Compiler.Version)
               referenceList "References" d.References
               hashedList "Analyzers" d.Analyzers
-              packageList "Packages" entry.Packages ] ]
+              packageList "Packages" entry.Packages
+              // only when there is one: every lock without prerequisites stays byte-identical
+              // to what was written before the key existed
+              if not (List.isEmpty entry.Prerequisites) then
+                  entry.Prerequisites
+                  |> List.map (fun p ->
+                      sprintf "%s  { \"Kind\": %s, \"Version\": %s, \"Pin\": %s }" indent (escape p.Kind) (escape p.Version) (escape p.Pin))
+                  |> String.concat ",\n"
+                  |> fun body -> sprintf "%s\"Prerequisites\": [\n%s\n%s]" indent body indent ] ]
         |> String.concat ",\n" |> sprintf "    {\n%s\n    }"
 
     /// The lock as text: paths tokenized against the given roots, one line per item, so the
@@ -450,6 +574,11 @@ module Lock =
                   SdkPin = str "SdkPin" e |> parseSdkPin
                   Properties = pairs "Properties" e |> Map.ofList }
             Packages = packageList "Packages" d
+            // absent in every lock written before the key existed, and whenever the entry
+            // has none; `Pin` is kept tokenized, as written
+            Prerequisites =
+                field "Prerequisites" d |> Option.map asArray |> Option.defaultValue []
+                |> List.map (fun p -> { Kind = str "Kind" p; Version = str "Version" p; Pin = str "Pin" p })
         }
 
     /// Reads a lock `format` produced, paths expanded for this machine. `roots` must be the
@@ -682,10 +811,26 @@ module Lock =
                                 (sprintf "'%s': the compiler %s named by the lock does not exist" c.Name compiler.Path)
         }
 
+    /// The prerequisites of `entry` this machine does not meet, as messages: a `dotnet-sdk`
+    /// one whose <c>&lt;DotnetRoot&gt;/sdk/&lt;Version&gt;</c> folder is missing. Reads the
+    /// disk, nothing else.
+    let internal unmetPrerequisites (entry: Entry) : string list =
+        let root = Roots.dotnetRoot ()
+        [ for p in entry.Prerequisites do
+            if p.Kind = DotnetSdk then
+                let installed = root |> Option.exists (fun r -> Directory.Exists (Path.Combine (r, "sdk", p.Version)))
+                if not installed then
+                    let rootText = root |> Option.map (fun r -> r.Replace('\\', '/')) |> Option.defaultValue "<no .NET installation found>"
+                    yield sprintf "'%s': the lock needs the .NET SDK %s (prerequisite from %s), which is not installed under '%s'; install it (dotnet-install --version %s --install-dir %s)"
+                            entry.Name p.Version p.Pin rootText p.Version rootText ]
+
     /// <summary>
     /// Replays a lock entry -- one imported by `Project.import`, read back from a lock, or
     /// recorded from composed settings -- exactly as recorded, with the runner and restore
     /// options given:
+    ///  0. the entry's prerequisites (`Entry.Prerequisites`): a `dotnet-sdk` one whose SDK is
+    ///     not installed under the .NET root fails before anything else, saying what to
+    ///     install.
     ///  1. `Restore.ensure`: a lock built on another machine names packages this one may not
     ///     have yet -- a compiler in a toolset package, and every reference and analyzer under
     ///     the package folder. The whole missing set is fetched in one restore; with nothing
@@ -701,6 +846,17 @@ module Lock =
     let compileWith (options: Options) (entry: Entry) : Recipe<ExecContext, unit> =
         recipe {
             let c = entry.Compilation
+
+            // the prerequisites first: nothing a restore fetches can stand in for a missing SDK
+            match unmetPrerequisites entry with
+            | [] -> ()
+            | unmet -> do! failStep options c (unmet |> String.concat "\n")
+
+            // TODO(Xake 3.6): the HERMETIC=on gate of the lock side (hermetic-mode.md, messages
+            // 9-11: refuse to record, or to replay, an entry naming a path outside
+            // $(ProjectRoot) and $(NuGetPackageRoot) not covered by a prerequisite) goes here and
+            // in `recordEntry`, reading the base's `HERMETIC` variable; this package does not
+            // read the variable itself
 
             let! restoreProblems = Restore.ensure options.Restore (restoreRequest [entry])
             if not (List.isEmpty restoreProblems) then
@@ -754,8 +910,34 @@ module Lock =
             do! compileWith { Options.Default with Run = { Options.Default.Run with Server = server } } entry
         }
 
-    /// Writes `entry`, hashed (`rehash`, the record-time step), as a one-entry lock at `path`
-    /// and returns what was written. There is no msbuild configuration or property set behind
+    /// <summary>
+    /// `entry` with its prerequisites (`Entry.Prerequisites`) derived from this build: when
+    /// its compiler, tokenized against the build's roots, lies under
+    /// <c>$(DotnetRoot)/sdk/&lt;v&gt;/</c> and the `global.json` found from the project root
+    /// upwards pins exactly `v` (`rollForward: "disable"`), a `dotnet-sdk v` prerequisite
+    /// naming that file. Otherwise none; with `warn`, each SDK version left without one is
+    /// traced as a warning (`sdkUnpinnedWarning`). The record-time step, and the same
+    /// derivation for the resolved side of a comparison (`buildWith`, `verify`), so a lock
+    /// whose pin changed differs from the configuration.
+    /// </summary>
+    let private withPrerequisites (warn: bool) (entry: Entry) : Recipe<ExecContext, Entry> =
+        recipe {
+            let! roots = Roots.current
+            match sdkVersionsOf roots [ entry.Dependencies.Compiler.Path ] with
+            | [] -> return entry
+            | versions ->
+                let! options = getCtxOptions ()
+                let projectRoot = match options.ProjectRoot with null | "" -> Directory.GetCurrentDirectory () | dir -> dir
+                let pinFile, pin = sdkPinAt projectRoot
+                let prerequisites, unpinned = prerequisitesFor roots pinFile pin versions
+                if warn then
+                    for v in unpinned do
+                        do! trace Warning "%s" (sdkUnpinnedWarning entry.Name v)
+                return { entry with Prerequisites = prerequisites }
+        }
+
+    /// Writes `entry`, hashed (`rehash`, the record-time step) and with its prerequisites
+    /// (`withPrerequisites`), as a one-entry lock at `path` and returns what was written. There is no msbuild configuration or property set behind
     /// a composed compilation, so those stay empty in the document.
     let private recordEntry (path: string) (entry: Entry) =
         recipe {
@@ -772,6 +954,7 @@ module Lock =
                   for i in entry.Evaluation.Imports -> i.Path ]
                 |> List.filter File.Exists
             do! needFiles (Filelist (hashedPaths |> List.map File.make))
+            let! entry = withPrerequisites true entry
             let rehashed = rehash entry
             do! save full { Configuration = ""; Properties = []; Entries = [ rehashed ] }
             return rehashed
@@ -811,7 +994,8 @@ module Lock =
                     c.Name path path
             let! doc = load full
             let! roots = Roots.current
-            return diffText roots (entry c.Name doc) (ofCompilation c)
+            let! resolved = withPrerequisites false (ofCompilation c)
+            return diffText roots (entry c.Name doc) resolved
         }
 
     /// <summary>
@@ -860,7 +1044,8 @@ module Lock =
             else
                 let! doc = load full
                 let recorded = entry c.Name doc
-                match diffText roots recorded (ofCompilation c) with
+                let! resolved = withPrerequisites false (ofCompilation c)
+                match diffText roots recorded resolved with
                 | [] ->
                     // compile the recorded entry, not the resolved one: its hashes are what
                     // gate the build
@@ -882,18 +1067,21 @@ module Lock =
             do! buildWith { Options.Default with Run = { Options.Default.Run with Server = server } } path c
         }
 
-/// The state of a `csc {}` block after `lock "path"`: the lock path, the settings, and the
-/// restore options the operations after `lock` set (`packageroot`, `norestore`).
-type CscLocked = CscLocked of path: string * settings: CscSettingsType * packageRoot: string option * restore: bool
+/// The state of a `csc {}` block after `lock "path"`: the lock path, the settings, and
+/// whether a package the lock names may be fetched (`nofetch` turns it off).
+type CscLocked = CscLocked of path: string * settings: CscSettingsType * fetch: bool
 
 /// `csc { ...; lock "path" }`: the settings resolved, then built gated by that lock
 /// (`Lock.buildWith`, so under CI a missing lock fails) with the run options the settings
-/// imply (`Csc.runOptions`) and the restore options `packageroot` and `norestore` give.
-/// Those two come *after* `lock` -- they are operations on the locked state, not on the
-/// settings:
+/// imply (`Csc.runOptions`). `nofetch` comes *after* `lock` -- an operation on the locked
+/// state, not on the settings:
 /// <code>
-/// csc { src !!"*.cs"; out (File.make "app.dll"); lock "locks/app.json"; packageroot ".packages"; norestore }
+/// csc { src !!"*.cs"; out (File.make "app.dll"); lock "locks/app.json"; nofetch }
 /// </code>
+/// The packages are read from and restored into the build's package folder (the
+/// `NUGET_PACKAGES` environment variable, else `~/.nuget/packages`); there is no per-target
+/// folder (`packageroot` was removed in 0.2). A script that reads a lock against another
+/// folder uses `Lock.loadWith (Roots.packageRootOverride dir)` and `Restore.into dir`.
 [<AutoOpen>]
 module CscLockBuilder =
     type CscSettingsBuilder with
@@ -903,48 +1091,41 @@ module CscLockBuilder =
         /// A matching lock is what gets compiled, so its recorded hashes are verified against
         /// disk. To update it, delete the file or call `Lock.record` from a target of the
         /// script's own. A missing lock is recorded, except under CI (`Lock.underCi`), where
-        /// it fails the build. Only `packageroot` and `norestore` may follow it.</summary>
+        /// it fails the build. Only `nofetch` may follow it.</summary>
         [<CustomOperation("lock")>]
-        member _.Lock(s: CscSettingsType, path: string) = CscLocked (path, s, None, true)
+        member _.Lock(s: CscSettingsType, path: string) = CscLocked (path, s, true)
 
-        /// <summary>After `lock`: the package folder the lock's packages are read from and
-        /// restored into (relative to the project root, or absolute), instead of the machine's
-        /// cache -- `Restore.into`.</summary>
-        [<CustomOperation("packageroot")>]
-        member _.PackageRoot(CscLocked (path, s, _, restore), dir: string) = CscLocked (path, s, Some dir, restore)
+        /// <summary>After `lock`: never fetch a package the lock names but the package folder
+        /// does not have (`Restore.Options.Enabled = false`, the per-target form of
+        /// `NUGET_FETCH=off`); the missing files are reported by the hash check before
+        /// anything is compiled.</summary>
+        [<CustomOperation("nofetch")>]
+        member _.NoFetch(CscLocked (path, s, _)) = CscLocked (path, s, false)
 
-        /// <summary>After `lock`: never download a package the lock names but the folder does
-        /// not have (`Restore.Options.Enabled = false`); the missing files are reported by
-        /// the hash check before anything is compiled.</summary>
-        [<CustomOperation("norestore")>]
-        member _.NoRestore(CscLocked (path, s, packageRoot, _)) = CscLocked (path, s, packageRoot, false)
-
-        member _.Run(CscLocked (path, s, packageRoot, restoreEnabled)) =
+        member _.Run(CscLocked (path, s, fetch)) =
             recipe {
                 let! c = Csc.ofSettings s
                 let! run = Csc.runOptions s
-                let! restore =
-                    match packageRoot with
-                    | Some dir -> Restore.into dir
-                    | None -> recipe { return Restore.Options.Default }
                 do! Lock.buildWith
-                        { Run = run; FscRun = FscRunOptions.Default; Restore = { restore with Enabled = restoreEnabled } }
+                        { Run = run; FscRun = FscRunOptions.Default; Restore = { Restore.Options.Default with Enabled = fetch } }
                         path (Lock.Compilation.Csc c)
             }
 
-/// The state of an `fsc {}` block after `lock "path"`: the lock path, the settings, and the
-/// restore options the operations after `lock` set (`packageroot`, `norestore`).
-type FscLocked = FscLocked of path: string * settings: FscSettingsType * packageRoot: string option * restore: bool
+/// The state of an `fsc {}` block after `lock "path"`: the lock path, the settings, and
+/// whether a package the lock names may be fetched (`nofetch` turns it off).
+type FscLocked = FscLocked of path: string * settings: FscSettingsType * fetch: bool
 
 /// `fsc { ...; lock "path" }`: the twin of `csc { lock }`. The settings resolved
 /// (`Fsc.ofSettings`), then built gated by that lock (`Lock.buildWith`, so under CI a missing
-/// lock fails) with the run options the settings imply (`Fsc.runOptions`) and the restore
-/// options `packageroot` and `norestore` give, which come *after* `lock`:
+/// lock fails) with the run options the settings imply (`Fsc.runOptions`); `nofetch` may come
+/// *after* `lock`:
 /// <code>
 /// fsc { targetfwk "net8.0"; src !!"*.fs"; out (File.make "lib.dll"); lock "locks/lib.json" }
 /// </code>
 /// The F# compiler is the SDK's own `fsc.dll`: pin the SDK (`global.json`, `rollForward:
-/// disable`), or the lock fails on every machine with another SDK.
+/// disable`) and the lock records it as a `dotnet-sdk` prerequisite (`Lock.Prerequisite`),
+/// checked before every replay; without the pin the recording warns, and the lock only
+/// builds where that SDK is installed.
 [<AutoOpen>]
 module FscLockBuilder =
     type FscSettingsBuilder with
@@ -954,31 +1135,22 @@ module FscLockBuilder =
         /// A matching lock is what gets compiled, so its recorded hashes are verified against
         /// disk. To update it, delete the file or call `Lock.record` from a target of the
         /// script's own. A missing lock is recorded, except under CI (`Lock.underCi`), where
-        /// it fails the build. Only `packageroot` and `norestore` may follow it.</summary>
+        /// it fails the build. Only `nofetch` may follow it.</summary>
         [<CustomOperation("lock")>]
-        member _.Lock(s: FscSettingsType, path: string) = FscLocked (path, s, None, true)
+        member _.Lock(s: FscSettingsType, path: string) = FscLocked (path, s, true)
 
-        /// <summary>After `lock`: the package folder the lock's packages are read from and
-        /// restored into (relative to the project root, or absolute), instead of the machine's
-        /// cache -- `Restore.into`.</summary>
-        [<CustomOperation("packageroot")>]
-        member _.PackageRoot(FscLocked (path, s, _, restore), dir: string) = FscLocked (path, s, Some dir, restore)
+        /// <summary>After `lock`: never fetch a package the lock names but the package folder
+        /// does not have (`Restore.Options.Enabled = false`, the per-target form of
+        /// `NUGET_FETCH=off`); the missing files are reported by the hash check before
+        /// anything is compiled.</summary>
+        [<CustomOperation("nofetch")>]
+        member _.NoFetch(FscLocked (path, s, _)) = FscLocked (path, s, false)
 
-        /// <summary>After `lock`: never download a package the lock names but the folder does
-        /// not have (`Restore.Options.Enabled = false`); the missing files are reported by
-        /// the hash check before anything is compiled.</summary>
-        [<CustomOperation("norestore")>]
-        member _.NoRestore(FscLocked (path, s, packageRoot, _)) = FscLocked (path, s, packageRoot, false)
-
-        member _.Run(FscLocked (path, s, packageRoot, restoreEnabled)) =
+        member _.Run(FscLocked (path, s, fetch)) =
             recipe {
                 let! f = Fsc.ofSettings s
                 let! run = Fsc.runOptions s
-                let! restore =
-                    match packageRoot with
-                    | Some dir -> Restore.into dir
-                    | None -> recipe { return Restore.Options.Default }
                 do! Lock.buildWith
-                        { Run = RunOptions.Default; FscRun = run; Restore = { restore with Enabled = restoreEnabled } }
+                        { Run = RunOptions.Default; FscRun = run; Restore = { Restore.Options.Default with Enabled = fetch } }
                         path (Lock.Compilation.Fsc f)
             }

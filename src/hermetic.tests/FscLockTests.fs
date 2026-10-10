@@ -215,17 +215,25 @@ type ``Fsc lock``() =
 
     [<Test; Category("Integration")>]
     member x.``without an exact pin no prerequisite is written and the recording warns``() =
-        // the fixture's project root finds the repository's global.json (rollForward
-        // latestMajor): not an exact pin
-        let lockPath = x.Fresh "FLockQ"
-        x.Run "flock-q" (recipe {
-            let! f = Fsc.ofSettings (settings !!"FLockQ.fs" "FLockQ.dll")
-            do! Lock.record lockPath (Lock.Compilation.Fsc f) })
+        // a project root of its own with a global.json that rolls forward (not an exact pin),
+        // so the test does not depend on how the repository pins its SDK
+        let root = Path.Combine (Directory.GetCurrentDirectory (), "unpinned-" + System.Guid.NewGuid().ToString("N"))
+        Directory.CreateDirectory root |> ignore
+        File.WriteAllText (Path.Combine (root, "FLockQ.fs"), "module FLockQ\nlet value = 1\n")
+        File.WriteAllText (Path.Combine (root, "global.json"), "{ \"sdk\": { \"version\": \"8.0.100\", \"rollForward\": \"latestMajor\" } }")
+        let lockPath = "locks/flockq.json"
+        try
+            x.RunIn root "flock-q" (recipe {
+                let! f = Fsc.ofSettings (settings !!"FLockQ.fs" "FLockQ.dll")
+                do! Lock.record lockPath (Lock.Compilation.Fsc f) })
 
-        let entry = (readLock lockPath).Entries |> List.exactlyOne
-        Assert.That(entry.Prerequisites, Is.Empty)
-        Assert.That(File.ReadAllText lockPath, Does.Not.Contain "Prerequisites")
-        Assert.That(File.ReadAllText "flock-q.log", Does.Match "'FLockQ': depends on the \\.NET SDK [^ ]+ but global\\.json does not pin it exactly; the lock will only build where that SDK is installed")
+            let full = Path.Combine (root, lockPath)
+            let entry = (Lock.read (Roots.builtin root) full).Entries |> List.exactlyOne
+            Assert.That(entry.Prerequisites, Is.Empty)
+            Assert.That(File.ReadAllText full, Does.Not.Contain "Prerequisites")
+            Assert.That(File.ReadAllText "flock-q.log", Does.Match "'FLockQ': depends on the \\.NET SDK [^ ]+ but global\\.json does not pin it exactly; the lock will only build where that SDK is installed")
+        finally
+            try Directory.Delete (root, true) with _ -> ()
 
     [<Test; Category("Integration")>]
     member x.``replay fails before anything else when the prerequisite SDK is not installed``() =

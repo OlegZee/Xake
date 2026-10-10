@@ -127,9 +127,10 @@ reasoning, since requirement 4 asks for it explicitly:
 so the reason is visible instead of inferred: `N package(s) named by the lock are not in
 '<folder>' and fetching is off (nofetch / NUGET_FETCH=off): <id> <version>, ...`. `nofetch`
 after `csc { lock }` / `fsc { lock }` sets it (called `norestore` before 0.2,
-[lock.md](lock.md#fetching-nofetch)). The field keeps its name; in 0.2.x, on Xake 3.6, its
-default is to follow the base's `NUGET_FETCH` script variable (`DotNetFwk.fetchEnabled ()`)
-instead of `true`. Verified on the fixture: 339 missing lines, and
+[lock.md](lock.md#fetching-nofetch)). The default `Enabled = true` follows the base's `NUGET_FETCH`
+script variable: where a build context exists (`ensure`, `Lock.compileWith`, `Lock.buildWith`)
+`Restore.resolve` turns fetching off when `DotNetFwk.fetchEnabled ()` says so; `false` is off
+whatever the variable says. Verified on the fixture: 339 missing lines, and
 the folder is never created.
 
 **Verification stays at the level each layer can actually see.** This module checks the
@@ -215,8 +216,9 @@ by name.
   build's folder (`NUGET_PACKAGES`, else `~/.nuget/packages`); the per-target `packageroot`
   after `lock` was removed in 0.2. `Restore.into dir` with `Lock.loadWith
   (Roots.packageRootOverride dir)` stays, for a script that reads a lock against another
-  folder. In 0.2.x, on Xake 3.6, `Options.PackageRoot = None` becomes the base's
-  `DotNetFwk.packageRoot ()` (the `NUGET_PACKAGES` script variable, not only the environment).
+  folder. `Options.PackageRoot = None` is the base's `DotNetFwk.packageRoot ()` (the
+  `NUGET_PACKAGES` script variable first) where a build context exists (`Restore.resolve`);
+  the context-free functions (`missing`, `verify`, `checkPresent`) see the environment's folder.
 - **Only what a compilation reads is restored**, i.e. the packages behind `References`,
   `Analyzers` and `Compiler`. The lock's `Dependencies.Packages` graph carries more than that
   (runtime-only packages, build-time-only packages); a build that wants to *publish* from the

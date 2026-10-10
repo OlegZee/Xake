@@ -470,3 +470,65 @@ type ``Lock prerequisites``() =
         Assert.That(Lock.prerequisitesFor roots file (Lock.RollsForward ("8.0.100", "latestPatch")) [ "8.0.100" ], Is.EqualTo (([]: Lock.Prerequisite list), [ "8.0.100" ]))
         Assert.That(Lock.prerequisitesFor roots None Lock.NoGlobalJson [ "8.0.100" ], Is.EqualTo (([]: Lock.Prerequisite list), [ "8.0.100" ]))
         Assert.That(Lock.prerequisitesFor roots file (Lock.Pinned "8.0.100") [], Is.EqualTo (([]: Lock.Prerequisite list), ([]: string list)))
+
+/// `Compilation.RuntimeConfig` (Xake 3.6: the `.runtimeconfig.json` a rule declares next to
+/// its output): the `"RuntimeConfig"` key under `Compilation`, written only when there is one,
+/// read back tokenized; and `hermeticViolations`, the lock-side rule of `HERMETIC=on`.
+[<TestFixture>]
+type ``Lock runtimeconfig and hermetic rule``() =
+
+    let roots = [ "$(NuGetPackageRoot)", "/r/pkgs"; "$(ProjectRoot)", "/r/proj"; "$(DotnetRoot)", "/r/dotnet" ]
+
+    let golden = ``Lock file format``.Golden
+
+    let first () = (Lock.parse roots golden).Entries.Head
+
+    let withRuntimeConfig (rc: string option) (e: Lock.Entry) =
+        match e.Compilation with
+        | Lock.Compilation.Csc c -> { e with Compilation = Lock.Compilation.Csc { c with RuntimeConfig = rc } }
+        | Lock.Compilation.Fsc f -> { e with Compilation = Lock.Compilation.Fsc { f with RuntimeConfig = rc } }
+
+    let document (e: Lock.Entry) : Lock.Document = { Configuration = ""; Properties = []; Entries = [ e ] }
+
+    [<Test>]
+    member x.``a runtimeconfig is written tokenized, read back, and diffed; none keeps the golden lock``() =
+        Assert.That((first ()).Compilation.RuntimeConfig, Is.EqualTo (None: string option))
+        let e = first () |> withRuntimeConfig (Some "/r/proj/bin/app.runtimeconfig.json")
+        let text = Lock.format roots (document e)
+        Assert.That(text, Does.Contain "\"RuntimeConfig\": \"$(ProjectRoot)/bin/app.runtimeconfig.json\"")
+        Assert.That((Lock.parse roots text).Entries.Head.Compilation.RuntimeConfig, Is.EqualTo (Some "/r/proj/bin/app.runtimeconfig.json"))
+        Assert.That(Lock.diff (first ()) e, Is.EqualTo [ "~ RuntimeConfig: none -> /r/proj/bin/app.runtimeconfig.json" ])
+
+    [<Test>]
+    member x.``the lock-side rule: the roots pass, the SDK only by a prerequisite in the role it may cover``() =
+        let e = first ()
+        let csc = e.Csc
+        let entryWith (compiler: string) (references: string list) (prerequisites: Lock.Prerequisite list) (imported: bool) =
+            { e with
+                Compilation =
+                    Lock.Compilation.Csc
+                        { csc with
+                            Options = []; Sources = [ "/r/proj/a.cs" ]; Generated = []; Resources = []
+                            Dependencies =
+                                { csc.Dependencies with
+                                    Compiler = { csc.Dependencies.Compiler with Path = compiler }
+                                    References = references |> List.map (fun p -> ({ Path = p; Sha256 = ""; Alias = "" }: Lock.Reference))
+                                    Analyzers = [] } }
+                Evaluation = { e.Evaluation with Project = if imported then "/r/proj/a.csproj" else "" }
+                Prerequisites = prerequisites }
+        let sdk : Lock.Prerequisite = { Kind = Lock.DotnetSdk; Version = "8.0.100"; Pin = "$(ProjectRoot)/global.json" }
+        let toolset = "/r/pkgs/microsoft.net.compilers.toolset/4.12.0/tasks/netcore/bincore/csc.dll"
+        let sdkCsc = "/r/dotnet/sdk/8.0.100/Roslyn/bincore/csc.dll"
+        let pack = "/r/dotnet/packs/Microsoft.NETCore.App.Ref/8.0.0/ref/net8.0/System.Runtime.dll"
+        Assert.That(Lock.hermeticViolations roots (entryWith toolset [ "/r/pkgs/x/1.0.0/lib/x.dll" ] [] false), Is.Empty)
+        Assert.That(Lock.hermeticViolations roots (entryWith sdkCsc [] [] false), Is.EqualTo [ "$(DotnetRoot)/sdk/8.0.100/Roslyn/bincore/csc.dll" ])
+        // a composed csc never relies on the SDK, prerequisite or not
+        Assert.That(Lock.hermeticViolations roots (entryWith sdkCsc [] [ sdk ] false), Is.EqualTo [ "$(DotnetRoot)/sdk/8.0.100/Roslyn/bincore/csc.dll" ])
+        // an import's compiler may, with the prerequisite of that version
+        Assert.That(Lock.hermeticViolations roots (entryWith sdkCsc [] [ sdk ] true), Is.Empty)
+        Assert.That(Lock.hermeticViolations roots (entryWith sdkCsc [] [ { sdk with Version = "9.0.100" } ] true), Is.Not.Empty)
+        // the targeting pack is never covered
+        Assert.That(Lock.hermeticViolations roots (entryWith sdkCsc [ pack ] [ sdk ] true), Is.EqualTo [ "$(DotnetRoot)/packs/Microsoft.NETCore.App.Ref/8.0.0/ref/net8.0/System.Runtime.dll" ])
+        // an extra root a script declared counts as the checkout
+        let extra = Roots.make "/r/proj" [ "$(OtherRoot)", "/r/other" ]
+        Assert.That(Lock.hermeticViolations extra (entryWith toolset [ "/r/other/bin/o.dll" ] [] false) |> List.filter (fun p -> p.Contains "o.dll"), Is.Empty)

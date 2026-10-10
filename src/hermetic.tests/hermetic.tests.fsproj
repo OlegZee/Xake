@@ -24,6 +24,7 @@
     <Compile Include="ToolsetImportTests.fs" />
     <Compile Include="ResxImportTests.fs" />
     <Compile Include="FsprojImportTests.fs" />
+    <Compile Include="HermeticLockTests.fs" />
   </ItemGroup>
   <ItemGroup>
     <!-- The `Xake` package (engine and Xake.Dotnet) flows in through this reference. -->

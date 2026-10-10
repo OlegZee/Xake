@@ -293,7 +293,8 @@ default `FSharp.Core` -- live in one folder, `DotNetFwk.packageRoot ()` inside a
 
 `DotNetFwk.restorePackage None` and `downloadPackages None` use that folder and pass it to the
 child `dotnet restore` as the environment variable `NUGET_PACKAGES`; `Some dir` names a folder
-explicitly (what `packageroot` after `lock` does in Xake.Hermetic.Dotnet, per target).
+explicitly (`Restore.into` in Xake.Hermetic.Dotnet; `csc { lock }` and `fsc { lock }` use the
+build's folder, there is no per-target one).
 `resolveFramework` reads its reference packs from it and memoizes per folder. The functions with
 no build context -- `DotNetFwk.nugetRoot`, `normalizedPackageRoot None`, `locateFramework`,
 `locateFrameworkIn`, `locateFrameworkWith` -- see only the environment.
@@ -303,8 +304,8 @@ on CI with a warm cache) stops every download into the package folder: `restoreP
 `downloadPackages` start no `dotnet restore`, and a package that is not there fails the build
 before the compiler runs, naming the package id and version and saying fetching is off. Values
 `off`, `false`, `no`, `0` turn it off; anything else, or unset, leaves it on.
-`DotNetFwk.fetchEnabled ()` is the decision as a recipe (what `Restore.Options.Enabled` of
-Xake.Hermetic.Dotnet is to default to); `norestore` after `lock` is the per-target form.
+`DotNetFwk.fetchEnabled ()` is the decision as a recipe (what `Restore.Options.Enabled = true`
+of Xake.Hermetic.Dotnet follows); `nofetch` after `lock` is the per-target form.
 
 `#r "nuget: ..."` in the build script is restored by `dotnet fsi` before Xake runs; only the
 environment variable reaches it.
@@ -346,7 +347,9 @@ that applies to the project root pins it exactly, `{ "sdk": { "version": "<v>", 
 it (`CSC_TOOLSET`). `DotNetFwk.globalJsonPin` reads the pin, `DotNetFwk.sdkPrerequisite root path`
 says which prerequisite covers a path (what the hermetic lock records), and
 `HermeticMode.check name roots inputs` is the rule itself over any list of paths and roots, for
-example the tokenized paths of a lock.
+example the tokenized paths of a lock. Xake.Hermetic.Dotnet 0.2 applies it on the lock side: a
+lock that breaks the invariant is neither written nor replayed, and an import needs an exact
+SDK pin ([hermetic/lock.md](hermetic/lock.md#hermetic-mode)).
 
 | Concern | What makes it hermetic | Under `HERMETIC=on` when missing |
 |---|---|---|

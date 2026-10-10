@@ -21,19 +21,22 @@ touched, so it is not re-litigated:
   tighter than `</>`, and `;` is not the Unix separator. Fixed, but the mono path has no test
   coverage.
 - Both build scripts bootstrap from nuget.org: `build.fsx` from `#r "nuget: Xake, 3.4.0.21"`
-  (the 3.4.0 release as nuget.org carries it), `build.fsc.fsx` from that and
-  `#r "nuget: Xake.Hermetic.Dotnet, 0.1.0.22"`. They stay behind the release being made; bump
-  them only after a release lands on nuget.org, to the exact published `X.Y.Z.<run>`.
-  Developing against unreleased libraries: a temporary `#r` on dlls (or a `#i` local feed);
-  see docs/devprocess.md, "Bootstrapping note". `samples/gettingstarted.fsx` references the
-  published package (`#r "nuget: Xake"`) and is checked against it after each release.
+  (the 3.4.0 release as nuget.org carries it), `build.fsc.fsx` from `#r "nuget: Xake,
+  3.6.0.24"` and `#r "nuget: Xake.Hermetic.Dotnet, 0.2.0"` (the lock API; a placeholder until
+  `hermetic-v0.2.0` lands, then the exact published `0.2.0.<run>`). They stay behind the release
+  being made; bump them only after a release lands on nuget.org, to the exact published
+  `X.Y.Z.<run>`. Developing against unreleased libraries: a temporary `#r` on dlls (or a `#i`
+  local feed); see docs/devprocess.md, "Bootstrapping note". `samples/gettingstarted.fsx`
+  references the published package (`#r "nuget: Xake"`) and is checked against it after each
+  release.
 - `src/hermetic` builds on the *published* `Xake` (PackageReference `[3.4.0.21, 4.0)`), not on
   `src/core`/`src/dotnet`. The floor is the exact published version: `[3.4.0, 4.0)` warns NU1603
   because no plain `3.4.0` exists. A local feed (`-d NUGET_SOURCE=<folder>`) is only for working
   against an unreleased base; a packed `3.4.0.99` in `~/.nuget/packages/xake/` shadows the
   release until deleted.
-- **The supported floor is .NET 8**, enforced in three places (`global.json`, the tests TFM, the
-  CI matrix) and by an explicit `FSharp.Core` 8.0.100 pin with
+- **The supported floor is .NET 8**, enforced by the tests TFM (`net8.0`) and the CI `floor`
+  leg (which drops `global.json`, now an exact `10.0.401` pin for the fsc build, and builds on
+  SDK 8.0), and by an explicit `FSharp.Core` 8.0.100 pin with
   `DisableImplicitFSharpCoreReference`. Without the pin the SDK's own FSharp.Core lands in the
   nuspec and every consumer inherits it. See docs/devprocess.md.
 - `builder {}` (the empty settings block) does **not** compile on F# 8 — `builder { () }` does,
@@ -121,8 +124,9 @@ worth knowing before touching it again:
   FSharp.Core reason given before (no net4x assembly in the pinned package) does not hold: a
   net462 compile takes FSharp.Core's netstandard2.0 build plus the facade, which is what
   `dotnet build` does too. What remains for a net462 leg of `build.fsc.fsx` is work, not a
-  blocker: `projects/net462/*.json` evaluations to read the references from (checking that
-  they carry the facade msbuild adds), and comparing its output with `dotnet pack`'s asset.
+  blocker: add `net462` to its `frameworks` (the import then records a net462 entry per
+  library; check it carries the facade msbuild adds), and compare its output with `dotnet
+  pack`'s asset.
 
 ## Trap: rule patterns with `..` never matched
 
@@ -166,18 +170,39 @@ if the hermetic nuspec has no `Xake` dependency or names `Xake.Dotnet` (docs/dev
 
 ## The fsc build (`build.fsc.fsx`)
 
-The fsc-based build (repo root) compiles all three libraries with the `fsc` task, running on
-the published `Xake` and `Xake.Hermetic.Dotnet` (see above). It must not load Xake from `out/`:
-it overwrites `out/`, and overwriting the assemblies fsi has loaded kills the run with a
-`BadImageFormatException` -- so a dev `#r` points at a copy (docs/devprocess.md).
+The fsc-based build (repo root) compiles all three libraries with fsc from **one imported
+lock**, `locks/xake.json` (committed), running on the published `Xake` and
+`Xake.Hermetic.Dotnet` (see above). It must not load Xake from `out/`: it overwrites `out/`,
+and overwriting the assemblies fsi has loaded kills the run with a `BadImageFormatException` --
+so a dev `#r` points at a copy (docs/devprocess.md).
 
 ```bash
 dotnet fsi build.fsc.fsx -- -- build test
+dotnet fsi build.fsc.fsx -- -- update-locks   # after a project, package or global.json change; commit the lock
+dotnet fsi build.fsc.fsx -- -- check-locks    # re-imports under obj/xake/check/, fails if the lock is stale
 ```
 
-What to compile is read from the msbuild evaluations kept in `projects/netstandard2.0/*.json`
-(tracked; regenerated when a project file changes). Its output is deterministic but not
-byte-identical to `dotnet build`. The package's own docs are in `docs/hermetic/`.
+- `update-locks` is `Project.import` of the three fsproj (Release, netstandard2.0) and the only
+  writer of the lock; `build` reads it as a plain file (`Lock.load`), maps each entry's `-o:`/
+  `--doc:` to `out/netstandard2.0/` and the unhashed project reference (Xake.Dotnet -> Xake) to
+  `out/netstandard2.0/Xake.dll` (`Lock.mapPaths`), and replays it (`Lock.compileWith`). No
+  msbuild, no project restore. There is no `projects/` folder and no `Fsproj` any more.
+- The lock carries each project's own `<Version>` (1.0.0 for Xake/Xake.Dotnet, which declare
+  none; 0.2.0 for the hermetic project); `-d Version=` only reaches `pack`. The commit sha is a
+  `$(SourceRevisionId)` token, resolved from HEAD at compile time.
+- The hermetic entry compiles against the *published* Xake its PackageReference restores
+  (`[3.5.0.23, 4.0)` resolves 3.5.0.23), not the Xake.dll built next to it.
+- `HERMETIC=on` and `NUGET_PACKAGES=.packages` (script variables): the replay restores what
+  the lock names into `.packages/` (gitignored) and reads `$(NuGetPackageRoot)` as that folder;
+  the script applies `HermeticMode.enforce` over `Fsc.hermeticInputs` itself before
+  `Lock.compileWith`, since the lock-side gate of the package is still a TODO in 0.2.
+- **The SDK is pinned exactly**: `global.json` is `10.0.401` with `rollForward: disable`, since
+  the lock's compiler is that SDK's `FSharp/fsc.dll` (the entries carry a `dotnet-sdk 10.0.401`
+  prerequisite). Bumping the SDK is: edit global.json, `update-locks`, commit both. A machine
+  without exactly that SDK cannot run `dotnet` in the repo at all (see docs/devprocess.md); CI
+  installs it from global.json, and its `floor` leg drops global.json to build on SDK 8.0.
+- Two clean builds are byte-identical (`--deterministic+`, same HEAD); output is not
+  byte-identical to `dotnet build` (different output paths).
 
 ## Earlier work: delegated execution (merged, PR #15)
 

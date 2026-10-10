@@ -45,3 +45,4 @@ temp
 paket-files/
 /out
 src/core/Xake.xml
+.packages/

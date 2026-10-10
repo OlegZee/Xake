@@ -87,6 +87,13 @@ binary-compatible across field changes. Proposed rule: the hermetic package depe
 
 ## Xake.Hermetic.Dotnet
 
+### Small: in-lock project references must stay unhashed (found 2026-10-11)
+
+`Project.import` hashes a project reference's output when an old `src/<x>/bin/...` happens to
+exist, so the lock differs depending on leftover build output (empty hash vs a real one). A
+reference whose project is in the same lock should always be recorded without a hash, as the
+lock format intends; `check-locks` ignores empty hashes, so this is churn, not a failure.
+
 From `docs/hermetic/workflows.md` ("Gaps"), in priority order:
 
 1. *(done in PR #30)* A missing lock fails under CI (env `CI`, or `-d CI=on|off`) instead of being

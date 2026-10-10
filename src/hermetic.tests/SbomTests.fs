@@ -55,7 +55,7 @@ type ``Sbom cycloneDx``() =
         { Compilation = Lock.Compilation.Csc
             { Name = name
               Framework = "netstandard2.0"
-              Directory = ""; Options = []; Defines = []; Sources = []; Generated = []; Resources = []
+              Directory = ""; Options = []; Defines = []; Sources = []; Generated = []; Resources = []; RuntimeConfig = None
               Dependencies =
                 { Compiler = { Tool = "csc"; Path = ""; Sha256 = ""; Version = "4.11.0" }
                   References = references |> List.map (fun r -> { Path = r.Path; Sha256 = r.Sha256; Alias = "" })
@@ -352,7 +352,7 @@ type ``Sbom package scope``() =
         { Compilation = Lock.Compilation.Csc
             { Name = name
               Framework = framework
-              Directory = ""; Options = []; Defines = []; Sources = []; Generated = []; Resources = []
+              Directory = ""; Options = []; Defines = []; Sources = []; Generated = []; Resources = []; RuntimeConfig = None
               Dependencies =
                 { Compiler = { Tool = "csc"; Path = ""; Sha256 = ""; Version = "4.11.0" }
                   References = references |> List.map (fun r -> { Path = r.Path; Sha256 = r.Sha256; Alias = "" })

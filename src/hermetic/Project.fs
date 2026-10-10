@@ -16,28 +16,8 @@ module Project =
     open Lock
 
     /// Walks up from `projectDir` looking for `global.json` and reads its `sdk.version` /
-    /// `sdk.rollForward` into a `Lock.SdkPin`. Pure: no msbuild involved.
-    let sdkPin (projectDir: string) : SdkPin =
-        let rec findGlobalJson (dir: string) =
-            let path = Path.Combine (dir, "global.json")
-            if File.Exists path then Some path
-            else
-                match Path.GetDirectoryName (dir: string) with
-                | null | "" -> None
-                | parent when parent = dir -> None
-                | parent -> findGlobalJson parent
-        match findGlobalJson (Path.GetFullPath projectDir) with
-        | None -> NoGlobalJson
-        | Some file ->
-            let root = File.ReadAllText file |> Json.parse
-            let sdk = Json.field "sdk" root
-            match sdk |> Option.bind (Json.field "version") |> Option.bind Json.asString with
-            | None -> NoVersion file
-            | Some version ->
-                match sdk |> Option.bind (Json.field "rollForward") |> Option.bind Json.asString with
-                | Some "disable" -> Pinned version
-                | Some policy -> RollsForward (version, policy)
-                | None -> RollsForward (version, "latestPatch")
+    /// `sdk.rollForward` into a `Lock.SdkPin` (`Lock.sdkPinAt`). Pure: no msbuild involved.
+    let sdkPin (projectDir: string) : SdkPin = Lock.sdkPinAt projectDir |> snd
 
     type ImportOptions = {
         /// The project files. All of them land in one lock: what varies between projects of
@@ -317,6 +297,8 @@ module Project =
                         List.contains name [ "AssemblyName"; "TargetFrameworkMoniker"; "LangVersion"; "Version"; "InformationalVersion"
                                              "SignAssembly"; "AssemblyOriginatorKeyFile"; "Deterministic"; "TargetPath"; "IntermediateOutputPath" ]) }
             Packages = packages
+            // derived by `import`, which knows the roots and the pin's file
+            Prerequisites = []
         }
         // the round trip: the structured entry must give back msbuild's command line exactly,
         // or the lock would describe a compilation other than the one msbuild ran
@@ -412,10 +394,14 @@ module Project =
                     do! Tool.failOnExitCode true name exitCode
                 }
 
+            // the roots the lock is written with; the SDK an entry depends on is read off its
+            // tokenized paths
+            let! roots = Roots.currentWith options.Roots
+
             let entries = ResizeArray<Lock.Entry>()
             for project in options.Projects do
                 let projectDir = Path.GetDirectoryName (Path.GetFullPath project)
-                let pin = sdkPin projectDir
+                let pinFile, pin = Lock.sdkPinAt projectDir
 
                 // one hold of the project's lock for the whole project: the restore and every
                 // framework's design-time build (which reads what that restore wrote) have to
@@ -485,14 +471,27 @@ module Project =
                     return List.ofSeq ofProject
                 })
 
-                for entry in imported do
-                    let sdk = entry.Evaluation.Sdk
+                for importedEntry in imported do
+                    let sdk = importedEntry.Evaluation.Sdk
+                    // the SDK this entry depends on: its compiler and analyzers under
+                    // $(DotnetRoot)/sdk/<v>/. Exactly pinned (the evaluation's `SdkPin` is
+                    // `Pinned v`, and so msbuild ran `v`), that SDK is the entry's prerequisite;
+                    // otherwise a warning, and none
+                    let sdkVersions =
+                        Lock.sdkVersionsOf roots
+                            (importedEntry.Dependencies.Compiler.Path :: (importedEntry.Dependencies.Analyzers |> List.map (fun a -> a.Path)))
+                    let prerequisites, unpinned =
+                        Lock.prerequisitesFor roots pinFile (importedEntry.Evaluation.SdkPin |> Option.defaultValue NoGlobalJson) sdkVersions
+                    let entry = { importedEntry with Prerequisites = prerequisites }
                     match pin with
                     | Pinned v when sdk <> "" && sdk <> v ->
                         do! trace Warning "'%s': the SDK is pinned to %s but msbuild ran %s -- the pinned SDK is not installed on this machine" entry.Name v sdk
                     | Pinned _ -> ()
-                    | other ->
+                    | other when List.isEmpty sdkVersions ->
                         do! trace Warning "'%s': the SDK is not pinned (%s) -- the lock's compiler (%s, SDK %s) will drift with every SDK the machine picks; pin it with global.json { sdk: { version, rollForward: \"disable\" } }" entry.Name (sdkPinText other) entry.Dependencies.Compiler.Version sdk
+                    | _ -> ()
+                    for v in unpinned do
+                        do! trace Warning "%s" (Lock.sdkUnpinnedWarning entry.Name v)
 
                     // the evaluation's inputs, so that a Directory.Build.props edit re-imports
                     // and nothing else does
@@ -523,6 +522,5 @@ module Project =
                 Properties = options.Properties
                 Entries = List.ofSeq entries
             }
-            let! roots = Roots.currentWith options.Roots
             File.WriteAllText (options.Output, Lock.format roots lock)
         }

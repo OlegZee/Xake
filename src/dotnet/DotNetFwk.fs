@@ -252,12 +252,16 @@ module DotNetFwk =
             (packages |> List.map (fun (id, v) -> id + " " + v) |> String.concat ", ")
 
     /// The versions of the NuGet packages that carry reference assemblies for the SDK
-    /// provider: `NETStandard.Library` (netstandard2.0) and
-    /// `Microsoft.NETFramework.ReferenceAssemblies.<moniker>` (.NET Framework). Exact versions,
-    /// never "the newest in the cache": the reference assemblies are compiler inputs.
+    /// provider: `NETStandard.Library` (netstandard2.0), `NETStandard.Library.Ref`
+    /// (netstandard2.1) and `Microsoft.NETFramework.ReferenceAssemblies.<moniker>` (.NET
+    /// Framework). Exact versions, never "the newest in the cache": the reference assemblies
+    /// are compiler inputs.
     type ReferencePackVersions = {
         /// `NETStandard.Library`, script variable `NETSTANDARD_LIBRARY_VERSION`
         NetStandardLibrary: string
+        /// `NETStandard.Library.Ref` (netstandard2.1), script variable
+        /// `NETSTANDARD_LIBRARY_REF_VERSION`
+        NetStandardLibraryRef: string
         /// `Microsoft.NETFramework.ReferenceAssemblies.*`, script variable
         /// `NETFX_REFERENCE_ASSEMBLIES_VERSION`
         ReferenceAssemblies: string
@@ -276,9 +280,14 @@ module DotNetFwk =
 
         let referenceAssembliesVersion = "1.0.3"
 
-        /// The package carrying the netstandard2.0 reference assemblies. 2.1 ships with the
-        /// SDK instead, see netstandardRefDir.
+        /// The package carrying the netstandard2.0 reference assemblies.
         let netstandardLibraryVersion = "2.0.3"
+
+        /// The package carrying the netstandard2.1 reference assemblies, `NETStandard.Library.Ref`:
+        /// its `ref/netstandard2.1` is byte-identical to the SDK's
+        /// `packs/NETStandard.Library.Ref/2.1.0/ref/netstandard2.1`, which is the package
+        /// unpacked.
+        let netstandardLibraryRefVersion = "2.1.0"
 
         /// The package (and the `packs/` folder) carrying the .NET targeting pack.
         let netcoreRefPackageId = "Microsoft.NETCore.App.Ref"
@@ -333,15 +342,17 @@ module DotNetFwk =
             | dir -> dir
 
         let defaultVersions =
-            { NetStandardLibrary = netstandardLibraryVersion; ReferenceAssemblies = referenceAssembliesVersion; NetCoreRef = [] }
+            { NetStandardLibrary = netstandardLibraryVersion
+              NetStandardLibraryRef = netstandardLibraryRefVersion
+              ReferenceAssemblies = referenceAssembliesVersion
+              NetCoreRef = [] }
 
         /// The package (id, exact version) the SDK provider reads `fwk`'s reference assemblies
-        /// from; `None` when they come with the SDK (netstandard2.1) or `fwk` is not a known
-        /// profile.
+        /// from; `None` when `fwk` is not a known netstandard or .NET Framework profile.
         let referencePackage (versions: ReferencePackVersions) (fwk: string) =
             match netstandardMoniker fwk with
             | Some "netstandard2.0" -> Some ("NETStandard.Library", versions.NetStandardLibrary)
-            | Some _ -> None
+            | Some _ -> Some ("NETStandard.Library.Ref", versions.NetStandardLibraryRef)
             | None ->
                 moniker fwk
                 |> Option.map (fun m -> "Microsoft.NETFramework.ReferenceAssemblies." + m, versions.ReferenceAssemblies)
@@ -514,6 +525,19 @@ module DotNetFwk =
                 && attr item "TargetingPackName" = Some netcoreRefPackageId)
             |> Seq.tryPick (fun item -> attr item "TargetingPackVersion" |> Option.filter ((<>) ""))
 
+        /// The `Microsoft.NETCore.App.Ref` version the SDK selected in `projectRoot` names for
+        /// `moniker` (`knownTargetingPackVersion`, else the SDK's own bundled pack when it is for
+        /// `moniker`); `None` when there is no SDK or it does not know the framework.
+        let internal sdkTargetingPackVersion projectRoot moniker =
+            sdkDir projectRoot
+            |> Option.bind (fun sdk ->
+                match knownTargetingPackVersion sdk moniker with
+                | Some v -> Some v
+                | None ->
+                    match bundledFramework sdk with
+                    | Some (tfm, packVersion) when tfm = moniker -> Some packVersion
+                    | _ -> None)
+
         /// Where the reference assemblies of a .NET target framework come from.
         type internal NetcoreRefSource =
             /// an installed targeting pack, `<dotnet>/packs/Microsoft.NETCore.App.Ref/<v>/ref/<moniker>`
@@ -602,8 +626,11 @@ module DotNetFwk =
                     let dir = packageDir packageRoot netcoreRefPackageId version </> "ref" </> moniker
                     if Directory.Exists dir then Some dir else None)
 
-        /// netstandard reference assemblies: 2.1 ships with the SDK as a pack, 2.0 only
-        /// exists in the NETStandard.Library package, taken at the exact version asked for.
+        /// netstandard reference assemblies, each from its package at the exact version asked
+        /// for: 2.0 from `NETStandard.Library` (`build/netstandard2.0/ref`), 2.1 from
+        /// `NETStandard.Library.Ref` (`ref/netstandard2.1`) -- never the SDK's
+        /// `packs/NETStandard.Library.Ref`, which carries the same files but no restore step
+        /// can bring to a machine that lacks it.
         let private netstandardRefDir packageRoot projectRoot versions moniker =
             match moniker with
             | "netstandard2.0" ->
@@ -612,12 +639,10 @@ module DotNetFwk =
                     let dir = packageDir packageRoot "NETStandard.Library" version </> "build" </> moniker </> "ref"
                     if Directory.Exists dir then Some dir else None)
             | _ ->
-                dotnetRoot ()
-                |> Option.bind (fun root -> latestDir (root </> "packs" </> "NETStandard.Library.Ref"))
-                |> Option.map (fun pack -> pack </> "ref" </> moniker)
-                |> Option.filter Directory.Exists
-                |> Option.defaultWith (fun () ->
-                    failwithf "reference assemblies for '%s' are not available: the SDK has no packs/NETStandard.Library.Ref/*/ref/%s" moniker moniker)
+                let version = versions.NetStandardLibraryRef
+                locateOrRestore packageRoot projectRoot "NETStandard.Library.Ref" version (fun () ->
+                    let dir = packageDir packageRoot "NETStandard.Library.Ref" version </> "ref" </> moniker
+                    if Directory.Exists dir then Some dir else None)
 
         /// fsc and msbuild ship as managed dlls, so they are launched through a tiny script.
         let private launcher name (args: string) =
@@ -692,6 +717,117 @@ module DotNetFwk =
     /// The .NET SDK installation root, when one can be located: compilers, analyzers and
     /// reference packs live under it.
     let dotnetRoot () = sdkImpl.dotnetRoot ()
+
+    /// Where the package folder of a build came from (`packageRootWithSource`).
+    type PackageRootSource =
+        /// the script variable `NUGET_PACKAGES`: a folder of the build's own
+        | ScriptVariable
+        /// the environment variable `NUGET_PACKAGES`: the machine's
+        | EnvironmentVariable
+        /// `~/.nuget/packages`: the machine's
+        | UserProfile
+
+    /// <summary>
+    /// `packageRoot ()` together with where it came from: the script variable `NUGET_PACKAGES`
+    /// (read, and so a dependency, here), else the environment variable, else
+    /// `~/.nuget/packages`. Only `ScriptVariable` makes the folder part of the build's
+    /// configuration, which is what `HERMETIC=on` asks for.
+    /// </summary>
+    let packageRootWithSource () : Recipe<ExecContext, string * PackageRootSource> =
+        recipe {
+            let! root = packageRoot ()
+            let! var = getVar "NUGET_PACKAGES"
+            match var |> Option.map (fun v -> v.Trim()) |> Option.filter ((<>) "") with
+            | Some _ -> return root, ScriptVariable
+            | None ->
+                match %"NUGET_PACKAGES" with
+                | null | "" -> return root, UserProfile
+                | _ -> return root, EnvironmentVariable
+        }
+
+    /// How `global.json` selects the .NET SDK for a project root: the file found searching
+    /// upwards from it, as the `dotnet` host does, and its `sdk.version`/`sdk.rollForward`
+    /// (`latestPatch` when a version is set and the policy is not). Only `Exact` makes the SDK
+    /// a fixed input; with anything else the SDK depends on what the machine has installed.
+    type GlobalJsonPin =
+        | NoGlobalJson
+        /// `"version": "<v>", "rollForward": "disable"`
+        | Exact of version: string * file: string
+        | RollsForward of version: string * policy: string * file: string
+        | NoVersion of file: string
+
+    /// The pin as messages quote it: `none`, `exact 10.0.401 (<file>)`,
+    /// `10.0.401 rollForward:latestPatch (<file>)`, `no version (<file>)`.
+    let globalJsonPinText = function
+        | NoGlobalJson -> "none"
+        | Exact (v, file) -> sprintf "exact %s (%s)" v file
+        | RollsForward (v, policy, file) -> sprintf "%s rollForward:%s (%s)" v policy file
+        | NoVersion file -> sprintf "no version (%s)" file
+
+    /// <summary>
+    /// Reads the `global.json` that applies to `projectRoot` (searched upwards from it) into a
+    /// `GlobalJsonPin`. Pure apart from reading the file; no `dotnet` process. Comments in the
+    /// file are tolerated; the `sdk` object is read with a pattern, not a JSON parser.
+    /// </summary>
+    let globalJsonPin (projectRoot: string) : GlobalJsonPin =
+        let rec find (dir: string) =
+            let path = Path.Combine (dir, "global.json")
+            if File.Exists path then Some path
+            else
+                match Path.GetDirectoryName dir with
+                | null | "" -> None
+                | parent when parent = dir -> None
+                | parent -> find parent
+        match find (Path.GetFullPath projectRoot) with
+        | None -> NoGlobalJson
+        | Some file ->
+            let text = File.ReadAllText file
+            let rx (pattern: string) (input: string) =
+                let m = System.Text.RegularExpressions.Regex.Match(input, pattern)
+                if m.Success then Some m.Groups.[1].Value else None
+            let sdk = rx "\"sdk\"\\s*:\\s*\\{([^}]*)\\}" text |> Option.defaultValue ""
+            match rx "\"version\"\\s*:\\s*\"([^\"]*)\"" sdk |> Option.map (fun v -> v.Trim()) |> Option.filter ((<>) "") with
+            | None -> NoVersion file
+            | Some version ->
+                match rx "\"rollForward\"\\s*:\\s*\"([^\"]*)\"" sdk |> Option.map (fun v -> v.Trim()) with
+                | Some "disable" -> Exact (version, file)
+                | Some policy when policy <> "" -> RollsForward (version, policy, file)
+                | _ -> RollsForward (version, "latestPatch", file)
+
+    /// The SDK version a path belongs to: `Some "<v>"` when `path` is under
+    /// `<dotnetRoot>/sdk/<v>/` (slashes either way; case-insensitive on Windows).
+    let sdkVersionOf (dotnetRoot: string) (path: string) : string option =
+        let norm (p: string) = p.Replace('\\', '/').TrimEnd '/'
+        let comparison = if Env.isWindows then System.StringComparison.OrdinalIgnoreCase else System.StringComparison.Ordinal
+        let prefix = norm dotnetRoot + "/sdk/"
+        let p = norm path
+        if not (p.StartsWith (prefix, comparison)) then None else
+        match p.Substring(prefix.Length).Split '/' with
+        | [| _ |] -> None
+        | parts when parts.[0] <> "" -> Some parts.[0]
+        | _ -> None
+
+    /// <summary>
+    /// The `dotnet-sdk` prerequisite that covers `path`, if any: `Some (version, globalJson)`
+    /// when `path` is under `<dotnetRoot ()>/sdk/<version>/` and the `global.json` that applies
+    /// to `projectRoot` pins exactly that version (`"rollForward": "disable"`). Role-agnostic:
+    /// whether a path in that role may rely on the prerequisite (only fsc's compiler, for a
+    /// composed compilation) is the caller's decision, see `HermeticMode.check`. What the
+    /// hermetic lock records as `{ "Kind": "dotnet-sdk", "Version": <version>, "Pin": <file> }`.
+    /// </summary>
+    let sdkPrerequisite (projectRoot: string) (path: string) : (string * string) option =
+        match dotnetRoot () with
+        | None -> None
+        | Some root ->
+            match sdkVersionOf root path, globalJsonPin projectRoot with
+            | Some v, Exact (pinned, file) when v = pinned -> Some (v, file)
+            | _ -> None
+
+    /// The `Microsoft.NETCore.App.Ref` version the SDK selected in `projectRoot` names for a
+    /// `netN.0` moniker, `None` when it does not know it. What `HERMETIC=on` suggests for
+    /// `NETCORE_REF_VERSION`.
+    let sdkTargetingPackVersion (projectRoot: string) (moniker: string) : string option =
+        sdkImpl.sdkTargetingPackVersion (Path.GetFullPath projectRoot) moniker
 
     /// <summary>
     /// Whether Xake may download packages into the package folder: the script variable `NUGET_FETCH`
@@ -859,8 +995,8 @@ module DotNetFwk =
     let locateFrameworkIn (projectRoot: string) (fwk: string option) : FrameworkInfo =
         locateFrameworkMemo (nugetRoot (), Path.GetFullPath projectRoot, sdkImpl.defaultVersions, fwk)
 
-    /// The default reference-pack versions: `NETStandard.Library` 2.0.3 and
-    /// `Microsoft.NETFramework.ReferenceAssemblies.*` 1.0.3.
+    /// The default reference-pack versions: `NETStandard.Library` 2.0.3,
+    /// `NETStandard.Library.Ref` 2.1.0 and `Microsoft.NETFramework.ReferenceAssemblies.*` 1.0.3.
     let defaultReferencePackVersions = sdkImpl.defaultVersions
 
     /// `locateFrameworkIn` with the reference-pack versions given (the machine's package cache,
@@ -869,23 +1005,26 @@ module DotNetFwk =
         locateFrameworkMemo (nugetRoot (), Path.GetFullPath projectRoot, versions, fwk)
 
     /// The reference package (id, exact version) the SDK provider reads `fwk`'s reference
-    /// assemblies from: `NETStandard.Library` for netstandard2.0,
-    /// `Microsoft.NETFramework.ReferenceAssemblies.<moniker>` for .NET Framework; `None` for
-    /// netstandard2.1 (an SDK pack) and anything unknown.
+    /// assemblies from: `NETStandard.Library` for netstandard2.0, `NETStandard.Library.Ref`
+    /// for netstandard2.1, `Microsoft.NETFramework.ReferenceAssemblies.<moniker>` for .NET
+    /// Framework; `None` for anything unknown (and for .NET, see `resolveFramework`).
     let referencePackage (versions: ReferencePackVersions) (fwk: string) : (string * string) option =
         sdkImpl.referencePackage versions fwk
 
     /// The reference-pack versions in effect for the build: the defaults, overridden by the
-    /// script variables `NETSTANDARD_LIBRARY_VERSION`, `NETFX_REFERENCE_ASSEMBLIES_VERSION` and
-    /// `NETCORE_REF_VERSION` (each read, and so a dependency, of every compile that resolves a framework).
+    /// script variables `NETSTANDARD_LIBRARY_VERSION`, `NETSTANDARD_LIBRARY_REF_VERSION`,
+    /// `NETFX_REFERENCE_ASSEMBLIES_VERSION` and `NETCORE_REF_VERSION` (each read, and so a
+    /// dependency, of every compile that resolves a framework).
     let referencePackVersions () : Recipe<ExecContext, ReferencePackVersions> =
         recipe {
             let pick (v: string option) dflt =
                 v |> Option.map (fun s -> s.Trim()) |> Option.filter ((<>) "") |> Option.defaultValue dflt
             let! ns = getVar "NETSTANDARD_LIBRARY_VERSION"
+            let! nsRef = getVar "NETSTANDARD_LIBRARY_REF_VERSION"
             let! refasm = getVar "NETFX_REFERENCE_ASSEMBLIES_VERSION"
             let! netcoreRef = getVar "NETCORE_REF_VERSION"
             return { NetStandardLibrary = pick ns sdkImpl.defaultVersions.NetStandardLibrary
+                     NetStandardLibraryRef = pick nsRef sdkImpl.defaultVersions.NetStandardLibraryRef
                      ReferenceAssemblies = pick refasm sdkImpl.defaultVersions.ReferenceAssemblies
                      NetCoreRef = sdkImpl.parseNetcoreRefVersions netcoreRef }
         }
@@ -982,11 +1121,13 @@ module DotNetFwk =
     let fsharpCoreVersion = "8.0.100"
 
     /// <summary>
-    /// The default `FSharp.Core.dll` of an fsc compilation for netstandard or .NET Framework:
-    /// the NuGet package `FSharp.Core` at `FSHARP_CORE_VERSION` (read, and so a dependency,
-    /// only here), else `fsharpCoreVersion`, fetched through `restorePackage` into the build's
-    /// package folder (`packageRoot ()`); its `lib/netstandard2.1` build for netstandard2.1 when the package has one, else
-    /// `lib/netstandard2.0`. Fails naming the package when neither exists.
+    /// The `FSharp.Core.dll` from the NuGet package `FSharp.Core` at `FSHARP_CORE_VERSION`
+    /// (read, and so a dependency, here), else `fsharpCoreVersion`, fetched through
+    /// `restorePackage` into the build's package folder (`packageRoot ()`): its
+    /// `lib/netstandard2.1` build for netstandard2.1 and for .NET (`netN.0`) when the package
+    /// has one, else `lib/netstandard2.0`. Fails naming the package when neither exists. The
+    /// default `FSharp.Core` of an fsc compilation for netstandard and .NET Framework always,
+    /// and for .NET when `FSHARP_CORE_VERSION` is set (else the SDK's, `sdkFSharpCore`).
     /// </summary>
     let fsharpCoreReference (targetFramework: string) : Recipe<ExecContext, string> =
         recipe {
@@ -994,9 +1135,10 @@ module DotNetFwk =
             let version =
                 v |> Option.map (fun s -> s.Trim()) |> Option.filter ((<>) "") |> Option.defaultValue fsharpCoreVersion
             let! dir = restorePackage None "FSharp.Core" version
+            let tfm = if isNull targetFramework then "" else targetFramework
             let libs =
-                match sdkImpl.netstandardMoniker (if isNull targetFramework then "" else targetFramework) with
-                | Some "netstandard2.1" -> [ "netstandard2.1"; "netstandard2.0" ]
+                match sdkImpl.netstandardMoniker tfm, sdkImpl.netcoreMoniker tfm with
+                | Some "netstandard2.1", _ | _, Some _ -> [ "netstandard2.1"; "netstandard2.0" ]
                 | _ -> [ "netstandard2.0" ]
             match libs |> List.map (fun lib -> dir </> "lib" </> lib </> "FSharp.Core.dll") |> List.tryFind File.Exists with
             | Some dll -> return dll
@@ -1014,6 +1156,7 @@ module DotNetFwk =
     /// else the .NET SDK's facade for .NET Framework 4.6.1+,
     /// `<sdk>/Microsoft/Microsoft.NET.Build.Extensions/net461/lib/netstandard.dll` -- the one
     /// msbuild uses -- from the first of `sdkDirs` that has it. `None` when neither exists.
+    /// fsc no longer takes the SDK's facade: see `netstandardFacadeReference`.
     /// </summary>
     let netstandardFacade (fwkInfo: FrameworkInfo) (sdkDirs: string list) : string option =
         let own =
@@ -1028,6 +1171,34 @@ module DotNetFwk =
             |> List.tryPick (fun sdk ->
                 let dll = sdk </> "Microsoft" </> "Microsoft.NET.Build.Extensions" </> "net461" </> "lib" </> "netstandard.dll"
                 if File.Exists dll then Some dll else None)
+
+    /// The package carrying the .NET Framework 4.6.1+ `netstandard.dll` facade:
+    /// `Microsoft.NET.Build.Extensions`, whose
+    /// `msbuildExtensions/Microsoft/Microsoft.NET.Build.Extensions/net461/lib/netstandard.dll` is
+    /// byte-identical to the one the .NET SDK ships under
+    /// `sdk/<v>/Microsoft/Microsoft.NET.Build.Extensions/net461/lib/` (8.0 and 10.0 alike).
+    let netstandardFacadePackage = "Microsoft.NET.Build.Extensions", "2.2.101"
+
+    /// <summary>
+    /// The `netstandard.dll` facade a .NET Framework fsc compilation references (see
+    /// `netstandardFacade` for why): the framework's own `Facades/netstandard.dll` when its
+    /// reference assemblies carry one (4.7.1 and later), else the one in the package
+    /// `netstandardFacadePackage` (`Microsoft.NET.Build.Extensions` 2.2.101), fetched through
+    /// `restorePackage` into the build's package folder -- the same bytes as the SDK's facade,
+    /// from a folder a restore can fill on any machine.
+    /// </summary>
+    let netstandardFacadeReference (fwkInfo: FrameworkInfo) : Recipe<ExecContext, string> =
+        recipe {
+            match netstandardFacade fwkInfo [] with
+            | Some own -> return own
+            | None ->
+                let packageId, version = netstandardFacadePackage
+                let! dir = restorePackage None packageId version
+                let dll = dir </> "msbuildExtensions" </> "Microsoft" </> "Microsoft.NET.Build.Extensions" </> "net461" </> "lib" </> "netstandard.dll"
+                if not (File.Exists dll) then
+                    failwithf "package %s %s in '%s' has no netstandard.dll facade at '%s' (a partial restore? delete the folder and rebuild)" packageId version dir dll
+                return dll
+        }
 
     /// The managed F# compiler of an SDK framework, `<InstallPath>/FSharp/fsc.dll` (the SDK
     /// provider's `InstallPath` is the SDK directory), when it exists; `None` for the other

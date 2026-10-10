@@ -27,6 +27,7 @@ type ``Lock rehash and diff``() =
                       Compiler = { Tool = "csc"; Path = "/sdk/csc.dll"; Sha256 = ""; Version = "4.11.0" }
                       References = c.Dependencies.References |> List.map (fun r -> { r with Sha256 = "hash-a" }) } }
           Evaluation = { Project = "/proj/Sample.csproj"; ProjectRefs = []; Imports = []; Sdk = "8.0.100"; SdkPin = None; Properties = Map.empty }
+          Prerequisites = []
           Packages = [ { Id = "Foo.Bar"; Version = "1.2.3"; Sha512 = "AAAA"; Direct = true; DependsOn = [] } ] }
 
     [<Test>]
@@ -212,6 +213,7 @@ type ``Lock file format``() =
                   Imports = [ { Path = "/r/proj/Directory.Build.props"; Sha256 = "0a0b" } ]
                   Sdk = "8.0.100"; SdkPin = Some (Lock.RollsForward ("8.0.100", "latestFeature"))
                   Properties = Map.ofList [ "AssemblyName", "Sample"; "Version", "1.0.0" ] }
+              Prerequisites = []
               Packages =
                 [ { Id = "Foo.Bar"; Version = "1.2.3"; Sha512 = "AAAA=="; Direct = true; DependsOn = [ "Baz.Qux" ] }
                   { Id = "Baz.Qux"; Version = "4.5.6"; Sha512 = ""; Direct = false; DependsOn = [] } ] }
@@ -341,6 +343,7 @@ type ``Lock file format, F# entry``() =
               Imports = []
               Sdk = "8.0.100"; SdkPin = Some (Lock.Pinned "8.0.100")
               Properties = Map.ofList [ "AssemblyName", "Lib" ] }
+          Prerequisites = []
           Packages = [ { Id = "FSharp.Core"; Version = "8.0.100"; Sha512 = "BBBB=="; Direct = true; DependsOn = [] } ] }
 
     let document () : Lock.Document = { Configuration = "Release"; Properties = []; Entries = [ fscEntry () ] }
@@ -391,3 +394,79 @@ type ``Lock file format, F# entry``() =
         Assert.That(text, Is.Not.EqualTo golden)
         let ex = Assert.Throws<exn>(fun () -> Lock.parse roots text |> ignore)
         Assert.That(ex.Message, Does.Contain "F# entry with analyzers")
+
+/// `Entry.Prerequisites`: the `"Prerequisites"` key under `Dependencies`, written only when
+/// the list is not empty (so every lock without one stays byte-identical), read back when
+/// present; `diff` reports it; `mapText` applies to the tokenized `Pin`, `mapPaths` and
+/// `rehash` leave it alone. And the pure derivation (`sdkVersionsOf`, `prerequisitesFor`).
+[<TestFixture>]
+type ``Lock prerequisites``() =
+
+    let roots = [ "$(NuGetPackageRoot)", "/r/pkgs"; "$(ProjectRoot)", "/r/proj"; "$(DotnetRoot)", "/r/dotnet" ]
+
+    let sdk : Lock.Prerequisite = { Kind = Lock.DotnetSdk; Version = "8.0.100"; Pin = "$(ProjectRoot)/global.json" }
+
+    let golden = ``Lock file format``.Golden
+
+    let withKey =
+        let packagesEnd = "\"DependsOn\": [] }\n        ]\n"
+        Assert.That(golden.Split([| packagesEnd |], System.StringSplitOptions.None).Length, Is.EqualTo 2)
+        golden.Replace (
+            packagesEnd,
+            "\"DependsOn\": [] }\n        ],\n        \"Prerequisites\": [\n          { \"Kind\": \"dotnet-sdk\", \"Version\": \"8.0.100\", \"Pin\": \"$(ProjectRoot)/global.json\" }\n        ]\n")
+
+    let documentWith prerequisites =
+        let doc = Lock.parse roots golden
+        { doc with Entries = doc.Entries |> List.map (fun e -> { e with Prerequisites = prerequisites }) }
+
+    [<Test>]
+    member x.``without prerequisites the key is not written and the golden lock is unchanged``() =
+        let doc = documentWith []
+        Assert.That(Lock.format roots doc, Is.EqualTo golden)
+        Assert.That(Lock.format roots doc, Does.Not.Contain "Prerequisites")
+        Assert.That((Lock.parse roots golden).Entries.Head.Prerequisites, Is.Empty)
+
+    [<Test>]
+    member x.``prerequisites are written under Dependencies after Packages and read back``() =
+        let doc = documentWith [ sdk ]
+        let text = Lock.format roots doc
+        Assert.That(text, Is.EqualTo withKey)
+        let parsed = Lock.parse roots text
+        Assert.That(parsed, Is.EqualTo doc)
+        Assert.That(parsed.Entries.Head.Prerequisites, Is.EqualTo [ sdk ])
+        Assert.That(Lock.format roots parsed, Is.EqualTo withKey)
+
+    [<Test>]
+    member x.``diff reports an added, a removed and a moved prerequisite``() =
+        let a = (documentWith []).Entries.Head
+        let b = { a with Prerequisites = [ sdk ] }
+        Assert.That(Lock.diff a b, Is.EqualTo [ "+ Prerequisite dotnet-sdk 8.0.100 ($(ProjectRoot)/global.json)" ])
+        Assert.That(Lock.diff b a, Is.EqualTo [ "- Prerequisite dotnet-sdk 8.0.100 ($(ProjectRoot)/global.json)" ])
+        let moved = { b with Prerequisites = [ { sdk with Pin = "/elsewhere/global.json" } ] }
+        Assert.That(Lock.diff b moved, Is.EqualTo [ "~ Prerequisite dotnet-sdk 8.0.100: $(ProjectRoot)/global.json -> /elsewhere/global.json" ])
+        Assert.That(Lock.diff b b, Is.Empty)
+
+    [<Test>]
+    member x.``mapText applies to the pin; mapPaths and rehash pass the prerequisites through``() =
+        let e = { (documentWith []).Entries.Head with Prerequisites = [ sdk ] }
+        Assert.That((Lock.mapText (fun s -> s.Replace ("global", "other")) e).Prerequisites, Is.EqualTo [ { sdk with Pin = "$(ProjectRoot)/other.json" } ])
+        Assert.That((Lock.mapPaths (fun p -> p + ".x") e).Prerequisites, Is.EqualTo [ sdk ])
+        Assert.That((Lock.rehash e).Prerequisites, Is.EqualTo [ sdk ])
+
+    [<Test>]
+    member x.``the SDK an entry depends on is read off its tokenized paths``() =
+        Assert.That(
+            Lock.sdkVersionsOf roots
+                [ "/r/dotnet/sdk/8.0.100/FSharp/fsc.dll"; "/r/dotnet/sdk/8.0.100/an.dll"; "/r/dotnet/packs/x/8.0.0/ref/a.dll"
+                  "/r/pkgs/microsoft.net.compilers.toolset/4.12.0/tasks/netcore/bincore/csc.dll"; "/r/dotnet/sdk/9.0.100/b.dll" ],
+            Is.EqualTo [ "8.0.100"; "9.0.100" ])
+        Assert.That(Lock.sdkVersionsOf roots [ "/r/dotnet/sdk/8.0.100" ], Is.Empty)
+
+    [<Test>]
+    member x.``only an exact pin on that version makes a prerequisite``() =
+        let file = Some "/r/proj/global.json"
+        Assert.That(Lock.prerequisitesFor roots file (Lock.Pinned "8.0.100") [ "8.0.100" ], Is.EqualTo ([ sdk ], ([]: string list)))
+        Assert.That(Lock.prerequisitesFor roots file (Lock.Pinned "8.0.200") [ "8.0.100" ], Is.EqualTo (([]: Lock.Prerequisite list), [ "8.0.100" ]))
+        Assert.That(Lock.prerequisitesFor roots file (Lock.RollsForward ("8.0.100", "latestPatch")) [ "8.0.100" ], Is.EqualTo (([]: Lock.Prerequisite list), [ "8.0.100" ]))
+        Assert.That(Lock.prerequisitesFor roots None Lock.NoGlobalJson [ "8.0.100" ], Is.EqualTo (([]: Lock.Prerequisite list), [ "8.0.100" ]))
+        Assert.That(Lock.prerequisitesFor roots file (Lock.Pinned "8.0.100") [], Is.EqualTo (([]: Lock.Prerequisite list), ([]: string list)))

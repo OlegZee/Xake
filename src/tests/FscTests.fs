@@ -410,7 +410,17 @@ type ``Fsc record tests``() =
         Assert.That(refs462 |> List.map Path.GetFileName, Is.EqualTo [ "FSharp.Core.dll"; "mscorlib.dll"; "netstandard.dll" ])
         Assert.That(refs462.[0], Is.EqualTo (sprintf "%s/fsharp.core/%s/lib/netstandard2.0/FSharp.Core.dll" nuget DotNetFwk.fsharpCoreVersion))
         Assert.That(refs462.[1], Does.StartWith (nuget + "/microsoft.netframework.referenceassemblies.net462/"))
-        Assert.That(refs462.[2], Does.EndWith "/Microsoft/Microsoft.NET.Build.Extensions/net461/lib/netstandard.dll")
+        // the facade from the Microsoft.NET.Build.Extensions package, byte-identical to the SDK's
+        Assert.That(refs462.[2], Is.EqualTo (nuget + "/microsoft.net.build.extensions/2.2.101/msbuildExtensions/Microsoft/Microsoft.NET.Build.Extensions/net461/lib/netstandard.dll"))
+        let sdkFacades =
+            match DotNetFwk.dotnetRoot () with
+            | Some root when Directory.Exists (root </> "sdk") ->
+                Directory.GetDirectories (root </> "sdk")
+                |> Array.map (fun sdk -> sdk </> "Microsoft" </> "Microsoft.NET.Build.Extensions" </> "net461" </> "lib" </> "netstandard.dll")
+                |> Array.filter File.Exists |> List.ofArray
+            | _ -> []
+        for sdkFacade in sdkFacades do
+            Assert.That(Csc.sha256 refs462.[2], Is.EqualTo (Csc.sha256 sdkFacade), sdkFacade)
 
         let refs472 = x.ResolveFsc "res472" [] (fun () -> fsc { targetfwk "net472"; src !!"a.fs"; out (File.make "r472.dll"); resolve })
         Assert.That(refs472 |> List.map Path.GetFileName, Is.EqualTo [ "FSharp.Core.dll"; "mscorlib.dll"; "netstandard.dll" ])
@@ -426,7 +436,59 @@ type ``Fsc record tests``() =
         Assert.That(refs20, Is.EqualTo [ sprintf "%s/fsharp.core/%s/lib/netstandard2.0/FSharp.Core.dll" nuget DotNetFwk.fsharpCoreVersion
                                          sprintf "%s/netstandard.library/2.0.3/build/netstandard2.0/ref/netstandard.dll" nuget ])
         let refs21 = x.ResolveFsc "resns21" [] (fun () -> fsc { targetfwk "netstandard2.1"; src !!"a.fs"; out (File.make "ns21.dll"); resolve })
-        Assert.That(refs21.[0], Is.EqualTo (sprintf "%s/fsharp.core/%s/lib/netstandard2.1/FSharp.Core.dll" nuget DotNetFwk.fsharpCoreVersion))
+        Assert.That(refs21, Is.EqualTo [ sprintf "%s/fsharp.core/%s/lib/netstandard2.1/FSharp.Core.dll" nuget DotNetFwk.fsharpCoreVersion
+                                         // the NETStandard.Library.Ref package, not the SDK's packs/
+                                         sprintf "%s/netstandard.library.ref/2.1.0/ref/netstandard2.1/netstandard.dll" nuget ])
+
+    // NETSTANDARD_LIBRARY_REF_VERSION picks the NETStandard.Library.Ref version (2.1.0 is the
+    // only one there is, so the test sets the default explicitly and checks it is honoured)
+    [<Test; Category("Integration")>]
+    member x.``NETSTANDARD_LIBRARY_REF_VERSION picks the netstandard2.1 package version``() =
+        let nuget = (DotNetFwk.nugetRoot ()).Replace('\\', '/').TrimEnd '/'
+        let refs = x.ResolveFsc "resnsref" ["NETSTANDARD_LIBRARY_REF_VERSION", "2.1.0"] (fun () ->
+            fsc { targetfwk "netstandard2.1"; src !!"a.fs"; out (File.make "nsref.dll"); resolve })
+        Assert.That(refs.[1], Is.EqualTo (nuget + "/netstandard.library.ref/2.1.0/ref/netstandard2.1/netstandard.dll"))
+
+    // netstandard2.1 compiles against the NETStandard.Library.Ref package
+    [<Test; Category("Integration")>]
+    member x.``fsc compiles netstandard2.1 against the NETStandard.Library.Ref package``() =
+        try File.Delete "ns21/ns21.dll" with _ -> ()
+        do xake {x.TestOptions with FileLog="fsc-ns21.log"; ThrowOnError = true} {
+            wantOverride (["ns21/ns21.dll"])
+            rules [
+                "ns21/ns21.dll" ..> recipe {
+                    do! need ["ns21.fs"]
+                    do! fsc { targetfwk "netstandard2.1"; src !!"ns21.fs"; args ["--nocopyfsharpcore"] }
+                }
+                "ns21.fs" ..> writeText "module Ns21\nlet span () = System.Span<int>(Array.zeroCreate 4).Length\n"
+            ]
+        }
+        Assert.That(File.Exists "ns21/ns21.dll", Is.True, "fsc did not produce ns21/ns21.dll")
+
+    // .NET with FSHARP_CORE_VERSION set: the FSharp.Core package's netstandard2.1 build, not
+    // the SDK's own; unset keeps the SDK's (see the default-framework test above)
+    [<Test; Category("Integration")>]
+    member x.``FSHARP_CORE_VERSION applies to .NET targets``() =
+        let nuget = (DotNetFwk.nugetRoot ()).Replace('\\', '/').TrimEnd '/'
+        let refs = x.ResolveFsc "resnetcore" ["FSHARP_CORE_VERSION", DotNetFwk.fsharpCoreVersion] (fun () ->
+            fsc { src !!"a.fs"; out (File.make "rnetcore.dll"); resolve })
+        let fsharpCore = refs |> List.filter (fun r -> Path.GetFileName r = "FSharp.Core.dll")
+        Assert.That(fsharpCore, Is.EqualTo [ sprintf "%s/fsharp.core/%s/lib/netstandard2.1/FSharp.Core.dll" nuget DotNetFwk.fsharpCoreVersion ])
+
+    [<Test; Category("Integration")>]
+    member x.``fsc compiles for .NET against the FSharp.Core package when FSHARP_CORE_VERSION is set``() =
+        try File.Delete "fcnet/hello.dll" with _ -> ()
+        do xake {x.TestOptions with FileLog="fsc-fcnet.log"; ThrowOnError = true; Vars = ["FSHARP_CORE_VERSION", DotNetFwk.fsharpCoreVersion]} {
+            wantOverride (["fcnet/hello.dll"])
+            rules [
+                "fcnet/hello.dll" ..> recipe {
+                    do! need ["fcnet.fs"]
+                    do! fsc { src !!"fcnet.fs"; args ["--nocopyfsharpcore"] }
+                }
+                "fcnet.fs" ..> writeText "module Hello\nlet lz = lazy (sprintf \"%A\" (Some 1))\n"
+            ]
+        }
+        Assert.That(File.Exists "fcnet/hello.dll", Is.True, "fsc did not produce fcnet/hello.dll")
 
     // a `ref` on an FSharp.Core.dll (or a netstandard.dll) replaces the implicit one
     [<Test; Category("Integration")>]

@@ -100,11 +100,14 @@ Windows registry is consulted.
   package and version. A clean machine therefore needs no preparation, but the first
   full-framework compile requires network access (or a feed).
 - **netstandard**, `netstandard2.0` and `netstandard2.1`, is resolved by the same provider but
-  against a different reference set: 2.1 from `<dotnet>/packs/NETStandard.Library.Ref/<ver>/ref/netstandard2.1`
-  (it comes with the SDK), 2.0 from
-  `<pkg cache>/netstandard.library/<v>/build/netstandard2.0/ref`, `<v>` being `2.0.3` unless
-  the script variable `NETSTANDARD_LIBRARY_VERSION` says otherwise, restored the same way when
-  missing. `netstandard.dll` alone carries the whole surface, so that single directory is the
+  against a different reference set, each from a package restored the same way when missing:
+  2.0 from `<pkg cache>/netstandard.library/<v>/build/netstandard2.0/ref`, `<v>` being `2.0.3`
+  unless the script variable `NETSTANDARD_LIBRARY_VERSION` says otherwise; 2.1 from
+  `<pkg cache>/netstandard.library.ref/<v>/ref/netstandard2.1`, `<v>` being `2.1.0` unless
+  `NETSTANDARD_LIBRARY_REF_VERSION` says otherwise. The SDK's
+  `<dotnet>/packs/NETStandard.Library.Ref/2.1.0` is that same package unpacked (its
+  `ref/netstandard2.1` is byte-identical), but no restore step can bring it to a machine that
+  lacks it, so it is not read. `netstandard.dll` alone carries the whole surface, so that single directory is the
   entire `AssemblyDirs`. The `fsc` task recognizes the profile and adds `--targetprofile:netstandard`
   and `-r:netstandard.dll` (instead of `mscorlib.dll`) on top of `--noframework`. `csc` has no
   netstandard support.
@@ -256,7 +259,9 @@ SDK 10.0.x), and fail asking for one only when that cannot be determined.
 | `NETFX-TARGET` | Default `targetfwk` for every compiler task that does not set its own. |
 | `NETFX` | Framework whose **tools** are used, overriding whatever is being targeted. Also the only framework selector the `msbuild` task reads. |
 | `FSCVER` | F# compiler version `fsc` asks for, when not set per task via `fscver`; read only by the Windows registry provider. |
-| `FSHARP_CORE_VERSION` | Version of the `FSharp.Core` package `fsc` references for netstandard and .NET Framework when no `ref` names an `FSharp.Core.dll` (default 8.0.100). |
+| `FSHARP_CORE_VERSION` | Version of the `FSharp.Core` package `fsc` references when no `ref` names an `FSharp.Core.dll`: for netstandard and .NET Framework always (default 8.0.100); for a .NET (`netN.0`) target only when set, then its `lib/netstandard2.1` build instead of the SDK's own `FSharp.Core.dll`. |
+| `NETSTANDARD_LIBRARY_VERSION` | Version of the `NETStandard.Library` package netstandard2.0 compiles against (default 2.0.3). |
+| `NETSTANDARD_LIBRARY_REF_VERSION` | Version of the `NETStandard.Library.Ref` package netstandard2.1 compiles against (default 2.1.0). |
 | `NUGET_PACKAGES` | The build's package folder (relative to the project root, or absolute), overriding the environment variable; see [Where packages go](#where-packages-go). |
 | `NUGET_FETCH` | `off` stops Xake from downloading anything into the package folder; a missing package then fails the compile. Default `on`. |
 | `NETCORE_REF_VERSION` | Pins of the `Microsoft.NETCore.App.Ref` targeting pack, one per major.minor (`6.0.36;7.0.20`): a pinned `netN.0` framework always takes the NuGet package at that version, never an installed pack; see [the SDK provider](#1-sdkimpl--net-sdk-compilers-over-nuget-reference-assemblies-default). |
@@ -320,7 +325,9 @@ environment variable reaches it.
   compiles for .NET Framework from any host: the `FSharp.Core` package's netstandard2.0 build
   (`FSHARP_CORE_VERSION`, default 8.0.100) and a type-forwarding `netstandard.dll` facade are
   referenced implicitly (the reference assemblies' `Facades/netstandard.dll` from 4.7.1, else
-  the SDK's `Microsoft/Microsoft.NET.Build.Extensions/net461/lib/netstandard.dll`), so the
+  `msbuildExtensions/Microsoft/Microsoft.NET.Build.Extensions/net461/lib/netstandard.dll` of the
+  `Microsoft.NET.Build.Extensions` 2.2.101 package, byte-identical to the SDK's own
+  `Microsoft/Microsoft.NET.Build.Extensions/net461/lib/netstandard.dll`), so the
   output references `netstandard 2.0.0.0`. The 4.7.2+ runtime resolves it; an older one needs
   the facade next to the exe, and Xake does not copy it (msbuild does). fsc copies
   `FSharp.Core.dll` next to the output unless `args ["--nocopyfsharpcore"]`. Before 3.5 this

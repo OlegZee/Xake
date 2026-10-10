@@ -329,15 +329,19 @@ references: for .NET (`net10.0`, the default, or any `netN.0` the SDK knows) eve
 of the targeting pack -- installed with the SDK, else restored from NuGet as for `csc` -- plus
 `--targetprofile:netcore`, for netstandard `netstandard.dll` plus
 `--targetprofile:netstandard`, for .NET Framework `mscorlib.dll` and a `netstandard.dll` facade.
-Unless a `ref` already names an `FSharp.Core.dll`, one is referenced: for a .NET target the
-SDK's (next to `fsc.dll`, the version the compiler ships with); for netstandard and .NET
+Unless a `ref` already names an `FSharp.Core.dll`, one is referenced: for netstandard and .NET
 Framework the `FSharp.Core` NuGet package at `DotNetFwk.fsharpCoreVersion` (8.0.100, what Xake
 itself pins) or the script variable `FSHARP_CORE_VERSION`, its `lib/netstandard2.0` build
-(`lib/netstandard2.1` for netstandard2.1), restored into the package cache on first use. That
-build references `netstandard 2.0.0.0`, so a .NET Framework target also gets a type-forwarding
-`netstandard.dll`: the reference assemblies' own `Facades/netstandard.dll` from 4.7.1 on, the
-SDK's `Microsoft/Microsoft.NET.Build.Extensions/net461/lib/netstandard.dll` below (unless a `ref`
-names a `netstandard.dll`). `NETStandard.Library`'s `netstandard.dll` is not used there: it
+(`lib/netstandard2.1` for netstandard2.1), restored into the package cache on first use; for a
+.NET target the same package's `lib/netstandard2.1` build when `FSHARP_CORE_VERSION` is set,
+else the SDK's (next to `fsc.dll`, the version the compiler ships with; the planned `HERMETIC`
+mode will require the variable, since the SDK's file cannot be restored). The package build
+references `netstandard 2.0.0.0`, so a .NET Framework target also gets a type-forwarding
+`netstandard.dll`: the reference assemblies' own `Facades/netstandard.dll` from 4.7.1 on, below
+that the one in the `Microsoft.NET.Build.Extensions` 2.2.101 package
+(`msbuildExtensions/Microsoft/Microsoft.NET.Build.Extensions/net461/lib/netstandard.dll`,
+byte-identical to the SDK's `Microsoft/Microsoft.NET.Build.Extensions/net461/lib/netstandard.dll`),
+restored like the others (unless a `ref` names a `netstandard.dll`). `NETStandard.Library`'s `netstandard.dll` is not used there: it
 defines the types rather than forwarding them, and fsc then fails on clashes with `mscorlib`.
 Every implicit reference is recorded in the resolved `Fsc` like any other. `csc` gets none of
 this: it needs no FSharp.Core, and C# compiles for .NET Framework without the facade.

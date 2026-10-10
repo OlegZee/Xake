@@ -43,7 +43,7 @@ dotnet fsi build.fsx -- -- build test -d FILTER=TestName
 dotnet fsi build.fsx -- -- clean
 ```
 
-Requires .NET SDK 8.0+ (see `global.json`).
+Requires .NET SDK 10.0.401 exactly: `global.json` pins it (`rollForward: disable`) because the fsc build of record (`build.fsc.fsx`) compiles with the SDK's `fsc.dll` and its lock records that SDK as a prerequisite. The tests also need the .NET 8 runtime. The 8.0 SDK floor is still tested by the `floor` CI leg, which removes `global.json`.
 
 ## Architecture
 

@@ -525,6 +525,19 @@ module DotNetFwk =
                 && attr item "TargetingPackName" = Some netcoreRefPackageId)
             |> Seq.tryPick (fun item -> attr item "TargetingPackVersion" |> Option.filter ((<>) ""))
 
+        /// The `Microsoft.NETCore.App.Ref` version the SDK selected in `projectRoot` names for
+        /// `moniker` (`knownTargetingPackVersion`, else the SDK's own bundled pack when it is for
+        /// `moniker`); `None` when there is no SDK or it does not know the framework.
+        let internal sdkTargetingPackVersion projectRoot moniker =
+            sdkDir projectRoot
+            |> Option.bind (fun sdk ->
+                match knownTargetingPackVersion sdk moniker with
+                | Some v -> Some v
+                | None ->
+                    match bundledFramework sdk with
+                    | Some (tfm, packVersion) when tfm = moniker -> Some packVersion
+                    | _ -> None)
+
         /// Where the reference assemblies of a .NET target framework come from.
         type internal NetcoreRefSource =
             /// an installed targeting pack, `<dotnet>/packs/Microsoft.NETCore.App.Ref/<v>/ref/<moniker>`
@@ -704,6 +717,117 @@ module DotNetFwk =
     /// The .NET SDK installation root, when one can be located: compilers, analyzers and
     /// reference packs live under it.
     let dotnetRoot () = sdkImpl.dotnetRoot ()
+
+    /// Where the package folder of a build came from (`packageRootWithSource`).
+    type PackageRootSource =
+        /// the script variable `NUGET_PACKAGES`: a folder of the build's own
+        | ScriptVariable
+        /// the environment variable `NUGET_PACKAGES`: the machine's
+        | EnvironmentVariable
+        /// `~/.nuget/packages`: the machine's
+        | UserProfile
+
+    /// <summary>
+    /// `packageRoot ()` together with where it came from: the script variable `NUGET_PACKAGES`
+    /// (read, and so a dependency, here), else the environment variable, else
+    /// `~/.nuget/packages`. Only `ScriptVariable` makes the folder part of the build's
+    /// configuration, which is what `HERMETIC=on` asks for.
+    /// </summary>
+    let packageRootWithSource () : Recipe<ExecContext, string * PackageRootSource> =
+        recipe {
+            let! root = packageRoot ()
+            let! var = getVar "NUGET_PACKAGES"
+            match var |> Option.map (fun v -> v.Trim()) |> Option.filter ((<>) "") with
+            | Some _ -> return root, ScriptVariable
+            | None ->
+                match %"NUGET_PACKAGES" with
+                | null | "" -> return root, UserProfile
+                | _ -> return root, EnvironmentVariable
+        }
+
+    /// How `global.json` selects the .NET SDK for a project root: the file found searching
+    /// upwards from it, as the `dotnet` host does, and its `sdk.version`/`sdk.rollForward`
+    /// (`latestPatch` when a version is set and the policy is not). Only `Exact` makes the SDK
+    /// a fixed input; with anything else the SDK depends on what the machine has installed.
+    type GlobalJsonPin =
+        | NoGlobalJson
+        /// `"version": "<v>", "rollForward": "disable"`
+        | Exact of version: string * file: string
+        | RollsForward of version: string * policy: string * file: string
+        | NoVersion of file: string
+
+    /// The pin as messages quote it: `none`, `exact 10.0.401 (<file>)`,
+    /// `10.0.401 rollForward:latestPatch (<file>)`, `no version (<file>)`.
+    let globalJsonPinText = function
+        | NoGlobalJson -> "none"
+        | Exact (v, file) -> sprintf "exact %s (%s)" v file
+        | RollsForward (v, policy, file) -> sprintf "%s rollForward:%s (%s)" v policy file
+        | NoVersion file -> sprintf "no version (%s)" file
+
+    /// <summary>
+    /// Reads the `global.json` that applies to `projectRoot` (searched upwards from it) into a
+    /// `GlobalJsonPin`. Pure apart from reading the file; no `dotnet` process. Comments in the
+    /// file are tolerated; the `sdk` object is read with a pattern, not a JSON parser.
+    /// </summary>
+    let globalJsonPin (projectRoot: string) : GlobalJsonPin =
+        let rec find (dir: string) =
+            let path = Path.Combine (dir, "global.json")
+            if File.Exists path then Some path
+            else
+                match Path.GetDirectoryName dir with
+                | null | "" -> None
+                | parent when parent = dir -> None
+                | parent -> find parent
+        match find (Path.GetFullPath projectRoot) with
+        | None -> NoGlobalJson
+        | Some file ->
+            let text = File.ReadAllText file
+            let rx (pattern: string) (input: string) =
+                let m = System.Text.RegularExpressions.Regex.Match(input, pattern)
+                if m.Success then Some m.Groups.[1].Value else None
+            let sdk = rx "\"sdk\"\\s*:\\s*\\{([^}]*)\\}" text |> Option.defaultValue ""
+            match rx "\"version\"\\s*:\\s*\"([^\"]*)\"" sdk |> Option.map (fun v -> v.Trim()) |> Option.filter ((<>) "") with
+            | None -> NoVersion file
+            | Some version ->
+                match rx "\"rollForward\"\\s*:\\s*\"([^\"]*)\"" sdk |> Option.map (fun v -> v.Trim()) with
+                | Some "disable" -> Exact (version, file)
+                | Some policy when policy <> "" -> RollsForward (version, policy, file)
+                | _ -> RollsForward (version, "latestPatch", file)
+
+    /// The SDK version a path belongs to: `Some "<v>"` when `path` is under
+    /// `<dotnetRoot>/sdk/<v>/` (slashes either way; case-insensitive on Windows).
+    let sdkVersionOf (dotnetRoot: string) (path: string) : string option =
+        let norm (p: string) = p.Replace('\\', '/').TrimEnd '/'
+        let comparison = if Env.isWindows then System.StringComparison.OrdinalIgnoreCase else System.StringComparison.Ordinal
+        let prefix = norm dotnetRoot + "/sdk/"
+        let p = norm path
+        if not (p.StartsWith (prefix, comparison)) then None else
+        match p.Substring(prefix.Length).Split '/' with
+        | [| _ |] -> None
+        | parts when parts.[0] <> "" -> Some parts.[0]
+        | _ -> None
+
+    /// <summary>
+    /// The `dotnet-sdk` prerequisite that covers `path`, if any: `Some (version, globalJson)`
+    /// when `path` is under `<dotnetRoot ()>/sdk/<version>/` and the `global.json` that applies
+    /// to `projectRoot` pins exactly that version (`"rollForward": "disable"`). Role-agnostic:
+    /// whether a path in that role may rely on the prerequisite (only fsc's compiler, for a
+    /// composed compilation) is the caller's decision, see `HermeticMode.check`. What the
+    /// hermetic lock records as `{ "Kind": "dotnet-sdk", "Version": <version>, "Pin": <file> }`.
+    /// </summary>
+    let sdkPrerequisite (projectRoot: string) (path: string) : (string * string) option =
+        match dotnetRoot () with
+        | None -> None
+        | Some root ->
+            match sdkVersionOf root path, globalJsonPin projectRoot with
+            | Some v, Exact (pinned, file) when v = pinned -> Some (v, file)
+            | _ -> None
+
+    /// The `Microsoft.NETCore.App.Ref` version the SDK selected in `projectRoot` names for a
+    /// `netN.0` moniker, `None` when it does not know it. What `HERMETIC=on` suggests for
+    /// `NETCORE_REF_VERSION`.
+    let sdkTargetingPackVersion (projectRoot: string) (moniker: string) : string option =
+        sdkImpl.sdkTargetingPackVersion (Path.GetFullPath projectRoot) moniker
 
     /// <summary>
     /// Whether Xake may download packages into the package folder: the script variable `NUGET_FETCH`

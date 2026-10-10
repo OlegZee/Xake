@@ -505,6 +505,24 @@ module Csc =
 
     let private frameworkOf (settings: CscSettingsType) = frameworkFor settings.TargetFramework
 
+    /// Every path a compilation names, with its role, for `HermeticMode.check`: the compiler,
+    /// the references, the analyzers, then the rest -- sources and every other input switch
+    /// (`/res:`, `/keyfile:`, ...), outputs (`/out:`, `/doc:`, ...), generated files, `.resx`
+    /// resources and their `.resources`, the runtimeconfig. Each path once, in its first role.
+    let hermeticInputs (c: Csc) : HermeticMode.Input list =
+        let args = c.Args
+        [ yield { HermeticMode.Role = HermeticMode.Compiler c.Dependencies.Compiler.Tool; HermeticMode.Path = c.Dependencies.Compiler.Path }
+          for r in c.Dependencies.References do yield { HermeticMode.Role = HermeticMode.Reference; HermeticMode.Path = r.Path }
+          for a in c.Dependencies.Analyzers do yield { HermeticMode.Role = HermeticMode.Analyzer; HermeticMode.Path = a.Path }
+          for p in c.Sources @ CscArgs.inputs args @ CscArgs.outputs args do
+              yield { HermeticMode.Role = HermeticMode.Other; HermeticMode.Path = p }
+          for (p, _) in c.Generated do yield { HermeticMode.Role = HermeticMode.Other; HermeticMode.Path = p }
+          for (resx, resources) in c.Resources do
+              yield { HermeticMode.Role = HermeticMode.Other; HermeticMode.Path = resx }
+              yield { HermeticMode.Role = HermeticMode.Other; HermeticMode.Path = resources }
+          for p in Option.toList c.RuntimeConfig do yield { HermeticMode.Role = HermeticMode.Other; HermeticMode.Path = p } ]
+        |> List.distinctBy (fun i -> i.Path)
+
     /// The runner's options for composed settings: `FailOnError` and `CscPath` from the
     /// settings, the server resolved (`CompilerServer.resolve`), and the environment of the
     /// framework the settings target. What `compile` runs with, and what `csc { ...; lock }`
@@ -532,6 +550,9 @@ module Csc =
     /// outside a file rule the settings need an explicit `out`. Hashes stay empty (`rehash`
     /// is the record-time step). A `.resx` resource is recorded as a permanent `(resx,
     /// .resources)` pair under `obj/xake/<name>/`, compiled by `run`.
+    ///
+    /// Under `HERMETIC=on` it ends with `HermeticMode.enforce` over `hermeticInputs` (and
+    /// `cscpath`): every violation of the mode fails the resolve, all of them in one message.
     /// </summary>
     let ofSettings (settings: CscSettingsType) : Recipe<ExecContext, Csc> =
         recipe {
@@ -681,6 +702,12 @@ module Csc =
             if rebuilt <> args then
                 failwithf "'%s': the command line rebuilt from the resolved compilation differs from the composed one:\n%s"
                     c.Name (diffList args rebuilt |> String.concat "\n")
+
+            // HERMETIC=on: every path the compilation names -- and `cscpath`, which replaces
+            // the compiler at run time -- under the project root or the build's package folder
+            let cscPath =
+                settings.CscPath |> Option.map (fun p -> { HermeticMode.Role = HermeticMode.Compiler "csc"; HermeticMode.Path = p }) |> Option.toList
+            do! HermeticMode.enforce c.Name (cscPath @ hermeticInputs c)
 
             return c
         }

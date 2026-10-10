@@ -241,6 +241,24 @@ module Fsc =
             Fsc.Options = c.Options |> List.map f
             Fsc.Defines = c.Defines |> List.map f }
 
+    /// Every path a compilation names, with its role, for `HermeticMode.check`: the compiler,
+    /// the references, then the rest -- sources and every other input switch, outputs
+    /// (`--out:`, `--doc:`), generated files, `.resx` resources and their `.resources`, the
+    /// runtimeconfig. Each path once, in its first role.
+    let hermeticInputs (f: Fsc) : HermeticMode.Input list =
+        let args = f.Args
+        [ yield { HermeticMode.Role = HermeticMode.Compiler f.Dependencies.Compiler.Tool; HermeticMode.Path = f.Dependencies.Compiler.Path }
+          for r in f.Dependencies.References do yield { HermeticMode.Role = HermeticMode.Reference; HermeticMode.Path = r.Path }
+          for a in f.Dependencies.Analyzers do yield { HermeticMode.Role = HermeticMode.Analyzer; HermeticMode.Path = a.Path }
+          for p in f.Sources @ FscArgs.inputs args @ FscArgs.outputs args do
+              yield { HermeticMode.Role = HermeticMode.Other; HermeticMode.Path = p }
+          for (p, _) in f.Generated do yield { HermeticMode.Role = HermeticMode.Other; HermeticMode.Path = p }
+          for (resx, resources) in f.Resources do
+              yield { HermeticMode.Role = HermeticMode.Other; HermeticMode.Path = resx }
+              yield { HermeticMode.Role = HermeticMode.Other; HermeticMode.Path = resources }
+          for p in Option.toList f.RuntimeConfig do yield { HermeticMode.Role = HermeticMode.Other; HermeticMode.Path = p } ]
+        |> List.distinctBy (fun i -> i.Path)
+
     /// <summary>
     /// Composes an `Fsc` from the settings at recipe time, without running the compiler (what
     /// `fsc { ...; resolve }` returns). The argument list, in order: `--nologo`, `--target:`,
@@ -264,6 +282,9 @@ module Fsc =
     /// on the other providers, `FscTool` with `fscver`/`FSCVER`. A `.resx` resource becomes
     /// a permanent `(resx, .resources)` pair under `obj/xake/<name>/`, as for csc. With no
     /// `Out`, the output is the target of the rule this runs in.
+    ///
+    /// Under `HERMETIC=on` it ends with `HermeticMode.enforce` over `hermeticInputs`: fsc's
+    /// compiler may lie under the SDK only when `global.json` pins that SDK exactly.
     /// </summary>
     let ofSettings (settings: FscSettingsType) : Recipe<ExecContext, Fsc> =
         recipe {
@@ -425,6 +446,10 @@ module Fsc =
             if rebuilt <> args then
                 failwithf "'%s': the command line rebuilt from the resolved compilation differs from the composed one:\n%s"
                     f.Name (Csc.diffList args rebuilt |> String.concat "\n")
+
+            // HERMETIC=on: every path under the project root or the build's package folder,
+            // fsc's compiler allowed under an SDK that global.json pins exactly
+            do! HermeticMode.enforce f.Name (hermeticInputs f)
 
             return f
         }

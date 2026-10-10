@@ -125,7 +125,7 @@ be determined (no SDK) does the compile fail with `csc needs a target framework`
 
 | `targetfwk` | Reference assemblies | Version |
 |---|---|---|
-| `net10.0`, `net6.0`, ... (also `sdk-net10.0`) | `<dotnet>/packs/Microsoft.NETCore.App.Ref/<v>/ref/<moniker>`, the targeting pack installed with the SDK, when there is one; else `microsoft.netcore.app.ref/<v>/ref/<moniker>` in the package folder, restored | the `TargetingPackVersion` the SDK's `BundledVersions.props` names for the framework, a `NETCORE_REF_VERSION` entry (a list such as `6.0.36;7.0.20`, one per major.minor) pins that framework's pack to the NuGet package at exactly that version, never an installed one (under the planned `HERMETIC` mode every `netN.0` target used must have an entry); otherwise an installed pack of another patch version is used rather than downloading. A framework the SDK does not know fails |
+| `net10.0`, `net6.0`, ... (also `sdk-net10.0`) | `<dotnet>/packs/Microsoft.NETCore.App.Ref/<v>/ref/<moniker>`, the targeting pack installed with the SDK, when there is one; else `microsoft.netcore.app.ref/<v>/ref/<moniker>` in the package folder, restored | the `TargetingPackVersion` the SDK's `BundledVersions.props` names for the framework, a `NETCORE_REF_VERSION` entry (a list such as `6.0.36;7.0.20`, one per major.minor) pins that framework's pack to the NuGet package at exactly that version, never an installed one (under `HERMETIC=on` every `netN.0` target used must have an entry); otherwise an installed pack of another patch version is used rather than downloading. A framework the SDK does not know fails |
 | `netstandard2.0` | `NETStandard.Library/<v>/build/netstandard2.0/ref` in the package folder | `2.0.3`, or the script variable `NETSTANDARD_LIBRARY_VERSION` |
 | `netstandard2.1` | `NETStandard.Library.Ref/<v>/ref/netstandard2.1` in the package folder (the same files as the SDK's `packs/NETStandard.Library.Ref/2.1.0`) | `2.1.0`, or the script variable `NETSTANDARD_LIBRARY_REF_VERSION` |
 | `net-4.6.2`, `net472`, ... (SDK provider) | `Microsoft.NETFramework.ReferenceAssemblies.<moniker>/<v>/build/.NETFramework/v4.x` (and its `Facades`) | `1.0.3`, or the script variable `NETFX_REFERENCE_ASSEMBLIES_VERSION` |
@@ -176,6 +176,15 @@ be determined (no SDK) does the compile fail with `csc needs a target framework`
   come from the targeted framework.
 - A lock records the compiler that ran (`Dependencies.Compiler`: path, SHA-256, version) and
   `Csc.run` verifies it; see [hermetic/lock.md](hermetic/lock.md).
+
+Under `HERMETIC=on` (the script variable; see [dotnet-build.md](dotnet-build.md#hermetic-mode))
+`Csc.ofSettings` ends with a check that every path of the composed compilation -- the compiler
+(and `cscpath`), references, analyzers, sources, resources, outputs, generated files -- lies under
+the project root or the package folder the `NUGET_PACKAGES` script variable names. A composed csc
+has no prerequisite: the SDK's `csc.dll` fails the check and asks for `CSC_TOOLSET` (or `toolset`),
+an installed `packs/Microsoft.NETCore.App.Ref` asks for a `NETCORE_REF_VERSION` entry, and any
+other path outside both roots is named. All violations are reported together. `Csc.hermeticInputs`
+lists the paths the check sees.
 
 ## The runner: `Csc.run`
 

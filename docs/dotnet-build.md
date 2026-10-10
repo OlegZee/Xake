@@ -137,7 +137,7 @@ Windows registry is consulted.
   the pack of the framework with the same major.minor (`6.0.36` pins `net6.0`); a framework
   without an entry follows rule 2. Two entries for one major.minor, or an entry that is not a
   3-part version, fail with a message naming `NETCORE_REF_VERSION` and the entry. Changing it
-  reruns the compile. Under the planned `HERMETIC` mode (not implemented yet) every `netN.0`
+  reruns the compile. Under `HERMETIC=on` (see [Hermetic mode](#hermetic-mode)) every `netN.0`
   target used must have an entry.
 
   **Locks.** Without a pin the lock depends on where the pack came from: an installed pack is
@@ -264,6 +264,7 @@ SDK 10.0.x), and fail asking for one only when that cannot be determined.
 | `NETSTANDARD_LIBRARY_REF_VERSION` | Version of the `NETStandard.Library.Ref` package netstandard2.1 compiles against (default 2.1.0). |
 | `NUGET_PACKAGES` | The build's package folder (relative to the project root, or absolute), overriding the environment variable; see [Where packages go](#where-packages-go). |
 | `NUGET_FETCH` | `off` stops Xake from downloading anything into the package folder; a missing package then fails the compile. Default `on`. |
+| `HERMETIC` | `on` checks that every composed compilation names only paths under the project root and the script variable `NUGET_PACKAGES`'s folder (plus fsc's compiler under an exactly pinned SDK); default `off`. See [Hermetic mode](#hermetic-mode). |
 | `NETCORE_REF_VERSION` | Pins of the `Microsoft.NETCore.App.Ref` targeting pack, one per major.minor (`6.0.36;7.0.20`): a pinned `netN.0` framework always takes the NuGet package at that version, never an installed pack; see [the SDK provider](#1-sdkimpl--net-sdk-compilers-over-nuget-reference-assemblies-default). |
 
 Precedence inside a task: `targetfwk` → `NETFX-TARGET` → the SDK's own .NET framework. The toolchain is then
@@ -307,6 +308,78 @@ Xake.Hermetic.Dotnet is to default to); `norestore` after `lock` is the per-targ
 
 `#r "nuget: ..."` in the build script is restored by `dotnet fsi` before Xake runs; only the
 environment variable reaches it.
+
+## Hermetic mode
+
+`HERMETIC=on` (`var "HERMETIC" "on"` in the script, or `-d HERMETIC=on`) turns completeness into
+a checked property of every composed `csc`/`fsc` compilation:
+
+> A resolved compilation names no path outside the project root and the build's own package
+> folder, except paths covered by a prerequisite.
+
+"Names" covers every path: the compiler, the references, the analyzers, the sources, every other
+input switch (`/res:`, `/keyfile:`, ...), the outputs (`/out:`, `/doc:`), generated files, `.resx`
+files and their `.resources`, and `cscpath`. The check runs at the end of `Csc.ofSettings` and
+`Fsc.ofSettings` (so `resolve`, `compile` and `lock` alike) and reports **all** violations of one
+compilation together, one line each, the compiler first, then the references, then the rest. It is
+a pure gate: it never changes where an input resolves from. Every fix is a variable, a pin, or a
+default that already comes from a package.
+
+`HERMETIC` is read with `getVar` (changing it reruns the compiles); values as for `CI`:
+`on|true|yes|1`, `off|false|no|0`, case-insensitive; default off; anything else fails with
+`HERMETIC='<x>': expected on or off`. There is no environment fallback: the rule belongs to the
+build definition, not to the machine. It is independent of `CI` (which is about whether a lock
+may be recorded) and of `NUGET_FETCH` (`HERMETIC=on` with `NUGET_FETCH=off` and a warm package
+folder is the offline build).
+
+**Package folder.** Only the script variable `NUGET_PACKAGES` makes the package folder the
+build's own; the environment variable (or `~/.nuget/packages`) does not satisfy the mode, since
+the folder is then a property of the machine. `DotNetFwk.packageRootWithSource ()` returns the
+folder with where it came from.
+
+**Prerequisites.** A prerequisite is an input the environment must provide, which no restore
+step fetches, checked up front. There is exactly one kind: the **.NET SDK at an exact version**
+(`dotnet-sdk <v>`), covering `<dotnetRoot>/sdk/<v>/` and nothing else (not `packs/`). It is
+allowed only for fsc's compiler (there is no NuGet F# compiler), and only when the `global.json`
+that applies to the project root pins it exactly, `{ "sdk": { "version": "<v>", "rollForward":
+"disable" } }`; any other pin means the SDK depends on the machine. A composed csc never needs
+it (`CSC_TOOLSET`). `DotNetFwk.globalJsonPin` reads the pin, `DotNetFwk.sdkPrerequisite root path`
+says which prerequisite covers a path (what the hermetic lock records), and
+`HermeticMode.check name roots inputs` is the rule itself over any list of paths and roots, for
+example the tokenized paths of a lock.
+
+| Concern | What makes it hermetic | Under `HERMETIC=on` when missing |
+|---|---|---|
+| Package folder | script variable `NUGET_PACKAGES` | `'<name>': HERMETIC=on needs a package folder of the build's own: set the NUGET_PACKAGES script variable (...)` |
+| csc compiler | `CSC_TOOLSET` (or `toolset` in the block) | `... the compiler <path> comes from the .NET SDK; set CSC_TOOLSET (...)` |
+| fsc compiler | `global.json` exact pin; the SDK is the prerequisite | `... fsc has no NuGet package, so the .NET SDK is a prerequisite and must be pinned exactly (found: <pin>); pin it in global.json: ...`; a pinned SDK that is not installed: `... global.json (<file>) pins the .NET SDK <v>, but '<root>' does not have it; install it (dotnet-install --version <v> --install-dir <root>)` |
+| `netN.0` references | a `NETCORE_REF_VERSION` entry for that major.minor | `... the reference assemblies for net10.0 come from <packs path> under the .NET SDK; add a 10.0 version to NETCORE_REF_VERSION (this SDK bundles 10.0.12)` (once per framework) |
+| `netstandard2.0` / `netstandard2.1` references | `NETStandard.Library` / `NETStandard.Library.Ref` packages | nothing to do |
+| .NET Framework references | `Microsoft.NETFramework.ReferenceAssemblies.<moniker>` | nothing to do |
+| fsc .NET Framework `netstandard.dll` facade | `Microsoft.NET.Build.Extensions` 2.2.101 package | nothing to do |
+| fsc `netN.0` default `FSharp.Core` | `FSHARP_CORE_VERSION` set, or a `ref` to an `FSharp.Core.dll` | `... the default FSharp.Core <path> comes from the .NET SDK; set FSHARP_CORE_VERSION (...)` |
+| fsc netstandard / .NET Framework `FSharp.Core` | `FSharp.Core` package | nothing to do |
+| anything else (a `ref`, `cscpath`, a source outside the checkout) | move it under the checkout or into a package | `... <path> is outside the project root '<root>' and the package folder '<folder>', and no prerequisite covers it` |
+
+A hermetic setup for a csc build on SDK 10.0.x, and the extra pin an fsc build needs:
+
+```fsharp
+xakeScript {
+    var "HERMETIC" "on"
+    var "NUGET_PACKAGES" ".nuget/packages"
+    var "CSC_TOOLSET" "4.12.0"
+    var "NETCORE_REF_VERSION" "10.0.12"
+    var "FSHARP_CORE_VERSION" "8.0.100"   // fsc for net10.0
+    ...
+}
+```
+
+```json
+{ "sdk": { "version": "10.0.401", "rollForward": "disable" } }
+```
+
+Not covered here (the hermetic package's lock side): recording the prerequisite in a lock entry,
+refusing to record or compile a lock that names other paths, and `Project.import`.
 
 ## Support matrix
 

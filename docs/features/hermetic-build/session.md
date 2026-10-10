@@ -1046,3 +1046,15 @@ net461 facade from byte-identical packages, FSharp.Core package for netN.0 under
 `Entry.Prerequisites`, replay check, `nofetch`). **Next**: merge #39, #40 → Xake 3.6; merge #41;
 wire the hermetic side to the 3.6 helpers (lock-side gate, messages 9–11, base docs cleanup of
 `packageroot`/`norestore`); PR E (`build.fsc.fsx` on one imported lock); `hermetic-v0.2.0`.
+
+## 2026-10-11 — Xake 3.6 and Xake.Hermetic.Dotnet 0.2 released
+
+`v3.6.0` → `Xake 3.6.0.24`; `hermetic-v0.2.0` → `Xake.Hermetic.Dotnet 0.2.0.25` (depends on
+`Xake [3.6.0.24, 3.7)`, the minor-range rule). 0.2: F# in the lock, `fsc { lock }`, fsproj import,
+`Entry.Prerequisites` (dotnet-sdk, always written), `nofetch`, no `packageroot`, the lock-side
+`HERMETIC=on` gate, base helpers wired, `docs/hermetic/hermetic-mode.md` as a product page.
+**In flight**: #42 (`build.fsc.fsx` on one imported lock `locks/xake.json`, exact SDK pin
+10.0.401 in `global.json`, CI legs `pinned` + `floor`, Xake itself builds under `HERMETIC=on`),
+being finished on the published packages. **After that**: the backlog in the roadmap: netN.0
+imports under the mode (`packs/`), SDK restore, F# compiler toolset, the six SBOM questions,
+`sign` shadowing, English docs simplification (nine items from workflows-ru).

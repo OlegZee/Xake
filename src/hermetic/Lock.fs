@@ -1033,7 +1033,7 @@ module Lock =
     /// with its prerequisites (`withPrerequisites`), refused under `HERMETIC=on` when
     /// incomplete (`hermeticRecordGate`, messages 2 and 9; `path` is the lock it is meant for,
     /// quoted in the messages). The references whose path is in `unhashed` -- the outputs of
-    /// project references, which a lock keeps without a hash (`Locks.generateAll`) -- are
+    /// project references, which a lock keeps without a hash (`Locks.generate`) -- are
     /// neither depended on nor hashed, whether or not a build left them on disk.
     /// </summary>
     let recorded (path: string) (unhashed: string list) (entry: Entry) : Recipe<ExecContext, Entry> =

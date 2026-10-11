@@ -72,6 +72,10 @@ recipe {
 }
 ```
 
+Capture groups of the rule's pattern (file or phony): `let! name = getRuleMatch "name"` (`""` when
+absent), `let! all = getRuleMatches ()` (a map). Also `getVar`, `getEnv`, `getCtxOptions`,
+`getTargetFile` (file rules only), `getTargetFullName`, `alwaysRerun ()`.
+
 ## Shell task
 
 ```fsharp
@@ -99,8 +103,10 @@ open Xake.Dotnet
 Script variables: `NETFX` (tool framework), `NETFX-TARGET` (default target framework), `FSCVER`.
 
 Locks of project descriptions (`Xake.Hermetic.Dotnet`, [hermetic/lock.md](hermetic/lock.md#xake-generated-locks)):
-`"locks" => Locks.generateAll (!! "src/*/xake.project.json") ["Release"] (fun n c -> $"locks/{n}/{c}.json") (fun c f _ -> $"out/{c}/{f}")`
--- one lock per project x configuration, references first, nothing compiled; `-d LOCK_REFRESH=<ids|*>` re-resolves pinned packages.
+a phony rule per project x configuration in the script, run only by `xake update-locks`:
+`"lock::(name:*)::(cfg:*)" => recipe { ...; do! need [ for r in d.ProjectRefs -> $"lock::{r}::{cfg}" ]; do! alwaysRerun (); do! Locks.generate lockOf outOf cfg (descriptionOf name) }`
+and `"update-locks" <== [ for n in projects -> $"lock::{n}::Release" ]` -- references first by `need`, nothing compiled;
+`-d LOCK_REFRESH=<ids|*>` re-resolves pinned packages.
 
 ## Fingerprints of committed generated files
 

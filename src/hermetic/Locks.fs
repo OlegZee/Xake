@@ -6,7 +6,8 @@ open Xake
 open Xake.Dotnet
 
 /// The locks of described projects (`xake.project.json`): one lock per project and
-/// configuration, written by the script's explicit `locks` command (`generateAll`). A lock
+/// configuration, written by the script's lock rule (`generate`, one lock per call; the
+/// script orders projects by `need` and runs it from an explicit `update-locks` target). A lock
 /// records what the compiler would be handed -- nothing is compiled here -- in the existing
 /// lock format: one entry per target framework, the packages msbuild restore resolved
 /// (`Described.restore`), a project reference as the referenced project's output path in the
@@ -89,25 +90,43 @@ module Locks =
                 let! x = r
                 return xs @ [ x ] }) (recipe { return [] })
 
-    /// The descriptions in build order: every project after the projects it references
-    /// (`projectRefs`, by name); a reference outside the set is not ordered (its lock must
-    /// exist). A cycle fails, naming it.
-    let ordered (descriptions: (string * Description.Project) list) =
-        let byName name = descriptions |> List.tryFind (fun (_, d) -> d.Name = name)
-        let rec visit (path: string list) (acc: (string * Description.Project) list) (item: string * Description.Project) =
-            let d = snd item
-            if acc |> List.exists (fun (_, x) -> x.Name = d.Name) then acc
-            elif List.contains d.Name path then
-                failwithf "projectRefs form a cycle: %s" (List.rev (d.Name :: path) |> String.concat " -> ")
-            else
-                let acc = d.ProjectRefs |> List.choose byName |> List.fold (visit (d.Name :: path)) acc
-                acc @ [ item ]
-        descriptions |> List.fold (visit []) []
-
-    /// One lock per described project and configuration; see `generateAll`.
-    let private generate (all: (string * Description.Project) list) (descPath: string) (d: Description.Project) (config: string)
-                         (lockOf: string -> string -> string) (outOf: string -> string -> string -> string) =
+    /// <summary>
+    /// Generates the lock of ONE described project for ONE configuration: the description at
+    /// `descriptionPath`, configuration `config`, written to `lockOf name config` (relative to
+    /// the project root; `name` is the description's). Nothing is compiled; the lock is what
+    /// the compiler would be handed:
+    /// <list type="bullet">
+    /// <item>one entry per framework of the description, composed as `fsc/csc { project }`
+    /// with `config` (the SDK preset), `--deterministic+`, the tokenized `--pathmap`, and no
+    /// `-o` (the output path is the build's);</item>
+    /// <item>packages through `Described.restore` (msbuild restore). A version the current
+    /// lock holds is passed as exact, so it stays; the script variable (or environment
+    /// variable) `LOCK_REFRESH=&lt;ids|*&gt;` lets the named packages resolve as declared again;</item>
+    /// <item>a project reference to B: B's configuration `refConfig` (this one, else Release,
+    /// else Debug -- whichever B has a lock for at `lockOf B c`) and framework
+    /// `nearestFramework`, recorded as B's output path `outOf cfgB fwkB B` + `/&lt;assembly&gt;.dll`
+    /// with no hash, and B's name in `Evaluation.ProjectRefs`; B's direct packages flow into
+    /// the restore.</item>
+    /// </list>
+    /// B's lock must exist: this does not order anything. The script's lock rule `need`s the
+    /// referenced projects' lock rules first (a missing one fails, naming B). The lock is
+    /// written only when its text changes. The script's rule (docs/hermetic/lock.md):
+    /// <code>
+    /// "lock::(name:*)::(cfg:*)" => recipe {
+    ///     let! name = getRuleMatch "name"
+    ///     let! cfg  = getRuleMatch "cfg"
+    ///     let! d = Description.load (descriptionOf name)
+    ///     do! need [ for r in d.ProjectRefs -> $"lock::{r}::{cfg}" ]
+    ///     do! alwaysRerun ()
+    ///     do! Locks.generate lockOf outOf cfg (descriptionOf name) }
+    /// "update-locks" &lt;== [ for n in projects -> $"lock::{n}::Release" ]
+    /// </code>
+    /// </summary>
+    let generate (lockOf: string -> string -> string) (outOf: string -> string -> string -> string)
+                 (config: string) (descriptionPath: string) : Recipe<ExecContext, unit> =
         recipe {
+            let descPath = descriptionPath
+            let! d = Description.load descriptionPath
             let! options = getCtxOptions ()
             let root = options.ProjectRoot
             let full (p: string) = normal (Path.GetFullPath (if Path.IsPathRooted p then p else Path.Combine (root, p)))
@@ -130,7 +149,7 @@ module Locks =
                                 match refConfig config (fun c -> File.Exists (full (lockOf name c))) with
                                 | Some c -> c
                                 | None ->
-                                    failwithf "'%s': projectRef '%s' has no lock for %s (nor Release, Debug): '%s'; generate the locks of '%s' first"
+                                    failwithf "'%s': projectRef '%s' has no lock for %s (nor Release, Debug): '%s'; generate the lock of '%s' first (the lock rule needs the referenced projects' lock rules, e.g. via `update-locks`)"
                                         d.Name name config (lockOf name config) name
                             let! refLock = Lock.load (lockOf name cfg)
                             let frameworks = refLock.Entries |> List.map (fun e -> e.Framework) |> List.distinct
@@ -142,10 +161,8 @@ module Locks =
                                         d.Name fwk name (lockOf name cfg) (String.concat ", " frameworks)
                             let e = refLock.Entries |> List.find (fun e -> e.Framework = refFwk)
                             let output = full (Path.Combine (outOf cfg refFwk name, e.Name + ".dll"))
-                            let projectFile =
-                                match all |> List.tryFind (fun (_, x) -> x.Name = name) with
-                                | Some (p, x) -> full (Path.Combine (Path.GetDirectoryName (full p), x.Project))
-                                | None -> name
+                            // the description names its references; the slot holds that name
+                            let projectFile = name
                             // the referenced project's direct packages flow into this one's restore,
                             // at the version its lock holds, as msbuild flows them
                             let flowing = e.Packages |> List.filter (fun p -> p.Direct)
@@ -215,42 +232,6 @@ module Locks =
                 Directory.CreateDirectory (Path.GetDirectoryName lockFull) |> ignore
                 File.WriteAllText (lockFull, text)
                 do! trace Info "'%s': wrote the lock '%s'" d.Name lockPath
-        }
-
-    /// <summary>
-    /// Generates the locks of the project descriptions `descriptions` (a fileset of
-    /// `xake.project.json` files) for each configuration of `configs`: one lock per project and
-    /// configuration at `lockOf name config` (relative to the project root), referenced
-    /// projects first. Nothing is compiled; a lock is what the compiler would be handed:
-    /// <list type="bullet">
-    /// <item>one entry per framework of the description, composed as `fsc/csc { project }`
-    /// with `config` (the SDK preset), `--deterministic+`, the tokenized `--pathmap`, and no
-    /// `-o` (the output path is the build's);</item>
-    /// <item>packages through `Described.restore` (msbuild restore). A version the current
-    /// lock holds is passed as exact, so it stays; the script variable (or environment
-    /// variable) `LOCK_REFRESH=<ids|*>` lets the named packages resolve as declared again;</item>
-    /// <item>a project reference to B: B's configuration `refConfig` (this one, else Release,
-    /// else Debug -- whichever B has a lock for) and framework `nearestFramework`, recorded as
-    /// B's output path `outOf cfgB fwkB B` + `/<assembly>.dll` with no hash, and B's project
-    /// file in `Evaluation.ProjectRefs`; B's direct packages flow into the restore.</item>
-    /// </list>
-    /// A lock is written only when its text changes: regenerating with nothing changed writes
-    /// nothing. The script's `locks` command:
-    /// <code>
-    /// command "locks" { do! Locks.generateAll (!! "src/*/xake.project.json") ["Release"] lockOf outOf }
-    /// </code>
-    /// </summary>
-    let generateAll (descriptions: Fileset) (configs: string list)
-                    (lockOf: string -> string -> string) (outOf: string -> string -> string -> string) : Recipe<ExecContext, unit> =
-        recipe {
-            let! (Filelist files) = getFiles descriptions
-            let! loaded =
-                files |> List.map (fun f -> recipe { let! d = Description.load f.FullName in return f.FullName, d })
-                |> sequence
-            let all = ordered (loaded |> List.sortBy (fun (_, d) -> d.Name))
-            for (path, d) in all do
-                for config in configs do
-                    do! generate all path d config lockOf outOf
         }
 
     /// The token a lock's `Generated` sources carry where the assembly version goes; the lock
@@ -383,7 +364,7 @@ module Locks =
     /// `xake.project.json` files) in configuration `cfg`: for each framework of a
     /// description, `outOf cfg fwk name` + `/&lt;assembly&gt;.dll` -- the targets the script's
     /// compile rule (`compileAs`) builds, all at once so independent ones run in parallel. A
-    /// described project without a lock (`lockOf name cfg`) fails, naming the `locks` command.
+    /// described project without a lock (`lockOf name cfg`) fails, naming the `update-locks` rule.
     /// The script's `build` command:
     /// <code>
     /// command "build" { do! Locks.needAll (!! "src/*/xake.project.json") "Release" lockOf outOf }
@@ -401,7 +382,7 @@ module Locks =
                     let lockPath = lockOf d.Name cfg
                     not (File.Exists (if Path.IsPathRooted lockPath then lockPath else Path.Combine (options.ProjectRoot, lockPath))))
             if not (List.isEmpty missing) then
-                failwithf "no %s lock for %s; generate the locks with the `locks` command (Locks.generateAll)"
+                failwithf "no %s lock for %s; generate the locks first (e.g. the script's `update-locks`, over Locks.generate)"
                     cfg (missing |> List.map (fun d -> sprintf "'%s' ('%s')" d.Name (lockOf d.Name cfg)) |> String.concat ", ")
             let targets =
                 [ for d in loaded do

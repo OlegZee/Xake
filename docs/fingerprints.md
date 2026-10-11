@@ -54,7 +54,7 @@ Pure helpers for plain code and tests: `hashFile`, `hashBytes`, `compute`, `pars
 
 ```fsharp
 command "import" { do! Description.import projects Description.beside [] }   // records lines
-command "locks"  { do! Lock.generateAll descriptions ["Release"] lockOf outOf } // records lines
+"update-locks" <== [ for n in projects -> $"lock::{n}::Release" ]              // hermetic/lock.md
 "check" => Fingerprints.check "xake.fingerprints"
 
 command "build" {
@@ -63,5 +63,5 @@ command "build" {
 }
 ```
 
-`import` records each description with every msbuild file read as inputs; `locks` records each lock
-with the description and the referenced projects' locks as inputs.
+`import` records each description with every msbuild file read as inputs; the lock rule behind
+`update-locks` could record each lock with the description and the referenced projects' locks as inputs.

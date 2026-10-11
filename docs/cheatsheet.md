@@ -98,6 +98,16 @@ open Xake.Dotnet
 
 Script variables: `NETFX` (tool framework), `NETFX-TARGET` (default target framework), `FSCVER`.
 
+## Fingerprints of committed generated files
+
+```fsharp
+command "import" { do! Fingerprints.record "xake.fingerprints" "desc/a.json" ["a.fsproj"] }
+command "build"  { do! Fingerprints.warn "xake.fingerprints" }   // warns on stale/hand-edited
+"check" => Fingerprints.check "xake.fingerprints"                // fails instead
+```
+
+See [fingerprints.md](fingerprints.md).
+
 ## Filesets
 
 ```fsharp

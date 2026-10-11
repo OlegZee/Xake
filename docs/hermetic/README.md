@@ -66,6 +66,7 @@ open Xake.Hermetic.Dotnet
 | Piece | What it is | Page |
 |---|---|---|
 | Lock | the lock file format (C# and F# entries), `Lock.build` / `compile` / `record` / `verify`, `csc { lock }`, `fsc { lock }`, `Project.import` (msbuild design-time build of a csproj or fsproj into a lock) | [lock.md](lock.md) |
+| Description | `xake.project.json`: what a project is, as data (name, language, frameworks, sources, references, packages, options, package metadata); `Description.load`/`save`/`find`/`names`/`beside`; schema in [../schemas/xake.project.schema.json](../schemas/xake.project.schema.json) | [description.md](description.md) |
 | Hermetic mode | `HERMETIC=on`: the invariant, prerequisites, what each input needs, the messages; what is shipped and what is pending | [hermetic-mode.md](hermetic-mode.md) |
 | Restore | fetch the packages a lock names into a folder of the build's choice, one `dotnet restore` for the whole set | [restore.md](restore.md) |
 | Nuget and Sbom | read the restore graph and package cache; write a deterministic CycloneDX 1.6 SBOM per assembly and per package | [nuget-sbom.md](nuget-sbom.md) |

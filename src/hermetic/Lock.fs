@@ -1028,21 +1028,22 @@ module Lock =
                 return { entry with Prerequisites = prerequisites }
         }
 
-    /// Writes `entry`, hashed (`rehash`, the record-time step) and with its prerequisites
-    /// (`withPrerequisites`), as a one-entry lock at `path` and returns what was written. There
-    /// is no msbuild configuration or property set behind a composed compilation, so those stay
-    /// empty in the document. Under `HERMETIC=on` an incomplete entry is not written
-    /// (`hermeticRecordGate`, messages 2 and 9).
-    let private recordEntry (path: string) (entry: Entry) =
+    /// <summary>
+    /// The record-time step of `record` without the write: `entry` hashed (`rehash`) and
+    /// with its prerequisites (`withPrerequisites`), refused under `HERMETIC=on` when
+    /// incomplete (`hermeticRecordGate`, messages 2 and 9; `path` is the lock it is meant for,
+    /// quoted in the messages). The references whose path is in `unhashed` -- the outputs of
+    /// project references, which a lock keeps without a hash (`Locks.generate`) -- are
+    /// neither depended on nor hashed, whether or not a build left them on disk.
+    /// </summary>
+    let recorded (path: string) (unhashed: string list) (entry: Entry) : Recipe<ExecContext, Entry> =
         recipe {
-            let! full = fullPath path
-            let dir = Path.GetDirectoryName full
-            if dir <> "" then Directory.CreateDirectory dir |> ignore
+            let isUnhashed (p: string) = List.contains p unhashed
             // what gets hashed is what the recorded lock depends on: a target that only
             // records (no `Csc.run`, which holds the compile-side `needFiles`) must still
             // rerun when a reference, analyzer, compiler or import changes
             let hashedPaths =
-                [ for r in entry.Dependencies.References -> r.Path
+                [ for r in entry.Dependencies.References do if not (isUnhashed r.Path) then yield r.Path
                   for a in entry.Dependencies.Analyzers -> a.Path
                   yield entry.Dependencies.Compiler.Path
                   for i in entry.Evaluation.Imports -> i.Path ]
@@ -1057,6 +1058,28 @@ module Lock =
                 do! trace Error "%s" msg
                 failwith msg
             let rehashed = rehash entry
+            if List.isEmpty unhashed then return rehashed else
+            let clear (r: Reference) = if isUnhashed r.Path then { r with Sha256 = "" } else r
+            let deps (d: Dependencies) = { d with References = d.References |> List.map clear }
+            return
+                { rehashed with
+                    Compilation =
+                        rehashed.Compilation
+                        |> mapCompilation (fun c -> { c with Dependencies = deps c.Dependencies })
+                                          (fun f -> { f with Fsc.Dependencies = deps f.Dependencies }) }
+        }
+
+    /// Writes `entry`, hashed (`rehash`, the record-time step) and with its prerequisites
+    /// (`withPrerequisites`), as a one-entry lock at `path` and returns what was written. There
+    /// is no msbuild configuration or property set behind a composed compilation, so those stay
+    /// empty in the document. Under `HERMETIC=on` an incomplete entry is not written
+    /// (`hermeticRecordGate`, messages 2 and 9).
+    let private recordEntry (path: string) (entry: Entry) =
+        recipe {
+            let! full = fullPath path
+            let dir = Path.GetDirectoryName full
+            if dir <> "" then Directory.CreateDirectory dir |> ignore
+            let! rehashed = recorded path [] entry
             do! save full { Configuration = ""; Properties = []; Entries = [ rehashed ] }
             return rehashed
         }

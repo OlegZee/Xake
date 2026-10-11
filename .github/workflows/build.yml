@@ -17,16 +17,28 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # 8.0.x is the supported floor, and the only way to keep it honest is to build with it;
-        # global.json rolls forward, so the newest installed SDK is what actually gets used.
-        dotnet: [ '8.0.x', '10.0.x' ]
+        # `pinned` builds with the SDK global.json pins exactly (10.0.401, rollForward disable:
+        # the F# compiler of build.fsc.fsx's lock is that SDK's fsc.dll). `floor` keeps the
+        # supported minimum honest: it drops global.json and builds with SDK 8.0. Both install
+        # 8.0.x as well, for the net8.0 test runtime.
+        leg: [ pinned, floor ]
 
     steps:
     - uses: actions/checkout@v7
-    - name: Setup .NET
+    - name: Drop the SDK pin (floor leg)
+      if: matrix.leg == 'floor'
+      run: rm global.json
+    - name: Setup .NET (pinned SDK)
+      if: matrix.leg == 'pinned'
       uses: actions/setup-dotnet@v6
       with:
-        dotnet-version: ${{ matrix.dotnet }}
+        global-json-file: global.json
+        dotnet-version: 8.0.x
+    - name: Setup .NET (floor)
+      if: matrix.leg == 'floor'
+      uses: actions/setup-dotnet@v6
+      with:
+        dotnet-version: 8.0.x
     # `test` runs both test projects, src/tests and src/hermetic.tests; `pack` builds both
     # packages and fails if the Xake.Hermetic.Dotnet nuspec has no dependency on package `Xake`
     - name: Build, test & pack
@@ -35,6 +47,6 @@ jobs:
       uses: actions/upload-artifact@v7
       if: always()
       with:
-        name: build-log-${{ github.run_number }}-${{ matrix.dotnet }}
+        name: build-log-${{ github.run_number }}-${{ matrix.leg }}
         path: build.log
         retention-days: 5

@@ -21,10 +21,12 @@ jobs:
 
     steps:
     - uses: actions/checkout@v7
+    # exactly the SDK global.json pins (rollForward disable), plus 8.0 for the net8.0 tests
     - name: Setup .NET
       uses: actions/setup-dotnet@v6
       with:
-        dotnet-version: 10.0.x
+        global-json-file: global.json
+        dotnet-version: 8.0.x
 
     # The tag carries the release version; the run number becomes the fourth component, so
     # re-tagging or re-running never collides with an already published version. The prefix

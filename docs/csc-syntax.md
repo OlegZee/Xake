@@ -162,6 +162,76 @@ be determined (no SDK) does the compile fail with `csc needs a target framework`
   framework's pack always comes from NuGet, installed or not. See
   [dotnet-build.md](dotnet-build.md).
 
+## From a project description: `project`, `config`, `packages`
+
+`Xake.Hermetic.Dotnet` adds three operations to `csc {}` and `fsc {}` that build a compilation
+from a project description (`xake.project.json`, [hermetic/description.md](hermetic/description.md))
+instead of listing sources and defines in the script. `project "path"` takes the description file
+(relative to the project root) and must follow every ordinary setting it builds on (`targetfwk`,
+`out`, `ref` for the outputs of `projectRefs`); after it only `config`, `packages`, `lock`,
+`nofetch` and `resolve` may come. Code: `src/hermetic/Described.fs`.
+
+```fsharp
+open Xake.Hermetic.Dotnet
+
+"out/Release/netstandard2.0/Xake.Dotnet.dll" ..> recipe {
+    let! d = Description.load "src/dotnet/xake.project.json"
+    let! pkgs = Described.restore d "netstandard2.0"            // msbuild restore; lock generation's step
+    do! fsc {
+        targetfwk "netstandard2.0"
+        ref !!"out/Release/netstandard2.0/Xake.dll"            // the projectRef's output: the script's layout
+        project "src/dotnet/xake.project.json"
+        config "Release"
+        packages pkgs
+        lock "locks/Xake.Dotnet/Release.json"
+    }
+}
+```
+
+| Operation | Argument | Does |
+|---|---|---|
+| `project` | `string` | the description at that path: sources (F# in order; C# as masks), defines, framework `references` (plus the SDK's implicit ones for .NET Framework), `byFramework` additions, options, `kind` as `target`, `internalsVisibleTo` as a generated source, `doc` as `<out>.xml`, `/deterministic+` and `/pathmap:<project root>/=/_/` |
+| `config` | `"Debug"` \| `"Release"` | the SDK's configuration preset (below); without it no preset applies |
+| `packages` | `Described.Restored` | the description's packages as `Described.restore` resolved them; required when the description has packages for the framework |
+
+- **Framework.** `targetfwk` (it must be one of the description's `frameworks`), else the
+  description's only framework, else `NETFX-TARGET`; otherwise it fails listing the frameworks.
+  The SDK's implicit framework symbols are added (`NETSTANDARD2_0`, `NET462`, `..._OR_GREATER`,
+  `Described.frameworkDefines`), as are the SDK's implicit framework assemblies for .NET Framework
+  (`System`, `System.Core`, `System.Xml`, ..., `Described.implicitFrameworkReferences`); a C#
+  netstandard compilation also references `netstandard.dll`.
+- **Presets** (`Described.preset`; SDK 10.0.401 `Microsoft.NET.Sdk.props`,
+  `Microsoft.FSharp.NetSdk.props` and the `ImplicitConfigurationDefine`, checked against the
+  compiler command lines of `dotnet build -c Debug|Release`):
+
+  | | F# | C# | Defines |
+  |---|---|---|---|
+  | Debug | `--debug+ --debug:portable --optimize- --tailcalls-` | `/debug+ /debug:portable /optimize-` | `TRACE`, `DEBUG` |
+  | Release | `--debug:portable --optimize+` | `/debug- /debug:portable /optimize+` | `TRACE`, `RELEASE` |
+
+  The SDK's configuration-independent switches (`--warn:3`, `/nowarn:1701,1702`,
+  `/highentropyva+`, `/filealign:512`, ...) are not carried: byte identity with `dotnet build` is
+  not a goal.
+- **Packages** are never resolved by the compiler. `Described.restore d framework` writes
+  `obj/xake/packages/<name>/<framework>/restore.csproj` (one `PackageReference` per package, the
+  version as the description states it, floating left to msbuild; for F# on .NET Framework
+  4.0-4.7 the SDK's implicit `System.ValueTuple` 4.6.2), runs `dotnet restore` on it into the
+  build's package folder (`NUGET_PACKAGES`), and reads `project.assets.json`
+  (`Nuget.readAssets`, `Nuget.compileItems`): `References` are the compile assets of the whole
+  graph, `Packages` the graph as a lock entry records it (`Lock.packagesOf`). A description with
+  packages and no `packages` fails, naming `Described.restore`.
+- **C# masks.** A C# description's `sources` are Xake masks with the import's convention: a `!`
+  prefix is an exclude, applied in order (`["**/*.cs", "!obj/**/*", "!bin/**/*"]`), and
+  `dir/**/*` is every file below `dir`. `resolve` returns a `Csc` whose `Sources` are those
+  masks made absolute (the generated `InternalsVisibleTo` file first); `lock` records them as
+  they are and compares them as written; compiling expands them (`Described.expand`: one fileset
+  based at the first include's fixed folder, through `getFiles`, so the target depends on the
+  listing and an added `.cs` rebuilds without touching the lock).
+- **Resources** are plain files: `--resource:`/`/resource:` with the given `name`, else the
+  root namespace (else the assembly name) and the path with `.` for `/`. A `.resx` fails for now.
+- **No `-o` decision here.** The output is `out` or the rule's target, as for composed settings;
+  leaving `-o` out of a lock is the lock generation's business.
+
 ## Compiler sources
 
 ### Composed mode: three sources, first match wins

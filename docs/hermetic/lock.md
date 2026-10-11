@@ -51,6 +51,8 @@ open Xake.Hermetic.Dotnet
 | `Lock.verify path c` | recipe | the diff between the lock at `path` and `c`, write and compile nothing; a missing lock fails |
 | `csc { ...; lock "path" }` | operation | `Lock.build` as an operation of a `csc {}` block; only `nofetch` may follow |
 | `fsc { ...; lock "path" }` | operation | the same for an `fsc {}` block |
+| `csc`/`fsc { ...; project "path"; config "Release"; packages p; lock "path" }` | operation | a compilation from a project description, gated the same way; a C# lock keeps the description's masks in `Sources` (an exclude as `!$(ProjectRoot)/...`), expanded when compiled ([../csc-syntax.md](../csc-syntax.md#from-a-project-description-project-config-packages)). No format change: `Sources` entries are strings the reader takes as written |
+| `Described.restore d framework` | recipe | a description's packages through an msbuild restore: compile assets and the graph for `Entry.Packages` |
 
 `Lock.Options = { Run: RunOptions; FscRun: FscRunOptions; Restore: Restore.Options }` with
 `Lock.Options.Default`. `Run` is read for a C# entry and `FscRun` for an F# one; each runner has

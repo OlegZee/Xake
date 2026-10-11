@@ -303,6 +303,30 @@ works). Outside a repository it fails: `'<name>': the lock needs $(SourceRevisio
 repository was found at or above '<dir>' -- a lock that needs a revision must be compiled in a
 repository`. A `git archive` copy is not a repository.
 
+### Importing a project description
+
+The other import turns a project file into its description (`xake.project.json`,
+[description.md](description.md)) instead of a lock. msbuild evaluates the project under the
+global properties the script passes (no targets run, nothing is restored), and the description
+is rewritten only when its content changes. It is an explicit command, not a rule:
+
+```fsharp
+let projects = [ "src/core/Xake.fsproj"; "src/dotnet/Xake.Dotnet.fsproj" ]
+
+command "import" {
+    let! imported = Import.descriptions projects Description.beside [ "Configuration", "Release" ]
+    for i in imported do
+        do! trace Info "%s: %d msbuild files read" i.Description i.Inputs.Length
+}
+```
+
+A variant msbuild evaluates differently is a separate description: import it with that
+variant's properties into a folder of its own, e.g.
+`Import.descriptions projects (fun p -> $"mescius/{Path.GetFileNameWithoutExtension p}.json") [ "Brand", "MESCIUS" ]`.
+Each result carries `Inputs`, the msbuild files the evaluation read (repository files only,
+relative to the project root, sorted), and `Dropped`, what msbuild knows that the description
+has no field for; the latter is also logged. **(untested as a script; the tests run it)**
+
 ## C. Teammate or fresh machine
 
 A teammate clones, runs `dotnet fsi build.fsx -- -- build`, and gets the same compilation.

@@ -106,6 +106,16 @@ Build from them ([hermetic/lock.md](hermetic/lock.md#building-from-xake-generate
 `target "out/(cfg:*)/(fwk:*)/(name:*).dll" { ...; do! Locks.compileAs (lockOf name cfg) fwk versions }`
 -- the dll is the target (`.xml` beside it when the lock asks for doc), refs built first, C# masks via `getFiles`, HERMETIC gate inside.
 
+## Fingerprints of committed generated files
+
+```fsharp
+command "import" { do! Fingerprints.record "xake.fingerprints" "desc/a.json" ["a.fsproj"] }
+command "build"  { do! Fingerprints.warn "xake.fingerprints" }   // warns on stale/hand-edited
+"check" => Fingerprints.check "xake.fingerprints"                // fails instead
+```
+
+See [fingerprints.md](fingerprints.md).
+
 ## Filesets
 
 ```fsharp

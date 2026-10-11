@@ -27,6 +27,7 @@
     <Compile Include="HermeticLockTests.fs" />
     <Compile Include="DescriptionTests.fs" />
     <Compile Include="DescribedTests.fs" />
+    <Compile Include="DescriptionImportTests.fs" />
     <Compile Include="LocksTests.fs" />
     <Compile Include="BuildFromLockTests.fs" />
   </ItemGroup>

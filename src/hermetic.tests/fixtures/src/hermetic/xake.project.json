@@ -16,6 +16,7 @@
     "Described.fs",
     "Locks.fs",
     "Project.fs",
+    "Import.fs",
     "Sbom.fs",
     "Verify.fs",
     "StrongName.fs",

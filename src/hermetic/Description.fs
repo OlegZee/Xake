@@ -333,8 +333,9 @@ module Description =
             | [ f, d ] ->
                 do! needFiles (Filelist [ f ])
                 return d
+            | [] when files.IsEmpty -> return failwithf "no description named '%s': the fileset matches no file" name
             | [] ->
-                return failwithf "no description named '%s' among %d file(s): %s" name files.Length
+                return failwithf "no description named '%s' among %s" name
                                  (files |> List.map (fun f -> f.FullName) |> String.concat ", ")
             | many ->
                 return failwithf "'%s' is described by more than one file: %s" name

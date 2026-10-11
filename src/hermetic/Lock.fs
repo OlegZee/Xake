@@ -993,6 +993,12 @@ module Lock =
     let compileWith (options: Options) (entry: Entry) : Recipe<ExecContext, unit> =
         compileEntry None options entry
 
+    /// `compileWith` of an entry read from the lock at `lockPath`, the path the `HERMETIC=on`
+    /// refusal (message 10) names -- what `buildWith` does with a matching lock, for a caller
+    /// that read the lock itself (`Locks.compileAs`).
+    let compileFrom (lockPath: string) (options: Options) (entry: Entry) : Recipe<ExecContext, unit> =
+        compileEntry (Some lockPath) options entry
+
     /// `compileWith` with the default options, the compiler server resolved for this build
     /// (`CompilerServer.resolve`: `CSC_SERVER`, then `XAKE_CSC_SERVER`; csc only, fsc has no
     /// server).

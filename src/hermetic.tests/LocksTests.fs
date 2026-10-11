@@ -42,21 +42,8 @@ type ``Lock generation``() =
         Description.write (dir </> Description.FileName) d |> ignore
         "tiny/" + name + "/" + Description.FileName
 
-    /// The canonical lock rule of docs/hermetic/lock.md; `refCfg` maps the configuration to
-    /// the one the referenced projects' locks are needed in (the doc: the same). `ran` gets
-    /// `name::cfg` each time the rule body runs.
-    let lockRule (descriptionOf: string -> string) (refCfg: string -> string) (ran: ResizeArray<string>) =
-        "lock::(name:*)::(cfg:*)" => recipe {
-            let! name = getRuleMatch "name"
-            let! cfg  = getRuleMatch "cfg"
-            let! d = Description.load (descriptionOf name)
-            do! need [ for r in d.ProjectRefs -> $"lock::{r}::{refCfg cfg}" ]
-            do! alwaysRerun ()
-            ran.Add (name + "::" + cfg)
-            do! Locks.generate lockOf outOf cfg (descriptionOf name)
-        }
-
-    let updateLocks (projects: string list) = "update-locks" <== [ for n in projects -> $"lock::{n}::Release" ]
+    let lockRule descriptionOf refCfg ran = LockRule.lockRule lockOf outOf descriptionOf refCfg ran
+    let updateLocks projects = LockRule.updateLocks [ "Release" ] projects
     let tinyOf name = "tiny/" + name + "/" + Description.FileName
     let clean (names: string list) = for n in names do if Directory.Exists ("locks/" + n) then Directory.Delete ("locks/" + n, true)
 

@@ -28,5 +28,6 @@
     { "id": "FSharp.Core", "version": "8.0.100" }
   ],
   "options": { "doc": true },
-  "internalsVisibleTo": ["hermetic.tests"]
+  "internalsVisibleTo": ["hermetic.tests"],
+  "byFramework": { "net462": { "references": ["System.IO.Compression"] } }
 }

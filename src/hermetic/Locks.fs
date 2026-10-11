@@ -233,3 +233,160 @@ module Locks =
                 File.WriteAllText (lockFull, text)
                 do! trace Info "'%s': wrote the lock '%s'" d.Name lockPath
         }
+
+    /// The token a lock's `Generated` sources carry where the assembly version goes; the lock
+    /// does not depend on the version, the build substitutes it (`compileAs`).
+    let VersionToken = "$(Version)"
+
+    /// The output switches of a lock entry made the build's: the output at `target` (the `-o`
+    /// a Xake-generated lock lacks), inserted where `--doc:` is or before the first section
+    /// marker, and a `--doc:` (when the lock asks for doc) re-targeted beside it. Pure.
+    let private outputAt (target: string) (c: Lock.Compilation) : Lock.Compilation =
+        let xml = normal (Path.ChangeExtension (target, ".xml"))
+        let place (isOut: string -> bool) (isDoc: string -> bool) (doc: string) (out: string) (options: string list) =
+            let options = options |> List.filter (isOut >> not) |> List.map (fun o -> if isDoc o then doc else o)
+            let at =
+                options |> List.tryFindIndex isDoc
+                |> Option.orElse (options |> List.tryFindIndex (fun o -> o.StartsWith "@"))
+                |> Option.defaultValue options.Length
+            List.take at options @ [ out ] @ List.skip at options
+        match c with
+        | Lock.Compilation.Fsc f ->
+            let is name o = match FscArgs.parse o with FscArgs.Switch (_, n, _) -> FscArgs.canonical n = name | _ -> false
+            Lock.Compilation.Fsc { f with Options = place (is "out") (is "doc") ("--doc:" + xml) ("--out:" + normal target) f.Options }
+        | Lock.Compilation.Csc c ->
+            let is name (o: string) = not (o.StartsWith "@") && (match CscArgs.parse o with CscArgs.Switch (n, _) -> CscArgs.canonical n = name | _ -> false)
+            Lock.Compilation.Csc { c with Options = place (is "out") (is "doc") ("/doc:" + xml) ("/out:" + normal target) c.Options }
+
+    /// <summary>
+    /// The version for a project from the script's `versions` (Ant-style mask -> version
+    /// variable): the first mask matching `projectPath` (relative to the project root, '/'),
+    /// `None` when none does. A mask ending in `**` covers every file below its folder.
+    /// </summary>
+    let versionFor (versions: (string * 'v) list) (projectPath: string) : 'v option =
+        let covers (mask: string) =
+            let mask = normal mask
+            let mask = if mask.EndsWith "**" then mask + "/*" else mask
+            Path.matchesPattern (Path.parse mask) (normal projectPath)
+        versions |> List.tryFind (fst >> covers) |> Option.map snd
+
+    /// <summary>
+    /// Compiles the lock entry for `fwk` of the lock at `lockPath` into the target of the
+    /// calling file rule -- the `.dll` at the script's layout path:
+    /// <code>
+    /// target "out/(cfg:*)/(fwk:*)/(name:*).dll" {
+    ///     let! cfg = getRuleMatch "cfg"
+    ///     let! fwk = getRuleMatch "fwk"
+    ///     let! name = getRuleMatch "name"
+    ///     do! Locks.compileAs (lockOf name cfg) fwk versions }
+    /// </code>
+    /// <list type="bullet">
+    /// <item>reads the lock (a dependency on it, `Lock.load`); the target's file name must be
+    /// the entry's assembly name;</item>
+    /// <item>the output: `-o`/`/out:` at the target (a Xake-generated lock has none); a
+    /// `--doc:`/`/doc:` the lock carries is re-targeted beside it -- the `.xml` is a side
+    /// output, not a target, so a lock without doc expects none;</item>
+    /// <item>depends on every reference before compiling: the hashed ones, and the unhashed
+    /// outputs of project references, so a referenced project's `.dll` is built first by its
+    /// own rule and a change to it rebuilds this one;</item>
+    /// <item>C# source masks are expanded through `getFiles` (`Described.expandCsc`), so an
+    /// added or removed `.cs` rebuilds;</item>
+    /// <item>a `$(Version)` token in `Generated` is replaced by the version of the first
+    /// `versions` mask matching the project (its folder, where its first source lies, as
+    /// `&lt;folder&gt;/xake.project.json` relative to the project root); the variable is read
+    /// (a dependency) only when the token is there;</item>
+    /// <item>then `Lock.compileFrom`: prerequisites, the `HERMETIC=on` gate (message 10),
+    /// restore of what the lock names, the compiler (csc's server per `CSC_SERVER`).</item>
+    /// </list>
+    /// </summary>
+    let compileAs (lockPath: string) (fwk: string) (versions: (string * RequiredVar<string>) list) : Recipe<ExecContext, unit> =
+        recipe {
+            let! options = getCtxOptions ()
+            let root = normal (Path.GetFullPath options.ProjectRoot)
+            let! target = getTargetFile ()
+            let target = normal target.FullName
+            let! doc = Lock.load lockPath
+            let entry =
+                match doc.Entries |> List.filter (fun e -> same e.Framework fwk) with
+                | [ e ] -> e
+                | [] ->
+                    failwithf "the lock '%s' has no entry for %s (%s)" lockPath fwk
+                        (doc.Entries |> List.map (fun e -> e.Framework) |> String.concat ", ")
+                | many ->
+                    failwithf "the lock '%s' has %d entries for %s (%s); one per framework is expected" lockPath many.Length fwk
+                        (many |> List.map (fun e -> e.Name) |> String.concat ", ")
+            let asm = Path.GetFileNameWithoutExtension target
+            if entry.Name <> asm then
+                failwithf "'%s': the target '%s' is not the assembly of the lock '%s' (%s.dll)" entry.Name target lockPath entry.Name
+
+            // every reference first: a project reference's output is another rule's target
+            do! needFiles (Filelist (entry.Dependencies.References |> List.map (fun r -> File.make r.Path)))
+
+            let c = entry.Compilation
+            let! c =
+                match c with
+                | Lock.Compilation.Csc masked -> recipe {
+                    let! expanded = Described.expandCsc masked
+                    return Lock.Compilation.Csc expanded }
+                | Lock.Compilation.Fsc _ -> recipe { return c }
+
+            let! c =
+                if not (c.Generated |> List.exists (fun (_, text) -> text.Contains VersionToken)) then recipe { return c } else
+                recipe {
+                    let projectDir =
+                        c.Sources |> List.tryFind (fun s -> not (c.Generated |> List.exists (fst >> (=) s)) && not (s.StartsWith "!"))
+                        |> Option.map (fun s ->
+                            let parts = (normal s).Split '/' |> List.ofArray
+                            let fixedParts = parts |> List.takeWhile (fun p -> not (p.Contains "*" || p.Contains "?"))
+                            String.concat "/" (if fixedParts.Length = parts.Length then List.truncate (parts.Length - 1) parts else fixedParts))
+                        |> Option.defaultValue root
+                    let relative = if projectDir.StartsWith (root + "/") then projectDir.Substring (root.Length + 1) else projectDir
+                    let projectPath = relative + "/" + Description.FileName
+                    match versionFor versions projectPath with
+                    | None ->
+                        return failwithf "'%s': the lock '%s' needs a version (%s) and no mask of `versions` matches '%s' (%s)"
+                                    entry.Name lockPath VersionToken projectPath (versions |> List.map fst |> String.concat ", ")
+                    | Some var ->
+                        let! version = var
+                        let subst (path, (text: string)) = path, text.Replace (VersionToken, version)
+                        return
+                            match c with
+                            | Lock.Compilation.Fsc f -> Lock.Compilation.Fsc { f with Generated = f.Generated |> List.map subst }
+                            | Lock.Compilation.Csc x -> Lock.Compilation.Csc { x with Generated = x.Generated |> List.map subst } }
+
+            let! server = CompilerServer.resolve None
+            let lockOptions = { Lock.Options.Default with Run = { Lock.Options.Default.Run with Server = server } }
+            do! Lock.compileFrom lockPath lockOptions { entry with Compilation = outputAt target c }
+        }
+
+    /// <summary>
+    /// Needs the outputs of every described project of `descriptions` (a fileset of
+    /// `xake.project.json` files) in configuration `cfg`: for each framework of a
+    /// description, `outOf cfg fwk name` + `/&lt;assembly&gt;.dll` -- the targets the script's
+    /// compile rule (`compileAs`) builds, all at once so independent ones run in parallel. A
+    /// described project without a lock (`lockOf name cfg`) fails, naming the `update-locks` rule.
+    /// The script's `build` command:
+    /// <code>
+    /// command "build" { do! Locks.needAll (!! "src/*/xake.project.json") "Release" lockOf outOf }
+    /// </code>
+    /// </summary>
+    let needAll (descriptions: Fileset) (cfg: string)
+                (lockOf: string -> string -> string) (outOf: string -> string -> string -> string) : Recipe<ExecContext, unit> =
+        recipe {
+            let! options = getCtxOptions ()
+            let! (Filelist files) = getFiles descriptions
+            let! loaded =
+                files |> List.map (fun f -> Description.load f.FullName) |> sequence
+            let missing =
+                loaded |> List.filter (fun d ->
+                    let lockPath = lockOf d.Name cfg
+                    not (File.Exists (if Path.IsPathRooted lockPath then lockPath else Path.Combine (options.ProjectRoot, lockPath))))
+            if not (List.isEmpty missing) then
+                failwithf "no %s lock for %s; generate the locks first (e.g. the script's `update-locks`, over Locks.generate)"
+                    cfg (missing |> List.map (fun d -> sprintf "'%s' ('%s')" d.Name (lockOf d.Name cfg)) |> String.concat ", ")
+            let targets =
+                [ for d in loaded do
+                    let asm = d.AssemblyName |> Option.defaultValue d.Name
+                    for fwk in d.Frameworks -> normal (Path.Combine (outOf cfg fwk d.Name, asm + ".dll")) ]
+            do! need targets
+        }

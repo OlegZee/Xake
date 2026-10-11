@@ -1156,6 +1156,15 @@ with `.xake` deleted, `build` over the committed locks of A -> B runs no lock ru
 projects from the locks `update-locks` writes into `out/Release/<fwk>/`. Every test generates
 its locks through the phony `lock::` rule and `update-locks`.
 
+### Known difference: another checkout folder
+
+Measured on Xake's own projects (SDK 10.0.401, macOS arm64): rebuilding from the locks in the
+same folder gives byte-identical dlls. A clone in another folder, built from the same locks,
+gives dlls that differ in 59 bytes -- the PE checksum and the timestamps of the debug directory
+-- despite `--deterministic+` and `--pathmap`; the pdbs are identical. This is described, not
+fixed. Comparing packages built in different folders (nupkg equality) therefore has to compare
+entry content with this in mind, not the archive bytes or a plain hash of each dll.
+
 ## Behaviour notes
 
 - A `Lock.Entry` in memory has absolute paths throughout; `Lock.save`/`format` tokenizes

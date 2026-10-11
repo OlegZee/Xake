@@ -27,6 +27,7 @@ let versions = [ "src/hermetic/**", vars.HermeticVersion; "**", vars.Version ]  
 let fingerprints = "xake.fingerprints"
 
 do xakeScript {
+    filelog "build.log" Verbosity.Chatty
     consolelog Verbosity.Loud   // shows warnings: Fingerprints.warn logs at Warning, hidden at Normal
     varschema vars
     var "NUGET_PACKAGES" ".packages"

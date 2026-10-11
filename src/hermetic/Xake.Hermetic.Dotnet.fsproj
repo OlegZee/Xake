@@ -85,6 +85,13 @@
     </AssemblyAttribute>
   </ItemGroup>
 
+  <!-- ZipArchive (Sbom.fs, Sign.fs): on net462 the SDK adds it as a netstandard facade, which
+       the project description (xake.project.json, imported from this file) does not see; named
+       here so the import carries it into the fsc build of build.fsc.fsx. -->
+  <ItemGroup Condition="'$(TargetFramework)' == 'net462'">
+    <Reference Include="System.IO.Compression" />
+  </ItemGroup>
+
   <!-- Kept in step with src/core and src/dotnet: the FSharp.Core floor consumers inherit. -->
   <ItemGroup>
     <PackageReference Include="FSharp.Core" Version="8.0.100" />

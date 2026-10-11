@@ -152,6 +152,35 @@ module Nuget =
 
         { Packages = packages; Graph = graph; Direct = direct; Framework = framework }
 
+    /// The compile-time assets of every package in the restore graph of `framework`, as
+    /// `project.assets.json` lists them (`targets.<framework>.<id>/<version>.compile`):
+    /// (id, version, path inside the package folder), in the file's order. NuGet's empty
+    /// placeholder (`_._`) and `type: project` entries are left out. Fails like `readAssets`
+    /// when the file has no target for `framework`.
+    let compileItems (assetsFile: string) (framework: string) : (string * string * string) list =
+        let root = File.ReadAllText assetsFile |> Json.parse
+        let targets =
+            match Json.field "targets" root with
+            | Some (Json.JObject members) -> members
+            | _ -> []
+        match selectTarget framework targets with
+        | None ->
+            failwithf "'%s' has no target for '%s' (it has: %s) -- restore it for that framework"
+                assetsFile framework
+                (match targets |> List.map fst with | [] -> "no targets at all" | keys -> String.concat ", " keys)
+        | Some (_, Json.JObject entries) ->
+            entries |> List.collect (fun (key, entry) ->
+                if Json.field "type" entry |> Option.bind Json.asString = Some "project" then [] else
+                let id, version = splitIdVersion key
+                match Json.field "compile" entry with
+                | Some (Json.JObject items) ->
+                    items
+                    |> List.map fst
+                    |> List.filter (fun path -> Path.GetFileName path <> "_._")
+                    |> List.map (fun path -> id, version, path)
+                | _ -> [])
+        | Some _ -> []
+
     /// Finds a child element by local name (nuspec namespaces vary by schema version --
     /// matching on the qualified name would miss packages using an older/newer one).
     let private child (name: string) (el: XmlElement) =

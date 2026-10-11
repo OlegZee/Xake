@@ -38,8 +38,8 @@
        Description.fs) and the root tokens first, then
        Nuget (assets, nuspec, cache) and Restore (which names no lock type), Git (revision
        token), the lock format and the lock's side of a build (Lock.build/compile/record/verify,
-       csc { lock }, fsc { lock }), the import (csproj and fsproj) into a lock, then into a
-       description (Import.fs, on Project.fs's msbuild runner), and the release
+       csc { lock }, fsc { lock }), a description as a compilation (Described.fs: csc/fsc
+       { project }, config, packages), the import (csproj and fsproj), and the release
        pipeline. Signing is the one delegated rule (signing.md); it uses Verify, StrongName
        and Pack, so it compiles after all three. -->
   <ItemGroup>
@@ -50,6 +50,7 @@
     <Compile Include="Restore.fs" />
     <Compile Include="Git.fs" />
     <Compile Include="Lock.fs" />
+    <Compile Include="Described.fs" />
     <Compile Include="Project.fs" />
     <Compile Include="Import.fs" />
     <Compile Include="Sbom.fs" />

@@ -26,6 +26,7 @@
     <Compile Include="FsprojImportTests.fs" />
     <Compile Include="HermeticLockTests.fs" />
     <Compile Include="DescriptionTests.fs" />
+    <Compile Include="DescribedTests.fs" />
     <Compile Include="DescriptionImportTests.fs" />
   </ItemGroup>
   <ItemGroup>

@@ -28,6 +28,7 @@
     <Compile Include="DescriptionTests.fs" />
     <Compile Include="DescribedTests.fs" />
     <Compile Include="DescriptionImportTests.fs" />
+    <Compile Include="LockRule.fs" />
     <Compile Include="LocksTests.fs" />
     <Compile Include="BuildFromLockTests.fs" />
   </ItemGroup>

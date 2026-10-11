@@ -75,6 +75,22 @@ module Description =
 
     open Json
 
+    /// The fields of each kind of object, in the order `format` writes them. The schema
+    /// (docs/schemas/xake.project.schema.json) lists the same; a test keeps the two in step.
+    let internal fields =
+        Map.ofList
+            [ "project", [ "$schema"; "name"; "project"; "assemblyName"; "rootNamespace"; "language"; "kind"; "frameworks"
+                           "sources"; "resources"; "defines"; "references"; "projectRefs"; "packages"; "options"
+                           "internalsVisibleTo"; "byFramework"; "package" ]
+              "package", [ "id"; "version"; "private" ]
+              "items", [ "defines"; "references"; "packages"; "args" ]
+              "resource", [ "file"; "name" ]
+              "options", [ "doc"; "langVersion"; "warningsAsErrors"; "nullable"; "keyFile"; "args" ]
+              "friend", [ "name"; "key" ]
+              "metadata", [ "id"; "description"; "authors"; "copyright"; "tags"; "license"; "projectUrl"; "repository"
+                            "icon"; "readme"; "bundle" ]
+              "repository", [ "type"; "url" ] ]
+
     let private at (parent: string) (name: string) = if parent = "" then name else parent + "." + name
     let private fail (path: string) message = failwithf "'%s': %s" path message
 
@@ -100,17 +116,16 @@ module Description =
     let private orEmpty ms parent name read = opt ms parent name read |> Option.defaultValue []
 
     let private package path v =
-        let ms = members path ["id"; "version"; "private"] v
+        let ms = members path fields.["package"] v
         { Id = req ms path "id" str; Version = opt ms path "version" str
           Private = opt ms path "private" bool |> Option.defaultValue false }
 
-    let private itemsFields = ["defines"; "references"; "packages"; "args"]
     let private items path ms =
         { Defines = orEmpty ms path "defines" strs; References = orEmpty ms path "references" strs
           Packages = orEmpty ms path "packages" (fun p -> list p package); Args = orEmpty ms path "args" strs }
 
     let private options path v =
-        let ms = members path ["doc"; "langVersion"; "warningsAsErrors"; "nullable"; "keyFile"; "args"] v
+        let ms = members path fields.["options"] v
         { Doc = opt ms path "doc" bool |> Option.defaultValue false
           LangVersion = opt ms path "langVersion" str
           WarningsAsErrors = opt ms path "warningsAsErrors" bool |> Option.defaultValue false
@@ -124,24 +139,22 @@ module Description =
 
     let private friend path = function
         | JString name -> { Name = name; Key = None }
-        | v -> let ms = members path ["name"; "key"] v in { Name = req ms path "name" str; Key = opt ms path "key" str }
+        | v -> let ms = members path fields.["friend"] v in { Name = req ms path "name" str; Key = opt ms path "key" str }
 
     let private metadata path v =
-        let ms = members path ["id"; "description"; "authors"; "copyright"; "tags"; "license"; "projectUrl"; "repository"; "icon"; "readme"; "bundle"] v
+        let ms = members path fields.["metadata"] v
         let s name = opt ms path name str
         { Id = req ms path "id" str; Description = s "description"; Authors = s "authors"; Copyright = s "copyright"
           Tags = orEmpty ms path "tags" strs; License = s "license"; ProjectUrl = s "projectUrl"
           Repository =
             opt ms path "repository" (fun p v ->
-                let rs = members p ["type"; "url"] v
+                let rs = members p fields.["repository"] v
                 { Type = opt rs p "type" str; Url = opt rs p "url" str })
           Icon = s "icon"; Readme = s "readme"; Bundle = orEmpty ms path "bundle" strs }
 
     let private ofJson (root: Value) : Project =
         let ms =
-            members "" [ "$schema"; "name"; "project"; "assemblyName"; "rootNamespace"; "language"; "kind"; "frameworks"
-                         "sources"; "resources"; "defines"; "references"; "projectRefs"; "packages"; "options"
-                         "internalsVisibleTo"; "byFramework"; "package" ] root
+            members "" fields.["project"] root
         let s name = opt ms "" name str
         let d =
             { Schema = s "$schema"
@@ -164,7 +177,7 @@ module Description =
               Sources = req ms "" "sources" strs
               Resources =
                 orEmpty ms "" "resources" (fun p -> list p (fun p v ->
-                    let rs = members p ["file"; "name"] v
+                    let rs = members p fields.["resource"] v
                     { File = req rs p "file" str; Name = opt rs p "name" str }))
               Defines = orEmpty ms "" "defines" strs
               References = orEmpty ms "" "references" strs
@@ -175,7 +188,7 @@ module Description =
               ByFramework =
                 orEmpty ms "" "byFramework" (fun p v ->
                     let tfms = match v with JObject fs -> List.map fst fs | _ -> []
-                    members p tfms v |> List.map (fun (tfm, i) -> let ip = at p tfm in tfm, items ip (members ip itemsFields i)))
+                    members p tfms v |> List.map (fun (tfm, i) -> let ip = at p tfm in tfm, items ip (members ip fields.["items"] i)))
               Package = opt ms "" "package" metadata }
         d.ByFramework |> List.iter (fun (tfm, _) ->
             if not (List.contains tfm d.Frameworks) then fail (at "byFramework" tfm) "not one of the frameworks")

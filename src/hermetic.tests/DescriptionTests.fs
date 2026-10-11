@@ -123,3 +123,20 @@ type ``Project description``() =
         Assert.That(Description.beside "Lib.fsproj", Is.EqualTo "xake.project.json")
         let ds = ["A"; "B"] |> List.map (minimal >> Description.parse)
         Assert.That(Description.names ds, Is.EqualTo ["A"; "B"])
+
+    [<Test>]
+    member x.``the committed schema lists the fields the reader knows, in the writer's order``() =
+        let schema = Json.parse (File.ReadAllText (__SOURCE_DIRECTORY__ </> ".." </> ".." </> "docs" </> "schemas" </> "xake.project.schema.json"))
+        let rec get (path: string list) value =
+            match path with
+            | [] -> value
+            | p :: rest ->
+                match System.Int32.TryParse p, value with
+                | (true, i), Json.JArray items -> get rest items.[i]
+                | _ -> get rest (Json.field p value |> Option.get)
+        let names path = match get path schema with Json.JObject ms -> List.map fst ms | _ -> []
+        let check kind path = Assert.That(names path, Is.EqualTo (Description.fields.[kind]), kind)
+        check "project" ["properties"]
+        for kind in ["package"; "items"; "resource"; "options"; "metadata"; "repository"] do
+            check kind ["$defs"; kind; "properties"]
+        check "friend" ["$defs"; "friend"; "oneOf"; "1"; "properties"]

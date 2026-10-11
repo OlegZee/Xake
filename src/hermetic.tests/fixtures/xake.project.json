@@ -1,5 +1,5 @@
 {
-  "$schema": "../../docs/schemas/xake.project.schema.json",
+  "$schema": "../../../docs/schemas/xake.project.schema.json",
   "name": "Xake.Dotnet",
   "project": "Xake.Dotnet.fsproj",
   "language": "fsharp",

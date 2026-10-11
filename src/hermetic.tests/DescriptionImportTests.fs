@@ -60,7 +60,11 @@ type ``Description import``() =
         match ds with
         | [ core; dotnet; hermetic ] ->
             Assert.That(core.Name, Is.EqualTo "Xake")
-            Assert.That(core.Sources.Length, Is.EqualTo 33)
+            // every Compile item of the project file, in order
+            let compileItems =
+                System.Text.RegularExpressions.Regex.Matches(File.ReadAllText (src </> "core" </> "Xake.fsproj"), """<Compile Include="([^"]+)" />""")
+                |> Seq.map (fun m -> m.Groups.[1].Value.Replace('\\', '/')) |> List.ofSeq
+            Assert.That(core.Sources, Is.EqualTo compileItems)
             Assert.That(core.Sources |> List.take 3, Is.EqualTo [ "Prelude.fs"; "Logging.fs"; "Pickler.fs" ])
             Assert.That(core.Sources, Does.Contain "Tasks/Cp.fs")
             Assert.That(core.InternalsVisibleTo |> List.map (fun f -> f.Name), Is.EqualTo [ "Xake.Dotnet"; "tests" ])

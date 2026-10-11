@@ -105,7 +105,7 @@ type ``Project import of an fsproj``() =
         | Lock.Compilation.Fsc f ->
             Assert.That(f.Dependencies.Compiler.Tool, Is.EqualTo "fsc")
             Assert.That(f.Dependencies.Compiler.Path, Does.EndWith "/FSharp/fsc.dll")
-            Assert.That(f.Dependencies.Compiler.Sha256, Is.Not.Empty)
+            Assert.That(f.Dependencies.Compiler.Sha256, Is.Empty, "the SDK's fsc is identified by the SDK version")
             Assert.That(f.Dependencies.Compiler.Version, Is.Not.Empty)
             Assert.That(f.Dependencies.Analyzers, Is.Empty)
             Assert.That(f.Options, Does.Not.Contain "@Analyzers")

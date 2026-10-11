@@ -46,6 +46,10 @@ Breaking against 0.1 and the earlier 0.2 previews:
   None` is `DotNetFwk.packageRoot ()` (the script variable `NUGET_PACKAGES` first) and
   `Enabled = true` means "fetch unless `NUGET_FETCH=off`" (`Restore.resolve`).
 
+Next (unreleased): a compiler of the .NET SDK (`fsc.dll`, Roslyn `csc.dll`) is identified in
+the lock by the SDK version, not by a hash, so a lock holds across OS and architecture
+([lock.md](lock.md#the-compiler-a-lock-names)).
+
 `Xake.Hermetic.Dotnet` builds .NET assemblies and packages so that what shipped can be
 explained and checked: a **lock** file records exactly what the compiler was handed and the hash
 of everything it read, the build compiles from the lock and fails when anything differs, and the

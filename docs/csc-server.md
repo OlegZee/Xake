@@ -42,7 +42,7 @@ same `Csc` for either setting.
 
 ## Which server, and is it the hashed compiler?
 
-The lock hashes `csc.dll`. The server that compiles is not that file, so the question is
+The lock hashes a toolset package's `csc.dll` (an SDK `csc.dll` is identified by the SDK version instead, [hermetic/lock.md](hermetic/lock.md#the-compiler-a-lock-names)). The server that compiles is not that file, so the question is
 whether it is the same build of Roslyn.
 
 - The client locates the server relative to itself: `VBCSCompiler` (the apphost) or

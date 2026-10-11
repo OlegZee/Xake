@@ -70,7 +70,8 @@ type ``Fsc lock``() =
             Assert.That(f.Sources |> List.exists (fun s -> s.EndsWith "FLockA.fs"), Is.True)
             Assert.That(f.Dependencies.Compiler.Tool, Is.EqualTo "fsc")
             Assert.That(f.Dependencies.Compiler.Path, Does.EndWith "fsc.dll")
-            Assert.That(f.Dependencies.Compiler.Sha256, Is.Not.Empty)
+            Assert.That(f.Dependencies.Compiler.Sha256, Is.Empty, "the SDK's fsc is identified by the SDK version, not its bytes")
+            Assert.That(f.Dependencies.Compiler.Version, Is.Not.Empty)
             Assert.That(f.Dependencies.References |> List.exists (fun r -> r.Path.EndsWith "FSharp.Core.dll"), Is.True)
             Assert.That(f.Dependencies.References |> List.forall (fun r -> r.Sha256 <> ""), Is.True,
                 "the recorded entry has to be hashed -- that is what gates the next build")
@@ -253,3 +254,83 @@ type ``Fsc lock``() =
         File.WriteAllText (lockPath, Lock.format (Roots.builtin (Directory.GetCurrentDirectory ())) { Configuration = ""; Properties = []; Entries = [ bogus ] })
         Assert.That((readLock lockPath).Entries.Head.Prerequisites, Is.EqualTo bogus.Prerequisites)
 
+
+    // ---- the SDK's fsc: identified by the SDK version, not by a hash ----------------------
+
+    /// `entry` with its compiler's hash set to `sha` (a lock from Xake 0.2, or from a machine
+    /// of another OS/architecture, whose ReadyToRun `fsc.dll` has other bytes).
+    member private x.WithCompilerHash (sha: string) (entry: Lock.Entry) =
+        let f = entry.Fsc
+        { entry with
+            Compilation =
+                Lock.Compilation.Fsc
+                    { f with Fsc.Dependencies = { f.Dependencies with Compiler = { f.Dependencies.Compiler with Sha256 = sha } } } }
+
+    [<Test; Category("Integration")>]
+    member x.``a lock from 0.2 with a hash of the SDK's fsc round-trips unchanged and builds``() =
+        let lockPath = x.Fresh "FLockS"
+        x.Run "flock-s" (recipe {
+            let! f = Fsc.ofSettings (settings !!"FLockS.fs" "FLockS.dll")
+            do! Lock.record lockPath (Lock.Compilation.Fsc f) })
+        let recorded = (readLock lockPath).Entries |> List.exactlyOne
+        Assert.That(recorded.Fsc.Dependencies.Compiler.Sha256, Is.Empty)
+
+        // what 0.2 wrote: the real hash of fsc.dll
+        let compiler = recorded.Fsc.Dependencies.Compiler.Path
+        let old = x.WithCompilerHash (Csc.sha256 compiler) recorded
+        let roots = Roots.builtin (Directory.GetCurrentDirectory ())
+        let text = Lock.format roots { Configuration = ""; Properties = []; Entries = [ old ] }
+        File.WriteAllText (lockPath, text)
+        let readBack = (readLock lockPath).Entries |> List.exactlyOne
+        Assert.That(readBack.Fsc.Dependencies.Compiler.Sha256, Is.EqualTo (Csc.sha256 compiler), "the hash is read as written")
+        Assert.That(Lock.format roots { Configuration = ""; Properties = []; Entries = [ readBack ] }, Is.EqualTo text, "the format is unchanged")
+
+        // the same configuration matches the old lock, which builds and stays as it was
+        x.Build "flock-s2" (settings !!"FLockS.fs" "FLockS.dll") lockPath
+        Assert.That(File.Exists "FLockS.dll", Is.True, "the 0.2 lock did not build")
+        Assert.That(File.ReadAllText lockPath, Is.EqualTo text, "building must not rewrite the lock")
+
+    [<Test; Category("Integration")>]
+    member x.``a wrong hash of the SDK's fsc (another OS) is ignored when the SDK version is present``() =
+        let lockPath = x.Fresh "FLockT"
+        x.Run "flock-t" (recipe {
+            let! f = Fsc.ofSettings (settings !!"FLockT.fs" "FLockT.dll")
+            do! Lock.record lockPath (Lock.Compilation.Fsc f) })
+        let entry = (readLock lockPath).Entries |> List.exactlyOne
+        let other = x.WithCompilerHash (String.replicate 64 "a") entry
+        File.WriteAllText (lockPath, Lock.format (Roots.builtin (Directory.GetCurrentDirectory ())) { Configuration = ""; Properties = []; Entries = [ other ] })
+
+        // the entry itself, and the lock file through the gate
+        x.Run "flock-t2" (Lock.compile ((readLock lockPath).Entries |> List.exactlyOne))
+        Assert.That(File.Exists "FLockT.dll", Is.True, "Lock.compile refused an SDK fsc over its hash")
+        File.Delete "FLockT.dll"
+        x.Build "flock-t3" (settings !!"FLockT.fs" "FLockT.dll") lockPath
+        Assert.That(File.Exists "FLockT.dll", Is.True, "the lock with another OS's fsc hash did not build")
+
+    [<Test; Category("Integration")>]
+    member x.``an fsc of an SDK version that is not installed still fails``() =
+        let lockPath = x.Fresh "FLockU"
+        x.Run "flock-u" (recipe {
+            let! f = Fsc.ofSettings (settings !!"FLockU.fs" "FLockU.dll")
+            do! Lock.record lockPath (Lock.Compilation.Fsc f) })
+        let entry = (readLock lockPath).Entries |> List.exactlyOne
+        let f = entry.Fsc
+        let compiler = f.Dependencies.Compiler
+        let root = (DotNetFwk.dotnetRoot () |> Option.defaultValue "").Replace('\\', '/').TrimEnd '/'
+        let version = (DotNetFwk.sdkVersionOf root compiler.Path).Value
+        let missingPath = compiler.Path.Replace('\\', '/').Replace (sprintf "/sdk/%s/" version, "/sdk/0.0.1-xake-missing/")
+        let missing =
+            { entry with
+                Compilation =
+                    Lock.Compilation.Fsc
+                        { f with Fsc.Dependencies = { f.Dependencies with Compiler = { compiler with Path = missingPath } } } }
+
+        let ex = Assert.Throws<XakeException> (fun () -> x.Run "flock-u2" (Lock.compile missing))
+        Assert.That(ex.Data0, Does.Contain "'FLockU': the lock names the compiler of SDK 0.0.1-xake-missing")
+        Assert.That(File.Exists "FLockU.dll", Is.False, "nothing may be compiled")
+
+        // and the configuration, resolved with the installed SDK, differs from such a lock
+        File.WriteAllText (lockPath, Lock.format (Roots.builtin (Directory.GetCurrentDirectory ())) { Configuration = ""; Properties = []; Entries = [ missing ] })
+        let ex2 = Assert.Throws<XakeException> (fun () -> x.Build "flock-u3" (settings !!"FLockU.fs" "FLockU.dll") lockPath)
+        Assert.That(ex2.Data0, Does.Contain "differs from the lock")
+        Assert.That(ex2.Data0, Does.Contain "~ Compiler.Path")

@@ -53,6 +53,7 @@
     <Compile Include="Described.fs" />
     <Compile Include="Locks.fs" />
     <Compile Include="Project.fs" />
+    <Compile Include="Import.fs" />
     <Compile Include="Sbom.fs" />
     <Compile Include="Verify.fs" />
     <Compile Include="StrongName.fs" />

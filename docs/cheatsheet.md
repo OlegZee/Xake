@@ -102,6 +102,16 @@ Locks of project descriptions (`Xake.Hermetic.Dotnet`, [hermetic/lock.md](hermet
 `"locks" => Locks.generateAll (!! "src/*/xake.project.json") ["Release"] (fun n c -> $"locks/{n}/{c}.json") (fun c f _ -> $"out/{c}/{f}")`
 -- one lock per project x configuration, references first, nothing compiled; `-d LOCK_REFRESH=<ids|*>` re-resolves pinned packages.
 
+## Fingerprints of committed generated files
+
+```fsharp
+command "import" { do! Fingerprints.record "xake.fingerprints" "desc/a.json" ["a.fsproj"] }
+command "build"  { do! Fingerprints.warn "xake.fingerprints" }   // warns on stale/hand-edited
+"check" => Fingerprints.check "xake.fingerprints"                // fails instead
+```
+
+See [fingerprints.md](fingerprints.md).
+
 ## Filesets
 
 ```fsharp

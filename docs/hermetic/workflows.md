@@ -327,6 +327,11 @@ Each result carries `Inputs`, the msbuild files the evaluation read (repository 
 relative to the project root, sorted), and `Dropped`, what msbuild knows that the description
 has no field for; the latter is also logged. **(untested as a script; the tests run it)**
 
+The whole flow as one script is Xake's own `build.fsc.fsx` (readme "The declarative build"):
+`import` records each description in `xake.fingerprints` with `i.Inputs`, `update-locks` writes
+and records the locks, `build` compiles from the committed files and warns on a stale line,
+`check` fails instead. **(run)**
+
 ## C. Teammate or fresh machine
 
 A teammate clones, runs `dotnet fsi build.fsx -- -- build`, and gets the same compilation.

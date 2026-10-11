@@ -136,7 +136,32 @@ Once you cloned the repository you are ready to compile and test the binaries:
 dotnet fsi build.fsx -- -- build test
 ```
 
-... or use `build.cmd` (`build.sh`) in the root folder.
+... or use `build.cmd` (`build.sh`) in the root folder. `build.fsx` (msbuild via `dotnet build`) is
+the build of record: packages and releases come from it.
+
+### The declarative build (`build.fsc.fsx`)
+
+The same three libraries, compiled by fsc from committed data instead of msbuild: a project
+description per project (`src/<dir>/xake.project.json`), a lock per project and configuration
+(`locks/<name>/Release.json`) and their fingerprints (`xake.fingerprints`). The script runs on the
+libraries `build.fsx` builds, so bootstrap it once:
+
+```
+dotnet fsi build.fsx -- -- build                  # out/netstandard2.0: what build.fsc.fsx runs on
+dotnet fsi build.fsc.fsx -- -- build              # out/Release/<fwk>/*.dll from the committed locks
+```
+
+| Command | What it does |
+|---|---|
+| `import` | msbuild evaluates each `.fsproj` and writes its `xake.project.json` (only on change) |
+| `update-locks` | writes `locks/<name>/Release.json` from the descriptions, referenced projects first; packages via msbuild restore, kept versions unless `-d LOCK_REFRESH=<ids\|*>` |
+| `build` | compiles from the committed locks only, no msbuild; warns when a description or lock is stale against its inputs |
+| `check` | fails where `build` only warns (stale or hand-edited descriptions and locks) |
+
+After changing a project file: `import`, `update-locks`, commit the changed descriptions, locks
+and `xake.fingerprints`. The locks name the SDK's compiler by path and hash, so they hold for one
+SDK version and one OS/architecture (CI runs this build on macOS with that SDK). See
+[docs/hermetic/lock.md](docs/hermetic/lock.md#xake-generated-locks).
 
 Releases are published to nuget.org by CI from a `v*` tag — see
 [docs/devprocess.md](docs/devprocess.md) for the packaging and release procedure.

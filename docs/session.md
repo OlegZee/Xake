@@ -20,9 +20,9 @@ touched, so it is not re-litigated:
 - The mono provider built its `PATH` env var as `sdkroot </> ("bin" + ";" + PATH)` — `+` binds
   tighter than `</>`, and `;` is not the Unix separator. Fixed, but the mono path has no test
   coverage.
-- Both build scripts bootstrap from nuget.org: `build.fsx` from `#r "nuget: Xake, 3.4.0.21"`
-  (the 3.4.0 release as nuget.org carries it), `build.fsc.fsx` from that and
-  `#r "nuget: Xake.Hermetic.Dotnet, 0.1.0.22"`. They stay behind the release being made; bump
+- `build.fsx` bootstraps from nuget.org (`#r "nuget: Xake, 3.4.0.21"`, the 3.4.0 release as
+  nuget.org carries it); `build.fsc.fsx` runs on the dlls `build.fsx` builds (see "The fsc
+  build" below). The nuget references stay behind the release being made; bump
   them only after a release lands on nuget.org, to the exact published `X.Y.Z.<run>`.
   Developing against unreleased libraries: a temporary `#r` on dlls (or a `#i` local feed);
   see docs/devprocess.md, "Bootstrapping note". `samples/gettingstarted.fsx` references the
@@ -166,18 +166,30 @@ if the hermetic nuspec has no `Xake` dependency or names `Xake.Dotnet` (docs/dev
 
 ## The fsc build (`build.fsc.fsx`)
 
-The fsc-based build (repo root) compiles all three libraries with the `fsc` task, running on
-the published `Xake` and `Xake.Hermetic.Dotnet` (see above). It must not load Xake from `out/`:
-it overwrites `out/`, and overwriting the assemblies fsi has loaded kills the run with a
-`BadImageFormatException` -- so a dev `#r` points at a copy (docs/devprocess.md).
+The declarative self-build (fsc-rework PR 7): the three libraries compiled by fsc from committed
+data, no msbuild for them. `build.fsx` stays the build of record (packages, releases).
 
-```bash
-dotnet fsi build.fsc.fsx -- -- build test
-```
-
-What to compile is read from the msbuild evaluations kept in `projects/netstandard2.0/*.json`
-(tracked; regenerated when a project file changes). Its output is deterministic but not
-byte-identical to `dotnet build`. The package's own docs are in `docs/hermetic/`.
+- Data: `src/<dir>/xake.project.json` (descriptions, written by `import`, msbuild evaluating the
+  `.fsproj`), `locks/<name>/Release.json` (written by `update-locks` = the phony
+  `lock::<name>::<cfg>` rules over `Locks.generate`), `xake.fingerprints` (one line per
+  description and lock: its hash, its inputs' hash, the inputs). All committed.
+- `build` = `Fingerprints.warn` + `Locks.needAll`, the rule `out/(cfg:*)/(fwk:*)/(name:*).dll` =
+  `Locks.compileAs`; `check` = `Fingerprints.check`. `test` is `dotnet test` as in `build.fsx`.
+  Release only; `pack` waits for `Package.nupkg` (PR 8).
+- Bootstrap: `#r "out/netstandard2.0/*.dll"`, built by `dotnet fsi build.fsx -- -- build`, until
+  a release carries `Locks`/`Import`/`Fingerprints`. The script writes `out/Release/` only, so it
+  never overwrites what fsi loaded; its `clean` removes `out/Release` only.
+- Both scripts share `.xake`; CI deletes it between the bootstrap and `build.fsc.fsx`.
+- The locks name the SDK's `fsc.dll` by path and SHA-256, and that file is ReadyToRun code for
+  one OS and architecture: the committed locks hold for SDK 10.0.401 on macOS arm64, and the CI
+  job `build-fsc` runs there. Another SDK or OS needs `update-locks` (and a different lock).
+- `HERMETIC=on` is not set: it needs an exact SDK pin in `global.json` (`rollForward: disable`),
+  which the repository does not have (CI matrix 8.0/10.0).
+- `Fingerprints.warn` logs at `Warning`, which the default console level hides; the script sets
+  `consolelog Verbosity.Loud`.
+- After a project-file change: `import`, `update-locks`, commit descriptions, locks and
+  `xake.fingerprints`. Without it `build` warns once per stale line and still builds; `check`
+  fails.
 
 ## Earlier work: delegated execution (merged, PR #15)
 

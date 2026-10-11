@@ -34,7 +34,8 @@
     <None Include="readme.md" Pack="true" PackagePath="\" />
   </ItemGroup>
 
-  <!-- Order follows the dependencies: the json reader and the root tokens first, then
+  <!-- Order follows the dependencies: the json reader, the project description (data only,
+       Description.fs) and the root tokens first, then
        Nuget (assets, nuspec, cache) and Restore (which names no lock type), Git (revision
        token), the lock format and the lock's side of a build (Lock.build/compile/record/verify,
        csc { lock }, fsc { lock }), the import (csproj and fsproj), and the release
@@ -42,6 +43,7 @@
        and Pack, so it compiles after all three. -->
   <ItemGroup>
     <Compile Include="Json.fs" />
+    <Compile Include="Description.fs" />
     <Compile Include="Roots.fs" />
     <Compile Include="Nuget.fs" />
     <Compile Include="Restore.fs" />

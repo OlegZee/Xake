@@ -54,6 +54,9 @@ open Xake.Hermetic.Dotnet
 | `csc`/`fsc { ...; project "path"; config "Release"; packages p; lock "path" }` | operation | a compilation from a project description, gated the same way; a C# lock keeps the description's masks in `Sources` (an exclude as `!$(ProjectRoot)/...`), expanded when compiled ([../csc-syntax.md](../csc-syntax.md#from-a-project-description-project-config-packages)). No format change: `Sources` entries are strings the reader takes as written |
 | `Described.restore d framework` | recipe | a description's packages through an msbuild restore: compile assets and the graph for `Entry.Packages` |
 | `Locks.generateAll descriptions configs lockOf outOf` | recipe | one lock per described project x configuration, referenced projects first, nothing compiled, written only on change ([Xake-generated locks](#xake-generated-locks)) |
+| `Locks.compileAs lockPath fwk versions` | recipe | inside the layout's `.dll` rule: the lock's entry for `fwk` compiled into the rule's target ([Building from Xake-generated locks](#building-from-xake-generated-locks)) |
+| `Locks.needAll descriptions cfg lockOf outOf` | recipe | needs the layout `.dll` of every framework of every described project; a project without a lock fails naming `locks` |
+| `Lock.compileFrom lockPath options entry` | recipe | `compileWith` of an entry read from the lock at `lockPath` (named by the HERMETIC refusal) |
 | `Lock.recorded path unhashed entry` | recipe | the record-time step of `record` (hashes, prerequisites, the HERMETIC gate) without writing; the references in `unhashed` keep an empty hash |
 
 `Lock.Options = { Run: RunOptions; FscRun: FscRunOptions; Restore: Restore.Options }` with
@@ -1028,8 +1031,8 @@ let outOf cfg fwk (_: string) = $"out/{cfg}/{fwk}"
 - **No format change**: the locks use existing slots only, and the 0.2 reader (`Lock.parse`)
   reads them and `Lock.format` writes them back byte-identically.
 
-Not done here: building from such a lock into the layout (`-o` from the target, C# masks
-expanded) is the next step; diamond references (A Debug -> B Release -> C) are not detected.
+Not done here: diamond references (A Debug -> B Release -> C) are not detected. Building from
+these locks: next section.
 
 Tests: `src/hermetic.tests/LocksTests.fs` -- Xake's three projects (fixtures for src/core,
 src/dotnet, src/hermetic) get Release locks that read back unchanged, with no output switch and
@@ -1038,6 +1041,56 @@ disk; a Debug project over a Release-only netstandard2.0 library gets
 `$(ProjectRoot)/out/Release/netstandard2.0/Lib.dll` unhashed; a missing ref lock fails; a floating
 version stays until `LOCK_REFRESH` names it; nearest framework, ref configuration, kept versions
 and the order as pure tests.
+
+## Building from Xake-generated locks
+
+`Locks.compileAs` and `Locks.needAll` build the locks `generateAll` wrote into the script's
+layout -- the same layout (`outOf`) that `generateAll` wrote into the project-reference paths:
+
+```fsharp
+let versions = [ "src/hermetic/**", vars.HermeticVersion; "**", vars.Version ]
+command "build" { do! Locks.needAll (!! "src/*/xake.project.json") "Release" lockOf outOf }
+target "out/(cfg:*)/(fwk:*)/(name:*).dll" {
+    let! cfg = getRuleMatch "cfg"
+    let! fwk = getRuleMatch "fwk"
+    let! name = getRuleMatch "name"
+    do! Locks.compileAs (lockOf name cfg) fwk versions }
+```
+
+- **`needAll descriptions cfg lockOf outOf`** reads every description and needs
+  `outOf cfg fwk name` + `/<assembly>.dll` for each of its frameworks, all at once. A described
+  project with no lock at `lockOf name cfg` fails the build naming the `locks` command; nothing
+  regenerates a lock on its own.
+- **`compileAs lockPath fwk versions`** runs inside the rule whose target is the `.dll`. It reads
+  the lock (a dependency), takes its one entry for `fwk` (the target's file name must be the
+  entry's assembly name) and compiles it into the target: `--out:`/`/out:` is the rule's target
+  (the lock has none); a `--doc:`/`/doc:` the lock carries is re-targeted beside it. The `.xml` is
+  a side output, not a target, so a lock without doc (a Debug lock, say) expects no `.xml` and is
+  up to date on the next run.
+- **Dependencies**: every reference is needed before the compile -- the hashed ones and the
+  unhashed project-reference outputs, so the referenced `.dll` is built first by the same rule
+  and a change to it rebuilds the referencer. C# source masks are expanded through `getFiles`
+  (`Described.expandCsc`): an added or removed `.cs` under a mask rebuilds without touching the
+  lock. The runner's own `needFiles` covers the sources and the compiler.
+- **`$(Version)`**: a `$(Version)` token in `Generated` is replaced by the value of the variable
+  of the first `versions` mask matching the project, taken as `<folder>/xake.project.json`
+  relative to the project root, the folder being where its first source lies. The variable is
+  read (and so a dependency) only when the token is there; the lock keeps the token. The locks
+  `generateAll` writes today carry none (assembly versioning is an open topic).
+- **Replay** is `Lock.compileFrom` (what `buildWith` does with a matching lock): prerequisites,
+  the **HERMETIC=on gate** (a lock naming a path outside the roots is refused, message 10, before
+  anything compiles), restore of what the lock names (`NUGET_PACKAGES`, `NUGET_FETCH`), csc's
+  server per `CSC_SERVER`, the hash check of every hashed reference. Nothing is recorded: the
+  build never writes a lock.
+
+With `--deterministic+` and the tokenized pathmap, two clean builds give identical assemblies.
+
+Tests: `src/hermetic.tests/BuildFromLockTests.fs` -- A -> B (F#) built in Release and Debug,
+the second build of each does nothing, B's `.xml` beside its dll and none for A, a change to B
+rebuilds A, two clean builds byte-identical; a C# lock with masks rebuilds on an added `.cs`
+without a lock change; a description without a lock fails naming `locks`; `HERMETIC=on` refuses
+inside `compileAs`; `$(Version)` substituted and a new version rebuilds; Xake's three projects
+from their generated locks into `out/Release/<fwk>/`.
 
 ## Behaviour notes
 

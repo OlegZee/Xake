@@ -101,6 +101,10 @@ Script variables: `NETFX` (tool framework), `NETFX-TARGET` (default target frame
 Locks of project descriptions (`Xake.Hermetic.Dotnet`, [hermetic/lock.md](hermetic/lock.md#xake-generated-locks)):
 `"locks" => Locks.generateAll (!! "src/*/xake.project.json") ["Release"] (fun n c -> $"locks/{n}/{c}.json") (fun c f _ -> $"out/{c}/{f}")`
 -- one lock per project x configuration, references first, nothing compiled; `-d LOCK_REFRESH=<ids|*>` re-resolves pinned packages.
+Build from them ([hermetic/lock.md](hermetic/lock.md#building-from-xake-generated-locks)):
+`command "build" { do! Locks.needAll descriptions "Release" lockOf outOf }` and
+`target "out/(cfg:*)/(fwk:*)/(name:*).dll" { ...; do! Locks.compileAs (lockOf name cfg) fwk versions }`
+-- the dll is the target (`.xml` beside it when the lock asks for doc), refs built first, C# masks via `getFiles`, HERMETIC gate inside.
 
 ## Filesets
 

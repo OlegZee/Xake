@@ -168,6 +168,20 @@ type ``Building from Xake-generated locks``() =
         Assert.That(locks |> List.map File.ReadAllText, Is.EqualTo texts, "the build writes no lock")
         Assert.That(x.Stamps locks, Is.EqualTo stamps)
 
+    /// A fresh clone with an empty package folder (CI): the packages the lock names are
+    /// fetched by the replay's restore before anything needs them (needs nuget.org).
+    [<Test; Category("Integration")>]
+    member x.``an empty package folder is fetched before the build needs the packages``() =
+        fixture ()
+        let descriptions = !! "p/B/xake.project.json"
+        x.Generate "empty-generate" fixtureOf [ "B" ] [ "Release" ] |> ignore
+        let packages = Path.GetFullPath "empty-packages"
+        if Directory.Exists packages then Directory.Delete (packages, true)
+        File.Delete x.TestOptions.DbFileName
+        x.Script "empty-build" [ "NUGET_PACKAGES", packages; "NUGET_FETCH", "on" ] descriptions "Release"
+        Assert.That(File.Exists (dll "Release" "B"), Is.True)
+        Assert.That(File.Exists (packages </> "fsharp.core" </> "8.0.100" </> "lib" </> "netstandard2.0" </> "FSharp.Core.dll"), Is.True, "FSharp.Core fetched")
+
     /// C# masks are expanded at build through getFiles: an added `.cs` rebuilds; `obj/` is
     /// not a source.
     [<Test; Category("Integration")>]

@@ -47,6 +47,11 @@ Fingerprints.check  file               : Recipe<ExecContext, unit> // fail, list
 ```
 
 `record` writes the file only when its content changes. Paths are resolved against the project root.
+Concurrent `record` calls within one process are safe (rules run in parallel): the read-modify-write
+runs under a lock keyed by the file's full path, and the file is replaced atomically (written beside it,
+then moved), so a reader never sees a partial file. Separate processes recording into the same file are
+not synchronised. `warn` logs at `Message` level (`[MSG] Fingerprints: warning: ...`) because the
+default console verbosity `Normal` hides `Warning`.
 Pure helpers for plain code and tests: `hashFile`, `hashBytes`, `compute`, `parse`, `format`, `load`,
 `save`, `recordIn`, `status`, `verify`, `describe`.
 

@@ -3,6 +3,7 @@ namespace Xake
 open System
 open System.IO
 open System.Text
+open System.Collections.Concurrent
 open System.Security.Cryptography
 
 /// <summary>
@@ -124,26 +125,45 @@ module Fingerprints =
         let p = fullPath root file
         if File.Exists p then File.ReadAllText p |> parse else []
 
+    /// One lock object per fingerprint file (full path), shared by the whole process.
+    let private fileLocks =
+        ConcurrentDictionary<string, obj>(if Env.isUnix then StringComparer.Ordinal else StringComparer.OrdinalIgnoreCase)
+
+    let private withFileLock (path: string) f =
+        lock (fileLocks.GetOrAdd(path, fun _ -> obj())) f
+
+    /// Writes <paramref name="text"/> to a temporary file beside <paramref name="path"/> and moves it
+    /// into place, so a reader sees either the old or the new content, never a partial file.
+    let private writeAtomic (path: string) (text: string) =
+        let tmp = path + "." + Guid.NewGuid().ToString("N") + ".tmp"
+        try
+            File.WriteAllBytes(tmp, Encoding.UTF8.GetBytes text)
+            if File.Exists path then File.Replace(tmp, path, null) else File.Move(tmp, path)
+        finally
+            if File.Exists tmp then File.Delete tmp
+
     /// Writes the lines; returns true if the file content changed (an unchanged file is not touched).
     let save root file (lines: Line seq) =
         let p = fullPath root file
         let text = format lines
-        if File.Exists p && File.ReadAllText p = text then false
-        else
-            let dir = Path.GetDirectoryName p
-            if not (String.IsNullOrEmpty dir) then Directory.CreateDirectory dir |> ignore
-            File.WriteAllBytes(p, Encoding.UTF8.GetBytes text)
-            true
+        withFileLock p (fun () ->
+            if File.Exists p && File.ReadAllText p = text then false
+            else
+                let dir = Path.GetDirectoryName p
+                if not (String.IsNullOrEmpty dir) then Directory.CreateDirectory dir |> ignore
+                writeAtomic p text
+                true)
 
     /// Sets the line of <paramref name="line"/>.Target, replacing a previous one.
     let upsert (line: Line) (lines: Line list) =
         line :: (lines |> List.filter (fun l -> l.Target <> line.Target))
 
     /// Records the current state of <paramref name="target"/> into <paramref name="file"/>;
-    /// returns true if the file changed.
+    /// returns true if the file changed. Safe for concurrent callers within one process: the
+    /// read-modify-write runs under a lock keyed by the file's full path.
     let recordIn root file target inputs =
         let line = compute root target inputs
-        load root file |> upsert line |> save root file
+        withFileLock (fullPath root file) (fun () -> load root file |> upsert line |> save root file)
 
     /// Status of one line against the current files.
     let status root (line: Line) =
@@ -180,11 +200,12 @@ module Fingerprints =
         }
 
     /// Recipe: logs one warning per stale, hand-edited or missing target and continues.
+    /// Logged at <c>Message</c> level: the default console verbosity (<c>Normal</c>) hides <c>Warning</c>.
     let warn (file: string) : Recipe<ExecContext, unit> =
         recipe {
             let! ctx = getCtx()
             for problem in verify ctx.Options.ProjectRoot file do
-                do ctx.Logger.Log Warning "%s" (describe problem)
+                do ctx.Logger.Log Message "Fingerprints: warning: %s" (describe problem)
         }
 
     /// Recipe: fails with a message listing every stale, hand-edited or missing target.

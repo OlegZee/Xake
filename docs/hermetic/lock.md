@@ -1112,9 +1112,10 @@ target "out/(cfg:*)/(fwk:*)/(name:*).dll" {
   (the lock has none); a `--doc:`/`/doc:` the lock carries is re-targeted beside it. The `.xml` is
   a side output, not a target, so a lock without doc (a Debug lock, say) expects no `.xml` and is
   up to date on the next run.
-- **Dependencies**: every reference is needed before the compile -- the hashed ones and the
-  unhashed project-reference outputs, so the referenced `.dll` is built first by the same rule
-  and a change to it rebuilds the referencer. C# source masks are expanded through `getFiles`
+- **Dependencies**: the unhashed project-reference outputs are needed before the compile, so
+  the referenced `.dll` is built first by the same rule and a change to it rebuilds the
+  referencer. The hashed references are packages: a missing one (an empty package folder on a
+  fresh clone or CI) is fetched by the replay's restore first, then needed by the runner. C# source masks are expanded through `getFiles`
   (`Described.expandCsc`): an added or removed `.cs` under a mask rebuilds without touching the
   lock. The runner's own `needFiles` covers the sources and the compiler.
 - **`$(Version)`**: a `$(Version)` token in `Generated` is replaced by the value of the variable

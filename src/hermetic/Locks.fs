@@ -286,9 +286,10 @@ module Locks =
     /// <item>the output: `-o`/`/out:` at the target (a Xake-generated lock has none); a
     /// `--doc:`/`/doc:` the lock carries is re-targeted beside it -- the `.xml` is a side
     /// output, not a target, so a lock without doc expects none;</item>
-    /// <item>depends on every reference before compiling: the hashed ones, and the unhashed
-    /// outputs of project references, so a referenced project's `.dll` is built first by its
-    /// own rule and a change to it rebuilds this one;</item>
+    /// <item>depends on the unhashed outputs of project references before compiling, so a
+    /// referenced project's `.dll` is built first by its own rule and a change to it rebuilds
+    /// this one; the hashed references (packages) are fetched by the restore below when
+    /// missing, then needed by the runner;</item>
     /// <item>C# source masks are expanded through `getFiles` (`Described.expandCsc`), so an
     /// added or removed `.cs` rebuilds;</item>
     /// <item>a `$(Version)` token in `Generated` is replaced by the version of the first
@@ -319,8 +320,10 @@ module Locks =
             if entry.Name <> asm then
                 failwithf "'%s': the target '%s' is not the assembly of the lock '%s' (%s.dll)" entry.Name target lockPath entry.Name
 
-            // every reference first: a project reference's output is another rule's target
-            do! needFiles (Filelist (entry.Dependencies.References |> List.map (fun r -> File.make r.Path)))
+            // project-reference outputs first (unhashed in the lock): another rule's targets. The
+            // hashed ones are packages, which may not be fetched yet: the runner needs them after
+            // `compileFrom`'s restore
+            do! needFiles (Filelist (entry.Dependencies.References |> List.filter (fun r -> r.Sha256 = "") |> List.map (fun r -> File.make r.Path)))
 
             let c = entry.Compilation
             let! c =

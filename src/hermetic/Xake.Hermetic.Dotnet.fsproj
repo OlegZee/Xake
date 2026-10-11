@@ -51,6 +51,7 @@
     <Compile Include="Git.fs" />
     <Compile Include="Lock.fs" />
     <Compile Include="Described.fs" />
+    <Compile Include="Locks.fs" />
     <Compile Include="Project.fs" />
     <Compile Include="Sbom.fs" />
     <Compile Include="Verify.fs" />

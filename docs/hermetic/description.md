@@ -69,6 +69,39 @@ value on one line when it fits in 100 columns and one item per line otherwise, t
 indent, LF line ends, a final newline. Reading and writing a file in this format gives back the
 same bytes.
 
+## Import
+
+`Import.descriptions projects descriptionOf globals` (module `Import`, `src/hermetic/Import.fs`)
+writes the description of each project file from msbuild's evaluation under `globals`, e.g.
+`["Configuration", "Release"; "Brand", "MESCIUS"]`; `descriptionOf` maps a project file to its
+description file (`Description.beside`, or a brand folder). msbuild evaluates the project once
+without and once per target framework, through the same runner as the lock import; no targets
+run, nothing is restored, and a file is rewritten only when its content changes (an existing
+`$schema` is kept). How the fields are taken:
+
+- `name`: the project file name; `assemblyName`/`rootNamespace` only when they differ from it.
+- `sources`: F#, the `Compile` items in order. C#, Xake masks, not files: `**/*.cs` and
+  msbuild's default excludes (`!bin/**/*`, `!obj/**/*`, `!**/.*/**/*`), then the `Compile`
+  `Include`/`Remove` attributes of the repository files; `!` marks an exclude, applied in order,
+  and msbuild's `dir/**` is written `dir/**/*`. The masks are expanded and compared with
+  msbuild's own list; a difference is reported.
+- `defines`, `references`, `packages`: what every framework has; the rest under `byFramework`.
+  `TRACE` and the configuration's define, the SDK's implicit packages (`NETStandard.Library`,
+  `System.ValueTuple`) and references are left out. Package versions are msbuild's
+  (`Version`, `VersionOverride` or central `PackageVersion`); `PrivateAssets=all` is `private`.
+- `options`: `GenerateDocumentationFile`, `TreatWarningsAsErrors`, `Nullable`, `LangVersion`
+  (only when a repository file sets it), the key file when `SignAssembly`, F# `OtherFlags`.
+- `package`, when `IsPackable`: `PackageId`, `Description` and `Authors` (when a repository
+  file sets them), `Copyright`, `PackageTags`, `PackageLicenseExpression`, `PackageProjectUrl`,
+  `RepositoryType`/`RepositoryUrl`, `PackageIcon`/`PackageReadmeFile` as the packed file's
+  path; `bundle` is every `PrivateAssets=all` project reference.
+
+Each result (`Import.Imported`) names the project and description files, whether it was
+written, `Inputs` (the msbuild files read: the project, `Directory.Build.props`/`.targets` and
+other repository imports; not the SDK's, package or `obj/` files) and `Dropped` (what msbuild
+knows that the description has no field for: other properties and item types of the repository
+files, targets, other assembly attributes, the SDK's implicit packages).
+
 ## API
 
 | Function | Signature | What it does |
@@ -82,6 +115,8 @@ same bytes.
 | `Description.find` | `Fileset -> string -> Recipe<ExecContext, Project>` | the description named `name` among the files of the fileset; only that file becomes an input (one file dependency). It fails when no file, or more than one file, describes the name |
 | `Description.names` | `Project list -> string list` | the project names, in order |
 | `Description.beside` | `string -> string` | the conventional description of a project file: `xake.project.json` in the same folder |
+| `Import.descriptions` | `string list -> (string -> string) -> (string * string) list -> Recipe<ExecContext, Import.Imported list>` | import project files into descriptions (above) |
+| `Import.project` | `string -> (string -> string) -> (string * string) list -> Recipe<ExecContext, Import.Imported>` | the same for one project |
 
 ```fsharp
 open Xake

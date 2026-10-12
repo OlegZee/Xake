@@ -91,7 +91,7 @@ content rule belongs to the build definition, not to the machine.
 |---|---|---|
 | Package folder | script variable `NUGET_PACKAGES` (the folder to cache and ship) | resolve fails, asks for `NUGET_PACKAGES` |
 | csc compiler | `CSC_TOOLSET` (or `toolset` in the block) | resolve fails naming the SDK csc path |
-| fsc compiler | `global.json` exact pin; the SDK is the prerequisite | resolve fails naming the pin found |
+| fsc compiler | `global.json` exact pin; the SDK is the prerequisite (its identity: no hash of `fsc.dll`) | resolve fails naming the pin found |
 | `netN.0` references | a `NETCORE_REF_VERSION` entry for that major.minor (then always the NuGet `Microsoft.NETCore.App.Ref`) | resolve fails naming the `packs/` path and the version this SDK bundles |
 | `netstandard2.0` references | `NETStandard.Library` (pinned package, default 2.0.3) | nothing to do |
 | `netstandard2.1` references | `NETStandard.Library.Ref` 2.1.0 package | nothing to do |
@@ -151,7 +151,10 @@ A hermetic fsc build is "packages plus one SDK": `fsc.dll` from
 `global.json` with `rollForward: disable`; everything it reads (references, `FSharp.Core`, the
 netstandard facade) from the package folder. A clean machine needs exactly: the checkout, the
 package folder (or network), and that SDK. Two machines that pass the prerequisite check run the
-same compiler bytes (the lock records its sha256) over the same inputs.
+same compiler version over the same inputs. Not the same compiler bytes: the SDK's `fsc.dll` is
+ReadyToRun code for one OS and architecture, so the lock identifies it by the SDK version and
+records no hash for it (an older lock's hash is ignored; [lock.md](lock.md#the-compiler-a-lock-names)).
+The inputs it reads are hashed as before.
 
 ## The net46x facade has a package
 

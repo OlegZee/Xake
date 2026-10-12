@@ -1,7 +1,21 @@
 # Xake.Hermetic.Dotnet
 
-Version **0.2.0, preview**: the API may break while the package is 0.x. 0.2 is built on
-**Xake 3.6** (`[3.6.0.24, 3.7)`) and adds:
+Version **0.3.0, preview**: the API may break while the package is 0.x. 0.3 is built on
+**Xake 3.7** (`[3.7.0.26, 3.8)`) and adds:
+
+- **The SDK compiler by the SDK version**: a compiler of the .NET SDK (`fsc.dll`, Roslyn
+  `csc.dll`) is identified in the lock by the SDK version, not by a hash, so a lock holds across
+  OS and architecture ([lock.md](lock.md#the-compiler-a-lock-names)).
+- **`Description` / `Import` / `Described`**: a project described once in JSON, imported and
+  compiled with `fsc { project; config; packages }` / `csc { ... }`
+  ([description.md](description.md), [lock.md](lock.md#import-the-project-decides-msbuild-answers)).
+- **`Locks.generate` / `Locks.compileAs` / `Locks.needAll`**: Xake-generated locks, one per
+  described project and configuration, and the layout rules that build from them
+  ([lock.md](lock.md#xake-generated-locks)).
+
+## 0.2
+
+0.2 was built on **Xake 3.6** (`[3.6.0.24, 3.7)`) and added:
 
 - **F# in the lock**: a lock entry holds a C# or an F# compilation (`Lock.Compilation`),
   `fsc { lock }` gates an `fsc {}` block, and `Project.import` imports an fsproj like a csproj.
@@ -26,7 +40,7 @@ Breaking against 0.1 and the earlier 0.2 previews:
   and so do `compile`, `record` and `verify`; **`Entry.Csc` became `Entry.Compilation`** (the
   `entry.Csc` member remains, and fails for an F# entry).
 - **`Fsproj` removed**: `Project.import` imports an fsproj.
-- **Depends on Xake 3.6** (`[3.6.0.24, 3.7)`): the `Csc`/`Fsc` records gained fields, and F#
+- **Depends on Xake 3.6** (`[3.6.0.24, 3.7)` in 0.2; 0.3 moves to 3.7): the `Csc`/`Fsc` records gained fields, and F#
   records are not binary-compatible across such a change, so 0.2 does not run on 3.5. The upper
   bound is the next minor for the same reason.
 
@@ -51,10 +65,10 @@ explained and checked: a **lock** file records exactly what the compiler was han
 of everything it read, the build compiles from the lock and fails when anything differs, and the
 result can be turned into a deterministic package with an SBOM and a signing step. It is a
 separate NuGet package that depends on `Xake` (the engine and the `csc`/`fsc`/`msbuild`/`resgen`
-tasks of `Xake.Dotnet`, Xake 3.6.0.24 or later, below 3.7); nothing in `Xake` knows about it.
+tasks of `Xake.Dotnet`, Xake 3.7.0.26 or later, below 3.8); nothing in `Xake` knows about it.
 
 ```fsharp
-#r "nuget: Xake.Hermetic.Dotnet, 0.2.0"
+#r "nuget: Xake.Hermetic.Dotnet, 0.3.0"
 
 open Xake
 open Xake.Dotnet
@@ -149,7 +163,7 @@ dotnet test src/hermetic.tests -c Release --no-restore
 ```
 
 The lower bound is the exact version nuget.org carries (the release pipeline appends the run
-number to the version, so 3.6.0 is published as 3.6.0.24). A bound with no published package at
+number to the version, so 3.7.0 is published as 3.7.0.26). A bound with no published package at
 it makes NuGet pick the next one up and warn NU1603 on every restore.
 
 Only when working against an *unreleased* base (a change in `src/core` or `src/dotnet` that
@@ -158,11 +172,11 @@ the range and hand that folder to the restore as an extra source; nothing in the
 points at it:
 
 ```bash
-dotnet pack src/dotnet -c Release -p:Version=3.6.0.99 -o /tmp/xake-feed
+dotnet pack src/dotnet -c Release -p:Version=3.7.0.99 -o /tmp/xake-feed
 dotnet restore src/hermetic.tests -p:RestoreAdditionalProjectSources=/tmp/xake-feed
 dotnet test src/hermetic.tests -c Release --no-restore
 ```
 
-The package lands in the NuGet global cache (`~/.nuget/packages/xake/3.6.0.99`) and wins over
+The package lands in the NuGet global cache (`~/.nuget/packages/xake/3.7.0.99`) and wins over
 the released one from there on; delete that folder when done, and raise the lower bound in
 `Xake.Hermetic.Dotnet.fsproj` to the released version once the base is published.

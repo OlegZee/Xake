@@ -8,7 +8,8 @@ meets the `Xake` package, and what is and is not proven. The user-facing referen
 [tasks.md](tasks.md), [csc-syntax.md](csc-syntax.md) and [csc-server.md](csc-server.md).
 
 Every name below was checked against the source on this branch (`src/hermetic/*.fs`,
-`src/dotnet/Csc.fs`, `src/dotnet/Dotnet.csc.fs`, `src/dotnet/DotNetFwk.fs`). The working notes
+`src/dotnet/Csc.fs`, `src/dotnet/Dotnet.csc.fs`, `src/dotnet/DotNetFwk.fs`,
+`src/core/Fingerprints.fs`). The working notes
 (the product brief, the extraction plan, the session log, the experiments) stay on the feature
 branch and are not part of this documentation. This document summarizes the decisions taken
 there; it does not reopen them.
@@ -16,9 +17,7 @@ there; it does not reopen them.
 ## 1. The problem, and what "hermetic" means here
 
 A stock .NET build is msbuild plus NuGet. Restore talks to the network. The package cache is a
-mutable, machine-wide directory. `obj/` carries hidden incremental state. An SBOM, when there is
-one, is produced afterwards by a separate tool that reads `project.assets.json`: it describes
-what restore resolved, not what the compiler was handed. `RestorePackagesWithLockFile` locks
+mutable, machine-wide directory. `obj/` carries hidden incremental state. `RestorePackagesWithLockFile` locks
 package versions, not compiler inputs. `/deterministic` gives identical bytes only if the inputs
 are identical, and nothing in the stock toolchain proves that they were.
 
@@ -28,9 +27,9 @@ file, kept in git, that records per project and target framework exactly what th
 handed (the command line, the generated inputs, the resx pairs) and the SHA-256 of everything it
 reads from outside the repository (the compiler, every reference, every analyzer, the msbuild
 files that produced the answer) plus the NuGet restore graph. A build then compiles *from* the
-lock and fails when anything differs. From the same lock the package derives a deterministic
-CycloneDX SBOM, and around it sit a deterministic packer, a strong-name re-signer, a PE
-comparator and a signing rule.
+lock and fails when anything differs. Since 0.3 a lock can also come from a **project
+description** (`xake.project.json`, section 5). Around the lock sit a deterministic packer, a
+strong-name re-signer and a PE comparator. SBOM and signing: to be redone (0.4).
 
 ### What is controlled
 
@@ -45,15 +44,20 @@ comparator and a signing rule.
 | Packages missing on this machine | fetched by exact id and version, the nupkg SHA-512 compared with the lock |
 | The commit | kept out of the lock as the token `$(SourceRevisionId)`, resolved from `.git` at compile time |
 | The SDK choice | recorded (`Evaluation.Sdk`, `Evaluation.SdkPin`); the import warns when `global.json` does not pin it exactly |
-| The SDK an entry depends on | an exactly pinned SDK under `$(DotnetRoot)/sdk/<v>/` (fsc, an import's compiler and analyzers) is a `dotnet-sdk` prerequisite (`Entry.Prerequisites`), checked before a replay; without the exact pin the recording warns |
+| The SDK an entry depends on | an exactly pinned SDK under `$(DotnetRoot)/sdk/<v>/` (fsc, an import's compiler and analyzers) is a `dotnet-sdk` prerequisite (`Entry.Prerequisites`), checked before a replay; without the exact pin the recording warns. Since 0.3 a compiler of the SDK has no hash in the lock: the SDK version identifies it (`Lock.isSdkCompiler`) |
 
 ### What is not controlled
 
 The brief calls the result "mostly hermetic", and that is the honest word.
 
-- **msbuild is still the evaluator.** `Project.import` asks msbuild what it would run. The lock
-  records the result of the evaluation, not the evaluator. Replaying a lock starts no msbuild,
-  but producing one does.
+- **msbuild is still the evaluator.** `Project.import` asks msbuild what it would run.
+  `Import.descriptions` asks msbuild to evaluate a project file into a description.
+  `Locks.generate` runs `dotnet restore` on a synthesized project to resolve the packages. The
+  lock records the results, not the tools. A build from a lock starts no msbuild. Producing a
+  description or a lock starts msbuild.
+- **A description is a projection.** `Import.descriptions` keeps only what the schema has a field
+  for. It reports the rest (`Import.Imported.Dropped`). A project that needs a dropped item is
+  not built the same from its description.
 - **The network.** Restore is allowed by default (`Restore.Options.Enabled = true`, which
   follows the base's `NUGET_FETCH`). A build can turn it off (`-d NUGET_FETCH=off`, `nofetch`),
   and then a missing package fails the build before the compiler runs. There is no vendored
@@ -65,14 +69,24 @@ The brief calls the result "mostly hermetic", and that is the honest word.
 - **The package cache is trusted by path and checked by hash.** The per-file SHA-256 check is the
   real gate. The package-level check compares the lock's SHA-512 with the `contentHash` NuGet
   wrote into `.nupkg.metadata`; it does not re-hash the `.nupkg`.
-- **The SDK is recorded, not enforced.** A lock names the compiler under
-  `$(DotnetRoot)/sdk/<version>/`; a machine without that SDK fails with a message naming it.
+- **The SDK is a prerequisite, not a package.** fsc has no package, so an F# lock always names
+  `$(DotnetRoot)/sdk/<v>/FSharp/fsc.dll`. An imported C# lock names the SDK's csc and analyzers,
+  unless the project references the compiler package. A composed C# lock names the SDK's csc
+  when no toolset is set. Under an exact `global.json` pin the lock records the SDK as a
+  `dotnet-sdk` prerequisite. A replay checks the prerequisite first. Without the exact pin the
+  recording warns, and a replay fails only when the compiler file is missing.
+- **The bytes of an SDK compiler are not checked.** Since 0.3 the lock records no hash for a
+  compiler under `$(DotnetRoot)/sdk/<v>/` (`Lock.isSdkCompiler`). These files are ReadyToRun
+  images for one OS and architecture, so a hash would tie the lock to one platform. The SDK
+  version in the path and in the prerequisite identifies the compiler. A compiler from a package
+  keeps its hash.
+- **An import cannot choose the compiler.** `Project.import` records the compiler that msbuild
+  wires up: the SDK's, or the compiler package that the project itself references. `ImportOptions` has no toolset field, and the import does not read `CSC_TOOLSET`. The
+  description route can choose it: `Locks.generate` composes through `Csc.ofSettings`, which reads
+  `CSC_TOOLSET` (C# only; section 5).
 - **Byte identity across machines** also needs the same checkout path (csc embeds absolute
   source paths in the PDB and, under `/deterministic`, in the PE) or a `/pathmap`.
-- **Only C# goes through the lock.** `fsc` has no lock runner yet (section 8).
-- **Obfuscation, installers, policy gates, provenance statements** are not built. The brief's
-  capability ladder (compile lock, dependency map, SBOM, policy, attestation, offline mode) is
-  implemented up to the SBOM rung.
+- **Obfuscation, installers, policy gates, provenance statements** are not built.
 
 ## 2. The model
 
@@ -88,8 +102,11 @@ The brief calls the result "mostly hermetic", and that is the honest word.
 A `Csc` has three producers:
 
 1. `Csc.ofSettings settings` (what `csc { ...; resolve }` returns) composes one from settings.
+   `csc { project "path" }` (`Described.csc`) also ends in `Csc.ofSettings`: it turns the
+   description into settings first. `Locks.generate` uses this producer.
 2. `Project.import` builds one per project and framework from an msbuild design-time build, and
-   wraps it in a `Lock.Entry` with a filled `Evaluation` and `Packages`.
+   wraps it in a `Lock.Entry` with a filled `Evaluation` and `Packages`. It does not go through
+   `Csc.ofSettings`.
 3. `Lock.load` / `Lock.parse` read one back from a lock file.
 
 `Csc.ofArgs` is the shared factoring step: producers 1 and 2 both build a flat argument list and
@@ -109,6 +126,9 @@ that starts the C# compiler. Every path ends there:
 | `Lock.compile entry` | hermetic | `Lock.compileWith`, `Csc.run` or `Fsc.run` by the entry's case |
 | `fsc { ... }` | base | `Fsc.compile` = `Fsc.ofSettings`, `Fsc.runOptions`, `Fsc.run` |
 | `fsc { ...; lock "path" }` | hermetic | `Fsc.ofSettings`, `Fsc.runOptions`, `Lock.buildWith`, `Lock.compileWith`, `Fsc.run` |
+| `csc { project "d"; ...; lock "path" }` | hermetic | `Described.csc` (`Csc.ofSettings`), `Described.buildCsc` (`Lock.record` or `Lock.verify`), `Lock.compileWith`, `Csc.run` |
+| `fsc { project "d"; ...; lock "path" }` | hermetic | `Described.fsc` (`Fsc.ofSettings`), `Lock.buildWith`, `Lock.compileWith`, `Fsc.run` |
+| `Locks.compileAs lockPath fwk versions` | hermetic | `Lock.load`, `Lock.compileFrom`, `Csc.run` or `Fsc.run` |
 
 `Fsc.run` shares the runner core (`CompilerRunner`, a plan record both runners fill) with
 `Csc.run`; it is the only function that starts the F# compiler. `Lock.Options` carries one
@@ -130,12 +150,15 @@ out of the runner into `Lock.compileWith`, which runs them and then hands the `C
 
 ```
 Lock.buildWith options path c
-  lock missing   -> record (prerequisites, rehash, save) -> compileWith recorded
-  lock matches   -> compileWith recorded            (the recorded hashes gate the build)
+  lock missing   -> under CI: fail                   (Lock.underCi; FailOnError = false does not change it)
+                    else record (prerequisites, rehash, save) -> compileWith recorded
+  lock matches   -> compileWith recorded            (the runner checks the recorded hashes)
   lock differs   -> fail with Lock.diff              (FailOnError = false: warn, compileWith resolved)
 
 Lock.compileWith options entry
+     an SDK compiler's hash is cleared              (withoutSdkCompilerHash; the SDK version identifies it)
   0. Entry.Prerequisites                            (a dotnet-sdk <v> not installed fails here)
+     HERMETIC=on: a path outside the roots fails     (message 10)
   1. Restore.ensure options.Restore (Lock.restoreRequest [entry])
   2. ensureCompilerAvailable                       (explain a compiler still missing)
   3. $(SourceRevisionId) -> Git.headSha c.Directory (only when the token occurs)
@@ -158,6 +181,51 @@ The alternatives considered in the extraction plan, and why they lost:
 The base `CscSettingsType` has no `Lock` field and no `Prepare` field. `RunOptions` has no
 `Restore` field; the package folder travels in `Lock.Options = { Run: RunOptions; FscRun:
 FscRunOptions; Restore: Restore.Options }`.
+
+### Lock strictness and CI
+
+**Current behaviour (0.3).**
+
+- `Lock.underCi` decides whether the build runs under CI. It reads the script variable `CI` first
+  (`on`/`true`/`yes`/`1` or `off`/`false`/`no`/`0`; any other value fails). When the variable is
+  not set, it reads the environment variable `CI`. GitHub Actions, GitLab CI and Azure Pipelines
+  set it. Nothing reads `GITHUB_ACTIONS`. A script can read the flag with `let! ci =
+  Lock.underCi`.
+- `Lock.buildWith` is strict. `Lock.build`, `csc { lock }`, `fsc { lock }` and
+  `csc { project; lock }` (`Described.buildCsc`) use the same rules:
+  - A missing lock is recorded. Under CI, a missing lock fails the build.
+  - A lock that differs from the resolved compilation fails the build with the differences.
+    The build never rewrites a lock that exists, on CI or on a developer machine.
+  - Only `Lock.record`, `Locks.generate`, `Project.import` or deleting the file changes a lock.
+- `nofailonerror` (`FailOnError = false`) changes a mismatch into a traced error. The build then
+  continues: `buildWith` compiles the resolved compilation, and `buildCsc` compiles the recorded
+  entry. This also applies under CI. Only the missing-lock check ignores `FailOnError`.
+- `Locks.compileAs` compiles the committed lock as it is. It does not compare the lock with the
+  description. `Fingerprints.warn` reports a stale lock or description as a warning.
+  `Fingerprints.check` fails on one. Neither function reads `CI`.
+- `Locks.generate`, `Import.descriptions` and `Project.import` do not read `CI`. They write their
+  files each time they run.
+- `HERMETIC=on` and `NUGET_FETCH` are independent of `CI` ([hermetic/hermetic-mode.md](hermetic/hermetic-mode.md)).
+
+**What to do on CI today** to never rewrite a lock and to fail on a mismatch:
+
+1. Do not set `CI` yourself. The runner sets it, and a missing lock then fails.
+2. Do not use `nofailonerror` in a block that has `lock`.
+3. Do not run the targets that call `Import.descriptions`, `Project.import`, `Locks.generate` or
+   `Lock.record` (for example `import` and `update-locks`).
+4. For described projects, run `Fingerprints.check "xake.fingerprints"` before `build`. Or let
+   `build` call `Fingerprints.check` when `Lock.underCi` is true and `Fingerprints.warn` when it
+   is false.
+5. As a safety net, run `git diff --exit-code` on the locks and descriptions after the build.
+6. For completeness, also set `HERMETIC=on` ([hermetic/workflows.md](hermetic/workflows.md#d-ci-github-actions-and-gitlab-ci)).
+
+**Proposal (not built; for decision).** These changes would put the rules above into the code:
+
+- Under CI, a lock mismatch fails even with `FailOnError = false`. That is, CI disables the
+  override.
+- Under CI, `Locks.generate`, `Import.project` and `Project.import` fail when the file they
+  would write differs from the committed one.
+- A library function that runs `Fingerprints.check` under CI and `Fingerprints.warn` otherwise.
 
 ### `resolve` and the overloaded `Run`
 
@@ -241,24 +309,31 @@ uses only public names of the base: `Tool.diagnosticLevel`, `Tool.failOnExitCode
 | # | Base (`src/dotnet`, `Xake.Dotnet`) | # | Hermetic (`src/hermetic`, `Xake.Hermetic.Dotnet`) |
 |---|---|---|---|
 | 1 | `Tool.fs` | 1 | `Json.fs` (internal) |
-| 2 | `Hash.fs` | 2 | `Roots.fs` |
-| 3 | `DotNetFwk.fs` | 3 | `Nuget.fs` |
-| 4 | `ResourceFileset.fs` | 4 | `Restore.fs` (also the namespace-level `Package` type) |
-| 5 | `Resx.fs` | 5 | `Git.fs` |
-| 6 | `DotnetTasks.fs` | 6 | `Lock.fs` (also `CscLocked`, `CscLockBuilder`, `FscLocked`, `FscLockBuilder`) |
-| 7 | `CscArgs.fs`, `FscArgs.fs` | 7 | `Project.fs` |
-| 8 | `CompilerRunner.fs`, `Csc.fs`, `Fsc.fs` | 8 | `Sbom.fs` |
-| 9 | `Dotnet.csc.fs` | 9 | `Verify.fs` |
-| 10 | `Dotnet.fsc.fs`, `Dotnet.resgen.fs`, `Dotnet.Msbuild.fs` | 10 | `StrongName.fs` |
-| | | 11 | `Pack.fs` |
-| | | 12 | `Sign.fs` (also `SignState`, `SignBuilder`) |
+| 2 | `Hash.fs` | 2 | `Description.fs` |
+| 3 | `DotNetFwk.fs` | 3 | `Roots.fs` |
+| 4 | `ResourceFileset.fs` | 4 | `Nuget.fs` |
+| 5 | `Resx.fs` | 5 | `Restore.fs` (also the namespace-level `Package` type) |
+| 6 | `DotnetTasks.fs` | 6 | `Git.fs` |
+| 7 | `CscArgs.fs`, `FscArgs.fs` | 7 | `Lock.fs` (also `CscLocked`, `CscLockBuilder`, `FscLocked`, `FscLockBuilder`) |
+| 8 | `CompilerRunner.fs`, `Csc.fs`, `Fsc.fs` | 8 | `Described.fs` (also `CscDescribedBuilder`, `FscDescribedBuilder`) |
+| 9 | `Dotnet.csc.fs` | 9 | `Locks.fs` |
+| 10 | `Dotnet.fsc.fs`, `Dotnet.resgen.fs`, `Dotnet.Msbuild.fs` | 10 | `Project.fs` |
+| | | 11 | `Import.fs` |
+| | | 12 | `Verify.fs` |
+| | | 13 | `StrongName.fs` |
+| | | 14 | `Pack.fs` |
+
+The table leaves out `Sbom.fs` (after `Import.fs`) and `Sign.fs` (last). SBOM and signing: to be
+redone (0.4).
 
 Within the hermetic package the order follows the dependencies. `Restore` names no lock type,
 so it compiles before `Lock` and takes a `Restore.Request`, not lock entries. `Git` compiles
 before `Lock` (the lock needs `Git.headSha`), which is why `Git.tokenize` works on text and a
-whole entry is tokenized with `entry |> Lock.mapText (Git.tokenize sha)`. `Verify` does not
-depend on `Sbom`; the SBOM checker lives in `Sbom`. `Sign` uses `Verify`, `StrongName` and
-`Pack`, so it compiles last.
+whole entry is tokenized with `entry |> Lock.mapText (Git.tokenize sha)`. `Description` uses only
+`Json`, so it compiles early. `Described` uses `Lock` (`Described.buildCsc`), so it compiles
+after `Lock`. `Locks` uses `Described` (`Described.restore` and the `project` operation), so
+lock generation is a module of its own and not part of `Lock`. `Import` uses `Project.runMsbuild`
+and `Project.parseImports`, so it compiles after `Project`.
 
 Who uses whom inside the hermetic package (names used in code, not comments):
 
@@ -269,12 +344,14 @@ Who uses whom inside the hermetic package (names used in code, not comments):
 | `Restore` | `Nuget`, `Roots`, `DotNetFwk` |
 | `Git` | nothing |
 | `Lock` | `Csc`, `Fsc`, `CompilerServer`, `RunOptions`, `FscRunOptions`, `Nuget`, `Restore`, `Roots`, `Git`, `Json` |
+| `Description` | `Json` |
+| `Described` | `Description`, `Lock`, `Restore`, `Nuget`, `Csc`, `Fsc`, `DotNetFwk`, `Tool` |
+| `Locks` | `Description`, `Described`, `Lock`, `Roots`, `CscArgs`, `FscArgs`, `CompilerServer` |
 | `Project` | `Lock`, `Csc`, `CscArgs`, `Fsc`, `FscArgs`, `Nuget`, `Roots`, `Git`, `Json`, `Tool` |
-| `Sbom` | `Lock`, `Nuget`, `Csc`, `Json` |
+| `Import` | `Description`, `Project`, `Json`, `DotNetFwk` |
 | `Verify` | nothing |
 | `StrongName` | `Verify` (the internal PE `Layout`) |
 | `Pack` | nothing |
-| `Sign` | `Verify`, `StrongName`, `Pack`, `Hash`, `Json` |
 
 ### Base pieces the hermetic package relies on
 
@@ -306,7 +383,7 @@ Who uses whom inside the hermetic package (names used in code, not comments):
 | `Csc.mapText f` | pure | rewrites `Generated` content, `Options`, `Defines` |
 | `Csc.diffList` | pure | ordered LCS diff, `- x` / `+ x` lines |
 | `Csc.runOptions settings` | recipe | `RunOptions` for composed settings: `FailOnError`, `CscPath`, resolved server, the framework's env vars |
-| `Csc.ofSettings settings` | recipe | composes a `Csc`; fails without `targetfwk` or `NETFX-TARGET`; the compiler from `Toolset`, else `CSC_TOOLSET`, else the SDK `global.json` selects; never hashes |
+| `Csc.ofSettings settings` | recipe | composes a `Csc`; the framework from `targetfwk`, else `NETFX-TARGET`, else the SDK's own .NET; the output from `out`, else the rule's file target; the compiler from `Toolset`, else `CSC_TOOLSET`, else the SDK `global.json` selects; never hashes |
 | `Csc.run options c` | recipe | the runner (below) |
 | `Csc.compile settings` | recipe | `ofSettings`, `runOptions`, `run`; replaces 3.3's `Csc settings` |
 
@@ -423,10 +500,13 @@ plus `toolset`, `noserver`, `keepalive` and `resolve`, the marker `CscRequest`, 
 | `Options` / `Options.Default` | record | `{ Run: RunOptions; FscRun: FscRunOptions; Restore: Restore.Options }` |
 | `restoreRequest entries` | pure | every compiler, reference and analyzer path, plus the combined graph |
 | `restore options doc` | recipe | `Restore.ensure` over a whole lock; fails on a problem |
-| `compileWith options entry`, `compile entry` | recipes | the replay (section 2): prerequisites, the `HERMETIC=on` gate (message 10), restore with `Restore.resolve`d options; `compile` resolves the server first |
+| `isSdkCompiler path`, `withoutSdkCompilerHash entry` | reads the SDK root | whether a compiler lies under `$(DotnetRoot)/sdk/<v>/`; the entry with that compiler's hash cleared (`rehash` and every replay apply it) |
+| `underCi` | recipe | whether the build runs under CI: the script variable `CI`, else the environment variable `CI` (section 2) |
+| `compileWith options entry`, `compile entry`, `compileFrom lockPath options entry` | recipes | the replay (section 2): prerequisites, the `HERMETIC=on` gate (message 10), restore with `Restore.resolve`d options; `compile` resolves the server first; `compileFrom` names the lock in message 10 (`Locks.compileAs`) |
+| `recorded path unhashed entry` | recipe | the record step without the write: `needFiles`, prerequisites, the `HERMETIC=on` gate, `rehash`; the references in `unhashed` (project-reference outputs) stay without a hash (`Locks.generate`) |
 | `record path c` | recipe | `c: Compilation`; `needFiles` what it hashes, derive the prerequisites (warn without an exact pin), the `HERMETIC=on` gate (messages 2, 9), rehash, overwrite a one-entry lock; compiles nothing |
 | `verify path c` | recipe | `diff (entry c.Name doc) (ofCompilation c with its prerequisites)`; writes and compiles nothing |
-| `buildWith options path c`, `build path c` | recipes | the strict gate (section 2), over a `Compilation` |
+| `buildWith options path c`, `build path c` | recipes | compare `c` with the lock, then record, fail or compile (section 2, "Lock strictness and CI") |
 | `lock "path"` | builder operation | `CscLockBuilder`: `Csc.ofSettings`, `Csc.runOptions`, `Lock.buildWith`; `FscLockBuilder`: the same with `Fsc.ofSettings`, `Fsc.runOptions` |
 | `nofetch` | builder operation, after `lock` | `Restore.Options.Enabled = false` (was `norestore`), the per-target form of `NUGET_FETCH=off`; `packageroot` was removed in 0.2, the folder is the build's (`NUGET_PACKAGES`) |
 
@@ -442,21 +522,6 @@ Internals of `Project` that tests use: `withProjectLock` (one `Resource` per pro
 variants cannot restore over each other's `obj/project.assets.json`), `frameworksToImport` (only
 the frameworks the project declares), `parseImports`, `parseImport`.
 
-`Sbom`:
-
-| Name | Kind | What it does |
-|---|---|---|
-| `Hash`, `Property`, `Component`, `Composition`, `Annotation`, `Bom` | records | the CycloneDX model |
-| `cycloneDx bom` | pure | CycloneDX 1.6 JSON, deterministic |
-| `forAssembly cacheRoot entry assemblyPath` | reads disk | restore-scope BOM of one assembly |
-| `forPackage nupkgPath assemblies` | reads disk | restore-scope BOM of one nupkg, the union of its assemblies' BOMs |
-| `packageSbomPath framework` | pure | `sbom/<tfm>/bom.cdx.json` |
-| `PackageScope.*` | pure | the predicates the package-scope default is built from |
-| `PackageScopeOptions` / `.Default` | record | the knobs of the package-scope rule |
-| `shippedPaths`, `pathProperty` | pure, value | tier-1 inventory; `"xake:nuget:path"` |
-| `forPackageScoped`, `forPackageScopedWith options` | reads disk | package-scope BOM of one nupkg for one framework |
-| `checkPackageScope options nupkg framework bom` | reads disk | acceptance checks 3.1 to 3.4; `[]` is a pass |
-
 `Verify`: `authenticodeHash path`, `compare a b` (labelled `Difference` list), `verdict diffs`;
 the PE `Layout` and `layout` are internal.
 
@@ -464,10 +529,7 @@ the PE `Layout` and `layout` are internal.
 
 `Pack`: `Entry`, `Options` / `Options.Default`, `zip`, `nupkg`, `list`.
 
-`Sign`: `Algorithm`, `Certificate`, `Kind`, `Request`, `Signer`, `Store`, `Settings` /
-`Settings.Default`, `kindOf`, `imageHash`, `identity`, `request`, `SignatureEntry`, `isSigned`,
-`verifySameImage`, `fakeSigner`, `directoryStore`, `rule`, `executor`; the builder `sign {}`
-(`SignBuilder`, auto-opened).
+`Description`, `Described`, `Locks`, `Import`: section 5, "Project descriptions".
 
 ## 4. The lock file format
 
@@ -557,8 +619,8 @@ a shared root would tokenize more than intended.
 
 | Function | Missing file | Used for |
 |---|---|---|
-| `Hash.sha256` (base) | throws | a verification, which must never produce `""` by accident; `Sign.imageHash` of a nupkg |
-| `Csc.sha256` (base) | `""` | everything the lock records: import, `rehash`, the runner's check, the SBOM root hash |
+| `Hash.sha256` (base) | throws | a verification, which must never produce `""` by accident |
+| `Csc.sha256` (base) | `""` | everything the lock records: import, `rehash`, the runner's check |
 
 An empty `Sha256` in a lock means "not computed", never "zero bytes". The runner skips it, and
 `Lock.diff` compares two hashes only when both are non-empty. That is why a composed compilation
@@ -567,7 +629,7 @@ without reporting every reference. Imported project references are unhashed by d
 point at the referenced project's own output, not built at import time.
 
 Hashes are lowercase hex SHA-256. Package hashes are NuGet's base64 SHA-512 as found in
-`.nupkg.metadata`; the SBOM converts them to hex.
+`.nupkg.metadata`.
 
 ### `$(SourceRevisionId)`
 
@@ -585,7 +647,8 @@ fails when there is no repository. Because the lock content no longer changes wi
 An imported entry's project references are `Reference`s with an empty hash, at the path msbuild
 would have built them (`bin/...`). A script maps them to the path its own rule produces them at
 (`Lock.mapPaths`, which drops the hash of any rewritten item), `need`s those outputs, and then
-calls `Lock.compile`. The maintainers' import script on the feature branch is the worked
+calls `Lock.compile`. A lock that `Locks.generate` writes needs no remap: it records the path the
+script's layout gives (`outOf`), without a hash (section 5). The maintainers' import script on the feature branch is the worked
 example (the guide, section 6, shows the pattern); section 8 has the caveat about keying the
 remap on the empty hash.
 
@@ -595,7 +658,7 @@ remap on the empty hash.
 design-time build: every package of the framework's target in `project.assets.json` (`type:
 project` entries excluded), the SHA-512 from the cache, `Direct` from the project's own framework
 section, and `DependsOn` from the graph edges. The runner never reads it; `Restore` uses it for
-the original id casing and the nupkg hash, and `Sbom` uses it for components and edges.
+the original id casing and the nupkg hash.
 
 ### `Lock.diff`
 
@@ -617,7 +680,7 @@ Line shapes are `+ x`, `- x`, `~ Label path: old -> new`.
 
 Limits:
 
-- A lock changes when the SDK changes (the compiler path and hash). An entry that depends on the
+- A lock changes when the SDK changes (the compiler path; an SDK compiler carries no hash, being ReadyToRun code for one OS/architecture). An entry that depends on the
   SDK records it as a prerequisite under an exact pin; without one, the recording warns.
 - A lock records absolute paths under `$(ProjectRoot)`; a lock is portable, but byte-identical
   *output* also needs the same checkout path or a `/pathmap`.
@@ -657,67 +720,128 @@ at an exact version; `verify` reports an absent package and a wrong SHA-512; `in
 to the project root; integration: a real restore into a scratch folder then a compile, restore
 off reports instead of fetching, a wrong recorded SHA-512 fails by name.
 
-### SBOM
+### SBOM and signing
 
-`Sbom.forAssembly cacheRoot entry assemblyPath` is the **restore scope**: what the compile saw.
+SBOM and signing: to be redone (0.4).
 
-- Every package of `entry.Packages` is a component with `purl` `pkg:nuget/<Id>@<Version>` in the
-  assets file's own casing. The cache is matched case-insensitively.
-- Scope: a package with at least one referenced file is `excluded` when every such file is under
-  its `ref/` folder, else `required`, with the referenced files nested as `file` components. A
-  package with no referenced file is `required` when it is reachable from a direct dependency and
-  `Nuget.ships` finds `lib/` or `runtimes/` content; otherwise `excluded`.
-- References outside the cache (project references, SDK packs) are top-level `file` components.
-- `dependencies[]`: the root depends on every direct, required package; package edges from
-  `DependsOn` when both ends are in the BOM.
-- `formulation`: analyzers, `csc` with `Compiler.Version`, the SDK with `Evaluation.Sdk`, all
-  `scope: excluded`.
-- The root is the assembly, hashed with `Csc.sha256`, version from `Evaluation.Properties`.
+### Project descriptions (`xake.project.json`)
 
-`Sbom.forPackage nupkg assemblies` is the restore-scope union for one nupkg: the nupkg as root
-(SHA-256 and SHA-512 of the file), the assemblies nested under it, components and edges merged
-by `bom-ref`.
+This part is the maintainers' view: where the code is and why it has this shape. The user pages
+are [hermetic/description.md](hermetic/description.md) (the model and the import),
+[hermetic/lock.md](hermetic/lock.md#xake-generated-locks) (lock generation and the build from
+locks) and [fingerprints.md](fingerprints.md).
 
-`Sbom.forPackageScoped nupkg framework assemblies` is the **package scope**: what the customer
-receives, per a package-scope SBOM specification supplied by the first user of the package. Tier 1
-is the physical inventory of the nupkg for that framework (`lib/`, `runtimes/`, `contentFiles/`,
-`analyzers/`, `build*/`, `tools/`), each file with SHA-256 and SHA-512, nested under the root;
-our own assemblies are recognized by hash against the evidence BOMs. Tier 2 is the nuspec
-dependency group for that framework, verbatim, with the declared range in
-`dt:nuget:declaredVersionRange` and the resolved version and purl taken from the evidence.
-There is no tier 3: nothing transitive appears. The boundary is declared: a `complete`
-composition over the root's assemblies, an `incomplete` one over dependencies, and one annotation.
-No `dependencies[]` entry has a tier-2 component as its `ref`. The root carries no hash, because
-the document is meant to be packed into the nupkg at `sbom/<tfm>/bom.cdx.json`.
+The flow has four steps. Each step is an explicit call in the script:
 
-`Sbom.checkPackageScope options nupkg framework bom` runs the acceptance checks mechanically
-(nupkg, SBOM and nuspec against each other) and shares `shippedPaths` and the options with the
-producer, so the two cannot drift.
+```
+project file --Import.descriptions--> xake.project.json --Locks.generate--> lock --Locks.compileAs--> dll
+   (msbuild evaluation)               (committed)      (dotnet restore,      (committed)  (no msbuild)
+                                                         csc/fsc { project })
+```
 
-Determinism: no `metadata.timestamp`; `serialNumber` is a UUID-shaped value taken from the
-SHA-256 of the document rendered with a placeholder serial; every unordered array is sorted. The
-only clock value is the package-scope annotation timestamp, which is `SOURCE_DATE_EPOCH` or
-`1980-01-01T00:00:00Z`. The tool component is `{ "name": "Xake.Hermetic.Dotnet", "version": <the
-assembly version> }`, so SBOM bytes change when the package version changes.
+#### The model
 
-The six questions the package-scope work left for a human decision (still open; they also
-decide the final names of the `Sbom.for*` functions):
+`Description` (`src/hermetic/Description.fs`) holds the model: `Description.Project` and its
+parts. A description is data only. It says what a project is: name, language, frameworks,
+sources, references, packages, options and package metadata. It has no placeholders. A variant
+that msbuild evaluates differently (a brand) gets its own description. Configurations, the
+output layout and versions belong to the script. The schema is
+`docs/schemas/xake.project.schema.json`. `Description.format` writes a fixed text form, so a
+description changes only when its content changes. `Description.load` reads a file and makes it a
+dependency of the target. `Description.FileName` is `xake.project.json`.
 
-| # | Question | Current behaviour |
-|---|---|---|
-| 1 | Keep `formulation` (compiler, SDK, analyzers) in the package document? | dropped (`KeepFormulation = false`) |
-| 2 | The annotation timestamp: DOS epoch, `SOURCE_DATE_EPOCH`, or real time? | epoch unless `SOURCE_DATE_EPOCH`; real time would cost byte identity |
-| 3 | `dependencies[]` entries for our own assemblies? | emitted |
-| 4 | Apply NuGet's nearest-compatible dependency group? | not applied; a missing group gives no tier 2 |
-| 5 | A declared dependency the evidence never resolved: keep or fail? | kept, purl without version |
-| 6 | A hash of the root (the nupkg)? | none; would require producing the SBOM after packing and shipping it next to the nupkg |
+The model is data and needs no compiler code. That is why the roadmap moves it into the core
+(see below).
 
-Tests (`SbomTests`): deterministic CycloneDX; the BOM of an assembly from a lock; the JSON
-parses; `forPackage` from assembly BOMs; tier 1 is the shipped files for the framework, hashed;
-tier 2 is the nuspec group verbatim with nothing transitive; the boundary is declared and the
-render is deterministic; one document per framework; the verifier passes the generated document
-and catches tampering; options override content and classification; no boundary text means no
-annotation and the verifier says so.
+#### The compile: `csc/fsc { project "path"; config "Release" }`
+
+`Described` (`src/hermetic/Described.fs`) turns a description into settings. The operation
+`project` is a type extension of the base builders (`CscDescribedBuilder`,
+`FscDescribedBuilder`), the same technique as `lock`. The operations before `project` stay in
+effect: `targetfwk` selects one framework of the description, `out` sets the output, and `ref`
+passes the outputs of project references. The operations after `project` are `config`,
+`packages`, `lock`, `nofetch` and `resolve`.
+
+- `Described.csc` and `Described.fsc` end in `Csc.ofSettings` and `Fsc.ofSettings`. So a
+  description goes through the same composition, round-trip check and `HERMETIC=on` gate as any
+  other block. They add `/deterministic+` (`--deterministic+`) and a `/pathmap` of the project
+  root.
+- `config` applies the SDK's preset (`Described.preset`). The preset adds the defines and the
+  debug and optimize switches that `dotnet build -c Debug|Release` passes. Only `Debug` and
+  `Release` are known; any other name fails.
+- `packages` takes a `Described.Restored`. The compile does not resolve packages. A description
+  with packages and no `packages` operation fails. `Described.restore` resolves them: it runs
+  `dotnet restore` on a synthesized project into the build's package folder and reads
+  `project.assets.json`. Package resolution stays with NuGet; that is the design decision.
+- C# sources stay masks (msbuild's globs). The resolved `Csc` and its lock keep the masks.
+  `Described.expandCsc` expands them at compile time through `getFiles`, so an added `.cs` file
+  rebuilds the target and does not change the lock.
+
+#### The import: `Import.descriptions`
+
+`Import` (`src/hermetic/Import.fs`) writes descriptions from project files.
+`Import.descriptions projects descriptionOf globals` evaluates each project with msbuild under
+the global properties `globals`. A brand is one set of `globals` and one `descriptionOf` (for
+example a brand folder). msbuild evaluates once without a framework and once per framework. No
+target runs, and nothing is restored. `Description.write` writes the file only when the content
+changes. The result `Import.Imported` lists the msbuild files the evaluation read (`Inputs`, for
+fingerprints) and what has no field in the description (`Dropped`).
+
+The import records no input. It is a command, not a rule: a rule would run again on every fresh
+clone, because a fresh clone has no `.xake` database. Import shares `Project.runMsbuild` and
+`Project.parseImports` with `Project.import`. Unlike `Project.import`, it produces a description,
+not a lock.
+
+#### The lock: `Locks.generate`
+
+`Locks` (`src/hermetic/Locks.fs`) writes and builds the locks of descriptions. It is a module of
+its own because it uses `Described`, which compiles after `Lock`.
+
+`Locks.generate lockOf outOf config descriptionPath` writes one lock for one project and one
+configuration. The lock has one entry per framework of the description. The script calls it from
+a phony rule, for example `lock::(name:*)::(cfg:*)`. That rule `need`s the lock rules of the
+project references first. A phony target `update-locks` needs all lock rules. Generation is
+explicit for the same reason as the import.
+
+- Each entry comes from `csc/fsc { targetfwk; out; ref; project; config; packages; resolve }`.
+  So the lock is what the composed task would compile. `CSC_TOOLSET` applies to C# entries.
+- The entry has no `/out:` (`-o`). The output path belongs to the build (`Locks.compileAs`).
+- Packages come from `Described.restore`. A version that the current lock holds is passed as an
+  exact version, so it does not float. `LOCK_REFRESH=<ids|*>` lets the named packages resolve
+  again.
+- A project reference gets a configuration (`Locks.refConfig`: the same, else `Release`, else
+  `Debug`) and a framework (`Locks.nearestFramework`). The lock records the reference as the
+  path of its output (`outOf`), without a hash (`Lock.recorded`).
+- The file is written only when its text changes. The lock format is the same as before 0.3.
+
+#### The build: `Locks.needAll` and `Locks.compileAs`
+
+`Locks.needAll descriptions cfg lockOf outOf` needs the output `.dll` of every framework of
+every description. A missing lock fails and names `update-locks`. Independent targets build in
+parallel.
+
+`Locks.compileAs lockPath fwk versions` builds one entry inside the file rule of the `.dll`. It
+takes the output from the rule's target (`getTargetFile`) and inserts `/out:` (`--out:`). It
+needs the outputs of the project references first. It expands the C# masks. It replaces a
+`$(Version)` token in `Generated` with the version of the first matching mask in `versions`.
+Then it calls `Lock.compileFrom`. `compileAs` does not compare the lock with the description
+(section 2, "Lock strictness and CI").
+
+#### Fingerprints
+
+`Fingerprints` (`src/core/Fingerprints.fs`) is in the core package `Xake`, not in this package.
+It is language-neutral. It records, in one committed file (`xake.fingerprints` by convention),
+how each committed generated file was produced: the file's hash, the hash of its inputs, and the
+inputs. `Fingerprints.record` adds a line. `Fingerprints.warn` reports a stale, hand-edited or
+missing file and continues. `Fingerprints.check` fails. The design decision: a build warns and
+uses the committed files, the same as CI. It does not regenerate them.
+
+#### Planned
+
+- The roadmap moves the descriptions (`xake.project.json`, `Description`, `Import`) into the
+  core package `Xake`. The description is language-neutral data.
+- A built-in Xake CLI command that writes `xake.project.json` from project files is a roadmap
+  idea.
 
 ### Verify
 
@@ -768,36 +892,6 @@ byte for byte; `checksum` is idempotent and reacts to changes; `stamp` sets `Tim
 recomputes `CheckSum` only; `normalise` touches exactly `TimeDateStamp`, `CheckSum` and
 `StrongNameSignature`.
 
-### Sign
-
-Signing is the one delegated rule in the pipeline, because the key lives elsewhere, the work is
-I/O-bound waiting, and the output is not byte-reproducible (a timestamp countersignature embeds
-the signing moment). So:
-
-- `Signer = Request -> Async<byte[]>` is the only thing a deployment replaces. `Sign.fakeSigner`
-  appends a genuine `WIN_CERTIFICATE` with a JSON payload (PE) or adds a `.signature.p7s` entry
-  (nupkg), and refreshes `CheckSum`. No real signing tool is wired up.
-- `Sign.identity settings input` is SHA-256 of (image hash, certificate id, timestamp server,
-  hash algorithm). The image hash is `Verify.authenticodeHash` for a PE and `Hash.sha256` for a
-  nupkg. `Description` is not part of the key. Two targets holding the same image share one
-  signature; the wall clock never enters the key.
-- `Sign.rule settings signer` is the local rule: `need` the input, call the signer, write the
-  target. `Sign.executor settings signer store budget` is a `DelegatedExecutor` that never runs
-  the body: store hit, join an in-flight job for the same key, or take one unit of `budget` and
-  call the signer, then publish. It records the input as a `FileDep`.
-- `sign { target ...; input ...; certificate ...; signer ... }` returns the local rule, or the
-  delegated one when both `store` and `budget` are given. No `signer` fails at construction;
-  `store` without `budget` (or the reverse) fails too.
-- `Sign.verifySameImage input signed`: the signed file carries a signature and its Authenticode
-  hash equals the input's (for a nupkg, every entry but the signature is unchanged).
-
-Tests (`SignTests`): `sign {}` gives the local or the delegated rule; the fake signer leaves the
-Authenticode hash alone and adds a certificate table; two targets sharing one image are signed
-once; a second run serves every target from the store with no signer call; the budget caps
-concurrent signer calls independently of `Threads`; a signed nupkg gains the signature entry and
-keeps every other entry; the identity key follows the image and the policy, never the signing
-moment.
-
 ## 6. Compiler server
 
 `Csc.run` adds `/shared` (and `/keepalive:<n>` when asked) to the command line, ahead of
@@ -816,7 +910,8 @@ What it does not affect:
 - **Which compiler compiles.** The client finds the server in its own directory, and the default
   pipe name is derived from that directory, so another SDK or toolset version gets its own server.
   The request carries the client's commit hash; a mismatching server makes the client compile
-  in-process. The hashed `csc.dll` and the compiling server are the same Roslyn build.
+  in-process. So the server is the same Roslyn build as the `csc.dll` the lock names. The lock
+  names that file by its hash, or, for the SDK's `csc.dll`, by the SDK version (since 0.3).
 
 When the switch is not added even though the server is on (`serverArgs`): no `VBCSCompiler.dll`
 next to the compiler file (legacy `csc.exe`, mono's `mcs`, an arbitrary `cscpath`, a Roslyn
@@ -835,8 +930,10 @@ Precedence (`CompilerServer.resolve`), first that is set wins:
 
 `Lock.build` and `Lock.compile` resolve the server with `CompilerServer.resolve None`;
 `buildWith` and `compileWith` take the options as given; `csc { lock }` uses `Csc.runOptions`, so
-a target's own `noserver` applies. `RunOptions.Default.Server` is `fromEnvironment ()`, which
-does not read `CSC_SERVER`. Measured gains: about 25 percent of wall clock on a 12-assembly build,
+a target's own `noserver` applies. `Locks.compileAs` also resolves the server with
+`CompilerServer.resolve None`. `RunOptions.Default.Server` is `fromEnvironment ()`, which does
+not read `CSC_SERVER`. fsc has no server: `Fsc.run` adds no client switches
+(`CompilerRunner.RunPlan.ClientSwitches` is empty). Measured gains: about 25 percent of wall clock on a 12-assembly build,
 about 3x per small compile. Verified on macOS only. Details: [csc-server.md](csc-server.md).
 
 ## 7. Evidence
@@ -855,10 +952,9 @@ and `-t:Rebuild`, and compares.
 |---|---|
 | byte-identical to `dotnet build` (dll, pdb, xml) | **36/36** |
 | deterministic: `obj/xake` deleted, compiled again | 36/36 |
-| SBOMs regenerated | 12/12 byte-identical |
 | built against a freshly restored package folder | 36/36 identical to the build against the machine cache |
-| with the compiler server on (SDK 8.0.425) | 36/36, 36/36, 12/12, 36/36; `/shared` in all 12 traced command lines |
-| after the `Csc` record split (B2) and after the extraction (E1 to E4) | 36/36, 36/36, 12/12, 36/36 |
+| with the compiler server on (SDK 8.0.425) | 36/36 in each byte check above; `/shared` in all 12 traced command lines |
+| after the `Csc` record split (B2) and after the extraction (E1 to E4) | 36/36 in each byte check above |
 | the dataengine locks, old writer vs new writer | identical (`cmp`) |
 
 Behaviour observed on the same fixture:
@@ -877,8 +973,7 @@ one restore per project without `TargetFramework` and with `RestoreRecursive=fal
 `Resource` per project path.
 
 A second, larger fixture (12 libraries plus a cross-repository reference into the first) was
-90/90 byte-identical on 2026-09-24, and its 30 SBOMs regenerated byte-identical after the lock
-split. (The notes disagree on whether the 90/90 run used the split lock format.) Its byte comparison cannot currently be re-run in a tree Xake has built in
+90/90 byte-identical on 2026-09-24. (The notes disagree on whether the 90/90 run used the split lock format.) Its byte comparison cannot currently be re-run in a tree Xake has built in
 (section 8).
 
 A shipped, signed release of one dataengine library was also compared with a local build of the
@@ -918,28 +1013,25 @@ run: base 258 passed and 1 skipped, hermetic 118 passed, 0 warnings in both libr
 
 | Item | Detail |
 |---|---|
-| The F# compiler is the SDK's | done in Xake 3.5 / hermetic 0.2: `Fsc.run` shares the runner with `Csc.run`, F# entries are in the lock, `Project.import` reads an fsproj, `Fsproj` is gone. What remains: no package carries a current F# compiler, so an F# lock names `<sdk>/FSharp/fsc.dll` and is reproducible only under an exact SDK pin; `FscArgs` does not treat `--embed:` as a path switch, so an imported fsproj keeps msbuild's relative `--embed:obj/...` values (they resolve against the entry's `Directory`, and the output is byte-identical) |
+| The F# compiler is the SDK's | done in Xake 3.5 / hermetic 0.2: `Fsc.run` shares the runner with `Csc.run`, F# entries are in the lock, `Project.import` reads an fsproj, `Fsproj` is gone. What remains: no package carries a current F# compiler, so an F# lock names `<sdk>/FSharp/fsc.dll` and is reproducible only under an exact SDK pin. Since 0.3 that compiler has no hash in the lock: the SDK version identifies it, so one lock builds on every OS and architecture that has that SDK; `FscArgs` does not treat `--embed:` as a path switch, so an imported fsproj keeps msbuild's relative `--embed:obj/...` values (they resolve against the entry's `Directory`, and the output is byte-identical) |
 | The net462 resx path | `Impl.compileResx` has two bodies on purpose: net462 uses `ResXResourceReader` (typed values, file refs), netstandard2.0 uses `Resx.compile`, which reads plain string values only and throws on typed entries. The runner calls `Resx.compile` for a missing `.resources`. No byte-identity claim is made for net462 |
-| The published base as a dependency | `src/hermetic` takes `Xake` as a PackageReference `[3.6.0.24, 3.7)`, so it compiles against the assemblies on nuget.org, not the `src/core`/`src/dotnet` of the same checkout, and the nuspec range is the reference's own (no pack-time rewriting). The lower bound must be a version that exists: the release run number makes 3.6.0 `3.6.0.24`, and `[3.6.0, 3.7)` warns NU1603 on every restore. The upper bound is the next minor: the `Csc`/`Fsc` records gain fields in base minors, and F# records are not binary-compatible across that (3.6 added `RuntimeConfig`), so each base minor gets a release of this package. A change the hermetic package needs from the base is released first; until then it is developed against a locally packed base passed as an extra restore source (`NUGET_SOURCE`) |
-| The fsx bootstrap | `build.fsx` bootstraps from `#r "nuget: Xake, 3.4.0.21"`, `build.fsc.fsx` from that and `#r "nuget: Xake.Hermetic.Dotnet, 0.1.0.22"` (exact published versions); `build.fsx` stays on the base package only. A fix in `src/hermetic` reaches `build.fsc.fsx` only after a release and a bump, or through a temporary `#r` on a copy of the built dlls (docs/devprocess.md) |
-| `sign` shadowing | `open Xake.Hermetic.Dotnet` brings the builder `sign` into scope, shadowing FSharp.Core's numeric `sign` (still `Operators.sign`). A value named like an operation (`signer`, `store`, `budget`) cannot be passed inside the block (FS3095); tests name them `theSigner` and so on |
-| SBOM tool identity | `metadata.tools.components[0]` is `Xake.Hermetic.Dotnet` with the executing assembly's version (the `AssemblyVersion`, for example `0.1.0.0`, not the package's full version), and the package-scope annotation's annotator is the same name (`Sbom.toolName`). There is no vendor field |
-| Vendor defaults in `PackageScopeOptions.Default` | `PackageScope.internalIds` is `DS.*`, `MESCIUS.*`, `GrapeCity.*`, the first user's prefixes; other users must override `IsInternal` |
-| The six SBOM questions | section 5; they also decide the final names of `Sbom.forPackage` / `forPackageScoped(With)` |
-| `targetfwk` required | `Csc.ofSettings` fails without `targetfwk` or `NETFX-TARGET` (decided: an error, the Windows `csc.rsp` fallback is gone). The composed mode only locates .NET Framework monikers (`net-4.6.2`, `net472`, ...) and `netstandard2.0`/`2.1`, so the message suggests `targetfwk "netstandard2.0"`; `net8.0` fails with "not a known .NET Framework profile". A modern target framework goes through `Project.import` |
+| The published base as a dependency | `src/hermetic` takes `Xake` as a PackageReference `[3.7.0.26, 3.8)`, so it compiles against the assemblies on nuget.org, not the `src/core`/`src/dotnet` of the same checkout, and the nuspec range is the reference's own (no pack-time rewriting). The lower bound must be a version that exists: the release run number makes 3.7.0 `3.7.0.26`, and `[3.7.0, 3.8)` warns NU1603 on every restore. The upper bound is the next minor: the `Csc`/`Fsc` records gain fields in base minors, and F# records are not binary-compatible across that (3.6 added `RuntimeConfig`), so each base minor gets a release of this package. A change the hermetic package needs from the base is released first; until then it is developed against a locally packed base passed as an extra restore source (`NUGET_SOURCE`) |
+| The fsx bootstrap | on this branch `build.fsx` bootstraps from `#r "nuget: Xake, 3.4.0.21"`, and `build.fsc.fsx` from that and `#r "nuget: Xake.Hermetic.Dotnet, 0.1.0.22"` (exact published versions); `build.fsx` stays on the base package only. #50 reworks `build.fsc.fsx` to `#r` the released 3.7 and 0.3 packages and to build from descriptions and locks. A fix in `src/hermetic` reaches `build.fsc.fsx` only after a release and a bump, or through a temporary `#r` on a copy of the built dlls (docs/devprocess.md) |
+| The target framework of a composed block | `Csc.ofSettings` takes `targetfwk`, else the script variable `NETFX-TARGET`, else the .NET of the SDK the build runs on. It fails only when none of them gives a framework (the Windows `csc.rsp` fallback is gone). An unknown .NET Framework moniker fails with "not a known .NET Framework profile" |
 | A locally built reference in `csc { lock }` | `Csc.run` checks hashes after `needFiles (CscArgs.inputs args)`, so a reference another rule of the script produces is rebuilt first and the check sees the bytes the compiler reads. If such a reference was recorded with a hash (`Lock.record` after it exists), any change to it is then a hash mismatch on the next build that rebuilds it. The imported-lock pattern avoids it by mapping project references (which drops the hash) and `need`ing them first |
 | New source files and the gate | a composed `csc {}` expands its filesets without recording them as a dependency, so a new file matching the glob does not rerun the target; the lock gate only fires when something else changes (observed; base behaviour) |
 | `Lock.build` and `Lock.verify` look up by name | they use `Lock.entry c.Name`, which fails when a lock holds the name for several frameworks. Composed locks hold one entry, so this only matters for a hand-merged lock |
-| The one-call build of an imported lock | the extraction plan sketched `Lock.build lockFile framework name` and a `Lock.buildWith { RunOptions; ExtraRoots; OutputOf }` that would also map project references. Not built: `Lock.build` gates a composed compilation; an imported lock is built with `Lock.load`, `Lock.entryFor`, `Lock.mapPaths`, `need`, `Lock.compile` |
+| The one-call build of an imported lock | the extraction plan sketched `Lock.build lockFile framework name` and a `Lock.buildWith { RunOptions; ExtraRoots; OutputOf }` that would also map project references. Not built. `Lock.build` takes a composed compilation: it compares the compilation with the lock and compiles the lock entry only when the two are equal. A lock from `Project.import` is built with `Lock.load`, `Lock.entryFor`, `Lock.mapPaths`, `need`, `Lock.compile`. A lock from `Locks.generate` is built with `Locks.compileAs`, one entry per call (section 5) |
 | Project-reference remap heuristic | keying the remap on "recorded hash is empty" breaks when a stale `bin/Release` output existed at import time (it gets hashed). `verify-dataengine.fsx` keys on the name matching another entry of the same framework; `import.fsx` still uses the empty-hash key |
 | MSB3577 interop | on a project with two same-named `.resx`, the msbuild baseline fails in a tree where Xake wrote `.resources` into msbuild's `obj/xake/...` paths. Likely fix: write imported `.resources` under a path Xake owns; the manifest name, not the path, is embedded |
 | `Generated` / `.resources` are not engine targets | the runner writes them inline; a rule factory would make them first-class targets (review item, waits for a second consumer) |
-| Restore scope | only what the compilation reads is restored (compiler, references, analyzers), not the whole package graph; `csc { toolset }` in composed mode always uses the machine's cache |
+| Restore scope | only what the compilation reads is restored (compiler, references, analyzers), not the whole package graph; `csc { toolset }` and `CSC_TOOLSET` restore the compiler package into the build's package folder (`DotNetFwk.packageRoot`) |
 | Package integrity | the nupkg is not re-hashed; the check trusts `.nupkg.metadata`. The per-file SHA-256 is the real gate |
 | `StrongName.signFile` | re-signs but does not recompute `CheckSum`; use `normalise`, or `checksum` after it |
 | `Verify.verdict` and signer padding | a certificate table must start 8-byte aligned; when the unsigned file is not, the padding shows as a short `Content` range and the verdict says "content differs". PE files are 512-byte aligned in practice |
 | Test-order fragility | `DotNetFwk.locateFramework` memoizes process-wide while one fixture points `NUGET_PACKAGES` at a scratch folder; worked around in `RestoreTests`, not fixed |
-| Not built | `Sln` parsing, `Policy` gates, obfuscator task, SBOM items declared in msbuild (`SbomComponent`), JSF signing of the SBOM, a real signer, signature validation, provenance statements |
+| Not built | `Sln` parsing, `Policy` gates, obfuscator task, signature validation, provenance statements |
+| SBOM and signing | to be redone (0.4) |
 
 ## 9. Release and versioning
 
@@ -950,15 +1042,17 @@ run: base 258 passed and 1 skipped, hermetic 118 passed, 0 warnings in both libr
 | Targets | `net462;netstandard2.0` | `net462;netstandard2.0` |
 | FSharp.Core floor | 8.0.100 | 8.0.100 |
 | First version | 3.4.0 | 0.1.0 |
-| Version source | `/p:Version` from `build.fsx` or CI (`VERSION`) | fsproj `<Version>0.1.0</Version>`, overridden by `HERMETIC_VERSION` |
+| Version source | `/p:Version` from `build.fsx` or CI (`VERSION`) | fsproj `<Version>0.3.0</Version>` (this PR), overridden by `HERMETIC_VERSION` |
 | Tag | `v<X.Y.Z>` | `hermetic-v<X.Y.Z>` |
-| Dependencies | FSharp.Core; Microsoft.Win32.Registry on netstandard2.0 | `Xake [3.4.0.21, 4.0.0)` (PackageReference on the published package), FSharp.Core |
+| Dependencies | FSharp.Core; Microsoft.Win32.Registry on netstandard2.0 | `Xake [3.7.0.26, 3.8)` (PackageReference on the published package), FSharp.Core |
 
 The versions are independent. `Xake` stays semantic-versioned 3.x. `Xake.Hermetic.Dotnet` starts
-at 0.1.0, a preview: its API may break while it is 0.x. The range `[3.4.0.21, 4.0)` (written by
-NuGet as `[3.4.0.21, 4.0.0)`; the lower bound is the exact published 3.4.0, see section 8) holds only because the hermetic package uses no internals of the base;
-the base names it relies on (`Csc`, `RunOptions`, `Csc.run`, `Csc.ofSettings`, `resolve`,
-`CSC_SERVER`, `CSC_TOOLSET`, `Hash`, `Tool`, the `DotNetFwk` functions) become breaking to change after 3.4.0.
+at 0.1.0, a preview: its API may break while it is 0.x. The range is one base minor:
+`[3.7.0.26, 3.8)` for 0.3. The lower bound is the exact published 3.7.0, and the upper bound is
+the next minor, because F# records are not binary-compatible when a base minor adds a field
+(section 8). The range works only because the hermetic package uses no internals of the base.
+The base names it relies on (`Csc`, `Fsc`, `RunOptions`, `Csc.run`, `Csc.ofSettings`, `resolve`,
+`CSC_SERVER`, `CSC_TOOLSET`, `Hash`, `Tool`, the `DotNetFwk` functions) are breaking to change.
 Lockstep versions would have made CI simpler but forced a `Xake` release for every
 hermetic-only change.
 
@@ -973,9 +1067,9 @@ packed), and pushes only the tagged package with `--skip-duplicate`. `build.yml`
 `build test pack` on SDK 8.0.x and 10.0.x.
 
 Order of release: `Xake` first, then `Xake.Hermetic.Dotnet` against the published version.
-`Xake` 3.4.0 is out (as `3.4.0.21`, the range floor, and `build.fsx`'s bootstrap), and so is
-`Xake.Hermetic.Dotnet` 0.1.0 (tag `hermetic-v0.1.0`, published as `0.1.0.22`); `build.fsc.fsx`
-bootstraps from both (section 8).
+`Xake` 3.7.0 is out as `3.7.0.26`, the floor of the 0.3 range. This PR makes
+`Xake.Hermetic.Dotnet` 0.3.0. `Xake` 3.4.0 (`3.4.0.21`) and `Xake.Hermetic.Dotnet` 0.1.0
+(`0.1.0.22`) are still the bootstrap of the fsx scripts (section 8).
 
 Before the first hermetic release every hermetic name is free to change. After it, names may
 still change while the package is 0.x; each change should be listed in the release notes.

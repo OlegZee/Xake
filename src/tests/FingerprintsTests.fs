@@ -19,9 +19,13 @@ let private run root (logged: Collections.Generic.List<string>) (body: Recipe<Ex
     do xake { ExecOptions.Default with
                 ProjectRoot = root; Targets = ["main"]; ThrowOnError = true; FileLog = ""
                 NoPersist = true; Nologo = true; ConLogLevel = Silent
-                CustomLogger = CustomLogger ((=) Level.Warning) logged.Add } {
+                CustomLogger = CustomLogger (fun _ -> true) logged.Add } {
         phony "main" body
     }
+
+/// The logged lines ("[LEVEL] text") reporting a fingerprint problem.
+let private warnings (logged: Collections.Generic.List<string>) =
+    logged |> Seq.filter (fun l -> l.Contains "Fingerprints: warning:") |> List.ofSeq
 
 /// A root with a generated target "desc/a.json" from inputs "a.fsproj" and "Directory.Build.props".
 let private recorded () =
@@ -87,7 +91,7 @@ let ``fresh fingerprints give no warning and check passes without a database``()
     let logged = Collections.Generic.List()
     run root logged (Fingerprints.warn "xake.fingerprints")
     run root logged (Fingerprints.check "xake.fingerprints")
-    CollectionAssert.IsEmpty logged
+    CollectionAssert.IsEmpty(warnings logged)
     Assert.IsFalse(File.Exists(Path.Combine(root, ".xake")))
 
 [<Test>]
@@ -106,8 +110,12 @@ let ``changed input warns once and leaves the target untouched``() =
     write root "Directory.Build.props" "<Project><PropertyGroup/></Project>\n"
     let logged = Collections.Generic.List()
     run root logged (Fingerprints.warn "xake.fingerprints")
-    Assert.AreEqual(1, logged.Count)
-    StringAssert.Contains("desc/a.json is stale", logged.[0])
+    let w = warnings logged
+    Assert.AreEqual(1, w.Length)
+    StringAssert.Contains("desc/a.json is stale", w.[0])
+    // Message level: shown by the default console verbosity (Normal shows Message, Error, Command;
+    // Warning only from Loud up)
+    StringAssert.StartsWith("[MSG] ", w.[0])
     Assert.AreEqual(before, File.ReadAllText target)
 
 [<Test>]
@@ -133,3 +141,21 @@ let ``check fails naming the stale and hand-edited targets``() =
     let msg = ex.ToString()
     StringAssert.Contains("desc/a.json is stale", msg)
     StringAssert.Contains("desc/b.json was edited by hand", msg)
+
+[<Test>]
+let ``parallel record calls keep every line``() =
+    let root = newRoot ()
+    let n = 50
+    for i in 1 .. n do
+        write root (sprintf "in/%02d.txt" i) (string i)
+        write root (sprintf "out/%02d.json" i) "{}\n"
+    let results =
+        [ for i in 1 .. n ->
+            async { return Fingerprints.recordIn root "xake.fingerprints" (sprintf "out/%02d.json" i) [sprintf "in/%02d.txt" i] } ]
+        |> Async.Parallel |> Async.RunSynchronously
+    Assert.IsTrue(results |> Array.forall id)
+    let text = File.ReadAllText(Path.Combine(root, "xake.fingerprints"))
+    let targets = text |> Fingerprints.parse |> List.map (fun l -> l.Target)
+    Assert.AreEqual([ for i in 1 .. n -> sprintf "out/%02d.json" i ], targets)
+    Assert.AreEqual(text, Fingerprints.load root "xake.fingerprints" |> Fingerprints.format)
+    CollectionAssert.IsEmpty(Directory.GetFiles(root, "*.tmp"))

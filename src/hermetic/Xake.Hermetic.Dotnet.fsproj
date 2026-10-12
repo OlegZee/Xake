@@ -8,7 +8,7 @@
          break. Same mechanism as src/dotnet: the build script and CI override it with
          /p:Version=...; this is the value a plain `dotnet pack` produces. -->
     <PackageId>Xake.Hermetic.Dotnet</PackageId>
-    <Version>0.2.0</Version>
+    <Version>0.3.0</Version>
     <OutputType>Library</OutputType>
     <!-- The SDK would otherwise reference its own FSharp.Core, see the pin below. -->
     <DisableImplicitFSharpCoreReference>true</DisableImplicitFSharpCoreReference>
@@ -64,9 +64,9 @@
   <ItemGroup>
     <!-- Built on the published package, not on src/dotnet and src/core: the `Xake` package
          carries both Xake.dll and Xake.Dotnet.dll, and the range is what the nuspec
-         dependency says. 3.6.0 is the first release with the base this package needs
-         (`HermeticMode`, `DotNetFwk.packageRoot`/`fetchEnabled`/`globalJsonPin`, the `Csc`/`Fsc`
-         fields this package reads); nuget.org carries it as 3.6.0.24 (publish.yml appends the
+         dependency says. 3.7.0 is the release this package builds on (3.6.0 was the first with the base
+         it needs: `HermeticMode`, `DotNetFwk.packageRoot`/`fetchEnabled`/`globalJsonPin`, the
+         `Csc`/`Fsc` fields this package reads); nuget.org carries 3.7.0 as 3.7.0.26 (publish.yml appends the
          run number), and the lower bound is that exact published version, or NuGet warns
          NU1603 on every restore.
 
@@ -74,7 +74,7 @@
          binary-compatible across releases that add a field (a new field changes the
          constructor and the compiled pattern matches), and the base releases that touch
          `Csc`/`Fsc` are minors. Each base minor gets a release of this package. -->
-    <PackageReference Include="Xake" Version="[3.6.0.24, 3.7)" />
+    <PackageReference Include="Xake" Version="[3.7.0.26, 3.8)" />
   </ItemGroup>
 
   <!-- Test assemblies only; no other package sees these internals. hermetic.tests tests the
@@ -87,7 +87,7 @@
 
   <!-- ZipArchive (Sbom.fs, Sign.fs): on net462 the SDK adds it as a netstandard facade, which
        the project description (xake.project.json, imported from this file) does not see; named
-       here so the import carries it into the fsc build of build.fsc.fsx. -->
+       here so the import carries it into a description-driven fsc build. -->
   <ItemGroup Condition="'$(TargetFramework)' == 'net462'">
     <Reference Include="System.IO.Compression" />
   </ItemGroup>

@@ -192,7 +192,7 @@ open Xake.Hermetic.Dotnet
 
 | Operation | Argument | Does |
 |---|---|---|
-| `project` | `string` | the description at that path: sources (F# in order; C# as masks), defines, framework `references` (plus the SDK's implicit ones for .NET Framework), `byFramework` additions, options, `kind` as `target`, `internalsVisibleTo` as a generated source, `doc` as `<out>.xml`, `/deterministic+` and `/pathmap:<project root>/=/_/` |
+| `project` | `string` | the description at that path: sources (F# in order; C# as masks), defines, framework `references` (plus the SDK's implicit ones for .NET Framework), `byFramework` additions, options, `kind` as `target`, `internalsVisibleTo` and `assemblyAttributes` as one generated source, resources (`.resx` compiled), `noWarn` with the SDK's defaults, `doc` as `<out>.xml`, `/deterministic+` and `/pathmap:<project root>/=/_/` |
 | `config` | `"Debug"` \| `"Release"` | the SDK's configuration preset (below); without it no preset applies |
 | `packages` | `Described.Restored` | the description's packages as `Described.restore` resolved them; required when the description has packages for the framework |
 
@@ -211,9 +211,11 @@ open Xake.Hermetic.Dotnet
   | Debug | `--debug+ --debug:portable --optimize- --tailcalls-` | `/debug+ /debug:portable /optimize-` | `TRACE`, `DEBUG` |
   | Release | `--debug:portable --optimize+` | `/debug- /debug:portable /optimize+` | `TRACE`, `RELEASE` |
 
-  The SDK's configuration-independent switches (`--warn:3`, `/nowarn:1701,1702`,
-  `/highentropyva+`, `/filealign:512`, ...) are not carried: byte identity with `dotnet build` is
-  not a goal.
+  The SDK's configuration-independent switches (`--warn:3`, `/highentropyva+`,
+  `/filealign:512`, ...) are not carried: byte identity with `dotnet build` is not a goal. The
+  SDK's `NoWarn` is: `/nowarn:` is the SDK's defaults (`Described.sdkNoWarn`: C# `1701,1702`, F#
+  none) then the description's `options.noWarn`; `/warnaserror+` (`--warnaserror+`) only when
+  `options.warningsAsErrors`.
 - **Packages** are never resolved by the compiler. `Described.restore d framework` writes
   `obj/xake/packages/<name>/<framework>/restore.csproj` (one `PackageReference` per package, the
   version as the description states it, floating left to msbuild; for F# on .NET Framework
@@ -225,12 +227,22 @@ open Xake.Hermetic.Dotnet
 - **C# masks.** A C# description's `sources` are Xake masks with the import's convention: a `!`
   prefix is an exclude, applied in order (`["**/*.cs", "!obj/**/*", "!bin/**/*"]`), and
   `dir/**/*` is every file below `dir`. `resolve` returns a `Csc` whose `Sources` are those
-  masks made absolute (the generated `InternalsVisibleTo` file first); `lock` records them as
+  masks made absolute (the generated attributes file first); `lock` records them as
   they are and compares them as written; compiling expands them (`Described.expand`: one fileset
   based at the first include's fixed folder, through `getFiles`, so the target depends on the
   listing and an added `.cs` rebuilds without touching the lock).
-- **Resources** are plain files: `--resource:`/`/resource:` with the given `name`, else the
-  root namespace (else the assembly name) and the path with `.` for `/`. A `.resx` fails for now.
+- **Resources**: `--resource:`/`/resource:` with the given `name`, else msbuild's default
+  (`Described.manifestName`: the root namespace, else the project name; the folder as an
+  identifier; the file name, a `.resx` as `<name>.resources`). A `.resx` is embedded as the
+  `.resources` it compiles to, `obj/xake/<assembly>/<framework>[/<config>]/<manifest>`: the pair
+  (resx, `.resources`) goes into `Csc.Resources`/`Fsc.Resources` (and so the lock: the resx path,
+  the manifest in the switch, no hash), and the runner compiles it with `Xake.Dotnet.Resx` (string
+  entries) when it is missing; `Described.refreshResources` (run by `project` and
+  `Locks.compileAs`) deletes one older than its resx first, so an edit is compiled again.
+- **Generated attributes.** One source per compile, `obj/xake/<assembly>/<framework>/`: the
+  `internalsVisibleTo` friends, then `assemblyAttributes` (`[assembly: <type>(<args>)]`), in the
+  description's order. It is `<assembly>.InternalsVisibleTo.cs|fs` while it holds friends only
+  (so existing locks keep their text), `<assembly>.AssemblyAttributes.cs|fs` otherwise.
 - **No `-o` decision here.** The output is `out` or the rule's target, as for composed settings;
   leaving `-o` out of a lock is the lock generation's business.
 

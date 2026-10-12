@@ -82,7 +82,7 @@ type ``Description import``() =
             Assert.That((pkg.Icon, pkg.Readme), Is.EqualTo ((Some "../../Icon.png", Some "../../readme.md")))
             Assert.That(pkg.License, Is.EqualTo (Some "MIT"))
             Assert.That(hermetic.Packages |> List.map (fun p -> p.Id, p.Version),
-                        Is.EqualTo [ "Xake", Some "[3.6.0.24, 3.7)"; "FSharp.Core", Some "8.0.100" ])
+                        Is.EqualTo [ "Xake", Some "[3.7.0.26, 3.8)"; "FSharp.Core", Some "8.0.100" ])
             Assert.That(hermetic.Sources, Does.Contain "Import.fs")
             Assert.That(hermetic.Package.Value.Readme, Is.EqualTo (Some "readme.md"))
         | _ -> Assert.Fail "three descriptions expected"

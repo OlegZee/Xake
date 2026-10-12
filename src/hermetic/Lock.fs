@@ -450,9 +450,10 @@ module Lock =
                     (p.DependsOn |> List.map escape |> String.concat ", "))
             |> String.concat ",\n"
             |> fun body -> sprintf "%s%s: [\n%s\n%s]" indent (escape name) body indent
-        let pairs name (items: (string * string) list) =
-            items |> List.map (fun (k, v) -> sprintf "%s  %s: %s" indent (str k) (str v)) |> String.concat ",\n"
+        let pairsWith value name (items: (string * string) list) =
+            items |> List.map (fun (k, v) -> sprintf "%s  %s: %s" indent (str k) (value v)) |> String.concat ",\n"
             |> fun body -> sprintf "%s%s: {\n%s\n%s}" indent (escape name) body indent
+        let pairs = pairsWith str
         let section name (fields: string list) =
             fields |> String.concat ",\n" |> sprintf "      %s: {\n%s\n      }" (escape name)
 
@@ -474,7 +475,8 @@ module Lock =
               strings "Options" c.Options
               strings "Defines" c.Defines
               strings "Sources" c.Sources
-              pairs "Generated" c.Generated
+              // the content of a generated source is text, not a path: its `\` stay
+              pairsWith (Roots.tokenizeText roots >> escape) "Generated" c.Generated
               pairs "Resources" c.Resources
               // only when the rule declares one: every other lock stays byte-identical to what
               // was written before the key existed

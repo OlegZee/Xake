@@ -100,14 +100,19 @@ module Roots =
             if path.StartsWith (root + "/") then Some (token + path.Substring root.Length) else None)
         |> Option.defaultValue path
 
-    /// Replaces a root anywhere in the string, not only as a prefix: `/pathmap:<root>=/_/`
-    /// carries one in the middle.
-    let internal tokenizeAll roots (text: string) =
-        let text = text.Replace ('\\', '/')
+    /// Replaces a root anywhere in `text`, not only as a prefix, and nothing else: the
+    /// content of a generated source, whose backslashes are the language's (an escape in a
+    /// string literal), not path separators.
+    let internal tokenizeText roots (text: string) =
         roots |> List.fold (fun (text: string) (token: string, root: string) ->
             // the root followed by a separator or the end, not a longer name with that prefix
             System.Text.RegularExpressions.Regex.Replace (
                 text, System.Text.RegularExpressions.Regex.Escape root + "(?=[/=,;]|$)", token.Replace ("$", "$$"))) text
+
+    /// Replaces a root anywhere in the string, not only as a prefix: `/pathmap:<root>=/_/`
+    /// carries one in the middle. A path field: `\` becomes `/` first.
+    let internal tokenizeAll roots (text: string) =
+        tokenizeText roots (text.Replace ('\\', '/'))
 
     let internal expand roots (path: string) =
         roots |> List.fold (fun (path: string) (token: string, root: string) -> path.Replace(token, root)) path

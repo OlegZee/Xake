@@ -144,11 +144,11 @@ the build of record: packages and releases come from it.
 The same three libraries, compiled by fsc from committed data instead of msbuild: a project
 description per project (`src/<dir>/xake.project.json`), a lock per project and configuration
 (`locks/<name>/Release.json`) and their fingerprints (`xake.fingerprints`). The script runs on the
-libraries `build.fsx` builds, so bootstrap it once:
+published `Xake` and `Xake.Hermetic.Dotnet` packages, so a fresh clone needs no bootstrap:
 
 ```
-dotnet fsi build.fsx -- -- build                  # out/netstandard2.0: what build.fsc.fsx runs on
 dotnet fsi build.fsc.fsx -- -- build              # out/Release/<fwk>/*.dll from the committed locks
+dotnet fsi build.fsc.fsx -- -- build check        # and fail on a stale description or lock
 ```
 
 | Command | What it does |
@@ -159,8 +159,8 @@ dotnet fsi build.fsc.fsx -- -- build              # out/Release/<fwk>/*.dll from
 | `check` | fails where `build` only warns (stale or hand-edited descriptions and locks) |
 
 After changing a project file: `import`, `update-locks`, commit the changed descriptions, locks
-and `xake.fingerprints`. The locks name the SDK's compiler by path and hash, so they hold for one
-SDK version and one OS/architecture (CI runs this build on macOS with that SDK). See
+and `xake.fingerprints`. The locks name the SDK's compiler by the SDK version (no hash), so they
+hold for that SDK version (10.0.401) on any OS (CI runs this build on Linux with that SDK). See
 [docs/hermetic/lock.md](docs/hermetic/lock.md#xake-generated-locks).
 
 Releases are published to nuget.org by CI from a `v*` tag — see

@@ -238,9 +238,9 @@ means the nuget.org version and the git tag never match exactly. Pushing uses
 ### Bootstrapping note
 
 Both build scripts bootstrap from nuget.org: the build builds Xake with an already published
-Xake. `build.fsx` starts with `#r "nuget: Xake, 3.4.0.21"`; `build.fsc.fsx` (the fsc-based build,
-which needs `Fsproj` from the hermetic package) with `#r "nuget: Xake, 3.4.0.21"` and
-`#r "nuget: Xake.Hermetic.Dotnet, 0.1.0.22"`. Those references are intentionally *behind* the
+Xake. `build.fsx` starts with `#r "nuget: Xake, 3.7.0.26"`; `build.fsc.fsx` (the declarative
+build, which needs `Locks`/`Import`/`Fingerprints` from the hermetic package) with
+`#r "nuget: Xake, 3.7.0.26"` and `#r "nuget: Xake.Hermetic.Dotnet, 0.3.0.28"`. Those references are intentionally *behind* the
 version being released: bump them only after a release has landed on nuget.org, to the exact
 published version (`X.Y.Z.<run>`, not the tag; a bare `X.Y.Z` does not exist and resolves
 upwards with NU1603), and only when the script needs what it brings. Bump `Xake` in both
@@ -250,16 +250,11 @@ To work on a script against *unreleased* libraries, there are two ways; `NUGET_S
 one of them (it is only the extra restore source of the hermetic `pack`, see above):
 
 - a temporary `#r` on built dlls. `build.fsx` carries it as the commented
-  `// #r "out/netstandard2.0/Xake.dll"`; `build.fsc.fsx` carries commented `#r` lines on a copy
-  (`/tmp/xake-dev/*.dll`), because it overwrites `out/` and overwriting assemblies fsi has
-  loaded kills the run with a `BadImageFormatException`:
-
-  ```bash
-  dotnet fsi build.fsx -- -- build
-  mkdir -p /tmp/xake-dev && cp out/netstandard2.0/*.dll /tmp/xake-dev/
-  # swap the #r "nuget: ..." lines of build.fsc.fsx for the commented ones, then
-  dotnet fsi build.fsc.fsx -- -- build test
-  ```
+  `// #r "out/netstandard2.0/Xake.dll"` (copy the dlls elsewhere first: `build.fsx` overwrites
+  `out/netstandard2.0`, and overwriting assemblies fsi has loaded kills the run with a
+  `BadImageFormatException`). `build.fsc.fsx` writes only `out/Release/`, so it can `#r`
+  `out/netstandard2.0/{Xake,Xake.Dotnet,Xake.Hermetic.Dotnet}.dll` directly in place of its two
+  `#r "nuget: ..."` lines, after `dotnet fsi build.fsx -- -- build`.
 
 - a local feed: pack at a version nuget.org does not have into a folder, add
   `#i "nuget: /tmp/xake-feed"` to the script and `#r` that version. The packed version lands in

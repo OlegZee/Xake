@@ -20,14 +20,15 @@ touched, so it is not re-litigated:
 - The mono provider built its `PATH` env var as `sdkroot </> ("bin" + ";" + PATH)` — `+` binds
   tighter than `</>`, and `;` is not the Unix separator. Fixed, but the mono path has no test
   coverage.
-- `build.fsx` bootstraps from nuget.org (`#r "nuget: Xake, 3.4.0.21"`, the 3.4.0 release as
-  nuget.org carries it); `build.fsc.fsx` runs on the dlls `build.fsx` builds (see "The fsc
-  build" below). The nuget references stay behind the release being made; bump
+- `build.fsx` bootstraps from nuget.org (`#r "nuget: Xake, 3.7.0.26"`, the 3.7.0 release as
+  nuget.org carries it); `build.fsc.fsx` from `Xake 3.7.0.26` and `Xake.Hermetic.Dotnet 0.3.0.28`
+  (see "The fsc build" below). The base script stays on the base package only. The nuget
+  references stay behind the release being made; bump
   them only after a release lands on nuget.org, to the exact published `X.Y.Z.<run>`.
   Developing against unreleased libraries: a temporary `#r` on dlls (or a `#i` local feed);
   see docs/devprocess.md, "Bootstrapping note". `samples/gettingstarted.fsx` references the
   published package (`#r "nuget: Xake"`) and is checked against it after each release.
-- `src/hermetic` builds on the *published* `Xake` (PackageReference `[3.4.0.21, 4.0)`), not on
+- `src/hermetic` builds on the *published* `Xake` (PackageReference `[3.7.0.26, 3.8)`), not on
   `src/core`/`src/dotnet`. The floor is the exact published version: `[3.4.0, 4.0)` warns NU1603
   because no plain `3.4.0` exists. A local feed (`-d NUGET_SOURCE=<folder>`) is only for working
   against an unreleased base; a packed `3.4.0.99` in `~/.nuget/packages/xake/` shadows the
@@ -147,7 +148,7 @@ goes to the recreate path. The `EndOfStreamException` warning in test runs is de
 
 ```bash
 dotnet build src/core -c Release && dotnet build src/dotnet -c Release   # both TFMs, 0 warnings
-dotnet restore src/hermetic.tests                                        # Xake 3.4.0.21 from nuget.org, no NU1603
+dotnet restore src/hermetic.tests                                        # Xake 3.7.0.26 from nuget.org, no NU1603
 dotnet build src/hermetic -c Release --no-restore                        # Xake.Hermetic.Dotnet, both TFMs, 0 warnings
 dotnet test src/tests -c Release                                         # 258 passed, 1 skipped
 dotnet test src/hermetic.tests -c Release --no-restore                   # 118 passed
@@ -176,17 +177,19 @@ data, no msbuild for them. `build.fsx` stays the build of record (packages, rele
 - `build` = `Fingerprints.warn` + `Locks.needAll`, the rule `out/(cfg:*)/(fwk:*)/(name:*).dll` =
   `Locks.compileAs`; `check` = `Fingerprints.check`. `test` is `dotnet test` as in `build.fsx`.
   Release only; `pack` waits for `Package.nupkg` (PR 8).
-- Bootstrap: `#r "out/netstandard2.0/*.dll"`, built by `dotnet fsi build.fsx -- -- build`, until
-  a release carries `Locks`/`Import`/`Fingerprints`. The script writes `out/Release/` only, so it
-  never overwrites what fsi loaded; its `clean` removes `out/Release` only.
-- Both scripts share `.xake`; CI deletes it between the bootstrap and `build.fsc.fsx`.
-- The locks name the SDK's `fsc.dll` by path and SHA-256, and that file is ReadyToRun code for
-  one OS and architecture: the committed locks hold for SDK 10.0.401 on macOS arm64, and the CI
-  job `build-fsc` runs there. Another SDK or OS needs `update-locks` (and a different lock).
+- Bootstrap: `#r "nuget: Xake, 3.7.0.26"` and `#r "nuget: Xake.Hermetic.Dotnet, 0.3.0.28"`, no
+  `build.fsx` run first. Its `clean` removes `out/Release` only (`out/netstandard2.0` is
+  `build.fsx`'s).
+- Own database `.xake.fsc` (`xake { ExecOptions.Default with DbFileName = ... }`): the scripts no
+  longer share a bootstrap, and their phony targets (`build`, `test`, `clean`) share names.
+- The locks name the SDK's `fsc.dll` by path with an empty `Sha256`: the SDK version is its
+  identity (prerequisite `dotnet-sdk` 10.0.401, hermetic 0.3). The committed locks hold for SDK
+  10.0.401 on any OS/architecture; the CI job `build-fsc` runs on ubuntu-latest. Another SDK
+  needs `update-locks`.
 - `HERMETIC=on` is not set: it needs an exact SDK pin in `global.json` (`rollForward: disable`),
-  which the repository does not have (CI matrix 8.0/10.0).
-- `Fingerprints.warn` logs at `Warning`, which the default console level hides; the script sets
-  `consolelog Verbosity.Loud`.
+  which the repository does not have (CI matrix 8.0/10.0). Open question.
+- `Fingerprints.warn` logs at `Message` (since #51), visible at the default console level; the
+  script sets no `consolelog`.
 - After a project-file change: `import`, `update-locks`, commit descriptions, locks and
   `xake.fingerprints`. Without it `build` warns once per stale line and still builds; `check`
   fails.

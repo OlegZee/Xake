@@ -277,3 +277,26 @@ type ``Building from Xake-generated locks``() =
             let a = alc.LoadFromAssemblyPath (Path.GetFullPath "out/Release/netstandard2.0/Xake.dll")
             Assert.That(a.GetExportedTypes (), Is.Not.Empty)
         finally alc.Unload ()
+
+    /// G5: A3 -> B3 -> C, A3's source uses C's type through B3 and its description names only
+    /// B3; the lock carries C's output too (unhashed, after B3's), and A3 compiles.
+    [<Test; Category("Integration")>]
+    member x.``transitive project references reach the compiler``() =
+        fixture ()
+        for dir in [ "p/C"; "p/B3"; "p/A3" ] do Directory.CreateDirectory dir |> ignore
+        File.WriteAllText ("p/C/Lib.fs", "module C.Lib\ntype T = { V: int }\n")
+        File.WriteAllText ("p/B3/Lib.fs", "module B3.Lib\nlet make () : C.Lib.T = { V = 7 }\n")
+        File.WriteAllText ("p/A3/Lib.fs", "module A3.Lib\nlet v = (B3.Lib.make ()).V\n")
+        describe "C" Description.FSharp [ "Lib.fs" ] [] false
+        describe "B3" Description.FSharp [ "Lib.fs" ] [ "C" ] false
+        describe "A3" Description.FSharp [ "Lib.fs" ] [ "B3" ] false
+        x.Generate "generate-transitive" fixtureOf [ "A3" ] [ "Release" ] |> ignore
+        let text = File.ReadAllText (lockOf "A3" "Release")
+        let b3 = text.IndexOf "\"$(ProjectRoot)/out/Release/netstandard2.0/B3.dll\", \"Sha256\": \"\""
+        let c = text.IndexOf "\"$(ProjectRoot)/out/Release/netstandard2.0/C.dll\", \"Sha256\": \"\""
+        Assert.That(b3, Is.GreaterThan -1, text)
+        Assert.That(c, Is.GreaterThan b3, "C's output follows B3's")
+        let entry = (Lock.read (Roots.builtin (Directory.GetCurrentDirectory ())) (lockOf "A3" "Release")).Entries.Head
+        Assert.That(entry.Evaluation.ProjectRefs, Is.EqualTo [ "B3" ], "ProjectRefs keeps the direct references")
+        x.Script "build-transitive" [] (!! "p/A3/xake.project.json") "Release"
+        for name in [ "C"; "B3"; "A3" ] do Assert.That(File.Exists (dll "Release" name), Is.True, name)

@@ -106,7 +106,9 @@ module Locks =
     /// else Debug -- whichever B has a lock for at `lockOf B c`) and framework
     /// `nearestFramework`, recorded as B's output path `outOf cfgB fwkB B` + `/&lt;assembly&gt;.dll`
     /// with no hash, and B's name in `Evaluation.ProjectRefs`; B's direct packages flow into
-    /// the restore.</item>
+    /// the restore. B's own project references (the unhashed references of B's lock, so the
+    /// closure) are references of this one too, after the direct ones, each once: msbuild
+    /// hands csc/fsc the transitive project references.</item>
     /// </list>
     /// B's lock must exist: this does not order anything. The script's lock rule `need`s the
     /// referenced projects' lock rules first (a missing one fails, naming B). The lock is
@@ -166,7 +168,10 @@ module Locks =
                             // the referenced project's direct packages flow into this one's restore,
                             // at the version its lock holds, as msbuild flows them
                             let flowing = e.Packages |> List.filter (fun p -> p.Direct)
-                            return (output: string), (projectFile: string), flowing })
+                            // B's own project references (unhashed in its lock, already B's
+                            // closure): csc gets them too, as msbuild passes transitive references
+                            let transitive = e.Dependencies.References |> List.filter (fun r -> r.Sha256 = "") |> List.map (fun r -> normal r.Path)
+                            return (output: string), (projectFile: string), flowing, transitive })
                         |> sequence
 
                     // packages: the description's for this framework plus the refs' flowing ones,
@@ -175,7 +180,7 @@ module Locks =
                         d.Packages
                         @ (d.ByFramework |> List.filter (fst >> same fwk) |> List.collect (fun (_, i) -> i.Packages))
                     let flowing =
-                        refs |> List.collect (fun (_, _, ps) -> ps)
+                        refs |> List.collect (fun (_, _, ps, _) -> ps)
                         |> List.filter (fun p -> not (own |> List.exists (fun o -> same o.Id p.Id)))
                         |> List.distinctBy (fun p -> p.Id.ToLowerInvariant ())
                         |> List.map (fun p -> ({ Id = p.Id; Version = Some ("[" + p.Version + "]"); Private = false } : Description.Package))
@@ -189,7 +194,10 @@ module Locks =
                             ByFramework = d.ByFramework |> List.map (fun (t, i) -> t, { i with Packages = [] }) }
                     let! restored = Described.restore forRestore fwk
 
-                    let outputs = refs |> List.map (fun (o, _, _) -> o)
+                    // the direct references' outputs, then theirs (the closure), each once, in order
+                    let outputs =
+                        (refs |> List.map (fun (o, _, _, _) -> o)) @ (refs |> List.collect (fun (_, _, _, t) -> t))
+                        |> List.distinct
                     let refFiles = outputs |> List.fold (fun fs o -> fs + (!! o)) Fileset.Empty
                     // the description's own packages go through `packages`; flowing ones alone through `ref`
                     let restoredRefs = if List.isEmpty own then restored.References |> List.fold (fun fs o -> fs + (!! o)) Fileset.Empty else Fileset.Empty
@@ -217,7 +225,7 @@ module Locks =
                         | Lock.Compilation.Csc c -> Lock.Compilation.Csc { c with Dependencies = add c.Dependencies }
                     let entry : Lock.Entry =
                         { Lock.ofCompilation compilation with
-                            Evaluation = { Lock.Evaluation.Empty with ProjectRefs = refs |> List.map (fun (_, p, _) -> p) }
+                            Evaluation = { Lock.Evaluation.Empty with ProjectRefs = refs |> List.map (fun (_, p, _, _) -> p) }
                             Packages = restored.Packages }
                     let unhashed = compilation.Dependencies.References |> List.map (fun r -> r.Path) |> List.filter (fun p -> List.contains (normal p) outputs)
                     let! recorded = Lock.recorded lockPath unhashed entry

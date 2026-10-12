@@ -1073,7 +1073,11 @@ What `Locks.generate lockOf outOf config descriptionPath` does for the descripti
   `/<B's assembly>.dll`, **with an empty `Sha256`**, also when a build left the file on disk
   (`Lock.recorded ... unhashed`; [roadmap](../roadmap.md): in-lock project references stay
   unhashed). `Evaluation.ProjectRefs` holds B's name, as the description names it. A reference
-  without any lock fails, naming it and pointing at `update-locks`.
+  without any lock fails, naming it and pointing at `update-locks`. B's own project references
+  (the unhashed references of B's lock, so B's closure) are references of A too, after the
+  direct ones, each once: msbuild hands the compiler the transitive project references, and a
+  type of C that A uses through B needs C (CS0234/CS0012, FS0074 otherwise). A's description
+  names only B.
 - **Packages** come from `Described.restore` (an msbuild restore of a synthesized project). A
   version the current lock's entry holds is passed as exact (`[v]`), so it stays when the
   description floats (`8.0.*`) or a newer version appears. The script variable, else the
@@ -1153,7 +1157,8 @@ rebuilds A, two clean builds byte-identical; a C# lock with masks rebuilds on an
 without a lock change; a description without a lock fails pointing at `update-locks`;
 `HERMETIC=on` refuses inside `compileAs`; `$(Version)` substituted and a new version rebuilds;
 with `.xake` deleted, `build` over the committed locks of A -> B runs no lock rule; Xake's three
-projects from the locks `update-locks` writes into `out/Release/<fwk>/`. Every test generates
+projects from the locks `update-locks` writes into `out/Release/<fwk>/`; A3 -> B3 -> C with A3
+naming only B3 compiles (C's output in A3's lock after B3's). Every test generates
 its locks through the phony `lock::` rule and `update-locks`.
 
 ### Known difference: another checkout folder

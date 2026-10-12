@@ -1,4 +1,4 @@
-#r "nuget: Xake, 3.4.0.21"
+#r "nuget: Xake, 3.7.0.26"
 // #r "out/netstandard2.0/Xake.dll"
 
 open Xake

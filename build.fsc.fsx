@@ -1,11 +1,9 @@
 // Declarative self-build (docs/hermetic/lock.md): what a project is lives in src/<dir>/xake.project.json,
 // how it compiles in locks/<name>/Release.json; both committed, written only by `import` and `update-locks`.
 // `build` compiles from them with fsc, no msbuild; `check` fails where `build` only warns (xake.fingerprints).
-// Bootstrap: runs on this repository's libraries, built by `dotnet fsi build.fsx -- -- build`, until a
-// release carries Locks/Import/Fingerprints (then `#r "nuget: ..."`, docs/devprocess.md).
-#r "out/netstandard2.0/Xake.dll"
-#r "out/netstandard2.0/Xake.Dotnet.dll"
-#r "out/netstandard2.0/Xake.Hermetic.Dotnet.dll"
+// Bootstrap: the published packages (exact X.Y.Z.<run>, bumped only after a release lands on nuget.org).
+#r "nuget: Xake, 3.7.0.26"
+#r "nuget: Xake.Hermetic.Dotnet, 0.3.0.28"
 
 open Xake
 open Xake.Tasks
@@ -13,7 +11,7 @@ open Xake.Hermetic.Dotnet
 
 let vars = {|
     Version         = Var.create<string>(description = "Xake package version") |> withDefault "0.0.1"
-    HermeticVersion = Var.create<string>(description = "Xake.Hermetic.Dotnet package version") |> withDefault "0.2.0"
+    HermeticVersion = Var.create<string>(description = "Xake.Hermetic.Dotnet package version") |> withDefault "0.3.0"
     TestFilter      = Var.string(envVar = "FILTER", description = "Test filter, e.g. 'Lock*'")
 |}
 
@@ -26,15 +24,15 @@ let outOf cfg fwk (_: string) = $"out/{cfg}/{fwk}"
 let versions = [ "src/hermetic/**", vars.HermeticVersion; "**", vars.Version ]   // first mask matching the project
 let fingerprints = "xake.fingerprints"
 
-do xakeScript {
+// Own database (.xake.fsc): the phony targets (build, test, clean) share names with build.fsx's.
+do xake { ExecOptions.Default with DbFileName = ".xake.fsc" } {
     filelog "build.log" Verbosity.Chatty
-    consolelog Verbosity.Loud   // shows warnings: Fingerprints.warn logs at Warning, hidden at Normal
     varschema vars
     var "NUGET_PACKAGES" ".packages"
 
     rules [
         "main" <<< ["build"; "test"]
-        "clean" => rm { dir "out/Release" }   // out/netstandard2.0 is build.fsx's: this script runs on it
+        "clean" => rm { dir "out/Release" }   // out/netstandard2.0 is build.fsx's
 
         // (a) project file -> description, under msbuild; records the msbuild files it read
         command "import" {

@@ -617,7 +617,7 @@ Line shapes are `+ x`, `- x`, `~ Label path: old -> new`.
 
 Limits:
 
-- A lock changes when the SDK changes (the compiler path and hash). An entry that depends on the
+- A lock changes when the SDK changes (the compiler path; an SDK compiler carries no hash, being ReadyToRun code for one OS/architecture). An entry that depends on the
   SDK records it as a prerequisite under an exact pin; without one, the recording warns.
 - A lock records absolute paths under `$(ProjectRoot)`; a lock is portable, but byte-identical
   *output* also needs the same checkout path or a `/pathmap`.

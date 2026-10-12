@@ -278,7 +278,7 @@ module Project =
             |> List.filter (fun path -> not (sdkRoot <> "" && path.StartsWith (sdkRoot + "/")) && not (path.StartsWith baseIntermediate))
 
         let dependencies tool (parsed: Dependencies) : Dependencies =
-            { Compiler = { Tool = tool; Path = compilerPath; Sha256 = Csc.sha256 compilerPath; Version = Csc.compilerVersion compilerPath }
+            { Compiler = { Tool = tool; Path = compilerPath; Sha256 = (if Lock.isSdkCompiler compilerPath then "" else Csc.sha256 compilerPath); Version = Csc.compilerVersion compilerPath }
               References = parsed.References |> List.map (fun r -> { r with Sha256 = Csc.sha256 r.Path })
               Analyzers = parsed.Analyzers |> List.map (fun a -> Csc.hashed a.Path) }
         let compilation =

@@ -125,7 +125,7 @@ in 0.1). An F# entry:
   "Generated": { ... }, "Resources": { }
 },
 "Dependencies": {
-  "Compiler": { "Tool": "fsc", "Path": "$(DotnetRoot)/sdk/10.0.401/FSharp/fsc.dll", "Sha256": "...", "Version": "15.2.401-servicing.26423.113" },
+  "Compiler": { "Tool": "fsc", "Path": "$(DotnetRoot)/sdk/10.0.401/FSharp/fsc.dll", "Sha256": "", "Version": "15.2.401-servicing.26423.113" },
   "References": [
     { "Path": "$(NuGetPackageRoot)/fsharp.core/.../lib/netstandard2.1/FSharp.Core.dll", "Sha256": "..." },
     ...
@@ -148,7 +148,8 @@ in 0.1). An F# entry:
   way to fix it is to fix the SDK. Pin it (`global.json` with `rollForward: disable`): the lock
   then records the SDK as a prerequisite ([below](#prerequisites)), checked before every
   replay. Without the pin the recording warns, and a lock fails, naming the SDK, on every
-  machine that does not have that SDK.
+  machine that does not have that SDK. Its `Sha256` is empty: the SDK version is its identity
+  ([below](#the-compiler-a-lock-names)).
 
 `entry.Csc` and `entry.Fsc` return the record of their case and fail with `'<name>' is an F#
 entry; use entry.Compilation` (or the C# counterpart) for the other; code that handles both
@@ -297,6 +298,20 @@ comes from `cscpath`, `toolset` or the framework (see [../csc-syntax.md](../csc-
 `Lock.compile` restores a toolset package the lock names when it is not on this machine yet,
 through its restore step (`Restore.ensure`, step 1 below), which treats the compiler as one
 package among the entry's references and analyzers.
+
+**A compiler of the .NET SDK has no hash.** The SDK's `fsc.dll` and Roslyn `csc.dll` (any
+compiler under `$(DotnetRoot)/sdk/<v>/`, `Lock.isSdkCompiler`) are ReadyToRun images compiled
+for one OS and architecture: the same SDK version has different bytes on macOS arm64 and on
+linux x64, so a hash would tie the lock to one platform. Their identity is the SDK version: the
+`<v>` in the path, and the `dotnet-sdk <v>` prerequisite when `global.json` pins it exactly
+([Prerequisites](#prerequisites)). Recording writes `"Sha256": ""` for them (`Lock.rehash`,
+`Project.import`), and a replay does not check one (`Lock.compileWith` clears it,
+`Lock.withoutSdkCompilerHash`, before `Csc.run`/`Fsc.run`); what is checked is that the SDK is
+installed -- the prerequisite, then the compiler's path (step 2 below). A lock written by 0.2
+with a hash there reads and formats unchanged; the hash is ignored, so the lock builds on any
+OS with that SDK. A compiler from a package (`Microsoft.Net.Compilers.Toolset`, `CSC_TOOLSET`)
+or a `cscpath` outside the SDK keeps its hash and is checked as before. The SBOM's `tool:fsc` /
+`tool:csc` component then carries no hash for an SDK compiler.
 
 ### Import: the project decides, msbuild answers
 
@@ -517,7 +532,8 @@ lives in its own `Json` module.
     msbuild's) when it is missing, so a machine with only the lock can still reproduce it
 - `Dependencies` -- what it is compiled with and against, hashed; changes rarely and is
   reviewed when it does:
-  - `Compiler` -- `{ Tool; Path; Sha256; Version }`, `Version` the compiler's own product version
+  - `Compiler` -- `{ Tool; Path; Sha256; Version }`, `Version` the compiler's own product version;
+    `Sha256` is empty for a compiler of the .NET SDK ([why](#the-compiler-a-lock-names))
   - `References` -- `{ Path; Sha256; Alias }` in command-line order; `Alias` is the `alias=`
     prefix of an `extern alias` reference and "" otherwise (written to the file only when set)
   - `Analyzers` -- `{ Path; Sha256 }`
@@ -611,7 +627,7 @@ item per line; `Alias` only on a reference that has one; each package one inline
         "Resources": { "<resx path>": "<.resources path>", ... }
       },
       "Dependencies": {
-        "Compiler": { "Tool": "csc", "Path": "$(DotnetRoot)/sdk/8.0.425/Roslyn/bincore/csc.dll", "Sha256": "...", "Version": "4.11.0-3.25569.22" },
+        "Compiler": { "Tool": "csc", "Path": "$(DotnetRoot)/sdk/8.0.425/Roslyn/bincore/csc.dll", "Sha256": "", "Version": "4.11.0-3.25569.22" },
         "References": [
           { "Path": "$(NuGetPackageRoot)/...", "Sha256": "..." },
           { "Path": "...", "Sha256": "...", "Alias": "legacy" }
@@ -1112,9 +1128,10 @@ target "out/(cfg:*)/(fwk:*)/(name:*).dll" {
   (the lock has none); a `--doc:`/`/doc:` the lock carries is re-targeted beside it. The `.xml` is
   a side output, not a target, so a lock without doc (a Debug lock, say) expects no `.xml` and is
   up to date on the next run.
-- **Dependencies**: every reference is needed before the compile -- the hashed ones and the
-  unhashed project-reference outputs, so the referenced `.dll` is built first by the same rule
-  and a change to it rebuilds the referencer. C# source masks are expanded through `getFiles`
+- **Dependencies**: the unhashed project-reference outputs are needed before the compile, so
+  the referenced `.dll` is built first by the same rule and a change to it rebuilds the
+  referencer. The hashed references are packages: a missing one (an empty package folder on a
+  fresh clone or CI) is fetched by the replay's restore first, then needed by the runner. C# source masks are expanded through `getFiles`
   (`Described.expandCsc`): an added or removed `.cs` under a mask rebuilds without touching the
   lock. The runner's own `needFiles` covers the sources and the compiler.
 - **`$(Version)`**: a `$(Version)` token in `Generated` is replaced by the value of the variable
@@ -1138,6 +1155,15 @@ without a lock change; a description without a lock fails pointing at `update-lo
 with `.xake` deleted, `build` over the committed locks of A -> B runs no lock rule; Xake's three
 projects from the locks `update-locks` writes into `out/Release/<fwk>/`. Every test generates
 its locks through the phony `lock::` rule and `update-locks`.
+
+### Known difference: another checkout folder
+
+Measured on Xake's own projects (SDK 10.0.401, macOS arm64): rebuilding from the locks in the
+same folder gives byte-identical dlls. A clone in another folder, built from the same locks,
+gives dlls that differ in 59 bytes -- the PE checksum and the timestamps of the debug directory
+-- despite `--deterministic+` and `--pathmap`; the pdbs are identical. This is described, not
+fixed. Comparing packages built in different folders (nupkg equality) therefore has to compare
+entry content with this in mind, not the archive bytes or a plain hash of each dll.
 
 ## Behaviour notes
 

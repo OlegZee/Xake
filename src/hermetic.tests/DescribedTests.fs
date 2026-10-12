@@ -273,3 +273,38 @@ type ``Described compilation``() =
         Assert.That(File.ReadAllText lockPath, Is.EqualTo lockText, "an added file changes no lock")
         Assert.That(typeNames "out/Cs.dll", Is.SupersetOf [ "A"; "B"; "C" ], "class C is in the rebuilt assembly")
         Assert.That(System.Text.Encoding.UTF8.GetString (File.ReadAllBytes "out/Cs.dll"), Does.Contain "Cs.Tests")
+
+    /// A C# library description under `<dir>/<name>/`, written as JSON.
+    member private x.CsDescription (dir: string) (name: string) (frameworks: string list) (refs: string list) (packages: (string * string) list) =
+        let quoted (xs: string list) = xs |> List.map (sprintf "\"%s\"") |> String.concat ", "
+        let pkgs = packages |> List.map (fun (id, v) -> sprintf "{ \"id\": \"%s\", \"version\": \"%s\" }" id v) |> String.concat ", "
+        File.WriteAllText (dir </> name </> Description.FileName,
+            sprintf "{\n  \"name\": \"%s\",\n  \"project\": \"%s.csproj\",\n  \"language\": \"csharp\",\n  \"kind\": \"library\",\n  \"frameworks\": [%s],\n  \"sources\": [\"*.cs\"],\n  \"projectRefs\": [%s],\n  \"packages\": [%s]\n}\n"
+                name name (quoted frameworks) (quoted refs) pkgs)
+
+    /// G14: compiled straight from the descriptions (no lock), A -> B where only B declares the
+    /// package A's source uses: `restore` gives A nothing, `restoreWith` brings B's package.
+    [<Test; Category("Integration")>]
+    member x.``restoreWith brings the packages of the project references``() =
+        if Directory.Exists "g14" then Directory.Delete ("g14", true)
+        for d in [ "g14/A"; "g14/B" ] do Directory.CreateDirectory d |> ignore
+        File.WriteAllText ("g14/B/B.cs", "namespace B { public class Buf { public System.Span<byte> Of (byte[] b) { return b; } } }\n")
+        File.WriteAllText ("g14/A/A.cs", "namespace A { public class User { public int Length (byte[] b) { return new B.Buf ().Of (b).Slice (1).Length; } } }\n")
+        x.CsDescription "g14" "B" [ "netstandard2.0" ] [] [ "System.Memory", "4.6.0" ]
+        x.CsDescription "g14" "A" [ "netstandard2.0" ] [ "B" ] []
+        let descOf name = sprintf "g14/%s/%s" name Description.FileName
+        let mutable own = None
+        let mutable flowing = None
+        x.Run "g14" (recipe {
+            let! b = Description.load (descOf "B")
+            let! pb = Described.restoreWith descOf b "netstandard2.0"
+            do! csc { targetfwk "netstandard2.0"; out (File.make "g14/out/B.dll"); project (descOf "B"); config "Release"; packages pb }
+            let! a = Description.load (descOf "A")
+            let! pa = Described.restore a "netstandard2.0"
+            own <- Some pa
+            let! pa = Described.restoreWith descOf a "netstandard2.0"
+            flowing <- Some pa
+            do! csc { targetfwk "netstandard2.0"; out (File.make "g14/out/A.dll"); ref !!"g14/out/B.dll"; project (descOf "A"); config "Release"; packages pa } })
+        Assert.That(own.Value.Packages, Is.Empty, "A declares no package")
+        Assert.That(flowing.Value.Packages |> List.exists (fun p -> p.Id = "System.Memory" && p.Version = "4.6.0" && p.Direct), Is.True, sprintf "%A" flowing.Value.Packages)
+        Assert.That(File.Exists "g14/out/A.dll", Is.True)

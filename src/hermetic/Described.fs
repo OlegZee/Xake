@@ -157,6 +157,44 @@ module Described =
             if File.Exists compiled && File.Exists resx && File.GetLastWriteTimeUtc compiled < File.GetLastWriteTimeUtc resx then
                 File.Delete compiled
 
+    /// A target framework moniker as (family, version): `netstandard2.0` -> ("netstandard",
+    /// [2; 0]), `net8.0`/`netcoreapp3.1` -> ("netcoreapp", ...), `net462` -> ("netfx", [4; 6; 2]).
+    let private moniker (tfm: string) =
+        let t = tfm.ToLowerInvariant ()
+        let dotted (s: string) = s.Split '.' |> Array.map int |> List.ofArray
+        let m = System.Text.RegularExpressions.Regex.Match (t, @"^(netstandard|netcoreapp|net)(\d+(\.\d+)+)$")
+        if m.Success then
+            Some ((if m.Groups.[1].Value = "netstandard" then "netstandard" else "netcoreapp"), dotted m.Groups.[2].Value)
+        elif System.Text.RegularExpressions.Regex.IsMatch (t, @"^net\d{2,3}$") then
+            Some ("netfx", t.Substring 3 |> Seq.map (fun c -> int c - int '0') |> List.ofSeq)
+        else None
+
+    /// <summary>
+    /// The framework of `available` a project targeting `target` references, msbuild's
+    /// "nearest" in its simplest form: `target` itself; else the highest of the same family
+    /// not above it (`net8.0` takes `net6.0`, `net472` takes `net462`); else the highest
+    /// `netstandard` the target implements (.NET and .NET Core: up to 2.1; .NET Framework
+    /// 4.6.1 and later: up to 2.0; `netstandard` itself: not above it). `None` when nothing fits.
+    /// </summary>
+    let nearestFramework (target: string) (available: string list) : string option =
+        match available |> List.tryFind (same target), moniker target with
+        | Some exact, _ -> Some exact
+        | None, None -> None
+        | None, Some (family, version) ->
+            let candidates = available |> List.choose (fun a -> moniker a |> Option.map (fun m -> a, m))
+            let highest pick = candidates |> List.filter pick |> List.sortBy (snd >> snd) |> List.tryLast |> Option.map fst
+            let standardUpTo =
+                match family with
+                | "netstandard" -> Some version
+                | "netcoreapp" -> Some [ 2; 1 ]
+                | _ when version >= [ 4; 6; 1 ] -> Some [ 2; 0 ]
+                | _ -> None
+            highest (fun (_, (f, v)) -> f = family && v <= version)
+            |> Option.orElse (
+                match standardUpTo with
+                | Some top -> highest (fun (_, (f, v)) -> f = "netstandard" && v <= top)
+                | None -> None)
+
     /// The package items of one framework: the project-wide ones, then `byFramework`'s.
     let private itemsFor (d: Description.Project) (framework: string) =
         let extra = d.ByFramework |> List.tryPick (fun (tfm, items) -> if same tfm framework then Some items else None)
@@ -186,20 +224,9 @@ module Described =
           yield "" ]
         |> String.concat "\n"
 
-    /// <summary>
-    /// Resolves the packages of description `d` for `framework` the way msbuild does: writes
-    /// `restoreProjectText` to `obj/xake/packages/&lt;name&gt;/&lt;framework&gt;/restore.csproj` under
-    /// the project root, runs `dotnet restore` on it into the build's package folder
-    /// (`DotNetFwk.packageRoot`: `NUGET_PACKAGES`), then reads its `project.assets.json`
-    /// (`Nuget.readAssets`, `Nuget.compileItems`). The repository's `nuget.config` applies; its
-    /// `Directory.Build.props`/`Directory.Packages.props` do not. This is the lock-generation
-    /// step: `fsc`/`csc` never call it, they take its result through `packages`. A description
-    /// without packages for `framework` gives an empty result without running anything.
-    /// </summary>
-    let restore (d: Description.Project) (framework: string) : Recipe<ExecContext, Restored> =
+    /// The restore of `packages` for description `d` and `framework` (see `restore`).
+    let private restorePackages (d: Description.Project) (framework: string) (packages: Description.Package list) : Recipe<ExecContext, Restored> =
         recipe {
-            let packages, _, _, _ = itemsFor d framework
-            let packages = packages @ implicitPackages d framework
             if List.isEmpty packages then
                 return { Framework = framework; References = []; Packages = [] }
             else
@@ -235,6 +262,79 @@ module Described =
                     |> List.distinct
                     |> List.sortWith (fun a b -> System.String.CompareOrdinal (a, b))
                 return { Framework = framework; References = references; Packages = Lock.packagesOf root graph }
+        }
+
+    /// <summary>
+    /// Resolves the packages of description `d` for `framework` the way msbuild does: writes
+    /// `restoreProjectText` to `obj/xake/packages/&lt;name&gt;/&lt;framework&gt;/restore.csproj` under
+    /// the project root, runs `dotnet restore` on it into the build's package folder
+    /// (`DotNetFwk.packageRoot`: `NUGET_PACKAGES`), then reads its `project.assets.json`
+    /// (`Nuget.readAssets`, `Nuget.compileItems`). The repository's `nuget.config` applies; its
+    /// `Directory.Build.props`/`Directory.Packages.props` do not. This is the lock-generation
+    /// step: `fsc`/`csc` never call it, they take its result through `packages`. A description
+    /// without packages for `framework` gives an empty result without running anything. Only
+    /// the description's own packages: a project compiled without a lock whose project
+    /// references declare packages takes `restoreWith`.
+    /// </summary>
+    let restore (d: Description.Project) (framework: string) : Recipe<ExecContext, Restored> =
+        let packages, _, _, _ = itemsFor d framework
+        restorePackages d framework (packages @ implicitPackages d framework)
+
+    /// <summary>
+    /// The packages description `d`'s project references bring for `framework`, as msbuild
+    /// flows them to the referring project: for each project of the closure of `projectRefs`
+    /// (breadth first, each once) -- its description at `descriptionOf name`, read and depended
+    /// on -- the packages it declares for its nearest framework (`nearestFramework`), at the
+    /// version it declares; not the `private` ones (`PrivateAssets="all"` does not flow), not
+    /// one `d` itself declares, the first declaration of an id winning. Fails when a
+    /// referenced project has no framework compatible with the referring one.
+    /// </summary>
+    let flowingPackages (descriptionOf: string -> string) (d: Description.Project) (framework: string)
+            : Recipe<ExecContext, Description.Package list> =
+        let declared, _, _, _ = itemsFor d framework
+        let rec walk (seen: string list) (queue: (string * string * string) list) (acc: Description.Package list) =
+            recipe {
+                match queue with
+                | [] -> return acc
+                | (name, _, _) :: rest when List.contains name seen ->
+                    let! result = walk seen rest acc
+                    return result
+                | (name, referrer, fwk) :: rest ->
+                    let! r = Description.load (descriptionOf name)
+                    let rf =
+                        match nearestFramework fwk r.Frameworks with
+                        | Some f -> f
+                        | None ->
+                            failwithf "'%s' (%s): projectRef '%s' has no framework compatible with it (%s)"
+                                referrer fwk name (String.concat ", " r.Frameworks)
+                    let packages, _, _, _ = itemsFor r rf
+                    let known = declared @ acc
+                    let adds =
+                        packages
+                        |> List.filter (fun p -> not p.Private && not (known |> List.exists (fun k -> same k.Id p.Id)))
+                        |> List.distinctBy (fun p -> p.Id.ToLowerInvariant ())
+                    let! result = walk (seen @ [ name ]) (rest @ [ for n in r.ProjectRefs -> n, r.Name, rf ]) (acc @ adds)
+                    return result
+            }
+        walk [] [ for n in d.ProjectRefs -> n, d.Name, framework ] []
+
+    /// <summary>
+    /// `restore` for a project compiled without a lock (`csc/fsc { project }` straight from the
+    /// description): the description's packages plus those its project references bring
+    /// (`flowingPackages`; a referenced project's description is at `descriptionOf name`, the
+    /// script's own mapping, the one its lock rule hands `Locks.generate`). Lock generation
+    /// flows the referenced projects' packages from their locks instead.
+    /// <code>
+    /// let! pkgs = Described.restoreWith descOf d fwk
+    /// do! csc { targetfwk fwk; ref refs; project (descOf name); config cfg; packages pkgs }
+    /// </code>
+    /// </summary>
+    let restoreWith (descriptionOf: string -> string) (d: Description.Project) (framework: string) : Recipe<ExecContext, Restored> =
+        recipe {
+            let! flowing = flowingPackages descriptionOf d framework
+            let packages, _, _, _ = itemsFor d framework
+            let! restored = restorePackages d framework (packages @ implicitPackages d framework @ flowing)
+            return restored
         }
 
     let private hasWildcard (s: string) = s.Contains "*" || s.Contains "?"
@@ -339,14 +439,16 @@ module Described =
 
             let packages, defines, references, extraArgs = itemsFor d framework
             let packageRefs =
+                // the restore may hold more than the description declares (the packages its
+                // project references bring, `restoreWith`): all of it is referenced
                 match packages, spec.Restored with
-                | [], _ -> []
-                | _, None ->
-                    failwithf "'%s': the description references packages (%s); resolve them with Described.restore and pass the result with `packages` -- fsc and csc do not resolve packages"
-                        d.Name (packages |> List.map (fun p -> p.Id) |> String.concat ", ")
                 | _, Some r when not (same r.Framework framework) ->
                     failwithf "'%s': the packages were restored for %s, the compilation is for %s" d.Name r.Framework framework
                 | _, Some r -> r.References
+                | [], None -> []
+                | _, None ->
+                    failwithf "'%s': the description references packages (%s); resolve them with Described.restore and pass the result with `packages` -- fsc and csc do not resolve packages"
+                        d.Name (packages |> List.map (fun p -> p.Id) |> String.concat ", ")
 
             // a projectRef is passed as a reference by the script (its output path is the script's layout)
             let (Filelist given) = toFileList root refs

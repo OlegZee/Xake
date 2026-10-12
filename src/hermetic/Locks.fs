@@ -17,18 +17,6 @@ module Locks =
     let private same (a: string) (b: string) = System.String.Equals (a, b, System.StringComparison.OrdinalIgnoreCase)
     let private normal (path: string) = path.Replace ('\\', '/')
 
-    /// A target framework moniker as (family, version): `netstandard2.0` -> ("netstandard",
-    /// [2; 0]), `net8.0`/`netcoreapp3.1` -> ("netcoreapp", ...), `net462` -> ("netfx", [4; 6; 2]).
-    let private moniker (tfm: string) =
-        let t = tfm.ToLowerInvariant ()
-        let dotted (s: string) = s.Split '.' |> Array.map int |> List.ofArray
-        let m = System.Text.RegularExpressions.Regex.Match (t, @"^(netstandard|netcoreapp|net)(\d+(\.\d+)+)$")
-        if m.Success then
-            Some ((if m.Groups.[1].Value = "netstandard" then "netstandard" else "netcoreapp"), dotted m.Groups.[2].Value)
-        elif System.Text.RegularExpressions.Regex.IsMatch (t, @"^net\d{2,3}$") then
-            Some ("netfx", t.Substring 3 |> Seq.map (fun c -> int c - int '0') |> List.ofSeq)
-        else None
-
     /// <summary>
     /// The framework of `available` a project targeting `target` references, msbuild's
     /// "nearest" in its simplest form: `target` itself; else the highest of the same family
@@ -37,23 +25,7 @@ module Locks =
     /// 4.6.1 and later: up to 2.0; `netstandard` itself: not above it). `None` when nothing fits.
     /// </summary>
     let nearestFramework (target: string) (available: string list) : string option =
-        match available |> List.tryFind (same target), moniker target with
-        | Some exact, _ -> Some exact
-        | None, None -> None
-        | None, Some (family, version) ->
-            let candidates = available |> List.choose (fun a -> moniker a |> Option.map (fun m -> a, m))
-            let highest pick = candidates |> List.filter pick |> List.sortBy (snd >> snd) |> List.tryLast |> Option.map fst
-            let standardUpTo =
-                match family with
-                | "netstandard" -> Some version
-                | "netcoreapp" -> Some [ 2; 1 ]
-                | _ when version >= [ 4; 6; 1 ] -> Some [ 2; 0 ]
-                | _ -> None
-            highest (fun (_, (f, v)) -> f = family && v <= version)
-            |> Option.orElse (
-                match standardUpTo with
-                | Some top -> highest (fun (_, (f, v)) -> f = "netstandard" && v <= top)
-                | None -> None)
+        Described.nearestFramework target available
 
     /// The configuration of a referenced project a project built as `config` gets, from the
     /// configurations the referenced one has a lock for (`hasLock`): `config` itself, else
@@ -199,18 +171,16 @@ module Locks =
                         (refs |> List.map (fun (o, _, _, _) -> o)) @ (refs |> List.collect (fun (_, _, _, t) -> t))
                         |> List.distinct
                     let refFiles = outputs |> List.fold (fun fs o -> fs + (!! o)) Fileset.Empty
-                    // the description's own packages go through `packages`; flowing ones alone through `ref`
-                    let restoredRefs = if List.isEmpty own then restored.References |> List.fold (fun fs o -> fs + (!! o)) Fileset.Empty else Fileset.Empty
                     let outFile = File.make (full (Path.Combine (outOf config fwk d.Name, assemblyName + ".dll")))
                     let! compilation =
                         match d.Language with
                         | Description.FSharp -> recipe {
-                            let! f = fsc { targetfwk fwk; out outFile; ref (refFiles + restoredRefs); project descPath; config configName; packages restored; resolve }
+                            let! f = fsc { targetfwk fwk; out outFile; ref refFiles; project descPath; config configName; packages restored; resolve }
                             // the output path is the build's (`-o` added when compiling from the lock)
                             let keep o = match FscArgs.parse o with FscArgs.Switch (_, n, _) -> FscArgs.canonical n <> "out" | _ -> true
                             return Lock.Compilation.Fsc { f with Options = f.Options |> List.filter keep } }
                         | Description.CSharp -> recipe {
-                            let! c = csc { targetfwk fwk; out outFile; ref (refFiles + restoredRefs); project descPath; config configName; packages restored; resolve }
+                            let! c = csc { targetfwk fwk; out outFile; ref refFiles; project descPath; config configName; packages restored; resolve }
                             let keep o = match CscArgs.parse o with CscArgs.Switch (n, _) -> CscArgs.canonical n <> "out" | _ -> true
                             return Lock.Compilation.Csc { c with Options = c.Options |> List.filter keep } }
                     // a project reference must be among the compilation's references even when

@@ -194,7 +194,7 @@ open Xake.Hermetic.Dotnet
 |---|---|---|
 | `project` | `string` | the description at that path: sources (F# in order; C# as masks), defines, framework `references` (plus the SDK's implicit ones for .NET Framework), `byFramework` additions, options, `kind` as `target`, `internalsVisibleTo` and `assemblyAttributes` as one generated source, resources (`.resx` compiled), `noWarn` with the SDK's defaults, `doc` as `<out>.xml`, `/deterministic+` and `/pathmap:<project root>/=/_/` |
 | `config` | `"Debug"` \| `"Release"` | the SDK's configuration preset (below); without it no preset applies |
-| `packages` | `Described.Restored` | the description's packages as `Described.restore` resolved them; required when the description has packages for the framework |
+| `packages` | `Described.Restored` | the description's packages as `Described.restore` (or `restoreWith`) resolved them; required when the description has packages for the framework; every reference of the restore is passed |
 
 - **Framework.** `targetfwk` (it must be one of the description's `frameworks`), else the
   description's only framework, else `NETFX-TARGET`; otherwise it fails listing the frameworks.
@@ -224,6 +224,13 @@ open Xake.Hermetic.Dotnet
   (`Nuget.readAssets`, `Nuget.compileItems`): `References` are the compile assets of the whole
   graph, `Packages` the graph as a lock entry records it (`Lock.packagesOf`). A description with
   packages and no `packages` fails, naming `Described.restore`.
+- **Packages of project references** (no lock): msbuild flows a referenced project's packages to
+  the referrer; a description lists only its own. `Described.restoreWith descriptionOf d
+  framework` restores `d`'s packages plus those of the closure of its `projectRefs` (each
+  description read at `descriptionOf name`, the script's own name-to-path mapping, the one its
+  lock rule hands `Locks.generate`; for each, its nearest framework; declared versions; not
+  `private` ones; an id `d` declares wins). Lock generation flows them from the referenced
+  locks instead.
 - **C# masks.** A C# description's `sources` are Xake masks with the import's convention: a `!`
   prefix is an exclude, applied in order (`["**/*.cs", "!obj/**/*", "!bin/**/*"]`), and
   `dir/**/*` is every file below `dir`. `resolve` returns a `Csc` whose `Sources` are those

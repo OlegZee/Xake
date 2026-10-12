@@ -67,3 +67,7 @@ From `docs/hermetic/workflows.md` ("Gaps"), in priority order:
 7. SBOM default internal prefixes are a customer's; the default should be empty.
 8. The six SBOM questions in `docs/hermetic/nuget-sbom.md`; `sign {}` shadows `sign`;
    `StrongName.signFile` does not recompute the PE checksum; no real signer ships.
+9. Rework `hermetic-guide.md` section 6, building from an imported lock: the hand-written
+   project-reference remap (`unbuilt`/`mapped` over empty hashes) is the pattern `Locks.compileAs`
+   replaced for Xake-generated locks; give imported locks the same shape, or document
+   `Locks.compileAs` as the way and retire the example.

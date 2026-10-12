@@ -92,6 +92,71 @@ module Described =
 
     let private normal (path: string) = path.Replace ('\\', '/')
 
+    /// The warnings the SDK suppresses for every project (`Microsoft.NET.Sdk.CSharp.props`:
+    /// `1701;1702`; the F# SDK sets none); `project` adds the description's `noWarn` to them.
+    let sdkNoWarn (language: Description.Language) : string list =
+        match language with
+        | Description.CSharp -> [ "1701"; "1702" ]
+        | Description.FSharp -> []
+
+    let private everettId (c: char) =
+        System.Char.IsLetterOrDigit c
+        || (match System.Char.GetUnicodeCategory c with
+            | System.Globalization.UnicodeCategory.ConnectorPunctuation
+            | System.Globalization.UnicodeCategory.NonSpacingMark
+            | System.Globalization.UnicodeCategory.SpacingCombiningMark
+            | System.Globalization.UnicodeCategory.EnclosingMark -> true
+            | _ -> false)
+    let private everettFirst (c: char) =
+        System.Char.IsLetter c || System.Char.GetUnicodeCategory c = System.Globalization.UnicodeCategory.ConnectorPunctuation
+
+    /// A folder path as msbuild makes it part of a manifest name (`MakeValidEverettIdentifier`):
+    /// `/` -> `.`, in each dot-separated part a character that is not an identifier character
+    /// becomes `_`, and a part that does not start like an identifier gets a leading `_`.
+    let private everett (dir: string) =
+        let b = System.Text.StringBuilder ()
+        let part (s: string) =
+            if s.Length > 0 then
+                if everettFirst s.[0] then b.Append s.[0] |> ignore
+                else
+                    b.Append '_' |> ignore
+                    if everettId s.[0] then b.Append s.[0] |> ignore
+                for c in s.Substring 1 do b.Append (if everettId c then c else '_') |> ignore
+        let folder (s: string) =
+            s.Split '.' |> Array.iteri (fun i p -> (if i > 0 then b.Append '.' |> ignore); part p)
+            if b.ToString () = "_" then b.Append '_' |> ignore
+        (normal dir).Split '/' |> Array.iteri (fun i f -> (if i > 0 then b.Append '.' |> ignore); folder f)
+        b.ToString ()
+
+    /// <summary>
+    /// msbuild's default manifest name of an embedded resource (`CreateCSharpManifestResourceName`,
+    /// no `DependentUpon`, no culture): `rootNamespace`, the folder of `file` (relative to the
+    /// project folder) as an identifier (`a/b c` -> `a.b_c`, `1st` -> `_1st`), the file name --
+    /// for a `.resx` without its extension, plus `.resources`. Empty parts are left out.
+    /// </summary>
+    let manifestName (rootNamespace: string) (file: string) : string =
+        let file = normal file
+        let dir, name = match file.LastIndexOf '/' with -1 -> "", file | i -> file.Substring (0, i), file.Substring (i + 1)
+        let leaf =
+            if name.EndsWith (".resx", System.StringComparison.OrdinalIgnoreCase) then Path.GetFileNameWithoutExtension name + ".resources"
+            else name
+        [ rootNamespace; (if dir = "" then "" else everett dir); leaf ] |> List.filter ((<>) "") |> String.concat "."
+
+    /// The root namespace of a description as msbuild defaults it: `rootNamespace`, else the
+    /// project name with ` ` -> `_`.
+    let rootNamespace (d: Description.Project) : string =
+        d.RootNamespace |> Option.defaultValue (d.Name.Replace (" ", "_"))
+
+    /// <summary>
+    /// Deletes each compiled `.resources` of `resources` ((resx, .resources) pairs) that is older
+    /// than its `.resx`. The runner compiles a `.resources` only when it is missing, so an
+    /// edited resx (which reruns the compile: the runner depends on it) is compiled again.
+    /// </summary>
+    let refreshResources (resources: (string * string) list) : unit =
+        for resx, compiled in resources do
+            if File.Exists compiled && File.Exists resx && File.GetLastWriteTimeUtc compiled < File.GetLastWriteTimeUtc resx then
+                File.Delete compiled
+
     /// The package items of one framework: the project-wide ones, then `byFramework`'s.
     let private itemsFor (d: Description.Project) (framework: string) =
         let extra = d.ByFramework |> List.tryPick (fun (tfm, items) -> if same tfm framework then Some items else None)
@@ -236,8 +301,11 @@ module Described =
         Doc: string option
         Target: TargetType
         Tailcalls: bool
-        /// the generated `InternalsVisibleTo` source, when the description names friends
-        Friends: (string * string) option }
+        /// the generated assembly-attributes source (`InternalsVisibleTo` and the
+        /// description's `assemblyAttributes`), when it names any
+        Attributes: (string * string) option
+        /// the `.resx` resources: (resx, compiled `.resources`), absolute
+        Resx: (string * string) list }
 
     let private fullOf (root: string) (path: string) =
         normal (Path.GetFullPath (if Path.IsPathRooted path then path else Path.Combine (root, path)))
@@ -308,45 +376,56 @@ module Described =
             let o = d.Options
             let fs = language = Description.FSharp
             let switch (name: string) value = if fs then sprintf "--%s:%s" name value else sprintf "/%s:%s" name value
-            // embedded resources, plain files: the manifest name as given, else msbuild's default
-            // (root namespace, else assembly name, then the path with '.' for '/')
+            let assemblyName = Path.GetFileNameWithoutExtension out.Name
+            // embedded resources: the manifest name as given, else msbuild's default
+            // (`manifestName`); a `.resx` is embedded as the `.resources` it compiles to, under
+            // obj/xake/<assembly>/<framework>[/<config>]/ (a build product, compiled by the runner)
+            let resxDir =
+                normal (Path.Combine (Array.append [| root; "obj"; "xake"; assemblyName; framework |] (Option.toArray spec.Config)))
             let resources =
                 d.Resources |> List.map (fun r ->
+                    let name = r.Name |> Option.defaultValue (manifestName (rootNamespace d) r.File)
                     if r.File.EndsWith (".resx", System.StringComparison.OrdinalIgnoreCase) then
-                        failwithf "'%s': resource '%s': a .resx in a description is not compiled by `project` yet" d.Name r.File
-                    let prefix = d.RootNamespace |> Option.orElse d.AssemblyName |> Option.defaultValue d.Name
-                    let name = r.Name |> Option.defaultValue (prefix + "." + (normal r.File).Replace ('/', '.'))
-                    switch "resource" (inProject r.File + "," + name))
+                        let compiled = resxDir + "/" + name
+                        Some (inProject r.File, compiled), switch "resource" (compiled + "," + name)
+                    else None, switch "resource" (inProject r.File + "," + name))
+            let nowarn = sdkNoWarn language @ o.NoWarn |> List.distinct
             let pathmap = (root |> normal |> fun r -> r.TrimEnd '/') + "/=/_/"
             let args =
                 configArgs
                 @ [ (if fs then "--deterministic+" else "/deterministic+"); switch "pathmap" pathmap ]
                 @ (o.LangVersion |> Option.map (switch "langversion") |> Option.toList)
                 @ (if o.WarningsAsErrors then [ (if fs then "--warnaserror+" else "/warnaserror+") ] else [])
+                @ (if List.isEmpty nowarn then [] else [ switch "nowarn" (String.concat "," nowarn) ])
                 @ (match o.Nullable with
                    | Some n when not fs -> [ switch "nullable" n ]
                    | Some "enable" -> [ "--checknulls+" ]
                    | _ -> [])
                 @ (o.KeyFile |> Option.map (inProject >> switch "keyfile") |> Option.toList)
-                @ resources
+                @ (resources |> List.map snd)
                 @ extraArgs
 
-            let assemblyName = Path.GetFileNameWithoutExtension out.Name
-            let friends =
-                match d.InternalsVisibleTo with
-                | [] -> None
-                | list ->
-                    let attr (f: Description.Friend) =
+            // one generated source per compile: the friends, then the other assembly attributes,
+            // in the description's order. Named `<assembly>.InternalsVisibleTo` while it holds
+            // only friends (as before), `<assembly>.AssemblyAttributes` otherwise
+            let attributes =
+                match d.InternalsVisibleTo, d.AssemblyAttributes with
+                | [], [] -> None
+                | friends, others ->
+                    let line (text: string) = if fs then sprintf "[<assembly: %s>]" text else sprintf "[assembly: %s]" text
+                    let friend (f: Description.Friend) =
                         let value = match f.Key with Some key -> sprintf "%s, PublicKey=%s" f.Name key | None -> f.Name
-                        if fs then sprintf "[<assembly: System.Runtime.CompilerServices.InternalsVisibleTo(\"%s\")>]" value
-                        else sprintf "[assembly: System.Runtime.CompilerServices.InternalsVisibleTo(\"%s\")]" value
+                        line (sprintf "System.Runtime.CompilerServices.InternalsVisibleTo(\"%s\")" value)
+                    let other (a: Description.Attribute) = line (sprintf "%s(%s)" a.Type (String.concat ", " a.Args))
+                    let kind = if List.isEmpty others then ".InternalsVisibleTo" else ".AssemblyAttributes"
                     let path =
                         normal (Path.Combine (root, "obj", "xake", assemblyName, framework,
-                                              assemblyName + ".InternalsVisibleTo" + (if fs then ".fs" else ".cs")))
+                                              assemblyName + kind + (if fs then ".fs" else ".cs")))
                     let body =
                         [ yield "// <auto-generated/> by Xake from the project description"
                           if fs then yield "namespace FSharp"; yield ""
-                          yield! list |> List.map attr
+                          yield! friends |> List.map friend
+                          yield! others |> List.map other
                           if fs then yield "do ()"
                           yield "" ]
                     Some (path, String.concat "\n" body)
@@ -370,7 +449,8 @@ module Described =
                   Doc = if o.Doc then Some (normal (Path.ChangeExtension (out.FullName, ".xml"))) else None
                   Target = (match d.Kind with Description.Library -> TargetType.Library | Description.Exe -> TargetType.Exe)
                   Tailcalls = tailcalls
-                  Friends = friends } : Plan
+                  Attributes = attributes
+                  Resx = resources |> List.choose fst } : Plan
         }
 
     let private filesOf (paths: string list) =
@@ -394,7 +474,8 @@ module Described =
                     Tailcalls = settings.Tailcalls && p.Tailcalls
                     CommandArgs = settings.CommandArgs @ p.Args }
             let! f = Fsc.ofSettings s
-            match p.Friends with
+            let f = { f with Fsc.Resources = f.Resources @ p.Resx }
+            match p.Attributes with
             | None -> return f
             | Some (path, content) ->
                 return { f with Fsc.Sources = path :: f.Sources; Fsc.Generated = (path, content) :: f.Generated }
@@ -419,8 +500,9 @@ module Described =
                     Define = settings.Define @ p.Defines |> List.distinct
                     CommandArgs = settings.CommandArgs @ p.Args @ (p.Doc |> Option.map ((+) "/doc:") |> Option.toList) }
             let! c = Csc.ofSettings s
-            let generated = p.Friends |> Option.toList
-            return { c with Sources = (generated |> List.map fst) @ p.Sources; Generated = generated @ c.Generated }
+            let generated = p.Attributes |> Option.toList
+            return { c with Sources = (generated |> List.map fst) @ p.Sources; Generated = generated @ c.Generated
+                            Resources = c.Resources @ p.Resx }
         }
 
     /// `c` with every source mask replaced by the files it names now (`expand`).
@@ -526,6 +608,7 @@ module FscDescribedBuilder =
         member _.Run(d: FscDescribed) =
             recipe {
                 let! f = Described.fsc d.FscSettings d.FscSpec
+                Described.refreshResources f.Resources
                 let! run = Fsc.runOptions { d.FscSettings with TargetFramework = f.Framework }
                 match d.FscLock with
                 | None -> do! Fsc.run run f
@@ -572,6 +655,7 @@ module CscDescribedBuilder =
         member _.Run(d: CscDescribed) =
             recipe {
                 let! masked = Described.csc d.CscSettings d.CscSpec
+                Described.refreshResources masked.Resources
                 let! run = Csc.runOptions { d.CscSettings with TargetFramework = masked.Framework }
                 match d.CscLock with
                 | None ->

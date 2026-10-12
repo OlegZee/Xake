@@ -292,6 +292,8 @@ module Locks =
     /// missing, then needed by the runner;</item>
     /// <item>C# source masks are expanded through `getFiles` (`Described.expandCsc`), so an
     /// added or removed `.cs` rebuilds;</item>
+    /// <item>a `.resx` resource is compiled into the `.resources` the lock names (under
+    /// `obj/xake/`) when that is missing or older than the resx; the resx is an input;</item>
     /// <item>a `$(Version)` token in `Generated` is replaced by the version of the first
     /// `versions` mask matching the project (its folder, where its first source lies, as
     /// `&lt;folder&gt;/xake.project.json` relative to the project root); the variable is read
@@ -357,6 +359,8 @@ module Locks =
                             | Lock.Compilation.Fsc f -> Lock.Compilation.Fsc { f with Generated = f.Generated |> List.map subst }
                             | Lock.Compilation.Csc x -> Lock.Compilation.Csc { x with Generated = x.Generated |> List.map subst } }
 
+            // a `.resx` edited since its `.resources` was compiled: compiled again by the runner
+            Described.refreshResources c.Resources
             let! server = CompilerServer.resolve None
             let lockOptions = { Lock.Options.Default with Run = { Lock.Options.Default.Run with Server = server } }
             do! Lock.compileFrom lockPath lockOptions { entry with Compilation = outputAt target c }

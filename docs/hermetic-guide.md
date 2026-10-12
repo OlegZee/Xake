@@ -1,6 +1,6 @@
 # Reproducible .NET builds with Xake.Hermetic.Dotnet
 
-Draft of the user guide. Status: package version 0.2.0, a preview; the API may change while the
+Draft of the user guide. Status: package version 0.3.0, a preview; the API may change while the
 package is 0.x.
 
 `Xake.Hermetic.Dotnet` adds a **lock** to Xake's `csc` and `fsc` tasks. A lock is a JSON file,
@@ -21,21 +21,21 @@ loaded with `#r` on the dll files instead of the NuGet package.
 
 ## 1. Install
 
-The package depends on `Xake` 3.6.0.24 or later, below 3.7 (3.6.0 as published on nuget.org). Reference it from your build script and
+The package depends on `Xake` 3.7.0.26 or later, below 3.8 (3.7.0 as published on nuget.org). Reference it from your build script and
 open three namespaces:
 
 ```fsharp
-#r "nuget: Xake.Hermetic.Dotnet, 0.2.0.<run>"   // the version nuget.org lists for 0.2.0
+#r "nuget: Xake.Hermetic.Dotnet, 0.3.0.<run>"   // the version nuget.org lists for 0.3.0
 
 open Xake
 open Xake.Dotnet
 open Xake.Hermetic.Dotnet
 ```
 
-Both are on nuget.org with the release run number as a fourth component: `Xake` 3.6.0 as
-`3.6.0.24`, `Xake.Hermetic.Dotnet` 0.2.0 as `0.2.0.<run>` (so `0.2.0` or `3.6.0` alone does not
+Both are on nuget.org with the release run number as a fourth component: `Xake` 3.7.0 as
+`3.7.0.26`, `Xake.Hermetic.Dotnet` 0.3.0 as `0.3.0.<run>` (so `0.3.0` or `3.7.0` alone does not
 exist and resolves to the next version up). The package brings `Xake` in as a dependency; add
-`#r "nuget: Xake, 3.6.0.24"` if you want to pin the base too. (0.1.0 was published as
+`#r "nuget: Xake, 3.7.0.26"` if you want to pin the base too. (0.1.0 was published as
 `0.1.0.22`, on Xake `3.4.0.21`; it has no F# support.)
 
 Two things change when you open `Xake.Hermetic.Dotnet`:

@@ -20,6 +20,20 @@ done (StrongName, Pack; Babel and delegated signing wait for the user) · **lock
 graph in the lock, repo-a re-proven 18/18 · open decisions for the user: lock update
 mechanism, release. Details: session.md, README.md.
 
+**Status 2026-10-11 (fsc-rework implementation):** plan of `fsc-rework/brief.md` §5 confirmed by the user; PRs 1-6 (minus PR 6 wiring) implemented by subagents and open as #44-#49; questions in `fsc-rework/questions.md`; PR 7 waits for the merges.
+
+## fsc-rework PR plan (brief §5, 2026-10-11)
+- [x] PR 1 Hermetic: description model — `pr/description-model`, PR #44 merged 2026-10-11
+- [~] PR 2 Hermetic: `fsc/csc { project d }` + `config` + packages via msbuild restore — `pr/csc-project`, PR #46 merged 2026-10-11
+- [~] PR 3 Hermetic: `Lock.generateAll` — `pr/lock-generate`, PR #48 merged 2026-10-11 (phony rule in the script + `Locks.generate`)
+- [x] PR 4 Hermetic: build from a lock into a layout (`Locks.compileAs`, `Locks.needAll`) — `pr/build-from-lock`, PR #49 merged 2026-10-11
+- [~] PR 5 Hermetic: import project file -> description — `pr/project-import`, PR #45 merged 2026-10-11
+- [x] PR 6 Core: fingerprints library + wiring — #47 merged 2026-10-11, fixes #51, wiring in #50
+- [x] PR 7 Self-build: `build.fsc.fsx` per the draft — PR #50 merged 2026-10-12 (includes the fingerprints wiring of PR 6); Xake 3.7.0.26 and hermetic 0.3.0.28 released on the way
+- [ ] PR 8 Hermetic: pack
+- [ ] PR 9 the trial product experiment (report, no PR)
+- [ ] PR 10 later: `cached` rule decorator
+
 ## Day zero (brief §8h/§8i/§8j)
 - [x] E1 reproducibility of repo-a with stock `dotnet build` — green on origin/develop
 - [x] E2 design-time import: CoreLib and page/Model (LocalBuild), both brands — complete
@@ -168,3 +182,10 @@ to that rule rather than the deliverable. Items are ordered by what they unblock
 - [ ] **`Lock.build` one-call for imported locks** (plan §3 "fsx wiring as one call") not built; scripts use `Lock.load` + `Lock.compile`
 - [ ] **`StrongName.signFile` does not recompute the PE CheckSum**
 
+
+**Status 2026-10-11:** `build.fsc.fsx` rework interviewed; decisions in `fsc-rework/interview.md`, plan in `fsc-rework/brief.md`. PR #42 parked on its branch.
+
+- [x] **fsc-rework interview** (2026-10-11): digest, interview, drafts, Fable review, brief
+- [ ] **fsc-rework implementation**: the PR plan in `fsc-rework/brief.md` (one tracker line per PR once started)
+- [ ] **`cached` rule decorator** + fingerprints file (after the explicit-command form lands)
+- [ ] **the trial product experiment** on the new system (repo-a + page, `develop`, two brands)

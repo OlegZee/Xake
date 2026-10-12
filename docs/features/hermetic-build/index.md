@@ -12,7 +12,9 @@ Kickoff for that session: [next-session.md](next-session.md).
 
 | File | What it is | Read when | fsc task | Lines | Date | Status |
 |---|---|---|---|---|---|---|
-| [next-session.md](next-session.md) | **RU.** kickoff for the `build.fsc.fsx` rework session: goal, state, user's remarks, reading order, interview plan | starting that session | **yes, first** | ~140 | 2026-10-11 | current |
+| [next-session-2.md](next-session-2.md) | **RU.** kickoff for the implementation session per fsc-rework/brief.md | starting implementation | **yes, first** | ~65 | 2026-10-11 | current |
+| [fsc-rework/](fsc-rework/) | rework working set: `brief.md` (plan), `interview.md` (decisions, authoritative), `drafts/`, `review.md`, `digest.md` | implementing the rework | **yes: brief + interview** | - | 2026-10-11 | current |
+| [next-session.md](next-session.md) | **RU.** kickoff for the `build.fsc.fsx` rework session: goal, state, user's remarks, reading order, interview plan | starting that session | done | ~140 | 2026-10-11 | done: interview held |
 | [session.md](session.md) | session log, mixed order: 09-29 and 09-23 at top, then branch notes on the fsc build (line ~610), then B2..E7 and dated entries to 2026-10-11 at the end | where things stand, next step | **yes: last two sections only** (2026-10-04, 2026-10-11); "Branch notes: the fsc-based build script" (~610-715) only if the old `Fsproj` design comes up | ~1060 | 2026-10-11 | current at the end, history above |
 | [tracker.md](tracker.md) | one-line work items by slice, status headers per day | checking whether an item was done or dropped | no | ~170 | 2026-10-02 | stale since 2026-10-02; session.md is ahead |
 | [README.md](README.md) | older folder map: working state, design notes, scripts | (replaced by this index) | no | ~50 | 2026-09-30 | superseded by index.md |

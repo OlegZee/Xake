@@ -38,7 +38,10 @@ fsproj), so a repository needs no script target for the import. Today the script
 
 ## Xake.Dotnet
 
-### B6: `Fsc` through the shared runner (planned after 3.4)
+### B6: `Fsc` through the shared runner (done in 3.5 / hermetic 0.2)
+
+Done: `Fsc` record, `fsc { resolve }`, `fsc { lock }`, `Fsc.run` on the shared runner core;
+kept below as the original plan.
 
 `fsc {}` has no resolved record, no `resolve` operation and no hash-checked runner, so there is
 no `fsc { lock }` and `build.fsc.fsx` (the build of record) is hermetic only through its kept

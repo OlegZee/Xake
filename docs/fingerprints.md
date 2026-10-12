@@ -58,13 +58,13 @@ Pure helpers for plain code and tests: `hashFile`, `hashBytes`, `compute`, `pars
 ## Wiring in a script
 
 ```fsharp
-command "import" { do! Description.import projects Description.beside [] }   // records lines
+command "import" { let! _ = Import.descriptions projects Description.beside [] in () }   // records lines
 "update-locks" <== [ for n in projects -> $"lock::{n}::Release" ]              // hermetic/lock.md
 "check" => Fingerprints.check "xake.fingerprints"
 
 command "build" {
     do! Fingerprints.warn "xake.fingerprints"
-    do! Lock.needAll descriptions "Release" lockOf outOf
+    do! Locks.needAll descriptions "Release" lockOf outOf
 }
 ```
 

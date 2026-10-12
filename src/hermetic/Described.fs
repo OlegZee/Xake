@@ -154,8 +154,10 @@ module Described =
 
     /// <summary>
     /// Deletes each compiled `.resources` of `resources` ((resx, .resources) pairs) that is older
-    /// than its `.resx`. The runner compiles a `.resources` only when it is missing, so an
-    /// edited resx (which reruns the compile: the runner depends on it) is compiled again.
+    /// than its `.resx`. The runner of Xake 3.7 (`Xake.Dotnet`, the floor of this package)
+    /// compiles a `.resources` only when it is missing, so an edited resx (which reruns the
+    /// compile: the runner depends on it) is compiled again. Xake's runner after 3.7.0.26
+    /// compiles it on every run itself: remove this when the package floor moves past it.
     /// </summary>
     let refreshResources (resources: (string * string) list) : unit =
         for resx, compiled in resources do

@@ -306,7 +306,7 @@ module Locks =
                             | Lock.Compilation.Fsc f -> Lock.Compilation.Fsc { f with Generated = f.Generated |> List.map subst }
                             | Lock.Compilation.Csc x -> Lock.Compilation.Csc { x with Generated = x.Generated |> List.map subst } }
 
-            // a `.resx` edited since its `.resources` was compiled: compiled again by the runner
+            // a `.resx` edited since its `.resources` was compiled (Xake 3.7's runner compiles a missing one only)
             Described.refreshResources c.Resources
             let! server = CompilerServer.resolve None
             let lockOptions = { Lock.Options.Default with Run = { Lock.Options.Default.Run with Server = server } }

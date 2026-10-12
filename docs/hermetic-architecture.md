@@ -38,7 +38,7 @@ strong-name re-signer and a PE comparator. SBOM and signing: to be redone (0.4).
 | The compiler command line | recorded verbatim (structured, with section markers); the import checks that the recorded form rebuilds msbuild's exact list |
 | References, analyzers, the compiler binary | path and SHA-256 in the lock; `Csc.run` refuses to compile when a recorded hash does not match the file on disk |
 | Generated compiler inputs (assembly attributes, the derived `.editorconfig`, `sourcelink.json`) | content stored in the lock and written back before compiling |
-| `.resx` resources | `(resx, .resources)` pairs; the `.resources` file is regenerated from the resx when missing |
+| `.resx` resources | `(resx, .resources)` pairs; the `.resources` file is compiled from the resx whenever the compile runs (written when it changes) |
 | The msbuild evaluation's own inputs | the project file and the imports outside the SDK, hashed (`Evaluation.Imports`); a change re-runs the import |
 | The package graph | ids, versions, nupkg SHA-512, direct flags, edges (`Entry.Packages`) |
 | Packages missing on this machine | fetched by exact id and version, the nupkg SHA-512 compared with the lock |

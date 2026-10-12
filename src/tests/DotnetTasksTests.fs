@@ -134,6 +134,19 @@ type ``Dotnet tasks tests``() =
         runBuild ()
         Assert.That(compileCount.Value, Is.EqualTo 1, "second build should not rerun the rule")
 
+        // an edited resx reruns the compile (it is an input) and the runner compiles the
+        // existing `.resources` again from it, not only a missing one
+        System.Threading.Thread.Sleep 1100
+        File.WriteAllText ("Strings.resx", resx.Replace ("Hello, resx!", "Hello again, resx!"))
+        runBuild ()
+        Assert.That(compileCount.Value, Is.EqualTo 2, "an edited resx reruns the rule")
+        Assert.That(System.Text.Encoding.UTF8.GetString (File.ReadAllBytes expectedResources), Does.Contain "Hello again, resx!")
+        Assert.That(System.Text.Encoding.UTF8.GetString (File.ReadAllBytes "helloresx.exe"), Does.Contain "Hello again, resx!")
+        let stamp = File.GetLastWriteTimeUtc expectedResources
+        runBuild ()
+        Assert.That(compileCount.Value, Is.EqualTo 2, "nothing changed after the edit")
+        Assert.That(File.GetLastWriteTimeUtc expectedResources, Is.EqualTo stamp)
+
     // A reference produced by another rule of the same script has to be (re)built before
     // `Csc.run` checks its hash, not after: the check is meant to verify what the compiler is
     // about to read. The consuming rule records its compilation once, hashed (`rehash`, the

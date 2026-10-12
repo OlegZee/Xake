@@ -249,8 +249,10 @@ open Xake.Hermetic.Dotnet
   `.resources` it compiles to, `obj/xake/<assembly>/<framework>[/<config>]/<manifest>`: the pair
   (resx, `.resources`) goes into `Csc.Resources`/`Fsc.Resources` (and so the lock: the resx path,
   the manifest in the switch, no hash), and the runner compiles it with `Xake.Dotnet.Resx` (string
-  entries) when it is missing; `Described.refreshResources` (run by `project` and
-  `Locks.compileAs`) deletes one older than its resx first, so an edit is compiled again.
+  entries) every time it runs (the resx is an input, so an edit reruns it), writing the
+  `.resources` only when its bytes change. Xake 3.7's runner compiled a missing one only; while
+  the hermetic package's floor is 3.7, `Described.refreshResources` (run by `project` and
+  `Locks.compileAs`) deletes one older than its resx first.
 - **Generated attributes.** One source per compile, `obj/xake/<assembly>/<framework>/`: the
   `internalsVisibleTo` friends, then `assemblyAttributes` (`[assembly: <type>(<args>)]`), in the
   description's order. It is `<assembly>.InternalsVisibleTo.cs|fs` while it holds friends only

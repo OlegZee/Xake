@@ -319,3 +319,33 @@ type ``Building from Xake-generated locks``() =
         let xml = File.ReadAllText "out/Release/netstandard2.0/Doc.xml"
         Assert.That(xml, Does.Contain "The included answer.")
         Assert.That(xml, Does.Not.Contain "Badly formed XML")
+
+    /// G12: a rule over the `.xml` (the same body as the dll's) lets a script need the doc
+    /// file first; it needs the dll, whose rule writes it. A lock without doc fails naming it;
+    /// `needAll` keeps needing only the dlls (Debug without doc does not rebuild).
+    [<Test; Category("Integration")>]
+    member x.``the xml is needed before the dll through its own rule``() =
+        fixture ()
+        x.Generate "generate-xml" fixtureOf [ "A" ] [ "Release" ] |> ignore
+        let compile = recipe {
+            let! cfg = getRuleMatch "cfg"
+            let! fwk = getRuleMatch "fwk"
+            let! name = getRuleMatch "name"
+            do! Locks.compileAs (lockOf name cfg) fwk versions }
+        let build label (goal: string) =
+            xake {x.TestOptions with FileLog = label + ".log"; ThrowOnError = true; Vars = [ "CI", "off" ]; FileLogLevel = Loud} {
+                wantOverride [ goal ]
+                rules [
+                    target "out/(cfg:*)/(fwk:*)/(name:*).dll" { do! compile }
+                    target "out/(cfg:*)/(fwk:*)/(name:*).xml" { do! compile }
+                ]
+            }
+        let xml = "out/Release/netstandard2.0/B.xml"
+        build "xml-1" xml
+        Assert.That(File.Exists xml, Is.True)
+        Assert.That(File.Exists (dll "Release" "B"), Is.True)
+        let stamps = x.Stamps [ xml; dll "Release" "B" ]
+        build "xml-2" xml
+        Assert.That(x.Stamps [ xml; dll "Release" "B" ], Is.EqualTo stamps, "nothing changed, nothing rebuilt")
+        let e = Assert.Throws<XakeException>(fun () -> build "xml-none" "out/Release/netstandard2.0/A.xml")
+        Assert.That(e.Data0, Does.Contain "asks for no XML doc")

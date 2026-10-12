@@ -248,39 +248,8 @@ module Locks =
             Path.matchesPattern (Path.parse mask) (normal projectPath)
         versions |> List.tryFind (fst >> covers) |> Option.map snd
 
-    /// <summary>
-    /// Compiles the lock entry for `fwk` of the lock at `lockPath` into the target of the
-    /// calling file rule -- the `.dll` at the script's layout path:
-    /// <code>
-    /// target "out/(cfg:*)/(fwk:*)/(name:*).dll" {
-    ///     let! cfg = getRuleMatch "cfg"
-    ///     let! fwk = getRuleMatch "fwk"
-    ///     let! name = getRuleMatch "name"
-    ///     do! Locks.compileAs (lockOf name cfg) fwk versions }
-    /// </code>
-    /// <list type="bullet">
-    /// <item>reads the lock (a dependency on it, `Lock.load`); the target's file name must be
-    /// the entry's assembly name;</item>
-    /// <item>the output: `-o`/`/out:` at the target (a Xake-generated lock has none); a
-    /// `--doc:`/`/doc:` the lock carries is re-targeted beside it -- the `.xml` is a side
-    /// output, not a target, so a lock without doc expects none;</item>
-    /// <item>depends on the unhashed outputs of project references before compiling, so a
-    /// referenced project's `.dll` is built first by its own rule and a change to it rebuilds
-    /// this one; the hashed references (packages) are fetched by the restore below when
-    /// missing, then needed by the runner;</item>
-    /// <item>C# source masks are expanded through `getFiles` (`Described.expandCsc`), so an
-    /// added or removed `.cs` rebuilds;</item>
-    /// <item>a `.resx` resource is compiled into the `.resources` the lock names (under
-    /// `obj/xake/`) when that is missing or older than the resx; the resx is an input;</item>
-    /// <item>a `$(Version)` token in `Generated` is replaced by the version of the first
-    /// `versions` mask matching the project (its folder, where its first source lies, as
-    /// `&lt;folder&gt;/xake.project.json` relative to the project root); the variable is read
-    /// (a dependency) only when the token is there;</item>
-    /// <item>then `Lock.compileFrom`: prerequisites, the `HERMETIC=on` gate (message 10),
-    /// restore of what the lock names, the compiler (csc's server per `CSC_SERVER`).</item>
-    /// </list>
-    /// </summary>
-    let compileAs (lockPath: string) (fwk: string) (versions: (string * RequiredVar<string>) list) : Recipe<ExecContext, unit> =
+    /// `compileAs` for a `.dll` target.
+    let private compileDll (lockPath: string) (fwk: string) (versions: (string * RequiredVar<string>) list) : Recipe<ExecContext, unit> =
         recipe {
             let! options = getCtxOptions ()
             let root = normal (Path.GetFullPath options.ProjectRoot)
@@ -342,6 +311,75 @@ module Locks =
             let! server = CompilerServer.resolve None
             let lockOptions = { Lock.Options.Default with Run = { Lock.Options.Default.Run with Server = server } }
             do! Lock.compileFrom lockPath lockOptions { entry with Compilation = outputAt target c }
+        }
+
+    /// Whether the compilation asks for an XML doc file (`/doc:`, `--doc:`).
+    let private asksDoc (c: Lock.Compilation) =
+        match c with
+        | Lock.Compilation.Fsc f -> f.Options |> List.exists (fun o -> match FscArgs.parse o with FscArgs.Switch (_, n, _) -> FscArgs.canonical n = "doc" | _ -> false)
+        | Lock.Compilation.Csc c -> c.Options |> List.exists (fun o -> not (o.StartsWith "@") && (match CscArgs.parse o with CscArgs.Switch (n, _) -> CscArgs.canonical n = "doc" | _ -> false))
+
+    /// The `.xml` beside a `.dll` target: the dll rule writes it (the side output of the
+    /// compile); this needs the dll and checks the file is there.
+    let private docOf (lockPath: string) (fwk: string) (xml: string) : Recipe<ExecContext, unit> =
+        recipe {
+            let! doc = Lock.load lockPath
+            let asm = Path.GetFileNameWithoutExtension xml
+            let asked = doc.Entries |> List.exists (fun e -> same e.Framework fwk && e.Name = asm && asksDoc e.Compilation)
+            if not asked then
+                failwithf "'%s': the lock '%s' asks for no XML doc for %s: nothing writes '%s' (set `options.doc` in the description and update the lock)"
+                    asm lockPath fwk xml
+            let dll = Path.ChangeExtension (xml, ".dll")
+            do! needFiles (Filelist [ File.make dll ])
+            if not (File.Exists xml) then
+                failwithf "'%s': '%s' is missing while '%s' is up to date; delete the dll to compile it again" asm xml dll
+        }
+
+    /// <summary>
+    /// Compiles the lock entry for `fwk` of the lock at `lockPath` into the target of the
+    /// calling file rule -- the `.dll` at the script's layout path:
+    /// <code>
+    /// target "out/(cfg:*)/(fwk:*)/(name:*).dll" {
+    ///     let! cfg = getRuleMatch "cfg"
+    ///     let! fwk = getRuleMatch "fwk"
+    ///     let! name = getRuleMatch "name"
+    ///     do! Locks.compileAs (lockOf name cfg) fwk versions }
+    /// </code>
+    /// <list type="bullet">
+    /// <item>reads the lock (a dependency on it, `Lock.load`); the target's file name must be
+    /// the entry's assembly name;</item>
+    /// <item>the output: `-o`/`/out:` at the target (a Xake-generated lock has none); a
+    /// `--doc:`/`/doc:` the lock carries is re-targeted beside it -- the `.xml` is a side
+    /// output of the dll's rule;</item>
+    /// <item>a target `.xml` (a rule over the `.xml` with the same body, for a script that
+    /// needs the doc file before or without the dll, e.g. to pack it) needs the `.dll` beside
+    /// it, whose rule writes it; it fails when the lock asks for no doc. A rule declaring both
+    /// (`targets [dll; xml]`) is not the form: a lock without doc never writes the `.xml`, so
+    /// such a rule would run on every build;</item>
+    /// <item>depends on the unhashed outputs of project references before compiling, so a
+    /// referenced project's `.dll` is built first by its own rule and a change to it rebuilds
+    /// this one; the hashed references (packages) are fetched by the restore below when
+    /// missing, then needed by the runner;</item>
+    /// <item>C# source masks are expanded through `getFiles` (`Described.expandCsc`), so an
+    /// added or removed `.cs` rebuilds;</item>
+    /// <item>a `.resx` resource is compiled by the runner into the `.resources` the lock names
+    /// (under `obj/xake/`); the resx is an input;</item>
+    /// <item>a `$(Version)` token in `Generated` is replaced by the version of the first
+    /// `versions` mask matching the project (its folder, where its first source lies, as
+    /// `&lt;folder&gt;/xake.project.json` relative to the project root); the variable is read
+    /// (a dependency) only when the token is there;</item>
+    /// <item>then `Lock.compileFrom`: prerequisites, the `HERMETIC=on` gate (message 10),
+    /// restore of what the lock names, the compiler (csc's server per `CSC_SERVER`) in the
+    /// project's folder (the lock's `Directory`).</item>
+    /// </list>
+    /// </summary>
+    let compileAs (lockPath: string) (fwk: string) (versions: (string * RequiredVar<string>) list) : Recipe<ExecContext, unit> =
+        recipe {
+            let! target = getTargetFile ()
+            if target.FullName.EndsWith (".xml", System.StringComparison.OrdinalIgnoreCase) then
+                do! docOf lockPath fwk (normal target.FullName)
+            else
+                do! compileDll lockPath fwk versions
         }
 
     /// <summary>

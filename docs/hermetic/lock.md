@@ -55,7 +55,7 @@ open Xake.Hermetic.Dotnet
 | `Described.restore d framework` | recipe | a description's packages through an msbuild restore: compile assets, the graph for `Entry.Packages`, the packages' `frameworkAssemblies` (`FrameworkReferences`, referenced by name on .NET Framework) |
 | `Described.restoreWith descriptionOf d framework` | recipe | `restore` plus the packages `d`'s project references declare (their closure; each description at `descriptionOf name`; not `private` ones): for a project compiled without a lock |
 | `Locks.generate lockOf outOf config descriptionPath` | recipe | the lock of one described project in one configuration, nothing compiled, written only on change; the referenced projects' locks must exist ([Xake-generated locks](#xake-generated-locks)) |
-| `Locks.compileAs lockPath fwk versions` | recipe | inside the layout's `.dll` rule: the lock's entry for `fwk` compiled into the rule's target ([Building from Xake-generated locks](#building-from-xake-generated-locks)) |
+| `Locks.compileAs lockPath fwk versions` | recipe | inside the layout's `.dll` rule: the lock's entry for `fwk` compiled into the rule's target; inside an `.xml` rule with the same body: needs the `.dll`, whose rule writes the doc ([Building from Xake-generated locks](#building-from-xake-generated-locks)) |
 | `Locks.needAll descriptions cfg lockOf outOf` | recipe | needs the layout `.dll` of every framework of every described project; a project without a lock fails naming `update-locks` |
 | `Lock.compileFrom lockPath options entry` | recipe | `compileWith` of an entry read from the lock at `lockPath` (named by the HERMETIC refusal) |
 | `Lock.recorded path unhashed entry` | recipe | the record-time step of `record` (hashes, prerequisites, the HERMETIC gate) without writing; the references in `unhashed` keep an empty hash |
@@ -1134,8 +1134,16 @@ target "out/(cfg:*)/(fwk:*)/(name:*).dll" {
   the lock (a dependency), takes its one entry for `fwk` (the target's file name must be the
   entry's assembly name) and compiles it into the target: `--out:`/`/out:` is the rule's target
   (the lock has none); a `--doc:`/`/doc:` the lock carries is re-targeted beside it. The `.xml` is
-  a side output, not a target, so a lock without doc (a Debug lock, say) expects no `.xml` and is
-  up to date on the next run.
+  a side output of the `.dll` rule, so a lock without doc (a Debug lock, say) expects no `.xml` and
+  is up to date on the next run; `needAll` needs the `.dll`s only.
+- **The `.xml` first**: a script that needs the doc file before the dll (a pack rule) adds a rule
+  over the `.xml` with the same body; `compileAs` there needs the `.dll` beside it (whose rule
+  writes the `.xml`) and fails when the lock asks for no doc:
+  ```fsharp
+  target "out/(cfg:*)/(fwk:*)/(name:*).xml" { ... do! Locks.compileAs (lockOf name cfg) fwk versions }
+  ```
+  One rule declaring both (`targets [dll; xml]`) is not the form: the engine reruns a rule while
+  one of its targets is missing, and a lock without doc never writes the `.xml`.
 - **Dependencies**: the unhashed project-reference outputs are needed before the compile, so
   the referenced `.dll` is built first by the same rule and a change to it rebuilds the
   referencer. The hashed references are packages: a missing one (an empty package folder on a
@@ -1163,7 +1171,8 @@ without a lock change; a description without a lock fails pointing at `update-lo
 with `.xake` deleted, `build` over the committed locks of A -> B runs no lock rule; Xake's three
 projects from the locks `update-locks` writes into `out/Release/<fwk>/`; A3 -> B3 -> C with A3
 naming only B3 compiles (C's output in A3's lock after B3's); a C# doc `<include file='../docs/..'>`
-resolves (lock `Directory` the project folder). Every test generates
+resolves (lock `Directory` the project folder); B's `.xml` needed first through its own rule, a
+no-doc lock's `.xml` refused. Every test generates
 its locks through the phony `lock::` rule and `update-locks`.
 
 ### Known difference: another checkout folder

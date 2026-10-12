@@ -30,7 +30,9 @@ the same shape with `out`, `Src`, `TargetFramework`, `RefGlobal` set directly on
 `Csc` at recipe time -- same argument order the task has always produced, save that
 references are now spelled `/reference:` rather than `/r:` -- and passes it to `Csc.run`.
 `csc { ...; resolve }` stops after `Csc.ofSettings` and returns the `Csc`; `resolve` must be the
-last operation, and outside a file rule needs an explicit `out`. Every custom operation of
+last operation, and outside a file rule needs an explicit `out`. (In a file rule `out` is
+optional: without it, the output is the rule's file target, for `resolve` too. A phony rule has
+no file target.) Every custom operation of
 `CscSettingsBuilder`:
 
 | Keyword | Argument | Does | Default |

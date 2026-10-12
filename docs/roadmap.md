@@ -23,6 +23,19 @@ loaded, not inside the recipe. Tuple overloads for 1–4 groups and 1–4 target
 members; the operator is sugar over them. Group names stay as documentation and keep working
 through `getRuleMatch` for existing scripts. `build.fsc.fsx` is the first customer.
 
+### Project descriptions in the core (planned, 2026-10-12)
+
+Move project descriptions (`xake.project.json`, `Description`, `Import`) from
+Xake.Hermetic.Dotnet into the core / Xake package. Why: the description is language-neutral
+data, so the core should own it, as it already owns `Fingerprints`. The lock and the hermetic
+build stay in Xake.Hermetic.Dotnet.
+
+### A CLI command that writes descriptions (idea, 2026-10-12)
+
+A built-in Xake CLI command that generates `xake.project.json` from project files (csproj,
+fsproj), so a repository needs no script target for the import. Today the script calls
+`Import.descriptions` from a target of its own.
+
 ## Xake.Dotnet
 
 ### B6: `Fsc` through the shared runner (planned after 3.4)

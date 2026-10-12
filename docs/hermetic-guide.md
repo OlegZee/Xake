@@ -126,9 +126,22 @@ The same thing without the builder sugar, with the resolved compilation in hand:
 ```
 
 `resolve` makes the block return the resolved `Csc` instead of compiling it. Outside a file rule
-it needs an explicit `out`. `Lock.build` gates the compilation against the lock and then
-compiles. It takes a `Lock.Compilation`, C# or F#: `Lock.Compilation.Csc c` here,
+it needs an explicit `out`.[^out] `Lock.build` compares the compilation with the lock:
+
+- If the lock is missing, `Lock.build` records it and compiles. Under CI it fails instead.
+- If the compilation differs from the lock, `Lock.build` fails and shows the differences. It does
+  not change the lock.
+- If they are equal, `Lock.build` compiles the entry from the lock. The runner then checks the
+  recorded hashes against the files on disk.
+
+`Lock.build` takes a `Lock.Compilation`, C# or F#: `Lock.Compilation.Csc c` here,
 `Lock.Compilation.Fsc f` for the `Fsc` of an `fsc { ...; resolve }`.
+
+[^out]: In a file rule, `out` is optional. Without `out`, `Csc.ofSettings` (and `Fsc.ofSettings`)
+    takes the output from the rule's file target. A phony rule has no file target, so there `out`
+    is required. In the example above `out` repeats the target and can be left out. A lock from
+    `Locks.generate` has no output switch. `Locks.compileAs` takes the output from the rule's
+    target in the same way ([hermetic/lock.md](hermetic/lock.md#building-from-xake-generated-locks)).
 
 ### An F# library
 

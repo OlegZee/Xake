@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/OlegZee/Xake/schemas/xake.project.json",
+  "title": "Xake project description (DRAFT rev. 3)",
+  "description": "What a project is: data only, rarely changes; written by the explicit import (msbuild, under the global properties the script passes, e.g. one brand), committed, fingerprinted in xake.fingerprints. Paths are relative to the project file's folder (see project). No placeholders: a variant msbuild evaluates differently (a brand) is a separate description; configurations, output layout and versions are the script's knowledge.",
+  "type": "object",
+  "required": ["name", "project", "language", "frameworks", "sources"],
+  "additionalProperties": false,
+  "$defs": {
+    "package": {
+      "type": "object",
+      "required": ["id"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string" },
+        "version": { "type": "string", "description": "As the project file declares it (exact or NuGet range). msbuild restore resolves it at lock generation; the lock records the result, and a later `locks` keeps it until LOCK_REFRESH names the package (npm install vs npm update). Never resolved by fsc/csc." },
+        "private": { "type": "boolean", "description": "Compile-time only (PrivateAssets=all): not a nuspec dependency.", "default": false }
+      }
+    },
+    "items": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "defines": { "type": "array", "items": { "type": "string" } },
+        "references": { "type": "array", "items": { "type": "string" }, "description": "Framework assemblies by name (grefs), e.g. System.Windows.Forms" },
+        "packages": { "type": "array", "items": { "$ref": "#/$defs/package" } },
+        "args": { "type": "array", "items": { "type": "string" }, "description": "Raw compiler switches, appended last" }
+      }
+    }
+  },
+  "properties": {
+    "$schema": { "type": "string" },
+    "name": { "type": "string", "description": "Project key: the project file name without extension (Xake.Dotnet, Rendering); unique within a build; names the lock folder and the {name} of the layout" },
+    "project": { "type": "string", "description": "The project file, relative to this description; lets a description live outside the project's repo (ActiveReports experiment). Other paths are relative to the project file's folder" },
+    "assemblyName": { "type": "string", "description": "Default: name. msbuild's value under the import's global properties (branded in ActiveReports)" },
+    "language": { "enum": ["fsharp", "csharp"] },
+    "kind": { "enum": ["library", "exe"], "default": "library" },
+    "frameworks": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+    "sources": { "type": "array", "items": { "type": "string" }, "description": "In compile order (semantic for F#). C#: msbuild's globs kept as Xake masks, copied as such into the lock's Sources and expanded at build through a file-search dependency (an added file rebuilds; no re-import)" },
+    "resources": {
+      "type": "array",
+      "items": {
+        "type": "object", "required": ["file"], "additionalProperties": false,
+        "properties": { "file": { "type": "string" }, "name": { "type": "string", "description": "Manifest name; default derived from rootNamespace and path" } }
+      }
+    },
+    "rootNamespace": { "type": "string" },
+    "defines": { "$ref": "#/$defs/items/properties/defines" },
+    "references": { "$ref": "#/$defs/items/properties/references" },
+    "packages": { "$ref": "#/$defs/items/properties/packages" },
+    "projectRefs": {
+      "type": "array", "items": { "type": "string" },
+      "description": "Names of other described projects. Lock generation picks each one's configuration and framework (nearest match, fallback when it lacks the referencer's configuration) and records the choice as the reference's output path in the referencer's lock (Dependencies.References, unhashed) plus Evaluation.ProjectRefs"
+    },
+    "options": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "doc": { "type": "boolean", "description": "Generate the XML documentation file", "default": false },
+        "langVersion": { "type": "string" },
+        "warningsAsErrors": { "type": "boolean" },
+        "nullable": { "enum": ["enable", "disable", "warnings", "annotations"] },
+        "keyFile": { "type": "string", "description": "Strong-name key" },
+        "args": { "$ref": "#/$defs/items/properties/args" }
+      }
+    },
+    "internalsVisibleTo": {
+      "type": "array",
+      "items": { "oneOf": [ { "type": "string" }, { "type": "object", "required": ["name"], "properties": { "name": { "type": "string" }, "key": { "type": "string" } } } ] }
+    },
+    "byFramework": {
+      "type": "object",
+      "description": "Additions for one target framework only, keyed by TFM",
+      "additionalProperties": { "$ref": "#/$defs/items" }
+    },
+    "package": {
+      "type": "object",
+      "description": "Present when the project is packed. Every field may be overridden by the script.",
+      "required": ["id"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string" },
+        "description": { "type": "string" },
+        "authors": { "type": "string" },
+        "copyright": { "type": "string" },
+        "tags": { "type": "array", "items": { "type": "string" } },
+        "license": { "type": "string", "description": "SPDX expression" },
+        "projectUrl": { "type": "string" },
+        "repository": { "type": "object", "properties": { "type": { "type": "string" }, "url": { "type": "string" } } },
+        "icon": { "type": "string", "description": "File packed at the package root" },
+        "readme": { "type": "string", "description": "File packed at the package root" },
+        "bundle": { "type": "array", "items": { "type": "string" }, "description": "projectRefs (names) whose assemblies go into this package's lib/<tfm>/ instead of becoming a dependency" }
+      }
+    }
+  }
+}

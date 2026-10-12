@@ -1058,3 +1058,84 @@ wire the hermetic side to the 3.6 helpers (lock-side gate, messages 9–11, base
 being finished on the published packages. **After that**: the backlog in the roadmap: netN.0
 imports under the mode (`packs/`), SDK restore, F# compiler toolset, the six SBOM questions,
 `sign` shadowing, English docs simplification (nine items from workflows-ru).
+
+## 2026-10-11 (later) — build.fsc.fsx rework: interview done, brief written
+
+Session run as orchestrator + subagents per `next-session.md`. Working files in
+[fsc-rework/](fsc-rework/): `digest.md` (what PR #42's script does, its boilerplate),
+`interview-plan.md`, **`interview.md`** (every answer and decision, authoritative),
+`drafts/` (desired one-screen `build.fsc.fsx`, `ar-build.fsx`, description schema + example,
+`gaps.md`), `review.md` (independent review on Fable), **`brief.md`** (decisions, desired
+scripts, gaps, PR plan, open topics).
+
+Key decisions (details in interview.md):
+- Fork: **now** Xake's own declarative build on the fsc/csc tasks: (a) script + per-project
+  descriptions (`xake.project.json`, data, JSON with schema to start), (b) lock generation,
+  (c) build from locks. **Later, separately**: hermetic builds of existing msbuild projects.
+  Lock format and build-from-lock recipes shared; the lock format does not change.
+- fsproj stays primary; import (msbuild, SDK OK) and lock generation are explicit commands,
+  never on CI; build uses committed files and only warns when they are stale. Next step: a
+  `cached` rule decorator (pipe) keyed by declared inputs, fingerprints in one committed file,
+  one line per target. Frozen mode only as a general "rules over rules" mechanism.
+- Byte identity with `dotnet build` is not a goal. Package resolution stays with msbuild (not
+  inside fsc/csc). C# sources kept as globs, expanded at build via Xake's file mask.
+- Pack: nupkg from layer (c) binaries via `Pack.nupkg`, metadata in the description with script
+  overrides; `dotnet test` stays; nupkg compared by binary content; assembly versioning open.
+- No publishing to nuget.org during the work: a local shared folder is publish target and
+  local feed; restore from nuget.org stays; `HERMETIC` and `NUGET_FETCH` are independent.
+- Targets carry no data-processing code; Debug/Release in the target mask (per-config rules
+  allowed, Debug not for every library); output layout variant A (`outOf cfg fwk name`), the
+  lock of A records the chosen config/TFM of each referenced project; Layout variant B (one
+  mask, typing, type providers) later.
+- Brands: target prefixes (paths, `clean::mescius`), script knowledge; import per brand,
+  descriptions and locks stored per brand. ActiveReports experiment: dataengine + page,
+  `develop`, MESCIUS + GCCN, Debug + Release + basic pack; judged by clarity and core use.
+- **PR #42 stays on its branch** (not merged, not closed).
+
+**Next**: implementation per `fsc-rework/brief.md`, in a fresh session:
+[next-session-2.md](next-session-2.md).
+
+PR / branch / worktree: none open from this session (docs only, on `feature/hermetic-build`).
+
+## 2026-10-11 (implementation session 1) — PR plan started
+
+Orchestrator session per `next-session-2.md`. The user confirmed the PR plan of
+`fsc-rework/brief.md` §5 unchanged and the order: PR 1 first, PR 5 right after (branched from
+PR 1's branch), then PR 2-4. Subagent reports land in `fsc-rework/pr<N>-report.md`.
+
+| PR | Branch | Worktree | Base | Status |
+|---|---|---|---|---|
+| 1 description model | `pr/description-model` | `.claude/worktrees/pr/description-model` | `origin/dev` bb0e990 | **merged** (squash, 4b93f3b); worktree/branch removed 2026-10-12 on the user's side; report `fsc-rework/pr1-report.md` |
+| 5 import -> description | `pr/project-import` | `.claude/worktrees/pr/project-import` | `pr/description-model` 15eb8f0 (stacked on #44) | **merged** (squash, d82263c); removed 2026-10-12; report `fsc-rework/pr5-report.md` |
+| 2 `fsc/csc { project d }` + `config` + packages | `pr/csc-project` | `.claude/worktrees/pr/csc-project` | `pr/description-model` 15eb8f0 (stacked on #44) | **merged** (squash, 867f362); removed 2026-10-12; report `fsc-rework/pr2-report.md` |
+| 3 `Lock.generateAll` | `pr/lock-generate` | `.claude/worktrees/pr/lock-generate` | `pr/csc-project` f450a1b (stacked on #46) | **merged** (squash, 9d54e99) as the phony-rule rework (`Locks.generate`, `lock::(name:*)::(cfg:*)` + `update-locks`); removed 2026-10-12; research `fsc-rework/engine-locks-rule.md`; report `fsc-rework/pr3-report.md` |
+| 4 build from a lock into a layout | `pr/build-from-lock` | `.claude/worktrees/pr/build-from-lock` | `pr/lock-generate` 434743c (stacked on #48) | **merged** (squash, 8b1a76a); removed 2026-10-12; report `fsc-rework/pr4-report.md` |
+| 6b core fixes (Fingerprints concurrency, warn level) | `pr/fingerprints-fixes` | `.claude/worktrees/pr/fingerprints-fixes` | `origin/dev` 8b1a76a | **merged** (#51, 4ef2579); removed 2026-10-12 |
+| 6c library PR before the release (fsc identity by SDK, `compileAs` restore-order fix, net462 reference, 59-byte note) | `pr/fsc-identity` | `.claude/worktrees/pr/fsc-identity` | `origin/dev` 8b1a76a | **merged** (#52, 35cfe56); removed 2026-10-12 |
+| 6d hermetic 0.3.0 on Xake 3.7.0.26 | `pr/hermetic-0.3` | `.claude/worktrees/pr/hermetic-0.3` | `origin/dev` 35cfe56 | **merged** (#53, 7e5e29f); removed 2026-10-12 |
+| 7 self-build `build.fsc.fsx` | `pr/build-fsc` | `.claude/worktrees/pr/build-fsc` | `origin/dev` 8b1a76a | **merged** (#50); bootstraps from Xake 3.7.0.26 + hermetic 0.3.0.28, own `.xake.fsc`, locks regenerated, CI job `build-fsc` on ubuntu; report `fsc-rework/pr7-report.md`; six new questions in `questions.md` (bootstrap via build.fsx dlls, macOS-only locks, HERMETIC off, 59-byte cross-folder diff) |
+
+Merged: #44-#49 (all of PRs 1-6 minus the fingerprints wiring, which PR 7 does in the script). After every squash merge the
+remaining stacked branches need `git merge origin/dev` (the squash commit conflicts with the
+original commits on `Compile Include` lines and add/add docs; content is identical, take the
+branch side), plus a fix where `dev` moved under the fixtures (e.g. a new core source file). After each merge: hand the user the removal command for that worktree and branch,
+then merge `dev` into the remaining stacked branches (no rebase). Stacked branches will show the
+squashed commits as already-applied content; `git merge dev` resolves cleanly in the normal case.
+
+Open questions from all six subagents, grouped per PR: [fsc-rework/questions.md](fsc-rework/questions.md)
+(none decided; the code follows the provisional choice named there).
+
+**Release log**: `v3.7.0` tagged 2026-10-12, publish run 38215257067 succeeded, nuget.org version `3.7.0.26`. `hermetic-v0.3.0` tagged 2026-10-12 (first attempt had a trailing comma in the tag name and failed; retagged), run 38307870186 succeeded, version `0.3.0.28`.
+
+**Next (updated 2026-10-12, later)**: intermediate release sequence confirmed by the user: merge #51 and the `pr/fsc-identity` PR -> tags `v3.7.0` then (hermetic `<Version>` 0.3.0) `hermetic-v0.3.0` (user's action) -> rework #50 to `#r nuget` the released packages, regenerate the locks (now OS-portable), drop the CI bootstrap step, CI on ubuntu. Earlier: #50 under review; PR 8 (pack) can start from `dev` after #50, but its
+nupkg-equality acceptance depends on PR 7 q6 (cross-folder 59-byte diff) and the versioning answers.
+Earlier plan: (1) the user answers `fsc-rework/questions.md` and reviews/merges the stack; (2) then
+PR 7 (`build.fsc.fsx` per the draft + committed descriptions, locks, fingerprints, wiring of
+`Fingerprints.record` into `import`/`locks`) on a branch from `dev` once #44-#49, #45, #47 are in;
+(3) PR 8 pack can start from `pr/build-from-lock` any time, but better after the answers on
+metadata (PR 5 q4) and versioning (PR 2 q5, PR 4 q1).
+| 6 fingerprints library (core) | `pr/fingerprints` | `.claude/worktrees/pr/fingerprints` | `origin/dev` bb0e990 | **merged** (squash, c90ef1d); wiring later; removed 2026-10-12; report `fsc-rework/pr6-report.md` |
+
+
+Worktree cleanup 2026-10-12: all `pr/*` worktrees and local branches of #44-#53 removed; origin
+branches already deleted by the merges. Left: `pr/build-fsc-lock` (#42, kept open by decision).

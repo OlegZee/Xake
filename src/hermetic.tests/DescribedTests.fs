@@ -308,3 +308,34 @@ type ``Described compilation``() =
         Assert.That(own.Value.Packages, Is.Empty, "A declares no package")
         Assert.That(flowing.Value.Packages |> List.exists (fun p -> p.Id = "System.Memory" && p.Version = "4.6.0" && p.Direct), Is.True, sprintf "%A" flowing.Value.Packages)
         Assert.That(File.Exists "g14/out/A.dll", Is.True)
+
+    /// G6: a package's `frameworkAssemblies` (DocumentFormat.OpenXml: WindowsBase for .NET
+    /// Framework) are referenced by name on net472, as msbuild does; without them the use of
+    /// the package fails (CS0012).
+    [<Test; Category("Integration")>]
+    member x.``a package's framework assemblies are referenced on .NET Framework``() =
+        if Directory.Exists "g6" then Directory.Delete ("g6", true)
+        Directory.CreateDirectory "g6/X" |> ignore
+        File.WriteAllText ("g6/X/X.cs",
+            "namespace X { public static class Doc { public static bool Main (System.IO.Stream s) { using (var d = DocumentFormat.OpenXml.Packaging.WordprocessingDocument.Open (s, false)) { return d.MainDocumentPart != null; } } } }\n")
+        x.CsDescription "g6" "X" [ "net472" ] [] [ "DocumentFormat.OpenXml", "3.2.0" ]
+        let path = sprintf "g6/X/%s" Description.FileName
+        let mutable restored = None
+        let mutable resolved = None
+        x.Run "g6" (recipe {
+            let! d = Description.load path
+            let! r = Described.restore d "net472"
+            restored <- Some r
+            let! c = csc { targetfwk "net472"; out (File.make "g6/out/X.dll"); project path; config "Release"; packages r; resolve }
+            resolved <- Some c
+            do! csc { targetfwk "net472"; out (File.make "g6/out/X.dll"); project path; config "Release"; packages r } })
+        Assert.That(restored.Value.FrameworkReferences, Does.Contain "WindowsBase")
+        Assert.That(resolved.Value.Dependencies.References |> List.exists (fun r -> r.Path.EndsWith "/WindowsBase.dll"), Is.True)
+        Assert.That(File.Exists "g6/out/X.dll", Is.True)
+        let e = Assert.Throws<XakeException>(fun () ->
+            x.Run "g6-without" (recipe {
+                let! d = Description.load path
+                let! r = Described.restore d "net472"
+                do! csc { targetfwk "net472"; out (File.make "g6/out/Without.dll"); project path; config "Release"; packages { r with FrameworkReferences = [] } } }))
+        Assert.That(e.Data0, Is.Not.Empty)
+        Assert.That(File.ReadAllText "g6-without.log", Does.Contain "CS0012")

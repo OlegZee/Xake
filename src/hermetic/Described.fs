@@ -16,7 +16,12 @@ module Described =
     /// What `restore` resolved for one description and framework: the compile-time assemblies
     /// of every package in the restore graph (absolute paths, sorted) and the graph itself, as
     /// a lock entry records it (`Lock.Entry.Packages`).
-    type Restored = { Framework: string; References: string list; Packages: Package list }
+    type Restored =
+        { Framework: string; References: string list; Packages: Package list
+          /// the .NET Framework assemblies the packages ask for (a nuspec's
+          /// `frameworkAssemblies`, `Nuget.Assets.FrameworkAssemblies`), by name: `project`
+          /// references them for a .NET Framework target the way it does the implicit ones
+          FrameworkReferences: string list }
 
     /// What follows `project` in a block: the description file, the configuration (`config`)
     /// and the restored packages (`packages`).
@@ -228,7 +233,7 @@ module Described =
     let private restorePackages (d: Description.Project) (framework: string) (packages: Description.Package list) : Recipe<ExecContext, Restored> =
         recipe {
             if List.isEmpty packages then
-                return { Framework = framework; References = []; Packages = [] }
+                return { Framework = framework; References = []; Packages = []; FrameworkReferences = [] }
             else
                 let! options = getCtxOptions ()
                 let! root = DotNetFwk.packageRoot ()
@@ -261,7 +266,8 @@ module Described =
                         normal (Path.Combine (root, id.ToLowerInvariant (), version.ToLowerInvariant (), item)))
                     |> List.distinct
                     |> List.sortWith (fun a b -> System.String.CompareOrdinal (a, b))
-                return { Framework = framework; References = references; Packages = Lock.packagesOf root graph }
+                return { Framework = framework; References = references; Packages = Lock.packagesOf root graph
+                         FrameworkReferences = graph.FrameworkAssemblies }
         }
 
     /// <summary>
@@ -269,7 +275,8 @@ module Described =
     /// `restoreProjectText` to `obj/xake/packages/&lt;name&gt;/&lt;framework&gt;/restore.csproj` under
     /// the project root, runs `dotnet restore` on it into the build's package folder
     /// (`DotNetFwk.packageRoot`: `NUGET_PACKAGES`), then reads its `project.assets.json`
-    /// (`Nuget.readAssets`, `Nuget.compileItems`). The repository's `nuget.config` applies; its
+    /// (`Nuget.readAssets`, `Nuget.compileItems`; the packages' `frameworkAssemblies` become
+    /// `FrameworkReferences`). The repository's `nuget.config` applies; its
     /// `Directory.Build.props`/`Directory.Packages.props` do not. This is the lock-generation
     /// step: `fsc`/`csc` never call it, they take its result through `packages`. A description
     /// without packages for `framework` gives an empty result without running anything. Only
@@ -449,6 +456,11 @@ module Described =
                 | _, None ->
                     failwithf "'%s': the description references packages (%s); resolve them with Described.restore and pass the result with `packages` -- fsc and csc do not resolve packages"
                         d.Name (packages |> List.map (fun p -> p.Id) |> String.concat ", ")
+            // the packages' .NET Framework assemblies (`frameworkAssemblies`), as msbuild references them
+            let packageFrameworkRefs =
+                match spec.Restored with
+                | Some r when same r.Framework framework && List.contains "NETFRAMEWORK" (frameworkDefines framework) -> r.FrameworkReferences
+                | _ -> []
 
             // a projectRef is passed as a reference by the script (its output path is the script's layout)
             let (Filelist given) = toFileList root refs
@@ -542,7 +554,7 @@ module Described =
                     (if List.contains "NETFRAMEWORK" (frameworkDefines framework) then implicitFrameworkReferences
                      // composed csc references only mscorlib for netstandard (fsc adds netstandard.dll itself)
                      elif not fs && List.contains "NETSTANDARD" (frameworkDefines framework) then [ "netstandard" ]
-                     else []) @ references
+                     else []) @ references @ packageFrameworkRefs
                     |> List.map (fun r -> if r.EndsWith ".dll" then r else r + ".dll") |> List.distinct
                   PackageRefs = packageRefs
                   Sources =

@@ -194,7 +194,7 @@ open Xake.Hermetic.Dotnet
 |---|---|---|
 | `project` | `string` | the description at that path: sources (F# in order; C# as masks), defines, framework `references` (plus the SDK's implicit ones for .NET Framework), `byFramework` additions, options, `kind` as `target`, `internalsVisibleTo` and `assemblyAttributes` as one generated source, resources (`.resx` compiled), `noWarn` with the SDK's defaults, `doc` as `<out>.xml`, `/deterministic+` and `/pathmap:<project root>/=/_/` |
 | `config` | `"Debug"` \| `"Release"` | the SDK's configuration preset (below); without it no preset applies |
-| `packages` | `Described.Restored` | the description's packages as `Described.restore` (or `restoreWith`) resolved them; required when the description has packages for the framework; every reference of the restore is passed |
+| `packages` | `Described.Restored` | the description's packages as `Described.restore` (or `restoreWith`) resolved them; required when the description has packages for the framework; every reference of the restore is passed, and its `FrameworkReferences` on .NET Framework |
 
 - **Framework.** `targetfwk` (it must be one of the description's `frameworks`), else the
   description's only framework, else `NETFX-TARGET`; otherwise it fails listing the frameworks.
@@ -222,8 +222,11 @@ open Xake.Hermetic.Dotnet
   4.0-4.7 the SDK's implicit `System.ValueTuple` 4.6.2), runs `dotnet restore` on it into the
   build's package folder (`NUGET_PACKAGES`), and reads `project.assets.json`
   (`Nuget.readAssets`, `Nuget.compileItems`): `References` are the compile assets of the whole
-  graph, `Packages` the graph as a lock entry records it (`Lock.packagesOf`). A description with
-  packages and no `packages` fails, naming `Described.restore`.
+  graph, `Packages` the graph as a lock entry records it (`Lock.packagesOf`), `FrameworkReferences`
+  the packages' `frameworkAssemblies` for the framework (DocumentFormat.OpenXml on net472:
+  `WindowsBase`), which `project` references by name for a .NET Framework target, as msbuild
+  does (CS0012 otherwise). A description with packages and no `packages` fails, naming
+  `Described.restore`.
 - **Packages of project references** (no lock): msbuild flows a referenced project's packages to
   the referrer; a description lists only its own. `Described.restoreWith descriptionOf d
   framework` restores `d`'s packages plus those of the closure of its `projectRefs` (each

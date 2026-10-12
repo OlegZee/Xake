@@ -45,6 +45,11 @@ module Nuget =
         /// the project's direct PackageReferences (ids), from `project.frameworks.<tfm>.dependencies`
         Direct: string list
         Framework: string
+        /// the .NET Framework assemblies the packages of the graph ask for
+        /// (`targets.<framework>.<id>/<version>.frameworkAssemblies`, a nuspec's
+        /// `frameworkAssemblies` for that framework, e.g. `WindowsBase`), by name, each once,
+        /// in the file's order; msbuild adds them as references. Empty for other frameworks
+        FrameworkAssemblies: string list
     }
 
     let private ic = System.StringComparison.OrdinalIgnoreCase
@@ -150,7 +155,15 @@ module Nuget =
                 | Some (Json.JObject members) -> members |> List.map fst
                 | _ -> []
 
-        { Packages = packages; Graph = graph; Direct = direct; Framework = framework }
+        let frameworkAssemblies =
+            entries
+            |> List.collect (fun (_, entry) ->
+                match Json.field "frameworkAssemblies" entry with
+                | Some (Json.JArray items) -> items |> List.choose Json.asString
+                | _ -> [])
+            |> List.distinctBy (fun a -> a.ToLowerInvariant ())
+
+        { Packages = packages; Graph = graph; Direct = direct; Framework = framework; FrameworkAssemblies = frameworkAssemblies }
 
     /// The compile-time assets of every package in the restore graph of `framework`, as
     /// `project.assets.json` lists them (`targets.<framework>.<id>/<version>.compile`):

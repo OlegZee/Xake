@@ -300,3 +300,22 @@ type ``Building from Xake-generated locks``() =
         Assert.That(entry.Evaluation.ProjectRefs, Is.EqualTo [ "B3" ], "ProjectRefs keeps the direct references")
         x.Script "build-transitive" [] (!! "p/A3/xake.project.json") "Release"
         for name in [ "C"; "B3"; "A3" ] do Assert.That(File.Exists (dll "Release" name), Is.True, name)
+
+    /// G7: the compiler runs in the project's folder, so a doc comment's relative
+    /// `<include file=...>` resolves (CS1589 otherwise); the lock's `Directory` is the project
+    /// folder, tokenized.
+    [<Test; Category("Integration")>]
+    member x.``a relative doc include resolves against the project folder``() =
+        fixture ()
+        for dir in [ "p/Doc"; "p/docs" ] do Directory.CreateDirectory dir |> ignore
+        File.WriteAllText ("p/docs/Common.xml",
+            "<doc><members><member name=\"Answer\"><summary>The included answer.</summary></member></members></doc>\n")
+        File.WriteAllText ("p/Doc/Lib.cs",
+            "namespace Doc {\n  public static class Lib {\n    /// <include file='../docs/Common.xml' path='doc/members/member[@name=\"Answer\"]/*' />\n    public static int Answer () { return 42; }\n  }\n}\n")
+        describe "Doc" Description.CSharp [ "**/*.cs" ] [] true
+        x.Generate "generate-doc" fixtureOf [ "Doc" ] [ "Release" ] |> ignore
+        Assert.That(File.ReadAllText (lockOf "Doc" "Release"), Does.Contain "\"Directory\": \"$(ProjectRoot)/p/Doc\"")
+        x.Script "build-doc" [] (!! "p/Doc/xake.project.json") "Release"
+        let xml = File.ReadAllText "out/Release/netstandard2.0/Doc.xml"
+        Assert.That(xml, Does.Contain "The included answer.")
+        Assert.That(xml, Does.Not.Contain "Badly formed XML")

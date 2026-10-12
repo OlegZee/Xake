@@ -234,6 +234,8 @@ open Xake.Hermetic.Dotnet
   lock rule hands `Locks.generate`; for each, its nearest framework; declared versions; not
   `private` ones; an id `d` declares wins). Lock generation flows them from the referenced
   locks instead.
+- **Directory.** The compiler runs in the project's folder (`Csc/Fsc.Directory`, a lock's
+  `Directory`), as under `dotnet build`: a relative `<include file=...>` resolves.
 - **C# masks.** A C# description's `sources` are Xake masks with the import's convention: a `!`
   prefix is an exclude, applied in order (`["**/*.cs", "!obj/**/*", "!bin/**/*"]`), and
   `dir/**/*` is every file below `dir`. `resolve` returns a `Csc` whose `Sources` are those

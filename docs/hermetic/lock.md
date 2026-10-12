@@ -1086,6 +1086,9 @@ What `Locks.generate lockOf outOf config descriptionPath` does for the descripti
   a comma/semicolon list, or `*` for all): `xake update-locks -d LOCK_REFRESH=FSharp.Core`.
   B's direct packages (from B's lock) flow into A's restore at B's locked version, as msbuild
   flows them through a project reference.
+- **`Directory`** is the project's folder (`$(ProjectRoot)/<folder of the project file>`): the
+  compiler runs there, as under `dotnet build`, so a doc comment's relative
+  `<include file='../docs/x.xml' .../>` resolves (CS1589 otherwise). `--pathmap` is unchanged.
 - **Written only on change**: the text is compared with the file on disk (CRLF read as LF);
   regenerating with nothing changed writes nothing and leaves the timestamp alone.
 - **No format change**: the locks use existing slots only, and the 0.2 reader (`Lock.parse`)
@@ -1159,7 +1162,8 @@ without a lock change; a description without a lock fails pointing at `update-lo
 `HERMETIC=on` refuses inside `compileAs`; `$(Version)` substituted and a new version rebuilds;
 with `.xake` deleted, `build` over the committed locks of A -> B runs no lock rule; Xake's three
 projects from the locks `update-locks` writes into `out/Release/<fwk>/`; A3 -> B3 -> C with A3
-naming only B3 compiles (C's output in A3's lock after B3's). Every test generates
+naming only B3 compiles (C's output in A3's lock after B3's); a C# doc `<include file='../docs/..'>`
+resolves (lock `Directory` the project folder). Every test generates
 its locks through the phony `lock::` rule and `update-locks`.
 
 ### Known difference: another checkout folder

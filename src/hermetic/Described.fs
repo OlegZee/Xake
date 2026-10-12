@@ -588,7 +588,9 @@ module Described =
                     Tailcalls = settings.Tailcalls && p.Tailcalls
                     CommandArgs = settings.CommandArgs @ p.Args }
             let! f = Fsc.ofSettings s
-            let f = { f with Fsc.Resources = f.Resources @ p.Resx }
+            // the compiler runs in the project's folder, as under `dotnet build` (a relative
+            // `<include file=...>` of a doc comment resolves against it)
+            let f = { f with Fsc.Resources = f.Resources @ p.Resx; Fsc.Directory = p.ProjectDir }
             match p.Attributes with
             | None -> return f
             | Some (path, content) ->
@@ -616,7 +618,7 @@ module Described =
             let! c = Csc.ofSettings s
             let generated = p.Attributes |> Option.toList
             return { c with Sources = (generated |> List.map fst) @ p.Sources; Generated = generated @ c.Generated
-                            Resources = c.Resources @ p.Resx }
+                            Resources = c.Resources @ p.Resx; Directory = p.ProjectDir }
         }
 
     /// `c` with every source mask replaced by the files it names now (`expand`).

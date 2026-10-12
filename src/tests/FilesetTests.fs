@@ -226,10 +226,13 @@ let ``directory masks in excludes follow the OS case rules``() =
 
 [<Test>]
 let ``excludes match the same after a mask was used many times``() =
-    // the mask regexes are cached: a second fileset with the same masks lists the same files
+    // the mask regexes are cached: every use after the first goes through the cached regex
+    // and must still give the known answer
     tree.withTree tree.edgeTree <| fun root ->
-        let fs = !! "**/*.cs" -- "**/.*/**/*" -- "dir/**/*"
-        Assert.That (fs |> tree.list root, Is.EqualTo (fs |> tree.list root))
+        let expected = ["a.b/f.cs"; "a/b.cs"; "Dir2/e.cs"; "top.cs"]
+        for _ in 1 .. 3 do
+            let fs = !! "**/*.cs" -- "**/.*/**/*" -- "dir/**/*"
+            Assert.That (fs |> tree.list root, Is.EquivalentTo expected)
 
 [<Test; Explicit("Benchmark: prints timings")>]
 let ``benchmark: '**/*.cs' with dot-folder, bin and obj excludes``() =

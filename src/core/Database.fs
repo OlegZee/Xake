@@ -193,9 +193,14 @@ module Storage =
         let agent = new MailboxProcessor<_>(fun mbox ->
             // An exception escaping the loop would kill the agent silently and every later
             // PostAndReply (GetResult, CloseWait) would wait forever. So each message is
-            // guarded: a failed store is logged and the result is kept in memory for this
-            // run (the next run finds the file unreadable and rebuilds), a failed lookup
-            // answers "no record" (a rebuild), and close always replies.
+            // guarded: a failed store is logged, nothing of it reaches the file and the result
+            // is kept in memory for this run (the next run rebuilds that target), a failed
+            // lookup answers "no record" (a rebuild), and close always replies.
+            let failedStores = ref 0
+            let warnUnsaved () =
+                if failedStores.Value > 0 then
+                    try logger.Log Warning "Database not fully saved: %d result(s) failed to store, the next build may rebuild them" failedStores.Value
+                    with _ -> ()
             let rec loop (db) =
                 async {
                     let! msg = mbox.Receive()
@@ -209,8 +214,16 @@ module Storage =
                         chnl.Reply found
                         return! loop (db)
                     | Store result ->
-                        try Persist.result.pickle result dbwriter
+                        // pickle into memory first, so a failure writes nothing and the file
+                        // stays a sequence of whole records
+                        try
+                            use buffer = new System.IO.MemoryStream()
+                            use bufWriter = new System.IO.BinaryWriter(buffer)
+                            Persist.result.pickle result bufWriter
+                            bufWriter.Flush()
+                            dbwriter.Write(buffer.ToArray())
                         with ex ->
+                            failedStores.Value <- failedStores.Value + 1
                             let name = try (result.Targets |> List.map (fun t -> t.ShortName) |> String.concat ", ") with _ -> "?"
                             logError "Database agent failed to store the result of '%s': %O" name ex
                         let db' =
@@ -219,11 +232,13 @@ module Storage =
                         return! loop db'
                     | Close ->
                         do (try logger.Log Info "Closing database" with _ -> ())
+                        do warnUnsaved ()
                         try dbwriter.Dispose()
                         with ex -> logError "Database agent failed to close: %O" ex
                         return ()
                     | CloseWait ch ->
                         do (try logger.Log Info "Closing database" with _ -> ())
+                        do warnUnsaved ()
                         try dbwriter.Dispose()
                         with ex -> logError "Database agent failed to close: %O" ex
                         ch.Reply()

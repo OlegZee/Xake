@@ -45,26 +45,29 @@ type RuleMatchTests() =
             let found = targets |> Array.choose (ExecCore.locateRule rules root) |> Array.length
             sw.Stop()
             Assert.AreEqual(0, found)
-            printfn "BENCH locateRule 30x5000: %d ms" sw.ElapsedMilliseconds
+            TestContext.Progress.WriteLine (sprintf "BENCH locateRule 30x5000: %d ms" sw.ElapsedMilliseconds)
 
     /// AR-like: a script with the `out/(cfg:*)/(fwk:*)/(name:*).dll` rule needing 3000 plain files.
     [<Test; Explicit("benchmark")>]
     member x.``bench script needing 3000 files``() =
-        let dir = x.TestOptions.ProjectRoot </> "inputs"
+        let dir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "xake-rulematch-" + string (System.Guid.NewGuid()))
         Directory.CreateDirectory dir |> ignore
         let files = [ for i in 1..3000 -> dir </> sprintf "f%i.cs" i ]
-        for f in files do if not (File.Exists f) then File.WriteAllText(f, "x")
-        for _ in 1..3 do
-            let sw = System.Diagnostics.Stopwatch.StartNew()
-            do xake {x.TestOptions with NoPersist = true; Threads = 4; ConLogLevel = Silent; FileLogLevel = Silent; Progress = false} {
-                rules [
-                    "main" => recipe { do! needFiles (Filelist (files |> List.map File.make)) }
-                    "out/(cfg:*)/(fwk:*)/(name:*).dll" ..> recipe { return () }
-                    "out/(cfg:*)/(fwk:*)/(name:*).xml" ..> recipe { return () }
-                    "obj/resx/(b:*)/(name:*)/**/*.resources" ..> recipe { return () }
-                    "out/(cfg:*)/(fwk:*)/(name:*).pdb" ..> recipe { return () }
-                    "obj/(name:*)/*.g.cs" ..> recipe { return () }
-                ]
-            }
-            sw.Stop()
-            printfn "BENCH script need 3000 files: %d ms" sw.ElapsedMilliseconds
+        for f in files do File.WriteAllText(f, "x")
+        try
+          for _ in 1..3 do
+              let sw = System.Diagnostics.Stopwatch.StartNew()
+              do xake {x.TestOptions with NoPersist = true; Threads = 4; ConLogLevel = Silent; FileLogLevel = Silent; Progress = false} {
+                  rules [
+                      "main" => recipe { do! needFiles (Filelist (files |> List.map File.make)) }
+                      "out/(cfg:*)/(fwk:*)/(name:*).dll" ..> recipe { return () }
+                      "out/(cfg:*)/(fwk:*)/(name:*).xml" ..> recipe { return () }
+                      "obj/resx/(b:*)/(name:*)/**/*.resources" ..> recipe { return () }
+                      "out/(cfg:*)/(fwk:*)/(name:*).pdb" ..> recipe { return () }
+                      "obj/(name:*)/*.g.cs" ..> recipe { return () }
+                  ]
+              }
+              sw.Stop()
+              TestContext.Progress.WriteLine (sprintf "BENCH script need 3000 files: %d ms" sw.ElapsedMilliseconds)
+        finally
+            try Directory.Delete(dir, true) with _ -> ()

@@ -38,7 +38,7 @@ type ``Lock generation``() =
             { Schema = None; Name = name; Project = name + ".fsproj"; AssemblyName = None; RootNamespace = None
               Language = Description.FSharp; Kind = Description.Library; Frameworks = frameworks; Sources = [ "Lib.fs" ]
               Resources = []; Defines = []; References = []; ProjectRefs = refs; Packages = packages
-              Options = Description.Options.Default; InternalsVisibleTo = []; ByFramework = []; Package = None }
+              Options = Description.Options.Default; InternalsVisibleTo = []; AssemblyAttributes = []; ByFramework = []; Package = None }
         Description.write (dir </> Description.FileName) d |> ignore
         "tiny/" + name + "/" + Description.FileName
 

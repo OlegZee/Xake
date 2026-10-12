@@ -33,7 +33,7 @@ type ``Building from Xake-generated locks``() =
               AssemblyName = None; RootNamespace = None; Language = language; Kind = Description.Library
               Frameworks = [ "netstandard2.0" ]; Sources = sources; Resources = []; Defines = []; References = []
               ProjectRefs = refs; Packages = (if language = Description.FSharp then [ fsharpCore ] else [])
-              Options = { Description.Options.Default with Doc = doc }; InternalsVisibleTo = []; ByFramework = []; Package = None }
+              Options = { Description.Options.Default with Doc = doc }; InternalsVisibleTo = []; AssemblyAttributes = []; ByFramework = []; Package = None }
         Description.write (dir </> Description.FileName) d |> ignore
 
     /// p/B (F#, doc), p/A (F#, references B, no doc), p/Cs (C#, masks); fresh sources.

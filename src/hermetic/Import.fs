@@ -33,7 +33,7 @@ module Import =
     let private properties =
         [ "MSBuildProjectName"; "MSBuildProjectExtension"; "MSBuildProjectDirectory"; "TargetFrameworks"; "TargetFramework"
           "AssemblyName"; "RootNamespace"; "OutputType"; "Configuration"; "DefineConstants"; "LangVersion"; "Nullable"
-          "TreatWarningsAsErrors"; "GenerateDocumentationFile"; "SignAssembly"; "AssemblyOriginatorKeyFile"; "OtherFlags"
+          "TreatWarningsAsErrors"; "NoWarn"; "GenerateDocumentationFile"; "SignAssembly"; "AssemblyOriginatorKeyFile"; "OtherFlags"
           "EnableDefaultItems"; "EnableDefaultCompileItems"; "DefaultItemExcludes"; "DefaultExcludesInProjectFolder"
           "IsPackable"; "PackageId"; "Description"; "Authors"; "Copyright"; "PackageTags"; "PackageLicenseExpression"
           "PackageProjectUrl"; "RepositoryType"; "RepositoryUrl"; "PackageIcon"; "PackageReadmeFile"
@@ -57,16 +57,121 @@ module Import =
           Items =
             match Json.field "Items" root with
             | Some (Json.JObject ms) ->
-                ms |> List.map (fun (k, v) -> k, Json.asArray v |> List.map (fun i -> let m = strings i in m.["Identity"], m)) |> Map.ofList
+                ms |> List.map (fun (k, v) ->
+                    k, Json.asArray v |> List.map (fun i ->
+                        let m = strings i
+                        (m |> Map.tryPick (fun k v -> if k.Equals ("Identity", StringComparison.OrdinalIgnoreCase) then Some v else None)
+                           |> Option.defaultValue ""), m))
+                |> Map.ofList
             | _ -> Map.empty }
 
     let private prop (d: Dump) name = d.Props |> Map.tryFind name |> Option.defaultValue ""
     let private items (d: Dump) name = d.Items |> Map.tryFind name |> Option.defaultValue []
-    let private meta name (m: Map<string, string>) = m |> Map.tryFind name |> Option.defaultValue ""
+    /// Item metadata by name, case-insensitively as msbuild reads it (`Version`, `version`).
+    let private meta (name: string) (m: Map<string, string>) =
+        match Map.tryFind name m with
+        | Some v -> v
+        | None -> m |> Map.tryPick (fun k v -> if k.Equals (name, StringComparison.OrdinalIgnoreCase) then Some v else None) |> Option.defaultValue ""
     let private isTrue (s: string) = s.Trim().Equals ("true", StringComparison.OrdinalIgnoreCase)
     let private slash (p: string) = p.Replace ('\\', '/')
     let private split (s: string) = s.Split ';' |> Array.map (fun s -> s.Trim ()) |> Array.filter ((<>) "") |> List.ofArray
     let private comparison = if Env.isUnix then StringComparison.Ordinal else StringComparison.OrdinalIgnoreCase
+
+    /// The metadata msbuild gives every item; the rest of an `AssemblyAttribute`'s is its arguments.
+    let private wellKnown =
+        set [ "identity"; "fullpath"; "rootdir"; "filename"; "extension"; "relativedir"; "directory"; "recursivedir"
+              "modifiedtime"; "createdtime"; "accessedtime"; "definingprojectfullpath"; "definingprojectdirectory"
+              "definingprojectname"; "definingprojectextension" ]
+
+    /// `value` as a source literal of type `t` (`None`: not representable, or not of that type).
+    let private literalOf (fs: bool) (t: Type) (value: string) : string option =
+        let inv = Globalization.CultureInfo.InvariantCulture
+        let v = value.Trim ()
+        // a quote or backslash: a verbatim string (C# and F#), so the text carries no `\` escape
+        // (a lock's writer turns every `\` of the generated source into `/`)
+        if t = typeof<string> || t = typeof<obj> then
+            if value.Contains "\"" || value.Contains "\\" then Some ("@\"" + value.Replace ("\"", "\"\"") + "\"")
+            else Some ("\"" + value + "\"")
+        elif t = typeof<bool> then
+            match Boolean.TryParse v with
+            | true, b -> Some (if b then "true" else "false")
+            | _ -> None
+        elif t.IsEnum then
+            if Enum.GetNames t |> Array.contains v then Some (t.FullName.Replace ('+', '.') + "." + v) else None
+        elif t = typeof<Type> then
+            if v = "" then None elif fs then Some (sprintf "typeof<%s>" v) else Some (sprintf "typeof(%s)" v)
+        elif t.IsPrimitive && t <> typeof<char> && t <> typeof<nativeint> && t <> typeof<unativeint> then
+            try Convert.ChangeType (v, t, inv) |> ignore; Some v with _ -> None
+        else None
+
+    /// <summary>
+    /// The arguments of an `AssemblyAttribute` item as source text, the way msbuild's
+    /// `WriteCodeFragment` writes them: `_Parameter1`, `_Parameter2`... positional, any other
+    /// metadata named (`Name = value`). `_ParameterN_IsLiteral=true` is verbatim and
+    /// `_ParameterN_TypeName` names the type; otherwise the types come from the first
+    /// constructor of the attribute type (when this process knows it, e.g.
+    /// `System.CLSCompliantAttribute`) whose parameters take every value, and are strings when
+    /// none does or the type is unknown. `None` (with a `dropped` line) for what it cannot write.
+    /// </summary>
+    let internal attributeArgs (fs: bool) (attribute: string) (m: Map<string, string>) (dropped: string -> unit) : string list option =
+        let key (k: string) = k.ToLowerInvariant ()
+        let positional =
+            m |> Map.toList |> List.choose (fun (k, v) ->
+                let k = key k
+                if k.StartsWith "_parameter" then
+                    match Int32.TryParse (k.Substring 10) with
+                    | true, n -> Some (n, v)
+                    | _ -> None
+                else None)
+            |> List.sortBy fst
+        let named =
+            m |> Map.toList |> List.filter (fun (k, _) -> not (wellKnown.Contains (key k)) && not ((key k).StartsWith "_"))
+        let side n suffix = meta (sprintf "_Parameter%d_%s" n suffix) m
+        let attributeType =
+            match Type.GetType attribute with
+            | null -> typeof<obj>.Assembly.GetType attribute |> Option.ofObj
+            | t -> Some t
+        if positional |> List.mapi (fun i (n, _) -> n <> i + 1) |> List.exists id then
+            dropped (sprintf "assembly attribute %s: its _ParameterN are not numbered 1, 2, ..." attribute); None
+        else
+        let explicitType n =
+            match side n "TypeName" with
+            | "" -> None
+            | name -> Some (match Type.GetType name with null -> typeof<obj>.Assembly.GetType name | t -> t)
+        let inferred : Type list option =
+            attributeType |> Option.bind (fun t ->
+                t.GetConstructors () |> Array.tryPick (fun c ->
+                    let ps = c.GetParameters ()
+                    let fits =
+                        ps.Length = positional.Length
+                        && Array.forall2 (fun (p: Reflection.ParameterInfo) (n, v) ->
+                               isTrue (side n "IsLiteral") || (literalOf fs p.ParameterType v).IsSome) ps (Array.ofList positional)
+                    if fits then Some (ps |> Array.map (fun p -> p.ParameterType) |> List.ofArray) else None))
+        let positionalArgs =
+            positional |> List.mapi (fun i (n, v) ->
+                if isTrue (side n "IsLiteral") then Some v
+                else
+                    let t =
+                        match side n "TypeName", explicitType n with
+                        | "", _ -> inferred |> Option.map (fun ts -> ts.[i]) |> Option.defaultValue typeof<string>
+                        | _, Some (null) | _, None -> null
+                        | _, Some t -> t
+                    match t with
+                    | null -> dropped (sprintf "assembly attribute %s: _Parameter%d_TypeName=%s is not a type this import knows" attribute n (side n "TypeName")); None
+                    | t ->
+                        match literalOf fs t v with
+                        | Some l -> Some l
+                        | None -> dropped (sprintf "assembly attribute %s: _Parameter%d '%s' is not a %s" attribute n v t.FullName); None)
+        let namedArgs =
+            named |> List.map (fun (k, v) ->
+                let t =
+                    attributeType |> Option.bind (fun at -> at.GetProperty k |> Option.ofObj |> Option.map (fun p -> p.PropertyType))
+                    |> Option.defaultValue typeof<string>
+                match literalOf fs t v with
+                | Some l -> Some (sprintf "%s = %s" k l)
+                | None -> dropped (sprintf "assembly attribute %s: %s '%s' is not a %s" attribute k v t.FullName); None)
+        let all = positionalArgs @ namedArgs
+        if all |> List.forall Option.isSome then Some (List.choose id all) else None
 
     /// `path` relative to the folder `dir` (both absolute), with `/`; `..` where it leaves it.
     let internal relativeTo (dir: string) (path: string) =
@@ -203,12 +308,41 @@ module Import =
         let friends =
             [ for id, m in items first "AssemblyAttribute" do
                 if id = "System.Runtime.CompilerServices.InternalsVisibleToAttribute" then yield friend (meta "_Parameter1" m)
-                elif inRepo m then drop (sprintf "%s: assembly attribute %s" name id)
               for id, m in items first "InternalsVisibleTo" do
                 yield ({ Name = id; Key = match meta "Key" m with "" -> None | k -> Some k } : Description.Friend) ]
+        let attributes =
+            [ for id, m in items first "AssemblyAttribute" do
+                if id <> "System.Runtime.CompilerServices.InternalsVisibleToAttribute" && inRepo m then
+                    match attributeArgs (language = Description.FSharp) id m (fun s -> drop (sprintf "%s: %s" name s)) with
+                    | Some args -> yield ({ Type = id; Args = args } : Description.Attribute)
+                    | None -> () ]
+        let cultures =
+            lazy (Globalization.CultureInfo.GetCultures Globalization.CultureTypes.AllCultures
+                  |> Array.map (fun c -> c.Name) |> Array.filter ((<>) "") |> set)
         let resources =
-            items first "EmbeddedResource" |> List.map (fun (id, m) ->
-                ({ File = slash id; Name = match meta "LogicalName" m with "" -> None | n -> Some n } : Description.Resource))
+            items first "EmbeddedResource" |> List.choose (fun (id, m) ->
+                let file = slash id
+                let culture =
+                    let n = Path.GetFileNameWithoutExtension file
+                    match n.LastIndexOf '.' with
+                    | -1 -> None
+                    | i -> let c = n.Substring (i + 1) in if cultures.Value.Contains c then Some c else None
+                let logical = meta "LogicalName" m
+                let dependentUpon = meta "DependentUpon" m
+                let isResx = file.EndsWith (".resx", StringComparison.OrdinalIgnoreCase)
+                match culture with
+                | Some c when meta "WithCulture" m <> "false" ->
+                    drop (sprintf "%s: EmbeddedResource %s (culture %s: a satellite assembly, not built)" name file c); None
+                | _ ->
+                    // msbuild names a resx after the class of its DependentUpon source (by convention
+                    // the `.cs` of the same name beside it); the import does not read C#
+                    let besideSource =
+                        isResx && language = Description.CSharp
+                        && File.Exists (Path.Combine (projectDir, Path.ChangeExtension (file, ".cs")))
+                    if logical = "" && (dependentUpon <> "" || besideSource) then
+                        drop (sprintf "%s: EmbeddedResource %s is named after the class of %s (DependentUpon); the description takes the default name, set its `name`"
+                                  name file (if dependentUpon <> "" then dependentUpon else Path.ChangeExtension (Path.GetFileName file, ".cs")))
+                    Some ({ File = file; Name = match logical with "" -> None | n -> Some n } : Description.Resource))
 
         // ---- options
         let fp = prop first
@@ -216,6 +350,12 @@ module Import =
             { Doc = isTrue (fp "GenerateDocumentationFile")
               LangVersion = ifDeclared "LangVersion" (match fp "LangVersion" with "" -> None | v -> Some v)
               WarningsAsErrors = isTrue (fp "TreatWarningsAsErrors")
+              // what the project adds to the SDK's defaults (`project` adds them back)
+              NoWarn =
+                let sdk = set (Described.sdkNoWarn language)
+                (fp "NoWarn").Split ([| ';'; ',' |], StringSplitOptions.RemoveEmptyEntries)
+                |> Array.map (fun w -> w.Trim ()) |> Array.filter (fun w -> w <> "" && not (sdk.Contains w))
+                |> Array.distinct |> List.ofArray
               Nullable =
                 match (fp "Nullable").ToLowerInvariant () with
                 | "" -> None
@@ -288,6 +428,7 @@ module Import =
               Packages = packages
               Options = options
               InternalsVisibleTo = friends
+              AssemblyAttributes = attributes
               ByFramework = byFramework
               Package = package }
         project, List.ofSeq dropped

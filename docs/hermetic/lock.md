@@ -1110,8 +1110,25 @@ What `Locks.generate lockOf outOf config descriptionPath` does for the descripti
 - **`Directory`** is the project's folder (`$(ProjectRoot)/<folder of the project file>`): the
   compiler runs there, as under `dotnet build`, so a doc comment's relative
   `<include file='../docs/x.xml' .../>` resolves (CS1589 otherwise). `--pathmap` is unchanged.
+- **Extra roots** <a id="extra-roots-for-generated-locks"></a>. Sources, a key file or a whole
+  project in a sibling checkout (outside the project root) are tokenised only against a root the
+  script declares, as for `Lock.loadWith`: `Locks.generateWith roots lockOf outOf cfg path` with
+  `roots = [ "$(Engine)", "../engine-repo" ]` (`Roots.make`: `$(Name)`, a path relative to the
+  project root or absolute). The lock then names `$(Engine)/src/**/*.cs`,
+  `/keyfile:$(Engine)/key.snk`, `Directory` `$(Engine)/src/X`, and the compilation gets one
+  `pathmap` per extra root, `<root>/=/Engine/`, in front of the project root's `/_/` (so the pdb
+  and `CallerFilePath` name no machine path). Without the roots those paths stay absolute and the
+  lock builds only in that checkout. The build passes the same list: `Locks.compileAsWith roots`,
+  `Locks.needAllWith roots`, `Locks.restoreAllWith roots`; `generate`, `compileAs`, `needAll` and
+  `restoreAll` are the same with no extra root. Under `HERMETIC=on` a path under an extra root
+  counts as under the project root (record gate and replay). Test (`BuildFromLockTests`): a C#
+  project in a sibling folder, its lock without an absolute path, built from a copy of both
+  folders at another path into the same bytes.
 - **Written only on change**: the text is compared with the file on disk (CRLF read as LF);
   regenerating with nothing changed writes nothing and leaves the timestamp alone.
+- **Prerequisites**: as `Lock.record`: under an exact `global.json` pin the entry records
+  `dotnet-sdk <v>` for an SDK compiler (fsc), without one the generation warns
+  ([Prerequisites](#prerequisites)); see [hermetic-mode.md](hermetic-mode.md#generated-locks-under-the-mode).
 - **No format change**: the locks use existing slots only, and the 0.2 reader (`Lock.parse`)
   reads them and `Lock.format` writes them back byte-identically.
 
@@ -1176,6 +1193,8 @@ target "out/(cfg:*)/(fwk:*)/(name:*).dll" {
   relative to the project root, the folder being where its first source lies. The variable is
   read (and so a dependency) only when the token is there; the lock keeps the token. The locks
   `Locks.generate` writes today carry none (assembly versioning is an open topic).
+- **Extra roots**: a script whose locks were generated with `generateWith roots` builds with
+  `needAllWith roots` and `compileAsWith roots` ([above](#extra-roots-for-generated-locks)).
 - **Replay** is `Lock.compileFrom` (what `buildWith` does with a matching lock): prerequisites,
   the **HERMETIC=on gate** (a lock naming a path outside the roots is refused, message 10, before
   anything compiles), restore of what the lock names (`NUGET_PACKAGES`, `NUGET_FETCH`), csc's

@@ -210,5 +210,6 @@ to that rule rather than the deliverable. Items are ordered by what they unblock
 **Status 2026-10-13 (evening):** AR full-product step opened, see `ar-full/README.md`.
 
 - [x] **AR-full inventory + macOS baseline** (2026-10-13): `ar-net-meta` develop/20 is the coherent set; 55/94 projects of `ar.meta.win.sln` build on macOS without the private feed; with the `.env` credentials **94/94** (designer, viewers, 5 dev-app exes), 26.8 s clean; `ar.meta.all.sln` extras 23/48
+- [x] **AR-full matrix + Cake analysis + build instruction** (2026-10-13): `ar-full/build.md`, `matrix.md` (MESCIUS/GCCN × Debug/Release, clean 32–52 s, no-op 5–6 s), `cake.md`
 - [ ] **AR-full Windows baseline** on the VM (VS Build Tools 2022 + SDK 8, `dotnet build ar.meta.win.sln -p:LocalBuild=true`, then `dotnet cake`), needs `AA_AR_TOKEN`
 - [ ] **AR-full Xake reproduction**: `ar-build-2.fsx` over `ar.meta.win.sln`; importer gaps in `ar-full/inventory.md` §5

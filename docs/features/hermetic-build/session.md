@@ -1211,3 +1211,11 @@ Later the same evening, with the feed credentials from `~/Projects-work/.env`: *
 with three `-p:` switches, see `ar-full/macos-build-feed.md`. The repo NuGet.configs do not work inside
 the meta repo (child `<clear/>` plus inherited package-source mapping); a flat `RestoreConfigFile` is
 needed. Open questions reduced to 4.7.2 vs 4.6.2 and the scope of reproduction.
+
+Then the matrix and the Cake analysis: `ar-full/matrix.md` (MESCIUS/GCCN × Debug/Release, two runs each:
+clean 32–52 s, restore ~3.5 s, no-op 5–6 s, warm brand switch recompiles everything; GCCN fails only in
+`Svg.Tests`), `ar-full/cake.md` (win `build.cake` task chain, version/brand/property rules, pack layer,
+other repos' scripts, Xake checklist §4) and the short RU instruction **`ar-full/build.md`**, which is the
+entry point for the Xake reproduction. **Exact next step**: extend `ar-build-2.fsx` to `ar.meta.win.sln`
+following `build.md` §2–4, starting with the MESCIUS/Release cell; keep the Windows VM baseline for the
+net472 byte comparison.

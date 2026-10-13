@@ -327,9 +327,22 @@ module Import =
                     match n.LastIndexOf '.' with
                     | -1 -> None
                     | i -> let c = n.Substring (i + 1) in if cultures.Value.Contains c then Some c else None
-                let logical = meta "LogicalName" m
-                let dependentUpon = meta "DependentUpon" m
                 let isResx = file.EndsWith (".resx", StringComparison.OrdinalIgnoreCase)
+                // the manifest name msbuild gives it, when it is not the default of the file
+                // path: `LogicalName` as is; `ManifestResourceName` on a resx + `.resources` (what
+                // GenerateResource writes); on another file msbuild then sets no `LogicalName`
+                // and csc names it after the file (checked against `dotnet build`); a `Link`,
+                // whose path stands for the file's in the default name
+                // (`CreateCSharpManifestResourceName`)
+                let logical =
+                    match meta "LogicalName" m, meta "ManifestResourceName" m, slash (meta "Link" m) with
+                    | "", "", "" -> ""
+                    | "", "", link ->
+                        let rootNs = match p "RootNamespace" with "" -> name.Replace (" ", "_") | r -> r
+                        Described.manifestName rootNs link
+                    | "", manifest, _ -> if isResx then manifest + ".resources" else Path.GetFileName file
+                    | logical, _, _ -> logical
+                let dependentUpon = meta "DependentUpon" m
                 match culture with
                 | Some c when meta "WithCulture" m <> "false" ->
                     drop (sprintf "%s: EmbeddedResource %s (culture %s: a satellite assembly, not built)" name file c); None

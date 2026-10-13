@@ -127,9 +127,12 @@ module Described =
                     b.Append '_' |> ignore
                     if everettId s.[0] then b.Append s.[0] |> ignore
                 for c in s.Substring 1 do b.Append (if everettId c then c else '_') |> ignore
+        // a folder that comes out as a single `_` becomes `__` (`MakeValidEverettFolderIdentifier`):
+        // the folder's own span, wherever it is in the path
         let folder (s: string) =
+            let start = b.Length
             s.Split '.' |> Array.iteri (fun i p -> (if i > 0 then b.Append '.' |> ignore); part p)
-            if b.ToString () = "_" then b.Append '_' |> ignore
+            if b.Length - start = 1 && b.[start] = '_' then b.Append '_' |> ignore
         (normal dir).Split '/' |> Array.iteri (fun i f -> (if i > 0 then b.Append '.' |> ignore); folder f)
         b.ToString ()
 

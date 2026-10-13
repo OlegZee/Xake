@@ -61,8 +61,9 @@ folder.
 
 The default manifest name of a resource is msbuild's (`CreateCSharpManifestResourceName`,
 `Described.manifestName`): `rootNamespace` (else `name`), the file's folder with `/` -> `.` and
-each part made an identifier (`1st Folder` -> `_1st_Folder`), the file name; a `.resx` without
-its extension, plus `.resources` (`Properties/Resources.resx` -> `<ns>.Properties.Resources.resources`).
+each part made an identifier (`1st Folder` -> `_1st_Folder`; a folder that comes out as `_`, such
+as `_` or `-`, is `__`), the file name; a `.resx` without its extension, plus `.resources`
+(`Properties/Resources.resx` -> `<ns>.Properties.Resources.resources`).
 
 Unknown fields are errors. Every error names the field by its path, e.g.
 `'packages[0].id': required` or `'byFramework.net462': not one of the frameworks`.
@@ -97,12 +98,17 @@ run, nothing is restored, and a file is rewritten only when its content changes 
   (`Version`, `VersionOverride` or central `PackageVersion`); `PrivateAssets=all` is `private`.
   Item metadata is read whatever its case (`version="8.0.5"`, `privateassets`, `logicalname`).
 - `resources`: the `EmbeddedResource` items, plain files and `.resx` alike, `LogicalName` as
-  `name`. A culture-specific one (`Strings.de.resx`: a satellite assembly) is left out and
+  `name`. Without one, `name` is what msbuild names it when that is not the default of the file
+  path: a `Link` gives the default name of the link path (`Link="Shared\x.txt"` ->
+  `<ns>.Shared.x.txt`); `ManifestResourceName` on a `.resx` gives `<that>.resources`, on another
+  file the file name (msbuild then sets no `LogicalName`, so csc names it after the file). A culture-specific one (`Strings.de.resx`: a satellite assembly) is left out and
   reported; one msbuild names after a class (`DependentUpon`, or a `.resx` with a `.cs` of the
   same name beside it) is kept with the default name and reported (set `name` by hand).
 - `options`: `GenerateDocumentationFile`, `TreatWarningsAsErrors`, `Nullable`, `LangVersion`
   (only when a repository file sets it), the key file when `SignAssembly`, F# `OtherFlags`,
-  `NoWarn` without the SDK's defaults (C# `1701;1702`).
+  `NoWarn` without the SDK's defaults (C# `1701;1702`). The lists `WarningsAsErrors` and
+  `WarningsNotAsErrors` have no field: reported in `Dropped` when a repository file sets them,
+  not seen at all when the SDK or an import outside the repository does.
 - `assemblyAttributes`: the `AssemblyAttribute` items other than `InternalsVisibleTo` (those are
   `internalsVisibleTo`), arguments as msbuild's `WriteCodeFragment` writes them: `_Parameter1`,
   `_Parameter2`... positional, other metadata named (`Name = value`); `_ParameterN_IsLiteral`

@@ -61,11 +61,12 @@ type ``Import fidelity``() =
     let version = Var.string (name = "FID_VERSION") |> withDefault "1.0.0"
 
     /// fid/Fid.csproj: two resx (one under a folder msbuild mangles), a LogicalName resource,
-    /// a `Res\*` glob, CLSCompliant and AssemblyMetadata attributes, NoWarn on top of the SDK's
+    /// a `Res\*` glob, a linked file (`Link`, through a `_` folder), `ManifestResourceName` on a file
+    /// and on a resx, CLSCompliant and AssemblyMetadata attributes, NoWarn on top of the SDK's
     /// with TreatWarningsAsErrors and doc on (so CS0618/CS1591 would fail the build).
     let fixture () =
-        for d in [ "fid"; "out"; "locks"; "obj" ] do if Directory.Exists d then Directory.Delete (d, true)
-        for d in [ "fid/1st Folder"; "fid/Res"; "fid/Data" ] do Directory.CreateDirectory d |> ignore
+        for d in [ "fid"; "shared"; "out"; "locks"; "obj" ] do if Directory.Exists d then Directory.Delete (d, true)
+        for d in [ "fid/1st Folder"; "fid/Res"; "fid/Data"; "shared" ] do Directory.CreateDirectory d |> ignore
         let csproj = """<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <TargetFramework>netstandard2.0</TargetFramework>
@@ -78,6 +79,9 @@ type ``Import fidelity``() =
   <ItemGroup>
     <EmbeddedResource Include="Data\blob.txt" LogicalName="blob.bin" />
     <EmbeddedResource Include="Res\*" />
+    <EmbeddedResource Include="..\shared\Linked.txt" Link="Shared\_\Linked.txt" />
+    <EmbeddedResource Include="Data\named.txt" ManifestResourceName="Custom.Named" />
+    <EmbeddedResource Update="Data\Other.resx" ManifestResourceName="Custom.Other" />
     <AssemblyAttribute Include="System.CLSCompliantAttribute">
       <_Parameter1>true</_Parameter1>
     </AssemblyAttribute>
@@ -105,6 +109,9 @@ type ``Import fidelity``() =
         File.WriteAllText ("fid/Res/a.txt", "a\n")
         File.WriteAllText ("fid/Res/b.json", "{}\n")
         File.WriteAllText ("fid/Data/blob.txt", "blob\n")
+        File.WriteAllText ("fid/Data/named.txt", "named\n")
+        File.WriteAllText ("fid/Data/Other.resx", resx [ "Other", "o" ])
+        File.WriteAllText ("shared/Linked.txt", "linked\n")
 
     member private x.Run (label: string) (rules': Rule<ExecContext> list) (targets: string list) =
         xake {x.TestOptions with FileLog = label + ".log"; ThrowOnError = true; Vars = [ "CI", "off"; "CSC_SERVER", "off" ]; FileLogLevel = Loud} {
@@ -144,7 +151,9 @@ type ``Import fidelity``() =
         let imported = x.Import ()
         let d = Description.read "fid/xake.project.json"
         Assert.That(d.Resources |> List.sortBy (fun r -> r.File),
-            Is.EqualTo ([ { File = "1st Folder/Messages.resx"; Name = None }; { File = "Data/blob.txt"; Name = Some "blob.bin" }
+            Is.EqualTo ([ { File = "../shared/Linked.txt"; Name = Some "Acme.Fid.Shared.__.Linked.txt" }
+                          { File = "1st Folder/Messages.resx"; Name = None }; { File = "Data/Other.resx"; Name = Some "Custom.Other.resources" }
+                          { File = "Data/blob.txt"; Name = Some "blob.bin" }; { File = "Data/named.txt"; Name = Some "named.txt" }
                           { File = "Res/a.txt"; Name = None }; { File = "Res/b.json"; Name = None }; { File = "Strings.resx"; Name = None } ]
                         : Description.Resource list))
         Assert.That(d.Options.NoWarn, Is.EqualTo [ "1591"; "0618" ])
@@ -158,6 +167,7 @@ type ``Import fidelity``() =
         let dll = "out/Release/netstandard2.0/Acme.Fidelity.dll"
         Assert.That(manifestResources dll, Is.EqualTo (manifestResources msbuildDll))
         Assert.That(manifestResources dll, Does.Contain "Acme.Fid._1st_Folder.Messages.resources")
+        Assert.That(manifestResources dll, Is.SupersetOf [ "Acme.Fid.Shared.__.Linked.txt"; "Custom.Other.resources"; "named.txt" ])
         Assert.That(assemblyAttributes dll, Is.SupersetOf [ "System.CLSCompliantAttribute"; "System.Reflection.AssemblyMetadataAttribute" ])
         let lockText = File.ReadAllText (lockOf "Fid" "Release")
         Assert.That(lockText, Does.Contain "/nowarn:1701,1702,1591,0618")
@@ -223,6 +233,11 @@ type ``Import fidelity``() =
         Assert.That(Described.manifestName "Acme" "1st Folder/a-b.txt", Is.EqualTo "Acme._1st_Folder.a-b.txt")
         Assert.That(Described.manifestName "Acme" "my.dir/x-y/z.xsd", Is.EqualTo "Acme.my.dir.x_y.z.xsd")
         Assert.That(Described.manifestName "" "Res/a.txt", Is.EqualTo "Res.a.txt")
+        // a folder that comes out as `_` is `__`, wherever it is in the path
+        Assert.That(Described.manifestName "Root" "_/x.txt", Is.EqualTo "Root.__.x.txt")
+        Assert.That(Described.manifestName "Root" "a/_/x.txt", Is.EqualTo "Root.a.__.x.txt")
+        Assert.That(Described.manifestName "Root" "a/-/x.txt", Is.EqualTo "Root.a.__.x.txt")
+        Assert.That(Described.manifestName "Root" "a/_b/x.txt", Is.EqualTo "Root.a._b.x.txt")
 
     /// `project` composes `/nowarn:` from the SDK's defaults and the description's, `/warnaserror+`
     /// only when asked, and one generated source with the friends and the attributes.

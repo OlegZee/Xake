@@ -93,6 +93,23 @@ module Locks =
             return refreshVar |> Option.orElse refreshEnv |> Option.filter (fun s -> s.Trim () <> "")
         }
 
+    /// The script's extra roots (`Roots.make`: `$(Name)`, a path relative to the project root
+    /// or absolute) as `(absolute root, Name)`, longest first, the built-in tokens left out.
+    let private pathmaps (projectRoot: string) (extraRoots: (string * string) list) : (string * string) list =
+        Roots.make projectRoot extraRoots
+        |> List.filter (fun (token, _) -> extraRoots |> List.exists (fst >> (=) token) && not (List.contains token Roots.builtinTokens))
+        |> List.map (fun (token, path) -> path, token.Substring (2, token.Length - 3))
+
+    /// `options` with one `pathmap` per extra root (`<root>/=/<Name>/`, `prefix` is `--` for
+    /// fsc, `/` for csc) in front of the project root's, so a source under a sibling checkout
+    /// does not leave its absolute path in the assembly (pdb, `CallerFilePath`).
+    let private withPathmaps (prefix: string) (mapped: (string * string) list) (options: string list) =
+        if List.isEmpty mapped then options else
+        let extra = mapped |> List.map (fun (path, name) -> sprintf "%spathmap:%s/=/%s/" prefix path name)
+        match options |> List.tryFindIndex (fun o -> o.StartsWith (prefix + "pathmap:")) with
+        | Some i -> List.take i options @ extra @ List.skip i options
+        | None -> options @ extra
+
     /// <summary>
     /// Generates the lock of ONE described project for ONE configuration: the description at
     /// `descriptionPath`, configuration `config`, written to `lockOf name config` (relative to
@@ -112,6 +129,12 @@ module Locks =
     /// the restore. B's own project references (the unhashed references of B's lock, so the
     /// closure) are references of this one too, after the direct ones, each once: msbuild
     /// hands csc/fsc the transitive project references.</item>
+    /// <item>`extraRoots`: the script's extra roots (`Roots.make`, e.g.
+    /// `[ "$(Sibling)", "../sibling-repo" ]`), as for `Lock.loadWith`: a path under one is
+    /// written `$(Sibling)/...` (sources, masks, key file, `Directory`), the compilation gets
+    /// one `pathmap` `&lt;root&gt;/=/Sibling/` per root before the project root's, and under
+    /// `HERMETIC=on` such a path counts as under the project root. The build passes the same
+    /// roots (`compileAsWith`, `needAllWith`, `restoreAllWith`).</item>
     /// </list>
     /// B's lock must exist: this does not order anything. The script's lock rule `need`s the
     /// referenced projects' lock rules first (a missing one fails, naming B). The lock is
@@ -127,15 +150,16 @@ module Locks =
     /// "update-locks" &lt;== [ for n in projects -> $"lock::{n}::Release" ]
     /// </code>
     /// </summary>
-    let generate (lockOf: string -> string -> string) (outOf: string -> string -> string -> string)
-                 (config: string) (descriptionPath: string) : Recipe<ExecContext, unit> =
+    let generateWith (extraRoots: (string * string) list) (lockOf: string -> string -> string) (outOf: string -> string -> string -> string)
+                     (config: string) (descriptionPath: string) : Recipe<ExecContext, unit> =
         recipe {
             let descPath = descriptionPath
             let! d = Description.load descriptionPath
             let! options = getCtxOptions ()
             let root = options.ProjectRoot
             let full (p: string) = normal (Path.GetFullPath (if Path.IsPathRooted p then p else Path.Combine (root, p)))
-            let! roots = Roots.current
+            let! roots = Roots.currentWith extraRoots
+            let mapped = pathmaps root extraRoots
             let configName = config
             let lockPath = lockOf d.Name config
             let lockFull = full lockPath
@@ -154,7 +178,7 @@ module Locks =
                                 | None ->
                                     failwithf "'%s': projectRef '%s' has no lock for %s (nor Release, Debug): '%s'; generate the lock of '%s' first (the lock rule needs the referenced projects' lock rules, e.g. via `update-locks`)"
                                         d.Name name config (lockOf name config) name
-                            let! refLock = Lock.load (lockOf name cfg)
+                            let! refLock = Lock.loadWith extraRoots (lockOf name cfg)
                             let frameworks = refLock.Entries |> List.map (fun e -> e.Framework) |> List.distinct
                             let refFwk =
                                 match nearestFramework fwk frameworks with
@@ -193,11 +217,11 @@ module Locks =
                             let! f = fsc { targetfwk fwk; out outFile; ref refFiles; project descPath; config configName; packages restored; resolve }
                             // the output path is the build's (`-o` added when compiling from the lock)
                             let keep o = match FscArgs.parse o with FscArgs.Switch (_, n, _) -> FscArgs.canonical n <> "out" | _ -> true
-                            return Lock.Compilation.Fsc { f with Options = f.Options |> List.filter keep } }
+                            return Lock.Compilation.Fsc { f with Options = f.Options |> List.filter keep |> withPathmaps "--" mapped } }
                         | Description.CSharp -> recipe {
                             let! c = csc { targetfwk fwk; out outFile; ref refFiles; project descPath; config configName; packages restored; resolve }
                             let keep o = match CscArgs.parse o with CscArgs.Switch (n, _) -> CscArgs.canonical n <> "out" | _ -> true
-                            return Lock.Compilation.Csc { c with Options = c.Options |> List.filter keep } }
+                            return Lock.Compilation.Csc { c with Options = c.Options |> List.filter keep |> withPathmaps "/" mapped } }
                     // a project reference must be among the compilation's references even when
                     // its output is not built yet
                     let compilation =
@@ -213,7 +237,7 @@ module Locks =
                             Evaluation = { Lock.Evaluation.Empty with ProjectRefs = refs |> List.map (fun (_, p, _, _) -> p) }
                             Packages = restored.Packages }
                     let unhashed = compilation.Dependencies.References |> List.map (fun r -> r.Path) |> List.filter (fun p -> List.contains (normal p) outputs)
-                    let! recorded = Lock.recorded lockPath unhashed entry
+                    let! recorded = Lock.recordedWith extraRoots lockPath unhashed entry
                     return recorded })
                 |> sequence
 
@@ -226,6 +250,12 @@ module Locks =
                 File.WriteAllText (lockFull, text)
                 do! trace Info "'%s': wrote the lock '%s'" d.Name lockPath
         }
+
+    /// `generateWith` without extra roots: every path the lock names outside `$(ProjectRoot)`,
+    /// `$(NuGetPackageRoot)` and `$(DotnetRoot)` stays absolute.
+    let generate (lockOf: string -> string -> string) (outOf: string -> string -> string -> string)
+                 (config: string) (descriptionPath: string) : Recipe<ExecContext, unit> =
+        generateWith [] lockOf outOf config descriptionPath
 
     /// A declared version as the version restore resolves it to, when that is known without
     /// resolving: `[1.2.3]` and `1.2.3` (the lowest applicable, the version itself when it
@@ -254,12 +284,12 @@ module Locks =
     ///     do! need [ for n in projects -> $"lock::{n}::Release" ] }
     /// </code>
     /// </summary>
-    let restoreAll (descriptions: Fileset) (cfg: string) (lockOf: string -> string -> string) (descriptionOf: string -> string)
+    let restoreAllWith (extraRoots: (string * string) list) (descriptions: Fileset) (cfg: string) (lockOf: string -> string -> string) (descriptionOf: string -> string)
             : Recipe<ExecContext, unit> =
         recipe {
             let! options = getCtxOptions ()
             let full (p: string) = normal (Path.GetFullPath (if Path.IsPathRooted p then p else Path.Combine (options.ProjectRoot, p)))
-            let! roots = Roots.current
+            let! roots = Roots.currentWith extraRoots
             let! refresh = refreshValue
             let lockAt (path: string) = let f = full path in if File.Exists f then Some (Lock.read roots f) else None
             let memo = System.Collections.Generic.Dictionary<string, (string * string) list option> ()
@@ -339,6 +369,11 @@ module Locks =
             do! Described.prefetch requests
         }
 
+    /// `restoreAllWith` without extra roots.
+    let restoreAll (descriptions: Fileset) (cfg: string) (lockOf: string -> string -> string) (descriptionOf: string -> string)
+            : Recipe<ExecContext, unit> =
+        restoreAllWith [] descriptions cfg lockOf descriptionOf
+
     /// The token a lock's `Generated` sources carry where the assembly version goes; the lock
     /// does not depend on the version, the build substitutes it (`compileAs`).
     let VersionToken = "$(Version)"
@@ -376,13 +411,13 @@ module Locks =
         versions |> List.tryFind (fst >> covers) |> Option.map snd
 
     /// `compileAs` for a `.dll` target.
-    let private compileDll (lockPath: string) (fwk: string) (versions: (string * RequiredVar<string>) list) : Recipe<ExecContext, unit> =
+    let private compileDll (extraRoots: (string * string) list) (lockPath: string) (fwk: string) (versions: (string * RequiredVar<string>) list) : Recipe<ExecContext, unit> =
         recipe {
             let! options = getCtxOptions ()
             let root = normal (Path.GetFullPath options.ProjectRoot)
             let! target = getTargetFile ()
             let target = normal target.FullName
-            let! doc = Lock.load lockPath
+            let! doc = Lock.loadWith extraRoots lockPath
             let entry =
                 match doc.Entries |> List.filter (fun e -> same e.Framework fwk) with
                 | [ e ] -> e
@@ -437,7 +472,7 @@ module Locks =
             Described.refreshResources c.Resources
             let! server = CompilerServer.resolve None
             let lockOptions = { Lock.Options.Default with Run = { Lock.Options.Default.Run with Server = server } }
-            do! Lock.compileFrom lockPath lockOptions { entry with Compilation = outputAt target c }
+            do! Lock.compileFromWith extraRoots lockPath lockOptions { entry with Compilation = outputAt target c }
         }
 
     /// Whether the compilation asks for an XML doc file (`/doc:`, `--doc:`).
@@ -448,9 +483,9 @@ module Locks =
 
     /// The `.xml` beside a `.dll` target: the dll rule writes it (the side output of the
     /// compile); this needs the dll and checks the file is there.
-    let private docOf (lockPath: string) (fwk: string) (xml: string) : Recipe<ExecContext, unit> =
+    let private docOf (extraRoots: (string * string) list) (lockPath: string) (fwk: string) (xml: string) : Recipe<ExecContext, unit> =
         recipe {
-            let! doc = Lock.load lockPath
+            let! doc = Lock.loadWith extraRoots lockPath
             let asm = Path.GetFileNameWithoutExtension xml
             let asked = doc.Entries |> List.exists (fun e -> same e.Framework fwk && e.Name = asm && asksDoc e.Compilation)
             if not asked then
@@ -500,14 +535,18 @@ module Locks =
     /// project's folder (the lock's `Directory`).</item>
     /// </list>
     /// </summary>
-    let compileAs (lockPath: string) (fwk: string) (versions: (string * RequiredVar<string>) list) : Recipe<ExecContext, unit> =
+    let compileAsWith (extraRoots: (string * string) list) (lockPath: string) (fwk: string) (versions: (string * RequiredVar<string>) list) : Recipe<ExecContext, unit> =
         recipe {
             let! target = getTargetFile ()
             if target.FullName.EndsWith (".xml", System.StringComparison.OrdinalIgnoreCase) then
-                do! docOf lockPath fwk (normal target.FullName)
+                do! docOf extraRoots lockPath fwk (normal target.FullName)
             else
-                do! compileDll lockPath fwk versions
+                do! compileDll extraRoots lockPath fwk versions
         }
+
+    /// `compileAsWith` without extra roots.
+    let compileAs (lockPath: string) (fwk: string) (versions: (string * RequiredVar<string>) list) : Recipe<ExecContext, unit> =
+        compileAsWith [] lockPath fwk versions
 
     /// <summary>
     /// Needs the outputs of every described project of `descriptions` (a fileset of
@@ -520,8 +559,8 @@ module Locks =
     /// command "build" { do! Locks.needAll (!! "src/*/xake.project.json") "Release" lockOf outOf }
     /// </code>
     /// </summary>
-    let needAll (descriptions: Fileset) (cfg: string)
-                (lockOf: string -> string -> string) (outOf: string -> string -> string -> string) : Recipe<ExecContext, unit> =
+    let needAllWith (extraRoots: (string * string) list) (descriptions: Fileset) (cfg: string)
+                    (lockOf: string -> string -> string) (outOf: string -> string -> string -> string) : Recipe<ExecContext, unit> =
         recipe {
             let! options = getCtxOptions ()
             let! (Filelist files) = getFiles descriptions
@@ -541,7 +580,12 @@ module Locks =
             // the packages every lock names that the folder lacks, fetched in one restore before
             // the compiles (each would otherwise start its own); nothing missing costs a
             // `File.Exists` per path. What is still wrong is reported by each compile
-            let! docs = loaded |> List.map (fun d -> Lock.load (lockOf d.Name cfg)) |> sequence
+            let! docs = loaded |> List.map (fun d -> Lock.loadWith extraRoots (lockOf d.Name cfg)) |> sequence
             let! _ = Restore.ensure Restore.Options.Default (Lock.restoreRequest (docs |> List.collect (fun doc -> doc.Entries)))
             do! need targets
         }
+
+    /// `needAllWith` without extra roots.
+    let needAll (descriptions: Fileset) (cfg: string)
+                (lockOf: string -> string -> string) (outOf: string -> string -> string -> string) : Recipe<ExecContext, unit> =
+        needAllWith [] descriptions cfg lockOf outOf

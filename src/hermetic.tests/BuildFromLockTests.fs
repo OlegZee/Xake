@@ -349,3 +349,72 @@ type ``Building from Xake-generated locks``() =
         Assert.That(x.Stamps [ xml; dll "Release" "B" ], Is.EqualTo stamps, "nothing changed, nothing rebuilt")
         let e = Assert.Throws<XakeException>(fun () -> build "xml-none" "out/Release/netstandard2.0/A.xml")
         Assert.That(e.Data0, Does.Contain "asks for no XML doc")
+
+    /// G10: a project whose sources and key file live in a sibling checkout, registered as the
+    /// extra root `$(SiblingRoot)`: the generated lock names no absolute path (masks, keyfile,
+    /// `Directory`, one `pathmap` per root), and a copy of both folders at another path builds
+    /// from the same lock, with the roots re-registered, into the same bytes.
+    [<Test; Category("Integration")>]
+    member x.``sources in a sibling root tokenise and build from another checkout path``() =
+        let roots = [ "$(SiblingRoot)", "../Sibling" ]
+        let checkout (name: string) = Path.GetFullPath ("siblings" </> name)
+        let a = checkout "a"
+        for dir in [ "siblings" ] do if Directory.Exists dir then Directory.Delete (dir, true)
+        for dir in [ a </> "root" </> "desc" </> "P"; a </> "Sibling" </> "P" </> "Sub" ] do Directory.CreateDirectory dir |> ignore
+        File.WriteAllText (a </> "Sibling/P/A.cs", "namespace P { public class A { public static string Where ([System.Runtime.CompilerServices.CallerFilePath] string f = \"\") => f; public static string Here () => Where (); } }\n")
+        File.WriteAllText (a </> "Sibling/P/Sub/B.cs", "namespace P { public class B {} }\n")
+        use rsa = System.Security.Cryptography.RSA.Create 1024
+        File.WriteAllBytes (a </> "Sibling/P/key.snk", StrongName.writeSnk (rsa.ExportParameters true))
+        let d : Description.Project =
+            { Schema = None; Name = "P"; Project = "../../../Sibling/P/P.csproj"; AssemblyName = None; RootNamespace = None
+              Language = Description.CSharp; Kind = Description.Library; Frameworks = [ "netstandard2.0" ]
+              Sources = [ "**/*.cs"; "!obj/**/*"; "!bin/**/*" ]; Resources = []; Defines = []; References = []; ProjectRefs = []; Packages = []
+              Options = { Description.Options.Default with KeyFile = Some "key.snk" }; InternalsVisibleTo = []; AssemblyAttributes = []; ByFramework = []; Package = None }
+        Description.write (a </> "root/desc/P" </> Description.FileName) d |> ignore
+        let descriptionOf (_: string) = "desc/P/" + Description.FileName
+        let run (root: string) (label: string) (goal: string) (rs: Rule<ExecContext> list) =
+            xake {x.TestOptions with ProjectRoot = root; DbFileName = root </> ".xake"; FileLog = root </> (label + ".log"); ThrowOnError = true; Vars = [ "CI", "off" ]; FileLogLevel = Loud} {
+                wantOverride [ goal ]
+                rules rs
+            }
+        let buildRules = [
+            command "build" { do! Locks.needAllWith roots (!! ("desc/P/" + Description.FileName)) "Release" lockOf outOf }
+            target "out/(cfg:*)/(fwk:*)/(name:*).dll" {
+                let! cfg = getRuleMatch "cfg"
+                let! fwk = getRuleMatch "fwk"
+                let! name = getRuleMatch "name"
+                do! Locks.compileAsWith roots (lockOf name cfg) fwk versions } ]
+        run (a </> "root") "generate" "update-locks"
+            [ LockRule.lockRuleWith roots lockOf outOf descriptionOf id (ResizeArray ()); LockRule.updateLocks [ "Release" ] [ "P" ] ]
+        let lockText = File.ReadAllText (a </> "root" </> lockOf "P" "Release")
+        Assert.That(lockText, Does.Not.Contain (checkout ""), "an absolute path in the lock")
+        Assert.That(lockText, Does.Contain "\"$(SiblingRoot)/P/**/*.cs\"")
+        Assert.That(lockText, Does.Contain "\"/keyfile:$(SiblingRoot)/P/key.snk\"")
+        Assert.That(lockText, Does.Contain "\"Directory\": \"$(SiblingRoot)/P\"")
+        Assert.That(lockText, Does.Contain "\"/pathmap:$(SiblingRoot)/=/SiblingRoot/\"")
+        Assert.That(lockText, Does.Contain "\"/pathmap:$(ProjectRoot)/=/_/\"")
+        run (a </> "root") "build-a" "build" buildRules
+        let built = a </> "root" </> dll "Release" "P"
+        Assert.That(File.Exists built, Is.True)
+        let bytes = File.ReadAllBytes built
+        // the CallerFilePath default is a user string (UTF-16)
+        let strings = System.Text.Encoding.Unicode.GetString bytes + System.Text.Encoding.Unicode.GetString (Array.skip 1 bytes)
+        Assert.That(strings, Does.Contain "/SiblingRoot/P/A.cs", "CallerFilePath is mapped")
+        Assert.That(strings, Does.Not.Contain (checkout ""), "an absolute path in the assembly")
+
+        // another checkout path: the sources, the description and the lock, no build state
+        let b = checkout "b"
+        let rec copy (src: string) (dst: string) =
+            Directory.CreateDirectory dst |> ignore
+            for f in Directory.GetFiles src do
+                let name = Path.GetFileName f
+                if name <> ".xake" && not (name.EndsWith ".log") then File.Copy (f, dst </> name)
+            for sub in Directory.GetDirectories src do
+                let name = Path.GetFileName sub
+                if name <> "out" && name <> "obj" then copy sub (dst </> name)
+        copy a b
+        run (b </> "root") "build-b" "build" buildRules
+        let other = b </> "root" </> dll "Release" "P"
+        Assert.That(File.Exists other, Is.True)
+        Assert.That(File.ReadAllBytes other, Is.EqualTo bytes, "the other checkout built different bytes")
+        Assert.That(File.ReadAllText (b </> "root" </> lockOf "P" "Release"), Is.EqualTo lockText)

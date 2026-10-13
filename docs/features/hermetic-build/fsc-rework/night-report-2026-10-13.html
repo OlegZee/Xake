@@ -1,0 +1,515 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Xake night report 2026-10-13</title><style>
+:root{--bg:#fff;--fg:#1c2428;--mut:#5b676d;--line:#d9e0e3;--acc:#1f6f8b}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 -apple-system,Segoe UI,Helvetica,Arial,sans-serif}
+main{max-width:980px;margin:0 auto;padding:24px 20px 60px}
+h1{font-size:26px;margin:0 0 4px}h2{font-size:19px;margin:34px 0 8px;border-bottom:1px solid var(--line);padding-bottom:4px}
+.sub{color:var(--mut);margin-bottom:18px}
+table{border-collapse:collapse;width:100%;margin:8px 0;font-size:14px}th,td{border:1px solid var(--line);padding:5px 8px;text-align:left;vertical-align:top}th{background:#f2f6f8}
+td.n{text-align:right;font-variant-numeric:tabular-nums}
+svg{width:100%;height:auto;display:block;margin:6px 0}.grid{stroke:#e3e8ea;stroke-width:1}.axis{stroke:#888}
+.ax{font-size:11px;fill:#5b676d}.gl{font-size:9px;fill:#333}.lane{font-size:11px;font-weight:600;fill:#1c2428}.val{font-size:11px;fill:#1c2428}.nm{font-size:10px;fill:#888}
+.kpi{display:flex;flex-wrap:wrap;gap:10px;margin:12px 0}.kpi div{border:1px solid var(--line);border-radius:6px;padding:8px 12px;background:#f8fafb}.kpi b{display:block;font-size:19px;color:var(--acc)}
+.note{color:var(--mut);font-size:13px}code{background:#f2f6f8;padding:1px 4px;border-radius:3px;font-size:13px}
+.legend span{display:inline-block;width:12px;height:12px;vertical-align:-2px;margin:0 4px 0 10px}
+</style></head><body><main>
+<h1>Night report: the build.fsc.fsx rework</h1><div class="sub">2026-10-13, autonomous run of the fixes plan. Nothing pushed, nothing merged.</div>
+<h2>1. Summary</h2>
+<p>The ActiveReports clean build of one config went from 33.4 s to 6.9 s, the four configs together from 224 s to 19.7 s, the no-op from 7.1 s to 0.9 s, a fresh clone from 141 s to 26.2 s. The lock-route script shrank from 179 to 124 lines (92 + a 32-line pack section) with zero workarounds, and the direct route (no locks) went from 57 s to 8.5 s. msbuild is the reference: 24 s for one config (Release, today) and 80 s for the four run sequentially. The speedup comes mainly from the regex cache in fileset matching and rule lookup (C1, C2a) and from one restore per build (B2.1); gaps G1-G9 and G12-G15 are closed for AR.</p>
+<div class="kpi"><div><b>33.4 -&gt; 6.9 s</b>clean, 1 config</div><div><b>224 -&gt; 19.7 s</b>clean, 4 configs</div><div><b>7.1 -&gt; 0.9 s</b>no-op</div><div><b>141 -&gt; 26.2 s</b>fresh clone</div><div><b>179 -&gt; 124</b>script lines</div><div><b>57 -&gt; 8.5 s</b>direct route</div><div><b>24 / 80 s</b>msbuild 1 config / 4 seq.</div></div>
+<h2>2. Wall time: before, after, msbuild</h2>
+<p class="note">Log scale so that 0.9 s is visible. Server off for Xake, no shared compilation for msbuild; 18 cores. Before = round 1 / round 2 (ar-experiment.md, ar-parallel.md, ar-direct.md); msbuild no-op bar is the lower end of 2.1-2.5 s; 4-config msbuild bar is the sequential sum. Not every run has a msbuild number.</p>
+<svg viewBox="0 0 900 420" role="img" aria-label="Wall time before, after and msbuild, log scale">
+<line x1="60" x2="880" y1="310.0" y2="310.0" class="grid"/><text x="54" y="314.0" text-anchor="end" class="ax">0.5 s</text>
+<line x1="60" x2="880" y1="278.6" y2="278.6" class="grid"/><text x="54" y="282.6" text-anchor="end" class="ax">1 s</text>
+<line x1="60" x2="880" y1="247.2" y2="247.2" class="grid"/><text x="54" y="251.2" text-anchor="end" class="ax">2 s</text>
+<line x1="60" x2="880" y1="205.6" y2="205.6" class="grid"/><text x="54" y="209.6" text-anchor="end" class="ax">5 s</text>
+<line x1="60" x2="880" y1="174.2" y2="174.2" class="grid"/><text x="54" y="178.2" text-anchor="end" class="ax">10 s</text>
+<line x1="60" x2="880" y1="142.8" y2="142.8" class="grid"/><text x="54" y="146.8" text-anchor="end" class="ax">20 s</text>
+<line x1="60" x2="880" y1="101.2" y2="101.2" class="grid"/><text x="54" y="105.2" text-anchor="end" class="ax">50 s</text>
+<line x1="60" x2="880" y1="69.8" y2="69.8" class="grid"/><text x="54" y="73.8" text-anchor="end" class="ax">100 s</text>
+<line x1="60" x2="880" y1="38.4" y2="38.4" class="grid"/><text x="54" y="42.4" text-anchor="end" class="ax">200 s</text>
+<rect x="79.5" y="119.5" width="29.9" height="190.5" fill="#9aa5ab"><title>Clean, 1 config (mescius Release): before 33.4 s</title></rect><text x="94.5" y="116.5" text-anchor="middle" class="val">33.4</text>
+<rect x="112.1" y="191.0" width="29.9" height="119.0" fill="#1f6f8b"><title>Clean, 1 config (mescius Release): after 6.9 s</title></rect><text x="127.0" y="188.0" text-anchor="middle" class="val">6.9</text>
+<rect x="144.6" y="134.1" width="29.9" height="175.9" fill="#c2571a"><title>Clean, 1 config (mescius Release): msbuild 24.2 s</title></rect><text x="159.6" y="131.1" text-anchor="middle" class="val">24.2</text>
+<text x="128.3" y="326.0" text-anchor="middle" class="ax">Clean</text>
+<text x="128.3" y="340.0" text-anchor="middle" class="ax">1 config (mescius Release)</text>
+<rect x="216.2" y="33.2" width="29.9" height="276.8" fill="#9aa5ab"><title>Clean, 4 configs: before 224 s</title></rect><text x="231.2" y="30.2" text-anchor="middle" class="val">224</text>
+<rect x="248.7" y="143.5" width="29.9" height="166.5" fill="#1f6f8b"><title>Clean, 4 configs: after 19.7 s</title></rect><text x="263.7" y="140.5" text-anchor="middle" class="val">19.7</text>
+<rect x="281.3" y="79.9" width="29.9" height="230.1" fill="#c2571a"><title>Clean, 4 configs: msbuild 80 s</title></rect><text x="296.2" y="76.9" text-anchor="middle" class="val">80</text>
+<text x="265.0" y="326.0" text-anchor="middle" class="ax">Clean</text>
+<text x="265.0" y="340.0" text-anchor="middle" class="ax">4 configs</text>
+<rect x="352.9" y="189.7" width="29.9" height="120.3" fill="#9aa5ab"><title>No-op, 1 config: before 7.1 s</title></rect><text x="367.8" y="186.7" text-anchor="middle" class="val">7.1</text>
+<rect x="385.4" y="283.4" width="29.9" height="26.6" fill="#1f6f8b"><title>No-op, 1 config: after 0.9 s</title></rect><text x="400.4" y="280.4" text-anchor="middle" class="val">0.9</text>
+<rect x="417.9" y="244.9" width="29.9" height="65.1" fill="#c2571a"><title>No-op, 1 config: msbuild 2.1 s</title></rect><text x="432.9" y="241.9" text-anchor="middle" class="val">2.1</text>
+<text x="401.7" y="326.0" text-anchor="middle" class="ax">No-op</text>
+<text x="401.7" y="340.0" text-anchor="middle" class="ax">1 config</text>
+<rect x="489.5" y="120.1" width="29.9" height="189.9" fill="#9aa5ab"><title>No-op, 4 configs: before 33 s</title></rect><text x="504.5" y="117.1" text-anchor="middle" class="val">33</text>
+<rect x="522.1" y="266.7" width="29.9" height="43.3" fill="#1f6f8b"><title>No-op, 4 configs: after 1.3 s</title></rect><text x="537.0" y="263.7" text-anchor="middle" class="val">1.3</text>
+<text x="570.9" y="306.0" text-anchor="middle" class="nm" transform="rotate(-90 570.9 306.0)">not measured</text>
+<text x="538.3" y="326.0" text-anchor="middle" class="ax">No-op</text>
+<text x="538.3" y="340.0" text-anchor="middle" class="ax">4 configs</text>
+<rect x="626.2" y="54.2" width="29.9" height="255.8" fill="#9aa5ab"><title>Fresh clone, 4 configs: before 141 s</title></rect><text x="641.2" y="51.2" text-anchor="middle" class="val">141</text>
+<rect x="658.7" y="130.5" width="29.9" height="179.5" fill="#1f6f8b"><title>Fresh clone, 4 configs: after 26.2 s</title></rect><text x="673.7" y="127.5" text-anchor="middle" class="val">26.2</text>
+<text x="707.5" y="306.0" text-anchor="middle" class="nm" transform="rotate(-90 707.5 306.0)">not measured</text>
+<text x="675.0" y="326.0" text-anchor="middle" class="ax">Fresh clone</text>
+<text x="675.0" y="340.0" text-anchor="middle" class="ax">4 configs</text>
+<rect x="762.9" y="95.2" width="29.9" height="214.8" fill="#9aa5ab"><title>Direct route, clean 1 config: before 57.1 s</title></rect><text x="777.8" y="92.2" text-anchor="middle" class="val">57.1</text>
+<rect x="795.4" y="181.6" width="29.9" height="128.4" fill="#1f6f8b"><title>Direct route, clean 1 config: after 8.5 s</title></rect><text x="810.4" y="178.6" text-anchor="middle" class="val">8.5</text>
+<text x="844.2" y="306.0" text-anchor="middle" class="nm" transform="rotate(-90 844.2 306.0)">not measured</text>
+<text x="811.7" y="326.0" text-anchor="middle" class="ax">Direct route</text>
+<text x="811.7" y="340.0" text-anchor="middle" class="ax">clean 1 config</text>
+<line x1="60" x2="880" y1="310.0" y2="310.0" class="axis"/>
+<rect x="60" y="390" width="12" height="12" fill="#9aa5ab"/><text x="78" y="400" class="ax">before</text>
+<rect x="190" y="390" width="12" height="12" fill="#1f6f8b"/><text x="208" y="400" class="ax">after</text>
+<rect x="320" y="390" width="12" height="12" fill="#c2571a"/><text x="338" y="400" class="ax">msbuild (sequential for 4 configs)</text>
+</svg>
+<table><tr><th>run</th><th>before</th><th>after</th><th>msbuild</th></tr>
+<tr><td>clean, 1 config (mescius Release)</td><td class="n">33.4 s</td><td class="n">6.9 s</td><td class="n">24.2 s (27.9 s in round 1)</td></tr>
+<tr><td>clean, 4 configs</td><td class="n">224 s (141 s with <code>&lt;&lt;&lt;</code>)</td><td class="n">19.7 s</td><td class="n">80 s sequential</td></tr>
+<tr><td>no-op, 1 config</td><td class="n">7.1 s</td><td class="n">0.9 s</td><td class="n">2.1-2.5 s</td></tr>
+<tr><td>no-op, 4 configs</td><td class="n">33 s</td><td class="n">1.3 s</td><td class="n">not measured</td></tr>
+<tr><td>fresh clone, 4 configs</td><td class="n">141 s</td><td class="n">26.2 s</td><td class="n">not measured</td></tr>
+<tr><td>direct route, clean, 1 config</td><td class="n">57.1 s</td><td class="n">8.5 s</td><td class="n">not measured</td></tr></table>
+<p class="note">Compiler server on (after): 6.0 s one config, 11.1 s four configs, direct 5.6 s; server CPU is not in util.</p>
+<h2>3. Gantt: AFTER, sequential clean (mescius Release, 30 dlls)</h2>
+<p class="note">One bar per target from <code>seq-clean.csv</code> (31 targets, rows sorted by start of own work). Light = waiting for dependencies, dark = own work. Wall 6.2 s; the critical path VBFunctionLib 0.3 s -&gt; ExpressionInfo 0.4 -&gt; Rdl 0.9 -&gt; Rendering 3.1-3.3 -&gt; Excel 1.2 adds up to the wall.</p>
+<div class="legend"><span style="background:#1f6f8b"></span>own <span style="background:#c9d6dc"></span>wait <span style="background:#555"></span>phony</div>
+<svg viewBox="0 0 900 412" role="img" aria-label="Sequential clean Gantt">
+<line x1="230.0" x2="230.0" y1="14" y2="392" class="grid"/><text x="230.0" y="406" text-anchor="middle" class="ax">0</text>
+<line x1="330.8" x2="330.8" y1="14" y2="392" class="grid"/><text x="330.8" y="406" text-anchor="middle" class="ax">1</text>
+<line x1="431.5" x2="431.5" y1="14" y2="392" class="grid"/><text x="431.5" y="406" text-anchor="middle" class="ax">2</text>
+<line x1="532.3" x2="532.3" y1="14" y2="392" class="grid"/><text x="532.3" y="406" text-anchor="middle" class="ax">3</text>
+<line x1="633.1" x2="633.1" y1="14" y2="392" class="grid"/><text x="633.1" y="406" text-anchor="middle" class="ax">4</text>
+<line x1="733.8" x2="733.8" y1="14" y2="392" class="grid"/><text x="733.8" y="406" text-anchor="middle" class="ax">5</text>
+<line x1="834.6" x2="834.6" y1="14" y2="392" class="grid"/><text x="834.6" y="406" text-anchor="middle" class="ax">6</text>
+<text x="226" y="27" text-anchor="end" class="gl">VBFunctionLib mescius/net472</text>
+<rect x="235.1" y="19" width="0.5" height="10" fill="#c9d6dc"><title>out/mescius/Release/net472/VBFunctionLib/MESCIUS.ActiveReports.Core.Data.VBFunctionLib.dll: start 0.051, wait 0.0, own 0.336, end 0.387</title></rect>
+<rect x="235.1" y="19" width="33.9" height="10" fill="#1f6f8b"><title>out/mescius/Release/net472/VBFunctionLib/MESCIUS.ActiveReports.Core.Data.VBFunctionLib.dll: start 0.051, wait 0.0, own 0.336, end 0.387</title></rect>
+<text x="226" y="39" text-anchor="end" class="gl">VBFunctionLib mescius/netstandard2.0</text>
+<rect x="235.1" y="31" width="0.5" height="10" fill="#c9d6dc"><title>out/mescius/Release/netstandard2.0/VBFunctionLib/MESCIUS.ActiveReports.Core.Data.VBFunctionLib.dll: start 0.051, wait 0.0, own 0.342, end 0.393</title></rect>
+<rect x="235.1" y="31" width="34.5" height="10" fill="#1f6f8b"><title>out/mescius/Release/netstandard2.0/VBFunctionLib/MESCIUS.ActiveReports.Core.Data.VBFunctionLib.dll: start 0.051, wait 0.0, own 0.342, end 0.393</title></rect>
+<text x="226" y="51" text-anchor="end" class="gl">ExpressionInfo mescius/net472</text>
+<rect x="235.1" y="43" width="34.0" height="10" fill="#c9d6dc"><title>out/mescius/Release/net472/ExpressionInfo/MESCIUS.ActiveReports.Core.Data.ExpressionInfo.dll: start 0.051, wait 0.337, own 0.437, end 0.825</title></rect>
+<rect x="269.1" y="43" width="44.0" height="10" fill="#1f6f8b"><title>out/mescius/Release/net472/ExpressionInfo/MESCIUS.ActiveReports.Core.Data.ExpressionInfo.dll: start 0.051, wait 0.337, own 0.437, end 0.825</title></rect>
+<text x="226" y="63" text-anchor="end" class="gl">ExpressionInfo mescius/netstandard2.0</text>
+<rect x="236.9" y="55" width="32.6" height="10" fill="#c9d6dc"><title>out/mescius/Release/netstandard2.0/ExpressionInfo/MESCIUS.ActiveReports.Core.Data.ExpressionInfo.dll: start 0.068, wait 0.324, own 0.398, end 0.790</title></rect>
+<rect x="269.5" y="55" width="40.1" height="10" fill="#1f6f8b"><title>out/mescius/Release/netstandard2.0/ExpressionInfo/MESCIUS.ActiveReports.Core.Data.ExpressionInfo.dll: start 0.068, wait 0.324, own 0.398, end 0.790</title></rect>
+<text x="226" y="75" text-anchor="end" class="gl">Rdl mescius/netstandard2.0</text>
+<rect x="235.1" y="67" width="75.0" height="10" fill="#c9d6dc"><title>out/mescius/Release/netstandard2.0/Rdl/MESCIUS.ActiveReports.Core.Rdl.dll: start 0.051, wait 0.744, own 0.948, end 1.743</title></rect>
+<rect x="310.1" y="67" width="95.5" height="10" fill="#1f6f8b"><title>out/mescius/Release/netstandard2.0/Rdl/MESCIUS.ActiveReports.Core.Rdl.dll: start 0.051, wait 0.744, own 0.948, end 1.743</title></rect>
+<text x="226" y="87" text-anchor="end" class="gl">DataEngine mescius/netstandard2.0</text>
+<rect x="236.9" y="79" width="73.6" height="10" fill="#c9d6dc"><title>out/mescius/Release/netstandard2.0/DataEngine/MESCIUS.ActiveReports.Core.Data.DataEngine.dll: start 0.068, wait 0.73, own 0.654, end 1.452</title></rect>
+<rect x="310.4" y="79" width="65.9" height="10" fill="#1f6f8b"><title>out/mescius/Release/netstandard2.0/DataEngine/MESCIUS.ActiveReports.Core.Data.DataEngine.dll: start 0.068, wait 0.73, own 0.654, end 1.452</title></rect>
+<text x="226" y="99" text-anchor="end" class="gl">Rdl mescius/net472</text>
+<rect x="235.2" y="91" width="78.5" height="10" fill="#c9d6dc"><title>out/mescius/Release/net472/Rdl/MESCIUS.ActiveReports.Core.Rdl.dll: start 0.052, wait 0.779, own 0.913, end 1.744</title></rect>
+<rect x="313.7" y="91" width="92.0" height="10" fill="#1f6f8b"><title>out/mescius/Release/net472/Rdl/MESCIUS.ActiveReports.Core.Rdl.dll: start 0.052, wait 0.779, own 0.913, end 1.744</title></rect>
+<text x="226" y="111" text-anchor="end" class="gl">DataEngine mescius/net472</text>
+<rect x="236.9" y="103" width="77.3" height="10" fill="#c9d6dc"><title>out/mescius/Release/net472/DataEngine/MESCIUS.ActiveReports.Core.Data.DataEngine.dll: start 0.068, wait 0.767, own 0.625, end 1.460</title></rect>
+<rect x="314.1" y="103" width="63.0" height="10" fill="#1f6f8b"><title>out/mescius/Release/net472/DataEngine/MESCIUS.ActiveReports.Core.Data.DataEngine.dll: start 0.068, wait 0.767, own 0.625, end 1.460</title></rect>
+<text x="226" y="123" text-anchor="end" class="gl">Rendering mescius/netstandard2.0</text>
+<rect x="235.0" y="115" width="171.7" height="10" fill="#c9d6dc"><title>out/mescius/Release/netstandard2.0/Rendering/MESCIUS.ActiveReports.Core.Rendering.dll: start 0.05, wait 1.704, own 3.101, end 4.855</title></rect>
+<rect x="406.7" y="115" width="312.5" height="10" fill="#1f6f8b"><title>out/mescius/Release/netstandard2.0/Rendering/MESCIUS.ActiveReports.Core.Rendering.dll: start 0.05, wait 1.704, own 3.101, end 4.855</title></rect>
+<text x="226" y="135" text-anchor="end" class="gl">Rendering mescius/net472</text>
+<rect x="236.9" y="127" width="169.9" height="10" fill="#c9d6dc"><title>out/mescius/Release/net472/Rendering/MESCIUS.ActiveReports.Core.Rendering.dll: start 0.068, wait 1.686, own 3.268, end 5.022</title></rect>
+<rect x="406.7" y="127" width="329.3" height="10" fill="#1f6f8b"><title>out/mescius/Release/net472/Rendering/MESCIUS.ActiveReports.Core.Rendering.dll: start 0.068, wait 1.686, own 3.268, end 5.022</title></rect>
+<text x="226" y="147" text-anchor="end" class="gl">Scripting mescius/netstandard2.0</text>
+<rect x="234.8" y="139" width="484.3" height="10" fill="#c9d6dc"><title>out/mescius/Release/netstandard2.0/Scripting/MESCIUS.ActiveReports.Core.Scripting.dll: start 0.048, wait 4.806, own 0.457, end 5.311</title></rect>
+<rect x="719.1" y="139" width="46.1" height="10" fill="#1f6f8b"><title>out/mescius/Release/netstandard2.0/Scripting/MESCIUS.ActiveReports.Core.Scripting.dll: start 0.048, wait 4.806, own 0.457, end 5.311</title></rect>
+<text x="226" y="159" text-anchor="end" class="gl">Export.Text.Page mescius/netstandard2.0</text>
+<rect x="236.8" y="151" width="482.7" height="10" fill="#c9d6dc"><title>out/mescius/Release/netstandard2.0/Export.Text.Page/MESCIUS.ActiveReports.Core.Export.Text.Page.dll: start 0.067, wait 4.79, own 0.407, end 5.264</title></rect>
+<rect x="719.4" y="151" width="41.0" height="10" fill="#1f6f8b"><title>out/mescius/Release/netstandard2.0/Export.Text.Page/MESCIUS.ActiveReports.Core.Export.Text.Page.dll: start 0.067, wait 4.79, own 0.407, end 5.264</title></rect>
+<text x="226" y="171" text-anchor="end" class="gl">Export.Html.Page mescius/netstandard2.0</text>
+<rect x="236.9" y="163" width="482.7" height="10" fill="#c9d6dc"><title>out/mescius/Release/netstandard2.0/Export.Html.Page/MESCIUS.ActiveReports.Core.Export.Html.Page.dll: start 0.068, wait 4.79, own 0.47, end 5.328</title></rect>
+<rect x="719.5" y="163" width="47.4" height="10" fill="#1f6f8b"><title>out/mescius/Release/netstandard2.0/Export.Html.Page/MESCIUS.ActiveReports.Core.Export.Html.Page.dll: start 0.068, wait 4.79, own 0.47, end 5.328</title></rect>
+<text x="226" y="183" text-anchor="end" class="gl">Export.Excel.Page mescius/netstandard2.0</text>
+<rect x="236.9" y="175" width="483.2" height="10" fill="#c9d6dc"><title>out/mescius/Release/netstandard2.0/Export.Excel.Page/MESCIUS.ActiveReports.Core.Export.Excel.Page.dll: start 0.068, wait 4.795, own 1.063, end 5.926</title></rect>
+<rect x="720.0" y="175" width="107.1" height="10" fill="#1f6f8b"><title>out/mescius/Release/netstandard2.0/Export.Excel.Page/MESCIUS.ActiveReports.Core.Export.Excel.Page.dll: start 0.068, wait 4.795, own 1.063, end 5.926</title></rect>
+<text x="226" y="195" text-anchor="end" class="gl">Drawing.Gc mescius/netstandard2.0</text>
+<rect x="236.9" y="187" width="489.7" height="10" fill="#c9d6dc"><title>out/mescius/Release/netstandard2.0/Drawing.Gc/MESCIUS.ActiveReports.Core.Drawing.Gc.dll: start 0.068, wait 4.86, own 0.495, end 5.423</title></rect>
+<rect x="726.6" y="187" width="49.9" height="10" fill="#1f6f8b"><title>out/mescius/Release/netstandard2.0/Drawing.Gc/MESCIUS.ActiveReports.Core.Drawing.Gc.dll: start 0.068, wait 4.86, own 0.495, end 5.423</title></rect>
+<text x="226" y="207" text-anchor="end" class="gl">Export.Word.Page mescius/netstandard2.0</text>
+<rect x="236.9" y="199" width="489.9" height="10" fill="#c9d6dc"><title>out/mescius/Release/netstandard2.0/Export.Word.Page/MESCIUS.ActiveReports.Core.Export.Word.Page.dll: start 0.068, wait 4.862, own 0.617, end 5.547</title></rect>
+<rect x="726.8" y="199" width="62.2" height="10" fill="#1f6f8b"><title>out/mescius/Release/netstandard2.0/Export.Word.Page/MESCIUS.ActiveReports.Core.Export.Word.Page.dll: start 0.068, wait 4.862, own 0.617, end 5.547</title></rect>
+<text x="226" y="219" text-anchor="end" class="gl">Scripting mescius/net472</text>
+<rect x="234.8" y="211" width="501.1" height="10" fill="#c9d6dc"><title>out/mescius/Release/net472/Scripting/MESCIUS.ActiveReports.Core.Scripting.dll: start 0.048, wait 4.973, own 0.466, end 5.487</title></rect>
+<rect x="736.0" y="211" width="47.0" height="10" fill="#1f6f8b"><title>out/mescius/Release/net472/Scripting/MESCIUS.ActiveReports.Core.Scripting.dll: start 0.048, wait 4.973, own 0.466, end 5.487</title></rect>
+<text x="226" y="231" text-anchor="end" class="gl">Export.Excel.Page mescius/net472</text>
+<rect x="235.1" y="223" width="501.6" height="10" fill="#c9d6dc"><title>out/mescius/Release/net472/Export.Excel.Page/MESCIUS.ActiveReports.Core.Export.Excel.Page.dll: start 0.051, wait 4.978, own 1.199, end 6.228</title></rect>
+<rect x="736.8" y="223" width="120.8" height="10" fill="#1f6f8b"><title>out/mescius/Release/net472/Export.Excel.Page/MESCIUS.ActiveReports.Core.Export.Excel.Page.dll: start 0.051, wait 4.978, own 1.199, end 6.228</title></rect>
+<text x="226" y="243" text-anchor="end" class="gl">Drawing.Gc mescius/net472</text>
+<rect x="235.2" y="235" width="504.2" height="10" fill="#c9d6dc"><title>out/mescius/Release/net472/Drawing.Gc/MESCIUS.ActiveReports.Core.Drawing.Gc.dll: start 0.052, wait 5.004, own 0.666, end 5.722</title></rect>
+<rect x="739.5" y="235" width="67.1" height="10" fill="#1f6f8b"><title>out/mescius/Release/net472/Drawing.Gc/MESCIUS.ActiveReports.Core.Drawing.Gc.dll: start 0.052, wait 5.004, own 0.666, end 5.722</title></rect>
+<text x="226" y="255" text-anchor="end" class="gl">Export.Text.Page mescius/net472</text>
+<rect x="236.8" y="247" width="503.0" height="10" fill="#c9d6dc"><title>out/mescius/Release/net472/Export.Text.Page/MESCIUS.ActiveReports.Core.Export.Text.Page.dll: start 0.067, wait 4.992, own 0.554, end 5.613</title></rect>
+<rect x="739.8" y="247" width="55.8" height="10" fill="#1f6f8b"><title>out/mescius/Release/net472/Export.Text.Page/MESCIUS.ActiveReports.Core.Export.Text.Page.dll: start 0.067, wait 4.992, own 0.554, end 5.613</title></rect>
+<text x="226" y="267" text-anchor="end" class="gl">Export.Html.Page mescius/net472</text>
+<rect x="236.9" y="259" width="503.0" height="10" fill="#c9d6dc"><title>out/mescius/Release/net472/Export.Html.Page/MESCIUS.ActiveReports.Core.Export.Html.Page.dll: start 0.068, wait 4.992, own 0.82, end 5.880</title></rect>
+<rect x="739.9" y="259" width="82.6" height="10" fill="#1f6f8b"><title>out/mescius/Release/net472/Export.Html.Page/MESCIUS.ActiveReports.Core.Export.Html.Page.dll: start 0.068, wait 4.992, own 0.82, end 5.880</title></rect>
+<text x="226" y="279" text-anchor="end" class="gl">Export.Word.Page mescius/net472</text>
+<rect x="236.9" y="271" width="503.1" height="10" fill="#c9d6dc"><title>out/mescius/Release/net472/Export.Word.Page/MESCIUS.ActiveReports.Core.Export.Word.Page.dll: start 0.068, wait 4.993, own 0.798, end 5.859</title></rect>
+<rect x="740.0" y="271" width="80.4" height="10" fill="#1f6f8b"><title>out/mescius/Release/net472/Export.Word.Page/MESCIUS.ActiveReports.Core.Export.Word.Page.dll: start 0.068, wait 4.993, own 0.798, end 5.859</title></rect>
+<text x="226" y="291" text-anchor="end" class="gl">Export.Image.Page mescius/netstandard2.0</text>
+<rect x="234.7" y="283" width="541.4" height="10" fill="#c9d6dc"><title>out/mescius/Release/netstandard2.0/Export.Image.Page/MESCIUS.ActiveReports.Core.Export.Image.Page.dll: start 0.047, wait 5.373, own 0.46, end 5.880</title></rect>
+<rect x="776.2" y="283" width="46.4" height="10" fill="#1f6f8b"><title>out/mescius/Release/netstandard2.0/Export.Image.Page/MESCIUS.ActiveReports.Core.Export.Image.Page.dll: start 0.047, wait 5.373, own 0.46, end 5.880</title></rect>
+<text x="226" y="303" text-anchor="end" class="gl">Export.Pdf.Page mescius/netstandard2.0</text>
+<rect x="235.0" y="295" width="541.7" height="10" fill="#c9d6dc"><title>out/mescius/Release/netstandard2.0/Export.Pdf.Page/MESCIUS.ActiveReports.Core.Export.Pdf.Page.dll: start 0.05, wait 5.376, own 0.675, end 6.101</title></rect>
+<rect x="776.8" y="295" width="68.0" height="10" fill="#1f6f8b"><title>out/mescius/Release/netstandard2.0/Export.Pdf.Page/MESCIUS.ActiveReports.Core.Export.Pdf.Page.dll: start 0.05, wait 5.376, own 0.675, end 6.101</title></rect>
+<text x="226" y="315" text-anchor="end" class="gl">Drawing.Gdi mescius/netstandard2.0</text>
+<rect x="236.8" y="307" width="540.0" height="10" fill="#c9d6dc"><title>out/mescius/Release/netstandard2.0/Drawing.Gdi/MESCIUS.ActiveReports.Core.Drawing.Gdi.dll: start 0.067, wait 5.359, own 0.603, end 6.029</title></rect>
+<rect x="776.8" y="307" width="60.8" height="10" fill="#1f6f8b"><title>out/mescius/Release/netstandard2.0/Drawing.Gdi/MESCIUS.ActiveReports.Core.Drawing.Gdi.dll: start 0.067, wait 5.359, own 0.603, end 6.029</title></rect>
+<text x="226" y="327" text-anchor="end" class="gl">Export.Svg.Page mescius/netstandard2.0</text>
+<rect x="236.9" y="319" width="540.1" height="10" fill="#c9d6dc"><title>out/mescius/Release/netstandard2.0/Export.Svg.Page/MESCIUS.ActiveReports.Core.Export.Svg.Page.dll: start 0.068, wait 5.36, own 0.625, end 6.053</title></rect>
+<rect x="777.0" y="319" width="63.0" height="10" fill="#1f6f8b"><title>out/mescius/Release/netstandard2.0/Export.Svg.Page/MESCIUS.ActiveReports.Core.Export.Svg.Page.dll: start 0.068, wait 5.36, own 0.625, end 6.053</title></rect>
+<text x="226" y="339" text-anchor="end" class="gl">Export.Image.Page mescius/net472</text>
+<rect x="234.7" y="331" width="571.6" height="10" fill="#c9d6dc"><title>out/mescius/Release/net472/Export.Image.Page/MESCIUS.ActiveReports.Core.Export.Image.Page.dll: start 0.047, wait 5.672, own 0.419, end 6.138</title></rect>
+<rect x="806.3" y="331" width="42.2" height="10" fill="#1f6f8b"><title>out/mescius/Release/net472/Export.Image.Page/MESCIUS.ActiveReports.Core.Export.Image.Page.dll: start 0.047, wait 5.672, own 0.419, end 6.138</title></rect>
+<text x="226" y="351" text-anchor="end" class="gl">Export.Svg.Page mescius/net472</text>
+<rect x="235.0" y="343" width="571.7" height="10" fill="#c9d6dc"><title>out/mescius/Release/net472/Export.Svg.Page/MESCIUS.ActiveReports.Core.Export.Svg.Page.dll: start 0.05, wait 5.673, own 0.416, end 6.139</title></rect>
+<rect x="806.7" y="343" width="41.9" height="10" fill="#1f6f8b"><title>out/mescius/Release/net472/Export.Svg.Page/MESCIUS.ActiveReports.Core.Export.Svg.Page.dll: start 0.05, wait 5.673, own 0.416, end 6.139</title></rect>
+<text x="226" y="363" text-anchor="end" class="gl">Drawing.Gdi mescius/net472</text>
+<rect x="236.8" y="355" width="570.1" height="10" fill="#c9d6dc"><title>out/mescius/Release/net472/Drawing.Gdi/MESCIUS.ActiveReports.Core.Drawing.Gdi.dll: start 0.067, wait 5.657, own 0.478, end 6.202</title></rect>
+<rect x="806.8" y="355" width="48.2" height="10" fill="#1f6f8b"><title>out/mescius/Release/net472/Drawing.Gdi/MESCIUS.ActiveReports.Core.Drawing.Gdi.dll: start 0.067, wait 5.657, own 0.478, end 6.202</title></rect>
+<text x="226" y="375" text-anchor="end" class="gl">Export.Pdf.Page mescius/net472</text>
+<rect x="236.9" y="367" width="570.2" height="10" fill="#c9d6dc"><title>out/mescius/Release/net472/Export.Pdf.Page/MESCIUS.ActiveReports.Core.Export.Pdf.Page.dll: start 0.068, wait 5.658, own 0.483, end 6.209</title></rect>
+<rect x="807.0" y="367" width="48.7" height="10" fill="#1f6f8b"><title>out/mescius/Release/net472/Export.Pdf.Page/MESCIUS.ActiveReports.Core.Export.Pdf.Page.dll: start 0.068, wait 5.658, own 0.483, end 6.209</title></rect>
+<text x="226" y="387" text-anchor="end" class="gl">build::mescius::Release</text>
+<rect x="230.0" y="379" width="623.5" height="10" fill="#ccc"><title>build::mescius::Release: start 0.0, wait 6.187, own 0.041, end 6.228</title></rect>
+<rect x="853.5" y="379" width="4.1" height="10" fill="#555"><title>build::mescius::Release: start 0.0, wait 6.187, own 0.041, end 6.228</title></rect>
+<text x="885" y="12" text-anchor="end" class="ax">seconds</text></svg>
+<p class="note">Targets running per second (<code>seq-clean-concurrency.csv</code>, seconds 0-7):</p>
+<svg viewBox="0 0 900 140" role="img" aria-label="Sequential clean concurrency">
+<line x1="230" x2="885" y1="115.0" y2="115.0" class="grid"/><text x="226" y="119.0" text-anchor="end" class="ax">0</text>
+<line x1="230" x2="885" y1="62.5" y2="62.5" class="grid"/><text x="226" y="66.5" text-anchor="end" class="ax">10</text>
+<line x1="230" x2="885" y1="10.0" y2="10.0" class="grid"/><text x="226" y="14.0" text-anchor="end" class="ax">20</text>
+<path d="M230.0,115.0 L230.0,73.0 L330.8,73.0 L330.8,83.5 L431.5,83.5 L431.5,104.5 L532.3,104.5 L532.3,104.5 L633.1,104.5 L633.1,62.5 L733.8,62.5 L733.8,10.0 L834.6,10.0 L834.6,78.2 L935.4,78.2 L935.4,115.0 L1036.2,115.0 L1036.2,115.0Z" fill="#1f6f8b" fill-opacity=".35" stroke="#1f6f8b" stroke-width="1.5"/>
+<text x="230.0" y="132" text-anchor="middle" class="ax">0</text>
+<text x="330.8" y="132" text-anchor="middle" class="ax">1</text>
+<text x="431.5" y="132" text-anchor="middle" class="ax">2</text>
+<text x="532.3" y="132" text-anchor="middle" class="ax">3</text>
+<text x="633.1" y="132" text-anchor="middle" class="ax">4</text>
+<text x="733.8" y="132" text-anchor="middle" class="ax">5</text>
+<text x="834.6" y="132" text-anchor="middle" class="ax">6</text>
+<text x="4" y="22" class="lane">active targets</text><text x="885" y="132" text-anchor="end" class="ax">second</text></svg>
+<h2>4. Gantt: AFTER, parallel clean (4 graphs, 120 dlls)</h2>
+<p class="note">From <code>parallel-clean.csv</code> (125 rows: 120 file targets plus 5 phony), lanes = brand x config, sorted by start of own work in each lane; colour = brand, light = wait, dark = own. Wall 18.9 s. Seconds 4-12 hold the 8 Rendering compiles, own 10.7-12.0 s each (3.1 s alone): CPU contention (util 14.4 of 18), not engine waiting. The 4-level leaves wait about 18.4 s on Rendering.</p>
+<div class="legend"><span style="background:#1f6f8b"></span>mescius <span style="background:#c2571a"></span>gccn <span style="background:#555"></span>phony</div>
+<svg viewBox="0 0 900 570" role="img" aria-label="Parallel clean Gantt">
+<line x1="120.0" x2="120.0" y1="14" y2="550" class="grid"/><text x="120.0" y="564" text-anchor="middle" class="ax">0</text>
+<line x1="160.3" x2="160.3" y1="14" y2="550" class="grid"/><text x="160.3" y="564" text-anchor="middle" class="ax">1</text>
+<line x1="200.5" x2="200.5" y1="14" y2="550" class="grid"/><text x="200.5" y="564" text-anchor="middle" class="ax">2</text>
+<line x1="240.8" x2="240.8" y1="14" y2="550" class="grid"/><text x="240.8" y="564" text-anchor="middle" class="ax">3</text>
+<line x1="281.1" x2="281.1" y1="14" y2="550" class="grid"/><text x="281.1" y="564" text-anchor="middle" class="ax">4</text>
+<line x1="321.3" x2="321.3" y1="14" y2="550" class="grid"/><text x="321.3" y="564" text-anchor="middle" class="ax">5</text>
+<line x1="361.6" x2="361.6" y1="14" y2="550" class="grid"/><text x="361.6" y="564" text-anchor="middle" class="ax">6</text>
+<line x1="401.8" x2="401.8" y1="14" y2="550" class="grid"/><text x="401.8" y="564" text-anchor="middle" class="ax">7</text>
+<line x1="442.1" x2="442.1" y1="14" y2="550" class="grid"/><text x="442.1" y="564" text-anchor="middle" class="ax">8</text>
+<line x1="482.4" x2="482.4" y1="14" y2="550" class="grid"/><text x="482.4" y="564" text-anchor="middle" class="ax">9</text>
+<line x1="522.6" x2="522.6" y1="14" y2="550" class="grid"/><text x="522.6" y="564" text-anchor="middle" class="ax">10</text>
+<line x1="562.9" x2="562.9" y1="14" y2="550" class="grid"/><text x="562.9" y="564" text-anchor="middle" class="ax">11</text>
+<line x1="603.2" x2="603.2" y1="14" y2="550" class="grid"/><text x="603.2" y="564" text-anchor="middle" class="ax">12</text>
+<line x1="643.4" x2="643.4" y1="14" y2="550" class="grid"/><text x="643.4" y="564" text-anchor="middle" class="ax">13</text>
+<line x1="683.7" x2="683.7" y1="14" y2="550" class="grid"/><text x="683.7" y="564" text-anchor="middle" class="ax">14</text>
+<line x1="723.9" x2="723.9" y1="14" y2="550" class="grid"/><text x="723.9" y="564" text-anchor="middle" class="ax">15</text>
+<line x1="764.2" x2="764.2" y1="14" y2="550" class="grid"/><text x="764.2" y="564" text-anchor="middle" class="ax">16</text>
+<line x1="804.5" x2="804.5" y1="14" y2="550" class="grid"/><text x="804.5" y="564" text-anchor="middle" class="ax">17</text>
+<line x1="844.7" x2="844.7" y1="14" y2="550" class="grid"/><text x="844.7" y="564" text-anchor="middle" class="ax">18</text>
+<line x1="885.0" x2="885.0" y1="14" y2="550" class="grid"/><text x="885.0" y="564" text-anchor="middle" class="ax">19</text>
+<text x="4" y="20" class="lane">gccn Debug</text>
+<rect x="122.4" y="19" width="0.5" height="2" fill="#f0cdb5"><title>out/gccn/Debug/netstandard2.0/VBFunctionLib/GCCN.ActiveReports.Core.Data.VBFunctionLib.dll: start 0.06, wait 0.0, own 0.515, end 0.575</title></rect>
+<rect x="122.4" y="19" width="20.7" height="2" fill="#c2571a"><title>out/gccn/Debug/netstandard2.0/VBFunctionLib/GCCN.ActiveReports.Core.Data.VBFunctionLib.dll: start 0.06, wait 0.0, own 0.515, end 0.575</title></rect>
+<rect x="122.5" y="23" width="0.5" height="2" fill="#f0cdb5"><title>out/gccn/Debug/net472/VBFunctionLib/GCCN.ActiveReports.Core.Data.VBFunctionLib.dll: start 0.061, wait 0.0, own 0.392, end 0.453</title></rect>
+<rect x="122.5" y="23" width="15.8" height="2" fill="#c2571a"><title>out/gccn/Debug/net472/VBFunctionLib/GCCN.ActiveReports.Core.Data.VBFunctionLib.dll: start 0.061, wait 0.0, own 0.392, end 0.453</title></rect>
+<rect x="122.5" y="27" width="15.8" height="2" fill="#f0cdb5"><title>out/gccn/Debug/net472/ExpressionInfo/GCCN.ActiveReports.Core.Data.ExpressionInfo.dll: start 0.061, wait 0.393, own 0.693, end 1.147</title></rect>
+<rect x="138.3" y="27" width="27.9" height="2" fill="#c2571a"><title>out/gccn/Debug/net472/ExpressionInfo/GCCN.ActiveReports.Core.Data.ExpressionInfo.dll: start 0.061, wait 0.393, own 0.693, end 1.147</title></rect>
+<rect x="122.5" y="31" width="20.7" height="2" fill="#f0cdb5"><title>out/gccn/Debug/netstandard2.0/ExpressionInfo/GCCN.ActiveReports.Core.Data.ExpressionInfo.dll: start 0.061, wait 0.514, own 0.581, end 1.156</title></rect>
+<rect x="143.2" y="31" width="23.4" height="2" fill="#c2571a"><title>out/gccn/Debug/netstandard2.0/ExpressionInfo/GCCN.ActiveReports.Core.Data.ExpressionInfo.dll: start 0.061, wait 0.514, own 0.581, end 1.156</title></rect>
+<rect x="122.5" y="35" width="44.0" height="2" fill="#f0cdb5"><title>out/gccn/Debug/net472/Rdl/GCCN.ActiveReports.Core.Rdl.dll: start 0.061, wait 1.092, own 2.698, end 3.851</title></rect>
+<rect x="166.4" y="35" width="108.6" height="2" fill="#c2571a"><title>out/gccn/Debug/net472/Rdl/GCCN.ActiveReports.Core.Rdl.dll: start 0.061, wait 1.092, own 2.698, end 3.851</title></rect>
+<rect x="122.5" y="39" width="44.2" height="2" fill="#f0cdb5"><title>out/gccn/Debug/net472/DataEngine/GCCN.ActiveReports.Core.Data.DataEngine.dll: start 0.061, wait 1.097, own 2.251, end 3.409</title></rect>
+<rect x="166.6" y="39" width="90.6" height="2" fill="#c2571a"><title>out/gccn/Debug/net472/DataEngine/GCCN.ActiveReports.Core.Data.DataEngine.dll: start 0.061, wait 1.097, own 2.251, end 3.409</title></rect>
+<rect x="122.4" y="43" width="44.3" height="2" fill="#f0cdb5"><title>out/gccn/Debug/netstandard2.0/Rdl/GCCN.ActiveReports.Core.Rdl.dll: start 0.06, wait 1.101, own 2.819, end 3.980</title></rect>
+<rect x="166.7" y="43" width="113.5" height="2" fill="#c2571a"><title>out/gccn/Debug/netstandard2.0/Rdl/GCCN.ActiveReports.Core.Rdl.dll: start 0.06, wait 1.101, own 2.819, end 3.980</title></rect>
+<rect x="122.5" y="47" width="45.7" height="2" fill="#f0cdb5"><title>out/gccn/Debug/netstandard2.0/DataEngine/GCCN.ActiveReports.Core.Data.DataEngine.dll: start 0.062, wait 1.136, own 2.211, end 3.409</title></rect>
+<rect x="168.2" y="47" width="89.0" height="2" fill="#c2571a"><title>out/gccn/Debug/netstandard2.0/DataEngine/GCCN.ActiveReports.Core.Data.DataEngine.dll: start 0.062, wait 1.136, own 2.211, end 3.409</title></rect>
+<rect x="122.5" y="51" width="153.4" height="2" fill="#f0cdb5"><title>out/gccn/Debug/net472/Rendering/GCCN.ActiveReports.Core.Rendering.dll: start 0.062, wait 3.811, own 11.975, end 15.848</title></rect>
+<rect x="275.9" y="51" width="482.2" height="2" fill="#c2571a"><title>out/gccn/Debug/net472/Rendering/GCCN.ActiveReports.Core.Rendering.dll: start 0.062, wait 3.811, own 11.975, end 15.848</title></rect>
+<rect x="122.6" y="55" width="158.3" height="2" fill="#f0cdb5"><title>out/gccn/Debug/netstandard2.0/Rendering/GCCN.ActiveReports.Core.Rendering.dll: start 0.065, wait 3.931, own 11.035, end 15.031</title></rect>
+<rect x="280.9" y="55" width="444.3" height="2" fill="#c2571a"><title>out/gccn/Debug/netstandard2.0/Rendering/GCCN.ActiveReports.Core.Rendering.dll: start 0.065, wait 3.931, own 11.035, end 15.031</title></rect>
+<rect x="122.4" y="59" width="621.2" height="2" fill="#f0cdb5"><title>out/gccn/Debug/netstandard2.0/Scripting/GCCN.ActiveReports.Core.Scripting.dll: start 0.06, wait 15.429, own 1.021, end 16.510</title></rect>
+<rect x="743.6" y="59" width="41.1" height="2" fill="#c2571a"><title>out/gccn/Debug/netstandard2.0/Scripting/GCCN.ActiveReports.Core.Scripting.dll: start 0.06, wait 15.429, own 1.021, end 16.510</title></rect>
+<rect x="122.5" y="63" width="621.7" height="2" fill="#f0cdb5"><title>out/gccn/Debug/netstandard2.0/Export.Html.Page/GCCN.ActiveReports.Core.Export.Html.Page.dll: start 0.061, wait 15.44, own 0.882, end 16.383</title></rect>
+<rect x="744.1" y="63" width="35.5" height="2" fill="#c2571a"><title>out/gccn/Debug/netstandard2.0/Export.Html.Page/GCCN.ActiveReports.Core.Export.Html.Page.dll: start 0.061, wait 15.44, own 0.882, end 16.383</title></rect>
+<rect x="122.5" y="67" width="622.9" height="2" fill="#f0cdb5"><title>out/gccn/Debug/netstandard2.0/Export.Word.Page/GCCN.ActiveReports.Core.Export.Word.Page.dll: start 0.062, wait 15.47, own 0.978, end 16.510</title></rect>
+<rect x="745.4" y="67" width="39.4" height="2" fill="#c2571a"><title>out/gccn/Debug/netstandard2.0/Export.Word.Page/GCCN.ActiveReports.Core.Export.Word.Page.dll: start 0.062, wait 15.47, own 0.978, end 16.510</title></rect>
+<rect x="122.4" y="71" width="623.7" height="2" fill="#f0cdb5"><title>out/gccn/Debug/netstandard2.0/Export.Text.Page/GCCN.ActiveReports.Core.Export.Text.Page.dll: start 0.06, wait 15.49, own 0.76, end 16.310</title></rect>
+<rect x="746.1" y="71" width="30.6" height="2" fill="#c2571a"><title>out/gccn/Debug/netstandard2.0/Export.Text.Page/GCCN.ActiveReports.Core.Export.Text.Page.dll: start 0.06, wait 15.49, own 0.76, end 16.310</title></rect>
+<rect x="122.5" y="75" width="624.4" height="2" fill="#f0cdb5"><title>out/gccn/Debug/netstandard2.0/Export.Excel.Page/GCCN.ActiveReports.Core.Export.Excel.Page.dll: start 0.062, wait 15.509, own 1.654, end 17.225</title></rect>
+<rect x="746.9" y="75" width="66.6" height="2" fill="#c2571a"><title>out/gccn/Debug/netstandard2.0/Export.Excel.Page/GCCN.ActiveReports.Core.Export.Excel.Page.dll: start 0.062, wait 15.509, own 1.654, end 17.225</title></rect>
+<rect x="122.6" y="79" width="627.5" height="2" fill="#f0cdb5"><title>out/gccn/Debug/netstandard2.0/Drawing.Gc/GCCN.ActiveReports.Core.Drawing.Gc.dll: start 0.064, wait 15.584, own 0.731, end 16.379</title></rect>
+<rect x="750.0" y="79" width="29.4" height="2" fill="#c2571a"><title>out/gccn/Debug/netstandard2.0/Drawing.Gc/GCCN.ActiveReports.Core.Drawing.Gc.dll: start 0.064, wait 15.584, own 0.731, end 16.379</title></rect>
+<rect x="122.5" y="83" width="677.6" height="2" fill="#f0cdb5"><title>out/gccn/Debug/net472/Export.Text.Page/GCCN.ActiveReports.Core.Export.Text.Page.dll: start 0.061, wait 16.83, own 1.126, end 18.017</title></rect>
+<rect x="800.1" y="83" width="45.3" height="2" fill="#c2571a"><title>out/gccn/Debug/net472/Export.Text.Page/GCCN.ActiveReports.Core.Export.Text.Page.dll: start 0.061, wait 16.83, own 1.126, end 18.017</title></rect>
+<rect x="122.5" y="87" width="677.6" height="2" fill="#f0cdb5"><title>out/gccn/Debug/net472/Scripting/GCCN.ActiveReports.Core.Scripting.dll: start 0.061, wait 16.83, own 0.98, end 17.871</title></rect>
+<rect x="800.1" y="87" width="39.5" height="2" fill="#c2571a"><title>out/gccn/Debug/net472/Scripting/GCCN.ActiveReports.Core.Scripting.dll: start 0.061, wait 16.83, own 0.98, end 17.871</title></rect>
+<rect x="122.5" y="91" width="677.7" height="2" fill="#f0cdb5"><title>out/gccn/Debug/net472/Drawing.Gc/GCCN.ActiveReports.Core.Drawing.Gc.dll: start 0.062, wait 16.831, own 1.115, end 18.008</title></rect>
+<rect x="800.2" y="91" width="44.9" height="2" fill="#c2571a"><title>out/gccn/Debug/net472/Drawing.Gc/GCCN.ActiveReports.Core.Drawing.Gc.dll: start 0.062, wait 16.831, own 1.115, end 18.008</title></rect>
+<rect x="122.5" y="95" width="677.7" height="2" fill="#f0cdb5"><title>out/gccn/Debug/net472/Export.Html.Page/GCCN.ActiveReports.Core.Export.Html.Page.dll: start 0.061, wait 16.833, own 1.162, end 18.056</title></rect>
+<rect x="800.2" y="95" width="46.8" height="2" fill="#c2571a"><title>out/gccn/Debug/net472/Export.Html.Page/GCCN.ActiveReports.Core.Export.Html.Page.dll: start 0.061, wait 16.833, own 1.162, end 18.056</title></rect>
+<rect x="122.5" y="99" width="684.2" height="2" fill="#f0cdb5"><title>out/gccn/Debug/net472/Export.Word.Page/GCCN.ActiveReports.Core.Export.Word.Page.dll: start 0.062, wait 16.994, own 0.963, end 18.019</title></rect>
+<rect x="806.7" y="99" width="38.8" height="2" fill="#c2571a"><title>out/gccn/Debug/net472/Export.Word.Page/GCCN.ActiveReports.Core.Export.Word.Page.dll: start 0.062, wait 16.994, own 0.963, end 18.019</title></rect>
+<rect x="122.5" y="103" width="685.4" height="2" fill="#f0cdb5"><title>out/gccn/Debug/netstandard2.0/Drawing.Gdi/GCCN.ActiveReports.Core.Drawing.Gdi.dll: start 0.061, wait 17.022, own 1.009, end 18.092</title></rect>
+<rect x="807.8" y="103" width="40.6" height="2" fill="#c2571a"><title>out/gccn/Debug/netstandard2.0/Drawing.Gdi/GCCN.ActiveReports.Core.Drawing.Gdi.dll: start 0.061, wait 17.022, own 1.009, end 18.092</title></rect>
+<rect x="122.4" y="107" width="690.9" height="2" fill="#f0cdb5"><title>out/gccn/Debug/netstandard2.0/Export.Pdf.Page/GCCN.ActiveReports.Core.Export.Pdf.Page.dll: start 0.059, wait 17.16, own 1.215, end 18.434</title></rect>
+<rect x="813.3" y="107" width="48.9" height="2" fill="#c2571a"><title>out/gccn/Debug/netstandard2.0/Export.Pdf.Page/GCCN.ActiveReports.Core.Export.Pdf.Page.dll: start 0.059, wait 17.16, own 1.215, end 18.434</title></rect>
+<rect x="122.4" y="111" width="693.3" height="2" fill="#f0cdb5"><title>out/gccn/Debug/netstandard2.0/Export.Svg.Page/GCCN.ActiveReports.Core.Export.Svg.Page.dll: start 0.06, wait 17.22, own 1.19, end 18.470</title></rect>
+<rect x="815.7" y="111" width="47.9" height="2" fill="#c2571a"><title>out/gccn/Debug/netstandard2.0/Export.Svg.Page/GCCN.ActiveReports.Core.Export.Svg.Page.dll: start 0.06, wait 17.22, own 1.19, end 18.470</title></rect>
+<rect x="122.4" y="115" width="696.6" height="2" fill="#f0cdb5"><title>out/gccn/Debug/netstandard2.0/Export.Image.Page/GCCN.ActiveReports.Core.Export.Image.Page.dll: start 0.059, wait 17.3, own 1.107, end 18.466</title></rect>
+<rect x="818.9" y="115" width="44.6" height="2" fill="#c2571a"><title>out/gccn/Debug/netstandard2.0/Export.Image.Page/GCCN.ActiveReports.Core.Export.Image.Page.dll: start 0.059, wait 17.3, own 1.107, end 18.466</title></rect>
+<rect x="122.5" y="119" width="698.4" height="2" fill="#f0cdb5"><title>out/gccn/Debug/net472/Export.Excel.Page/GCCN.ActiveReports.Core.Export.Excel.Page.dll: start 0.062, wait 17.347, own 1.448, end 18.857</title></rect>
+<rect x="820.9" y="119" width="58.3" height="2" fill="#c2571a"><title>out/gccn/Debug/net472/Export.Excel.Page/GCCN.ActiveReports.Core.Export.Excel.Page.dll: start 0.062, wait 17.347, own 1.448, end 18.857</title></rect>
+<rect x="122.4" y="123" width="739.6" height="2" fill="#f0cdb5"><title>out/gccn/Debug/net472/Export.Svg.Page/GCCN.ActiveReports.Core.Export.Svg.Page.dll: start 0.059, wait 18.369, own 0.518, end 18.946</title></rect>
+<rect x="862.0" y="123" width="20.9" height="2" fill="#c2571a"><title>out/gccn/Debug/net472/Export.Svg.Page/GCCN.ActiveReports.Core.Export.Svg.Page.dll: start 0.059, wait 18.369, own 0.518, end 18.946</title></rect>
+<rect x="122.4" y="127" width="739.8" height="2" fill="#f0cdb5"><title>out/gccn/Debug/net472/Export.Pdf.Page/GCCN.ActiveReports.Core.Export.Pdf.Page.dll: start 0.06, wait 18.375, own 0.548, end 18.983</title></rect>
+<rect x="862.3" y="127" width="22.1" height="2" fill="#c2571a"><title>out/gccn/Debug/net472/Export.Pdf.Page/GCCN.ActiveReports.Core.Export.Pdf.Page.dll: start 0.06, wait 18.375, own 0.548, end 18.983</title></rect>
+<rect x="122.5" y="131" width="741.0" height="2" fill="#f0cdb5"><title>out/gccn/Debug/net472/Drawing.Gdi/GCCN.ActiveReports.Core.Drawing.Gdi.dll: start 0.061, wait 18.404, own 0.499, end 18.964</title></rect>
+<rect x="863.5" y="131" width="20.1" height="2" fill="#c2571a"><title>out/gccn/Debug/net472/Drawing.Gdi/GCCN.ActiveReports.Core.Drawing.Gdi.dll: start 0.061, wait 18.404, own 0.499, end 18.964</title></rect>
+<rect x="122.5" y="135" width="741.0" height="2" fill="#f0cdb5"><title>out/gccn/Debug/net472/Export.Image.Page/GCCN.ActiveReports.Core.Export.Image.Page.dll: start 0.063, wait 18.404, own 0.482, end 18.949</title></rect>
+<rect x="863.5" y="135" width="19.4" height="2" fill="#c2571a"><title>out/gccn/Debug/net472/Export.Image.Page/GCCN.ActiveReports.Core.Export.Image.Page.dll: start 0.063, wait 18.404, own 0.482, end 18.949</title></rect>
+<text x="4" y="146" class="lane">gccn Release</text>
+<rect x="122.5" y="145" width="0.5" height="2" fill="#f0cdb5"><title>out/gccn/Release/netstandard2.0/VBFunctionLib/GCCN.ActiveReports.Core.Data.VBFunctionLib.dll: start 0.063, wait 0.0, own 0.465, end 0.528</title></rect>
+<rect x="122.5" y="145" width="18.7" height="2" fill="#c2571a"><title>out/gccn/Release/netstandard2.0/VBFunctionLib/GCCN.ActiveReports.Core.Data.VBFunctionLib.dll: start 0.063, wait 0.0, own 0.465, end 0.528</title></rect>
+<rect x="122.6" y="149" width="0.5" height="2" fill="#f0cdb5"><title>out/gccn/Release/net472/VBFunctionLib/GCCN.ActiveReports.Core.Data.VBFunctionLib.dll: start 0.065, wait 0.0, own 0.433, end 0.498</title></rect>
+<rect x="122.6" y="149" width="17.4" height="2" fill="#c2571a"><title>out/gccn/Release/net472/VBFunctionLib/GCCN.ActiveReports.Core.Data.VBFunctionLib.dll: start 0.065, wait 0.0, own 0.433, end 0.498</title></rect>
+<rect x="122.9" y="153" width="17.2" height="2" fill="#f0cdb5"><title>out/gccn/Release/net472/ExpressionInfo/GCCN.ActiveReports.Core.Data.ExpressionInfo.dll: start 0.072, wait 0.427, own 0.647, end 1.146</title></rect>
+<rect x="140.1" y="153" width="26.1" height="2" fill="#c2571a"><title>out/gccn/Release/net472/ExpressionInfo/GCCN.ActiveReports.Core.Data.ExpressionInfo.dll: start 0.072, wait 0.427, own 0.647, end 1.146</title></rect>
+<rect x="122.8" y="157" width="18.5" height="2" fill="#f0cdb5"><title>out/gccn/Release/netstandard2.0/ExpressionInfo/GCCN.ActiveReports.Core.Data.ExpressionInfo.dll: start 0.069, wait 0.46, own 0.649, end 1.178</title></rect>
+<rect x="141.3" y="157" width="26.1" height="2" fill="#c2571a"><title>out/gccn/Release/netstandard2.0/ExpressionInfo/GCCN.ActiveReports.Core.Data.ExpressionInfo.dll: start 0.069, wait 0.46, own 0.649, end 1.178</title></rect>
+<rect x="122.7" y="161" width="43.6" height="2" fill="#f0cdb5"><title>out/gccn/Release/net472/Rdl/GCCN.ActiveReports.Core.Rdl.dll: start 0.068, wait 1.084, own 2.699, end 3.851</title></rect>
+<rect x="166.4" y="161" width="108.7" height="2" fill="#c2571a"><title>out/gccn/Release/net472/Rdl/GCCN.ActiveReports.Core.Rdl.dll: start 0.068, wait 1.084, own 2.699, end 3.851</title></rect>
+<rect x="122.8" y="165" width="43.8" height="2" fill="#f0cdb5"><title>out/gccn/Release/net472/DataEngine/GCCN.ActiveReports.Core.Data.DataEngine.dll: start 0.069, wait 1.089, own 2.084, end 3.242</title></rect>
+<rect x="166.6" y="165" width="83.9" height="2" fill="#c2571a"><title>out/gccn/Release/net472/DataEngine/GCCN.ActiveReports.Core.Data.DataEngine.dll: start 0.069, wait 1.089, own 2.084, end 3.242</title></rect>
+<rect x="122.7" y="169" width="45.0" height="2" fill="#f0cdb5"><title>out/gccn/Release/netstandard2.0/Rdl/GCCN.ActiveReports.Core.Rdl.dll: start 0.068, wait 1.117, own 2.595, end 3.780</title></rect>
+<rect x="167.7" y="169" width="104.5" height="2" fill="#c2571a"><title>out/gccn/Release/netstandard2.0/Rdl/GCCN.ActiveReports.Core.Rdl.dll: start 0.068, wait 1.117, own 2.595, end 3.780</title></rect>
+<rect x="122.7" y="173" width="50.0" height="2" fill="#f0cdb5"><title>out/gccn/Release/netstandard2.0/DataEngine/GCCN.ActiveReports.Core.Data.DataEngine.dll: start 0.068, wait 1.241, own 2.115, end 3.424</title></rect>
+<rect x="172.7" y="173" width="85.2" height="2" fill="#c2571a"><title>out/gccn/Release/netstandard2.0/DataEngine/GCCN.ActiveReports.Core.Data.DataEngine.dll: start 0.068, wait 1.241, own 2.115, end 3.424</title></rect>
+<rect x="122.9" y="177" width="150.3" height="2" fill="#f0cdb5"><title>out/gccn/Release/netstandard2.0/Rendering/GCCN.ActiveReports.Core.Rendering.dll: start 0.071, wait 3.733, own 10.289, end 14.093</title></rect>
+<rect x="273.2" y="177" width="414.3" height="2" fill="#c2571a"><title>out/gccn/Release/netstandard2.0/Rendering/GCCN.ActiveReports.Core.Rendering.dll: start 0.071, wait 3.733, own 10.289, end 14.093</title></rect>
+<rect x="122.8" y="181" width="155.3" height="2" fill="#f0cdb5"><title>out/gccn/Release/net472/Rendering/GCCN.ActiveReports.Core.Rendering.dll: start 0.07, wait 3.858, own 11.576, end 15.504</title></rect>
+<rect x="278.2" y="181" width="466.1" height="2" fill="#c2571a"><title>out/gccn/Release/net472/Rendering/GCCN.ActiveReports.Core.Rendering.dll: start 0.07, wait 3.858, own 11.576, end 15.504</title></rect>
+<rect x="122.5" y="185" width="564.9" height="2" fill="#f0cdb5"><title>out/gccn/Release/netstandard2.0/Scripting/GCCN.ActiveReports.Core.Scripting.dll: start 0.062, wait 14.03, own 0.746, end 14.838</title></rect>
+<rect x="687.4" y="185" width="30.0" height="2" fill="#c2571a"><title>out/gccn/Release/netstandard2.0/Scripting/GCCN.ActiveReports.Core.Scripting.dll: start 0.062, wait 14.03, own 0.746, end 14.838</title></rect>
+<rect x="122.7" y="189" width="564.7" height="2" fill="#f0cdb5"><title>out/gccn/Release/netstandard2.0/Export.Html.Page/GCCN.ActiveReports.Core.Export.Html.Page.dll: start 0.067, wait 14.026, own 0.735, end 14.828</title></rect>
+<rect x="687.4" y="189" width="29.6" height="2" fill="#c2571a"><title>out/gccn/Release/netstandard2.0/Export.Html.Page/GCCN.ActiveReports.Core.Export.Html.Page.dll: start 0.067, wait 14.026, own 0.735, end 14.828</title></rect>
+<rect x="122.7" y="193" width="564.8" height="2" fill="#f0cdb5"><title>out/gccn/Release/netstandard2.0/Export.Text.Page/GCCN.ActiveReports.Core.Export.Text.Page.dll: start 0.068, wait 14.028, own 0.768, end 14.864</title></rect>
+<rect x="687.5" y="193" width="30.9" height="2" fill="#c2571a"><title>out/gccn/Release/netstandard2.0/Export.Text.Page/GCCN.ActiveReports.Core.Export.Text.Page.dll: start 0.068, wait 14.028, own 0.768, end 14.864</title></rect>
+<rect x="122.9" y="197" width="564.8" height="2" fill="#f0cdb5"><title>out/gccn/Release/netstandard2.0/Export.Word.Page/GCCN.ActiveReports.Core.Export.Word.Page.dll: start 0.071, wait 14.027, own 1.024, end 15.122</title></rect>
+<rect x="687.6" y="197" width="41.2" height="2" fill="#c2571a"><title>out/gccn/Release/netstandard2.0/Export.Word.Page/GCCN.ActiveReports.Core.Export.Word.Page.dll: start 0.071, wait 14.027, own 1.024, end 15.122</title></rect>
+<rect x="122.9" y="201" width="566.2" height="2" fill="#f0cdb5"><title>out/gccn/Release/netstandard2.0/Export.Excel.Page/GCCN.ActiveReports.Core.Export.Excel.Page.dll: start 0.071, wait 14.062, own 1.568, end 15.701</title></rect>
+<rect x="689.0" y="201" width="63.1" height="2" fill="#c2571a"><title>out/gccn/Release/netstandard2.0/Export.Excel.Page/GCCN.ActiveReports.Core.Export.Excel.Page.dll: start 0.071, wait 14.062, own 1.568, end 15.701</title></rect>
+<rect x="122.9" y="205" width="567.3" height="2" fill="#f0cdb5"><title>out/gccn/Release/netstandard2.0/Drawing.Gc/GCCN.ActiveReports.Core.Drawing.Gc.dll: start 0.073, wait 14.091, own 0.823, end 14.987</title></rect>
+<rect x="690.3" y="205" width="33.1" height="2" fill="#c2571a"><title>out/gccn/Release/netstandard2.0/Drawing.Gc/GCCN.ActiveReports.Core.Drawing.Gc.dll: start 0.073, wait 14.091, own 0.823, end 14.987</title></rect>
+<rect x="122.5" y="209" width="603.5" height="2" fill="#f0cdb5"><title>out/gccn/Release/netstandard2.0/Export.Image.Page/GCCN.ActiveReports.Core.Export.Image.Page.dll: start 0.063, wait 14.99, own 0.778, end 15.831</title></rect>
+<rect x="726.1" y="209" width="31.3" height="2" fill="#c2571a"><title>out/gccn/Release/netstandard2.0/Export.Image.Page/GCCN.ActiveReports.Core.Export.Image.Page.dll: start 0.063, wait 14.99, own 0.778, end 15.831</title></rect>
+<rect x="122.5" y="213" width="606.1" height="2" fill="#f0cdb5"><title>out/gccn/Release/netstandard2.0/Export.Pdf.Page/GCCN.ActiveReports.Core.Export.Pdf.Page.dll: start 0.063, wait 15.054, own 0.834, end 15.951</title></rect>
+<rect x="728.7" y="213" width="33.6" height="2" fill="#c2571a"><title>out/gccn/Release/netstandard2.0/Export.Pdf.Page/GCCN.ActiveReports.Core.Export.Pdf.Page.dll: start 0.063, wait 15.054, own 0.834, end 15.951</title></rect>
+<rect x="122.6" y="217" width="614.0" height="2" fill="#f0cdb5"><title>out/gccn/Release/netstandard2.0/Export.Svg.Page/GCCN.ActiveReports.Core.Export.Svg.Page.dll: start 0.064, wait 15.249, own 0.782, end 16.095</title></rect>
+<rect x="736.5" y="217" width="31.5" height="2" fill="#c2571a"><title>out/gccn/Release/netstandard2.0/Export.Svg.Page/GCCN.ActiveReports.Core.Export.Svg.Page.dll: start 0.064, wait 15.249, own 0.782, end 16.095</title></rect>
+<rect x="122.7" y="221" width="619.5" height="2" fill="#f0cdb5"><title>out/gccn/Release/netstandard2.0/Drawing.Gdi/GCCN.ActiveReports.Core.Drawing.Gdi.dll: start 0.067, wait 15.386, own 0.815, end 16.268</title></rect>
+<rect x="742.2" y="221" width="32.8" height="2" fill="#c2571a"><title>out/gccn/Release/netstandard2.0/Drawing.Gdi/GCCN.ActiveReports.Core.Drawing.Gdi.dll: start 0.067, wait 15.386, own 0.815, end 16.268</title></rect>
+<rect x="122.7" y="225" width="634.8" height="2" fill="#f0cdb5"><title>out/gccn/Release/net472/Export.Html.Page/GCCN.ActiveReports.Core.Export.Html.Page.dll: start 0.066, wait 15.767, own 1.026, end 16.859</title></rect>
+<rect x="757.5" y="225" width="41.3" height="2" fill="#c2571a"><title>out/gccn/Release/net472/Export.Html.Page/GCCN.ActiveReports.Core.Export.Html.Page.dll: start 0.066, wait 15.767, own 1.026, end 16.859</title></rect>
+<rect x="122.5" y="229" width="635.4" height="2" fill="#f0cdb5"><title>out/gccn/Release/net472/Scripting/GCCN.ActiveReports.Core.Scripting.dll: start 0.062, wait 15.782, own 0.665, end 16.509</title></rect>
+<rect x="757.9" y="229" width="26.8" height="2" fill="#c2571a"><title>out/gccn/Release/net472/Scripting/GCCN.ActiveReports.Core.Scripting.dll: start 0.062, wait 15.782, own 0.665, end 16.509</title></rect>
+<rect x="122.7" y="233" width="639.0" height="2" fill="#f0cdb5"><title>out/gccn/Release/net472/Export.Text.Page/GCCN.ActiveReports.Core.Export.Text.Page.dll: start 0.068, wait 15.871, own 0.956, end 16.895</title></rect>
+<rect x="761.8" y="233" width="38.5" height="2" fill="#c2571a"><title>out/gccn/Release/net472/Export.Text.Page/GCCN.ActiveReports.Core.Export.Text.Page.dll: start 0.068, wait 15.871, own 0.956, end 16.895</title></rect>
+<rect x="122.9" y="237" width="639.2" height="2" fill="#f0cdb5"><title>out/gccn/Release/net472/Drawing.Gc/GCCN.ActiveReports.Core.Drawing.Gc.dll: start 0.072, wait 15.876, own 0.901, end 16.849</title></rect>
+<rect x="762.1" y="237" width="36.3" height="2" fill="#c2571a"><title>out/gccn/Release/net472/Drawing.Gc/GCCN.ActiveReports.Core.Drawing.Gc.dll: start 0.072, wait 15.876, own 0.901, end 16.849</title></rect>
+<rect x="123.0" y="241" width="653.6" height="2" fill="#f0cdb5"><title>out/gccn/Release/net472/Export.Word.Page/GCCN.ActiveReports.Core.Export.Word.Page.dll: start 0.074, wait 16.232, own 1.059, end 17.365</title></rect>
+<rect x="776.5" y="241" width="42.6" height="2" fill="#c2571a"><title>out/gccn/Release/net472/Export.Word.Page/GCCN.ActiveReports.Core.Export.Word.Page.dll: start 0.074, wait 16.232, own 1.059, end 17.365</title></rect>
+<rect x="122.8" y="245" width="661.5" height="2" fill="#f0cdb5"><title>out/gccn/Release/net472/Export.Excel.Page/GCCN.ActiveReports.Core.Export.Excel.Page.dll: start 0.069, wait 16.43, own 2.089, end 18.588</title></rect>
+<rect x="784.3" y="245" width="84.1" height="2" fill="#c2571a"><title>out/gccn/Release/net472/Export.Excel.Page/GCCN.ActiveReports.Core.Export.Excel.Page.dll: start 0.069, wait 16.43, own 2.089, end 18.588</title></rect>
+<rect x="122.6" y="249" width="699.0" height="2" fill="#f0cdb5"><title>out/gccn/Release/net472/Export.Pdf.Page/GCCN.ActiveReports.Core.Export.Pdf.Page.dll: start 0.064, wait 17.362, own 1.044, end 18.470</title></rect>
+<rect x="821.6" y="249" width="42.0" height="2" fill="#c2571a"><title>out/gccn/Release/net472/Export.Pdf.Page/GCCN.ActiveReports.Core.Export.Pdf.Page.dll: start 0.064, wait 17.362, own 1.044, end 18.470</title></rect>
+<rect x="122.8" y="253" width="701.5" height="2" fill="#f0cdb5"><title>out/gccn/Release/net472/Drawing.Gdi/GCCN.ActiveReports.Core.Drawing.Gdi.dll: start 0.07, wait 17.424, own 0.976, end 18.470</title></rect>
+<rect x="824.4" y="253" width="39.3" height="2" fill="#c2571a"><title>out/gccn/Release/net472/Drawing.Gdi/GCCN.ActiveReports.Core.Drawing.Gdi.dll: start 0.07, wait 17.424, own 0.976, end 18.470</title></rect>
+<rect x="122.6" y="257" width="701.8" height="2" fill="#f0cdb5"><title>out/gccn/Release/net472/Export.Svg.Page/GCCN.ActiveReports.Core.Export.Svg.Page.dll: start 0.065, wait 17.431, own 0.974, end 18.470</title></rect>
+<rect x="824.4" y="257" width="39.2" height="2" fill="#c2571a"><title>out/gccn/Release/net472/Export.Svg.Page/GCCN.ActiveReports.Core.Export.Svg.Page.dll: start 0.065, wait 17.431, own 0.974, end 18.470</title></rect>
+<rect x="122.9" y="261" width="701.6" height="2" fill="#f0cdb5"><title>out/gccn/Release/net472/Export.Image.Page/GCCN.ActiveReports.Core.Export.Image.Page.dll: start 0.071, wait 17.425, own 0.974, end 18.470</title></rect>
+<rect x="824.4" y="261" width="39.2" height="2" fill="#c2571a"><title>out/gccn/Release/net472/Export.Image.Page/GCCN.ActiveReports.Core.Export.Image.Page.dll: start 0.071, wait 17.425, own 0.974, end 18.470</title></rect>
+<text x="4" y="272" class="lane">mescius Debug</text>
+<rect x="122.7" y="271" width="0.5" height="2" fill="#bcd5de"><title>out/mescius/Debug/netstandard2.0/VBFunctionLib/MESCIUS.ActiveReports.Core.Data.VBFunctionLib.dll: start 0.067, wait 0.0, own 0.385, end 0.452</title></rect>
+<rect x="122.7" y="271" width="15.5" height="2" fill="#1f6f8b"><title>out/mescius/Debug/netstandard2.0/VBFunctionLib/MESCIUS.ActiveReports.Core.Data.VBFunctionLib.dll: start 0.067, wait 0.0, own 0.385, end 0.452</title></rect>
+<rect x="122.7" y="275" width="0.5" height="2" fill="#bcd5de"><title>out/mescius/Debug/net472/VBFunctionLib/MESCIUS.ActiveReports.Core.Data.VBFunctionLib.dll: start 0.067, wait 0.0, own 0.508, end 0.575</title></rect>
+<rect x="122.7" y="275" width="20.5" height="2" fill="#1f6f8b"><title>out/mescius/Debug/net472/VBFunctionLib/MESCIUS.ActiveReports.Core.Data.VBFunctionLib.dll: start 0.067, wait 0.0, own 0.508, end 0.575</title></rect>
+<rect x="122.9" y="279" width="15.4" height="2" fill="#bcd5de"><title>out/mescius/Debug/netstandard2.0/ExpressionInfo/MESCIUS.ActiveReports.Core.Data.ExpressionInfo.dll: start 0.072, wait 0.383, own 0.686, end 1.141</title></rect>
+<rect x="138.3" y="279" width="27.6" height="2" fill="#1f6f8b"><title>out/mescius/Debug/netstandard2.0/ExpressionInfo/MESCIUS.ActiveReports.Core.Data.ExpressionInfo.dll: start 0.072, wait 0.383, own 0.686, end 1.141</title></rect>
+<rect x="122.9" y="283" width="20.3" height="2" fill="#bcd5de"><title>out/mescius/Debug/net472/ExpressionInfo/MESCIUS.ActiveReports.Core.Data.ExpressionInfo.dll: start 0.073, wait 0.503, own 0.602, end 1.178</title></rect>
+<rect x="143.2" y="283" width="24.2" height="2" fill="#1f6f8b"><title>out/mescius/Debug/net472/ExpressionInfo/MESCIUS.ActiveReports.Core.Data.ExpressionInfo.dll: start 0.073, wait 0.503, own 0.602, end 1.178</title></rect>
+<rect x="122.8" y="287" width="43.6" height="2" fill="#bcd5de"><title>out/mescius/Debug/netstandard2.0/DataEngine/MESCIUS.ActiveReports.Core.Data.DataEngine.dll: start 0.069, wait 1.082, own 1.862, end 3.013</title></rect>
+<rect x="166.3" y="287" width="75.0" height="2" fill="#1f6f8b"><title>out/mescius/Debug/netstandard2.0/DataEngine/MESCIUS.ActiveReports.Core.Data.DataEngine.dll: start 0.069, wait 1.082, own 1.862, end 3.013</title></rect>
+<rect x="122.7" y="291" width="44.0" height="2" fill="#bcd5de"><title>out/mescius/Debug/netstandard2.0/Rdl/MESCIUS.ActiveReports.Core.Rdl.dll: start 0.066, wait 1.094, own 2.657, end 3.817</title></rect>
+<rect x="166.7" y="291" width="107.0" height="2" fill="#1f6f8b"><title>out/mescius/Debug/netstandard2.0/Rdl/MESCIUS.ActiveReports.Core.Rdl.dll: start 0.066, wait 1.094, own 2.657, end 3.817</title></rect>
+<rect x="122.7" y="295" width="45.1" height="2" fill="#bcd5de"><title>out/mescius/Debug/net472/Rdl/MESCIUS.ActiveReports.Core.Rdl.dll: start 0.066, wait 1.12, own 2.632, end 3.818</title></rect>
+<rect x="167.8" y="295" width="106.0" height="2" fill="#1f6f8b"><title>out/mescius/Debug/net472/Rdl/MESCIUS.ActiveReports.Core.Rdl.dll: start 0.066, wait 1.12, own 2.632, end 3.818</title></rect>
+<rect x="122.8" y="299" width="51.8" height="2" fill="#bcd5de"><title>out/mescius/Debug/net472/DataEngine/MESCIUS.ActiveReports.Core.Data.DataEngine.dll: start 0.07, wait 1.287, own 2.099, end 3.456</title></rect>
+<rect x="174.6" y="299" width="84.5" height="2" fill="#1f6f8b"><title>out/mescius/Debug/net472/DataEngine/MESCIUS.ActiveReports.Core.Data.DataEngine.dll: start 0.07, wait 1.287, own 2.099, end 3.456</title></rect>
+<rect x="122.8" y="303" width="151.7" height="2" fill="#bcd5de"><title>out/mescius/Debug/netstandard2.0/Rendering/MESCIUS.ActiveReports.Core.Rendering.dll: start 0.069, wait 3.768, own 10.681, end 14.518</title></rect>
+<rect x="274.5" y="303" width="430.1" height="2" fill="#1f6f8b"><title>out/mescius/Debug/netstandard2.0/Rendering/MESCIUS.ActiveReports.Core.Rendering.dll: start 0.069, wait 3.768, own 10.681, end 14.518</title></rect>
+<rect x="122.9" y="307" width="151.6" height="2" fill="#bcd5de"><title>out/mescius/Debug/net472/Rendering/MESCIUS.ActiveReports.Core.Rendering.dll: start 0.071, wait 3.766, own 11.619, end 15.456</title></rect>
+<rect x="274.5" y="307" width="467.8" height="2" fill="#1f6f8b"><title>out/mescius/Debug/net472/Rendering/MESCIUS.ActiveReports.Core.Rendering.dll: start 0.071, wait 3.766, own 11.619, end 15.456</title></rect>
+<rect x="122.5" y="311" width="582.6" height="2" fill="#bcd5de"><title>out/mescius/Debug/netstandard2.0/Scripting/MESCIUS.ActiveReports.Core.Scripting.dll: start 0.063, wait 14.471, own 0.782, end 15.316</title></rect>
+<rect x="705.2" y="311" width="31.5" height="2" fill="#1f6f8b"><title>out/mescius/Debug/netstandard2.0/Scripting/MESCIUS.ActiveReports.Core.Scripting.dll: start 0.063, wait 14.471, own 0.782, end 15.316</title></rect>
+<rect x="122.8" y="315" width="584.9" height="2" fill="#bcd5de"><title>out/mescius/Debug/netstandard2.0/Export.Excel.Page/MESCIUS.ActiveReports.Core.Export.Excel.Page.dll: start 0.07, wait 14.528, own 1.712, end 16.310</title></rect>
+<rect x="707.8" y="315" width="68.9" height="2" fill="#1f6f8b"><title>out/mescius/Debug/netstandard2.0/Export.Excel.Page/MESCIUS.ActiveReports.Core.Export.Excel.Page.dll: start 0.07, wait 14.528, own 1.712, end 16.310</title></rect>
+<rect x="122.7" y="319" width="585.2" height="2" fill="#bcd5de"><title>out/mescius/Debug/netstandard2.0/Export.Text.Page/MESCIUS.ActiveReports.Core.Export.Text.Page.dll: start 0.066, wait 14.534, own 0.98, end 15.580</title></rect>
+<rect x="707.8" y="319" width="39.5" height="2" fill="#1f6f8b"><title>out/mescius/Debug/netstandard2.0/Export.Text.Page/MESCIUS.ActiveReports.Core.Export.Text.Page.dll: start 0.066, wait 14.534, own 0.98, end 15.580</title></rect>
+<rect x="122.8" y="323" width="585.1" height="2" fill="#bcd5de"><title>out/mescius/Debug/netstandard2.0/Export.Html.Page/MESCIUS.ActiveReports.Core.Export.Html.Page.dll: start 0.069, wait 14.532, own 0.979, end 15.580</title></rect>
+<rect x="707.9" y="323" width="39.4" height="2" fill="#1f6f8b"><title>out/mescius/Debug/netstandard2.0/Export.Html.Page/MESCIUS.ActiveReports.Core.Export.Html.Page.dll: start 0.069, wait 14.532, own 0.979, end 15.580</title></rect>
+<rect x="122.9" y="327" width="588.2" height="2" fill="#bcd5de"><title>out/mescius/Debug/netstandard2.0/Export.Word.Page/MESCIUS.ActiveReports.Core.Export.Word.Page.dll: start 0.072, wait 14.61, own 0.933, end 15.615</title></rect>
+<rect x="711.1" y="327" width="37.6" height="2" fill="#1f6f8b"><title>out/mescius/Debug/netstandard2.0/Export.Word.Page/MESCIUS.ActiveReports.Core.Export.Word.Page.dll: start 0.072, wait 14.61, own 0.933, end 15.615</title></rect>
+<rect x="122.9" y="331" width="590.9" height="2" fill="#bcd5de"><title>out/mescius/Debug/netstandard2.0/Drawing.Gc/MESCIUS.ActiveReports.Core.Drawing.Gc.dll: start 0.072, wait 14.677, own 0.831, end 15.580</title></rect>
+<rect x="713.8" y="331" width="33.5" height="2" fill="#1f6f8b"><title>out/mescius/Debug/netstandard2.0/Drawing.Gc/MESCIUS.ActiveReports.Core.Drawing.Gc.dll: start 0.072, wait 14.677, own 0.831, end 15.580</title></rect>
+<rect x="122.7" y="335" width="626.5" height="2" fill="#bcd5de"><title>out/mescius/Debug/net472/Export.Text.Page/MESCIUS.ActiveReports.Core.Export.Text.Page.dll: start 0.067, wait 15.561, own 1.141, end 16.769</title></rect>
+<rect x="749.2" y="335" width="45.9" height="2" fill="#1f6f8b"><title>out/mescius/Debug/net472/Export.Text.Page/MESCIUS.ActiveReports.Core.Export.Text.Page.dll: start 0.067, wait 15.561, own 1.141, end 16.769</title></rect>
+<rect x="122.6" y="339" width="626.7" height="2" fill="#bcd5de"><title>out/mescius/Debug/net472/Scripting/MESCIUS.ActiveReports.Core.Scripting.dll: start 0.064, wait 15.565, own 1.023, end 16.652</title></rect>
+<rect x="749.3" y="339" width="41.2" height="2" fill="#1f6f8b"><title>out/mescius/Debug/net472/Scripting/MESCIUS.ActiveReports.Core.Scripting.dll: start 0.064, wait 15.565, own 1.023, end 16.652</title></rect>
+<rect x="122.9" y="343" width="629.1" height="2" fill="#bcd5de"><title>out/mescius/Debug/net472/Drawing.Gc/MESCIUS.ActiveReports.Core.Drawing.Gc.dll: start 0.073, wait 15.625, own 1.152, end 16.850</title></rect>
+<rect x="752.1" y="343" width="46.4" height="2" fill="#1f6f8b"><title>out/mescius/Debug/net472/Drawing.Gc/MESCIUS.ActiveReports.Core.Drawing.Gc.dll: start 0.073, wait 15.625, own 1.152, end 16.850</title></rect>
+<rect x="122.8" y="347" width="634.4" height="2" fill="#bcd5de"><title>out/mescius/Debug/net472/Export.Html.Page/MESCIUS.ActiveReports.Core.Export.Html.Page.dll: start 0.07, wait 15.757, own 0.988, end 16.815</title></rect>
+<rect x="757.2" y="347" width="39.8" height="2" fill="#1f6f8b"><title>out/mescius/Debug/net472/Export.Html.Page/MESCIUS.ActiveReports.Core.Export.Html.Page.dll: start 0.07, wait 15.757, own 0.988, end 16.815</title></rect>
+<rect x="123.0" y="351" width="634.3" height="2" fill="#bcd5de"><title>out/mescius/Debug/net472/Export.Word.Page/MESCIUS.ActiveReports.Core.Export.Word.Page.dll: start 0.074, wait 15.753, own 1.227, end 17.054</title></rect>
+<rect x="757.2" y="351" width="49.4" height="2" fill="#1f6f8b"><title>out/mescius/Debug/net472/Export.Word.Page/MESCIUS.ActiveReports.Core.Export.Word.Page.dll: start 0.074, wait 15.753, own 1.227, end 17.054</title></rect>
+<rect x="122.9" y="355" width="655.6" height="2" fill="#bcd5de"><title>out/mescius/Debug/net472/Export.Excel.Page/MESCIUS.ActiveReports.Core.Export.Excel.Page.dll: start 0.071, wait 16.283, own 2.337, end 18.691</title></rect>
+<rect x="778.5" y="355" width="94.1" height="2" fill="#1f6f8b"><title>out/mescius/Debug/net472/Export.Excel.Page/MESCIUS.ActiveReports.Core.Export.Excel.Page.dll: start 0.071, wait 16.283, own 2.337, end 18.691</title></rect>
+<rect x="122.6" y="359" width="662.2" height="2" fill="#bcd5de"><title>out/mescius/Debug/netstandard2.0/Export.Pdf.Page/MESCIUS.ActiveReports.Core.Export.Pdf.Page.dll: start 0.065, wait 16.447, own 0.988, end 17.500</title></rect>
+<rect x="784.8" y="359" width="39.8" height="2" fill="#1f6f8b"><title>out/mescius/Debug/netstandard2.0/Export.Pdf.Page/MESCIUS.ActiveReports.Core.Export.Pdf.Page.dll: start 0.065, wait 16.447, own 0.988, end 17.500</title></rect>
+<rect x="122.6" y="363" width="662.3" height="2" fill="#bcd5de"><title>out/mescius/Debug/netstandard2.0/Export.Image.Page/MESCIUS.ActiveReports.Core.Export.Image.Page.dll: start 0.064, wait 16.45, own 0.904, end 17.418</title></rect>
+<rect x="784.9" y="363" width="36.4" height="2" fill="#1f6f8b"><title>out/mescius/Debug/netstandard2.0/Export.Image.Page/MESCIUS.ActiveReports.Core.Export.Image.Page.dll: start 0.064, wait 16.45, own 0.904, end 17.418</title></rect>
+<rect x="122.9" y="367" width="672.2" height="2" fill="#bcd5de"><title>out/mescius/Debug/netstandard2.0/Drawing.Gdi/MESCIUS.ActiveReports.Core.Drawing.Gdi.dll: start 0.071, wait 16.694, own 0.733, end 17.498</title></rect>
+<rect x="795.0" y="367" width="29.5" height="2" fill="#1f6f8b"><title>out/mescius/Debug/netstandard2.0/Drawing.Gdi/MESCIUS.ActiveReports.Core.Drawing.Gdi.dll: start 0.071, wait 16.694, own 0.733, end 17.498</title></rect>
+<rect x="122.7" y="371" width="674.1" height="2" fill="#bcd5de"><title>out/mescius/Debug/netstandard2.0/Export.Svg.Page/MESCIUS.ActiveReports.Core.Export.Svg.Page.dll: start 0.068, wait 16.743, own 1.005, end 17.816</title></rect>
+<rect x="796.9" y="371" width="40.5" height="2" fill="#1f6f8b"><title>out/mescius/Debug/netstandard2.0/Export.Svg.Page/MESCIUS.ActiveReports.Core.Export.Svg.Page.dll: start 0.068, wait 16.743, own 1.005, end 17.816</title></rect>
+<rect x="122.6" y="375" width="714.6" height="2" fill="#bcd5de"><title>out/mescius/Debug/net472/Export.Image.Page/MESCIUS.ActiveReports.Core.Export.Image.Page.dll: start 0.064, wait 17.748, own 0.81, end 18.622</title></rect>
+<rect x="837.2" y="375" width="32.6" height="2" fill="#1f6f8b"><title>out/mescius/Debug/net472/Export.Image.Page/MESCIUS.ActiveReports.Core.Export.Image.Page.dll: start 0.064, wait 17.748, own 0.81, end 18.622</title></rect>
+<rect x="122.6" y="379" width="715.2" height="2" fill="#bcd5de"><title>out/mescius/Debug/net472/Export.Svg.Page/MESCIUS.ActiveReports.Core.Export.Svg.Page.dll: start 0.065, wait 17.764, own 0.646, end 18.475</title></rect>
+<rect x="837.9" y="379" width="26.0" height="2" fill="#1f6f8b"><title>out/mescius/Debug/net472/Export.Svg.Page/MESCIUS.ActiveReports.Core.Export.Svg.Page.dll: start 0.065, wait 17.764, own 0.646, end 18.475</title></rect>
+<rect x="122.6" y="383" width="721.3" height="2" fill="#bcd5de"><title>out/mescius/Debug/net472/Export.Pdf.Page/MESCIUS.ActiveReports.Core.Export.Pdf.Page.dll: start 0.065, wait 17.915, own 0.745, end 18.725</title></rect>
+<rect x="843.9" y="383" width="30.0" height="2" fill="#1f6f8b"><title>out/mescius/Debug/net472/Export.Pdf.Page/MESCIUS.ActiveReports.Core.Export.Pdf.Page.dll: start 0.065, wait 17.915, own 0.745, end 18.725</title></rect>
+<rect x="122.7" y="387" width="722.5" height="2" fill="#bcd5de"><title>out/mescius/Debug/net472/Drawing.Gdi/MESCIUS.ActiveReports.Core.Drawing.Gdi.dll: start 0.068, wait 17.945, own 0.732, end 18.745</title></rect>
+<rect x="845.3" y="387" width="29.5" height="2" fill="#1f6f8b"><title>out/mescius/Debug/net472/Drawing.Gdi/MESCIUS.ActiveReports.Core.Drawing.Gdi.dll: start 0.068, wait 17.945, own 0.732, end 18.745</title></rect>
+<text x="4" y="398" class="lane">mescius Release</text>
+<rect x="122.8" y="397" width="0.5" height="2" fill="#bcd5de"><title>out/mescius/Release/netstandard2.0/VBFunctionLib/MESCIUS.ActiveReports.Core.Data.VBFunctionLib.dll: start 0.069, wait 0.0, own 0.506, end 0.575</title></rect>
+<rect x="122.8" y="397" width="20.4" height="2" fill="#1f6f8b"><title>out/mescius/Release/netstandard2.0/VBFunctionLib/MESCIUS.ActiveReports.Core.Data.VBFunctionLib.dll: start 0.069, wait 0.0, own 0.506, end 0.575</title></rect>
+<rect x="122.8" y="401" width="0.5" height="2" fill="#bcd5de"><title>out/mescius/Release/net472/VBFunctionLib/MESCIUS.ActiveReports.Core.Data.VBFunctionLib.dll: start 0.07, wait 0.0, own 0.458, end 0.528</title></rect>
+<rect x="122.8" y="401" width="18.4" height="2" fill="#1f6f8b"><title>out/mescius/Release/net472/VBFunctionLib/MESCIUS.ActiveReports.Core.Data.VBFunctionLib.dll: start 0.07, wait 0.0, own 0.458, end 0.528</title></rect>
+<rect x="123.0" y="405" width="18.3" height="2" fill="#bcd5de"><title>out/mescius/Release/net472/ExpressionInfo/MESCIUS.ActiveReports.Core.Data.ExpressionInfo.dll: start 0.074, wait 0.455, own 0.625, end 1.154</title></rect>
+<rect x="141.3" y="405" width="25.2" height="2" fill="#1f6f8b"><title>out/mescius/Release/net472/ExpressionInfo/MESCIUS.ActiveReports.Core.Data.ExpressionInfo.dll: start 0.074, wait 0.455, own 0.625, end 1.154</title></rect>
+<rect x="122.9" y="409" width="20.3" height="2" fill="#bcd5de"><title>out/mescius/Release/netstandard2.0/ExpressionInfo/MESCIUS.ActiveReports.Core.Data.ExpressionInfo.dll: start 0.073, wait 0.503, own 0.602, end 1.178</title></rect>
+<rect x="143.2" y="409" width="24.2" height="2" fill="#1f6f8b"><title>out/mescius/Release/netstandard2.0/ExpressionInfo/MESCIUS.ActiveReports.Core.Data.ExpressionInfo.dll: start 0.073, wait 0.503, own 0.602, end 1.178</title></rect>
+<rect x="122.8" y="413" width="44.0" height="2" fill="#bcd5de"><title>out/mescius/Release/net472/Rdl/MESCIUS.ActiveReports.Core.Rdl.dll: start 0.069, wait 1.093, own 2.622, end 3.784</title></rect>
+<rect x="166.8" y="413" width="105.6" height="2" fill="#1f6f8b"><title>out/mescius/Release/net472/Rdl/MESCIUS.ActiveReports.Core.Rdl.dll: start 0.069, wait 1.093, own 2.622, end 3.784</title></rect>
+<rect x="122.7" y="417" width="45.0" height="2" fill="#bcd5de"><title>out/mescius/Release/netstandard2.0/Rdl/MESCIUS.ActiveReports.Core.Rdl.dll: start 0.068, wait 1.118, own 2.587, end 3.773</title></rect>
+<rect x="167.8" y="417" width="104.2" height="2" fill="#1f6f8b"><title>out/mescius/Release/netstandard2.0/Rdl/MESCIUS.ActiveReports.Core.Rdl.dll: start 0.068, wait 1.118, own 2.587, end 3.773</title></rect>
+<rect x="122.9" y="421" width="45.2" height="2" fill="#bcd5de"><title>out/mescius/Release/net472/DataEngine/MESCIUS.ActiveReports.Core.Data.DataEngine.dll: start 0.073, wait 1.123, own 2.183, end 3.379</title></rect>
+<rect x="168.2" y="421" width="87.9" height="2" fill="#1f6f8b"><title>out/mescius/Release/net472/DataEngine/MESCIUS.ActiveReports.Core.Data.DataEngine.dll: start 0.073, wait 1.123, own 2.183, end 3.379</title></rect>
+<rect x="122.9" y="425" width="49.8" height="2" fill="#bcd5de"><title>out/mescius/Release/netstandard2.0/DataEngine/MESCIUS.ActiveReports.Core.Data.DataEngine.dll: start 0.072, wait 1.236, own 2.115, end 3.423</title></rect>
+<rect x="172.7" y="425" width="85.2" height="2" fill="#1f6f8b"><title>out/mescius/Release/netstandard2.0/DataEngine/MESCIUS.ActiveReports.Core.Data.DataEngine.dll: start 0.072, wait 1.236, own 2.115, end 3.423</title></rect>
+<rect x="122.9" y="429" width="150.0" height="2" fill="#bcd5de"><title>out/mescius/Release/netstandard2.0/Rendering/MESCIUS.ActiveReports.Core.Rendering.dll: start 0.072, wait 3.726, own 10.117, end 13.915</title></rect>
+<rect x="272.9" y="429" width="407.3" height="2" fill="#1f6f8b"><title>out/mescius/Release/netstandard2.0/Rendering/MESCIUS.ActiveReports.Core.Rendering.dll: start 0.072, wait 3.726, own 10.117, end 13.915</title></rect>
+<rect x="123.0" y="433" width="150.3" height="2" fill="#bcd5de"><title>out/mescius/Release/net472/Rendering/MESCIUS.ActiveReports.Core.Rendering.dll: start 0.074, wait 3.732, own 11.729, end 15.535</title></rect>
+<rect x="273.2" y="433" width="472.2" height="2" fill="#1f6f8b"><title>out/mescius/Release/net472/Rendering/MESCIUS.ActiveReports.Core.Rendering.dll: start 0.074, wait 3.732, own 11.729, end 15.535</title></rect>
+<rect x="122.7" y="437" width="557.6" height="2" fill="#bcd5de"><title>out/mescius/Release/netstandard2.0/Scripting/MESCIUS.ActiveReports.Core.Scripting.dll: start 0.066, wait 13.848, own 0.691, end 14.605</title></rect>
+<rect x="680.2" y="437" width="27.8" height="2" fill="#1f6f8b"><title>out/mescius/Release/netstandard2.0/Scripting/MESCIUS.ActiveReports.Core.Scripting.dll: start 0.066, wait 13.848, own 0.691, end 14.605</title></rect>
+<rect x="122.8" y="441" width="557.5" height="2" fill="#bcd5de"><title>out/mescius/Release/netstandard2.0/Export.Text.Page/MESCIUS.ActiveReports.Core.Export.Text.Page.dll: start 0.07, wait 13.846, own 0.689, end 14.605</title></rect>
+<rect x="680.3" y="441" width="27.7" height="2" fill="#1f6f8b"><title>out/mescius/Release/netstandard2.0/Export.Text.Page/MESCIUS.ActiveReports.Core.Export.Text.Page.dll: start 0.07, wait 13.846, own 0.689, end 14.605</title></rect>
+<rect x="122.9" y="445" width="557.5" height="2" fill="#bcd5de"><title>out/mescius/Release/netstandard2.0/Export.Html.Page/MESCIUS.ActiveReports.Core.Export.Html.Page.dll: start 0.071, wait 13.847, own 0.687, end 14.605</title></rect>
+<rect x="680.4" y="445" width="27.7" height="2" fill="#1f6f8b"><title>out/mescius/Release/netstandard2.0/Export.Html.Page/MESCIUS.ActiveReports.Core.Export.Html.Page.dll: start 0.071, wait 13.847, own 0.687, end 14.605</title></rect>
+<rect x="122.9" y="449" width="557.7" height="2" fill="#bcd5de"><title>out/mescius/Release/netstandard2.0/Export.Excel.Page/MESCIUS.ActiveReports.Core.Export.Excel.Page.dll: start 0.073, wait 13.852, own 1.905, end 15.830</title></rect>
+<rect x="680.7" y="449" width="76.7" height="2" fill="#1f6f8b"><title>out/mescius/Release/netstandard2.0/Export.Excel.Page/MESCIUS.ActiveReports.Core.Export.Excel.Page.dll: start 0.073, wait 13.852, own 1.905, end 15.830</title></rect>
+<rect x="123.0" y="453" width="559.6" height="2" fill="#bcd5de"><title>out/mescius/Release/netstandard2.0/Drawing.Gc/MESCIUS.ActiveReports.Core.Drawing.Gc.dll: start 0.074, wait 13.899, own 0.711, end 14.684</title></rect>
+<rect x="682.6" y="453" width="28.6" height="2" fill="#1f6f8b"><title>out/mescius/Release/netstandard2.0/Drawing.Gc/MESCIUS.ActiveReports.Core.Drawing.Gc.dll: start 0.074, wait 13.899, own 0.711, end 14.684</title></rect>
+<rect x="123.0" y="457" width="559.7" height="2" fill="#bcd5de"><title>out/mescius/Release/netstandard2.0/Export.Word.Page/MESCIUS.ActiveReports.Core.Export.Word.Page.dll: start 0.074, wait 13.9, own 0.777, end 14.751</title></rect>
+<rect x="682.6" y="457" width="31.3" height="2" fill="#1f6f8b"><title>out/mescius/Release/netstandard2.0/Export.Word.Page/MESCIUS.ActiveReports.Core.Export.Word.Page.dll: start 0.074, wait 13.9, own 0.777, end 14.751</title></rect>
+<rect x="122.7" y="461" width="594.6" height="2" fill="#bcd5de"><title>out/mescius/Release/netstandard2.0/Export.Svg.Page/MESCIUS.ActiveReports.Core.Export.Svg.Page.dll: start 0.067, wait 14.768, own 0.657, end 15.492</title></rect>
+<rect x="717.3" y="461" width="26.5" height="2" fill="#1f6f8b"><title>out/mescius/Release/netstandard2.0/Export.Svg.Page/MESCIUS.ActiveReports.Core.Export.Svg.Page.dll: start 0.067, wait 14.768, own 0.657, end 15.492</title></rect>
+<rect x="122.5" y="465" width="594.8" height="2" fill="#bcd5de"><title>out/mescius/Release/netstandard2.0/Export.Image.Page/MESCIUS.ActiveReports.Core.Export.Image.Page.dll: start 0.063, wait 14.773, own 0.719, end 15.555</title></rect>
+<rect x="717.3" y="465" width="28.9" height="2" fill="#1f6f8b"><title>out/mescius/Release/netstandard2.0/Export.Image.Page/MESCIUS.ActiveReports.Core.Export.Image.Page.dll: start 0.063, wait 14.773, own 0.719, end 15.555</title></rect>
+<rect x="122.7" y="469" width="595.7" height="2" fill="#bcd5de"><title>out/mescius/Release/netstandard2.0/Export.Pdf.Page/MESCIUS.ActiveReports.Core.Export.Pdf.Page.dll: start 0.067, wait 14.794, own 0.993, end 15.854</title></rect>
+<rect x="718.4" y="469" width="40.0" height="2" fill="#1f6f8b"><title>out/mescius/Release/netstandard2.0/Export.Pdf.Page/MESCIUS.ActiveReports.Core.Export.Pdf.Page.dll: start 0.067, wait 14.794, own 0.993, end 15.854</title></rect>
+<rect x="122.9" y="473" width="600.4" height="2" fill="#bcd5de"><title>out/mescius/Release/netstandard2.0/Drawing.Gdi/MESCIUS.ActiveReports.Core.Drawing.Gdi.dll: start 0.071, wait 14.912, own 0.968, end 15.951</title></rect>
+<rect x="723.3" y="473" width="39.0" height="2" fill="#1f6f8b"><title>out/mescius/Release/netstandard2.0/Drawing.Gdi/MESCIUS.ActiveReports.Core.Drawing.Gdi.dll: start 0.071, wait 14.912, own 0.968, end 15.951</title></rect>
+<rect x="122.6" y="477" width="645.3" height="2" fill="#bcd5de"><title>out/mescius/Release/net472/Scripting/MESCIUS.ActiveReports.Core.Scripting.dll: start 0.065, wait 16.027, own 0.803, end 16.895</title></rect>
+<rect x="767.9" y="477" width="32.3" height="2" fill="#1f6f8b"><title>out/mescius/Release/net472/Scripting/MESCIUS.ActiveReports.Core.Scripting.dll: start 0.065, wait 16.027, own 0.803, end 16.895</title></rect>
+<rect x="122.8" y="481" width="652.1" height="2" fill="#bcd5de"><title>out/mescius/Release/net472/Export.Text.Page/MESCIUS.ActiveReports.Core.Export.Text.Page.dll: start 0.07, wait 16.195, own 0.805, end 17.070</title></rect>
+<rect x="774.9" y="481" width="32.4" height="2" fill="#1f6f8b"><title>out/mescius/Release/net472/Export.Text.Page/MESCIUS.ActiveReports.Core.Export.Text.Page.dll: start 0.07, wait 16.195, own 0.805, end 17.070</title></rect>
+<rect x="122.9" y="485" width="653.6" height="2" fill="#bcd5de"><title>out/mescius/Release/net472/Drawing.Gc/MESCIUS.ActiveReports.Core.Drawing.Gc.dll: start 0.073, wait 16.233, own 0.979, end 17.285</title></rect>
+<rect x="776.5" y="485" width="39.4" height="2" fill="#1f6f8b"><title>out/mescius/Release/net472/Drawing.Gc/MESCIUS.ActiveReports.Core.Drawing.Gc.dll: start 0.073, wait 16.233, own 0.979, end 17.285</title></rect>
+<rect x="122.9" y="489" width="656.5" height="2" fill="#bcd5de"><title>out/mescius/Release/net472/Export.Html.Page/MESCIUS.ActiveReports.Core.Export.Html.Page.dll: start 0.072, wait 16.304, own 1.054, end 17.430</title></rect>
+<rect x="779.3" y="489" width="42.4" height="2" fill="#1f6f8b"><title>out/mescius/Release/net472/Export.Html.Page/MESCIUS.ActiveReports.Core.Export.Html.Page.dll: start 0.072, wait 16.304, own 1.054, end 17.430</title></rect>
+<rect x="123.0" y="493" width="667.3" height="2" fill="#bcd5de"><title>out/mescius/Release/net472/Export.Word.Page/MESCIUS.ActiveReports.Core.Export.Word.Page.dll: start 0.074, wait 16.573, own 0.852, end 17.499</title></rect>
+<rect x="790.3" y="493" width="34.3" height="2" fill="#1f6f8b"><title>out/mescius/Release/net472/Export.Word.Page/MESCIUS.ActiveReports.Core.Export.Word.Page.dll: start 0.074, wait 16.573, own 0.852, end 17.499</title></rect>
+<rect x="122.9" y="497" width="675.1" height="2" fill="#bcd5de"><title>out/mescius/Release/net472/Export.Excel.Page/MESCIUS.ActiveReports.Core.Export.Excel.Page.dll: start 0.073, wait 16.766, own 1.887, end 18.726</title></rect>
+<rect x="798.0" y="497" width="76.0" height="2" fill="#1f6f8b"><title>out/mescius/Release/net472/Export.Excel.Page/MESCIUS.ActiveReports.Core.Export.Excel.Page.dll: start 0.073, wait 16.766, own 1.887, end 18.726</title></rect>
+<rect x="122.7" y="501" width="725.5" height="2" fill="#bcd5de"><title>out/mescius/Release/net472/Export.Pdf.Page/MESCIUS.ActiveReports.Core.Export.Pdf.Page.dll: start 0.068, wait 18.019, own 0.736, end 18.823</title></rect>
+<rect x="848.2" y="501" width="29.6" height="2" fill="#1f6f8b"><title>out/mescius/Release/net472/Export.Pdf.Page/MESCIUS.ActiveReports.Core.Export.Pdf.Page.dll: start 0.068, wait 18.019, own 0.736, end 18.823</title></rect>
+<rect x="122.6" y="505" width="725.7" height="2" fill="#bcd5de"><title>out/mescius/Release/net472/Export.Image.Page/MESCIUS.ActiveReports.Core.Export.Image.Page.dll: start 0.064, wait 18.024, own 0.638, end 18.726</title></rect>
+<rect x="848.3" y="505" width="25.7" height="2" fill="#1f6f8b"><title>out/mescius/Release/net472/Export.Image.Page/MESCIUS.ActiveReports.Core.Export.Image.Page.dll: start 0.064, wait 18.024, own 0.638, end 18.726</title></rect>
+<rect x="122.7" y="509" width="725.5" height="2" fill="#bcd5de"><title>out/mescius/Release/net472/Export.Svg.Page/MESCIUS.ActiveReports.Core.Export.Svg.Page.dll: start 0.068, wait 18.02, own 0.639, end 18.727</title></rect>
+<rect x="848.3" y="509" width="25.7" height="2" fill="#1f6f8b"><title>out/mescius/Release/net472/Export.Svg.Page/MESCIUS.ActiveReports.Core.Export.Svg.Page.dll: start 0.068, wait 18.02, own 0.639, end 18.727</title></rect>
+<rect x="123.0" y="513" width="737.9" height="2" fill="#bcd5de"><title>out/mescius/Release/net472/Drawing.Gdi/MESCIUS.ActiveReports.Core.Drawing.Gdi.dll: start 0.074, wait 18.327, own 0.44, end 18.841</title></rect>
+<rect x="860.9" y="513" width="17.7" height="2" fill="#1f6f8b"><title>out/mescius/Release/net472/Drawing.Gdi/MESCIUS.ActiveReports.Core.Drawing.Gdi.dll: start 0.074, wait 18.327, own 0.44, end 18.841</title></rect>
+<text x="4" y="524" class="lane">phony (build targets)</text>
+<rect x="120.2" y="523" width="746.2" height="2" fill="#ccc"><title>build::gccn::Release: start 0.005, wait 18.534, own 0.05, end 18.589</title></rect>
+<rect x="866.4" y="523" width="2.0" height="2" fill="#555"><title>build::gccn::Release: start 0.005, wait 18.534, own 0.05, end 18.589</title></rect>
+<rect x="120.2" y="527" width="752.6" height="2" fill="#ccc"><title>build::mescius::Debug: start 0.005, wait 18.691, own 0.049, end 18.745</title></rect>
+<rect x="872.8" y="527" width="2.0" height="2" fill="#555"><title>build::mescius::Debug: start 0.005, wait 18.691, own 0.049, end 18.745</title></rect>
+<rect x="120.2" y="531" width="756.4" height="2" fill="#ccc"><title>build::mescius::Release: start 0.005, wait 18.787, own 0.05, end 18.842</title></rect>
+<rect x="876.6" y="531" width="2.0" height="2" fill="#555"><title>build::mescius::Release: start 0.005, wait 18.787, own 0.05, end 18.842</title></rect>
+<rect x="120.2" y="535" width="762.1" height="2" fill="#ccc"><title>build::gccn::Debug: start 0.005, wait 18.929, own 0.049, end 18.983</title></rect>
+<rect x="882.3" y="535" width="2.0" height="2" fill="#555"><title>build::gccn::Debug: start 0.005, wait 18.929, own 0.049, end 18.983</title></rect>
+<rect x="120.0" y="539" width="764.2" height="2" fill="#ccc"><title>build: start 0.0, wait 18.98, own 0.003, end 18.983</title></rect>
+<rect x="884.2" y="539" width="1.0" height="2" fill="#555"><title>build: start 0.0, wait 18.98, own 0.003, end 18.983</title></rect>
+<text x="885" y="12" text-anchor="end" class="ax">seconds</text></svg>
+<svg viewBox="0 0 900 140" role="img" aria-label="Parallel clean concurrency">
+<line x1="120" x2="885" y1="115.0" y2="115.0" class="grid"/><text x="116" y="119.0" text-anchor="end" class="ax">0</text>
+<line x1="120" x2="885" y1="62.5" y2="62.5" class="grid"/><text x="116" y="66.5" text-anchor="end" class="ax">18</text>
+<line x1="120" x2="885" y1="10.0" y2="10.0" class="grid"/><text x="116" y="14.0" text-anchor="end" class="ax">36</text>
+<path d="M120.0,115.0 L120.0,68.3 L160.3,68.3 L160.3,45.0 L200.5,45.0 L200.5,68.3 L240.8,68.3 L240.8,47.9 L281.1,47.9 L281.1,91.7 L321.3,91.7 L321.3,91.7 L361.6,91.7 L361.6,91.7 L401.8,91.7 L401.8,91.7 L442.1,91.7 L442.1,91.7 L482.4,91.7 L482.4,91.7 L522.6,91.7 L522.6,91.7 L562.9,91.7 L562.9,91.7 L603.2,91.7 L603.2,91.7 L643.4,91.7 L643.4,74.2 L683.7,74.2 L683.7,27.5 L723.9,27.5 L723.9,10.0 L764.2,10.0 L764.2,10.0 L804.5,10.0 L804.5,24.6 L844.7,24.6 L844.7,45.0 L885.0,45.0 L885.0,115.0 L925.3,115.0 L925.3,115.0Z" fill="#1f6f8b" fill-opacity=".35" stroke="#1f6f8b" stroke-width="1.5"/>
+<text x="120.0" y="132" text-anchor="middle" class="ax">0</text>
+<text x="160.3" y="132" text-anchor="middle" class="ax">1</text>
+<text x="200.5" y="132" text-anchor="middle" class="ax">2</text>
+<text x="240.8" y="132" text-anchor="middle" class="ax">3</text>
+<text x="281.1" y="132" text-anchor="middle" class="ax">4</text>
+<text x="321.3" y="132" text-anchor="middle" class="ax">5</text>
+<text x="361.6" y="132" text-anchor="middle" class="ax">6</text>
+<text x="401.8" y="132" text-anchor="middle" class="ax">7</text>
+<text x="442.1" y="132" text-anchor="middle" class="ax">8</text>
+<text x="482.4" y="132" text-anchor="middle" class="ax">9</text>
+<text x="522.6" y="132" text-anchor="middle" class="ax">10</text>
+<text x="562.9" y="132" text-anchor="middle" class="ax">11</text>
+<text x="603.2" y="132" text-anchor="middle" class="ax">12</text>
+<text x="643.4" y="132" text-anchor="middle" class="ax">13</text>
+<text x="683.7" y="132" text-anchor="middle" class="ax">14</text>
+<text x="723.9" y="132" text-anchor="middle" class="ax">15</text>
+<text x="764.2" y="132" text-anchor="middle" class="ax">16</text>
+<text x="804.5" y="132" text-anchor="middle" class="ax">17</text>
+<text x="844.7" y="132" text-anchor="middle" class="ax">18</text>
+<text x="885.0" y="132" text-anchor="middle" class="ax">19</text>
+<text x="4" y="22" class="lane">active targets</text><text x="885" y="132" text-anchor="end" class="ax">second</text></svg>
+<h2>5. Concurrency before and after</h2>
+<table><tr><th>run</th><th>peak</th><th>mean</th><th>seconds with no active target</th></tr>
+<tr><td>sequential clean, before (ar-stats.md)</td><td class="n">8</td><td class="n">1.02</td><td class="n">not measured</td></tr>
+<tr><td>sequential clean, after (ar-rerun.md)</td><td class="n">20 (t=5 s)</td><td class="n">6.9</td><td class="n">1 (of 8 s, from the CSV)</td></tr>
+<tr><td>parallel clean, before</td><td class="n">11 (t=166 s)</td><td class="n">2.30</td><td class="n">116 of 217 s</td></tr>
+<tr><td>parallel clean, after</td><td class="n">36 (t=15 s)</td><td class="n">16.1</td><td class="n">1 (of 20 s)</td></tr></table>
+<p class="note">Wall: sequential 27.6 s -&gt; 6.2 s, parallel 217.6 s -&gt; 18.9 s. Parallel Excel own time under load was 33 s before. The before numbers are per step from the database; the after "peak 20" is the figure in ar-rerun.md.</p>
+<h2>6. What changed, round by round</h2>
+<table><tr><th>round</th><th>gaps closed</th><th>branch</th><th>tests</th><th>critic verdict</th></tr><tr><td>A1</td><td>G1-G4, G13</td><td><code>pr/import-fidelity</code></td><td>211 (hermetic)</td><td>SHIP; 3 fixes (F1 <code>_</code> folder, F2 backslash args, F3 ignored metadata), all applied (F2 in B1, F1/F3 in D1)</td></tr><tr><td>B1</td><td>G5-G7, G12, G14</td><td><code>pr/lock-fidelity</code></td><td>218 hermetic + 324 core</td><td>SHIP on all items, nits (critic-b)</td></tr><tr><td>B2.1</td><td>G15 (+ <code>Described.closure</code>)</td><td><code>pr/batch-restore</code></td><td>222 hermetic</td><td>SHIP; one fix on the <code>needAll</code> prefetch, nits (critic-b)</td></tr><tr><td>D1</td><td>G10, G11 (test only) + A1 critic fixes</td><td><code>pr/lock-roots</code></td><td>226 hermetic</td><td>No separate critic file; critic-b fix and nits applied per the session table; open question 1</td></tr><tr><td>C1</td><td>G8</td><td><code>pr/fileset-perf</code></td><td>329 core (+ 206 hermetic)</td><td>SHIP (critic-core)</td></tr><tr><td>C2a</td><td>G9 part; agent failure guards</td><td><code>pr/rule-match-cache</code></td><td>332 core after merge of C1 (327 reported by the author)</td><td>SHIP; db agent guard SHIP WITH FIX F1 (atomic record write), applied by the author in 006243f (record pickled in memory, written in one call; test reopens the db); nits N2-N4, N6 applied</td></tr><tr><td>G16</td><td>G16 hang</td><td><code>pr/pool-hang</code></td><td>344 core (repro tests only)</td><td>Not reproduced; no critic file</td></tr></table>
+<p class="note">Stacks: hermetic A1 -&gt; B1 -&gt; B2.1 -&gt; D1; core C1 -&gt; C2a. Self-build locks regenerated in D1.</p>
+<h2>7. Still open</h2><ul><li><b>HERMETIC=on on generated C# locks</b> (D1 question 1): the lock names the SDK <code>csc.dll</code> outside the roots and not covered by a prerequisite; AR pins <code>latestFeature</code> and uses the SDK csc, so it is refused.</li><li><b>Pack as PR 8</b>: still 32 lines of script; <code>Locks.restoreAll</code> takes one config.</li><li><b>G10 not exercised with sibling repos</b>: the AR worktrees sit inside the experiment folder.</li><li><b>Doc bug</b>: the <code>Described.closure</code> doc comment and csc-syntax.md name the result <code>refs</code>, which clashes with the <code>csc { ref }</code> custom operation (FS3095); use <code>deps</code>.</li><li><b>One-time lock rewrite</b> on the next <code>update-locks</code>: <code>Directory</code> = project folder, the <code>nowarn</code> line, framework assemblies (net462 <code>System.Windows.Forms.dll</code> in the self-build locks; <code>WindowsBase</code> on net472 AR).</li><li><b>G16 hang not reproduced</b>: 20 cases + 2 stress passes; the agent-failure guards (pool failure fails the build, db store failure logged) were added instead; next hang: <code>dotnet-stack report -p &lt;pid&gt;</code>.</li><li><b>msbuild concurrent is not a valid baseline</b>: the four Rebuilds share <code>bin/</code> and <code>obj/</code> and fail (CS0006, MSB3030); the fair number is the sequential 80 s.</li><li>Server-on CPU is invisible to <code>cputime.pl</code>; a VBCSCompiler started by these runs stays until its idle timeout.</li></ul>
+<h2>8. Branch and merge order</h2>
+<ol><li>Core: <code>pr/fileset-perf</code> -&gt; <code>pr/rule-match-cache</code> (the second contains the first).</li>
+<li>Hermetic stack: <code>pr/import-fidelity</code> -&gt; <code>pr/lock-fidelity</code> -&gt; <code>pr/batch-restore</code> -&gt; <code>pr/lock-roots</code>.</li>
+<li><code>pr/pool-hang</code> holds repro tests only; merge it only if wanted.</li></ol>
+<p>Nothing is pushed and nothing is merged. The integration worktree <code>.claude/worktrees/night-integration</code> is detached (74bf4d9 = <code>pr/lock-roots</code> + <code>pr/rule-match-cache</code>) and disposable. After the merges, release Xake 3.7.1 and Xake.Hermetic.Dotnet 0.3.1 so that <code>build.fsc.fsx</code> and the AR scripts can leave the <code>-night</code> feed.</p>
+</main></body></html>

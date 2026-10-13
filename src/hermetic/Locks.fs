@@ -62,6 +62,37 @@ module Locks =
                 let! x = r
                 return xs @ [ x ] }) (recipe { return [] })
 
+    /// The description `generate` restores for `d` and `fwk`: its packages for `fwk` at the
+    /// version the current lock (`current`) holds unless `refresh` names them, then the
+    /// packages the project references bring (`refFlowing`, (id, resolved version), first
+    /// declaration of an id winning, not one `d` declares) as exact versions. Pure.
+    let private restoreFor (refresh: string option) (current: Lock.Document option) (d: Description.Project) (fwk: string)
+                           (refFlowing: (string * string) list) : Description.Project =
+        let assemblyName = d.AssemblyName |> Option.defaultValue d.Name
+        let own =
+            d.Packages
+            @ (d.ByFramework |> List.filter (fst >> same fwk) |> List.collect (fun (_, i) -> i.Packages))
+        let flowing =
+            refFlowing
+            |> List.filter (fun (id, _) -> not (own |> List.exists (fun o -> same o.Id id)))
+            |> List.distinctBy (fun (id, _) -> id.ToLowerInvariant ())
+            |> List.map (fun (id, v) -> ({ Id = id; Version = Some ("[" + v + "]"); Private = false } : Description.Package))
+        let kept =
+            current
+            |> Option.bind (fun doc -> doc.Entries |> List.tryFind (fun e -> e.Framework = fwk && e.Name = assemblyName))
+            |> Option.map (fun e -> e.Packages) |> Option.defaultValue []
+        { d with
+            Packages = keptVersions refresh kept own @ flowing
+            ByFramework = d.ByFramework |> List.map (fun (t, i) -> t, { i with Packages = [] }) }
+
+    /// The value of `LOCK_REFRESH`: the script variable, else the environment variable.
+    let private refreshValue =
+        recipe {
+            let! refreshVar = getVar "LOCK_REFRESH"
+            let! refreshEnv = getEnv "LOCK_REFRESH"
+            return refreshVar |> Option.orElse refreshEnv |> Option.filter (fun s -> s.Trim () <> "")
+        }
+
     /// <summary>
     /// Generates the lock of ONE described project for ONE configuration: the description at
     /// `descriptionPath`, configuration `config`, written to `lockOf name config` (relative to
@@ -109,9 +140,7 @@ module Locks =
             let lockPath = lockOf d.Name config
             let lockFull = full lockPath
             let current = if File.Exists lockFull then Some (Lock.read roots lockFull) else None
-            let! refreshVar = getVar "LOCK_REFRESH"
-            let! refreshEnv = getEnv "LOCK_REFRESH"
-            let refresh = refreshVar |> Option.orElse refreshEnv |> Option.filter (fun s -> s.Trim () <> "")
+            let! refresh = refreshValue
             let assemblyName = d.AssemblyName |> Option.defaultValue d.Name
 
             let! entries =
@@ -148,22 +177,8 @@ module Locks =
 
                     // packages: the description's for this framework plus the refs' flowing ones,
                     // a version the current lock holds kept unless LOCK_REFRESH names it
-                    let own =
-                        d.Packages
-                        @ (d.ByFramework |> List.filter (fst >> same fwk) |> List.collect (fun (_, i) -> i.Packages))
-                    let flowing =
-                        refs |> List.collect (fun (_, _, ps, _) -> ps)
-                        |> List.filter (fun p -> not (own |> List.exists (fun o -> same o.Id p.Id)))
-                        |> List.distinctBy (fun p -> p.Id.ToLowerInvariant ())
-                        |> List.map (fun p -> ({ Id = p.Id; Version = Some ("[" + p.Version + "]"); Private = false } : Description.Package))
-                    let kept =
-                        current
-                        |> Option.bind (fun doc -> doc.Entries |> List.tryFind (fun e -> e.Framework = fwk && e.Name = assemblyName))
-                        |> Option.map (fun e -> e.Packages) |> Option.defaultValue []
-                    let forRestore =
-                        { d with
-                            Packages = keptVersions refresh kept own @ flowing
-                            ByFramework = d.ByFramework |> List.map (fun (t, i) -> t, { i with Packages = [] }) }
+                    let refFlowing = refs |> List.collect (fun (_, _, ps, _) -> ps |> List.map (fun (p: Package) -> p.Id, p.Version))
+                    let forRestore = restoreFor refresh current d fwk refFlowing
                     let! restored = Described.restore forRestore fwk
 
                     // the direct references' outputs, then theirs (the closure), each once, in order
@@ -210,6 +225,118 @@ module Locks =
                 Directory.CreateDirectory (Path.GetDirectoryName lockFull) |> ignore
                 File.WriteAllText (lockFull, text)
                 do! trace Info "'%s': wrote the lock '%s'" d.Name lockPath
+        }
+
+    /// A declared version as the version restore resolves it to, when that is known without
+    /// resolving: `[1.2.3]` and `1.2.3` (the lowest applicable, the version itself when it
+    /// exists); `None` for a range or a floating version.
+    let private resolvedVersion (version: string option) =
+        let plain (v: string) = v <> "" && v |> Seq.forall (fun c -> System.Char.IsLetterOrDigit c || c = '.' || c = '-' || c = '+')
+        match version with
+        | Some v when v.StartsWith "[" && v.EndsWith "]" && plain (v.Substring (1, v.Length - 2)) -> Some (v.Substring (1, v.Length - 2))
+        | Some v when plain v -> Some v
+        | _ -> None
+
+    /// <summary>
+    /// Restores, in ONE `dotnet restore` (`Described.prefetch`), the packages `generate` is
+    /// about to restore for every description of `descriptions` (a fileset of
+    /// `xake.project.json` files) and each of its frameworks in configuration `cfg`, so that the
+    /// lock rules find them in the build's cache instead of starting msbuild per project and
+    /// framework. The sets are computed as `generate` computes them: the versions the current
+    /// locks hold (`LOCK_REFRESH` applies), and the packages of a project reference from its lock
+    /// (`lockOf`), or -- before it has one -- from its description (`descriptionOf name`) at
+    /// the declared exact version. A set that cannot be known ahead (a reference's floating
+    /// version without a lock), or that the generation changes (a reference whose lock this run
+    /// rewrites), is restored by its lock rule alone, as before. The script's `update-locks`:
+    /// <code>
+    /// command "update-locks" {
+    ///     do! Locks.restoreAll (!! "src/*/xake.project.json") "Release" lockOf descriptionOf
+    ///     do! need [ for n in projects -> $"lock::{n}::Release" ] }
+    /// </code>
+    /// </summary>
+    let restoreAll (descriptions: Fileset) (cfg: string) (lockOf: string -> string -> string) (descriptionOf: string -> string)
+            : Recipe<ExecContext, unit> =
+        recipe {
+            let! options = getCtxOptions ()
+            let full (p: string) = normal (Path.GetFullPath (if Path.IsPathRooted p then p else Path.Combine (options.ProjectRoot, p)))
+            let! roots = Roots.current
+            let! refresh = refreshValue
+            let lockAt (path: string) = let f = full path in if File.Exists f then Some (Lock.read roots f) else None
+            let memo = System.Collections.Generic.Dictionary<string, (string * string) list option> ()
+            // the restore input of `d` for `fwk`, or None when it cannot be known ahead
+            let rec inputOf (d: Description.Project) (fwk: string) : Recipe<ExecContext, Description.Project option> =
+                recipe {
+                    let! flowing = flowingOf d.ProjectRefs fwk []
+                    return flowing |> Option.map (restoreFor refresh (lockAt (lockOf d.Name cfg)) d fwk)
+                }
+            and flowingOf (names: string list) (fwk: string) (acc: (string * string) list) : Recipe<ExecContext, (string * string) list option> =
+                recipe {
+                    match names with
+                    | [] -> return Some acc
+                    | name :: rest ->
+                        let! direct = directOf name fwk
+                        match direct with
+                        | None -> return None
+                        | Some ps ->
+                            let! result = flowingOf rest fwk (acc @ ps)
+                            return result
+                }
+            // the direct packages (id, resolved version) of the referenced project `name` for a
+            // referrer on `fwk`, as `generate` reads them from its lock
+            and directOf (name: string) (fwk: string) : Recipe<ExecContext, (string * string) list option> =
+                recipe {
+                    let key = name + "|" + fwk
+                    match memo.TryGetValue key with
+                    | true, known -> return known
+                    | _ ->
+                        let! known =
+                            match refConfig cfg (fun c -> File.Exists (full (lockOf name c))) with
+                            | Some c -> recipe {
+                                let doc = (lockAt (lockOf name c)).Value
+                                let frameworks = doc.Entries |> List.map (fun e -> e.Framework) |> List.distinct
+                                return
+                                    nearestFramework fwk frameworks
+                                    |> Option.map (fun f ->
+                                        doc.Entries |> List.find (fun e -> e.Framework = f)
+                                        |> fun e -> e.Packages |> List.filter (fun p -> p.Direct) |> List.map (fun p -> p.Id, p.Version)) }
+                            | None -> recipe {
+                                let! r = Description.load (descriptionOf name)
+                                match nearestFramework fwk r.Frameworks with
+                                | None -> return None
+                                | Some rf ->
+                                    let! input = inputOf r rf
+                                    return
+                                        input |> Option.bind (fun forRestore ->
+                                            let packages = Described.restoreInput forRestore rf
+                                            let resolved = packages |> List.map (fun p -> p.Id, resolvedVersion p.Version)
+                                            if resolved |> List.forall (snd >> Option.isSome) then Some (resolved |> List.map (fun (id, v) -> id, v.Value))
+                                            else None) }
+                        memo.[key] <- known
+                        return known
+                }
+            let! (Filelist files) = getFiles descriptions
+            let rec gather (files: File list) (acc: (string * Description.Package list) list) : Recipe<ExecContext, (string * Description.Package list) list> =
+                recipe {
+                    match files with
+                    | [] -> return acc
+                    | f :: rest ->
+                        let! d = Description.load f.FullName
+                        let rec each (fwks: string list) (acc: (string * Description.Package list) list) : Recipe<ExecContext, (string * Description.Package list) list> =
+                            recipe {
+                                match fwks with
+                                | [] -> return acc
+                                | fwk :: more ->
+                                    let! input = inputOf d fwk
+                                    let acc = match input with Some forRestore -> acc @ [ fwk, Described.restoreInput forRestore fwk ] | None -> acc
+                                    let! result = each more acc
+                                    return result
+                            }
+                        let! acc = each d.Frameworks acc
+                        let! result = gather rest acc
+                        return result
+                }
+            let! requests = gather files []
+            do! Described.prefetch requests
         }
 
     /// The token a lock's `Generated` sources carry where the assembly version goes; the lock
@@ -411,5 +538,10 @@ module Locks =
                 [ for d in loaded do
                     let asm = d.AssemblyName |> Option.defaultValue d.Name
                     for fwk in d.Frameworks -> normal (Path.Combine (outOf cfg fwk d.Name, asm + ".dll")) ]
+            // the packages every lock names that the folder lacks, fetched in one restore before
+            // the compiles (each would otherwise start its own); nothing missing costs a
+            // `File.Exists` per path. What is still wrong is reported by each compile
+            let! docs = loaded |> List.map (fun d -> Lock.load (lockOf d.Name cfg)) |> sequence
+            let! _ = Restore.ensure Restore.Options.Default (Lock.restoreRequest (docs |> List.collect (fun doc -> doc.Entries)))
             do! need targets
         }

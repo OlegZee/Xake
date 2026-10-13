@@ -105,7 +105,8 @@ Script variables: `NETFX` (tool framework), `NETFX-TARGET` (default target frame
 Locks of project descriptions (`Xake.Hermetic.Dotnet`, [hermetic/lock.md](hermetic/lock.md#xake-generated-locks)):
 a phony rule per project x configuration in the script, run only by `xake update-locks`:
 `"lock::(name:*)::(cfg:*)" => recipe { ...; do! need [ for r in d.ProjectRefs -> $"lock::{r}::{cfg}" ]; do! alwaysRerun (); do! Locks.generate lockOf outOf cfg (descriptionOf name) }`
-and `"update-locks" <== [ for n in projects -> $"lock::{n}::Release" ]` -- references first by `need`, nothing compiled;
+and `command "update-locks" { do! Locks.restoreAll descriptions "Release" lockOf descriptionOf; do! need [ for n in projects -> $"lock::{n}::Release" ] }`
+-- references first by `need`, nothing compiled, all package sets in one `dotnet restore` (without `restoreAll`: one per project x framework);
 `-d LOCK_REFRESH=<ids|*>` re-resolves pinned packages.
 Build from the committed locks ([hermetic/lock.md](hermetic/lock.md#building-from-xake-generated-locks)):
 `command "build" { do! Locks.needAll descriptions "Release" lockOf outOf }` and

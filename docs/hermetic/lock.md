@@ -54,9 +54,13 @@ open Xake.Hermetic.Dotnet
 | `csc`/`fsc { ...; project "path"; config "Release"; packages p; lock "path" }` | operation | a compilation from a project description, gated the same way; a C# lock keeps the description's masks in `Sources` (an exclude as `!$(ProjectRoot)/...`), expanded when compiled ([../csc-syntax.md](../csc-syntax.md#from-a-project-description-project-config-packages)). No format change: `Sources` entries are strings the reader takes as written |
 | `Described.restore d framework` | recipe | a description's packages through an msbuild restore: compile assets, the graph for `Entry.Packages`, the packages' `frameworkAssemblies` (`FrameworkReferences`, referenced by name on .NET Framework) |
 | `Described.restoreWith descriptionOf d framework` | recipe | `restore` plus the packages `d`'s project references declare (their closure; each description at `descriptionOf name`; not `private` ones): for a project compiled without a lock |
+| `Described.restoreAll descriptionOf descriptions frameworks` | recipe | the `restoreWith` sets of every description (paths) x framework (`[]`: each one's own) in ONE `dotnet restore`, kept in the build's cache: the direct route's batch ([one restore per build](#one-restore-per-build)) |
+| `Described.prefetch requests` | recipe | (framework, packages) sets restored with one `dotnet restore` into the build's cache; what both `restoreAll`s call |
+| `Described.closure descriptionOf d` | recipe | the transitive project references of `d`, a project after the ones it references, each once; a cycle fails: the direct route's `ref` list |
+| `Locks.restoreAll descriptions cfg lockOf descriptionOf` | recipe | the sets the lock rules' `generate` will restore, in ONE `dotnet restore`, before `need`ing them ([one restore per build](#one-restore-per-build)) |
 | `Locks.generate lockOf outOf config descriptionPath` | recipe | the lock of one described project in one configuration, nothing compiled, written only on change; the referenced projects' locks must exist ([Xake-generated locks](#xake-generated-locks)) |
 | `Locks.compileAs lockPath fwk versions` | recipe | inside the layout's `.dll` rule: the lock's entry for `fwk` compiled into the rule's target; inside an `.xml` rule with the same body: needs the `.dll`, whose rule writes the doc ([Building from Xake-generated locks](#building-from-xake-generated-locks)) |
-| `Locks.needAll descriptions cfg lockOf outOf` | recipe | needs the layout `.dll` of every framework of every described project; a project without a lock fails naming `update-locks` |
+| `Locks.needAll descriptions cfg lockOf outOf` | recipe | needs the layout `.dll` of every framework of every described project; a project without a lock fails naming `update-locks`; the packages all locks name and the folder lacks are fetched first in one restore |
 | `Lock.compileFrom lockPath options entry` | recipe | `compileWith` of an entry read from the lock at `lockPath` (named by the HERMETIC refusal) |
 | `Lock.recorded path unhashed entry` | recipe | the record-time step of `record` (hashes, prerequisites, the HERMETIC gate) without writing; the references in `unhashed` keep an empty hash |
 
@@ -1028,7 +1032,9 @@ let descriptionOf name = $"src/{name}/xake.project.json"
     do! alwaysRerun ()
     do! Locks.generate lockOf outOf cfg (descriptionOf name)
 }
-"update-locks" <== [ for n in projects do for cfg in ["Release"] -> $"lock::{n}::{cfg}" ]
+command "update-locks" {
+    do! Locks.restoreAll (!! "src/*/xake.project.json") "Release" lockOf descriptionOf   // one dotnet restore
+    do! need [ for n in projects do for cfg in ["Release"] -> $"lock::{n}::{cfg}" ] }
 ```
 
 `xake update-locks` regenerates them; `xake lock::Xake.Dotnet::Debug` does one (and the locks it
@@ -1086,6 +1092,21 @@ What `Locks.generate lockOf outOf config descriptionPath` does for the descripti
   a comma/semicolon list, or `*` for all): `xake update-locks -d LOCK_REFRESH=FSharp.Core`.
   B's direct packages (from B's lock) flow into A's restore at B's locked version, as msbuild
   flows them through a project reference.
+- **One restore per build** <a id="one-restore-per-build"></a>. A restore is keyed by its
+  framework, the package folder and the package set (sorted): the synthesized project is
+  `obj/xake/restore/<framework>-<hash>/restore.csproj` and the result is kept for the build (one
+  engine run), so projects with the same set restore once. `Locks.restoreAll descriptions cfg
+  lockOf descriptionOf` computes, before the lock rules run, the set each `generate` will
+  restore -- the versions the current locks hold, `LOCK_REFRESH`, a reference's packages from
+  its lock or, before it has one, from its description (`descriptionOf`) at the exact declared
+  version -- and restores them all with ONE `dotnet restore` of a plain msbuild project
+  referencing the synthesized ones (`obj/xake/restore/batch-<hash>.proj`; restore resolves each
+  graph on its own, in parallel, in one process). A set it cannot know ahead (a reference's
+  floating version before its lock exists) or that the run changes (a reference whose lock is
+  rewritten) is restored by its rule alone, as without `restoreAll`; a failing batch caches
+  nothing and warns, and each rule then reports its own error. The direct route's twin is
+  `Described.restoreAll descriptionOf descriptions frameworks` (the `restoreWith` sets).
+  Self-build `update-locks` (3 descriptions x 2 frameworks): 6 restores, 2.3-2.5 s -> 1, 0.9 s.
 - **`Directory`** is the project's folder (`$(ProjectRoot)/<folder of the project file>`): the
   compiler runs there, as under `dotnet build`, so a doc comment's relative
   `<include file='../docs/x.xml' .../>` resolves (CS1589 otherwise). `--pathmap` is unchanged.

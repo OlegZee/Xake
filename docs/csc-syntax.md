@@ -217,10 +217,11 @@ open Xake.Hermetic.Dotnet
   none) then the description's `options.noWarn`; `/warnaserror+` (`--warnaserror+`) only when
   `options.warningsAsErrors`.
 - **Packages** are never resolved by the compiler. `Described.restore d framework` writes
-  `obj/xake/packages/<name>/<framework>/restore.csproj` (one `PackageReference` per package, the
+  `obj/xake/restore/<framework>-<hash>/restore.csproj` (one folder per package set; one `PackageReference` per package, the
   version as the description states it, floating left to msbuild; for F# on .NET Framework
   4.0-4.7 the SDK's implicit `System.ValueTuple` 4.6.2), runs `dotnet restore` on it into the
-  build's package folder (`NUGET_PACKAGES`), and reads `project.assets.json`
+  build's package folder (`NUGET_PACKAGES`) -- unless the build restored the same set already,
+  or `restoreAll` did in one batch: then the build's cache answers without a process -- and reads `project.assets.json`
   (`Nuget.readAssets`, `Nuget.compileItems`): `References` are the compile assets of the whole
   graph, `Packages` the graph as a lock entry records it (`Lock.packagesOf`), `FrameworkReferences`
   the packages' `frameworkAssemblies` for the framework (DocumentFormat.OpenXml on net472:
@@ -234,6 +235,24 @@ open Xake.Hermetic.Dotnet
   lock rule hands `Locks.generate`; for each, its nearest framework; declared versions; not
   `private` ones; an id `d` declares wins). Lock generation flows them from the referenced
   locks instead.
+- **The direct route at one restore** (no lock): `Described.restoreAll descriptionOf
+  descriptions frameworks` restores every description's `restoreWith` set in one `dotnet
+  restore` before the targets need them, and `Described.closure descriptionOf d` lists the
+  transitive project references (a project after the ones it references) the script passes with
+  `ref`:
+  ```fsharp
+  "main" => recipe {
+      do! Described.restoreAll descOf [ for n in names -> descOf n ] fwks
+      do! need [ for n in names do for f in fwks -> dllOf "Release" f n ] }
+  target "out/(cfg:*)/(fwk:*)/(name:*)/*.dll" {
+      // ... cfg, fwk, name from getRuleMatch
+      let! d = Description.load (descOf name)
+      let! pkgs = Described.restoreWith descOf d fwk               // from the cache
+      let! refs = Described.closure descOf d
+      do! need [ for r in refs -> dllOf cfg fwk r ]
+      do! csc { targetfwk fwk; ref (refs |> List.fold (fun fs r -> fs ++ dllOf cfg fwk r) Fileset.Empty)
+                project (descOf name); config cfg; packages pkgs } }
+  ```
 - **Directory.** The compiler runs in the project's folder (`Csc/Fsc.Directory`, a lock's
   `Directory`), as under `dotnet build`: a relative `<include file=...>` resolves.
 - **C# masks.** A C# description's `sources` are Xake masks with the import's convention: a `!`

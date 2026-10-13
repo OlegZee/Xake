@@ -1193,3 +1193,15 @@ worktree (`git worktree remove .claude/worktrees/night-integration`), not a bran
 merges: tags `v3.7.1` and `hermetic-v0.3.1`, then `build.fsc.fsx` and the AR scripts move from the
 `-night` feed (`/Users/olegz/Projects-work/ar/xake-ar/feed/`) to nuget.org. Decisions pending:
 HERMETIC on generated C# locks (SDK csc prerequisite, d1-report q1), pack (PR 8) answers, G16.
+
+## 2026-10-13 (evening) — AR full-product step: inventory + macOS baseline
+
+New folder `ar-full/` (README-RU kickoff, `inventory.md`, `macos-build.md`). Confluence/Bitbucket MCP
+unavailable (403); everything came from the clones and `ar-net-docs`. Found the meta repo
+`ar-net-meta` (`~/Projects-work/ar/ar-net-meta`, `develop/20`, 15 submodules at pins, product 20.2.2,
+`LocalBuild=true`); its page/dataengine pins equal the earlier experiment's commits. Desktop targets
+`net472` + `net8.0-windows`, no net462 anywhere. macOS `dotnet build ar.meta.win.sln`: 55 of 94
+projects build, 39 fail restore on the private `ar-dev` feed (38 via `MESCIUS.DataVisualization.Chart`),
+none fail because of macOS. **Exact next step**: the user answers the three questions in
+`ar-full/README.md` (feed token, 4.7.2 not 4.6.2, scope of "reproduce"); then the Windows VM baseline,
+then extending `ar-build-2.fsx` to `ar.meta.win.sln`.

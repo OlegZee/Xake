@@ -206,3 +206,9 @@ to that rule rather than the deliverable. Items are ordered by what they unblock
 - [ ] **fsc-rework implementation**: the PR plan in `fsc-rework/brief.md` (one tracker line per PR once started)
 - [ ] **`cached` rule decorator** + fingerprints file (after the explicit-command form lands)
 - [ ] **ActiveReports experiment** on the new system (dataengine + page, `develop`, two brands)
+
+**Status 2026-10-13 (evening):** AR full-product step opened, see `ar-full/README.md`.
+
+- [x] **AR-full inventory + macOS baseline** (2026-10-13): `ar-net-meta` develop/20 is the coherent set; 55/94 projects of `ar.meta.win.sln` build on macOS, the rest need the `ar-dev` feed token
+- [ ] **AR-full Windows baseline** on the VM (VS Build Tools 2022 + SDK 8, `dotnet build ar.meta.win.sln -p:LocalBuild=true`, then `dotnet cake`), needs `AA_AR_TOKEN`
+- [ ] **AR-full Xake reproduction**: `ar-build-2.fsx` over `ar.meta.win.sln`; importer gaps in `ar-full/inventory.md` §5

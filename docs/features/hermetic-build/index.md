@@ -12,6 +12,7 @@ Kickoff for that session: [next-session.md](next-session.md).
 
 | File | What it is | Read when | fsc task | Lines | Date | Status |
 |---|---|---|---|---|---|---|
+| [ar-full/](ar-full/) | **RU.** full-product AR step: `ar-net-meta` develop/20, inventory of 16 repos, macOS `dotnet build` baseline (55/94), decisions needed (feed token, net472 vs 4.6.2), next steps | extending the AR experiment to the desktop designer | **yes, after fsc-rework** | ~100 + 317 + 198 | 2026-10-13 | current |
 | [next-session-2.md](next-session-2.md) | **RU.** kickoff for the implementation session per fsc-rework/brief.md | starting implementation | **yes, first** | ~65 | 2026-10-11 | current |
 | [fsc-rework/](fsc-rework/) | rework working set: `brief.md` (plan), `interview.md` (decisions, authoritative), `drafts/`, `review.md`, `digest.md` | implementing the rework | **yes: brief + interview** | - | 2026-10-11 | current |
 | [next-session.md](next-session.md) | **RU.** kickoff for the `build.fsc.fsx` rework session: goal, state, user's remarks, reading order, interview plan | starting that session | done | ~140 | 2026-10-11 | done: interview held |

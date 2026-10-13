@@ -418,3 +418,69 @@ type ``Building from Xake-generated locks``() =
         Assert.That(File.Exists other, Is.True)
         Assert.That(File.ReadAllBytes other, Is.EqualTo bytes, "the other checkout built different bytes")
         Assert.That(File.ReadAllText (b </> "root" </> lockOf "P" "Release"), Is.EqualTo lockText)
+
+    /// G11: under an exact `global.json` pin the generated lock records the `dotnet-sdk`
+    /// prerequisite (as `Lock.record` does), which covers fsc's compiler, so `update-locks`
+    /// and `build` both pass under `HERMETIC=on` (a C# project takes csc from `CSC_TOOLSET`, as
+    /// the mode asks of a composed csc). Without the pin the generation warns as `Lock.record`
+    /// does and records no prerequisite.
+    [<Test; Category("Integration")>]
+    member x.``a generated lock under an exact SDK pin builds under HERMETIC=on``() =
+        let sdks =
+            Directory.GetDirectories (Xake.Dotnet.DotNetFwk.dotnetRoot () |> Option.get </> "sdk")
+            |> Array.map Path.GetFileName
+            |> Array.choose (fun n -> match System.Version.TryParse n with | true, v -> Some (v, n) | _ -> None)
+            |> Array.sortBy fst |> Array.map snd
+        let sdk = Array.last sdks
+        let setup (name: string) (pin: bool) =
+            let root = Path.GetFullPath name
+            if Directory.Exists root then Directory.Delete (root, true)
+            for dir in [ "p/B"; "p/Cs" ] do Directory.CreateDirectory (root </> dir) |> ignore
+            if pin then File.WriteAllText (root </> "global.json", sprintf """{ "sdk": { "version": "%s", "rollForward": "disable" } }""" sdk)
+            File.WriteAllText (root </> "p/B/Lib.fs", "module B.Lib\nlet answer = 42\n")
+            File.WriteAllText (root </> "p/Cs/A.cs", "namespace Cs { public class A {} }\n")
+            let write (dir: string) (language: Description.Language) (sources: string list) =
+                let d : Description.Project =
+                    { Schema = None; Name = dir; Project = dir + (if language = Description.FSharp then ".fsproj" else ".csproj")
+                      AssemblyName = None; RootNamespace = None; Language = language; Kind = Description.Library
+                      Frameworks = [ "netstandard2.0" ]; Sources = sources; Resources = []; Defines = []; References = []
+                      ProjectRefs = []; Packages = (if language = Description.FSharp then [ fsharpCore ] else [])
+                      Options = Description.Options.Default; InternalsVisibleTo = []; AssemblyAttributes = []; ByFramework = []; Package = None }
+                Description.write (root </> "p" </> dir </> Description.FileName) d |> ignore
+            write "B" Description.FSharp [ "Lib.fs" ]
+            write "Cs" Description.CSharp [ "*.cs" ]
+            root
+        let run (root: string) (label: string) (vars: (string * string) list) (goal: string) =
+            xake {x.TestOptions with ProjectRoot = root; DbFileName = root </> ".xake"; FileLog = root </> (label + ".log"); ThrowOnError = true; Vars = ("CI", "off") :: vars; FileLogLevel = Loud} {
+                wantOverride [ goal ]
+                rules [
+                    LockRule.lockRule lockOf outOf fixtureOf id (ResizeArray ())
+                    LockRule.updateLocks [ "Release" ] [ "B"; "Cs" ]
+                    command "build" { do! Locks.needAll (!! "p/*/xake.project.json") "Release" lockOf outOf }
+                    target "out/(cfg:*)/(fwk:*)/(name:*).dll" {
+                        let! cfg = getRuleMatch "cfg"
+                        let! fwk = getRuleMatch "fwk"
+                        let! name = getRuleMatch "name"
+                        do! Locks.compileAs (lockOf name cfg) fwk versions } ]
+            }
+        let hermetic = [ "HERMETIC", "on"; "NUGET_PACKAGES", Xake.Dotnet.DotNetFwk.nugetRoot (); "CSC_TOOLSET", "4.12.0" ]
+
+        let root = setup "pinned" true
+        run root "update-locks" hermetic "update-locks"
+        let text = File.ReadAllText (root </> lockOf "B" "Release")
+        Assert.That(text, Does.Contain (sprintf "\"Path\": \"$(DotnetRoot)/sdk/%s/FSharp/fsc.dll\"" sdk))
+        Assert.That(text, Does.Contain (sprintf "{ \"Kind\": \"dotnet-sdk\", \"Version\": \"%s\", \"Pin\": \"$(ProjectRoot)/global.json\" }" sdk))
+        Assert.That(File.ReadAllText (root </> lockOf "Cs" "Release"), Does.Not.Contain "$(DotnetRoot)", "csc from the toolset package")
+        run root "build" hermetic "build"
+        for name in [ "B"; "Cs" ] do Assert.That(File.Exists (root </> dll "Release" name), Is.True, name)
+
+        // the SDK's csc is not covered by the prerequisite: a C# lock needs CSC_TOOLSET (message 3)
+        let csc = setup "pinned-sdk-csc" true
+        let e = Assert.Throws<XakeException>(fun () -> run csc "update-locks" (hermetic |> List.filter (fst >> (<>) "CSC_TOOLSET")) "update-locks")
+        Assert.That(e.Data0 + File.ReadAllText (csc </> "update-locks.log"), Does.Contain "'Cs': HERMETIC=on: the compiler ")
+
+        // no exact pin: the generation warns and records no prerequisite (the mode off)
+        let unpinned = setup "unpinned" false
+        run unpinned "update-locks" [] "update-locks"
+        Assert.That(File.ReadAllText (unpinned </> lockOf "B" "Release"), Does.Not.Contain "Prerequisites")
+        Assert.That(File.ReadAllText (unpinned </> "update-locks.log"), Does.Contain "'B': depends on the .NET SDK ")

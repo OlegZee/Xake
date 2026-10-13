@@ -231,63 +231,186 @@ module Described =
           yield "" ]
         |> String.concat "\n"
 
-    /// The restore of `packages` for description `d` and `framework` (see `restore`).
+    /// The restores of one build (one engine run): the `Restored` of each restore key, so
+    /// that every target asking for the same package set and framework restores once.
+    let private caches =
+        System.Runtime.CompilerServices.ConditionalWeakTable<obj, System.Collections.Concurrent.ConcurrentDictionary<string, Restored>> ()
+    let private cacheOf (ctx: ExecContext) =
+        caches.GetValue (box ctx.Engine, fun _ -> System.Collections.Concurrent.ConcurrentDictionary<string, Restored> ())
+    /// One `Resource` per restore key, so two targets missing the same key run one restore.
+    let private keyLocks = System.Collections.Concurrent.ConcurrentDictionary<string, Resource> ()
+    let mutable private processes = 0
+
+    /// The number of `dotnet restore` processes `restore`, `restoreWith` and `restoreAll` have
+    /// started in this process (a diagnostic: measurements and tests).
+    let restoreProcesses () = processes
+
+    /// The restore of a package set for a framework: its key (`<framework>-<hash>`, the hash of
+    /// the package folder and the restore project with the packages sorted, so the order of the
+    /// declarations does not matter) and the project text.
+    let private keyOf (root: string) (framework: string) (packages: Description.Package list) =
+        let sorted = packages |> List.sortBy (fun p -> p.Id.ToLowerInvariant (), defaultArg p.Version "", p.Private)
+        let text = restoreProjectText framework sorted
+        use sha = System.Security.Cryptography.SHA256.Create ()
+        let hash = sha.ComputeHash (System.Text.Encoding.UTF8.GetBytes (root + "\n" + text))
+        let hex = System.BitConverter.ToString(hash).Replace("-", "").ToLowerInvariant().Substring (0, 16)
+        framework.ToLowerInvariant () + "-" + hex, text
+
+    /// The folder all synthesized restore projects live in: `obj/xake/restore/<key>/restore.csproj`.
+    let private restoreDir (projectRoot: string) = Path.Combine (projectRoot, "obj", "xake", "restore")
+
+    /// Runs `dotnet restore` on `project` (one synthesized project or the batch project).
+    let private runRestore (root: string) (project: string) : Recipe<ExecContext, int> =
+        recipe {
+            System.Threading.Interlocked.Increment &processes |> ignore
+            let! exitCode =
+                shell {
+                    cmd "dotnet"
+                    args [ "restore"; project; "-v:quiet"; "-nologo"; "-p:NuGetAudit=false"
+                           "-p:ImportDirectoryBuildProps=false"; "-p:ImportDirectoryBuildTargets=false"
+                           "-p:ImportDirectoryPackagesProps=false"; "-p:ManagePackageVersionsCentrally=false" ]
+                    env ("NUGET_PACKAGES", root)
+                    workdir (Path.GetDirectoryName project)
+                    logprefix "[restore]"
+                    stdoutlevel (Tool.diagnosticLevel Level.Verbose)
+                    erroutlevel (Tool.diagnosticLevel Level.Verbose)
+                }
+            return exitCode
+        }
+
+    /// The `Restored` of a restore project whose `obj/project.assets.json` is written.
+    let private readRestored (root: string) (dir: string) (framework: string) : Restored =
+        let assets = Path.Combine (dir, "obj", "project.assets.json")
+        let graph = Nuget.readAssets assets framework
+        let references =
+            Nuget.compileItems assets framework
+            |> List.map (fun (id, version, item) ->
+                normal (Path.Combine (root, id.ToLowerInvariant (), version.ToLowerInvariant (), item)))
+            |> List.distinct
+            |> List.sortWith (fun a b -> System.String.CompareOrdinal (a, b))
+        { Framework = framework; References = references; Packages = Lock.packagesOf root graph
+          FrameworkReferences = graph.FrameworkAssemblies }
+
+    /// The package folder of this build, normalized.
+    let private packageFolder () =
+        recipe {
+            let! root = DotNetFwk.packageRoot ()
+            return normal root |> fun r -> r.TrimEnd '/'
+        }
+
+    /// The restore of `packages` for description `d` and `framework` (see `restore`): from
+    /// this build's cache when a target (or `restoreAll`) restored the same set already, else
+    /// one `dotnet restore` of its own.
     let private restorePackages (d: Description.Project) (framework: string) (packages: Description.Package list) : Recipe<ExecContext, Restored> =
         recipe {
             if List.isEmpty packages then
                 return { Framework = framework; References = []; Packages = []; FrameworkReferences = [] }
             else
                 let! options = getCtxOptions ()
-                let! root = DotNetFwk.packageRoot ()
-                let root = normal root |> fun r -> r.TrimEnd '/'
-                let dir = Path.Combine (options.ProjectRoot, "obj", "xake", "packages", d.Name, framework)
-                Directory.CreateDirectory dir |> ignore
-                let project = Path.Combine (dir, "restore.csproj")
-                File.WriteAllText (project, restoreProjectText framework packages)
-                let! exitCode =
-                    shell {
-                        cmd "dotnet"
-                        args [ "restore"; project; "-v:quiet"; "-nologo"; "-p:NuGetAudit=false"
-                               "-p:ImportDirectoryBuildProps=false"; "-p:ImportDirectoryBuildTargets=false"
-                               "-p:ImportDirectoryPackagesProps=false"; "-p:ManagePackageVersionsCentrally=false" ]
-                        env ("NUGET_PACKAGES", root)
-                        workdir dir
-                        logprefix "[restore]"
-                        stdoutlevel (Tool.diagnosticLevel Level.Verbose)
-                        erroutlevel (Tool.diagnosticLevel Level.Verbose)
-                    }
-                if exitCode <> 0 then
-                    failwithf "'%s': restoring the packages of the description for %s failed with exit code %d (see '%s'): %s"
-                        d.Name framework exitCode project
-                        (packages |> List.map (fun p -> p.Id + " " + defaultArg p.Version "*") |> String.concat ", ")
-                let assets = Path.Combine (dir, "obj", "project.assets.json")
-                let graph = Nuget.readAssets assets framework
-                let references =
-                    Nuget.compileItems assets framework
-                    |> List.map (fun (id, version, item) ->
-                        normal (Path.Combine (root, id.ToLowerInvariant (), version.ToLowerInvariant (), item)))
-                    |> List.distinct
-                    |> List.sortWith (fun a b -> System.String.CompareOrdinal (a, b))
-                return { Framework = framework; References = references; Packages = Lock.packagesOf root graph
-                         FrameworkReferences = graph.FrameworkAssemblies }
+                let! ctx = getCtx ()
+                let! root = packageFolder ()
+                let key, text = keyOf root framework packages
+                let cache = cacheOf ctx
+                match cache.TryGetValue key with
+                | true, restored -> return restored
+                | _ ->
+                    let lock = keyLocks.GetOrAdd (key, fun k -> Resource.newResource ("described-restore:" + k) 1)
+                    let! restored =
+                        withResource lock 1 (recipe {
+                            match cache.TryGetValue key with
+                            | true, restored -> return restored
+                            | _ ->
+                                let dir = Path.Combine (restoreDir options.ProjectRoot, key)
+                                Directory.CreateDirectory dir |> ignore
+                                let project = Path.Combine (dir, "restore.csproj")
+                                File.WriteAllText (project, text)
+                                let! exitCode = runRestore root project
+                                if exitCode <> 0 then
+                                    failwithf "'%s': restoring the packages of the description for %s failed with exit code %d (see '%s'): %s"
+                                        d.Name framework exitCode project
+                                        (packages |> List.map (fun p -> p.Id + " " + defaultArg p.Version "*") |> String.concat ", ")
+                                let restored = readRestored root dir framework
+                                cache.[key] <- restored
+                                return restored })
+                    return restored
         }
 
     /// <summary>
+    /// Restores the package sets `requests` ((framework, packages) pairs) with ONE `dotnet
+    /// restore` and keeps each result in this build's cache, so the targets asking for them
+    /// afterwards (`restore`, `restoreWith`, `Locks.generate`) do not start msbuild again. Sets
+    /// already in the cache and empty ones are skipped; identical sets are restored once. The
+    /// synthesized projects are `obj/xake/restore/&lt;key&gt;/restore.csproj`, the batch is a plain
+    /// msbuild project referencing them (`obj/xake/restore/batch-&lt;hash&gt;.proj`): restore
+    /// evaluates them in one process and resolves each graph on its own, in parallel. When
+    /// the batch fails nothing is cached and a warning says so: each target then restores
+    /// alone and reports its own error.
+    /// </summary>
+    let prefetch (requests: (string * Description.Package list) list) : Recipe<ExecContext, unit> =
+        recipe {
+            let! options = getCtxOptions ()
+            let! ctx = getCtx ()
+            let! root = packageFolder ()
+            let cache = cacheOf ctx
+            let wanted =
+                requests
+                |> List.filter (snd >> List.isEmpty >> not)
+                |> List.map (fun (framework, packages) -> let key, text = keyOf root framework packages in key, (framework, text))
+                |> List.distinctBy fst
+                |> List.filter (fun (key, _) -> not (cache.ContainsKey key))
+            if not (List.isEmpty wanted) then
+                let dir = restoreDir options.ProjectRoot
+                for key, (_, text) in wanted do
+                    let d = Path.Combine (dir, key)
+                    Directory.CreateDirectory d |> ignore
+                    let project = Path.Combine (d, "restore.csproj")
+                    // unchanged text keeps the file (and msbuild's no-op restore) as it is
+                    if not (File.Exists project) || File.ReadAllText project <> text then File.WriteAllText (project, text)
+                let keys = wanted |> List.map fst
+                let batch =
+                    use sha = System.Security.Cryptography.SHA256.Create ()
+                    let hash = sha.ComputeHash (System.Text.Encoding.UTF8.GetBytes (String.concat "\n" keys))
+                    Path.Combine (dir, "batch-" + System.BitConverter.ToString(hash).Replace("-", "").ToLowerInvariant().Substring (0, 16) + ".proj")
+                File.WriteAllText (batch,
+                    [ yield "<Project>"
+                      yield "  <ItemGroup>"
+                      for key in keys do yield sprintf "    <ProjectReference Include=\"%s/restore.csproj\" />" key
+                      yield "  </ItemGroup>"
+                      yield "  <Import Project=\"$(MSBuildToolsPath)/Microsoft.Common.targets\" />"
+                      yield "</Project>"
+                      yield "" ] |> String.concat "\n")
+                do! trace Info "restoring %d package set(s) in one restore ('%s')" keys.Length batch
+                let! exitCode = runRestore root batch
+                if exitCode <> 0 then
+                    do! trace Warning "the batch restore '%s' failed with exit code %d; each target restores its packages alone" batch exitCode
+                else
+                    for key, (framework, _) in wanted do
+                        cache.[key] <- readRestored root (Path.Combine (dir, key)) framework
+        }
+
+    /// The packages `restore` restores for description `d` and `framework`: its own (project-wide
+    /// and `byFramework`) and the implicit ones (`implicitPackages`). Pure.
+    let restoreInput (d: Description.Project) (framework: string) : Description.Package list =
+        let packages, _, _, _ = itemsFor d framework
+        packages @ implicitPackages d framework
+
+    /// <summary>
     /// Resolves the packages of description `d` for `framework` the way msbuild does: writes
-    /// `restoreProjectText` to `obj/xake/packages/&lt;name&gt;/&lt;framework&gt;/restore.csproj` under
-    /// the project root, runs `dotnet restore` on it into the build's package folder
+    /// `restoreProjectText` to `obj/xake/restore/&lt;framework&gt;-&lt;hash&gt;/restore.csproj` under
+    /// the project root (the hash is of the package set: one folder per distinct set), runs `dotnet restore` on it into the build's package folder
     /// (`DotNetFwk.packageRoot`: `NUGET_PACKAGES`), then reads its `project.assets.json`
     /// (`Nuget.readAssets`, `Nuget.compileItems`; the packages' `frameworkAssemblies` become
     /// `FrameworkReferences`). The repository's `nuget.config` applies; its
     /// `Directory.Build.props`/`Directory.Packages.props` do not. This is the lock-generation
     /// step: `fsc`/`csc` never call it, they take its result through `packages`. A description
-    /// without packages for `framework` gives an empty result without running anything. Only
+    /// without packages for `framework` gives an empty result without running anything. A set
+    /// this build restored already (by another target, or by `restoreAll` / `prefetch` in one
+    /// batch) comes from the build's cache without running anything either. Only
     /// the description's own packages: a project compiled without a lock whose project
     /// references declare packages takes `restoreWith`.
     /// </summary>
     let restore (d: Description.Project) (framework: string) : Recipe<ExecContext, Restored> =
-        let packages, _, _, _ = itemsFor d framework
-        restorePackages d framework (packages @ implicitPackages d framework)
+        restorePackages d framework (restoreInput d framework)
 
     /// <summary>
     /// The packages description `d`'s project references bring for `framework`, as msbuild
@@ -327,6 +450,15 @@ module Described =
             }
         walk [] [ for n in d.ProjectRefs -> n, d.Name, framework ] []
 
+    /// The packages `restoreWith` restores: the description's for `framework`, the implicit
+    /// ones, and those its project references bring (`flowingPackages`).
+    let private withFlowing (descriptionOf: string -> string) (d: Description.Project) (framework: string) =
+        recipe {
+            let! flowing = flowingPackages descriptionOf d framework
+            let packages, _, _, _ = itemsFor d framework
+            return packages @ implicitPackages d framework @ flowing
+        }
+
     /// <summary>
     /// `restore` for a project compiled without a lock (`csc/fsc { project }` straight from the
     /// description): the description's packages plus those its project references bring
@@ -340,11 +472,84 @@ module Described =
     /// </summary>
     let restoreWith (descriptionOf: string -> string) (d: Description.Project) (framework: string) : Recipe<ExecContext, Restored> =
         recipe {
-            let! flowing = flowingPackages descriptionOf d framework
-            let packages, _, _, _ = itemsFor d framework
-            let! restored = restorePackages d framework (packages @ implicitPackages d framework @ flowing)
+            let! packages = withFlowing descriptionOf d framework
+            let! restored = restorePackages d framework packages
             return restored
         }
+
+    /// <summary>
+    /// Fills this build's restore cache for the direct route: for each description of
+    /// `descriptions` (paths) and each of its frameworks that `frameworks` names (an empty list:
+    /// all of its frameworks), the packages `restoreWith descriptionOf` restores, all in ONE
+    /// `dotnet restore` (`prefetch`). The `restoreWith` of each target then reads the cache.
+    /// Call it before needing the targets; a target reached without it restores alone, as before:
+    /// <code>
+    /// "main" => recipe {
+    ///     do! Described.restoreAll descOf [ for n in names -> descOf n ] fwks
+    ///     do! need [ for n in names do for f in fwks -> dllOf "Release" f n ] }
+    /// </code>
+    /// </summary>
+    let restoreAll (descriptionOf: string -> string) (descriptions: string list) (frameworks: string list) : Recipe<ExecContext, unit> =
+        recipe {
+            let rec gather (paths: string list) (acc: (string * Description.Package list) list) =
+                recipe {
+                    match paths with
+                    | [] -> return acc
+                    | path :: rest ->
+                        let! d = Description.load path
+                        let fwks = if List.isEmpty frameworks then d.Frameworks else d.Frameworks |> List.filter (fun f -> frameworks |> List.exists (same f))
+                        let rec each (fs: string list) (acc: (string * Description.Package list) list) =
+                            recipe {
+                                match fs with
+                                | [] -> return acc
+                                | f :: more ->
+                                    let! packages = withFlowing descriptionOf d f
+                                    let! result = each more (acc @ [ f, packages ])
+                                    return result
+                            }
+                        let! acc = each fwks acc
+                        let! result = gather rest acc
+                        return result
+                }
+            let! requests = gather descriptions []
+            do! prefetch requests
+        }
+
+    /// <summary>
+    /// The transitive project references of description `d` (the closure of `projectRefs`, each
+    /// description read -- a dependency -- at `descriptionOf name`), each once, a project after
+    /// the projects it references: what msbuild hands the compiler for `d`'s project references.
+    /// A project compiled straight from its description (no lock) passes their outputs with `ref`:
+    /// <code>
+    /// let! refs = Described.closure descOf d
+    /// do! need [ for r in refs -> dllOf cfg fwk r ]
+    /// do! csc { targetfwk fwk; ref (refs |> List.fold (fun fs r -> fs ++ dllOf cfg fwk r) Fileset.Empty)
+    ///           project (descOf name); config cfg; packages pkgs }
+    /// </code>
+    /// Fails on a cycle, naming it.
+    /// </summary>
+    let closure (descriptionOf: string -> string) (d: Description.Project) : Recipe<ExecContext, string list> =
+        // depth first, a project emitted after its references
+        let rec visit (path: string list) (name: string) (acc: string list) : Recipe<ExecContext, string list> =
+            recipe {
+                if List.contains name acc then return acc
+                elif List.contains name path then
+                    return failwithf "'%s': the project references form a cycle: %s" d.Name (String.concat " -> " (List.rev (name :: path)))
+                else
+                    let! r = Description.load (descriptionOf name)
+                    let! acc = visitAll (name :: path) r.ProjectRefs acc
+                    return acc @ [ name ]
+            }
+        and visitAll (path: string list) (names: string list) (acc: string list) : Recipe<ExecContext, string list> =
+            recipe {
+                match names with
+                | [] -> return acc
+                | n :: rest ->
+                    let! acc = visit path n acc
+                    let! result = visitAll path rest acc
+                    return result
+            }
+        visitAll [ d.Name ] d.ProjectRefs []
 
     let private hasWildcard (s: string) = s.Contains "*" || s.Contains "?"
 

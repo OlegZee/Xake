@@ -150,7 +150,8 @@ type ``Described compilation``() =
         Assert.That(r.References |> List.exists (fun p -> p.EndsWith "/fsharp.core/8.0.100/lib/netstandard2.0/FSharp.Core.dll"), Is.True, sprintf "%A" r.References)
         let fsharpCore = r.Packages |> List.find (fun p -> p.Id = "FSharp.Core")
         Assert.That((fsharpCore.Version, fsharpCore.Direct), Is.EqualTo (("8.0.100", true)))
-        Assert.That(File.Exists "obj/xake/packages/Xake/netstandard2.0/obj/project.assets.json", Is.True)
+        Assert.That(Directory.GetFiles ("obj/xake/restore", "project.assets.json", SearchOption.AllDirectories)
+                    |> Array.exists (fun f -> f.Replace('\\', '/').Contains "/netstandard2.0-"), Is.True)
 
     /// The acceptance of the PR: src/core and src/dotnet from their descriptions, Release,
     /// both frameworks, through `Lock.record` then `Lock.build`, into assemblies that load.
@@ -339,3 +340,98 @@ type ``Described compilation``() =
                 do! csc { targetfwk "net472"; out (File.make "g6/out/Without.dll"); project path; config "Release"; packages { r with FrameworkReferences = [] } } }))
         Assert.That(e.Data0, Is.Not.Empty)
         Assert.That(File.ReadAllText "g6-without.log", Does.Contain "CS0012")
+
+    /// The descriptions `names` (C#, under `<dir>/`), fresh: each folder emptied and given a source.
+    member private x.CsFolder (dir: string) (names: string list) =
+        if Directory.Exists dir then Directory.Delete (dir, true)
+        for n in names do
+            Directory.CreateDirectory (dir </> n) |> ignore
+            File.WriteAllText (dir </> n </> (n + ".cs"), sprintf "namespace %s { public class T {} }\n" n)
+
+    /// B2.1: two targets restoring the same package set in one build start one `dotnet restore`
+    /// (the build's cache), and get the same result.
+    [<Test; Category("Integration")>]
+    member x.``two targets with the same package set restore once``() =
+        x.CsFolder "same" [ "X"; "Y" ]
+        x.CsDescription "same" "X" [ "netstandard2.0" ] [] [ "System.Memory", "4.6.0" ]
+        x.CsDescription "same" "Y" [ "netstandard2.0" ] [] [ "System.Memory", "4.6.0" ]
+        let results = System.Collections.Concurrent.ConcurrentBag<Described.Restored> ()
+        let restoreOf name = recipe {
+            let! d = Description.load (sprintf "same/%s/%s" name Description.FileName)
+            let! r = Described.restore d "netstandard2.0"
+            results.Add r }
+        let before = Described.restoreProcesses ()
+        xake {x.TestOptions with FileLog = "same.log"; ThrowOnError = true; Vars = [ "CI", "off" ]; FileLogLevel = Loud} {
+            wantOverride [ "both" ]
+            rules [ "both" <== [ "x"; "y" ]; "x" => restoreOf "X"; "y" => restoreOf "Y" ]
+        }
+        Assert.That(Described.restoreProcesses () - before, Is.EqualTo 1)
+        let all = results.ToArray ()
+        Assert.That(all.Length, Is.EqualTo 2)
+        Assert.That(all.[0], Is.EqualTo all.[1])
+        Assert.That(all.[0].Packages |> List.exists (fun p -> p.Id = "System.Memory" && p.Direct), Is.True)
+
+    /// B2.1: `restoreAll` over three descriptions x two frameworks is one msbuild process; the
+    /// targets' `restoreWith` afterwards start none, and get what they would alone.
+    [<Test; Category("Integration")>]
+    member x.``restoreAll restores three descriptions for two frameworks in one process``() =
+        x.CsFolder "batch" [ "A"; "B"; "C" ]
+        let fwks = [ "netstandard2.0"; "net472" ]
+        x.CsDescription "batch" "A" fwks [] [ "System.Memory", "4.6.0" ]
+        x.CsDescription "batch" "B" fwks [] [ "System.Buffers", "4.6.0" ]
+        x.CsDescription "batch" "C" fwks [ "A" ] []        // C gets A's package: the same set as A
+        let descOf name = sprintf "batch/%s/%s" name Description.FileName
+        let names = [ "A"; "B"; "C" ]
+        let batched = System.Collections.Generic.List<string * Described.Restored> ()
+        let mutable afterBatch = 0
+        let before = Described.restoreProcesses ()
+        x.Run "batch" (recipe {
+            do! Described.restoreAll descOf [ for n in names -> descOf n ] fwks
+            afterBatch <- Described.restoreProcesses ()
+            for n in names do
+                let! d = Description.load (descOf n)
+                for f in fwks do
+                    let! r = Described.restoreWith descOf d f
+                    batched.Add ((n + "/" + f), r) })
+        Assert.That(afterBatch - before, Is.EqualTo 1, "one dotnet restore for the batch")
+        Assert.That(Described.restoreProcesses () - afterBatch, Is.EqualTo 0, "the targets read the cache")
+        // the same results as restoring alone (a new build: an empty cache)
+        let alone = System.Collections.Generic.List<string * Described.Restored> ()
+        x.Run "alone" (recipe {
+            for n in names do
+                let! d = Description.load (descOf n)
+                for f in fwks do
+                    let! r = Described.restoreWith descOf d f
+                    alone.Add ((n + "/" + f), r) })
+        Assert.That(List.ofSeq batched, Is.EqualTo (List.ofSeq alone))
+        let c472 = batched |> Seq.find (fst >> (=) "C/net472") |> snd
+        Assert.That(c472.Packages |> List.exists (fun p -> p.Id = "System.Memory" && p.Direct), Is.True)
+
+    /// B2.1: the transitive project references of a description, a project after the ones it
+    /// references, each once; a cycle fails naming it.
+    [<Test>]
+    member x.``closure lists the transitive project references in dependency order``() =
+        x.CsFolder "closure" [ "A"; "B"; "C"; "D" ]
+        x.CsDescription "closure" "A" [ "netstandard2.0" ] [ "B"; "C" ] []
+        x.CsDescription "closure" "B" [ "netstandard2.0" ] [ "C" ] []
+        x.CsDescription "closure" "C" [ "netstandard2.0" ] [] []
+        x.CsDescription "closure" "D" [ "netstandard2.0" ] [ "A" ] []
+        let descOf name = sprintf "closure/%s/%s" name Description.FileName
+        let mutable ofA = []
+        let mutable ofD = []
+        x.Run "closure" (recipe {
+            let! a = Description.load (descOf "A")
+            let! refs = Described.closure descOf a
+            ofA <- refs
+            let! d = Description.load (descOf "D")
+            let! refs = Described.closure descOf d
+            ofD <- refs })
+        Assert.That(ofA, Is.EqualTo [ "C"; "B" ])
+        Assert.That(ofD, Is.EqualTo [ "C"; "B"; "A" ])
+        x.CsDescription "closure" "C" [ "netstandard2.0" ] [ "A" ] []
+        let e = Assert.Throws<XakeException>(fun () ->
+            x.Run "closure-cycle" (recipe {
+                let! d = Description.load (descOf "D")
+                let! _ = Described.closure descOf d
+                () }))
+        Assert.That(File.ReadAllText "closure-cycle.log", Does.Contain "cycle: D -> A -> B -> C -> A")

@@ -20,6 +20,23 @@ done (StrongName, Pack; Babel and delegated signing wait for the user) · **lock
 graph in the lock, repo-a re-proven 18/18 · open decisions for the user: lock update
 mechanism, release. Details: session.md, README.md.
 
+**Status 2026-10-13 (night run):** fixes plan rounds A1, B1, B2.1, D1 (hermetic stack `pr/import-fidelity` -> `pr/lock-fidelity` -> `pr/batch-restore` -> `pr/lock-roots`) and C1, C2a (core `pr/fileset-perf` -> `pr/rule-match-cache`) implemented, critic-reviewed, local only (nothing pushed or merged); the trial project rerun on local packages: 33 -> 7 s clean, 224 -> 20 s four configs, script without workarounds; report `fsc-rework/night-report-2026-10-13.html`.
+
+## Fixes plan (fsc-rework/fixes-plan.md, 2026-10-13)
+- [x] A1 import/project fidelity G1-G4, G13 — `pr/import-fidelity`
+- [x] B1 transitive refs, framework assemblies, directory, xml rule, G14 — `pr/lock-fidelity`
+- [x] B2.1 batch restore G15, closure helper — `pr/batch-restore`
+- [ ] B2.2 direct HTTP download for locks — not started (B2.1 made restore cheap enough for now)
+- [x] C0 stats from `.xake` — `exp-repo/tools/xakestats.fsx`, `trial-stats.md`
+- [x] C1 fileset regex cache G8 — `pr/fileset-perf`
+- [x] C2a rule-match cache, observable agent errors (G9/G17 cause) — `pr/rule-match-cache`
+- [-] C2 profiling — not needed: C0 + C1/C2a explained G9/G17
+- [x] D1 roots/pathmap G10, prerequisite G11 (test only), A1/B critic fixes, self-build locks regenerated — `pr/lock-roots`
+- [x] E the trial project rerun — `trial-rerun.md`
+- [ ] F pack (PR 8) — waits for answers
+- [ ] G16 hang — not reproduced (`pr/pool-hang` holds repro tests only); agent-failure guards in C2a
+- [ ] open: HERMETIC on generated C# locks (SDK csc prerequisite), 3.7.1/0.3.1 release, `build.fsc.fsx` on the new API
+
 **Status 2026-10-11 (fsc-rework implementation):** plan of `fsc-rework/brief.md` §5 confirmed by the user; PRs 1-6 (minus PR 6 wiring) implemented by subagents and open as #44-#49; questions in `fsc-rework/questions.md`; PR 7 waits for the merges.
 
 ## fsc-rework PR plan (brief §5, 2026-10-11)
@@ -31,7 +48,7 @@ mechanism, release. Details: session.md, README.md.
 - [x] PR 6 Core: fingerprints library + wiring — #47 merged 2026-10-11, fixes #51, wiring in #50
 - [x] PR 7 Self-build: `build.fsc.fsx` per the draft — PR #50 merged 2026-10-12 (includes the fingerprints wiring of PR 6); Xake 3.7.0.26 and hermetic 0.3.0.28 released on the way
 - [ ] PR 8 Hermetic: pack
-- [ ] PR 9 the trial product experiment (report, no PR)
+- [x] PR 9 the trial product experiment (report, no PR) — done 2026-10-13, report `fsc-rework/trial-experiment.md`, gaps G1-G13 to triage
 - [ ] PR 10 later: `cached` rule decorator
 
 ## Day zero (brief §8h/§8i/§8j)

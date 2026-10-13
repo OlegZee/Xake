@@ -1139,3 +1139,57 @@ metadata (PR 5 q4) and versioning (PR 2 q5, PR 4 q1).
 
 Worktree cleanup 2026-10-12: all `pr/*` worktrees and local branches of #44-#53 removed; origin
 branches already deleted by the merges. Left: `pr/build-fsc-lock` (#42, kept open by decision).
+
+## 2026-10-12 (later) — the trial product experiment started (plan item 9)
+
+Experiment folder `/path/to/exp-repo/` beside the trial project repos, with detached
+worktrees of both repos at `origin/develop` (`repo-a` 25b7e48, `repo-b`
+808ef9f2); the user's own checkouts are untouched (repo-a sits on his feature branch). The
+subagent writes `build.fsx` there (brand as a prefix of every path and command), imports per
+brand, generates Debug + Release locks, builds from the locks, measures against `dotnet build`,
+tries a basic pack with `Pack.nupkg`, and reports to `fsc-rework/trial-experiment.md` plus the script
+copy `trial-build.fsx` in this folder. Packages: Xake 3.7.0.26, Xake.Hermetic.Dotnet 0.3.0.28.
+
+To remove the experiment worktrees later (user's action):
+`git -C /path/to/repo-a worktree remove /path/to/exp-repo/repo-a`
+and the same for page.
+
+**Result (2026-10-13)**: `fsc-rework/trial-experiment.md` + `trial-build.fsx`. Both brands, Debug + Release,
+all 15 projects (120 dlls) build from committed locks; fresh-clone run with no msbuild; packs
+byte-identical; but only with six script workarounds (G1-G7) and the script is 179 lines vs the
+draft's 78. Xake clean build 33 s at 3.0 cores vs msbuild 13 s (Debug, 9 cores) / 27 s (Release,
+6 cores); no-op 7 s vs 2 s; the `!**/.*/**/*` exclude mask alone costs 1.4 s per expansion.
+Thirteen gaps G1-G13 listed in the report with fix sizes. Not an engine point verified: lock
+tokenisation outside `$(ProjectRoot)` (G10). Next: the user picks which gaps to fix (library
+G1-G7, G12; engine performance G8-G9; hermetic G10-G11; import idempotence G13).
+
+## 2026-10-13 (night) — autonomous run of the fixes plan
+
+The user (going to sleep): run the improvements locally, merge nothing into `dev`, commit as
+needed, use local builds for the trial project experiment, a critic subagent judges each change, by morning:
+all improvements with measurements, profiles (Gantt and other charts) and conclusions.
+
+Branches/worktrees (all from `origin/dev` 0139682 unless stacked), nothing pushed yet:
+
+| round | branch | worktree | status |
+|---|---|---|---|
+| C0 stats from `.xake` | (experiment only) | `/path/to/exp-repo/tools/xakestats.fsx` | done: `fsc-rework/trial-stats.md`; db readable by reflection; sequential 27.6 s util 3.5, avg concurrency 1.0 (chain), peak 8; parallel four graphs 218 s, completed (no hang this time), peak 11, 116 of 218 s with no file target active; Excel targets 3 s -> 33 s own under load |
+| A1 import/project fidelity (G1-G4, G13) | `pr/import-fidelity` | `.claude/worktrees/pr/import-fidelity` | done (b165cb4): resx via `project`, metadata case, `options.noWarn`, `assemblyAttributes`, re-import clean; 211 tests; two leftovers for B1: stale `.resources` in the runner (workaround `Described.refreshResources`), backslashes in generated source turned to `/` by the lock writer; report `a1-report.md` |
+| C1 fileset perf (G8) | `pr/fileset-perf` | `.claude/worktrees/pr/fileset-perf` | done (2b5bf39): `Path.maskToRegex` compiled a `RegexOptions.Compiled` regex per call (~1 ms) for every mask segment per file; now cached per mask string; the trial project Layout masks 1653 ms -> 14 ms, benchmark 1250 -> 7-13 ms; 329 tests; also stops `locateRule` recompiling; report `c1-report.md` |
+| G16 hang repro/fix | `pr/pool-hang` | `.claude/worktrees/pr/pool-hang` | done, NOT reproduced (20 cases + 2 stress pass; join cannot deadlock: `withYieldedSlot`); premise wrong: the `.resources` targets had completed, the stuck tasks were two net472 Excel compiles inside `CompilerRunner.run` before `[shell] starting`; hypotheses: a silently dead MailboxProcessor (pool or db agent), something in CompilerRunner; next hang: `dotnet-stack report -p <pid>`; branch holds the repro tests only; report `g16-report.md` |
+| C2a rule-match regex cache + observable agent errors | `pr/rule-match-cache` | `.claude/worktrees/pr/rule-match-cache` | done (6d4eea7 + merge 2343ab4 of `pr/fileset-perf`): `locateRule` 30 rules x 5000 calls 94 s -> 0.17 s; trial-project-like 3000 needs 10.1 s -> 0.03 s; `Compiled` kept (noise); pool/db agents handle failures (pool failure fails the build, db store failure logged, kept in memory); 327 tests; critic running; report `c2a-report.md` |
+| B1 refs/framework asm/dir (G5-G7, G12, G14) | `pr/lock-fidelity` | `.claude/worktrees/pr/lock-fidelity`, stacked on A1 b165cb4 | done (9bf45d6): transitive refs from refs' locks, `Described.restoreWith descriptionOf` for the direct route, `frameworkAssemblies`, `Directory` = project folder, separate `.xml` rule (two-target form would rebuild forever), runner recompiles `.resources` on change, writer keeps `\` in generated source; 218 + 324 tests; questions: closure helper for the direct route, a Xake 3.7.x patch so `refreshResources` can go, regenerate self-build locks; report `b1-report.md` |
+| B2.1 batch restore (G15) | `pr/batch-restore` | `.claude/worktrees/pr/batch-restore`, stacked on B1 9bf45d6 | done (c2b5eb2): per-build restore cache keyed by (fwk, package folder, package set), `Described.prefetch`/`restoreAll`, `Locks.restoreAll`, `needAll` prefetches missing packages, `Described.closure`; self-build update-locks 6 restores -> 1, 2.4 s -> 0.9 s; 222 tests; report `b21-report.md` |
+| D1 roots/pathmap, sdk prerequisite (G10, G11) + A1 critic fixes | `pr/lock-roots` | `.claude/worktrees/pr/lock-roots`, stacked on B2.1 c2b5eb2 | done (550bac3): `generateWith/compileAsWith/needAllWith/restoreAllWith roots`, one pathmap per root, HERMETIC treats extra roots as project root; G11 needed no code (test only: generated locks already record the prerequisite; the trial project refused because its pin is `latestFeature` and it uses the SDK csc); A1 critic F1/F3 applied; self-build locks regenerated (`Directory`, net462 `System.Windows.Forms.dll` from the Xake package's framework assemblies); critic-b fix + nits applied; 226 tests; open q: should a generated C# lock's SDK csc be covered by the prerequisite as for imports; report `d1-report.md` |
+| critic | - | read-only | core: all SHIP, db guard with fix F1 (atomic record write) -> sent back to the C2a author; A1: all SHIP with fixes: F1 `_` folder -> `__` only for the first folder in the manifest name, F2 backslash in attribute args (done by B1's writer fix), F3 `Link`/`ManifestResourceName` metadata ignored silently -> to apply at the top of the stack (D1) |
+| the trial project rerun on local packages | experiment; integration worktree `.claude/worktrees/night-integration` (detached 74bf4d9 = `pr/lock-roots` + `pr/rule-match-cache`, not a branch) | `exp-repo/` | done: `trial-rerun.md`, scripts `trial-build-2.fsx` (124 lines, 92 + pack, zero workarounds) and `trial-direct-2.fsx` (43); clean acme Release 33.4 -> 6.9 s (util 8.3), no-op 7.1 -> 0.9 s, four configs `<==` 224 -> 19.7 s (util 14.4), fresh clone 141 -> 26.2 s, direct 57 -> 8.5 s, update-locks 60 locks 3.5 s; msbuild 24 s / 80 s sequential (its concurrent run is invalid: shared bin/obj fail); Gantt: critical path = wall, peak 36, mean 16; no hang in 9 runs; still open: HERMETIC on generated C# locks (SDK csc not covered), closure example naming (`refs` is an op name), G10 with sibling repos not exercised |
+| report HTML + md | docs | `fsc-rework/night-report-2026-10-13.html` / `.md` | done; docs fix 27e4c6e on `pr/lock-roots` |
+
+**Morning hand-over (2026-10-13)**: read `fsc-rework/night-report-2026-10-13.html` (charts) or `.md`.
+Merge order (all local, nothing pushed): core `pr/fileset-perf` then `pr/rule-match-cache`;
+hermetic `pr/import-fidelity` -> `pr/lock-fidelity` -> `pr/batch-restore` -> `pr/lock-roots`;
+`pr/pool-hang` holds only the G16 repro tests (optional); `night-integration` is a detached
+worktree (`git worktree remove .claude/worktrees/night-integration`), not a branch. After the
+merges: tags `v3.7.1` and `hermetic-v0.3.1`, then `build.fsc.fsx` and the trial project scripts move from the
+`-night` feed (`/path/to/exp-repo/feed/`) to nuget.org. Decisions pending:
+HERMETIC on generated C# locks (SDK csc prerequisite, d1-report q1), pack (PR 8) answers, G16.

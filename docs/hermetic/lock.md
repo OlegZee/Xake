@@ -1167,7 +1167,9 @@ target "out/(cfg:*)/(fwk:*)/(name:*).dll" {
 - **`needAll descriptions cfg lockOf outOf`** reads every description and needs
   `outOf cfg fwk name` + `/<assembly>.dll` for each of its frameworks, all at once. A described
   project with no lock at `lockOf name cfg` fails the build pointing at `update-locks`; nothing
-  regenerates a lock on its own.
+  regenerates a lock on its own. The packages all the locks name that the folder lacks are
+  fetched first in one restore; if that fails (a bad feed, one wrong version) it is a warning, the
+  compiles go on and each restores, and fails, alone.
 - **`compileAs lockPath fwk versions`** runs inside the rule whose target is the `.dll`. It reads
   the lock (a dependency), takes its one entry for `fwk` (the target's file name must be the
   entry's assembly name) and compiles it into the target: `--out:`/`/out:` is the rule's target

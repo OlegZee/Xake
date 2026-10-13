@@ -361,34 +361,45 @@ module Described =
                 |> List.map (fun (framework, packages) -> let key, text = keyOf root framework packages in key, (framework, text))
                 |> List.distinctBy fst
                 |> List.filter (fun (key, _) -> not (cache.ContainsKey key))
-            if not (List.isEmpty wanted) then
-                let dir = restoreDir options.ProjectRoot
-                for key, (_, text) in wanted do
-                    let d = Path.Combine (dir, key)
-                    Directory.CreateDirectory d |> ignore
-                    let project = Path.Combine (d, "restore.csproj")
-                    // unchanged text keeps the file (and msbuild's no-op restore) as it is
-                    if not (File.Exists project) || File.ReadAllText project <> text then File.WriteAllText (project, text)
-                let keys = wanted |> List.map fst
-                let batch =
-                    use sha = System.Security.Cryptography.SHA256.Create ()
-                    let hash = sha.ComputeHash (System.Text.Encoding.UTF8.GetBytes (String.concat "\n" keys))
-                    Path.Combine (dir, "batch-" + System.BitConverter.ToString(hash).Replace("-", "").ToLowerInvariant().Substring (0, 16) + ".proj")
-                File.WriteAllText (batch,
-                    [ yield "<Project>"
-                      yield "  <ItemGroup>"
-                      for key in keys do yield sprintf "    <ProjectReference Include=\"%s/restore.csproj\" />" key
-                      yield "  </ItemGroup>"
-                      yield "  <Import Project=\"$(MSBuildToolsPath)/Microsoft.Common.targets\" />"
-                      yield "</Project>"
-                      yield "" ] |> String.concat "\n")
-                do! trace Info "restoring %d package set(s) in one restore ('%s')" keys.Length batch
-                let! exitCode = runRestore root batch
-                if exitCode <> 0 then
-                    do! trace Warning "the batch restore '%s' failed with exit code %d; each target restores its packages alone" batch exitCode
-                else
-                    for key, (framework, _) in wanted do
-                        cache.[key] <- readRestored root (Path.Combine (dir, key)) framework
+            // the per-key locks single restores take (`restorePackages`), in key order, so a
+            // target restoring one of these keys meanwhile does not run a second msbuild on its `obj`
+            let rec holding (keys: string list) (body: Recipe<ExecContext, unit>) : Recipe<ExecContext, unit> =
+                match keys with
+                | [] -> body
+                | key :: rest ->
+                    let lock = keyLocks.GetOrAdd (key, fun k -> Resource.newResource ("described-restore:" + k) 1)
+                    withResource lock 1 (holding rest body)
+            do! holding (wanted |> List.map fst |> List.sort) (recipe {
+                // what another target restored while this waited is not restored again
+                let wanted = wanted |> List.filter (fun (key, _) -> not (cache.ContainsKey key))
+                if not (List.isEmpty wanted) then
+                    let dir = restoreDir options.ProjectRoot
+                    for key, (_, text) in wanted do
+                        let d = Path.Combine (dir, key)
+                        Directory.CreateDirectory d |> ignore
+                        let project = Path.Combine (d, "restore.csproj")
+                        // unchanged text keeps the file (and msbuild's no-op restore) as it is
+                        if not (File.Exists project) || File.ReadAllText project <> text then File.WriteAllText (project, text)
+                    let keys = wanted |> List.map fst
+                    let batch =
+                        use sha = System.Security.Cryptography.SHA256.Create ()
+                        let hash = sha.ComputeHash (System.Text.Encoding.UTF8.GetBytes (String.concat "\n" keys))
+                        Path.Combine (dir, "batch-" + System.BitConverter.ToString(hash).Replace("-", "").ToLowerInvariant().Substring (0, 16) + ".proj")
+                    File.WriteAllText (batch,
+                        [ yield "<Project>"
+                          yield "  <ItemGroup>"
+                          for key in keys do yield sprintf "    <ProjectReference Include=\"%s/restore.csproj\" />" key
+                          yield "  </ItemGroup>"
+                          yield "  <Import Project=\"$(MSBuildToolsPath)/Microsoft.Common.targets\" />"
+                          yield "</Project>"
+                          yield "" ] |> String.concat "\n")
+                    do! trace Info "restoring %d package set(s) in one restore ('%s')" keys.Length batch
+                    let! exitCode = runRestore root batch
+                    if exitCode <> 0 then
+                        do! trace Warning "the batch restore '%s' failed with exit code %d; each target restores its packages alone" batch exitCode
+                    else
+                        for key, (framework, _) in wanted do
+                            cache.[key] <- readRestored root (Path.Combine (dir, key)) framework })
         }
 
     /// The packages `restore` restores for description `d` and `framework`: its own (project-wide
@@ -426,7 +437,7 @@ module Described =
     /// </summary>
     let flowingPackages (descriptionOf: string -> string) (d: Description.Project) (framework: string)
             : Recipe<ExecContext, Description.Package list> =
-        let declared, _, _, _ = itemsFor d framework
+        let declared = restoreInput d framework
         let rec walk (seen: string list) (queue: (string * string * string) list) (acc: Description.Package list) =
             recipe {
                 match queue with
@@ -442,7 +453,8 @@ module Described =
                         | None ->
                             failwithf "'%s' (%s): projectRef '%s' has no framework compatible with it (%s)"
                                 referrer fwk name (String.concat ", " r.Frameworks)
-                    let packages, _, _, _ = itemsFor r rf
+                    // with the implicit ones (F#'s System.ValueTuple), as the lock route and msbuild flow them
+                    let packages = restoreInput r rf
                     let known = declared @ acc
                     let adds =
                         packages
@@ -765,7 +777,9 @@ module Described =
                      // composed csc references only mscorlib for netstandard (fsc adds netstandard.dll itself)
                      elif not fs && List.contains "NETSTANDARD" (frameworkDefines framework) then [ "netstandard" ]
                      else []) @ references @ packageFrameworkRefs
-                    |> List.map (fun r -> if r.EndsWith ".dll" then r else r + ".dll") |> List.distinct
+                    |> List.map (fun r -> if r.EndsWith ".dll" then r else r + ".dll")
+                    // an assembly name is case-insensitive (`WindowsBase`, `windowsbase`): the first spelling
+                    |> List.distinctBy (fun r -> r.ToLowerInvariant ())
                   PackageRefs = packageRefs
                   Sources =
                     d.Sources |> List.map (fun s -> if s.StartsWith "!" then "!" + inProject (s.Substring 1) else inProject s)

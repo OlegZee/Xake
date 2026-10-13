@@ -310,6 +310,32 @@ type ``Described compilation``() =
         Assert.That(flowing.Value.Packages |> List.exists (fun p -> p.Id = "System.Memory" && p.Version = "4.6.0" && p.Direct), Is.True, sprintf "%A" flowing.Value.Packages)
         Assert.That(File.Exists "g14/out/A.dll", Is.True)
 
+    /// The direct route flows a referenced F# project's implicit `System.ValueTuple` (net462),
+    /// as the lock route and msbuild do; a referrer that has it implicitly too gets it once.
+    [<Test>]
+    member x.``flowingPackages takes a reference's implicit packages``() =
+        if Directory.Exists "flowimplicit" then Directory.Delete ("flowimplicit", true)
+        for d in [ "flowimplicit/A"; "flowimplicit/F"; "flowimplicit/G" ] do Directory.CreateDirectory d |> ignore
+        let fs (name: string) (refs: string list) =
+            File.WriteAllText (sprintf "flowimplicit/%s/%s" name Description.FileName,
+                sprintf "{\n  \"name\": \"%s\",\n  \"project\": \"%s.fsproj\",\n  \"language\": \"fsharp\",\n  \"frameworks\": [\"net462\"],\n  \"sources\": [\"Lib.fs\"],\n  \"projectRefs\": [%s]\n}\n"
+                    name name (refs |> List.map (sprintf "\"%s\"") |> String.concat ", "))
+        fs "F" []
+        fs "G" [ "F" ]
+        x.CsDescription "flowimplicit" "A" [ "net462" ] [ "F" ] []
+        let descOf name = sprintf "flowimplicit/%s/%s" name Description.FileName
+        let mutable csharp = []
+        let mutable fsharp = []
+        x.Run "flowimplicit" (recipe {
+            let! a = Description.load (descOf "A")
+            let! fa = Described.flowingPackages descOf a "net462"
+            csharp <- fa
+            let! g = Description.load (descOf "G")
+            let! fg = Described.flowingPackages descOf g "net462"
+            fsharp <- fg })
+        Assert.That(csharp |> List.map (fun p -> p.Id, p.Version), Is.EqualTo [ "System.ValueTuple", Some "4.6.2" ])
+        Assert.That(fsharp, Is.Empty, "G has System.ValueTuple implicitly itself")
+
     /// G6: a package's `frameworkAssemblies` (DocumentFormat.OpenXml: WindowsBase for .NET
     /// Framework) are referenced by name on net472, as msbuild does; without them the use of
     /// the package fails (CS0012).

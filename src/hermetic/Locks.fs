@@ -554,6 +554,8 @@ module Locks =
     /// description, `outOf cfg fwk name` + `/&lt;assembly&gt;.dll` -- the targets the script's
     /// compile rule (`compileAs`) builds, all at once so independent ones run in parallel. A
     /// described project without a lock (`lockOf name cfg`) fails, naming the `update-locks` rule.
+    /// The packages the locks name that the folder lacks are fetched first in one restore; when
+    /// that fails it is a warning, and each compile restores (and reports) its own.
     /// The script's `build` command:
     /// <code>
     /// command "build" { do! Locks.needAll (!! "src/*/xake.project.json") "Release" lockOf outOf }
@@ -580,8 +582,18 @@ module Locks =
             // the packages every lock names that the folder lacks, fetched in one restore before
             // the compiles (each would otherwise start its own); nothing missing costs a
             // `File.Exists` per path. What is still wrong is reported by each compile
+            // A failing restore (a bad feed, a missing version in one lock) does not fail the
+            // build here: each compile restores what it misses again and fails, or not, alone
             let! docs = loaded |> List.map (fun d -> Lock.loadWith extraRoots (lockOf d.Name cfg)) |> sequence
-            let! _ = Restore.ensure Restore.Options.Default (Lock.restoreRequest (docs |> List.collect (fun doc -> doc.Entries)))
+            let! problems =
+                recipe {
+                    try
+                        let! problems = Restore.ensure Restore.Options.Default (Lock.restoreRequest (docs |> List.collect (fun doc -> doc.Entries)))
+                        return problems
+                    with e -> return [ e.Message ]
+                }
+            if not (List.isEmpty problems) then
+                do! trace Warning "fetching the packages of the %s locks at once failed; each compile restores its own:\n%s" cfg (String.concat "\n" problems)
             do! need targets
         }
 

@@ -484,3 +484,26 @@ type ``Building from Xake-generated locks``() =
         run unpinned "update-locks" [] "update-locks"
         Assert.That(File.ReadAllText (unpinned </> lockOf "B" "Release"), Does.Not.Contain "Prerequisites")
         Assert.That(File.ReadAllText (unpinned </> "update-locks.log"), Does.Contain "'B': depends on the .NET SDK ")
+
+    /// `needAll` fetches what the locks name in one restore; when that fails (here: one lock
+    /// names a package that does not exist) it warns and the compiles go on, each restoring its
+    /// own: the project whose packages are there builds, the other fails naming itself.
+    [<Test; Category("Integration")>]
+    member x.``a failing fetch of all locks does not stop the other compiles``() =
+        fixture ()
+        x.Generate "generate-badfetch" fixtureOf [ "B"; "Cs" ] [ "Release" ] |> ignore
+        let lockPath = lockOf "Cs" "Release"
+        let text = File.ReadAllText lockPath
+        let at = text.IndexOf "\"References\": [\n"
+        Assert.That(at, Is.GreaterThan 0)
+        let missing = "{ \"Path\": \"$(NuGetPackageRoot)/xake.no.such.package/9.9.9/lib/netstandard2.0/Missing.dll\", \"Sha256\": \"00\" },\n          "
+        let insertAt = text.IndexOf ('{', at)
+        File.WriteAllText (lockPath, text.Substring (0, insertAt) + missing + text.Substring insertAt)
+        let e = Assert.Throws<XakeException>(fun () -> x.Script "badfetch" [] (!! "p/B/xake.project.json" + "p/Cs/xake.project.json") "Release")
+        let log = File.ReadAllText "badfetch.log"
+        Assert.That(log, Does.Contain "fetching the packages of the Release locks at once failed; each compile restores its own")
+        // Cs's own restore fails (after the warning: the second restore of the build)
+        Assert.That(log, Does.Contain ("Started " + Path.GetFullPath (dll "Release" "Cs")))
+        Assert.That(e.Data0, Does.Contain "xake.no.such.package 9.9.9")
+        Assert.That(File.Exists (dll "Release" "B"), Is.True, "B's packages are there: B builds")
+        Assert.That(File.Exists (dll "Release" "Cs"), Is.False)

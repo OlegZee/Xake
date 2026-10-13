@@ -1,0 +1,15 @@
+<Project>
+  <!-- Probe imported via -p:CustomAfterMicrosoftCommonTargets. Emulates the source changes that would be needed;
+       nothing in the repos is edited. feed- variant: skips System.Resources.Extensions if the project already references it (ar-net-vs NU1504). -->
+  <!-- 1. net472 WinForms/WPF resx with non-string resources (MSB3822/MSB3823 under .NET MSBuild) -->
+  <PropertyGroup Condition="'$(TargetFramework)' == 'net472' and ('$(UseWindowsForms)' == 'true' or '$(UseWPF)' == 'true')">
+    <GenerateResourceUsePreserializedResources>true</GenerateResourceUsePreserializedResources>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(TargetFramework)' == 'net472' and ('$(UseWindowsForms)' == 'true' or '$(UseWPF)' == 'true')">
+    <PackageReference Include="System.Resources.Extensions" Version="8.0.0" Condition="'@(PackageReference->WithMetadataValue('Identity','System.Resources.Extensions'))' == ''" />
+  </ItemGroup>
+  <!-- 2. OllamaSharp source generator built against Roslyn 4.14; SDK 8.0.425 ships Roslyn 4.11 (CS9057 + TreatWarningsAsErrors) -->
+  <PropertyGroup>
+    <WarningsNotAsErrors>$(WarningsNotAsErrors);CS9057</WarningsNotAsErrors>
+  </PropertyGroup>
+</Project>

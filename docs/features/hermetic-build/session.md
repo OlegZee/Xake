@@ -1205,3 +1205,9 @@ projects build, 39 fail restore on the private `ar-dev` feed (38 via `MESCIUS.Da
 none fail because of macOS. **Exact next step**: the user answers the three questions in
 `ar-full/README.md` (feed token, 4.7.2 not 4.6.2, scope of "reproduce"); then the Windows VM baseline,
 then extending `ar-build-2.fsx` to `ar.meta.win.sln`.
+
+Later the same evening, with the feed credentials from `~/Projects-work/.env`: **94/94 projects of
+`ar.meta.win.sln` build on macOS** (designer dll for net472 + net8.0-windows, 5 dev-app exes, 26.8 s clean)
+with three `-p:` switches, see `ar-full/macos-build-feed.md`. The repo NuGet.configs do not work inside
+the meta repo (child `<clear/>` plus inherited package-source mapping); a flat `RestoreConfigFile` is
+needed. Open questions reduced to 4.7.2 vs 4.6.2 and the scope of reproduction.

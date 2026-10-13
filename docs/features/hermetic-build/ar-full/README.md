@@ -55,6 +55,30 @@
 и ломает побайтовое совпадение с Windows-сборкой. WPF/XAML, COM interop, licx — не проверены (не дошли
 до компиляции).
 
+## Обновление того же вечера: с ключами фида собирается всё
+
+Пользователь положил ключи в `~/Projects-work/.env` (загружать `source ~/Projects-work/.env` в начале
+каждой терминальной сессии; `feed-run.sh` — обёртка). Результат — [macos-build-feed.md](macos-build-feed.md):
+
+- **94 из 94 csproj `ar.meta.win.sln` собираются на macOS**, все TFM, 0 ошибок, чистая сборка 26.8 с.
+  Собраны `MESCIUS.ActiveReports.Design.Win.dll` (net472 и net8.0-windows, ~11.4 МБ), Viewer.Win/Wpf
+  (XAML скомпилирован, 66 baml), Advanced.Win, все Export.*, движок и 5 exe в `dev-apps/bin/Release/net472/`
+  (Designer, DesignerClassic, Viewer, WpfViewer, ThemeEditor).
+- Нужны три `-p:` без правок репозиториев: `EnableWindowsTargeting=true`;
+  `RestoreConfigFile=nuget-feed.config` (плоский конфиг: **штатные NuGet.config внутри меты не работают даже
+  с ключом**, потому что дочерний `<clear/>` убирает источники родителя, а `packageSourceMapping` родителя
+  остаётся, и `MESCIUS.DataVisualization.Chart` маппится на отсутствующий источник, NU1100/NU1101; CI этого
+  не видит, так как собирает репозитории по одному); `CustomAfterMicrosoftCommonTargets=macos-probe.targets`
+  (resx с бинарными ресурсами на net472 + CS9057 как warning), причём и в restore, и в build.
+- `ar.meta.all.sln` (+48 проектов): imports 7/7, vs 9/25, web-designer 4/8, web-viewer 3/8. Остальное —
+  VSIX/VSSDK, старые non-SDK net472 шаблоны, `Microsoft.WebApplication.targets` (нужен MSBuild из VS),
+  npm-ассеты фронтенда (не пробовали), три проблемы кода/конфига (CS1591, CS0436, SQLite AnyCPU).
+- Для Windows-проверки важно: пробник resx делает net472-сборки **не идентичными** Windows-сборке
+  (runtime-зависимость `System.Resources.Extensions`, другой формат ресурсов). Эталон для `Verify` всё
+  равно нужен с виртуалки.
+
+Вопрос 1 ниже снят. Остаются вопросы 2 (4.7.2 vs 4.6.2) и 3 (объём воспроизведения).
+
 ## Решения, которые нужны от пользователя
 
 1. **`AA_AR_TOKEN`** для фида `ar-dev` — без него дизайнер не собирается ни на одной ОС. Альтернатива:

@@ -1219,3 +1219,17 @@ other repos' scripts, Xake checklist §4) and the short RU instruction **`ar-ful
 entry point for the Xake reproduction. **Exact next step**: extend `ar-build-2.fsx` to `ar.meta.win.sln`
 following `build.md` §2–4, starting with the MESCIUS/Release cell; keep the Windows VM baseline for the
 net472 byte comparison.
+
+## 2026-10-14 — night run: ActiveReports whole product on Xake
+
+Report: `ar-full/night-report-2026-10-14.md` (RU). All 94/93 projects of `ar.meta.win.sln` build on Xake in
+all four cells (designer, WPF hybrid, 5 exes, tests, satellites, 46 nupkg), 185/185 assemblies byte-identical
+to the aligned msbuild build. Four Xake fix rounds + integration (`pr/desc-fidelity` → `pr/win-import` →
+{`pr/win-import-2`, `pr/wpf-exe-satellites`} → `night-2` → `pr/win-import-3`, hermetic tests 226 → 285,
+night packages up to 0.3.8), two critic reviews with two blockers (apphost of the importing machine in
+locks; WPF step calls msbuild during build). Speed on the full set is modest: clean 1.1–1.2×, no-op 2×,
+pack 3×, incremental 0.7–0.95× (no csc server), all cells in one process 1.46× and failing on a WPF brand
+race (S53). The user's five remarks (shared output folder, minimal pack, satellites later, library module,
+cached BAML) and the one-process scenario are the next cycle: `ar-full/cycle-2.md`. **Exact next step**:
+the user decides the branch merge order and the host/SDK-facts question; then cycle 2 stage 0 (csc server
+in the matrix, S53, profile) and stages A/B in parallel.

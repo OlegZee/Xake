@@ -213,3 +213,10 @@ to that rule rather than the deliverable. Items are ordered by what they unblock
 - [x] **AR-full matrix + Cake analysis + build instruction** (2026-10-13): `ar-full/build.md`, `matrix.md` (MESCIUS/GCCN × Debug/Release, clean 32–52 s, no-op 5–6 s), `cake.md`
 - [ ] **AR-full Windows baseline** on the VM (VS Build Tools 2022 + SDK 8, `dotnet build ar.meta.win.sln -p:LocalBuild=true`, then `dotnet cake`), needs `AA_AR_TOKEN`
 - [ ] **AR-full Xake reproduction**: `ar-build-2.fsx` over `ar.meta.win.sln`; importer gaps in `ar-full/inventory.md` §5
+
+**Status 2026-10-14 (morning):** night run done, see `ar-full/night-report-2026-10-14.md`; cycle 2 planned in `ar-full/cycle-2.md`.
+
+- [x] **AR-full Xake reproduction, cycle 1** (2026-10-14): all 94/93 projects, 4 cells, 185/185 identical, matrix in `xake-ar/tests/results/2026-10-14-final/`; Xake branches up to `pr/win-import-3` (not merged)
+- [ ] **Xake branch merge order** (user): night base 74bf4d9 vs `feature/hermetic-build`, PR sequence from `fsc-rework/critic-night-2.md`
+- [ ] **Cycle 2 stage 0**: all cells in one process — `CSC_SERVER=on`, S53 per-brand WPF markup, pool profile
+- [ ] **Cycle 2 A–G**: shared output folder, library module, minimal pack, cached BAML, BN1 apphost, rewrite `build.fsx`, matrix, critic

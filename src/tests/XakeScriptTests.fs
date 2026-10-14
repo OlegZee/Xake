@@ -506,7 +506,7 @@ type ``XakeScript tests``() =
             | Some {
                     BuildResult.Targets = [PhonyAction "test"]
                     Depends = [
-                                ArtifactDep (PhonyAction "aaa"); ArtifactDep (PhonyAction "deeplyNested");
+                                ArtifactDep2 (PhonyAction "aaa", _); ArtifactDep2 (PhonyAction "deeplyNested", _);
                                 FileDep (fileDep, depDate)
                                 ]
                 }
@@ -518,7 +518,7 @@ type ``XakeScript tests``() =
             match testee.PostAndReply <| fun ch -> DatabaseApi.GetResult ((PhonyAction "test1"), ch) with
             | Some {
                     Targets = [PhonyAction "test1"]
-                    Depends = [ArtifactDep (PhonyAction "aaa")]
+                    Depends = [ArtifactDep2 (PhonyAction "aaa", _)]
                     //BuildResult.Steps = []
                 } -> true
             | _ -> false

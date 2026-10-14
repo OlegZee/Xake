@@ -13,6 +13,7 @@
     <Compile Include="ScriptErrorTests.fs" />
     
     <Compile Include="XakeScriptTests.fs" />
+    <Compile Include="StaleArtifactDepTests.fs" />
     <Compile Include="MiscTests.fs" />
     <Compile Include="StorageTests.fs" />
     <Compile Include="FileTasksCopy.fs" />

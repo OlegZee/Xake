@@ -116,7 +116,9 @@ let rec execOne (ctx: ExecContext) target =
 
                 let startResult = {BuildLog.makeResult targets with Steps = [Step.start "all"]}
                 let! (result,_) = action (startResult, taskContext)
-                let result = Step.updateTotalDuration result
+                // Built is the completion time: it is the change stamp of a phony target
+                // (see Dependency.ArtifactDep2 and DependencyAnalysis.getChangeStamp)
+                let result = {Step.updateTotalDuration result with Built = System.DateTime.Now}
 
                 Store result |> ctx.Db.Post
 
@@ -145,7 +147,7 @@ let rec execOne (ctx: ExecContext) target =
             let bodyThunk () = async {
                 let startResult = {BuildLog.makeResult targets with Steps = [Step.start "all"]}
                 let! (result,_) = action (startResult, taskContext)
-                return Step.updateTotalDuration result
+                return {Step.updateTotalDuration result with Built = System.DateTime.Now}
             }
 
             let! result =
@@ -177,7 +179,10 @@ let rec execOne (ctx: ExecContext) target =
         async {
             let! waitTask = (fun channel -> Run(target, targets, taskAction, channel)) |> (Scheduler.pool ctx.Engine.Scheduler).PostAndAsyncReply
             let! status = waitTask
-            return target, status, ArtifactDep target
+            // the dependee is built or up to date now: record its change stamp, so a later run
+            // sees a rebuild done in between, by another run or target group (S66)
+            let stamp = getChangeStamp ctx target |> Option.defaultValue System.DateTime.MinValue
+            return target, status, ArtifactDep2 (target, stamp)
         }
     | None ->
         target |> function

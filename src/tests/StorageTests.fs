@@ -214,3 +214,37 @@ let ``cleanupDb deletes database files``() =
     let read = testee <-* mkFileTarget "abc.exe"
     Assert.IsTrue(Option.isNone read, "Fresh database should not contain old data")
     testee.PostAndReply CloseWait
+[<Test>]
+let ``persists ArtifactDep2 with its stamp``() =
+    let stamp = System.DateTime(2026, 10, 15, 1, 2, 3, 456)
+    let testee =
+        { (makeResult [mkFileTarget "pkg.zip"]) with
+            Depends = [ ArtifactDep2 (mkFileTarget "app.dll", stamp); ArtifactDep2 (PhonyAction "gen", stamp) ] }
+    let _, repl = writeAndRead Storage.resultPU testee
+    Assert.AreEqual(testee, repl)
+
+[<Test>]
+let ``reads a 0.4 database and rewrites it as the current version``() =
+    let msgs = System.Collections.Generic.List<string>()
+    let old = createResult "old.exe"     // depends on ArtifactDep abc.c
+    Tests.OldDatabase.write dbname "0.4" [old]
+
+    use testee = Storage.openDb dbname (createStrLogger msgs)
+    let read = testee <-* mkFileTarget "old.exe"
+    testee.PostAndReply CloseWait
+    Assert.AreEqual(Some old.Depends, read |> Option.map (fun r -> r.Depends))
+    Assert.That(msgs, IsAny().Contains("Upgrading database"))
+
+    let ver, results = Tests.OldDatabase.read dbname
+    Assert.AreEqual(XakeDbVersion, ver)
+    Assert.AreEqual([old.Depends], results |> List.map (fun r -> r.Depends))
+
+[<Test>]
+let ``discards a database older than 0.4``() =
+    let msgs = System.Collections.Generic.List<string>()
+    Tests.OldDatabase.write dbname "0.3" [createResult "old.exe"]
+    use testee = Storage.openDb dbname (createStrLogger msgs)
+    let read = testee <-* mkFileTarget "old.exe"
+    testee.PostAndReply CloseWait
+    Assert.IsTrue(Option.isNone read)
+    Assert.That(msgs, IsAny().Contains("Failed to read database"))

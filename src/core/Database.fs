@@ -4,8 +4,14 @@ module BuildLog =
     open Xake
     open System
     
-    /// Current database schema version. Old databases are discarded on version mismatch.
-    let XakeDbVersion = "0.4"
+    /// Current database schema version, written to the header of every database file.
+    /// 0.5 adds the Dependency case ArtifactDep2 (dependee target with its change stamp).
+    let XakeDbVersion = "0.5"
+
+    /// Oldest database version this Xake still reads. A database of 0.4 has no ArtifactDep2
+    /// records (its pickles are a subset of 0.5), so it loads as is and is rewritten with
+    /// the current header on open. Older databases are discarded.
+    let XakeDbMinReadVersion = "0.4"
 
     /// In-memory build database mapping targets to their last build results.
     type Database = { Status : Map<Target, BuildResult> }
@@ -63,13 +69,15 @@ module Storage =
                 | EnvVar _ -> 2
                 | Var _ -> 3
                 | AlwaysRerun -> 4
-                | GetFiles _ -> 5) 
+                | GetFiles _ -> 5
+                | ArtifactDep2 _ -> 6) 
                 [| wrap (ArtifactDep, fun (ArtifactDep f | OtherwiseFail f) -> f) target                   
                    wrap (FileDep, fun (FileDep(f, ts) | OtherwiseFail (f, ts)) -> (f, ts))  (pair file date)                   
                    wrap (EnvVar, fun (EnvVar(n, v) | OtherwiseFail (n,v)) -> n, v)  (pair str (option str))
                    wrap (Var, fun (Var(n, v)| OtherwiseFail (n,v)) -> n, v)        (pair str (option str))
                    wrap0 AlwaysRerun                   
-                   wrap (GetFiles, fun (GetFiles(fs, fi)| OtherwiseFail (fs,fi)) -> fs, fi)  (pair filesetPickler filelistPickler) |]
+                   wrap (GetFiles, fun (GetFiles(fs, fi)| OtherwiseFail (fs,fi)) -> fs, fi)  (pair filesetPickler filelistPickler)
+                   wrap (ArtifactDep2, fun (ArtifactDep2(t, ts) | OtherwiseFail (t, ts)) -> (t, ts)) (pair target date) |]
         
         let result = 
             wrap 
@@ -134,27 +142,32 @@ module Storage =
                 File.Move(bkpath, dbpath)
             let db = ref (newDatabase())
             let recordCount = ref 0
+            let isOldVersion = ref false
             // read database
             if File.Exists(dbpath) then 
                 try 
                     use reader = new BinaryReader(openReadWithRetry dbpath)
                     let stream = reader.BaseStream
                     let header = Persist.dbHeader.unpickle reader
-                    if header.XakeVer < XakeDbVersion then 
+                    if header.XakeVer < XakeDbMinReadVersion then 
                         failwith "Database version is old."
+                    isOldVersion := header.XakeVer < XakeDbVersion
                     while stream.Position < stream.Length do
                         let result = resultPU.unpickle reader
                         db := result |> addResult !db
                         recordCount := !recordCount + 1
                 // if fails create new
                 with ex -> 
+                    isOldVersion := false
                     log Warning "Failed to read database, so recreating. Got \"%s\"" <| ex.ToString()
                     try 
                         File.Delete(dbpath)
                     with _ -> ()
-            // check if we can cleanup db
-            if !recordCount > (!db).Status.Count * 5 then 
-                log Level.Message "Compacting database"
+            // check if we can cleanup db; a database of an older (still readable) version is
+            // rewritten so that the header carries the current version of the records appended next
+            if !isOldVersion || !recordCount > (!db).Status.Count * 5 then 
+                if !isOldVersion then log Level.Message "Upgrading database to version %s" XakeDbVersion
+                else log Level.Message "Compacting database"
                 File.Move(dbpath, bkpath)
                 use writer =
                     new BinaryWriter(openWithRetry (fun () -> File.Open(dbpath, FileMode.CreateNew) :> Stream))

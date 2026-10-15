@@ -282,6 +282,159 @@ type ``Import record``() =
         Assert.That(x.Locks (), Is.EqualTo locks)
 
 
+/// What the `Import.record` end-to-end fixtures share: running dotnet, reading an assembly's
+/// metadata, a resx text, and an import or a build in a Xake run of the fixture's folder.
+module internal RecordKit =
+
+    let runDotnet (workDir: string) (args: string list) =
+        let psi = ProcessStartInfo ("dotnet")
+        psi.WorkingDirectory <- workDir
+        psi.RedirectStandardOutput <- true
+        psi.RedirectStandardError <- true
+        psi.UseShellExecute <- false
+        for a in args do psi.ArgumentList.Add a
+        use p = Process.Start psi
+        let out = p.StandardOutput.ReadToEnd ()
+        let err = p.StandardError.ReadToEnd ()
+        p.WaitForExit ()
+        if p.ExitCode <> 0 then
+            failwithf "'dotnet %s' failed (exit %d):\n%s\n%s" (String.Join (" ", args)) p.ExitCode out err
+
+    /// (types, methods, manifest resources) of an assembly.
+    let metadata (path: string) =
+        use stream = File.OpenRead path
+        use pe = new System.Reflection.PortableExecutable.PEReader (stream)
+        let md = System.Reflection.Metadata.PEReaderExtensions.GetMetadataReader pe
+        md.TypeDefinitions.Count, md.MethodDefinitions.Count,
+        [ for h in md.ManifestResources -> md.GetString (md.GetManifestResource h).Name ] |> List.sort
+
+    let resx (entries: (string * string) list) =
+        "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<root>\n"
+        + "  <resheader name=\"resmimetype\"><value>text/microsoft-resx</value></resheader>\n"
+        + "  <resheader name=\"version\"><value>2.0</value></resheader>\n"
+        + (entries |> List.map (fun (k, v) -> sprintf "  <data name=\"%s\" xml:space=\"preserve\"><value>%s</value></data>\n" k v) |> String.concat "")
+        + "</root>\n"
+
+    let lockOf name cfg = sprintf "locks/%s/%s.json" name cfg
+    let outOf cfg fwk name = sprintf "out/%s/%s/%s" cfg fwk name
+
+    /// Deletes the folders and writes the files (path, text) of a fixture.
+    let write (folders: string list) (files: (string * string) list) =
+        for d in folders do if Directory.Exists d then Directory.Delete (d, true)
+        for path, text in files do
+            match Path.GetDirectoryName path with "" -> () | dir -> Directory.CreateDirectory dir |> ignore
+            File.WriteAllText (path, text)
+
+    let run (options: ExecOptions) (label: string) (rules': Rule<ExecContext> list) (targets: string list) =
+        xake {options with FileLog = label + ".log"; ThrowOnError = true; Vars = [ "CI", "off"; "CSC_SERVER", "off" ]; FileLogLevel = Loud} {
+            wantOverride targets
+            rules rules'
+        }
+
+    /// `Import.record` of `projects` with `options` (the fixture's lock and output layout by
+    /// default), in a run of its own.
+    let import (options: ExecOptions) (label: string) (record: Import.RecordOptions) (projects: string list) =
+        let result = ref []
+        run options label [ label => recipe {
+                                do! alwaysRerun ()
+                                let! i = Import.record record projects
+                                result.Value <- i } ] [ label ]
+        result.Value
+
+    let recordDefault = { Import.RecordOptions.Default with LockOf = lockOf; OutOf = outOf }
+
+    /// The fixture's outputs of configuration `cfg`, built from the locks.
+    let build (options: ExecOptions) (label: string) (cfg: string) =
+        let compile = recipe {
+            let! cfg = getRuleMatch "cfg"
+            let! fwk = getRuleMatch "fwk"
+            let! name = getRuleMatch "name"
+            do! Locks.compileAs (lockOf name cfg) fwk [] }
+        run options label
+            [ command "build" { do! Locks.needAll (!! "*/xake.project.json") cfg lockOf outOf }
+              "out/(cfg:*)/(fwk:*)/(name:*)/*.dll" ..> compile
+              "out/(cfg:*)/(fwk:*)/(name:*)/*.exe" ..> compile
+              "out/(cfg:*)/(fwk:*)/(name:*)/*.xml" ..> compile ]
+            [ "build" ]
+
+    let sdkProject (properties: string) (items: string) =
+        sprintf "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>%s</PropertyGroup>\n  <ItemGroup>%s</ItemGroup>\n</Project>\n" properties items
+
+
+/// `Import.record` over several configurations and a platform: the restore solution declares
+/// every configuration|platform asked for, and each configuration is restored for itself (a
+/// package may depend on it).
+[<TestFixture>]
+type ``Import record configurations``() =
+    inherit XakeTestBase("import-record-cfg")
+
+    let fixture () =
+        RecordKit.write [ "one"; "out"; "locks"; "obj" ]
+            [ "one/one.csproj",
+                RecordKit.sdkProject "<TargetFramework>net8.0</TargetFramework>"
+                    "<PackageReference Include=\"Newtonsoft.Json\" Version=\"13.0.3\" Condition=\"'$(Configuration)' == 'Debug'\" />"
+              "one/C.cs",
+                "namespace One { public class C {\n#if DEBUG\n  public static string S() => Newtonsoft.Json.JsonConvert.SerializeObject (1);\n#else\n  public static string S() => \"1\";\n#endif\n} }\n" ]
+
+    [<Test>]
+    member x.``Debug and Release are recorded, each with its own restore, and both build``() =
+        fixture ()
+        let imported =
+            RecordKit.import x.TestOptions "import-cfg" { RecordKit.recordDefault with Configurations = [ "Debug"; "Release" ] } [ "one/one.csproj" ]
+        Assert.That(imported |> List.collect (fun i -> i.Locks), Is.EqualTo [ RecordKit.lockOf "one" "Debug"; RecordKit.lockOf "one" "Release" ])
+        let debug, release = File.ReadAllText (RecordKit.lockOf "one" "Debug"), File.ReadAllText (RecordKit.lockOf "one" "Release")
+        Assert.That(debug, Does.Contain "\"DEBUG\"")
+        Assert.That(release, Does.Not.Contain "\"DEBUG\"")
+        // the package of the Debug configuration only
+        Assert.That(debug, Does.Contain "pkg:newtonsoft.json/13.0.3/")
+        Assert.That(release, Does.Not.Contain "newtonsoft")
+        RecordKit.build x.TestOptions "build-debug" "Debug"
+        RecordKit.build x.TestOptions "build-release" "Release"
+        Assert.That(File.Exists "out/Debug/net8.0/one/one.dll")
+        Assert.That(File.Exists "out/Release/net8.0/one/one.dll")
+
+    [<Test>]
+    member x.``a Platform property is a platform of the restore solution``() =
+        fixture ()
+        RecordKit.import x.TestOptions "import-x64" { RecordKit.recordDefault with Properties = [ "Platform", "x64" ] } [ "one/one.csproj" ] |> ignore
+        let release = File.ReadAllText (RecordKit.lockOf "one" "Release")
+        Assert.That(release, Does.Contain "/platform:x64")
+        Assert.That(release, Does.Contain "\"Platform\": \"x64\"")
+
+
+/// Two imports of one project at once, with different properties (two brands): each records
+/// its own AssemblyInfo, since each design-time build writes into an intermediate folder of
+/// its own.
+[<TestFixture>]
+type ``Import record concurrent brands``() =
+    inherit XakeTestBase("import-record-brands")
+
+    [<Test>]
+    member x.``two brands imported at once record their own generated texts``() =
+        RecordKit.write [ "b"; "out"; "locks"; "obj"; "desc" ]
+            [ "b/b.csproj", RecordKit.sdkProject "<TargetFramework>net8.0</TargetFramework><AssemblyTitle>Brand-$(Brand)</AssemblyTitle>" ""
+              "b/C.cs", "namespace B { public class C { } }\n" ]
+        let options brand =
+            { RecordKit.recordDefault with
+                Properties = [ "Brand", brand ]
+                DescriptionOf = (fun _ -> sprintf "desc/%s/xake.project.json" brand)
+                LockOf = (fun name cfg -> sprintf "locks/%s/%s/%s.json" brand name cfg) }
+        let importOf brand = sprintf "import-%s" brand => recipe {
+                                 do! alwaysRerun ()
+                                 let! _ = Import.record (options brand) [ "b/b.csproj" ]
+                                 () }
+        let brands = [ "Mescius"; "Gccn"; "Third" ]
+        RecordKit.run { x.TestOptions with Threads = 4 } "import-brands" (brands |> List.map importOf) (brands |> List.map (sprintf "import-%s"))
+        // nothing in msbuild's own intermediate folder, which an IDE or `dotnet build` writes too
+        Assert.That(File.Exists "b/obj/Release/net8.0/b.AssemblyInfo.cs", Is.False)
+        Assert.That(Directory.GetDirectories ("b/obj/xake-record"), Has.Length.EqualTo brands.Length)
+        for brand in brands do
+            let text = File.ReadAllText (sprintf "locks/%s/b/Release.json" brand)
+            Assert.That(text, Does.Contain (sprintf "AssemblyTitleAttribute(\\\"Brand-%s\\\")" brand), brand)
+            for other in brands do
+                if other <> brand then Assert.That(text, Does.Not.Contain ("Brand-" + other), brand)
+
+
 /// One synthesized restore downloads one version of an id: the fetch of a recorded lock set
 /// (each project's own restore graph) splits the packages into rounds of distinct ids.
 [<TestFixture>]

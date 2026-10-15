@@ -566,6 +566,14 @@ module Import =
                 return { r with Depends = r.Depends @ added }, (results |> Array.map snd |> List.ofArray)
             })
 
+    /// The recipes one after another, their results in order.
+    let private sequentially (recipes: Recipe<ExecContext, 'a> list) : Recipe<ExecContext, 'a list> =
+        recipes |> List.fold (fun (acc: Recipe<ExecContext, 'a list>) r ->
+            recipe {
+                let! xs = acc
+                let! x = r
+                return xs @ [ x ] }) (recipe { return [] })
+
     /// The msbuild processes an import runs at once, over every project and every run of each:
     /// the processor count.
     let private msbuildSlots = new Threading.SemaphoreSlim (Environment.ProcessorCount)
@@ -759,6 +767,9 @@ module Import =
             [ "<Project>"
               "  <!-- written by Xake.Hermetic.Dotnet's Import.record for one import; deleted after it -->"
               "  <Import Project=\"$(XakeChainedAfterCommonTargets)\" Condition=\"'$(XakeChainedAfterCommonTargets)' != '' and Exists('$(XakeChainedAfterCommonTargets)')\" />"
+              // what the traversal hands one build only: not to a referenced project (which is
+              // then evaluated once for all the projects referencing it)
+              "  <PropertyGroup><_GlobalPropertiesToRemoveFromProjectReferences>$(_GlobalPropertiesToRemoveFromProjectReferences);IntermediateOutputPath;XakeChainedAfterCommonTargets</_GlobalPropertiesToRemoveFromProjectReferences></PropertyGroup>"
               "  <Target Name=\"XakeRecordDump\">"
               "    <PropertyGroup><_XakeDumpFile>$(XakeDumpRoot)/$([System.Guid]::NewGuid().ToString('N')).txt</_XakeDumpFile></PropertyGroup>"
               sprintf "    <WriteLinesToFile File=\"$(_XakeDumpFile)\" Overwrite=\"true\" Lines=\"%s\" />"
@@ -785,8 +796,11 @@ module Import =
         { Props = props |> Seq.filter (fun (_, v) -> v <> "") |> Map.ofSeq
           Items = items |> Seq.map (fun kv -> kv.Key, List.ofSeq kv.Value) |> Map.ofSeq }
 
-    /// A solution of `projects` (absolute): one restore of all of them.
-    let internal solutionText (projects: string list) =
+    /// A solution of `projects` (absolute) for each of `configurations` on `platform` (the
+    /// script's `Platform`, else `Any CPU`): a restore of all of them under any of those
+    /// (`-p:Configuration=<cfg>`). A solution configuration it does not declare fails the
+    /// restore (MSB4126).
+    let internal solutionText (configurations: string list) (platform: string) (projects: string list) =
         let guid (path: string) =
             use md5 = Security.Cryptography.MD5.Create ()
             Guid(md5.ComputeHash (Text.Encoding.UTF8.GetBytes path)).ToString("B").ToUpperInvariant ()
@@ -802,12 +816,14 @@ module Import =
                   yield "EndProject"
               yield "Global"
               yield "\tGlobalSection(SolutionConfigurationPlatforms) = preSolution"
-              yield "\t\tRelease|Any CPU = Release|Any CPU"
+              for cfg in configurations do
+                  yield sprintf "\t\t%s|%s = %s|%s" cfg platform cfg platform
               yield "\tEndGlobalSection"
               yield "\tGlobalSection(ProjectConfigurationPlatforms) = postSolution"
               for p in projects do
-                  yield sprintf "\t\t%s.Release|Any CPU.ActiveCfg = Release|Any CPU" (guid p)
-                  yield sprintf "\t\t%s.Release|Any CPU.Build.0 = Release|Any CPU" (guid p)
+                  for cfg in configurations do
+                      yield sprintf "\t\t%s.%s|%s.ActiveCfg = %s|%s" (guid p) cfg platform cfg platform
+                      yield sprintf "\t\t%s.%s|%s.Build.0 = %s|%s" (guid p) cfg platform cfg platform
               yield "\tEndGlobalSection"
               yield "EndGlobal"
               yield "" ]
@@ -1145,14 +1161,39 @@ module Import =
             Directory.CreateDirectory temp |> ignore
             try
                 let projectFiles = projects |> List.map full |> List.distinct
+                // the design-time builds write what they generate (AssemblyInfo, the compiled
+                // resources) into an intermediate folder of their own, keyed by the configuration
+                // and the properties: two imports with different properties at once (two brands)
+                // never read each other's files, nor an IDE's or `dotnet build`'s
+                let key cfg =
+                    use sha = Security.Cryptography.SHA256.Create ()
+                    let text =
+                        ("Configuration", cfg) :: globals |> List.map (fun (k, v) -> k.ToLowerInvariant () + "=" + v)
+                        |> List.sort |> String.concat "\n"
+                    sha.ComputeHash (Text.Encoding.UTF8.GetBytes text) |> Array.take 6 |> Array.map (sprintf "%02x") |> String.concat ""
+                let runProperties (key: string) (ev: Evaluated) (framework: string) =
+                    let escape (v: string) = v.Replace("%", "%25").Replace(";", "%3B")
+                    let projectDir = prop ev.Outer "MSBuildProjectDirectory"
+                    let baseObj = match prop ev.Outer "BaseIntermediateOutputPath" with "" -> "obj/" | b -> b
+                    let intermediate = sprintf "%s/xake-record/%s/%s/" ((absoluteIn projectDir baseObj).TrimEnd '/') key framework
+                    [ "TargetFramework", framework; "IntermediateOutputPath", intermediate ]
+                    |> List.map (fun (k, v) -> k + "=" + escape v) |> String.concat ";"
                 let elapsed (since: DateTime) = (DateTime.UtcNow - since).TotalSeconds
-                // 1. one restore of every project (a solution of them), before anything reads what
-                // it writes
-                let phase = DateTime.UtcNow
+                let platform =
+                    options.Properties |> List.tryFind (fun (k, _) -> k.Equals ("Platform", StringComparison.OrdinalIgnoreCase))
+                    |> Option.map snd |> Option.defaultValue "Any CPU"
+                // the restore of every project (a solution of them) under one configuration,
+                // before anything reads what it writes
                 let solution = temp </> "import.sln"
-                File.WriteAllText (solution, solutionText projectFiles)
-                do! msbuild environment ([ solution; "-nologo"; "-verbosity:quiet"; "-t:Restore" ] @ switches primary) solution
-                do! trace Info "import: the restore of %d project(s) in %.1f s" projectFiles.Length (elapsed phase)
+                File.WriteAllText (solution, solutionText options.Configurations platform projectFiles)
+                let restore cfg =
+                    recipe {
+                        let phase = DateTime.UtcNow
+                        do! msbuild environment ([ solution; "-nologo"; "-verbosity:quiet"; "-t:Restore" ] @ switches cfg) solution
+                        do! trace Info "import: the restore of %d project(s) for %s in %.1f s" projectFiles.Length cfg (elapsed phase)
+                    }
+                // 1. the restore under the first configuration
+                do! restore primary
                 // 2. the evaluations (the description), concurrently
                 let phase = DateTime.UtcNow
                 let! evaluations =
@@ -1167,31 +1208,36 @@ module Import =
                 do! trace Info "import: %d project evaluation(s) in %.1f s" projectFiles.Length (elapsed phase)
                 // 3. every design-time build of a configuration in one msbuild process: a traversal
                 // project over (project, framework), the dump target handed to every project
-                let phase = DateTime.UtcNow
                 let targetsFile = temp </> "xake-record.targets"
                 File.WriteAllText (targetsFile, dumpTargets ())
-                let chained = options.Properties |> List.tryFind (fun (k, _) -> k.Equals ("CustomAfterMicrosoftCommonTargets", StringComparison.OrdinalIgnoreCase))
                 let recordSwitches cfg =
                     [ for k, v in ("Configuration", cfg) :: globals do
                         if not (k.Equals ("CustomAfterMicrosoftCommonTargets", StringComparison.OrdinalIgnoreCase)) then
                             yield sprintf "-p:%s=%s" k v ]
-                    @ (match chained with Some (_, v) -> [ "-p:XakeChainedAfterCommonTargets=" + v ] | None -> [])
                     @ [ "-p:CustomAfterMicrosoftCommonTargets=" + slash targetsFile
                         "-p:ProvideCommandLineArgs=true"; "-p:SkipCompilerExecution=true"; "-p:BuildProjectReferences=false"
                         // CoreCompile lists this among its outputs: a file that never exists keeps it
                         // from being skipped as up to date
                         "-p:NonExistentFile=__NonExistentSubDir__/__NonExistentFile__" ]
-                let runs = [ for pf, ev in List.zip projectFiles evaluations do for f, _ in ev.Inner -> pf, f ]
+                let runs = [ for pf, ev in List.zip projectFiles evaluations do for f, _ in ev.Inner -> pf, ev, f ]
+                let phase = DateTime.UtcNow
+                // one configuration after the other: its restore (the assets file is the project's,
+                // not the configuration's, and a package may depend on the configuration), its
+                // design-time builds, and a copy of each assets file they read
                 let! dumps =
                     options.Configurations |> List.map (fun cfg ->
                         recipe {
+                            if cfg <> primary then do! restore cfg
                             let dumpRoot = temp </> "dump-" + cfg
+                            let assetsRoot = temp </> "assets-" + cfg
                             Directory.CreateDirectory dumpRoot |> ignore
+                            Directory.CreateDirectory assetsRoot |> ignore
                             let traversal = temp </> sprintf "record-%s.proj" cfg
                             let runItems =
-                                runs |> List.map (fun (pf, f) ->
-                                    sprintf "    <XakeRun Include=\"%s\" AdditionalProperties=\"TargetFramework=%s\" />"
-                                        (Security.SecurityElement.Escape pf) (Security.SecurityElement.Escape f))
+                                runs |> List.map (fun (pf, ev, f) ->
+                                    sprintf "    <XakeRun Include=\"%s\" AdditionalProperties=\"%s\" />"
+                                        (Security.SecurityElement.Escape pf)
+                                        (Security.SecurityElement.Escape (runProperties (key cfg) ev f)))
                             File.WriteAllText (traversal, String.concat "\n" ([ "<Project>"; "  <ItemGroup>" ] @ runItems @
                                                                               [ "  </ItemGroup>"
                                                                                 "  <Target Name=\"Build\">"
@@ -1202,15 +1248,24 @@ module Import =
                                      @ recordSwitches cfg) traversal
                             let byRun =
                                 Directory.GetFiles (dumpRoot, "*.txt") |> Array.map readRecordDump
-                                |> Array.map (fun d -> (slash (prop d "MSBuildProjectFullPath"), prop d "TargetFramework"), d)
+                                |> Array.mapi (fun i d ->
+                                    // the restore of the next configuration rewrites the assets file
+                                    let d =
+                                        match prop d "ProjectAssetsFile" with
+                                        | assets when assets <> "" && File.Exists assets ->
+                                            let copy = assetsRoot </> sprintf "%d.json" i
+                                            File.Copy (assets, copy)
+                                            { d with Props = d.Props |> Map.add "ProjectAssetsFile" copy }
+                                        | _ -> d
+                                    (slash (prop d "MSBuildProjectFullPath"), prop d "TargetFramework"), d)
                                 |> Map.ofArray
                             return
-                                [ for pf, f in runs ->
+                                [ for pf, _, f in runs ->
                                     match byRun |> Map.tryFind (slash pf, f) with
                                     | Some d -> pf, (cfg, f, d)
                                     | None -> failwithf "'%s': the design-time build for %s|%s wrote nothing; the import stops" pf cfg f ]
                         })
-                    |> concurrently
+                    |> sequentially
                 let dumps = List.concat dumps
                 do! trace Info "import: %d design-time build(s) in %.1f s" dumps.Length (elapsed phase)
                 let evaluated =

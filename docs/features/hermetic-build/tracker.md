@@ -219,4 +219,15 @@ to that rule rather than the deliverable. Items are ordered by what they unblock
 - [x] **AR-full Xake reproduction, cycle 1** (2026-10-14): all 94/93 projects, 4 cells, 185/185 identical, matrix in `xake-ar/tests/results/2026-10-14-final/`; Xake branches up to `pr/win-import-3` (not merged)
 - [ ] **Xake branch merge order** (user): night base 74bf4d9 vs `feature/hermetic-build`, PR sequence from `fsc-rework/critic-night-2.md`
 - [ ] **Cycle 2 stage 0**: all cells in one process — `CSC_SERVER=on`, S53 per-brand WPF markup, pool profile
-- [ ] **Cycle 2 A–G**: shared output folder, library module, minimal pack, cached BAML, BN1 apphost, rewrite `build.fsx`, matrix, critic
+- [-] (superseded 2026-10-15 by the PR sequence below) **Cycle 2 A–G**: shared output folder, library module, minimal pack, cached BAML, BN1 apphost, rewrite `build.fsx`, matrix, critic
+
+**Status 2026-10-15:** owner decision — Xake does not emulate msbuild; only the locks path remains (resolved inputs recorded at import). Documents on `pr/apphost-resx` (`fsc-rework/night-changes-decisions-ru.md`). Open: decisions 3a/3b/3c and two agent choices.
+
+- [x] S66 ArtifactDep2 PR #54 (draft, dev)
+- [x] decision: no msbuild emulation (docs on pr/apphost-resx)
+- [ ] PR 0 merge dev into feature/hermetic-build
+- [ ] PR 1 src/dotnet resx + csc crash
+- [ ] PR 2 resolved-inputs import/lock (removes ~25 emulation functions)
+- [ ] PR 3 apphost/applications
+- [ ] PR 4 deploy fixes (S60/S64/S65)
+- [ ] AR script: flat out + run folders into Xake (S63), module + minimal pack

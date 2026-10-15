@@ -359,3 +359,30 @@ The user's remarks (overall: very good, the step-by-step format is what he likes
 9. Missing: the CI environment variable and how a script detects CI; the earlier idea of
    disabling the lock override on CI and failing on mismatch.
 Status: research + edits delegated (`arch-doc-review.md`), commit into `pr/hermetic-0.3`.
+
+## 2026-10-15 — решение: Xake не эмулирует msbuild
+
+Обязательно (binding). Источник: `night-changes-decisions-ru.md` §0 на `pr/apphost-resx`.
+
+**Решение (2026-10-15): Xake не эмулирует msbuild.** Для hermetic-режима и для AR остаётся только «путь
+lock'ов»: импорт берёт у msbuild **уже разрешённые** входы компиляции — набор ссылок (переносимо, как
+идентичности `pkg:<id>/<версия>/<путь>`, `pack:<ref-pack>/<версия>/<путь>`, `project:<имя>`, `sdk:<файл>`),
+итоговые `DefineConstants`, сгенерированные SDK исходники (AssemblyInfo, GlobalUsings, точка входа Test.Sdk,
+TFM-атрибуты) — для каждой пары конфигурация × фреймворк, и пишет их в lock. Сборка по lock'у только
+превращает идентичности в пути (папка пакетов, ref-pack'и, SDK, соседние lock'и). Собственное разрешение
+ссылок Xake (фасады, `resolveConflicts`/`frameworkConflicts`/`supersede`, неявные WinForms/WPF, `Direct`,
+Include/ExcludeAssets, выбор транзитивного фреймворка, project-wins) дальше не развивается; ручной `csc {}`
+сохраняет своё простое доночное разрешение.
+
+**Что это значит для interview.** «Пакеты разрешает msbuild, не csc» распространяется на ссылки, дефайны
+и сгенерированные исходники. Развилка Q3 («сейчас — декларативный csc, потом — импорт из msbuild») для
+импортированных проектов переворачивается: путь импорта — сейчас. Описание остаётся коммитимым контрактом
+«что такое проект» (исходники, ресурсы, опции, объявленные пакеты); lock — запись того, как msbuild его разрешил,
+по явной команде импорта.
+
+Всё ещё открыто (рекомендация в скобках):
+
+- 3a. Форма записи фактов SDK в lock: как записано / LF + токены + пин SDK (второе).
+- 3b. SourceLink и `embed`: взять / парковать на `pr/sourcelink` (парковать).
+- 3c. Хеширование apphost (и WPF): «идентичность = SDK» / явный RID (первое; WPF-шаг — вместе с задачей WPF).
+

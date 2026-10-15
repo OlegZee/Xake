@@ -1233,3 +1233,23 @@ race (S53). The user's five remarks (shared output folder, minimal pack, satelli
 cached BAML) and the one-process scenario are the next cycle: `ar-full/cycle-2.md`. **Exact next step**:
 the user decides the branch merge order and the host/SDK-facts question; then cycle 2 stage 0 (csc server
 in the matrix, S53, profile) and stages A/B in parallel.
+
+## 2026-10-15 — решение: Xake не эмулирует msbuild
+
+Решение владельца: Xake не эмулирует msbuild; для hermetic и AR остаётся путь lock'ов — импорт записывает
+разрешённые msbuild входы (идентичности `pkg:`/`pack:`/`project:`/`sdk:`, дефайны, сгенерированные исходники) на
+пару конфигурация × фреймворк. Итог по 74 ночным строкам: остаётся 13 исправлений (плюс посленочные), 35 строк
+заменяет один механизм, 8 запаркованы, 11 отброшены. Документы на `pr/apphost-resx`
+(`/Users/olegz/projects/Xake/.claude/worktrees/pr/apphost-resx/docs/features/hermetic-build/fsc-rework/`):
+`night-changes-decisions-ru.md`, `night-changes-triage.md` (Part 5 — дизайн), `night-changes-group1-ru.md`.
+S66 (`ArtifactDep2`, БД 0.4 -> 0.5) — draft PR #54 в `dev`. База: ночная цепочка на 74bf4d9, в `feature/hermetic-build`
+нет `dev` #50/#52/#53 (конфликты `.gitignore`, `docs/roadmap.md`). Тесты AR не запускать без явного приказа; WpfViewer вне области.
+
+Замеры сегодня (xake-ar): csc-server матрица (`tests/results/2026-10-14-final/results-server.md`) — clean 1.2–1.4x,
+no-op 2.2x, все ячейки в одном процессе 1.45x. Прототип раскладки (`tests/results/2026-10-14-layout-proto/results-2.md`,
+ветка `layout-proto`): плоский out + папки запуска из hard-link на приложение, 9.4 MiB реальных байт, тесты равны эталону.
+
+**Exact next step**: владелец подтверждает два выбора агента (прочие ключи компилятора записываются; имена
+ресурсов и культуры берутся от msbuild) и решения 3a–3c; затем PR 0 (merge `dev`), PR 1 (`src/dotnet`),
+PR 2 (resolved-inputs import + lock).
+

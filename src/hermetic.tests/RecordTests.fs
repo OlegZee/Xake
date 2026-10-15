@@ -435,6 +435,45 @@ type ``Import record concurrent brands``() =
                 if other <> brand then Assert.That(text, Does.Not.Contain ("Brand-" + other), brand)
 
 
+/// `Import.record` against what a repository sets for itself: its own
+/// `CustomAfterMicrosoftCommonTargets` (chained, not overridden), a shared resource outside
+/// the project (its name from msbuild's `Link`), its `global.json` (the prerequisite's pin,
+/// tokenized; a warning that the lock pins the SDK more strictly).
+[<TestFixture>]
+type ``Import record repository settings``() =
+    inherit XakeTestBase("import-record-repo")
+
+    let fixture () =
+        RecordKit.write [ "app"; "shared"; "out"; "locks"; "obj" ]
+            [ "Directory.Build.props",
+                "<Project><PropertyGroup><CustomAfterMicrosoftCommonTargets>$(MSBuildThisFileDirectory)custom.targets</CustomAfterMicrosoftCommonTargets></PropertyGroup></Project>\n"
+              "custom.targets", "<Project><PropertyGroup><DefineConstants>$(DefineConstants);CUSTOM_AFTER</DefineConstants></PropertyGroup></Project>\n"
+              "global.json", "{ \"sdk\": { \"rollForward\": \"latestMajor\", \"version\": \"8.0.0\" } }\n"
+              "app/app.csproj",
+                RecordKit.sdkProject "<TargetFramework>net8.0</TargetFramework>" "<EmbeddedResource Include=\"../shared/Shared.resx\" />"
+              "app/C.cs", "namespace App { public class C {\n#if CUSTOM_AFTER\n  public static int X = 1;\n#endif\n} }\n"
+              "shared/Shared.resx", RecordKit.resx [ "A", "a" ] ]
+
+    [<Test>]
+    member x.``the repository's targets, a linked resource and the global.json pin are recorded``() =
+        fixture ()
+        RecordKit.import x.TestOptions "import-repo" RecordKit.recordDefault [ "app/app.csproj" ] |> ignore
+        let lock = File.ReadAllText (RecordKit.lockOf "app" "Release")
+        // the repository's CustomAfterMicrosoftCommonTargets ran in the design-time build
+        Assert.That(lock, Does.Contain "\"CUSTOM_AFTER\"")
+        // a resource outside the project is named by its link (PrepareForBuild's AssignLinkMetadata)
+        Assert.That(lock, Does.Contain "/obj/xake/app/net8.0/Release/app.Shared.resources\"")
+        Assert.That(lock, Does.Contain "\"$(ProjectRoot)/shared/Shared.resx\"")
+        // the prerequisite names the global.json by its tokenized path, and the import says the
+        // lock pins the SDK more strictly than it
+        Assert.That(lock, Does.Contain "\"Pin\": \"$(ProjectRoot)/global.json\"")
+        let log = File.ReadAllText "import-repo.log"
+        Assert.That(log, Does.Contain "pins the .NET SDK")
+        RecordKit.build x.TestOptions "build-repo" "Release"
+        let types, _, resources = RecordKit.metadata "out/Release/net8.0/app/app.dll"
+        Assert.That(resources, Is.EqualTo [ "app.Shared.resources" ])
+
+
 /// One synthesized restore downloads one version of an id: the fetch of a recorded lock set
 /// (each project's own restore graph) splits the packages into rounds of distinct ids.
 [<TestFixture>]

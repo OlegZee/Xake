@@ -40,7 +40,9 @@ module Import =
           "EnableDefaultItems"; "EnableDefaultCompileItems"; "DefaultItemExcludes"; "DefaultExcludesInProjectFolder"
           "IsPackable"; "PackageId"; "Description"; "Authors"; "Copyright"; "PackageTags"; "PackageLicenseExpression"
           "PackageProjectUrl"; "RepositoryType"; "RepositoryUrl"; "PackageIcon"; "PackageReadmeFile"
-          "NetCoreRoot"; "MSBuildExtensionsPath"; "MSBuildSDKsPath"; "MSBuildBinPath"; "NuGetPackageRoot"; "BaseIntermediateOutputPath" ]
+          "NetCoreRoot"; "MSBuildExtensionsPath"; "MSBuildSDKsPath"; "MSBuildBinPath"; "NuGetPackageRoot"; "BaseIntermediateOutputPath"
+          // the repository's own (`record` imports it from its targets file)
+          "CustomAfterMicrosoftCommonTargets" ]
     let private itemTypes =
         [ "Compile"; "Reference"; "PackageReference"; "PackageVersion"; "ProjectReference"; "AssemblyAttribute"
           "InternalsVisibleTo"; "EmbeddedResource"; "None"; "Content" ]
@@ -1097,6 +1099,13 @@ module Import =
                 ctx.Description.Name cfg framework
         entry, List.ofSeq warnings
 
+    /// The warning for a recorded lock whose SDK prerequisite (`sdk`, the SDK that recorded it)
+    /// is stricter than the project's `global.json` (`pin`): a machine with another SDK the pin
+    /// allows has to install `sdk` or import again (and every lock of the set changes).
+    let internal sdkPinWarning (name: string) (sdk: string) (pin: Lock.SdkPin) =
+        sprintf "'%s': the lock pins the .NET SDK %s (a prerequisite), more strictly than global.json does (%s); a machine with another SDK must install %s or import again. To say so in global.json: { \"sdk\": { \"version\": \"%s\", \"rollForward\": \"disable\" } }"
+            name sdk (match pin with Lock.NoGlobalJson -> "no global.json" | p -> Lock.sdkPinText p) sdk sdk
+
     /// The strings of this machine a portable lock must not contain (`record` checks the text
     /// it writes): the project root, the package folder, the .NET root, the home and temp folders
     /// -- each only where no token stands for it -- and a runtime identifier (`osx-arm64`) as a
@@ -1176,7 +1185,13 @@ module Import =
                     let projectDir = prop ev.Outer "MSBuildProjectDirectory"
                     let baseObj = match prop ev.Outer "BaseIntermediateOutputPath" with "" -> "obj/" | b -> b
                     let intermediate = sprintf "%s/xake-record/%s/%s/" ((absoluteIn projectDir baseObj).TrimEnd '/') key framework
-                    [ "TargetFramework", framework; "IntermediateOutputPath", intermediate ]
+                    // the project's own targets after the common targets (a repository's
+                    // `Directory.Build.props`, or the script's): imported from Xake's
+                    let chained =
+                        match prop ev.Outer "CustomAfterMicrosoftCommonTargets" with
+                        | "" -> []
+                        | v -> [ "XakeChainedAfterCommonTargets", absoluteIn projectDir v ]
+                    [ "TargetFramework", framework; "IntermediateOutputPath", intermediate ] @ chained
                     |> List.map (fun (k, v) -> k + "=" + escape v) |> String.concat ";"
                 let elapsed (since: DateTime) = (DateTime.UtcNow - since).TotalSeconds
                 let platform =
@@ -1295,6 +1310,12 @@ module Import =
                             | Some t when t.StartsWith "$(" -> t
                             | Some t -> Path.GetFileName t
                             | None -> "" }
+                    // the lock pins the SDK that recorded it (a prerequisite): say so where
+                    // global.json lets another one build
+                    match [ for _, _, _, d in runs -> prop d "NETCoreSdkVersion" ] |> List.filter ((<>) "") |> List.tryHead with
+                    | Some sdk when pin <> Lock.Pinned sdk ->
+                        do! trace Warning "%s" (sdkPinWarning description.Name sdk pin)
+                    | _ -> ()
                     let locks = ResizeArray<string> ()
                     for cfg in options.Configurations do
                         let built = [ for c, f, scratch, d in runs do if c = cfg then yield entryOf ctx cfg f scratch d ]

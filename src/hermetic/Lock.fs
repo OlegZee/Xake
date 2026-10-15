@@ -1053,7 +1053,7 @@ module Lock =
                 if not installed then
                     let rootText = root |> Option.map (fun r -> r.Replace('\\', '/')) |> Option.defaultValue "<no .NET installation found>"
                     yield sprintf "'%s': the lock needs the .NET SDK %s (prerequisite from %s), which is not installed under '%s'; install it (dotnet-install --version %s --install-dir %s)"
-                            entry.Name p.Version p.Pin rootText p.Version rootText ]
+                            entry.Name p.Version (if p.Pin = "" then "the import" else p.Pin) rootText p.Version rootText ]
 
     /// The compilation's inputs as `HERMETIC=on` sees them (`Csc.hermeticInputs`,
     /// `Fsc.hermeticInputs`): the compiler, references, analyzers and every other path.

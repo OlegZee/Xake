@@ -713,16 +713,97 @@ module Import =
               LockOf = (fun name cfg -> sprintf "locks/%s/%s.json" name cfg)
               OutOf = (fun cfg fwk name -> sprintf "out/%s/%s/%s" cfg fwk name) }
 
-    /// The items and properties of the design-time build `record` reads.
+    /// The items of the design-time build `record` reads, with the metadata it reads of each.
     let internal designTimeItems =
-        [ "CscCommandLineArgs"; "FscCommandLineArgs"; "ReferencePath"; "Analyzer"; "Compile"; "EmbeddedResource"; "EditorConfigFiles" ]
+        [ "CscCommandLineArgs", []
+          "FscCommandLineArgs", []
+          "ReferencePath",
+            [ "ReferenceSourceTarget"; "MSBuildSourceProjectFile"; "OriginalProjectReferenceItemSpec"; "NearestTargetFramework"
+              "SetTargetFramework"; "ReferenceAssembly"; "Aliases"; "NuGetPackageId"; "NuGetPackageVersion" ]
+          "Analyzer", [ "NuGetPackageId"; "NuGetPackageVersion" ]
+          "Compile", []
+          "EmbeddedResource", [ "OutputResource"; "WithCulture"; "Culture"; "LogicalName"; "ManifestResourceName"; "Link"; "DependentUpon"; "Type" ]
+          "EditorConfigFiles", [] ]
     let internal designTimeProperties =
         [ "AssemblyName"; "MSBuildProjectFullPath"; "MSBuildProjectDirectory"; "MSBuildProjectName"; "TargetFramework"
           "TargetFrameworkIdentifier"; "TargetFrameworkMoniker"; "DefineConstants"; "LangVersion"; "Version"; "OutputType"
           "NETCoreSdkVersion"; "NetCoreRoot"; "NuGetPackageRoot"; "ProjectAssetsFile"; "IntermediateOutputPath"
           "CscToolPath"; "CscToolExe"; "CSharpCoreTargetsPath"; "RoslynTargetsPath"; "DotnetFscCompilerPath"
           "SourceRevisionId"; "GenerateResourceUsePreserializedResources"; "Deterministic"; "SignAssembly"; "AssemblyOriginatorKeyFile"
-          "TargetFileName" ]
+          "TargetFileName"; "Configuration" ]
+
+    /// <summary>
+    /// The targets file `record` hands every project (`CustomAfterMicrosoftCommonTargets`; the
+    /// script's own value is imported from it, `XakeChainedAfterCommonTargets`): the target
+    /// `XakeRecordDump`, run after `PrepareResources;Compile` in the same project instance,
+    /// writes the properties and items `record` reads to a file of its own under
+    /// `$(XakeDumpRoot)`, one per line, tab-separated: <c>P name value</c>, <c>I type identity
+    /// metadata...</c> (the metadata of `designTimeItems`, in that order). One msbuild process
+    /// then runs every design-time build of a configuration, and a project several others
+    /// reference is evaluated once.
+    /// </summary>
+    let internal dumpTargets () =
+        let esc (s: string) = Security.SecurityElement.Escape s
+        let property name = sprintf "P%%09%s%%09$([MSBuild]::Escape('$(%s)'))" name name
+        let item (name, (metadata: string list)) =
+            let fields = "%(Identity)" :: (metadata |> List.map (sprintf "%%(%s)")) |> String.concat "%09"
+            sprintf "    <WriteLinesToFile File=\"$(_XakeDumpFile)\" Lines=\"%s\" />" (esc (sprintf "@(%s->'I%%09%s%%09%s')" name name fields))
+        String.concat "\n"
+            [ "<Project>"
+              "  <!-- written by Xake.Hermetic.Dotnet's Import.record for one import; deleted after it -->"
+              "  <Import Project=\"$(XakeChainedAfterCommonTargets)\" Condition=\"'$(XakeChainedAfterCommonTargets)' != '' and Exists('$(XakeChainedAfterCommonTargets)')\" />"
+              "  <Target Name=\"XakeRecordDump\">"
+              "    <PropertyGroup><_XakeDumpFile>$(XakeDumpRoot)/$([System.Guid]::NewGuid().ToString('N')).txt</_XakeDumpFile></PropertyGroup>"
+              sprintf "    <WriteLinesToFile File=\"$(_XakeDumpFile)\" Overwrite=\"true\" Lines=\"%s\" />"
+                  (esc (designTimeProperties |> List.map property |> String.concat ";"))
+              yield! designTimeItems |> List.map item
+              "  </Target>"
+              "</Project>"
+              "" ]
+
+    /// A file `XakeRecordDump` wrote, as a `Dump`.
+    let internal readRecordDump (file: string) : Dump =
+        let metadataOf = Map.ofList designTimeItems
+        let props = ResizeArray<string * string> ()
+        let items = Collections.Generic.Dictionary<string, ResizeArray<string * Map<string, string>>> ()
+        for line in File.ReadAllLines file do
+            match line.Split '\t' |> List.ofArray with
+            | "P" :: name :: value -> props.Add (name, String.concat "\t" value)
+            | "I" :: kind :: identity :: values ->
+                let names = metadataOf |> Map.tryFind kind |> Option.defaultValue []
+                let m = Seq.zip names values |> Seq.filter (fun (_, v) -> v <> "") |> Map.ofSeq |> Map.add "Identity" identity
+                if not (items.ContainsKey kind) then items.[kind] <- ResizeArray ()
+                items.[kind].Add (identity, m)
+            | _ -> ()
+        { Props = props |> Seq.filter (fun (_, v) -> v <> "") |> Map.ofSeq
+          Items = items |> Seq.map (fun kv -> kv.Key, List.ofSeq kv.Value) |> Map.ofSeq }
+
+    /// A solution of `projects` (absolute): one restore of all of them.
+    let internal solutionText (projects: string list) =
+        let guid (path: string) =
+            use md5 = Security.Cryptography.MD5.Create ()
+            Guid(md5.ComputeHash (Text.Encoding.UTF8.GetBytes path)).ToString("B").ToUpperInvariant ()
+        let kind (path: string) =
+            if path.EndsWith (".fsproj", StringComparison.OrdinalIgnoreCase) then "{6EC3EE1D-3C4E-46DD-8F32-0CC8E7565705}"
+            else "{9A19103F-16F7-4668-BE54-9A1E7A4F7556}"
+        String.concat "\n"
+            [ yield ""
+              yield "Microsoft Visual Studio Solution File, Format Version 12.00"
+              yield "# Visual Studio Version 17"
+              for p in projects do
+                  yield sprintf "Project(\"%s\") = \"%s\", \"%s\", \"%s\"" (kind p) (Path.GetFileNameWithoutExtension p) (p.Replace ('/', Path.DirectorySeparatorChar)) (guid p)
+                  yield "EndProject"
+              yield "Global"
+              yield "\tGlobalSection(SolutionConfigurationPlatforms) = preSolution"
+              yield "\t\tRelease|Any CPU = Release|Any CPU"
+              yield "\tEndGlobalSection"
+              yield "\tGlobalSection(ProjectConfigurationPlatforms) = postSolution"
+              for p in projects do
+                  yield sprintf "\t\t%s.Release|Any CPU.ActiveCfg = Release|Any CPU" (guid p)
+                  yield sprintf "\t\t%s.Release|Any CPU.Build.0 = Release|Any CPU" (guid p)
+              yield "\tEndGlobalSection"
+              yield "EndGlobal"
+              yield "" ]
 
     /// The properties of the design-time build a lock entry keeps (`Evaluation.Properties`).
     let private keptProperties =
@@ -1056,44 +1137,84 @@ module Import =
             Directory.CreateDirectory temp |> ignore
             try
                 let projectFiles = projects |> List.map full |> List.distinct
-                // 1. the restores: every one before any design-time build reads what they wrote
-                do! projectFiles
-                    |> List.map (fun pf ->
-                        msbuild environment ([ pf; "-nologo"; "-verbosity:quiet"; "-t:Restore" ] @ switches primary @ [ "-p:RestoreRecursive=false" ]) pf)
-                    |> concurrently |> Recipe.map ignore
-                // 2. per project: the evaluations, then its design-time builds
-                let one (index: int) (pf: string) =
-                    recipe {
-                        let projectTemp = temp </> string index
-                        Directory.CreateDirectory projectTemp |> ignore
-                        let! ev = evaluate environment pf (switches primary) projectTemp
-                        let frameworks = ev.Inner |> List.map fst
-                        let run (cfg: string) (framework: string) =
-                            recipe {
-                                let tag = sprintf "%s-%s" cfg framework
-                                let dump = projectTemp </> tag + ".json"
-                                let scratch = slash (projectTemp </> tag) + "/"
-                                do! msbuild environment
-                                        ([ pf; "-nologo"; "-verbosity:quiet" ] @ switches cfg
-                                         @ [ "-p:TargetFramework=" + framework
-                                             "-p:ProvideCommandLineArgs=true"; "-p:SkipCompilerExecution=true"
-                                             "-p:BuildProjectReferences=false"
-                                             "-p:IntermediateOutputPath=" + scratch
-                                             // CoreCompile lists this among its outputs: a file that never
-                                             // exists keeps it from being skipped as up to date
-                                             "-p:NonExistentFile=__NonExistentSubDir__/__NonExistentFile__"
-                                             "-t:PrepareResources;Compile"
-                                             "-getItem:" + String.concat "," designTimeItems
-                                             "-getProperty:" + String.concat "," designTimeProperties
-                                             "-getResultOutputFile:" + dump ]) pf
-                                if not (File.Exists dump) then
-                                    failwithf "'%s': msbuild wrote no result for %s|%s; the import stops" pf cfg framework
-                                return cfg, framework, scratch, readDump dump
-                            }
-                        let! runs = [ for cfg in options.Configurations do for f in frameworks -> run cfg f ] |> concurrently
-                        return pf, ev, runs
-                    }
-                let! evaluated = projectFiles |> List.mapi one |> concurrently
+                let elapsed (since: DateTime) = (DateTime.UtcNow - since).TotalSeconds
+                // 1. one restore of every project (a solution of them), before anything reads what
+                // it writes
+                let phase = DateTime.UtcNow
+                let solution = temp </> "import.sln"
+                File.WriteAllText (solution, solutionText projectFiles)
+                do! msbuild environment ([ solution; "-nologo"; "-verbosity:quiet"; "-t:Restore" ] @ switches primary) solution
+                do! trace Info "import: the restore of %d project(s) in %.1f s" projectFiles.Length (elapsed phase)
+                // 2. the evaluations (the description), concurrently
+                let phase = DateTime.UtcNow
+                let! evaluations =
+                    projectFiles |> List.mapi (fun index pf ->
+                        recipe {
+                            let projectTemp = temp </> string index
+                            Directory.CreateDirectory projectTemp |> ignore
+                            let! ev = evaluate environment pf (switches primary) projectTemp
+                            return ev
+                        })
+                    |> concurrently
+                do! trace Info "import: %d project evaluation(s) in %.1f s" projectFiles.Length (elapsed phase)
+                // 3. every design-time build of a configuration in one msbuild process: a traversal
+                // project over (project, framework), the dump target handed to every project
+                let phase = DateTime.UtcNow
+                let targetsFile = temp </> "xake-record.targets"
+                File.WriteAllText (targetsFile, dumpTargets ())
+                let chained = options.Properties |> List.tryFind (fun (k, _) -> k.Equals ("CustomAfterMicrosoftCommonTargets", StringComparison.OrdinalIgnoreCase))
+                let recordSwitches cfg =
+                    [ for k, v in ("Configuration", cfg) :: globals do
+                        if not (k.Equals ("CustomAfterMicrosoftCommonTargets", StringComparison.OrdinalIgnoreCase)) then
+                            yield sprintf "-p:%s=%s" k v ]
+                    @ (match chained with Some (_, v) -> [ "-p:XakeChainedAfterCommonTargets=" + v ] | None -> [])
+                    @ [ "-p:CustomAfterMicrosoftCommonTargets=" + slash targetsFile
+                        "-p:ProvideCommandLineArgs=true"; "-p:SkipCompilerExecution=true"; "-p:BuildProjectReferences=false"
+                        // CoreCompile lists this among its outputs: a file that never exists keeps it
+                        // from being skipped as up to date
+                        "-p:NonExistentFile=__NonExistentSubDir__/__NonExistentFile__" ]
+                let runs = [ for pf, ev in List.zip projectFiles evaluations do for f, _ in ev.Inner -> pf, f ]
+                let! dumps =
+                    options.Configurations |> List.map (fun cfg ->
+                        recipe {
+                            let dumpRoot = temp </> "dump-" + cfg
+                            Directory.CreateDirectory dumpRoot |> ignore
+                            let traversal = temp </> sprintf "record-%s.proj" cfg
+                            let runItems =
+                                runs |> List.map (fun (pf, f) ->
+                                    sprintf "    <XakeRun Include=\"%s\" AdditionalProperties=\"TargetFramework=%s\" />"
+                                        (Security.SecurityElement.Escape pf) (Security.SecurityElement.Escape f))
+                            File.WriteAllText (traversal, String.concat "\n" ([ "<Project>"; "  <ItemGroup>" ] @ runItems @
+                                                                              [ "  </ItemGroup>"
+                                                                                "  <Target Name=\"Build\">"
+                                                                                "    <MSBuild Projects=\"@(XakeRun)\" Targets=\"PrepareResources;Compile;XakeRecordDump\" BuildInParallel=\"true\" />"
+                                                                                "  </Target>"; "</Project>"; "" ]))
+                            do! msbuild environment
+                                    ([ traversal; "-nologo"; "-verbosity:quiet"; "-m"; "-nodeReuse:false"; "-p:XakeDumpRoot=" + slash dumpRoot ]
+                                     @ recordSwitches cfg) traversal
+                            let byRun =
+                                Directory.GetFiles (dumpRoot, "*.txt") |> Array.map readRecordDump
+                                |> Array.map (fun d -> (slash (prop d "MSBuildProjectFullPath"), prop d "TargetFramework"), d)
+                                |> Map.ofArray
+                            return
+                                [ for pf, f in runs ->
+                                    match byRun |> Map.tryFind (slash pf, f) with
+                                    | Some d -> pf, (cfg, f, d)
+                                    | None -> failwithf "'%s': the design-time build for %s|%s wrote nothing; the import stops" pf cfg f ]
+                        })
+                    |> concurrently
+                let dumps = List.concat dumps
+                do! trace Info "import: %d design-time build(s) in %.1f s" dumps.Length (elapsed phase)
+                let evaluated =
+                    List.zip projectFiles evaluations
+                    |> List.map (fun (pf, ev) ->
+                        let runs =
+                            [ for p, (cfg, f, d) in dumps do
+                                if p = pf then
+                                    // msbuild's own intermediate folder of that build: what it generated
+                                    let scratch = absoluteIn (slash (Path.GetDirectoryName pf)) (prop d "IntermediateOutputPath")
+                                    yield cfg, f, scratch, d ]
+                        pf, ev, runs)
 
                 // 3. the descriptions and the locks
                 let results = ResizeArray<Imported> ()

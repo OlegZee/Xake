@@ -674,7 +674,8 @@ module Lock =
         [ sprintf "  \"Format\": %d" FormatVersion
           sprintf "  \"Configuration\": %s" (escape lock.Configuration)
           sprintf "  \"Properties\": {\n%s\n  }"
-            (lock.Properties |> List.map (fun (k, v) -> sprintf "    %s: %s" (escape k) (escape v)) |> String.concat ",\n")
+            // a value may be a path (`RestoreConfigFile`): tokenized as every path
+            (lock.Properties |> List.map (fun (k, v) -> sprintf "    %s: %s" (escape k) (escape (Roots.tokenizeAll roots v))) |> String.concat ",\n")
           sprintf "  \"Entries\": [\n%s\n  ]" (lock.Entries |> List.map (writeEntry roots) |> String.concat ",\n") ]
         |> String.concat ",\n" |> sprintf "{\n%s\n}\n"
 
@@ -816,7 +817,7 @@ module Lock =
             Configuration = str "Configuration"
             Properties =
                 match field "Properties" root with
-                | Some (JObject members) -> members |> List.choose (fun (k, v) -> asString v |> Option.map (fun v -> k, v))
+                | Some (JObject members) -> members |> List.choose (fun (k, v) -> asString v |> Option.map (fun v -> k, Roots.expand roots v))
                 | _ -> []
             Entries = field "Entries" root |> Option.map asArray |> Option.defaultValue [] |> List.map (readEntry roots (str "Framework"))
         }

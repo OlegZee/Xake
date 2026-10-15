@@ -48,7 +48,7 @@ folder.
 | `kind` | `library` \| `exe` | default `library`; always written |
 | `frameworks` | string list, required, at least one | target frameworks (TFMs) |
 | `sources` | string list, required | in compile order (it matters for F#); for C#, msbuild's globs as Xake masks |
-| `resources` | `{ file, name? }` list | a plain file, embedded as is, or a `.resx`, compiled to a `.resources` by `project`; `name`: the manifest name (msbuild's `LogicalName`), default msbuild's (below) |
+| `resources` | `{ file, name? }` list | a plain file, embedded as is, or a `.resx`, compiled to a `.resources` by `project`; `name`: the manifest name (msbuild's `LogicalName`, or the `ManifestResourceName` msbuild gave it when `Import.record` ran its targets), default msbuild's (below) |
 | `defines` | string list | |
 | `references` | string list | framework assemblies by name, e.g. `System.Windows.Forms` |
 | `projectRefs` | string list | names of other described projects |
@@ -56,7 +56,7 @@ folder.
 | `options` | object | `doc`, `langVersion`, `warningsAsErrors`, `noWarn` (warnings suppressed beyond the SDK's defaults, which `project` adds: C# `1701`, `1702`; F# none), `nullable` (`enable`/`disable`/`warnings`/`annotations`), `keyFile`, `args` (raw switches, appended last) |
 | `internalsVisibleTo` | list of string or `{ name, key? }` | friend assemblies |
 | `assemblyAttributes` | `{ type, args? }` list | assembly-level attributes, e.g. `{ "type": "System.CLSCompliantAttribute", "args": ["true"] }`; `args` are source text, emitted verbatim (`"\"text\""` for a string) |
-| `byFramework` | object keyed by TFM | additions for one framework: `defines`, `references`, `packages`, `args`; each key must be one of `frameworks` |
+| `byFramework` | object keyed by TFM | additions for one framework: `defines`, `references`, `packages`, `args`, `resources` (an `EmbeddedResource` under a condition on the framework); each key must be one of `frameworks` |
 | `package` | object | present when the project is packed: `id` (required), `description`, `authors`, `copyright`, `tags`, `license` (SPDX), `projectUrl`, `repository { type, url }`, `icon`, `readme`, `bundle` (projectRefs packed into this package) |
 
 The default manifest name of a resource is msbuild's (`CreateCSharpManifestResourceName`,
@@ -127,6 +127,34 @@ other repository imports; not the SDK's, package or `obj/` files) and `Dropped` 
 knows that the description has no field for: other properties and item types of the repository
 files, targets, attribute arguments it cannot write, the SDK's implicit packages).
 
+## Import that records msbuild's compile inputs: `Import.record`
+
+`Import.record options projects` writes, for each project file, its description (as
+`Import.descriptions` does) **and** one lock per configuration (`options.LockOf name cfg`), with
+one entry per target framework. The lock entry is msbuild's own answer, not a Xake
+derivation: see [lock.md, "Recorded locks"](lock.md#recorded-locks-importrecord). For the
+description, `record` differs from `descriptions` in two points:
+
+- The resource names and cultures come from msbuild's targets: `ManifestResourceName` and
+  `LogicalName` (a `.resx` is `<ManifestResourceName>.resources`), `WithCulture` for a
+  satellite resource. `name` is written only when it is not the default name. No C# parsing and
+  no culture table of the importing machine are used.
+- `byFramework.<tfm>.resources` holds the resources only one framework has.
+
+Both imports read a `Compile Include` with a property (`$(BuildTmpPath)\VersionInfo.cs`, a
+shared project's `$(MSBuildThisFileDirectory)X.cs`) as the evaluated path, relative to the
+project folder, and write the path of a shared project's resource relative to the project
+folder.
+
+| `RecordOptions` field | Meaning |
+|---|---|
+| `Configurations` | one lock per configuration, e.g. `["Release"]` |
+| `Properties` | the global properties msbuild runs with, e.g. `["Brand", "GCCN"]` (not `Configuration`); written into the lock, tokenized |
+| `Roots` | the script's extra roots (`Roots.make`) |
+| `DescriptionOf` | project file -> description file (default `Description.beside`) |
+| `LockOf` | description name -> configuration -> lock file |
+| `OutOf` | configuration -> framework -> project name -> output folder: where a project reference is found |
+
 ## API
 
 | Function | Signature | What it does |
@@ -142,6 +170,7 @@ files, targets, attribute arguments it cannot write, the SDK's implicit packages
 | `Description.beside` | `string -> string` | the conventional description of a project file: `xake.project.json` in the same folder |
 | `Import.descriptions` | `string list -> (string -> string) -> (string * string) list -> Recipe<ExecContext, Import.Imported list>` | import project files into descriptions (above) |
 | `Import.project` | `string -> (string -> string) -> (string * string) list -> Recipe<ExecContext, Import.Imported>` | the same for one project |
+| `Import.record` | `Import.RecordOptions -> string list -> Recipe<ExecContext, Import.Imported list>` | descriptions and recorded locks ([above](#import-that-records-msbuilds-compile-inputs-importrecord)); `Imported.Locks` names the locks written |
 
 ```fsharp
 open Xake

@@ -231,6 +231,24 @@ type ``Lock file format``() =
         Assert.That(parsed, Is.EqualTo (document ()))
         Assert.That(Lock.format roots parsed, Is.EqualTo golden)
 
+    /// The content of a generated source is text: a `\` in a string literal (an attribute
+    /// argument) stays, only the path fields have theirs turned into `/`.
+    [<Test>]
+    member x.``a backslash in generated content is kept``() =
+        let doc = document ()
+        let content = "[assembly: System.Reflection.AssemblyDescription(\"a\\\\b \\\"q\\\"\")]\n"
+        let withText (e: Lock.Entry) =
+            match e.Compilation with
+            | Lock.Compilation.Csc c ->
+                { e with Compilation = Lock.Compilation.Csc { c with Generated = [ "/r/proj/src/Sample/obj/AssemblyInfo.cs", content ]
+                                                                     Resources = [ "C:\\r\\S.resx", "/r/proj/src/Sample/obj/S.resources" ] } }
+            | _ -> e
+        let doc = { doc with Entries = doc.Entries |> List.map withText }
+        let text = Lock.format roots doc
+        let back = Lock.parse roots text
+        Assert.That(back.Entries.Head.Compilation.Generated, Is.EqualTo [ "/r/proj/src/Sample/obj/AssemblyInfo.cs", content ])
+        Assert.That(back.Entries.Head.Compilation.Resources |> List.map fst, Is.EqualTo [ "C:/r/S.resx" ], "a path field still gets '/'")
+
 /// An F# entry has the C# entry's shape: the same sections and keys in the same order, the
 /// options in fsc's own `-`/`--` dialect, references as `-r:` behind `@References`, no
 /// `@Analyzers` marker and an empty `Analyzers` list (written the way the writer writes an

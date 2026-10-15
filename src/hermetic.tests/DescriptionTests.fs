@@ -137,6 +137,6 @@ type ``Project description``() =
         let names path = match get path schema with Json.JObject ms -> List.map fst ms | _ -> []
         let check kind path = Assert.That(names path, Is.EqualTo (Description.fields.[kind]), kind)
         check "project" ["properties"]
-        for kind in ["package"; "items"; "resource"; "options"; "metadata"; "repository"] do
+        for kind in ["package"; "items"; "resource"; "options"; "attribute"; "metadata"; "repository"] do
             check kind ["$defs"; kind; "properties"]
         check "friend" ["$defs"; "friend"; "oneOf"; "1"; "properties"]

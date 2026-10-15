@@ -22,7 +22,7 @@
         }
       },
       "Compilation": {
-        "Directory": "$(ProjectRoot)",
+        "Directory": "$(ProjectRoot)/src/hermetic",
         "Options": [
           "--nologo",
           "--target:library",
@@ -96,7 +96,8 @@
           { "Path": "$(NuGetPackageRoot)/microsoft.netframework.referenceassemblies.net462/1.0.3/build/.NETFramework/v4.6.2/System.Xml.Linq.dll", "Sha256": "8a0b22e041af7818e61d86e3afa4104d3e3b0e796641adbc50b750a9bc3e3436" },
           { "Path": "$(NuGetPackageRoot)/microsoft.netframework.referenceassemblies.net462/1.0.3/build/.NETFramework/v4.6.2/System.Numerics.dll", "Sha256": "b4f4dc7cdff4f157085d10ec9d66fde2606563746433f1bbf61dea34e49c21a1" },
           { "Path": "$(NuGetPackageRoot)/microsoft.netframework.referenceassemblies.net462/1.0.3/build/.NETFramework/v4.6.2/System.IO.Compression.FileSystem.dll", "Sha256": "ad6fdd0a932d61273c0a06eeda19b0cacb680b24a4bdd1800679788c613ba00e" },
-          { "Path": "$(NuGetPackageRoot)/microsoft.netframework.referenceassemblies.net462/1.0.3/build/.NETFramework/v4.6.2/System.IO.Compression.dll", "Sha256": "03dcccb80ae9a6714d36e2812cebf6a069067e1890d36a8b4b1f20ad35a04c5b" }
+          { "Path": "$(NuGetPackageRoot)/microsoft.netframework.referenceassemblies.net462/1.0.3/build/.NETFramework/v4.6.2/System.IO.Compression.dll", "Sha256": "03dcccb80ae9a6714d36e2812cebf6a069067e1890d36a8b4b1f20ad35a04c5b" },
+          { "Path": "$(NuGetPackageRoot)/microsoft.netframework.referenceassemblies.net462/1.0.3/build/.NETFramework/v4.6.2/System.Windows.Forms.dll", "Sha256": "e06679baad09262f37499a042b2e3265e0412052e10877bb01a7fbb4f6a6f3a4" }
         ],
         "Analyzers": [
 
@@ -126,7 +127,7 @@
         }
       },
       "Compilation": {
-        "Directory": "$(ProjectRoot)",
+        "Directory": "$(ProjectRoot)/src/hermetic",
         "Options": [
           "--nologo",
           "--target:library",

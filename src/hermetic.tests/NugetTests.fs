@@ -146,6 +146,23 @@ type ``Nuget assets``() =
         Assert.That (ex.Message, Does.Contain "netstandard2.0")
         Assert.That (ex.Message, Does.Contain ".NETFramework,Version=v4.7.2")
 
+    /// A package's `frameworkAssemblies` for the target (a nuspec's, for .NET Framework) are
+    /// read by name, each once, in the file's order.
+    [<Test>]
+    member x.``reads the framework assemblies of the packages``() =
+        let assetsFile = Directory.GetCurrentDirectory() </> "project.assets.fwkasm.json"
+        File.WriteAllText (assetsFile, """
+            {
+              "targets": { ".NETFramework,Version=v4.7.2": {
+                "DocumentFormat.OpenXml/3.2.0": { "type": "package", "frameworkAssemblies": [ "System", "System.Xml", "WindowsBase" ] },
+                "Other/1.0.0": { "type": "package", "frameworkAssemblies": [ "windowsbase", "System.IO.Compression" ] },
+                "Plain/1.0.0": { "type": "package" } } },
+              "project": { "frameworks": { "net472": { "dependencies": { "DocumentFormat.OpenXml": {} } } } }
+            }
+            """)
+        Assert.That ((Nuget.readAssets assetsFile "net472").FrameworkAssemblies,
+                     Is.EqualTo [ "System"; "System.Xml"; "WindowsBase"; "System.IO.Compression" ])
+
     [<Test>]
     member x.``picks the rid-less net8_0 entry over net8_0-win-x64``() =
         let assetsFile = Directory.GetCurrentDirectory() </> "project.assets.net8.json"

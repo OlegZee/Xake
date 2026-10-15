@@ -326,6 +326,7 @@ type ``Project import``() =
                 Graph = [ ("Foo.Bar", "1.2.3"), ("Baz.Qux", "4.5.6"); ("MyProj", "1.0.0"), ("Baz.Qux", "4.5.6") ]
                 Direct = [ "foo.bar" ]
                 Framework = "netstandard2.0"
+                FrameworkAssemblies = []
             }
             let expected : Lock.Package list =
                 [ { Id = "Foo.Bar"; Version = "1.2.3"; Sha512 = "AAAA=="; Direct = true; DependsOn = [ "Baz.Qux" ] }

@@ -132,6 +132,29 @@ lock" without a path when `Lock.compileWith` is called with an entry whose file 
 An import refused for its SDK pin (7, 11) is not reported again with 9 for the SDK paths that pin
 would have covered. All of them are hard failures: `FailOnError = false` does not soften them.
 
+## Generated locks under the mode <a id="generated-locks-under-the-mode"></a>
+
+A lock `Locks.generate` writes from a description is a composed compilation (`fsc`/`csc {
+project }`), so the rules above apply to it as written, at both ends: `update-locks` under
+`HERMETIC=on` resolves under the mode (messages 1 to 8) and refuses an incomplete lock (message
+9); `build` (`Locks.compileAs`) refuses a lock that names a path outside the roots (message 10).
+
+- **F#**: pin the SDK exactly in `global.json` (found from the project root upwards). The
+  generation records the `dotnet-sdk <v>` prerequisite exactly as `Lock.record` does, and it
+  covers `fsc.dll`; without the pin it warns ("depends on the .NET SDK ... global.json does not
+  pin it exactly") and the mode refuses (message 6).
+- **C#**: set `CSC_TOOLSET`; the SDK's csc is not covered by the prerequisite for a generated
+  lock (msbuild did not choose it, the description did), so without the toolset `update-locks`
+  fails with message 3, and a lock generated without the mode is refused at build (message 10).
+- **Everything else** as for any composed compilation: `NUGET_PACKAGES` (the script variable),
+  `NETCORE_REF_VERSION` for `netN.0`, `FSHARP_CORE_VERSION` for an F# `netN.0` default.
+- **Sibling checkouts**: the extra roots of `Locks.generateWith`/`compileAsWith`
+  ([lock.md](lock.md#extra-roots-for-generated-locks)) count as project roots.
+
+Test (`BuildFromLockTests`): an F# and a C# description under an exact pin, `update-locks` and
+`build` with `HERMETIC=on`, `NUGET_PACKAGES` and `CSC_TOOLSET`; without `CSC_TOOLSET` the C#
+lock is refused (message 3); without the pin the generation warns and records no prerequisite.
+
 ## Interplay
 
 - **`CI`.** Independent. `CI=on` alone: a missing lock fails, content unchecked. `HERMETIC=on`

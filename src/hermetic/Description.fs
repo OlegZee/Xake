@@ -25,13 +25,23 @@ module Description =
     /// The lists a framework can add to (`byFramework`), also the project-wide ones.
     type Items = { Defines: string list; References: string list; Packages: Package list; Args: string list }
 
+    /// An embedded resource: a plain file, or a `.resx` that `project` compiles to a
+    /// `.resources` first. `Name` is the manifest name (msbuild's `LogicalName`); `None` is
+    /// msbuild's default (`Described.manifestName`).
     type Resource = { File: string; Name: string option }
 
+    /// `NoWarn`: the warnings the project suppresses beyond the SDK's own defaults (C#'s
+    /// `1701;1702`), which `project` adds back.
     type Options =
-        { Doc: bool; LangVersion: string option; WarningsAsErrors: bool
+        { Doc: bool; LangVersion: string option; WarningsAsErrors: bool; NoWarn: string list
           Nullable: string option; KeyFile: string option; Args: string list }
         static member Default =
-            { Doc = false; LangVersion = None; WarningsAsErrors = false; Nullable = None; KeyFile = None; Args = [] }
+            { Doc = false; LangVersion = None; WarningsAsErrors = false; NoWarn = []; Nullable = None; KeyFile = None; Args = [] }
+
+    /// An assembly-level attribute (msbuild's `AssemblyAttribute` item other than
+    /// `InternalsVisibleTo`): the attribute type and its arguments as source text, emitted
+    /// verbatim (`["true"]`, `["\"text\""]`, `["Name = 1"]`).
+    type Attribute = { Type: string; Args: string list }
 
     /// An `InternalsVisibleTo` friend; written as a plain string when it has no key.
     type Friend = { Name: string; Key: string option }
@@ -64,6 +74,7 @@ module Description =
           Packages: Package list
           Options: Options
           InternalsVisibleTo: Friend list
+          AssemblyAttributes: Attribute list
           ByFramework: (string * Items) list
           Package: Metadata option }
 
@@ -81,12 +92,13 @@ module Description =
         Map.ofList
             [ "project", [ "$schema"; "name"; "project"; "assemblyName"; "rootNamespace"; "language"; "kind"; "frameworks"
                            "sources"; "resources"; "defines"; "references"; "projectRefs"; "packages"; "options"
-                           "internalsVisibleTo"; "byFramework"; "package" ]
+                           "internalsVisibleTo"; "assemblyAttributes"; "byFramework"; "package" ]
               "package", [ "id"; "version"; "private" ]
               "items", [ "defines"; "references"; "packages"; "args" ]
               "resource", [ "file"; "name" ]
-              "options", [ "doc"; "langVersion"; "warningsAsErrors"; "nullable"; "keyFile"; "args" ]
+              "options", [ "doc"; "langVersion"; "warningsAsErrors"; "noWarn"; "nullable"; "keyFile"; "args" ]
               "friend", [ "name"; "key" ]
+              "attribute", [ "type"; "args" ]
               "metadata", [ "id"; "description"; "authors"; "copyright"; "tags"; "license"; "projectUrl"; "repository"
                             "icon"; "readme"; "bundle" ]
               "repository", [ "type"; "url" ] ]
@@ -129,6 +141,7 @@ module Description =
         { Doc = opt ms path "doc" bool |> Option.defaultValue false
           LangVersion = opt ms path "langVersion" str
           WarningsAsErrors = opt ms path "warningsAsErrors" bool |> Option.defaultValue false
+          NoWarn = orEmpty ms path "noWarn" strs
           Nullable =
             opt ms path "nullable" (fun p v ->
                 match str p v with
@@ -185,6 +198,10 @@ module Description =
               Packages = orEmpty ms "" "packages" (fun p -> list p package)
               Options = opt ms "" "options" options |> Option.defaultValue Options.Default
               InternalsVisibleTo = orEmpty ms "" "internalsVisibleTo" (fun p -> list p friend)
+              AssemblyAttributes =
+                orEmpty ms "" "assemblyAttributes" (fun p -> list p (fun p v ->
+                    let ats = members p fields.["attribute"] v
+                    { Type = req ats p "type" str; Args = orEmpty ats p "args" strs }))
               ByFramework =
                 orEmpty ms "" "byFramework" (fun p v ->
                     let tfms = match v with JObject fs -> List.map fst fs | _ -> []
@@ -255,6 +272,7 @@ module Description =
             else
                 Some ("options", JObject (List.choose id
                         [ flag "doc" o.Doc; maybe "langVersion" o.LangVersion; flag "warningsAsErrors" o.WarningsAsErrors
+                          nonEmpty "noWarn" (List.map s o.NoWarn)
                           maybe "nullable" o.Nullable; maybe "keyFile" o.KeyFile; nonEmpty "args" (List.map s o.Args) ]))
         let friend (f: Friend) =
             match f.Key with
@@ -286,6 +304,8 @@ module Description =
               nonEmpty "packages" (List.map package d.Packages)
               options
               nonEmpty "internalsVisibleTo" (List.map friend d.InternalsVisibleTo)
+              nonEmpty "assemblyAttributes" (d.AssemblyAttributes |> List.map (fun a ->
+                  JObject (List.choose id [ some "type" (s a.Type); nonEmpty "args" (List.map s a.Args) ])))
               (match d.ByFramework with
                | [] -> None
                | fs -> Some ("byFramework", JObject (fs |> List.map (fun (tfm, i) -> tfm, JObject (List.choose id (items i))))))

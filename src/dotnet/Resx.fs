@@ -45,3 +45,23 @@ module Resx =
         for (name, value) in read resxFile do
             writer.AddResource (name, value)
         writer.Generate ()
+
+    /// `compile`, but the `.resources` file is written only when it is missing or its bytes
+    /// differ from what the resx compiles to, so an unchanged one keeps its timestamp.
+    /// Returns whether it wrote.
+    let refresh (resxFile: string) (resourcesFile: string) : bool =
+        let bytes =
+            use stream = new MemoryStream ()
+            (
+                use writer = new System.Resources.ResourceWriter (stream)
+                for (name, value) in read resxFile do
+                    writer.AddResource (name, value)
+                writer.Generate ()
+            )
+            stream.ToArray ()
+        if File.Exists resourcesFile && File.ReadAllBytes resourcesFile = bytes then false
+        else
+            let dir = Path.GetDirectoryName resourcesFile
+            if not (System.String.IsNullOrWhiteSpace dir) then Directory.CreateDirectory dir |> ignore
+            File.WriteAllBytes (resourcesFile, bytes)
+            true

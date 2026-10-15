@@ -201,30 +201,66 @@ module Storage =
     /// <param name="logger"></param>
     let openDb dbpath (logger : ILogger) = 
         let db, dbwriter = impl.openDatabaseFile dbpath logger
-        MailboxProcessor.Start(fun mbox -> 
-            let rec loop (db) = 
-                async { 
+        // Logging the agent's own failure must not throw out of the loop again.
+        let logError fmt = Printf.kprintf (fun s -> try logger.Log Error "%s" s with _ -> ()) fmt
+        let agent = new MailboxProcessor<_>(fun mbox ->
+            // An exception escaping the loop would kill the agent silently and every later
+            // PostAndReply (GetResult, CloseWait) would wait forever. So each message is
+            // guarded: a failed store is logged, nothing of it reaches the file and the result
+            // is kept in memory for this run (the next run rebuilds that target), a failed
+            // lookup answers "no record" (a rebuild), and close always replies.
+            let failedStores = ref 0
+            let warnUnsaved () =
+                if failedStores.Value > 0 then
+                    try logger.Log Warning "Database not fully saved: %d result(s) failed to store, the next build may rebuild them" failedStores.Value
+                    with _ -> ()
+            let rec loop (db) =
+                async {
                     let! msg = mbox.Receive()
                     match msg with
-                    | GetResult(key, chnl) -> 
-                        db.Status
-                        |> Map.tryFind key
-                        |> chnl.Reply
+                    | GetResult(key, chnl) ->
+                        let found =
+                            try db.Status |> Map.tryFind key
+                            with ex ->
+                                logError "Database agent failed to look up '%s': %O" key.ShortName ex
+                                None
+                        chnl.Reply found
                         return! loop (db)
-                    | Store result -> 
-                        Persist.result.pickle result dbwriter
-                        return! loop (result |> addResult db)
-                    | Close -> 
-                        logger.Log Info "Closing database"
-                        dbwriter.Dispose()
+                    | Store result ->
+                        // pickle into memory first, so a failure writes nothing and the file
+                        // stays a sequence of whole records
+                        try
+                            use buffer = new System.IO.MemoryStream()
+                            use bufWriter = new System.IO.BinaryWriter(buffer)
+                            Persist.result.pickle result bufWriter
+                            bufWriter.Flush()
+                            dbwriter.Write(buffer.ToArray())
+                        with ex ->
+                            failedStores.Value <- failedStores.Value + 1
+                            let name = try (result.Targets |> List.map (fun t -> t.ShortName) |> String.concat ", ") with _ -> "?"
+                            logError "Database agent failed to store the result of '%s': %O" name ex
+                        let db' =
+                            try result |> addResult db
+                            with ex -> logError "Database agent failed to record a result: %O" ex; db
+                        return! loop db'
+                    | Close ->
+                        do (try logger.Log Info "Closing database" with _ -> ())
+                        do warnUnsaved ()
+                        try dbwriter.Dispose()
+                        with ex -> logError "Database agent failed to close: %O" ex
                         return ()
-                    | CloseWait ch -> 
-                        logger.Log Info "Closing database"
-                        dbwriter.Dispose()
+                    | CloseWait ch ->
+                        do (try logger.Log Info "Closing database" with _ -> ())
+                        do warnUnsaved ()
+                        try dbwriter.Dispose()
+                        with ex -> logError "Database agent failed to close: %O" ex
                         ch.Reply()
                         return ()
                 }
             loop (!db))
+        agent.Error.Add (fun ex -> logError "Database agent stopped: %O" ex)
+        agent.Start()
+        agent
 
     /// <summary>
     /// In-memory database for use when NoPersist = true.

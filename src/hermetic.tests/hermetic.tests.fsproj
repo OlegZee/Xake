@@ -31,6 +31,7 @@
     <Compile Include="LockRule.fs" />
     <Compile Include="LocksTests.fs" />
     <Compile Include="BuildFromLockTests.fs" />
+    <Compile Include="ImportFidelityTests.fs" />
   </ItemGroup>
   <ItemGroup>
     <!-- The `Xake` package (engine and Xake.Dotnet) flows in through this reference. -->

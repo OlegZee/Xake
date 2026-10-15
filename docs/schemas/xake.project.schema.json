@@ -32,8 +32,8 @@
       "required": ["file"],
       "additionalProperties": false,
       "properties": {
-        "file": { "type": "string" },
-        "name": { "type": "string", "description": "Manifest name; default derived from rootNamespace and path" }
+        "file": { "type": "string", "description": "A plain file, embedded as is, or a .resx, compiled to a .resources by `project`" },
+        "name": { "type": "string", "description": "Manifest name (msbuild's LogicalName); default msbuild's: rootNamespace (else name), the folder path as an identifier, the file name (a .resx: without extension, plus .resources)" }
       }
     },
     "options": {
@@ -43,6 +43,7 @@
         "doc": { "type": "boolean", "description": "Generate the XML documentation file", "default": false },
         "langVersion": { "type": "string" },
         "warningsAsErrors": { "type": "boolean", "default": false },
+        "noWarn": { "type": "array", "items": { "type": "string" }, "description": "Warnings suppressed beyond the SDK's defaults (C# 1701, 1702), which `project` adds" },
         "nullable": { "enum": ["enable", "disable", "warnings", "annotations"] },
         "keyFile": { "type": "string", "description": "Strong-name key" },
         "args": { "$ref": "#/$defs/items/properties/args" }
@@ -58,6 +59,15 @@
           "properties": { "name": { "type": "string" }, "key": { "type": "string", "description": "Public key of the friend assembly" } }
         }
       ]
+    },
+    "attribute": {
+      "type": "object",
+      "required": ["type"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "type": "string", "description": "The attribute type, e.g. System.CLSCompliantAttribute" },
+        "args": { "type": "array", "items": { "type": "string" }, "description": "Arguments as source text, emitted verbatim: [\"true\"], [\"\\\"text\\\"\"]" }
+      }
     },
     "metadata": {
       "type": "object",
@@ -104,6 +114,10 @@
     "packages": { "$ref": "#/$defs/items/properties/packages" },
     "options": { "$ref": "#/$defs/options" },
     "internalsVisibleTo": { "type": "array", "items": { "$ref": "#/$defs/friend" } },
+    "assemblyAttributes": {
+      "type": "array", "items": { "$ref": "#/$defs/attribute" },
+      "description": "Assembly-level attributes (msbuild's AssemblyAttribute items), generated into the same source as internalsVisibleTo"
+    },
     "byFramework": {
       "type": "object",
       "description": "Additions for one target framework only, keyed by a TFM listed in frameworks",

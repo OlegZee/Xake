@@ -48,15 +48,22 @@ folder.
 | `kind` | `library` \| `exe` | default `library`; always written |
 | `frameworks` | string list, required, at least one | target frameworks (TFMs) |
 | `sources` | string list, required | in compile order (it matters for F#); for C#, msbuild's globs as Xake masks |
-| `resources` | `{ file, name? }` list | `name`: manifest name |
+| `resources` | `{ file, name? }` list | a plain file, embedded as is, or a `.resx`, compiled to a `.resources` by `project`; `name`: the manifest name (msbuild's `LogicalName`), default msbuild's (below) |
 | `defines` | string list | |
 | `references` | string list | framework assemblies by name, e.g. `System.Windows.Forms` |
 | `projectRefs` | string list | names of other described projects |
 | `packages` | `{ id, version?, private? }` list | `version` as declared (exact or a NuGet range), resolved at lock generation; `private`: compile time only |
-| `options` | object | `doc`, `langVersion`, `warningsAsErrors`, `nullable` (`enable`/`disable`/`warnings`/`annotations`), `keyFile`, `args` (raw switches, appended last) |
+| `options` | object | `doc`, `langVersion`, `warningsAsErrors`, `noWarn` (warnings suppressed beyond the SDK's defaults, which `project` adds: C# `1701`, `1702`; F# none), `nullable` (`enable`/`disable`/`warnings`/`annotations`), `keyFile`, `args` (raw switches, appended last) |
 | `internalsVisibleTo` | list of string or `{ name, key? }` | friend assemblies |
+| `assemblyAttributes` | `{ type, args? }` list | assembly-level attributes, e.g. `{ "type": "System.CLSCompliantAttribute", "args": ["true"] }`; `args` are source text, emitted verbatim (`"\"text\""` for a string) |
 | `byFramework` | object keyed by TFM | additions for one framework: `defines`, `references`, `packages`, `args`; each key must be one of `frameworks` |
 | `package` | object | present when the project is packed: `id` (required), `description`, `authors`, `copyright`, `tags`, `license` (SPDX), `projectUrl`, `repository { type, url }`, `icon`, `readme`, `bundle` (projectRefs packed into this package) |
+
+The default manifest name of a resource is msbuild's (`CreateCSharpManifestResourceName`,
+`Described.manifestName`): `rootNamespace` (else `name`), the file's folder with `/` -> `.` and
+each part made an identifier (`1st Folder` -> `_1st_Folder`; a folder that comes out as `_`, such
+as `_` or `-`, is `__`), the file name; a `.resx` without its extension, plus `.resources`
+(`Properties/Resources.resx` -> `<ns>.Properties.Resources.resources`).
 
 Unknown fields are errors. Every error names the field by its path, e.g.
 `'packages[0].id': required` or `'byFramework.net462': not one of the frameworks`.
@@ -89,8 +96,26 @@ run, nothing is restored, and a file is rewritten only when its content changes 
   `TRACE` and the configuration's define, the SDK's implicit packages (`NETStandard.Library`,
   `System.ValueTuple`) and references are left out. Package versions are msbuild's
   (`Version`, `VersionOverride` or central `PackageVersion`); `PrivateAssets=all` is `private`.
+  Item metadata is read whatever its case (`version="8.0.5"`, `privateassets`, `logicalname`).
+- `resources`: the `EmbeddedResource` items, plain files and `.resx` alike, `LogicalName` as
+  `name`. Without one, `name` is what msbuild names it when that is not the default of the file
+  path: a `Link` gives the default name of the link path (`Link="Shared\x.txt"` ->
+  `<ns>.Shared.x.txt`); `ManifestResourceName` on a `.resx` gives `<that>.resources`, on another
+  file the file name (msbuild then sets no `LogicalName`, so csc names it after the file). A culture-specific one (`Strings.de.resx`: a satellite assembly) is left out and
+  reported; one msbuild names after a class (`DependentUpon`, or a `.resx` with a `.cs` of the
+  same name beside it) is kept with the default name and reported (set `name` by hand).
 - `options`: `GenerateDocumentationFile`, `TreatWarningsAsErrors`, `Nullable`, `LangVersion`
-  (only when a repository file sets it), the key file when `SignAssembly`, F# `OtherFlags`.
+  (only when a repository file sets it), the key file when `SignAssembly`, F# `OtherFlags`,
+  `NoWarn` without the SDK's defaults (C# `1701;1702`). The lists `WarningsAsErrors` and
+  `WarningsNotAsErrors` have no field: reported in `Dropped` when a repository file sets them,
+  not seen at all when the SDK or an import outside the repository does.
+- `assemblyAttributes`: the `AssemblyAttribute` items other than `InternalsVisibleTo` (those are
+  `internalsVisibleTo`), arguments as msbuild's `WriteCodeFragment` writes them: `_Parameter1`,
+  `_Parameter2`... positional, other metadata named (`Name = value`); `_ParameterN_IsLiteral`
+  verbatim, `_ParameterN_TypeName` the type; else the types of the first constructor of the
+  attribute type (when the importing process knows it, e.g. `System.CLSCompliantAttribute`:
+  `true` stays `true`) that takes every value, strings otherwise. A string with `"` or `\` is
+  written as a verbatim literal (`@"a""b"`).
 - `package`, when `IsPackable`: `PackageId`, `Description` and `Authors` (when a repository
   file sets them), `Copyright`, `PackageTags`, `PackageLicenseExpression`, `PackageProjectUrl`,
   `RepositoryType`/`RepositoryUrl`, `PackageIcon`/`PackageReadmeFile` as the packed file's
@@ -100,7 +125,7 @@ Each result (`Import.Imported`) names the project and description files, whether
 written, `Inputs` (the msbuild files read: the project, `Directory.Build.props`/`.targets` and
 other repository imports; not the SDK's, package or `obj/` files) and `Dropped` (what msbuild
 knows that the description has no field for: other properties and item types of the repository
-files, targets, other assembly attributes, the SDK's implicit packages).
+files, targets, attribute arguments it cannot write, the SDK's implicit packages).
 
 ## API
 

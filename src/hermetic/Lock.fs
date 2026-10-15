@@ -450,9 +450,10 @@ module Lock =
                     (p.DependsOn |> List.map escape |> String.concat ", "))
             |> String.concat ",\n"
             |> fun body -> sprintf "%s%s: [\n%s\n%s]" indent (escape name) body indent
-        let pairs name (items: (string * string) list) =
-            items |> List.map (fun (k, v) -> sprintf "%s  %s: %s" indent (str k) (str v)) |> String.concat ",\n"
+        let pairsWith value name (items: (string * string) list) =
+            items |> List.map (fun (k, v) -> sprintf "%s  %s: %s" indent (str k) (value v)) |> String.concat ",\n"
             |> fun body -> sprintf "%s%s: {\n%s\n%s}" indent (escape name) body indent
+        let pairs = pairsWith str
         let section name (fields: string list) =
             fields |> String.concat ",\n" |> sprintf "      %s: {\n%s\n      }" (escape name)
 
@@ -474,7 +475,8 @@ module Lock =
               strings "Options" c.Options
               strings "Defines" c.Defines
               strings "Sources" c.Sources
-              pairs "Generated" c.Generated
+              // the content of a generated source is text, not a path: its `\` stay
+              pairsWith (Roots.tokenizeText roots >> escape) "Generated" c.Generated
               pairs "Resources" c.Resources
               // only when the rule declares one: every other lock stays byte-identical to what
               // was written before the key existed
@@ -946,7 +948,7 @@ module Lock =
     ///     .NET SDK is not hash-checked (`withoutSdkCompilerHash`): step 0 and its path pin
     ///     its version.
     /// </summary>
-    let private compileEntry (lockPath: string option) (options: Options) (entry: Entry) : Recipe<ExecContext, unit> =
+    let private compileEntry (extraRoots: (string * string) list) (lockPath: string option) (options: Options) (entry: Entry) : Recipe<ExecContext, unit> =
         recipe {
             // an SDK compiler is identified by the SDK version (the path, the prerequisite),
             // never by its bytes: a hash an older lock carries for it is ignored
@@ -965,7 +967,10 @@ module Lock =
             // prerequisite, is not replayed (message 10) -- a hard failure, like the base's gate
             let! hermetic = HermeticMode.enabled ()
             if hermetic then
-                let! roots = Roots.currentWith (Roots.packageRootOverride (Restore.packageRoot restore))
+                // the script's extra roots (sibling checkouts) count as project roots; the
+                // package folder is the one the restore uses
+                let extra = extraRoots |> List.filter (fst >> (<>) Roots.nugetPackageRootToken)
+                let! roots = Roots.currentWith (extra @ Roots.packageRootOverride (Restore.packageRoot restore))
                 match hermeticViolations roots entry with
                 | [] -> ()
                 | paths ->
@@ -1024,13 +1029,18 @@ module Lock =
     /// (`Restore.resolve`: the build's package folder, `NUGET_FETCH`).
     /// </summary>
     let compileWith (options: Options) (entry: Entry) : Recipe<ExecContext, unit> =
-        compileEntry None options entry
+        compileEntry [] None options entry
 
     /// `compileWith` of an entry read from the lock at `lockPath`, the path the `HERMETIC=on`
     /// refusal (message 10) names -- what `buildWith` does with a matching lock, for a caller
     /// that read the lock itself (`Locks.compileAs`).
     let compileFrom (lockPath: string) (options: Options) (entry: Entry) : Recipe<ExecContext, unit> =
-        compileEntry (Some lockPath) options entry
+        compileEntry [] (Some lockPath) options entry
+
+    /// `compileFrom` of a lock read with the script's extra roots (`loadWith extraRoots`): a
+    /// path under one of them counts as under the project root for `HERMETIC=on` (message 10).
+    let compileFromWith (extraRoots: (string * string) list) (lockPath: string) (options: Options) (entry: Entry) : Recipe<ExecContext, unit> =
+        compileEntry extraRoots (Some lockPath) options entry
 
     /// `compileWith` with the default options, the compiler server resolved for this build
     /// (`CompilerServer.resolve`: `CSC_SERVER`, then `XAKE_CSC_SERVER`; csc only, fsc has no
@@ -1073,9 +1083,11 @@ module Lock =
     /// incomplete (`hermeticRecordGate`, messages 2 and 9; `path` is the lock it is meant for,
     /// quoted in the messages). The references whose path is in `unhashed` -- the outputs of
     /// project references, which a lock keeps without a hash (`Locks.generate`) -- are
-    /// neither depended on nor hashed, whether or not a build left them on disk.
+    /// neither depended on nor hashed, whether or not a build left them on disk. `extraRoots`
+    /// are the script's (`Roots.make`): a path under one counts as under the project root for
+    /// the gate.
     /// </summary>
-    let recorded (path: string) (unhashed: string list) (entry: Entry) : Recipe<ExecContext, Entry> =
+    let recordedWith (extraRoots: (string * string) list) (path: string) (unhashed: string list) (entry: Entry) : Recipe<ExecContext, Entry> =
         recipe {
             let isUnhashed (p: string) = List.contains p unhashed
             // what gets hashed is what the recorded lock depends on: a target that only
@@ -1089,8 +1101,9 @@ module Lock =
                 |> List.filter File.Exists
             do! needFiles (Filelist (hashedPaths |> List.map File.make))
             let! entry = withPrerequisites true entry
-            // HERMETIC=on: a lock that is not complete is not written (messages 2 and 9)
-            let! roots = Roots.current
+            // HERMETIC=on: a lock that is not complete is not written (messages 2 and 9); a
+            // path under an extra root of the script counts as under the project root
+            let! roots = Roots.currentWith extraRoots
             let! refused = hermeticRecordGate path roots [ entry ]
             if not (List.isEmpty refused) then
                 let msg = refused |> String.concat "\n"
@@ -1107,6 +1120,10 @@ module Lock =
                         |> mapCompilation (fun c -> { c with Dependencies = deps c.Dependencies })
                                           (fun f -> { f with Fsc.Dependencies = deps f.Dependencies }) }
         }
+
+    /// `recordedWith` without extra roots.
+    let recorded (path: string) (unhashed: string list) (entry: Entry) : Recipe<ExecContext, Entry> =
+        recordedWith [] path unhashed entry
 
     /// Writes `entry`, hashed (`rehash`, the record-time step) and with its prerequisites
     /// (`withPrerequisites`), as a one-entry lock at `path` and returns what was written. There
@@ -1207,7 +1224,7 @@ module Lock =
                 // no lock yet: record what was just resolved and compile that -- the hashes
                 // `Csc.run` verifies are the ones taken a moment ago
                 let! recorded = recordEntry path (ofCompilation c)
-                do! compileEntry (Some path) options (forCompile recorded)
+                do! compileEntry [] (Some path) options (forCompile recorded)
             else
                 let! doc = load full
                 let recorded = entry c.Name doc
@@ -1216,7 +1233,7 @@ module Lock =
                 | [] ->
                     // compile the recorded entry, not the resolved one: its hashes are what
                     // gate the build
-                    do! compileEntry (Some path) options (forCompile recorded)
+                    do! compileEntry [] (Some path) options (forCompile recorded)
                 | differences ->
                     do! failStep options c
                             (sprintf "'%s': the resolved compilation differs from the lock '%s':\n%s\nUpdate the lock deliberately: delete '%s', or run the target that calls Lock.record \"%s\"."

@@ -22,7 +22,7 @@
         }
       },
       "Compilation": {
-        "Directory": "$(ProjectRoot)",
+        "Directory": "$(ProjectRoot)/src/dotnet",
         "Options": [
           "--nologo",
           "--target:library",
@@ -124,7 +124,7 @@
         }
       },
       "Compilation": {
-        "Directory": "$(ProjectRoot)",
+        "Directory": "$(ProjectRoot)/src/dotnet",
         "Options": [
           "--nologo",
           "--target:library",

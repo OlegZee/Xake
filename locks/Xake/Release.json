@@ -22,7 +22,7 @@
         }
       },
       "Compilation": {
-        "Directory": "$(ProjectRoot)",
+        "Directory": "$(ProjectRoot)/src/core",
         "Options": [
           "--nologo",
           "--target:library",
@@ -140,7 +140,7 @@
         }
       },
       "Compilation": {
-        "Directory": "$(ProjectRoot)",
+        "Directory": "$(ProjectRoot)/src/core",
         "Options": [
           "--nologo",
           "--target:library",

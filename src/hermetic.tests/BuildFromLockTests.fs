@@ -33,7 +33,7 @@ type ``Building from Xake-generated locks``() =
               AssemblyName = None; RootNamespace = None; Language = language; Kind = Description.Library
               Frameworks = [ "netstandard2.0" ]; Sources = sources; Resources = []; Defines = []; References = []
               ProjectRefs = refs; Packages = (if language = Description.FSharp then [ fsharpCore ] else [])
-              Options = { Description.Options.Default with Doc = doc }; InternalsVisibleTo = []; ByFramework = []; Package = None }
+              Options = { Description.Options.Default with Doc = doc }; InternalsVisibleTo = []; AssemblyAttributes = []; ByFramework = []; Package = None }
         Description.write (dir </> Description.FileName) d |> ignore
 
     /// p/B (F#, doc), p/A (F#, references B, no doc), p/Cs (C#, masks); fresh sources.
@@ -277,3 +277,233 @@ type ``Building from Xake-generated locks``() =
             let a = alc.LoadFromAssemblyPath (Path.GetFullPath "out/Release/netstandard2.0/Xake.dll")
             Assert.That(a.GetExportedTypes (), Is.Not.Empty)
         finally alc.Unload ()
+
+    /// G5: A3 -> B3 -> C, A3's source uses C's type through B3 and its description names only
+    /// B3; the lock carries C's output too (unhashed, after B3's), and A3 compiles.
+    [<Test; Category("Integration")>]
+    member x.``transitive project references reach the compiler``() =
+        fixture ()
+        for dir in [ "p/C"; "p/B3"; "p/A3" ] do Directory.CreateDirectory dir |> ignore
+        File.WriteAllText ("p/C/Lib.fs", "module C.Lib\ntype T = { V: int }\n")
+        File.WriteAllText ("p/B3/Lib.fs", "module B3.Lib\nlet make () : C.Lib.T = { V = 7 }\n")
+        File.WriteAllText ("p/A3/Lib.fs", "module A3.Lib\nlet v = (B3.Lib.make ()).V\n")
+        describe "C" Description.FSharp [ "Lib.fs" ] [] false
+        describe "B3" Description.FSharp [ "Lib.fs" ] [ "C" ] false
+        describe "A3" Description.FSharp [ "Lib.fs" ] [ "B3" ] false
+        x.Generate "generate-transitive" fixtureOf [ "A3" ] [ "Release" ] |> ignore
+        let text = File.ReadAllText (lockOf "A3" "Release")
+        let b3 = text.IndexOf "\"$(ProjectRoot)/out/Release/netstandard2.0/B3.dll\", \"Sha256\": \"\""
+        let c = text.IndexOf "\"$(ProjectRoot)/out/Release/netstandard2.0/C.dll\", \"Sha256\": \"\""
+        Assert.That(b3, Is.GreaterThan -1, text)
+        Assert.That(c, Is.GreaterThan b3, "C's output follows B3's")
+        let entry = (Lock.read (Roots.builtin (Directory.GetCurrentDirectory ())) (lockOf "A3" "Release")).Entries.Head
+        Assert.That(entry.Evaluation.ProjectRefs, Is.EqualTo [ "B3" ], "ProjectRefs keeps the direct references")
+        x.Script "build-transitive" [] (!! "p/A3/xake.project.json") "Release"
+        for name in [ "C"; "B3"; "A3" ] do Assert.That(File.Exists (dll "Release" name), Is.True, name)
+
+    /// G7: the compiler runs in the project's folder, so a doc comment's relative
+    /// `<include file=...>` resolves (CS1589 otherwise); the lock's `Directory` is the project
+    /// folder, tokenized.
+    [<Test; Category("Integration")>]
+    member x.``a relative doc include resolves against the project folder``() =
+        fixture ()
+        for dir in [ "p/Doc"; "p/docs" ] do Directory.CreateDirectory dir |> ignore
+        File.WriteAllText ("p/docs/Common.xml",
+            "<doc><members><member name=\"Answer\"><summary>The included answer.</summary></member></members></doc>\n")
+        File.WriteAllText ("p/Doc/Lib.cs",
+            "namespace Doc {\n  public static class Lib {\n    /// <include file='../docs/Common.xml' path='doc/members/member[@name=\"Answer\"]/*' />\n    public static int Answer () { return 42; }\n  }\n}\n")
+        describe "Doc" Description.CSharp [ "**/*.cs" ] [] true
+        x.Generate "generate-doc" fixtureOf [ "Doc" ] [ "Release" ] |> ignore
+        Assert.That(File.ReadAllText (lockOf "Doc" "Release"), Does.Contain "\"Directory\": \"$(ProjectRoot)/p/Doc\"")
+        x.Script "build-doc" [] (!! "p/Doc/xake.project.json") "Release"
+        let xml = File.ReadAllText "out/Release/netstandard2.0/Doc.xml"
+        Assert.That(xml, Does.Contain "The included answer.")
+        Assert.That(xml, Does.Not.Contain "Badly formed XML")
+
+    /// G12: a rule over the `.xml` (the same body as the dll's) lets a script need the doc
+    /// file first; it needs the dll, whose rule writes it. A lock without doc fails naming it;
+    /// `needAll` keeps needing only the dlls (Debug without doc does not rebuild).
+    [<Test; Category("Integration")>]
+    member x.``the xml is needed before the dll through its own rule``() =
+        fixture ()
+        x.Generate "generate-xml" fixtureOf [ "A" ] [ "Release" ] |> ignore
+        let compile = recipe {
+            let! cfg = getRuleMatch "cfg"
+            let! fwk = getRuleMatch "fwk"
+            let! name = getRuleMatch "name"
+            do! Locks.compileAs (lockOf name cfg) fwk versions }
+        let build label (goal: string) =
+            xake {x.TestOptions with FileLog = label + ".log"; ThrowOnError = true; Vars = [ "CI", "off" ]; FileLogLevel = Loud} {
+                wantOverride [ goal ]
+                rules [
+                    target "out/(cfg:*)/(fwk:*)/(name:*).dll" { do! compile }
+                    target "out/(cfg:*)/(fwk:*)/(name:*).xml" { do! compile }
+                ]
+            }
+        let xml = "out/Release/netstandard2.0/B.xml"
+        build "xml-1" xml
+        Assert.That(File.Exists xml, Is.True)
+        Assert.That(File.Exists (dll "Release" "B"), Is.True)
+        let stamps = x.Stamps [ xml; dll "Release" "B" ]
+        build "xml-2" xml
+        Assert.That(x.Stamps [ xml; dll "Release" "B" ], Is.EqualTo stamps, "nothing changed, nothing rebuilt")
+        let e = Assert.Throws<XakeException>(fun () -> build "xml-none" "out/Release/netstandard2.0/A.xml")
+        Assert.That(e.Data0, Does.Contain "asks for no XML doc")
+
+    /// G10: a project whose sources and key file live in a sibling checkout, registered as the
+    /// extra root `$(SiblingRoot)`: the generated lock names no absolute path (masks, keyfile,
+    /// `Directory`, one `pathmap` per root), and a copy of both folders at another path builds
+    /// from the same lock, with the roots re-registered, into the same bytes.
+    [<Test; Category("Integration")>]
+    member x.``sources in a sibling root tokenise and build from another checkout path``() =
+        let roots = [ "$(SiblingRoot)", "../Sibling" ]
+        let checkout (name: string) = Path.GetFullPath ("siblings" </> name)
+        let a = checkout "a"
+        for dir in [ "siblings" ] do if Directory.Exists dir then Directory.Delete (dir, true)
+        for dir in [ a </> "root" </> "desc" </> "P"; a </> "Sibling" </> "P" </> "Sub" ] do Directory.CreateDirectory dir |> ignore
+        File.WriteAllText (a </> "Sibling/P/A.cs", "namespace P { public class A { public static string Where ([System.Runtime.CompilerServices.CallerFilePath] string f = \"\") => f; public static string Here () => Where (); } }\n")
+        File.WriteAllText (a </> "Sibling/P/Sub/B.cs", "namespace P { public class B {} }\n")
+        use rsa = System.Security.Cryptography.RSA.Create 1024
+        File.WriteAllBytes (a </> "Sibling/P/key.snk", StrongName.writeSnk (rsa.ExportParameters true))
+        let d : Description.Project =
+            { Schema = None; Name = "P"; Project = "../../../Sibling/P/P.csproj"; AssemblyName = None; RootNamespace = None
+              Language = Description.CSharp; Kind = Description.Library; Frameworks = [ "netstandard2.0" ]
+              Sources = [ "**/*.cs"; "!obj/**/*"; "!bin/**/*" ]; Resources = []; Defines = []; References = []; ProjectRefs = []; Packages = []
+              Options = { Description.Options.Default with KeyFile = Some "key.snk" }; InternalsVisibleTo = []; AssemblyAttributes = []; ByFramework = []; Package = None }
+        Description.write (a </> "root/desc/P" </> Description.FileName) d |> ignore
+        let descriptionOf (_: string) = "desc/P/" + Description.FileName
+        let run (root: string) (label: string) (goal: string) (rs: Rule<ExecContext> list) =
+            xake {x.TestOptions with ProjectRoot = root; DbFileName = root </> ".xake"; FileLog = root </> (label + ".log"); ThrowOnError = true; Vars = [ "CI", "off" ]; FileLogLevel = Loud} {
+                wantOverride [ goal ]
+                rules rs
+            }
+        let buildRules = [
+            command "build" { do! Locks.needAllWith roots (!! ("desc/P/" + Description.FileName)) "Release" lockOf outOf }
+            target "out/(cfg:*)/(fwk:*)/(name:*).dll" {
+                let! cfg = getRuleMatch "cfg"
+                let! fwk = getRuleMatch "fwk"
+                let! name = getRuleMatch "name"
+                do! Locks.compileAsWith roots (lockOf name cfg) fwk versions } ]
+        run (a </> "root") "generate" "update-locks"
+            [ LockRule.lockRuleWith roots lockOf outOf descriptionOf id (ResizeArray ()); LockRule.updateLocks [ "Release" ] [ "P" ] ]
+        let lockText = File.ReadAllText (a </> "root" </> lockOf "P" "Release")
+        Assert.That(lockText, Does.Not.Contain (checkout ""), "an absolute path in the lock")
+        Assert.That(lockText, Does.Contain "\"$(SiblingRoot)/P/**/*.cs\"")
+        Assert.That(lockText, Does.Contain "\"/keyfile:$(SiblingRoot)/P/key.snk\"")
+        Assert.That(lockText, Does.Contain "\"Directory\": \"$(SiblingRoot)/P\"")
+        Assert.That(lockText, Does.Contain "\"/pathmap:$(SiblingRoot)/=/SiblingRoot/\"")
+        Assert.That(lockText, Does.Contain "\"/pathmap:$(ProjectRoot)/=/_/\"")
+        run (a </> "root") "build-a" "build" buildRules
+        let built = a </> "root" </> dll "Release" "P"
+        Assert.That(File.Exists built, Is.True)
+        let bytes = File.ReadAllBytes built
+        // the CallerFilePath default is a user string (UTF-16)
+        let strings = System.Text.Encoding.Unicode.GetString bytes + System.Text.Encoding.Unicode.GetString (Array.skip 1 bytes)
+        Assert.That(strings, Does.Contain "/SiblingRoot/P/A.cs", "CallerFilePath is mapped")
+        Assert.That(strings, Does.Not.Contain (checkout ""), "an absolute path in the assembly")
+
+        // another checkout path: the sources, the description and the lock, no build state
+        let b = checkout "b"
+        let rec copy (src: string) (dst: string) =
+            Directory.CreateDirectory dst |> ignore
+            for f in Directory.GetFiles src do
+                let name = Path.GetFileName f
+                if name <> ".xake" && not (name.EndsWith ".log") then File.Copy (f, dst </> name)
+            for sub in Directory.GetDirectories src do
+                let name = Path.GetFileName sub
+                if name <> "out" && name <> "obj" then copy sub (dst </> name)
+        copy a b
+        run (b </> "root") "build-b" "build" buildRules
+        let other = b </> "root" </> dll "Release" "P"
+        Assert.That(File.Exists other, Is.True)
+        Assert.That(File.ReadAllBytes other, Is.EqualTo bytes, "the other checkout built different bytes")
+        Assert.That(File.ReadAllText (b </> "root" </> lockOf "P" "Release"), Is.EqualTo lockText)
+
+    /// G11: under an exact `global.json` pin the generated lock records the `dotnet-sdk`
+    /// prerequisite (as `Lock.record` does), which covers fsc's compiler, so `update-locks`
+    /// and `build` both pass under `HERMETIC=on` (a C# project takes csc from `CSC_TOOLSET`, as
+    /// the mode asks of a composed csc). Without the pin the generation warns as `Lock.record`
+    /// does and records no prerequisite.
+    [<Test; Category("Integration")>]
+    member x.``a generated lock under an exact SDK pin builds under HERMETIC=on``() =
+        let sdks =
+            Directory.GetDirectories (Xake.Dotnet.DotNetFwk.dotnetRoot () |> Option.get </> "sdk")
+            |> Array.map Path.GetFileName
+            |> Array.choose (fun n -> match System.Version.TryParse n with | true, v -> Some (v, n) | _ -> None)
+            |> Array.sortBy fst |> Array.map snd
+        let sdk = Array.last sdks
+        let setup (name: string) (pin: bool) =
+            let root = Path.GetFullPath name
+            if Directory.Exists root then Directory.Delete (root, true)
+            for dir in [ "p/B"; "p/Cs" ] do Directory.CreateDirectory (root </> dir) |> ignore
+            if pin then File.WriteAllText (root </> "global.json", sprintf """{ "sdk": { "version": "%s", "rollForward": "disable" } }""" sdk)
+            File.WriteAllText (root </> "p/B/Lib.fs", "module B.Lib\nlet answer = 42\n")
+            File.WriteAllText (root </> "p/Cs/A.cs", "namespace Cs { public class A {} }\n")
+            let write (dir: string) (language: Description.Language) (sources: string list) =
+                let d : Description.Project =
+                    { Schema = None; Name = dir; Project = dir + (if language = Description.FSharp then ".fsproj" else ".csproj")
+                      AssemblyName = None; RootNamespace = None; Language = language; Kind = Description.Library
+                      Frameworks = [ "netstandard2.0" ]; Sources = sources; Resources = []; Defines = []; References = []
+                      ProjectRefs = []; Packages = (if language = Description.FSharp then [ fsharpCore ] else [])
+                      Options = Description.Options.Default; InternalsVisibleTo = []; AssemblyAttributes = []; ByFramework = []; Package = None }
+                Description.write (root </> "p" </> dir </> Description.FileName) d |> ignore
+            write "B" Description.FSharp [ "Lib.fs" ]
+            write "Cs" Description.CSharp [ "*.cs" ]
+            root
+        let run (root: string) (label: string) (vars: (string * string) list) (goal: string) =
+            xake {x.TestOptions with ProjectRoot = root; DbFileName = root </> ".xake"; FileLog = root </> (label + ".log"); ThrowOnError = true; Vars = ("CI", "off") :: vars; FileLogLevel = Loud} {
+                wantOverride [ goal ]
+                rules [
+                    LockRule.lockRule lockOf outOf fixtureOf id (ResizeArray ())
+                    LockRule.updateLocks [ "Release" ] [ "B"; "Cs" ]
+                    command "build" { do! Locks.needAll (!! "p/*/xake.project.json") "Release" lockOf outOf }
+                    target "out/(cfg:*)/(fwk:*)/(name:*).dll" {
+                        let! cfg = getRuleMatch "cfg"
+                        let! fwk = getRuleMatch "fwk"
+                        let! name = getRuleMatch "name"
+                        do! Locks.compileAs (lockOf name cfg) fwk versions } ]
+            }
+        let hermetic = [ "HERMETIC", "on"; "NUGET_PACKAGES", Xake.Dotnet.DotNetFwk.nugetRoot (); "CSC_TOOLSET", "4.12.0" ]
+
+        let root = setup "pinned" true
+        run root "update-locks" hermetic "update-locks"
+        let text = File.ReadAllText (root </> lockOf "B" "Release")
+        Assert.That(text, Does.Contain (sprintf "\"Path\": \"$(DotnetRoot)/sdk/%s/FSharp/fsc.dll\"" sdk))
+        Assert.That(text, Does.Contain (sprintf "{ \"Kind\": \"dotnet-sdk\", \"Version\": \"%s\", \"Pin\": \"$(ProjectRoot)/global.json\" }" sdk))
+        Assert.That(File.ReadAllText (root </> lockOf "Cs" "Release"), Does.Not.Contain "$(DotnetRoot)", "csc from the toolset package")
+        run root "build" hermetic "build"
+        for name in [ "B"; "Cs" ] do Assert.That(File.Exists (root </> dll "Release" name), Is.True, name)
+
+        // the SDK's csc is not covered by the prerequisite: a C# lock needs CSC_TOOLSET (message 3)
+        let csc = setup "pinned-sdk-csc" true
+        let e = Assert.Throws<XakeException>(fun () -> run csc "update-locks" (hermetic |> List.filter (fst >> (<>) "CSC_TOOLSET")) "update-locks")
+        Assert.That(e.Data0 + File.ReadAllText (csc </> "update-locks.log"), Does.Contain "'Cs': HERMETIC=on: the compiler ")
+
+        // no exact pin: the generation warns and records no prerequisite (the mode off)
+        let unpinned = setup "unpinned" false
+        run unpinned "update-locks" [] "update-locks"
+        Assert.That(File.ReadAllText (unpinned </> lockOf "B" "Release"), Does.Not.Contain "Prerequisites")
+        Assert.That(File.ReadAllText (unpinned </> "update-locks.log"), Does.Contain "'B': depends on the .NET SDK ")
+
+    /// `needAll` fetches what the locks name in one restore; when that fails (here: one lock
+    /// names a package that does not exist) it warns and the compiles go on, each restoring its
+    /// own: the project whose packages are there builds, the other fails naming itself.
+    [<Test; Category("Integration")>]
+    member x.``a failing fetch of all locks does not stop the other compiles``() =
+        fixture ()
+        x.Generate "generate-badfetch" fixtureOf [ "B"; "Cs" ] [ "Release" ] |> ignore
+        let lockPath = lockOf "Cs" "Release"
+        let text = File.ReadAllText lockPath
+        let at = text.IndexOf "\"References\": [\n"
+        Assert.That(at, Is.GreaterThan 0)
+        let missing = "{ \"Path\": \"$(NuGetPackageRoot)/xake.no.such.package/9.9.9/lib/netstandard2.0/Missing.dll\", \"Sha256\": \"00\" },\n          "
+        let insertAt = text.IndexOf ('{', at)
+        File.WriteAllText (lockPath, text.Substring (0, insertAt) + missing + text.Substring insertAt)
+        let e = Assert.Throws<XakeException>(fun () -> x.Script "badfetch" [] (!! "p/B/xake.project.json" + "p/Cs/xake.project.json") "Release")
+        let log = File.ReadAllText "badfetch.log"
+        Assert.That(log, Does.Contain "fetching the packages of the Release locks at once failed; each compile restores its own")
+        // Cs's own restore fails (after the warning: the second restore of the build)
+        Assert.That(log, Does.Contain ("Started " + Path.GetFullPath (dll "Release" "Cs")))
+        Assert.That(e.Data0, Does.Contain "xake.no.such.package 9.9.9")
+        Assert.That(File.Exists (dll "Release" "B"), Is.True, "B's packages are there: B builds")
+        Assert.That(File.Exists (dll "Release" "Cs"), Is.False)

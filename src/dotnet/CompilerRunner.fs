@@ -164,9 +164,12 @@ module internal CompilerRunner =
                     yield "@" + rspFile
                 }
 
-            // the response file has to go regardless of how the compilation ends
+            // the response file has to go regardless of how the compilation ends -- unless the
+            // compiler died without a word, then it is kept for a rerun by hand
+            let keepRsp = ref false
             let deleteTempFiles () =
-                try System.IO.File.Delete rspFile with _ -> ()
+                if not keepRsp.Value then
+                    try System.IO.File.Delete rspFile with _ -> ()
 
             let tool, extraArgs =
                 match plan.Launch with
@@ -181,6 +184,20 @@ module internal CompilerRunner =
             do! trace Debug "Command line: '%s %s'" tool
                     ((extraArgs @ List.ofSeq commandLineArgs) |> String.concat " ")
 
+            // what the compiler printed, kept (bounded) for a failure without a diagnostic: a
+            // crash (exit 134, `Environment.FailFast`) logs nothing at the default verbosity
+            let output = System.Collections.Generic.Queue<string> ()
+            let sawError = ref false
+            let keep (stream: string) (line: string) =
+                lock output (fun () ->
+                    output.Enqueue (stream + line)
+                    if output.Count > 200 then output.Dequeue () |> ignore)
+            let classify (stream: string) (line: string) =
+                keep stream line
+                let level = plan.Diagnostics line
+                if level = Level.Error then sawError.Value <- true
+                level
+
             try
                 let! exitCode =
                     shell {
@@ -192,10 +209,18 @@ module internal CompilerRunner =
                         // (an XML-doc `<include file='../..'>` path, CS1589)
                         workdir plan.Directory
                         logprefix plan.LogPrefix
-                        stdoutlevel plan.Diagnostics
-                        erroutlevel plan.Diagnostics
+                        stdoutlevel (classify "")
+                        erroutlevel (classify "stderr: ")
                     }
 
+                if exitCode <> 0 && not sawError.Value then
+                    keepRsp.Value <- true
+                    let printed = lock output (fun () -> List.ofSeq output)
+                    do! trace Error "('%s') %s exited with code %d and reported no error%s; response file kept: %s\n%s"
+                            plan.Name plan.Tool exitCode
+                            (if exitCode = 134 || exitCode = -6 then " (an abort: Environment.FailFast or a runtime crash)" else "")
+                            rspFile
+                            (match printed with [] -> "(it printed nothing)" | lines -> lines |> String.concat "\n")
                 do! Tool.failOnExitCode plan.FailOnError plan.Name exitCode
 
                 // an output next to the compiler's, declared by the rule; rewritten only when it

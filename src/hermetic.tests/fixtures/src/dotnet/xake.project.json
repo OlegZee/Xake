@@ -11,6 +11,7 @@
     "DotNetFwk.fs",
     "HermeticMode.fs",
     "ResourceFileset.fs",
+    "ResxFormat.fs",
     "Resx.fs",
     "DotnetTasks.fs",
     "CscArgs.fs",
@@ -24,7 +25,10 @@
     "Dotnet.Msbuild.fs"
   ],
   "projectRefs": ["Xake"],
-  "packages": [{ "id": "FSharp.Core", "version": "8.0.100" }],
+  "packages": [
+    { "id": "System.Resources.Extensions", "version": "8.0.0" },
+    { "id": "FSharp.Core", "version": "8.0.100" }
+  ],
   "options": { "doc": true },
   "internalsVisibleTo": ["tests"],
   "byFramework": {

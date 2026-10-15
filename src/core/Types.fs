@@ -43,7 +43,14 @@ module DomainTypes =
     /// A tracked dependency that determines whether a target needs rebuilding.
     type Dependency =
         | FileDep of File * Timestamp // regular file (such as source code file), triggers when file date/time is changed
-        | ArtifactDep of Target // other target (triggers when target is rebuilt)
+        /// Other target, recorded by Xake databases before version 0.5 (no change stamp).
+        /// Still read from old databases; judged as changed once so it is re-recorded as ArtifactDep2.
+        | ArtifactDep of Target
+        /// Other target (a target that has a rule) with its change stamp as observed when the
+        /// dependent recorded the dependency, right after the dependee was built or found up to date:
+        /// for a FileTarget the file's last write time, for a PhonyAction the completion time of
+        /// its last build (BuildResult.Built). Triggers when the stamp moves or the dependee is out of date.
+        | ArtifactDep2 of Target * Timestamp
         | EnvVar of string * string option // environment variable
         | Var of string * string option // any other data such as compiler version (not used yet)
         | AlwaysRerun // trigger always

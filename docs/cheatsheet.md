@@ -72,6 +72,10 @@ recipe {
 }
 ```
 
+Capture groups of the rule's pattern (file or phony): `let! name = getRuleMatch "name"` (`""` when
+absent), `let! all = getRuleMatches ()` (a map). Also `getVar`, `getEnv`, `getCtxOptions`,
+`getTargetFile` (file rules only), `getTargetFullName`, `alwaysRerun ()`.
+
 ## Shell task
 
 ```fsharp
@@ -97,6 +101,26 @@ open Xake.Dotnet
 ```
 
 Script variables: `NETFX` (tool framework), `NETFX-TARGET` (default target framework), `FSCVER`.
+
+Locks of project descriptions (`Xake.Hermetic.Dotnet`, [hermetic/lock.md](hermetic/lock.md#xake-generated-locks)):
+a phony rule per project x configuration in the script, run only by `xake update-locks`:
+`"lock::(name:*)::(cfg:*)" => recipe { ...; do! need [ for r in d.ProjectRefs -> $"lock::{r}::{cfg}" ]; do! alwaysRerun (); do! Locks.generate lockOf outOf cfg (descriptionOf name) }`
+and `"update-locks" <== [ for n in projects -> $"lock::{n}::Release" ]` -- references first by `need`, nothing compiled;
+`-d LOCK_REFRESH=<ids|*>` re-resolves pinned packages.
+Build from the committed locks ([hermetic/lock.md](hermetic/lock.md#building-from-xake-generated-locks)):
+`command "build" { do! Locks.needAll descriptions "Release" lockOf outOf }` and
+`target "out/(cfg:*)/(fwk:*)/(name:*).dll" { ...; do! Locks.compileAs (lockOf name cfg) fwk versions }`
+-- the dll is the target (`.xml` beside it when the lock asks for doc), refs built first, C# masks via `getFiles`, HERMETIC gate inside.
+
+## Fingerprints of committed generated files
+
+```fsharp
+command "import" { do! Fingerprints.record "xake.fingerprints" "desc/a.json" ["a.fsproj"] }
+command "build"  { do! Fingerprints.warn "xake.fingerprints" }   // warns on stale/hand-edited
+"check" => Fingerprints.check "xake.fingerprints"                // fails instead
+```
+
+See [fingerprints.md](fingerprints.md).
 
 ## Filesets
 

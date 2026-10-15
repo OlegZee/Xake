@@ -1,13 +1,13 @@
 # Reproducible .NET builds with Xake.Hermetic.Dotnet
 
-Draft of the user guide. Status: package version 0.2.0, a preview; the API may change while the
+Draft of the user guide. Status: package version 0.3.0, a preview; the API may change while the
 package is 0.x.
 
 `Xake.Hermetic.Dotnet` adds a **lock** to Xake's `csc` and `fsc` tasks. A lock is a JSON file,
 kept in git, that records exactly what the C# or F# compiler is handed and the SHA-256 of every file it reads from
 outside your repository: the compiler itself, every reference, every analyzer. Later builds
 compile from the lock and fail when anything differs. On top of the lock the package can
-restore missing packages, write a CycloneDX SBOM, compare two binaries, pack a deterministic
+restore missing packages, compare two binaries, pack a deterministic
 nupkg and run a signing step.
 
 What it does not do: it does not replace msbuild's evaluation (importing a project still runs
@@ -21,21 +21,21 @@ loaded with `#r` on the dll files instead of the NuGet package.
 
 ## 1. Install
 
-The package depends on `Xake` 3.6.0.24 or later, below 3.7 (3.6.0 as published on nuget.org). Reference it from your build script and
+The package depends on `Xake` 3.7.0.26 or later, below 3.8 (3.7.0 as published on nuget.org). Reference it from your build script and
 open three namespaces:
 
 ```fsharp
-#r "nuget: Xake.Hermetic.Dotnet, 0.2.0.<run>"   // the version nuget.org lists for 0.2.0
+#r "nuget: Xake.Hermetic.Dotnet, 0.3.0.<run>"   // the version nuget.org lists for 0.3.0
 
 open Xake
 open Xake.Dotnet
 open Xake.Hermetic.Dotnet
 ```
 
-Both are on nuget.org with the release run number as a fourth component: `Xake` 3.6.0 as
-`3.6.0.24`, `Xake.Hermetic.Dotnet` 0.2.0 as `0.2.0.<run>` (so `0.2.0` or `3.6.0` alone does not
+Both are on nuget.org with the release run number as a fourth component: `Xake` 3.7.0 as
+`3.7.0.26`, `Xake.Hermetic.Dotnet` 0.3.0 as `0.3.0.<run>` (so `0.3.0` or `3.7.0` alone does not
 exist and resolves to the next version up). The package brings `Xake` in as a dependency; add
-`#r "nuget: Xake, 3.6.0.24"` if you want to pin the base too. (0.1.0 was published as
+`#r "nuget: Xake, 3.7.0.26"` if you want to pin the base too. (0.1.0 was published as
 `0.1.0.22`, on Xake `3.4.0.21`; it has no F# support.)
 
 Two things change when you open `Xake.Hermetic.Dotnet`:
@@ -53,17 +53,15 @@ Add `lock "<path>"` as the **last** operation of a `csc {}` block:
 
 ```fsharp
 do xakeScript {
-    rules [
-        "main" <== ["out/app.dll"]
+    "main" <== ["out/app.dll"]
 
-        "out/app.dll" ..> csc {
-            targetfwk "net-4.6.2"
-            target Library
-            src !!"src/*.cs"
-            grefs ["System.dll"]
-            lock "locks/app.json"
-        }
-    ]
+    "out/app.dll" ..> csc {
+        targetfwk "net-4.6.2"
+        target Library
+        src !!"src/*.cs"
+        grefs ["System.dll"]
+        lock "locks/app.json"
+    }
 }
 ```
 
@@ -126,9 +124,22 @@ The same thing without the builder sugar, with the resolved compilation in hand:
 ```
 
 `resolve` makes the block return the resolved `Csc` instead of compiling it. Outside a file rule
-it needs an explicit `out`. `Lock.build` gates the compilation against the lock and then
-compiles. It takes a `Lock.Compilation`, C# or F#: `Lock.Compilation.Csc c` here,
+it needs an explicit `out`.[^out] `Lock.build` compares the compilation with the lock:
+
+- If the lock is missing, `Lock.build` records it and compiles. Under CI it fails instead.
+- If the compilation differs from the lock, `Lock.build` fails and shows the differences. It does
+  not change the lock.
+- If they are equal, `Lock.build` compiles the entry from the lock. The runner then checks the
+  recorded hashes against the files on disk.
+
+`Lock.build` takes a `Lock.Compilation`, C# or F#: `Lock.Compilation.Csc c` here,
 `Lock.Compilation.Fsc f` for the `Fsc` of an `fsc { ...; resolve }`.
+
+[^out]: In a file rule, `out` is optional. Without `out`, `Csc.ofSettings` (and `Fsc.ofSettings`)
+    takes the output from the rule's file target. A phony rule has no file target, so there `out`
+    is required. In the example above `out` repeats the target and can be left out. A lock from
+    `Locks.generate` has no output switch. `Locks.compileAs` takes the output from the rule's
+    target in the same way ([hermetic/lock.md](hermetic/lock.md#building-from-xake-generated-locks)).
 
 ### An F# library
 
@@ -244,24 +255,22 @@ let app = recipe {
     return Lock.Compilation.Csc c }
 
 do xakeScript {
-    rules [
-        "out/app.dll" ..> recipe {
-            let! c = app
-            do! Lock.build "locks/app.json" c
-        }
+    "out/app.dll" ..> recipe {
+        let! c = app
+        do! Lock.build "locks/app.json" c
+    }
 
-        "update-locks" => recipe {
-            let! c = app
-            do! Lock.record "locks/app.json" c
-        }
+    "update-locks" => recipe {
+        let! c = app
+        do! Lock.record "locks/app.json" c
+    }
 
-        "check-locks" => recipe {
-            let! c = app
-            let! diff = Lock.verify "locks/app.json" c
-            if not (List.isEmpty diff) then
-                failwithf "locks/app.json is stale:\n%s" (String.concat "\n" diff)
-        }
-    ]
+    "check-locks" => recipe {
+        let! c = app
+        let! diff = Lock.verify "locks/app.json" c
+        if not (List.isEmpty diff) then
+            failwithf "locks/app.json is stale:\n%s" (String.concat "\n" diff)
+    }
 }
 ```
 
@@ -300,9 +309,7 @@ let importInto (output: string) = recipe {
 }
 
 do xakeScript {
-    rules [
-        "update-locks" => importInto lockPath
-    ]
+    "update-locks" => importInto lockPath
 }
 ```
 
@@ -490,13 +497,11 @@ do xakeScript {
     var "NUGET_PACKAGES" ".nuget/packages"    // the build's own package folder
     var "CSC_TOOLSET" "4.12.0"                // csc from Microsoft.Net.Compilers.Toolset
     var "NETCORE_REF_VERSION" "8.0.0"         // net8.0 references from the NuGet package
-    rules [
-        "out/app.dll" ..> csc {
-            targetfwk "net8.0"
-            src !!"src/*.cs"
-            lock "locks/app.json"
-        }
-    ]
+    "out/app.dll" ..> csc {
+        targetfwk "net8.0"
+        src !!"src/*.cs"
+        lock "locks/app.json"
+    }
 }
 ```
 
@@ -519,62 +524,7 @@ F# (`fsc {}`) has no compiler package: pin the SDK exactly in `global.json` and 
 command. Put `HERMETIC=on` and `CI` together on the build server. Details:
 [hermetic/hermetic-mode.md](hermetic/hermetic-mode.md), [hermetic/lock.md](hermetic/lock.md#hermetic-mode).
 
-## 8. Producing an SBOM
-
-`Sbom.forAssembly` builds a CycloneDX 1.6 bill of materials for one assembly from its lock entry:
-every package of the recorded restore graph as a component (`pkg:nuget/<Id>@<Version>`), the
-files the compiler referenced nested under their package with SHA-256, and the compiler, SDK and
-analyzers under `formulation` (this was run):
-
-```fsharp
-"sbom/hello.cdx.json" ..> recipe {
-    let! lock = Lock.load "locks/hello.json"
-    let entry = Lock.entryFor "netstandard2.0" "Hello" lock
-    let assembly = entry.Output.Value
-    do! need [ assembly ]                                  // however your script builds it
-    let bom = Sbom.forAssembly (Roots.nugetRoot ()) entry assembly
-    let! target = getTargetFullName ()
-    System.IO.Directory.CreateDirectory (System.IO.Path.GetDirectoryName target) |> ignore
-    System.IO.File.WriteAllText (target, Sbom.cycloneDx bom)
-}
-```
-
-The first argument is the package cache the supplier and license fields are read from. If you
-restore into your own folder, pass `Restore.packageRoot options` instead. The `need` line works
-when a rule produces the assembly or the file already exists (it was run after the phony
-"build" of section 6).
-
-The output is deterministic: no timestamp, and a serial number derived from the content. Two
-builds of the same commit give the same bytes, so the SBOM can be committed or compared.
-
-For a package there are two documents:
-
-| Function | Scope | Use |
-|---|---|---|
-| `Sbom.forPackage nupkg [ bom1; bom2 ]` | restore scope: the union of the assemblies' SBOMs, the nupkg hashed as root | what the build saw |
-| `Sbom.forPackageScoped nupkg framework [ bom1; ... ]` | package scope: the files shipped for that framework, the nuspec dependencies as declared, nothing transitive | what a customer receives; meant to be packed into the nupkg at `Sbom.packageSbomPath framework` |
-
-Check a package-scope document against the nupkg it describes (this was run):
-
-```fsharp
-let bom = Sbom.forPackageScoped "out/Demo.App.1.0.0.nupkg" "net462" [ evidence ]
-let findings = Sbom.checkPackageScope Sbom.PackageScopeOptions.Default "out/Demo.App.1.0.0.nupkg" "net462" bom
-// [] means the document passes
-```
-
-`Sbom.PackageScopeOptions.Default` treats package ids starting with `DS.`, `Acme.` or
-`Initech.` as internal. Override `IsInternal` for your own:
-
-```fsharp
-let options = { Sbom.PackageScopeOptions.Default with IsInternal = Sbom.PackageScope.idPrefixes [ "Acme." ] }
-let bom = Sbom.forPackageScopedWith options nupkg framework evidence
-```
-
-The package-scope rules still have open questions (whether to
-keep `formulation`, the annotation timestamp, and four more); see
-[hermetic/nuget-sbom.md](hermetic/nuget-sbom.md). The function names may change with them.
-
-## 9. Verifying a shipped assembly
+## 8. Verifying a shipped assembly
 
 `Verify` answers "is this the same binary". It measures; it does not validate signatures.
 
@@ -606,7 +556,7 @@ Reading the result:
 For byte identity with `dotnet build`, build the baseline in the same directory with the same
 intermediate path and `-t:Rebuild`: csc embeds absolute source paths.
 
-## 10. Packing and signing
+## 9. Packing and signing
 
 `Pack.nupkg` writes a nupkg whose bytes depend only on its inputs: sorted entries, one fixed
 timestamp (`SOURCE_DATE_EPOCH`, else 1980-01-01), and a content-derived GUID in the package
@@ -661,7 +611,7 @@ name with your `.snk`, and recomputes the checksum, so two runs give the same by
 **(untested here; covered by the package's tests)**. Details:
 [hermetic/strongname.md](hermetic/strongname.md).
 
-## 11. The compiler server switch
+## 10. The compiler server switch
 
 By default `csc` goes through the Roslyn compiler server, which saves the compiler's startup on
 every compile. It does not change the output bytes and never enters the lock. Turn it off or
@@ -683,7 +633,7 @@ XAKE_CSC_SERVER=0 dotnet fsi build.fsx -- -- build
 A leftover server after the build is normal; `dotnet build-server shutdown` stops the SDK's.
 Details: [csc-server.md](csc-server.md).
 
-## 12. Troubleshooting
+## 11. Troubleshooting
 
 ### The compiler is missing
 
@@ -751,7 +701,7 @@ project instead (section 5).
 ## See also
 
 The package reference: [hermetic/README.md](hermetic/README.md), [hermetic/lock.md](hermetic/lock.md),
-[hermetic/restore.md](hermetic/restore.md), [hermetic/nuget-sbom.md](hermetic/nuget-sbom.md),
+[hermetic/restore.md](hermetic/restore.md),
 [hermetic/verify.md](hermetic/verify.md), [hermetic/pack.md](hermetic/pack.md),
 [hermetic/strongname.md](hermetic/strongname.md), [hermetic/signing.md](hermetic/signing.md). The base
 `csc` task, `resolve` and `Csc.run`: [tasks.md](tasks.md), [csc-syntax.md](csc-syntax.md). The compiler

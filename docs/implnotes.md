@@ -10,7 +10,7 @@ A target is rebuilt when at least one condition is true:
 
 - output does not exist
 - dependency files changed
-- dependency target was rebuilt
+- dependency target was rebuilt, by this run or an earlier one (its change stamp moved: see below)
 - variable or environment dependency changed
 - recipe requests rerun by `alwaysRerun`
 
@@ -24,6 +24,19 @@ The build database stores:
 - variable and environment reads
 
 This enables incremental rebuild and `--dryrun` estimation.
+
+A dependency on a target that has a rule is stored as `ArtifactDep2 (target, stamp)`: the dependee's
+change stamp as seen right after it was built or found up to date. For a file target the stamp is the
+file's last write time; for a phony target it is the completion time of its last build
+(`BuildResult.Built`). The dependent is out of date when the stamp moved (a file's write time differs
+beyond the 10 ms tolerance; a phony's completion time is later) or when the dependee itself is out of
+date. So a dependee rebuilt by an earlier separate run, or an earlier command-line target group,
+still triggers its dependents.
+
+The database file starts with a version header (`BuildLog.XakeDbVersion`, now `0.5`). Versions from
+`XakeDbMinReadVersion` (`0.4`) on are read; an older-version file is rewritten with the current header
+on open. A `0.4` database holds the stampless `ArtifactDep`, which counts as changed once, so each
+such dependent rebuilds one time and records `ArtifactDep2`. Older databases are discarded.
 
 ## Rules and scheduling
 

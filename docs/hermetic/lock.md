@@ -51,6 +51,13 @@ open Xake.Hermetic.Dotnet
 | `Lock.verify path c` | recipe | the diff between the lock at `path` and `c`, write and compile nothing; a missing lock fails |
 | `csc { ...; lock "path" }` | operation | `Lock.build` as an operation of a `csc {}` block; only `nofetch` may follow |
 | `fsc { ...; lock "path" }` | operation | the same for an `fsc {}` block |
+| `csc`/`fsc { ...; project "path"; config "Release"; packages p; lock "path" }` | operation | a compilation from a project description, gated the same way; a C# lock keeps the description's masks in `Sources` (an exclude as `!$(ProjectRoot)/...`), expanded when compiled ([../csc-syntax.md](../csc-syntax.md#from-a-project-description-project-config-packages)). No format change: `Sources` entries are strings the reader takes as written |
+| `Described.restore d framework` | recipe | a description's packages through an msbuild restore: compile assets and the graph for `Entry.Packages` |
+| `Locks.generate lockOf outOf config descriptionPath` | recipe | the lock of one described project in one configuration, nothing compiled, written only on change; the referenced projects' locks must exist ([Xake-generated locks](#xake-generated-locks)) |
+| `Locks.compileAs lockPath fwk versions` | recipe | inside the layout's `.dll` rule: the lock's entry for `fwk` compiled into the rule's target ([Building from Xake-generated locks](#building-from-xake-generated-locks)) |
+| `Locks.needAll descriptions cfg lockOf outOf` | recipe | needs the layout `.dll` of every framework of every described project; a project without a lock fails naming `update-locks` |
+| `Lock.compileFrom lockPath options entry` | recipe | `compileWith` of an entry read from the lock at `lockPath` (named by the HERMETIC refusal) |
+| `Lock.recorded path unhashed entry` | recipe | the record-time step of `record` (hashes, prerequisites, the HERMETIC gate) without writing; the references in `unhashed` keep an empty hash |
 
 `Lock.Options = { Run: RunOptions; FscRun: FscRunOptions; Restore: Restore.Options }` with
 `Lock.Options.Default`. `Run` is read for a C# entry and `FscRun` for an F# one; each runner has
@@ -118,7 +125,7 @@ in 0.1). An F# entry:
   "Generated": { ... }, "Resources": { }
 },
 "Dependencies": {
-  "Compiler": { "Tool": "fsc", "Path": "$(DotnetRoot)/sdk/10.0.401/FSharp/fsc.dll", "Sha256": "...", "Version": "15.2.401-servicing.26423.113" },
+  "Compiler": { "Tool": "fsc", "Path": "$(DotnetRoot)/sdk/10.0.401/FSharp/fsc.dll", "Sha256": "", "Version": "15.2.401-servicing.26423.113" },
   "References": [
     { "Path": "$(NuGetPackageRoot)/fsharp.core/.../lib/netstandard2.1/FSharp.Core.dll", "Sha256": "..." },
     ...
@@ -141,7 +148,8 @@ in 0.1). An F# entry:
   way to fix it is to fix the SDK. Pin it (`global.json` with `rollForward: disable`): the lock
   then records the SDK as a prerequisite ([below](#prerequisites)), checked before every
   replay. Without the pin the recording warns, and a lock fails, naming the SDK, on every
-  machine that does not have that SDK.
+  machine that does not have that SDK. Its `Sha256` is empty: the SDK version is its identity
+  ([below](#the-compiler-a-lock-names)).
 
 `entry.Csc` and `entry.Fsc` return the record of their case and fail with `'<name>' is an F#
 entry; use entry.Compilation` (or the C# counterpart) for the other; code that handles both
@@ -290,6 +298,20 @@ comes from `cscpath`, `toolset` or the framework (see [../csc-syntax.md](../csc-
 `Lock.compile` restores a toolset package the lock names when it is not on this machine yet,
 through its restore step (`Restore.ensure`, step 1 below), which treats the compiler as one
 package among the entry's references and analyzers.
+
+**A compiler of the .NET SDK has no hash.** The SDK's `fsc.dll` and Roslyn `csc.dll` (any
+compiler under `$(DotnetRoot)/sdk/<v>/`, `Lock.isSdkCompiler`) are ReadyToRun images compiled
+for one OS and architecture: the same SDK version has different bytes on macOS arm64 and on
+linux x64, so a hash would tie the lock to one platform. Their identity is the SDK version: the
+`<v>` in the path, and the `dotnet-sdk <v>` prerequisite when `global.json` pins it exactly
+([Prerequisites](#prerequisites)). Recording writes `"Sha256": ""` for them (`Lock.rehash`,
+`Project.import`), and a replay does not check one (`Lock.compileWith` clears it,
+`Lock.withoutSdkCompilerHash`, before `Csc.run`/`Fsc.run`); what is checked is that the SDK is
+installed -- the prerequisite, then the compiler's path (step 2 below). A lock written by 0.2
+with a hash there reads and formats unchanged; the hash is ignored, so the lock builds on any
+OS with that SDK. A compiler from a package (`Microsoft.Net.Compilers.Toolset`, `CSC_TOOLSET`)
+or a `cscpath` outside the SDK keeps its hash and is checked as before. The SBOM's `tool:fsc` /
+`tool:csc` component then carries no hash for an SDK compiler.
 
 ### Import: the project decides, msbuild answers
 
@@ -510,7 +532,8 @@ lives in its own `Json` module.
     msbuild's) when it is missing, so a machine with only the lock can still reproduce it
 - `Dependencies` -- what it is compiled with and against, hashed; changes rarely and is
   reviewed when it does:
-  - `Compiler` -- `{ Tool; Path; Sha256; Version }`, `Version` the compiler's own product version
+  - `Compiler` -- `{ Tool; Path; Sha256; Version }`, `Version` the compiler's own product version;
+    `Sha256` is empty for a compiler of the .NET SDK ([why](#the-compiler-a-lock-names))
   - `References` -- `{ Path; Sha256; Alias }` in command-line order; `Alias` is the `alias=`
     prefix of an `extern alias` reference and "" otherwise (written to the file only when set)
   - `Analyzers` -- `{ Path; Sha256 }`
@@ -604,7 +627,7 @@ item per line; `Alias` only on a reference that has one; each package one inline
         "Resources": { "<resx path>": "<.resources path>", ... }
       },
       "Dependencies": {
-        "Compiler": { "Tool": "csc", "Path": "$(DotnetRoot)/sdk/8.0.425/Roslyn/bincore/csc.dll", "Sha256": "...", "Version": "4.11.0-3.25569.22" },
+        "Compiler": { "Tool": "csc", "Path": "$(DotnetRoot)/sdk/8.0.425/Roslyn/bincore/csc.dll", "Sha256": "", "Version": "4.11.0-3.25569.22" },
         "References": [
           { "Path": "$(NuGetPackageRoot)/...", "Sha256": "..." },
           { "Path": "...", "Sha256": "...", "Alias": "legacy" }
@@ -983,6 +1006,164 @@ lines carry `$(ProjectRoot)`, not the absolute root; `verify` on a missing lock;
 fetching off for csc and fsc, and with fetching off an empty package folder fails before
 compiling. The tests that record set the script variable `CI=off`, so the suite also
 passes with `CI=true` in the environment.
+
+## Xake-generated locks
+
+The locks of project descriptions ([description.md](description.md)) are written without
+compiling and without msbuild evaluating anything, by a **phony rule in the script** that calls
+the one-lock primitive `Locks.generate` (module `Locks`, `src/hermetic/Locks.fs`; not `Lock`: it
+needs `Described`, which compiles after `Lock.fs`):
+
+```fsharp
+let lockOf name cfg = $"locks/{name}/{cfg}.json"
+let outOf cfg fwk (_: string) = $"out/{cfg}/{fwk}"
+let descriptionOf name = $"src/{name}/xake.project.json"
+
+"lock::(name:*)::(cfg:*)" => recipe {
+    let! name = getRuleMatch "name"
+    let! cfg  = getRuleMatch "cfg"
+    let! d = Description.load (descriptionOf name)
+    do! need [ for r in d.ProjectRefs -> $"lock::{r}::{cfg}" ]
+    do! alwaysRerun ()
+    do! Locks.generate lockOf outOf cfg (descriptionOf name)
+}
+"update-locks" <== [ for n in projects do for cfg in ["Release"] -> $"lock::{n}::{cfg}" ]
+```
+
+`xake update-locks` regenerates them; `xake lock::Xake.Dotnet::Debug` does one (and the locks it
+references).
+
+**Why a phony rule.** The ordering between projects is a `need` of the referenced projects'
+lock rules, so it is ordinary Xake targets, not a sort inside the library; the script decides
+what a lock depends on and can add settings per project or configuration (a different
+configuration for the references, an extra `need`, a filter). The engine runs a target at most
+once per run, so a project referenced by several others gets its lock generated once. The
+library owns no loop and no layout: `lockOf`, `outOf` and `descriptionOf` are the script's.
+
+**Why `alwaysRerun`.** The lock is written as a side effect, not as a target: the engine does
+not notice a deleted or hand-edited lock file, and a phony rule whose dependencies did not
+change would be skipped. Regeneration is cheap when nothing changed (nothing is written), so
+the rule simply runs every time it is demanded.
+
+**Why `update-locks` is explicit; fresh clone and CI.** The locks are committed. `build` reads
+them through `Lock.load`, which `needFiles` the lock path; since no FILE rule matches
+`locks/...`, the engine treats the lock as a plain input file and never runs a lock rule, even
+with no `.xake` database (a fresh clone, a CI run). Locks change only when someone runs
+`update-locks` and commits the result. Do not turn the lock rule into a file rule
+(`"locks/(name:*)/(cfg:*).json" ..> ...`): every `Lock.load` would then run it on a fresh clone.
+
+What `Locks.generate lockOf outOf config descriptionPath` does for the description at
+`descriptionPath` (its `name` from the file) and `config`:
+
+- **One lock** at `lockOf name config`, `Configuration` set to the configuration, one entry per
+  framework of the description, in the description's order.
+- **The compilation** is `fsc`/`csc { targetfwk; out; ref; project; config; packages; resolve }`
+  ([../csc-syntax.md](../csc-syntax.md#from-a-project-description-project-config-packages)): the
+  SDK preset, `--deterministic+`, `--pathmap:$(ProjectRoot)/=/_/`. The output switch (`--out:`,
+  `/out:`) is removed: the output path is the build's. The doc switch stays, at the layout path
+  `outOf cfg fwk name`.
+- **A project reference** to B: B's lock must exist (at `lockOf B c`; the rule `need`s B's lock
+  rule first). B's configuration is the first B has a lock for in the order *this
+  configuration, Release, Debug* (`Locks.refConfig`; provisional, the brief's open "ref-config
+  fallback order"; with the rule above B's lock in this configuration always exists, the
+  fallback matters when the script needs B's locks in another configuration); B's framework is
+  the nearest of the frameworks in that lock (`Locks.nearestFramework`: the same; else the
+  highest of the same family not above it; else the highest `netstandard` the target
+  implements). The choice is recorded only as the reference path `outOf cfgB fwkB B` +
+  `/<B's assembly>.dll`, **with an empty `Sha256`**, also when a build left the file on disk
+  (`Lock.recorded ... unhashed`; [roadmap](../roadmap.md): in-lock project references stay
+  unhashed). `Evaluation.ProjectRefs` holds B's name, as the description names it. A reference
+  without any lock fails, naming it and pointing at `update-locks`.
+- **Packages** come from `Described.restore` (an msbuild restore of a synthesized project). A
+  version the current lock's entry holds is passed as exact (`[v]`), so it stays when the
+  description floats (`8.0.*`) or a newer version appears. The script variable, else the
+  environment variable, `LOCK_REFRESH` re-resolves the named ids as declared (`FSharp.Core`,
+  a comma/semicolon list, or `*` for all): `xake update-locks -d LOCK_REFRESH=FSharp.Core`.
+  B's direct packages (from B's lock) flow into A's restore at B's locked version, as msbuild
+  flows them through a project reference.
+- **Written only on change**: the text is compared with the file on disk (CRLF read as LF);
+  regenerating with nothing changed writes nothing and leaves the timestamp alone.
+- **No format change**: the locks use existing slots only, and the 0.2 reader (`Lock.parse`)
+  reads them and `Lock.format` writes them back byte-identically.
+
+Not done here: diamond references (A Debug -> B Release -> C) are not detected. Building from
+these locks: next section.
+
+Tests: `src/hermetic.tests/LocksTests.fs`, all through the rule above in a small script --
+Xake's three projects (fixtures for src/core, src/dotnet, src/hermetic) get Release locks from
+`update-locks` that read back unchanged, with no output switch and the tokenized pathmap,
+regenerated byte-identically without a write even with a ref output on disk; `update-locks` run
+twice runs each lock rule once per run (a library two projects reference: once) and the second
+run writes nothing; with committed locks and the `.xake` database deleted, a `build` that
+`Lock.load`s them runs no lock rule; a Debug project over a Release-only netstandard2.0 library
+gets `$(ProjectRoot)/out/Release/netstandard2.0/Lib.dll` unhashed; a missing ref lock fails; a
+floating version stays until `LOCK_REFRESH` names it; nearest framework, ref configuration and
+kept versions as pure tests.
+
+## Building from Xake-generated locks
+
+The whole story: `xake update-locks` (the phony lock rule above) writes the locks, they are
+committed, and `xake build` compiles from them. `Locks.compileAs` and `Locks.needAll` build the
+committed locks into the script's layout -- the same layout (`outOf`) that `Locks.generate`
+wrote into the project-reference paths. `build` never runs a lock rule: the locks are plain
+input files to it, so a fresh clone or a CI run (no `.xake`) builds from what was committed:
+
+```fsharp
+let versions = [ "src/hermetic/**", vars.HermeticVersion; "**", vars.Version ]
+command "build" { do! Locks.needAll (!! "src/*/xake.project.json") "Release" lockOf outOf }
+target "out/(cfg:*)/(fwk:*)/(name:*).dll" {
+    let! cfg = getRuleMatch "cfg"
+    let! fwk = getRuleMatch "fwk"
+    let! name = getRuleMatch "name"
+    do! Locks.compileAs (lockOf name cfg) fwk versions }
+```
+
+- **`needAll descriptions cfg lockOf outOf`** reads every description and needs
+  `outOf cfg fwk name` + `/<assembly>.dll` for each of its frameworks, all at once. A described
+  project with no lock at `lockOf name cfg` fails the build pointing at `update-locks`; nothing
+  regenerates a lock on its own.
+- **`compileAs lockPath fwk versions`** runs inside the rule whose target is the `.dll`. It reads
+  the lock (a dependency), takes its one entry for `fwk` (the target's file name must be the
+  entry's assembly name) and compiles it into the target: `--out:`/`/out:` is the rule's target
+  (the lock has none); a `--doc:`/`/doc:` the lock carries is re-targeted beside it. The `.xml` is
+  a side output, not a target, so a lock without doc (a Debug lock, say) expects no `.xml` and is
+  up to date on the next run.
+- **Dependencies**: the unhashed project-reference outputs are needed before the compile, so
+  the referenced `.dll` is built first by the same rule and a change to it rebuilds the
+  referencer. The hashed references are packages: a missing one (an empty package folder on a
+  fresh clone or CI) is fetched by the replay's restore first, then needed by the runner. C# source masks are expanded through `getFiles`
+  (`Described.expandCsc`): an added or removed `.cs` under a mask rebuilds without touching the
+  lock. The runner's own `needFiles` covers the sources and the compiler.
+- **`$(Version)`**: a `$(Version)` token in `Generated` is replaced by the value of the variable
+  of the first `versions` mask matching the project, taken as `<folder>/xake.project.json`
+  relative to the project root, the folder being where its first source lies. The variable is
+  read (and so a dependency) only when the token is there; the lock keeps the token. The locks
+  `Locks.generate` writes today carry none (assembly versioning is an open topic).
+- **Replay** is `Lock.compileFrom` (what `buildWith` does with a matching lock): prerequisites,
+  the **HERMETIC=on gate** (a lock naming a path outside the roots is refused, message 10, before
+  anything compiles), restore of what the lock names (`NUGET_PACKAGES`, `NUGET_FETCH`), csc's
+  server per `CSC_SERVER`, the hash check of every hashed reference. Nothing is recorded: the
+  build never writes a lock.
+
+With `--deterministic+` and the tokenized pathmap, two clean builds give identical assemblies.
+
+Tests: `src/hermetic.tests/BuildFromLockTests.fs` -- A -> B (F#) built in Release and Debug,
+the second build of each does nothing, B's `.xml` beside its dll and none for A, a change to B
+rebuilds A, two clean builds byte-identical; a C# lock with masks rebuilds on an added `.cs`
+without a lock change; a description without a lock fails pointing at `update-locks`;
+`HERMETIC=on` refuses inside `compileAs`; `$(Version)` substituted and a new version rebuilds;
+with `.xake` deleted, `build` over the committed locks of A -> B runs no lock rule; Xake's three
+projects from the locks `update-locks` writes into `out/Release/<fwk>/`. Every test generates
+its locks through the phony `lock::` rule and `update-locks`.
+
+### Known difference: another checkout folder
+
+Measured on Xake's own projects (SDK 10.0.401, macOS arm64): rebuilding from the locks in the
+same folder gives byte-identical dlls. A clone in another folder, built from the same locks,
+gives dlls that differ in 59 bytes -- the PE checksum and the timestamps of the debug directory
+-- despite `--deterministic+` and `--pathmap`; the pdbs are identical. This is described, not
+fixed. Comparing packages built in different folders (nupkg equality) therefore has to compare
+entry content with this in mind, not the archive bytes or a plain hash of each dll.
 
 ## Behaviour notes
 

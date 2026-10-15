@@ -1112,6 +1112,38 @@ module Import =
                 ctx.Description.Name cfg framework
         entry, List.ofSeq warnings
 
+    /// <summary>
+    /// What a recorded entry's command line names that no portable name covers, as messages:
+    /// every file a switch or a source names (`/analyzerconfig:`, `/keyfile:`, `/ruleset:`,
+    /// `/win32icon:`, `/win32manifest:`, `/additionalfile:`, `/resource:`, ...) must have an
+    /// identity (`Lock.Identity.ofPath`: the package folder, the packs, the entry's SDK, a
+    /// referenced project, a root), as the references must; a `/pathmap:` source path must lie
+    /// under a root. An `.editorconfig` above the repository is such a file: declare its folder
+    /// as a root, or move it in. Pure.
+    /// </summary>
+    let internal unportablePaths (roots: (string * string) list) (entry: Lock.Entry) : string list =
+        let c = entry.Compilation
+        let context : Lock.Identity.Context =
+            { Roots = roots; Sdk = entry.Evaluation.Sdk
+              Projects = entry.Recorded |> Option.map (fun r -> r.Projects) |> Option.defaultValue [] }
+        let isFSharp = match c with Lock.Compilation.Fsc _ -> true | _ -> false
+        let args = c.Args |> List.filter (fun a -> not (a.StartsWith "@"))
+        let files = (if isFSharp then FscArgs.inputs args else CscArgs.inputs args) |> List.map slash |> List.distinct
+        let pathmaps =
+            [ for a in args do
+                let bare = a.TrimStart ('-', '/')
+                if bare.StartsWith ("pathmap:", StringComparison.OrdinalIgnoreCase) then
+                    yield! (bare.Substring 8).Split ',' ]
+            |> List.choose (fun m -> match m.IndexOf '=' with -1 -> None | i -> Some (m.Substring (0, i)))
+            |> List.distinct
+        [ for f in files do
+            if (Lock.Identity.ofPath context f).IsNone then
+                yield sprintf "'%s' (%s): the compiler's command line names '%s', which cannot be named portably: it is not in the package folder, the .NET packs or the SDK %s, nor under $(ProjectRoot) or a root the script declares; declare its folder as a root (RecordOptions.Roots) or move it into the repository"
+                        c.Name c.Framework f entry.Evaluation.Sdk
+          for m in pathmaps do
+            if not ((Roots.tokenize roots (slash m)).StartsWith "$(") then
+                yield sprintf "'%s' (%s): the compiler's /pathmap: maps '%s', which is under no root; declare its folder as a root (RecordOptions.Roots)" c.Name c.Framework m ]
+
     /// The warning for a recorded lock whose SDK prerequisite (`sdk`, the SDK that recorded it)
     /// is stricter than the project's `global.json` (`pin`): a machine with another SDK the pin
     /// allows has to install `sdk` or import again (and every lock of the set changes).
@@ -1336,6 +1368,9 @@ module Import =
                         for _, warnings in built do
                             for w in warnings do do! trace Warning "%s" w
                         let entries = built |> List.map fst
+                        match entries |> List.collect (unportablePaths roots) |> List.distinct with
+                        | [] -> ()
+                        | problems -> failwith (String.concat "\n" problems)
                         let lockPath = options.LockOf description.Name cfg
                         let lockFull = full lockPath
                         // HERMETIC=on: what a lock may not be written with (messages 2 and 9)

@@ -511,6 +511,57 @@ type ``Import record project chain``() =
         Assert.That(File.Exists (RecordKit.lockOf "c" "Release"), Is.False)
 
 
+/// `Import.record` checks the files the compiler's switches name, not only the references:
+/// an `.editorconfig` above the repository fails the import; a key file in a declared root is
+/// written by its token.
+[<TestFixture>]
+type ``Import record switch files``() =
+    inherit XakeTestBase("import-record-switch")
+
+    let here () = (Directory.GetCurrentDirectory ()).Replace ('\\', '/')
+    let fixture () =
+        for f in [ ".editorconfig" ] do if File.Exists f then File.Delete f
+        RecordKit.write [ "repo"; "keys" ]
+            [ "repo/app/app.csproj",
+                RecordKit.sdkProject "<TargetFramework>net8.0</TargetFramework><SignAssembly>true</SignAssembly><AssemblyOriginatorKeyFile>../../keys/k.snk</AssemblyOriginatorKeyFile>" ""
+              "repo/app/C.cs", "namespace App { public class C { } }\n"
+              "keys/k.snk", "not a key: the design-time build does not read it\n" ]
+    member private x.Options = { x.TestOptions with ProjectRoot = here () + "/repo" }
+    member private x.Record = { RecordKit.recordDefault with Roots = [ "$(Keys)", here () + "/keys" ] }
+
+    [<Test>]
+    member x.``an editorconfig above the repository fails the import, naming it``() =
+        fixture ()
+        File.WriteAllText (".editorconfig", "root = true\n[*.cs]\nindent_size = 4\n")
+        try
+            let e = Assert.Catch(fun () -> RecordKit.import x.Options "import-editorconfig" x.Record [ "app/app.csproj" ] |> ignore)
+            Assert.That(string e, Does.Contain (here () + "/.editorconfig', which cannot be named portably"))
+            Assert.That(File.Exists "repo/locks/app/Release.json", Is.False)
+        finally File.Delete ".editorconfig"
+
+    [<Test>]
+    member x.``a key file in a declared root is written by its token``() =
+        fixture ()
+        RecordKit.import x.Options "import-keyfile" x.Record [ "app/app.csproj" ] |> ignore
+        let lock = File.ReadAllText "repo/locks/app/Release.json"
+        Assert.That(lock, Does.Contain "\"/keyfile:$(Keys)/k.snk\"")
+        // without the root, the key file cannot be named
+        let e = Assert.Catch(fun () -> RecordKit.import x.Options "import-keyfile-2" RecordKit.recordDefault [ "app/app.csproj" ] |> ignore)
+        Assert.That(string e, Does.Contain (here () + "/keys/k.snk', which cannot be named portably"))
+
+    [<Test>]
+    member x.``a pathmap outside every root, or a switch file outside, is reported; tokens and identities are not``() =
+        let roots = [ "$(NuGetPackageRoot)", "/r/pkgs"; "$(ProjectRoot)", "/r/proj"; "$(DotnetRoot)", "/r/dotnet" ]
+        let c =
+            { Csc.ofArgs [ "/noconfig"; "/keyfile:/opt/keys/k.snk"; "/analyzerconfig:/r/dotnet/sdk/8.0.425/x.globalconfig"; "/ruleset:/r/proj/a.ruleset"
+                           "/pathmap:/r/proj/=/_/,/opt/src/=/_2/"; "/r/proj/A.cs" ] with Name = "A"; Framework = "net8.0" }
+        let entry = { Lock.ofCsc c with Evaluation = { Lock.Evaluation.Empty with Project = "/r/proj/A.csproj"; Sdk = "8.0.425" }; Recorded = Some { Projects = []; Masks = [] } }
+        let problems = Import.unportablePaths roots entry
+        Assert.That(problems, Has.Length.EqualTo 2)
+        Assert.That(problems.[0], Does.Contain "'/opt/keys/k.snk'")
+        Assert.That(problems.[1], Does.Contain "/pathmap: maps '/opt/src/'")
+
+
 /// One synthesized restore downloads one version of an id: the fetch of a recorded lock set
 /// (each project's own restore graph) splits the packages into rounds of distinct ids.
 [<TestFixture>]

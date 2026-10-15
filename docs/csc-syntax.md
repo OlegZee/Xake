@@ -348,6 +348,11 @@ not temp files.
 
 ## Not yet
 
-- `Resx.read`/`compile` only support plain string entries (`<data name="X"><value>...</value></data>`).
-  A typed value (a `type` attribute) or a `ResXFileRef`/binary value (`mimetype`) fails with a
-  clear message rather than being compiled; the real projects this targets have none.
+- `Resx.read` is the plain-strings view and still fails on a typed or `ResXFileRef` entry.
+  `Resx.compile`/`refresh` (`ResxFormat`) compile every entry kind the .NET SDK's
+  `GenerateResource` does, byte for byte: typed values, `ResXNullRef`, `ResXFileRef` (text in
+  the named encoding, code pages included; `byte[]`; images and other types as activator
+  streams), `bytearray.base64` and `binary.base64` payloads. A resx of strings compiles to the
+  classic format; any other entry makes it preserialized, and the assembly then needs
+  `System.Resources.Extensions` at run time (in .NET 5+'s shared framework; a package on .NET
+  Framework). `ResxFormat.needsExtensions` tells which format a `.resources` file is.

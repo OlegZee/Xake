@@ -52,7 +52,7 @@ Requires .NET SDK 8.0+ (see `global.json`).
 - **Target**: What a rule produces — either a `FileTarget` (file path) or `PhonyAction` (named action)
 - **Rule**: Maps a target pattern to a Recipe. Types: `FileRule`, `MultiFileRule`, `PhonyRule`, `FileConditionRule`
 - **Recipe**: Async-like computation expression (`recipe { ... }`) that builds a target and tracks dependencies
-- **Dependency**: Tracked inputs — `FileDep`, `ArtifactDep`, `EnvVar`, `Var`, `AlwaysRerun`, `GetFiles`
+- **Dependency**: Tracked inputs — `FileDep`, `ArtifactDep2` (dependee target + change stamp; `ArtifactDep` only in old databases), `EnvVar`, `Var`, `AlwaysRerun`, `GetFiles`
 
 ### Execution Flow
 

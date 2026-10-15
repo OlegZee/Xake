@@ -1,0 +1,33 @@
+{
+  "$schema": "../../docs/schemas/xake.project.schema.json",
+  "name": "Xake.Hermetic.Dotnet",
+  "project": "Xake.Hermetic.Dotnet.fsproj",
+  "language": "fsharp",
+  "kind": "library",
+  "frameworks": ["net462", "netstandard2.0"],
+  "sources": [
+    "Json.fs",
+    "Description.fs",
+    "Roots.fs",
+    "Nuget.fs",
+    "Restore.fs",
+    "Git.fs",
+    "Lock.fs",
+    "Described.fs",
+    "Locks.fs",
+    "Project.fs",
+    "Import.fs",
+    "Sbom.fs",
+    "Verify.fs",
+    "StrongName.fs",
+    "Pack.fs",
+    "Sign.fs"
+  ],
+  "packages": [
+    { "id": "Xake", "version": "[3.7.0.26, 3.8)" },
+    { "id": "FSharp.Core", "version": "8.0.100" }
+  ],
+  "options": { "doc": true },
+  "internalsVisibleTo": ["hermetic.tests"],
+  "byFramework": { "net462": { "references": ["System.IO.Compression"] } }
+}

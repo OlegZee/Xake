@@ -182,8 +182,11 @@ Every operation of `csc {}`:
 
 `lock "path"` is not part of the base package: it is added by the separate package
 `Xake.Hermetic.Dotnet` (`open Xake.Hermetic.Dotnet`), and gates the compilation against a lock
-file; see [hermetic/lock.md](hermetic/lock.md). Details behind the operations above:
-[csc-syntax.md](csc-syntax.md).
+file; see [hermetic/lock.md](hermetic/lock.md). The same package adds `project "path"`, `config`
+and `packages` to `csc {}` and `fsc {}`: a compilation from a project description, with the
+SDK's Debug/Release preset and packages restored beforehand by `Described.restore`; see
+[csc-syntax.md](csc-syntax.md#from-a-project-description-project-config-packages). Details
+behind the operations above: [csc-syntax.md](csc-syntax.md).
 
 `toolset` example, see [samples/toolset.fsx](../samples/toolset.fsx):
 
@@ -411,7 +414,9 @@ construct it with qualified labels or from `FscRunOptions.Default with ...`.
 A script that wants exactly what `dotnet build` would compile for an existing `.fsproj` does not
 re-describe it as `fsc {}` settings: `Project.import` in `Xake.Hermetic.Dotnet` asks msbuild
 for the compiler's own command line (a design-time build) and records it in a lock, and
-`Lock.compile` replays it through `Fsc.run`. See [hermetic/lock.md](hermetic/lock.md). (The
+`Lock.compile` replays it through `Fsc.run`. See [hermetic/lock.md](hermetic/lock.md).
+`fsc { project "path"; config "Release"; packages p }` builds from a project description
+([csc-syntax.md](csc-syntax.md#from-a-project-description-project-config-packages)). (The
 `Fsproj` module of Xake.Hermetic.Dotnet 0.1, which evaluated a project's items for a composed
 `fsc {}`, is gone in 0.2.)
 

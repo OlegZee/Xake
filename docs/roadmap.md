@@ -32,9 +32,26 @@ loaded, not inside the recipe. Tuple overloads for 1–4 groups and 1–4 target
 members; the operator is sugar over them. Group names stay as documentation and keep working
 through `getRuleMatch` for existing scripts. `build.fsc.fsx` is the first customer.
 
+### Project descriptions in the core (planned, 2026-10-12)
+
+Move project descriptions (`xake.project.json`, `Description`, `Import`) from
+Xake.Hermetic.Dotnet into the core / Xake package. Why: the description is language-neutral
+data, so the core should own it, as it already owns `Fingerprints`. The lock and the hermetic
+build stay in Xake.Hermetic.Dotnet.
+
+### A CLI command that writes descriptions (idea, 2026-10-12)
+
+A built-in Xake CLI command that generates `xake.project.json` from project files (csproj,
+fsproj), so a repository needs no script target for the import. Today the script calls
+`Import.descriptions` from a target of its own.
+
 ## Xake.Dotnet
 
-### B6: `Fsc` through the shared runner (designed 2026-10-04, `docs/features/hermetic-build/fsc-design.md`; breaking for fsc in 3.5: `Fsc settings` -> `Fsc.compile`, `targetfwk` required)
+### B6: `Fsc` through the shared runner (done in 3.5 / hermetic 0.2)
+
+Done: `Fsc` record, `fsc { resolve }`, `fsc { lock }`, `Fsc.run` on the shared runner core;
+kept below as the original plan (designed 2026-10-04, `docs/features/hermetic-build/fsc-design.md`;
+breaking for fsc in 3.5: `Fsc settings` -> `Fsc.compile`, `targetfwk` required).
 
 `fsc {}` has no resolved record, no `resolve` operation and no hash-checked runner, so there is
 no `fsc { lock }` and `build.fsc.fsx` (the build of record) is hermetic only through its kept
@@ -107,3 +124,7 @@ From `docs/hermetic/workflows.md` ("Gaps"), in priority order:
 7. SBOM default internal prefixes are a customer's; the default should be empty.
 8. The six SBOM questions in `docs/hermetic/nuget-sbom.md`; `sign {}` shadows `sign`;
    `StrongName.signFile` does not recompute the PE checksum; no real signer ships.
+9. Rework `hermetic-guide.md` section 6, building from an imported lock: the hand-written
+   project-reference remap (`unbuilt`/`mapped` over empty hashes) is the pattern `Locks.compileAs`
+   replaced for Xake-generated locks; give imported locks the same shape, or document
+   `Locks.compileAs` as the way and retire the example.

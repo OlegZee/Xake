@@ -94,7 +94,9 @@ type ``Csc lock``() =
         Assert.That(entry.Csc.Dependencies.References, Is.Not.Empty)
         Assert.That(entry.Csc.Dependencies.References |> List.forall (fun r -> r.Sha256 <> ""), Is.True,
             "the recorded entry has to be hashed -- that is what gates the next build")
-        Assert.That(entry.Csc.Dependencies.Compiler.Sha256, Is.Not.Empty)
+        // the SDK's csc.dll is identified by the SDK version, not by its (per-OS) bytes
+        Assert.That(entry.Csc.Dependencies.Compiler.Path, Does.Contain "/sdk/")
+        Assert.That(entry.Csc.Dependencies.Compiler.Sha256, Is.Empty)
 
     [<Test; Category("Integration")>]
     member x.``second build with unchanged settings leaves the lock untouched``() =

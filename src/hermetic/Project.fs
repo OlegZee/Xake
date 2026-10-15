@@ -85,6 +85,23 @@ module Project =
     let internal withProjectLock (project: string) (body: Recipe<ExecContext, 'a>) : Recipe<ExecContext, 'a> =
         withResource (ProjectLocks.resourceFor project) 1 body
 
+    /// Runs `dotnet msbuild <arguments>` with `env` added to its environment, failing the
+    /// recipe (named `name`) on a non-zero exit. The one msbuild driver of this package: the
+    /// lock import below and the description import (`Import`) both go through it.
+    let internal runMsbuild (environment: (string * string) list) (arguments: string list) (name: string) =
+        recipe {
+            let! exitCode =
+                shell {
+                    cmd "dotnet"
+                    args ("msbuild" :: arguments)
+                    envs environment
+                    logprefix "[msbuild]"
+                    stdoutlevel (Tool.diagnosticLevel Level.Verbose)
+                    erroutlevel (Tool.diagnosticLevel Level.Error)
+                }
+            do! Tool.failOnExitCode true name exitCode
+        }
+
     /// One property from a design-time build's result dump (the `-getResultOutputFile` json
     /// `wantedProperties` asks for), read directly rather than through `parseImport`'s full
     /// parse -- `ProjectAssetsFile` and `NuGetPackageRoot` are needed early, inside the
@@ -261,7 +278,7 @@ module Project =
             |> List.filter (fun path -> not (sdkRoot <> "" && path.StartsWith (sdkRoot + "/")) && not (path.StartsWith baseIntermediate))
 
         let dependencies tool (parsed: Dependencies) : Dependencies =
-            { Compiler = { Tool = tool; Path = compilerPath; Sha256 = Csc.sha256 compilerPath; Version = Csc.compilerVersion compilerPath }
+            { Compiler = { Tool = tool; Path = compilerPath; Sha256 = (if Lock.isSdkCompiler compilerPath then "" else Csc.sha256 compilerPath); Version = Csc.compilerVersion compilerPath }
               References = parsed.References |> List.map (fun r -> { r with Sha256 = Csc.sha256 r.Path })
               Analyzers = parsed.Analyzers |> List.map (fun a -> Csc.hashed a.Path) }
         let compilation =
@@ -388,19 +405,7 @@ module Project =
             let! packageRoot, packageSource = DotNetFwk.packageRootWithSource ()
             let msbuildEnv = if packageSource = DotNetFwk.ScriptVariable then [ "NUGET_PACKAGES", packageRoot ] else []
 
-            let msbuild (arguments: string list) name =
-                recipe {
-                    let! exitCode =
-                        shell {
-                            cmd "dotnet"
-                            args ("msbuild" :: arguments)
-                            envs msbuildEnv
-                            logprefix "[msbuild]"
-                            stdoutlevel (Tool.diagnosticLevel Level.Verbose)
-                            erroutlevel (Tool.diagnosticLevel Level.Error)
-                        }
-                    do! Tool.failOnExitCode true name exitCode
-                }
+            let msbuild = runMsbuild msbuildEnv
 
             // the roots the lock is written with; the SDK an entry depends on is read off its
             // tokenized paths

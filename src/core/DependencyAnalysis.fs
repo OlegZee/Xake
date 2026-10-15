@@ -24,8 +24,29 @@ let getExecTime (ctx: ExecContext) target =
     (fun ch -> Storage.GetResult(target, ch)) |> ctx.Db.PostAndReply
     |> Option.fold (fun _ r -> r.Steps |> List.sumBy (fun s -> s.OwnTime)) 0<ms>
 
+/// <summary>
+/// Gets the current change stamp of a target that has a rule (see Dependency.ArtifactDep2):
+/// for a file target its last write time (None if the file is missing), for a phony target
+/// the completion time of its last build as stored in the database (None if never built).
+/// </summary>
+let getChangeStamp (ctx: ExecContext) = function
+    | FileTarget file -> if File.exists file then Some (File.getLastWriteTime file) else None
+    | PhonyAction _ as target ->
+        (fun ch -> GetResult(target, ch)) |> ctx.Db.PostAndReply
+        |> Option.map (fun r -> r.Built)
+
+/// Tells whether the dependee's change stamp differs from the one the dependent recorded.
+/// A file stamp is a write time: any move beyond the tolerance (a restored older file too) is a change.
+/// A phony stamp is a completion time: only a later one is a change.
+let private stampMoved target (recorded: Timestamp) (current: Timestamp option) =
+    match target, current with
+    | _, None -> true
+    | FileTarget _, Some current -> abs((current - recorded).TotalMilliseconds) >= TimeCompareToleranceMs
+    | PhonyAction _, Some current -> current.Ticks > recorded.Ticks
+
 /// Gets single dependency state and reason of a change.
-let getDepState getVar getFileList (getChangedDeps: Target -> ChangeReason list) x = 
+/// `getStamp` gives the dependee's current change stamp (see getChangeStamp).
+let getDepState getVar getFileList (getChangedDeps: Target -> ChangeReason list) (getStamp: Target -> Timestamp option) x = 
     match x with
     | FileDep (a:File, wrtime) when not((File.exists a) && abs((File.getLastWriteTime a - wrtime).TotalMilliseconds) < TimeCompareToleranceMs) ->
         let dbgInfo = File.exists a |> function
@@ -37,6 +58,19 @@ let getDepState getVar getFileList (getChangedDeps: Target -> ChangeReason list)
         ChangeReason.DependsMissingTarget (FileTarget file), None
 
     | ArtifactDep dependeeTarget ->
+        // recorded by Xake before database 0.5: there is no stamp to tell whether the dependee
+        // was rebuilt by an earlier separate run (S66), so it counts as changed once and the
+        // rebuild records ArtifactDep2
+        ChangeReason.Depends dependeeTarget, Some "dependency recorded by an older Xake (no change stamp)"
+
+    | ArtifactDep2 (FileTarget file, _) when not (File.exists file) ->
+        ChangeReason.DependsMissingTarget (FileTarget file), None
+
+    | ArtifactDep2 (dependeeTarget, recorded) when stampMoved dependeeTarget recorded (getStamp dependeeTarget) ->
+        ChangeReason.Depends dependeeTarget,
+            Some (sprintf "dependee changed since recorded: %A -> %A" recorded (getStamp dependeeTarget))
+
+    | ArtifactDep2 (dependeeTarget, _) ->
         dependeeTarget |> getChangedDeps |> List.filter ((<>) ChangeReason.NotChanged)
         |> function
             |  [] -> NotChanged, None
@@ -87,7 +121,7 @@ let getChangeReasons (ctx: ExecContext) getTargetDeps target =
         [ChangeReason.Other "No dependencies", Some "It means target is not \"pure\" and depends on something beyond our control (oracle)"]
 
     | Some {BuildResult.Depends = depends; Targets = result} ->
-        let depState = getDepState (Util.getVar ctx.Vars) (toFileList ctx.Options.ProjectRoot) getTargetDeps
+        let depState = getDepState (Util.getVar ctx.Vars) (toFileList ctx.Options.ProjectRoot) getTargetDeps (getChangeStamp ctx)
 
         depends
             |> List.map depState
@@ -127,7 +161,14 @@ let dumpDeps (ctx: ExecContext) (target: Target list) =
     let rec displayNestedDeps ii =
         function
         | ArtifactDep dependeeTarget ->
-            printfn "%sArtifact: %A" (indent ii) dependeeTarget.FullName
+            printfn "%sArtifact: %A (no stamp, recorded by an older Xake)" (indent ii) dependeeTarget.FullName
+            showTargetStatus (ii+1) dependeeTarget
+        | ArtifactDep2 (dependeeTarget, stamp) ->
+            let changed =
+                match getChangeStamp ctx dependeeTarget with
+                | Some current when current = stamp -> ""
+                | current -> sprintf " CHANGED (now %A)" current
+            printfn "%sArtifact: %A %A%s" (indent ii) dependeeTarget.FullName stamp changed
             showTargetStatus (ii+1) dependeeTarget
         | _ -> ()
     and showDepStatus ii (d: Dependency) =

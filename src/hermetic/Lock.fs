@@ -251,15 +251,43 @@ module Lock =
         | Compilation.Csc c -> Compilation.Csc (fc c)
         | Compilation.Fsc f -> Compilation.Fsc (ff f)
 
+    /// <summary>
+    /// Whether `path` is a compiler of the .NET SDK itself: under
+    /// <c>&lt;DotnetRoot&gt;/sdk/&lt;v&gt;/</c> (`Roots.dotnetRoot`), as the SDK's `fsc.dll` and
+    /// an imported C# project's Roslyn `csc.dll` are. Those files are ReadyToRun images compiled
+    /// for one OS and architecture, so the same SDK version has different bytes on macOS arm64
+    /// and on linux x64. Their identity in a lock is the SDK version -- the version in the path
+    /// and the `dotnet-sdk` prerequisite (`withPrerequisites`) -- not a hash: the lock records
+    /// no hash for them (`rehash`) and a replay does not check one (`compileWith`).
+    /// </summary>
+    let isSdkCompiler (path: string) : bool =
+        path <> "" && Roots.dotnetRoot () |> Option.exists (fun root -> (DotNetFwk.sdkVersionOf root path).IsSome)
+
+    /// `entry` with the hash of an SDK compiler (`isSdkCompiler`) cleared; a compiler from a
+    /// package (`Microsoft.Net.Compilers.Toolset`, `CSC_TOOLSET`) or any other path keeps its
+    /// hash. Applied when recording (`rehash`) and before a replay, so a lock written before
+    /// this rule (whose SDK compiler carries a hash) builds wherever the SDK version is present.
+    let withoutSdkCompilerHash (entry: Entry) : Entry =
+        let clear (d: Dependencies) =
+            if d.Compiler.Sha256 <> "" && isSdkCompiler d.Compiler.Path then { d with Compiler = { d.Compiler with Sha256 = "" } }
+            else d
+        { entry with
+            Compilation =
+                entry.Compilation
+                |> mapCompilation (fun c -> { c with Dependencies = clear c.Dependencies })
+                                  (fun f -> { f with Fsc.Dependencies = clear f.Dependencies }) }
+
     /// Fills `Sha256` for every hashed item (`References`, `Analyzers`, the compiler via
     /// `Csc.rehash`/`Fsc.rehash`, and `Imports`) from what is on disk right now; leaves `""` where the file
-    /// does not exist. For a composed entry, which leaves every hash empty, this is the
+    /// does not exist, and for a compiler of the .NET SDK (`isSdkCompiler`, identified by the SDK
+    /// version instead). For a composed entry, which leaves every hash empty, this is the
     /// "record time" step `lock-from-settings.md` recommendation 5 asks for -- run once by the
     /// lock-recording rule, not on every compile.
     let rehash (entry: Entry) : Entry =
         { entry with
             Compilation = entry.Compilation |> mapCompilation Csc.rehash Fsc.rehash
             Evaluation = { entry.Evaluation with Imports = entry.Evaluation.Imports |> List.map (fun h -> { h with Sha256 = Csc.sha256 h.Path }) } }
+        |> withoutSdkCompilerHash
 
     /// Rewrites every path the entry's compilation carries, through `f` (`Csc.mapPaths`,
     /// `Fsc.mapPaths`). A
@@ -914,10 +942,15 @@ module Lock =
     ///     never carries the commit sha itself, `Git.tokenize`) is resolved from
     ///     the project's own repository.
     ///  4. `Csc.run` with `options.Run` for a C# entry, `Fsc.run` with `options.FscRun` for
-    ///     an F# one; the runner's hash check makes the replay trustworthy.
+    ///     an F# one; the runner's hash check makes the replay trustworthy. A compiler of the
+    ///     .NET SDK is not hash-checked (`withoutSdkCompilerHash`): step 0 and its path pin
+    ///     its version.
     /// </summary>
     let private compileEntry (lockPath: string option) (options: Options) (entry: Entry) : Recipe<ExecContext, unit> =
         recipe {
+            // an SDK compiler is identified by the SDK version (the path, the prerequisite),
+            // never by its bytes: a hash an older lock carries for it is ignored
+            let entry = withoutSdkCompilerHash entry
             let c = entry.Compilation
             // the build's package folder and NUGET_FETCH, for `Options.Default` (`Restore.resolve`)
             let! restore = Restore.resolve options.Restore
@@ -993,6 +1026,12 @@ module Lock =
     let compileWith (options: Options) (entry: Entry) : Recipe<ExecContext, unit> =
         compileEntry None options entry
 
+    /// `compileWith` of an entry read from the lock at `lockPath`, the path the `HERMETIC=on`
+    /// refusal (message 10) names -- what `buildWith` does with a matching lock, for a caller
+    /// that read the lock itself (`Locks.compileAs`).
+    let compileFrom (lockPath: string) (options: Options) (entry: Entry) : Recipe<ExecContext, unit> =
+        compileEntry (Some lockPath) options entry
+
     /// `compileWith` with the default options, the compiler server resolved for this build
     /// (`CompilerServer.resolve`: `CSC_SERVER`, then `XAKE_CSC_SERVER`; csc only, fsc has no
     /// server).
@@ -1028,21 +1067,22 @@ module Lock =
                 return { entry with Prerequisites = prerequisites }
         }
 
-    /// Writes `entry`, hashed (`rehash`, the record-time step) and with its prerequisites
-    /// (`withPrerequisites`), as a one-entry lock at `path` and returns what was written. There
-    /// is no msbuild configuration or property set behind a composed compilation, so those stay
-    /// empty in the document. Under `HERMETIC=on` an incomplete entry is not written
-    /// (`hermeticRecordGate`, messages 2 and 9).
-    let private recordEntry (path: string) (entry: Entry) =
+    /// <summary>
+    /// The record-time step of `record` without the write: `entry` hashed (`rehash`) and
+    /// with its prerequisites (`withPrerequisites`), refused under `HERMETIC=on` when
+    /// incomplete (`hermeticRecordGate`, messages 2 and 9; `path` is the lock it is meant for,
+    /// quoted in the messages). The references whose path is in `unhashed` -- the outputs of
+    /// project references, which a lock keeps without a hash (`Locks.generate`) -- are
+    /// neither depended on nor hashed, whether or not a build left them on disk.
+    /// </summary>
+    let recorded (path: string) (unhashed: string list) (entry: Entry) : Recipe<ExecContext, Entry> =
         recipe {
-            let! full = fullPath path
-            let dir = Path.GetDirectoryName full
-            if dir <> "" then Directory.CreateDirectory dir |> ignore
+            let isUnhashed (p: string) = List.contains p unhashed
             // what gets hashed is what the recorded lock depends on: a target that only
             // records (no `Csc.run`, which holds the compile-side `needFiles`) must still
             // rerun when a reference, analyzer, compiler or import changes
             let hashedPaths =
-                [ for r in entry.Dependencies.References -> r.Path
+                [ for r in entry.Dependencies.References do if not (isUnhashed r.Path) then yield r.Path
                   for a in entry.Dependencies.Analyzers -> a.Path
                   yield entry.Dependencies.Compiler.Path
                   for i in entry.Evaluation.Imports -> i.Path ]
@@ -1057,6 +1097,28 @@ module Lock =
                 do! trace Error "%s" msg
                 failwith msg
             let rehashed = rehash entry
+            if List.isEmpty unhashed then return rehashed else
+            let clear (r: Reference) = if isUnhashed r.Path then { r with Sha256 = "" } else r
+            let deps (d: Dependencies) = { d with References = d.References |> List.map clear }
+            return
+                { rehashed with
+                    Compilation =
+                        rehashed.Compilation
+                        |> mapCompilation (fun c -> { c with Dependencies = deps c.Dependencies })
+                                          (fun f -> { f with Fsc.Dependencies = deps f.Dependencies }) }
+        }
+
+    /// Writes `entry`, hashed (`rehash`, the record-time step) and with its prerequisites
+    /// (`withPrerequisites`), as a one-entry lock at `path` and returns what was written. There
+    /// is no msbuild configuration or property set behind a composed compilation, so those stay
+    /// empty in the document. Under `HERMETIC=on` an incomplete entry is not written
+    /// (`hermeticRecordGate`, messages 2 and 9).
+    let private recordEntry (path: string) (entry: Entry) =
+        recipe {
+            let! full = fullPath path
+            let dir = Path.GetDirectoryName full
+            if dir <> "" then Directory.CreateDirectory dir |> ignore
+            let! rehashed = recorded path [] entry
             do! save full { Configuration = ""; Properties = []; Entries = [ rehashed ] }
             return rehashed
         }

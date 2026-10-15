@@ -136,7 +136,32 @@ Once you cloned the repository you are ready to compile and test the binaries:
 dotnet fsi build.fsx -- -- build test
 ```
 
-... or use `build.cmd` (`build.sh`) in the root folder.
+... or use `build.cmd` (`build.sh`) in the root folder. `build.fsx` (msbuild via `dotnet build`) is
+the build of record: packages and releases come from it.
+
+### The declarative build (`build.fsc.fsx`)
+
+The same three libraries, compiled by fsc from committed data instead of msbuild: a project
+description per project (`src/<dir>/xake.project.json`), a lock per project and configuration
+(`locks/<name>/Release.json`) and their fingerprints (`xake.fingerprints`). The script runs on the
+published `Xake` and `Xake.Hermetic.Dotnet` packages, so a fresh clone needs no bootstrap:
+
+```
+dotnet fsi build.fsc.fsx -- -- build              # out/Release/<fwk>/*.dll from the committed locks
+dotnet fsi build.fsc.fsx -- -- build check        # and fail on a stale description or lock
+```
+
+| Command | What it does |
+|---|---|
+| `import` | msbuild evaluates each `.fsproj` and writes its `xake.project.json` (only on change) |
+| `update-locks` | writes `locks/<name>/Release.json` from the descriptions, referenced projects first; packages via msbuild restore, kept versions unless `-d LOCK_REFRESH=<ids\|*>` |
+| `build` | compiles from the committed locks only, no msbuild; warns when a description or lock is stale against its inputs |
+| `check` | fails where `build` only warns (stale or hand-edited descriptions and locks) |
+
+After changing a project file: `import`, `update-locks`, commit the changed descriptions, locks
+and `xake.fingerprints`. The locks name the SDK's compiler by the SDK version (no hash), so they
+hold for that SDK version (10.0.401) on any OS (CI runs this build on Linux with that SDK). See
+[docs/hermetic/lock.md](docs/hermetic/lock.md#xake-generated-locks).
 
 Releases are published to nuget.org by CI from a `v*` tag — see
 [docs/devprocess.md](docs/devprocess.md) for the packaging and release procedure.

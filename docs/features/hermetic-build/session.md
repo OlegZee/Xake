@@ -1193,3 +1193,10 @@ worktree (`git worktree remove .claude/worktrees/night-integration`), not a bran
 merges: tags `v3.7.1` and `hermetic-v0.3.1`, then `build.fsc.fsx` and the trial project scripts move from the
 `-night` feed (`/path/to/exp-repo/feed/`) to nuget.org. Decisions pending:
 HERMETIC on generated C# locks (SDK csc prerequisite, d1-report q1), pack (PR 8) answers, G16.
+
+**PR 0 done (2026-10-15)**: `origin/dev` merged into `feature/hermetic-build` (e6acb95, not pushed;
+dev brought PRs #44-#54 incl. #54 `ArtifactDep2`); conflicts `.gitignore` (union:
+`.claude/worktrees/` + `.packages/`) and `docs/roadmap.md` (dev's "B6 done" heading kept, the
+feature's fsc-design.md reference re-added); `build test` passes, tests 333 passed + 1 skipped
+(334), hermetic.tests 206 passed; no hermetic test change was needed for `ArtifactDep2`. Night
+base 74bf4d9 dry-run (`git merge-tree`) on top of e6acb95: no conflicts (28 commits, 39 files).

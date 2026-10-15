@@ -853,6 +853,8 @@ module Import =
         Pin': string
         /// the repository's msbuild files the evaluation read (absolute)
         Inputs: string list
+        /// the project files this import records (absolute, '/'): a project reference must be one
+        Imported: string list
         OutOf: string -> string -> string -> string
     }
 
@@ -882,11 +884,16 @@ module Import =
     /// build's layout (`outOf cfg <framework msbuild chose> <name>`), and the paths msbuild
     /// names it by (its output, its reference assembly).
     let internal projectsOf (ctx: RecordContext) (cfg: string) (d: Dump) : (Lock.ProjectOutput * string list) list =
-        [ for id, m in items d "ReferencePath" do
+        let found =
+          [ for id, m in items d "ReferencePath" do
             let source = meta "MSBuildSourceProjectFile" m
             if meta "ReferenceSourceTarget" m = "ProjectReference" || source <> "" then
-                let name =
-                    Path.GetFileNameWithoutExtension (slash (match source with "" -> meta "OriginalProjectReferenceItemSpec" m | s -> s))
+                let projectFile = absoluteIn ctx.ProjectDir (match source with "" -> meta "OriginalProjectReferenceItemSpec" m | s -> s)
+                let name = Path.GetFileNameWithoutExtension projectFile
+                // its output is found by the lock of that project, which this import must write
+                if not (ctx.Imported |> List.exists (fun p -> String.Equals (p, projectFile, comparison))) then
+                    failwithf "'%s' (%s|%s) references the project '%s', which this import does not record: its output would have no lock; add it to the imported projects"
+                        ctx.ProjectFile cfg (prop d "TargetFramework") projectFile
                 let framework =
                     match meta "NearestTargetFramework" m, meta "SetTargetFramework" m with
                     | "", set when set.StartsWith "TargetFramework=" -> set.Substring 16
@@ -894,8 +901,14 @@ module Import =
                     | f, _ -> f
                 let output = absoluteIn ctx.Root (ctx.OutOf cfg framework name </> Path.GetFileName (slash id))
                 let names = [ id; meta "ReferenceAssembly" m ] |> List.filter ((<>) "") |> List.map (absoluteIn ctx.ProjectDir)
-                yield ({ Name = name; Configuration = cfg; Framework = framework; Path = output } : Lock.ProjectOutput), names ]
-        |> List.distinctBy (fun (p, _) -> p.Name)
+                yield projectFile, (({ Name = name; Configuration = cfg; Framework = framework; Path = output } : Lock.ProjectOutput), names) ]
+        // a project is `project:<name>`: two project files of one name cannot both be
+        match found |> List.map fst |> List.distinct |> List.groupBy Path.GetFileNameWithoutExtension |> List.tryFind (fun (_, fs) -> fs.Length > 1) with
+        | Some (name, files) ->
+            failwithf "'%s' (%s|%s) references two projects named '%s' (%s); a recorded lock names a project reference by its name: rename one"
+                ctx.ProjectFile cfg (prop d "TargetFramework") name (String.concat ", " files)
+        | None -> ()
+        found |> List.map snd |> List.distinctBy (fun (p, _) -> p.Name)
 
     /// An argument without the quotes msbuild puts around a path with a character it deems
     /// special (`~`, a space): a source `"<path>"`, a switch value `"<path>"` or `"<path>",<name>`.
@@ -1305,6 +1318,7 @@ module Import =
                         { Root = root; ProjectFile = slash pf; ProjectDir = slash (Path.GetDirectoryName pf)
                           Description = description; DescriptionFile = descriptionFile; PackageRoot = packageRoot
                           Pin = pin; PinFile = pinFile; Inputs = inputs; OutOf = options.OutOf
+                          Imported = projectFiles |> List.map slash
                           Pin' =
                             match pinFile |> Option.map (Roots.tokenize roots) with
                             | Some t when t.StartsWith "$(" -> t

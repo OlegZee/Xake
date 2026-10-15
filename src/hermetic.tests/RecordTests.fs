@@ -474,6 +474,43 @@ type ``Import record repository settings``() =
         Assert.That(resources, Is.EqualTo [ "app.Shared.resources" ])
 
 
+/// `Import.record` of a chain of project references (c -> b -> a): the transitive reference
+/// is a `project:` identity too, and a referenced project outside the import fails it.
+[<TestFixture>]
+type ``Import record project chain``() =
+    inherit XakeTestBase("import-record-chain")
+
+    let fixture () =
+
+        RecordKit.write [ "a"; "b"; "c"; "out"; "locks"; "obj" ]
+            [ "a/a.csproj", RecordKit.sdkProject "<TargetFramework>net8.0</TargetFramework>" ""
+              "a/A.cs", "namespace A { public class X { } }\n"
+              "b/b.csproj", RecordKit.sdkProject "<TargetFramework>net8.0</TargetFramework>" "<ProjectReference Include=\"../a/a.csproj\" />"
+              "b/B.cs", "namespace B { public class Y : A.X { } }\n"
+              "c/c.csproj", RecordKit.sdkProject "<TargetFramework>net8.0</TargetFramework>" "<ProjectReference Include=\"../b/b.csproj\" />"
+              "c/C.cs", "namespace C { public class Z : B.Y { A.X x; } }\n" ]
+
+    [<Test>]
+    member x.``a transitive project reference is a project identity, built from its own lock``() =
+        fixture ()
+        RecordKit.import x.TestOptions "import-chain" RecordKit.recordDefault [ "a/a.csproj"; "b/b.csproj"; "c/c.csproj" ] |> ignore
+        let c = File.ReadAllText (RecordKit.lockOf "c" "Release")
+        Assert.That(c, Does.Contain "\"Id\": \"project:a\"")
+        Assert.That(c, Does.Contain "\"Id\": \"project:b\"")
+        Assert.That(c, Does.Contain "{ \"Name\": \"a\", \"Configuration\": \"Release\", \"Framework\": \"net8.0\", \"Path\": \"$(ProjectRoot)/out/Release/net8.0/a/a.dll\" }")
+        RecordKit.build x.TestOptions "build-chain" "Release"
+        for p in [ "a"; "b"; "c" ] do Assert.That(File.Exists (sprintf "out/Release/net8.0/%s/%s.dll" p p), p)
+
+    [<Test>]
+    member x.``a referenced project the import does not record fails it, naming both``() =
+        fixture ()
+        let e = Assert.Catch(fun () -> RecordKit.import x.TestOptions "import-partial" RecordKit.recordDefault [ "b/b.csproj"; "c/c.csproj" ] |> ignore)
+        let message = string e
+        Assert.That(message, Does.Contain "/a/a.csproj', which this import does not record")
+        Assert.That(message, Does.Contain "/b/b.csproj' (Release|net8.0) references")
+        Assert.That(File.Exists (RecordKit.lockOf "c" "Release"), Is.False)
+
+
 /// One synthesized restore downloads one version of an id: the fetch of a recorded lock set
 /// (each project's own restore graph) splits the packages into rounds of distinct ids.
 [<TestFixture>]

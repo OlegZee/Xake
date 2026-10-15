@@ -445,11 +445,23 @@ module Locks =
 
             let c = entry.Compilation
             let! c =
-                match c with
-                | Lock.Compilation.Csc masked -> recipe {
+                match c, entry.Recorded with
+                // recorded from msbuild: msbuild's files in its order, those the masks no longer
+                // name dropped, a file the masks name since appended
+                | Lock.Compilation.Csc recorded, Some r when not (List.isEmpty r.Masks) -> recipe {
+                    let! files = Described.expand r.Masks
+                    let generated = recorded.Generated |> List.map fst
+                    let isGenerated s = List.contains s generated
+                    let named = set files
+                    let kept = recorded.Sources |> List.filter (fun s -> isGenerated s || named.Contains (normal s))
+                    let added = files |> List.filter (fun f -> not (recorded.Sources |> List.exists (fun s -> normal s = f)))
+                    let firstGenerated = kept |> List.tryFindIndex isGenerated |> Option.defaultValue kept.Length
+                    return Lock.Compilation.Csc { recorded with Sources = List.take firstGenerated kept @ added @ List.skip firstGenerated kept } }
+                | Lock.Compilation.Csc _, Some _ -> recipe { return c }
+                | Lock.Compilation.Csc masked, None -> recipe {
                     let! expanded = Described.expandCsc masked
                     return Lock.Compilation.Csc expanded }
-                | Lock.Compilation.Fsc _ -> recipe { return c }
+                | Lock.Compilation.Fsc _, _ -> recipe { return c }
 
             let! c =
                 if not (c.Generated |> List.exists (fun (_, text) -> text.Contains VersionToken)) then recipe { return c } else

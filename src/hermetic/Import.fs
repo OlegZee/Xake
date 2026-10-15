@@ -983,10 +983,12 @@ module Import =
                 if fromPackage.Contains path && (composed.Sources |> List.exists (fun s -> slash s = path)) then packaged path else moved path)
         let c = entry1.Compilation
 
-        // the sources: for C#, the description's masks in place of the files msbuild compiles
+        // the sources: msbuild's, in its order; for C#, the description's masks beside them when
+        // they name exactly the files msbuild compiles (a build then takes an added file too)
         let isGenerated (s: string) = generated |> List.exists (fst >> (=) s)
         let user = c.Sources |> List.filter (isGenerated >> not)
-        let sources =
+        let sources = c.Sources
+        let masks =
             match ctx.Description.Language with
             | Description.CSharp ->
                 let masks = ctx.Description.Sources
@@ -994,18 +996,17 @@ module Import =
                 let compiled = user |> List.map slash |> Set.ofList
                 if expanded = compiled then
                     let inProject (s: string) = slash (Path.GetFullPath (Path.Combine (ctx.ProjectDir, s)))
-                    (masks |> List.map (fun m -> if m.StartsWith "!" then "!" + inProject (m.Substring 1) else inProject m))
-                    @ (c.Sources |> List.filter isGenerated)
+                    masks |> List.map (fun m -> if m.StartsWith "!" then "!" + inProject (m.Substring 1) else inProject m)
                 else
                     let missed = Set.difference compiled expanded |> Set.toList
                     let extra = Set.difference expanded compiled |> Set.toList
                     warnings.Add (
-                        sprintf "'%s' (%s|%s): the description's source masks do not name what msbuild compiles (missed: %s; extra: %s); the lock lists msbuild's files (an added .cs needs a re-import)"
+                        sprintf "'%s' (%s|%s): the description's source masks do not name what msbuild compiles (missed: %s; extra: %s); the lock keeps msbuild's files only (an added .cs needs a re-import)"
                             ctx.Description.Name cfg framework
                             (match missed with [] -> "none" | m -> m |> List.map (relativeTo ctx.ProjectDir) |> String.concat ", ")
                             (match extra with [] -> "none" | e -> e |> List.map (relativeTo ctx.ProjectDir) |> String.concat ", "))
-                    c.Sources
-            | Description.FSharp -> c.Sources
+                    []
+            | Description.FSharp -> []
 
         // the .resx msbuild compiles for the main assembly, as (resx, compiled .resources)
         let resourceSwitches = if isFSharp then FscArgs.switchValues "resource" c.Options else CscArgs.switchValues "resource" c.Options
@@ -1067,7 +1068,7 @@ module Import =
               Prerequisites =
                 if sdk = "" then []
                 else [ { Kind = Lock.DotnetSdk; Version = sdk; Pin = ctx.Pin' } ]
-              Recorded = Some { Projects = projects |> List.map fst } }
+              Recorded = Some { Projects = projects |> List.map fst; Masks = masks } }
         // the commit a SourceLink-free AssemblyInfo still names (`InformationalVersion`): a token
         let entry = match p "SourceRevisionId" with "" -> entry | sha -> entry |> Lock.mapText (Git.tokenize sha)
 

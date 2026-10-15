@@ -62,7 +62,7 @@ type ``Recorded lock identities``() =
         { Lock.ofCsc c with
             Evaluation = { Lock.Evaluation.Empty with Project = "/r/proj/src/App.csproj"; ProjectRefs = [ "Lib" ]; Sdk = "8.0.425" }
             Prerequisites = [ { Kind = Lock.DotnetSdk; Version = "8.0.425"; Pin = "$(ProjectRoot)/global.json" } ]
-            Recorded = Some { Projects = [ lib ] } }
+            Recorded = Some { Projects = [ lib ]; Masks = [ "/r/proj/src/**/*.cs"; "!/r/proj/src/obj/**/*" ] } }
 
     [<Test>]
     member x.``a recorded entry is written with identities and the Recorded section, and reads back to paths``() =
@@ -74,6 +74,7 @@ type ``Recorded lock identities``() =
         Assert.That(text, Does.Contain "\"Compiler\": { \"Tool\": \"csc\", \"Id\": \"sdk:Roslyn/bincore/csc.dll\"")
         Assert.That(text, Does.Contain "{ \"Id\": \"pack:microsoft.netcore.app.ref/8.0.11/analyzers/dotnet/cs/Gen.dll\", \"Sha256\": \"cd\" }")
         Assert.That(text, Does.Contain "\"By\": \"msbuild\"")
+        Assert.That(text, Does.Contain "\"$(ProjectRoot)/src/**/*.cs\"")
         Assert.That(text, Does.Contain "{ \"Name\": \"Lib\", \"Configuration\": \"Release\", \"Framework\": \"netstandard2.0\", \"Path\": \"$(ProjectRoot)/out/Release/netstandard2.0/Lib/Lib.dll\" }")
         Assert.That(text, Does.Not.Contain "/r/")
         let back = Lock.parse roots text
@@ -268,6 +269,16 @@ type ``Import record``() =
         // and after msbuild's build (bin/ and obj/ full of outputs): still the same locks
         let third = x.Import "import-3"
         Assert.That(third |> List.exists (fun i -> i.Written), Is.False)
+        Assert.That(x.Locks (), Is.EqualTo locks)
+
+        // the lock keeps msbuild's file order and the description's masks: a source added since
+        // is compiled without a new import
+        Assert.That(app, Does.Contain "\"Masks\": [")
+        let types, _, _ = metadata "out/Release/net8.0/app/app.dll"
+        File.WriteAllText ("app/Extra.cs", "public class Extra { }\n")
+        x.Build "build-2"
+        let typesAfter, _, _ = metadata "out/Release/net8.0/app/app.dll"
+        Assert.That(typesAfter, Is.EqualTo (types + 1))
         Assert.That(x.Locks (), Is.EqualTo locks)
 
 

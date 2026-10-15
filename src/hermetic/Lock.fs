@@ -207,6 +207,11 @@ module Lock =
     type Recorded = {
         /// The referenced projects (`project:<name>` references), in msbuild's order
         Projects: ProjectOutput list
+        /// The description's source masks (absolute; `!` an exclude) when they name exactly the
+        /// sources msbuild compiles, else empty. `Sources` holds msbuild's files in msbuild's
+        /// order; a build compiles the files the masks name then -- msbuild's order first, a file
+        /// added since after them (`Locks.compileAs`)
+        Masks: string list
     }
 
     /// One project's compilation, as recorded in a lock: what the compiler is handed
@@ -657,6 +662,7 @@ module Lock =
           | Some r ->
               section "Recorded"
                 [ sprintf "%s\"By\": \"msbuild\"" indent
+                  strings "Masks" r.Masks
                   r.Projects
                   |> List.map (fun p ->
                       sprintf "%s  { \"Name\": %s, \"Configuration\": %s, \"Framework\": %s, \"Path\": %s }"
@@ -712,7 +718,8 @@ module Lock =
                          field "Projects" r |> Option.map asArray |> Option.defaultValue []
                          |> List.map (fun p ->
                              { Name = str "Name" p; Configuration = str "Configuration" p; Framework = str "Framework" p
-                               Path = str "Path" p |> expand }) }
+                               Path = str "Path" p |> expand })
+                       Masks = strings "Masks" r }
             | _ -> None
         let context : Identity.Context =
             { Roots = roots; Sdk = str "Sdk" e; Projects = recorded |> Option.map (fun r -> r.Projects) |> Option.defaultValue [] }

@@ -24,7 +24,8 @@
         "defines": { "type": "array", "items": { "type": "string" } },
         "references": { "type": "array", "items": { "type": "string" }, "description": "Framework assemblies by name (grefs), e.g. System.Windows.Forms" },
         "packages": { "type": "array", "items": { "$ref": "#/$defs/package" } },
-        "args": { "type": "array", "items": { "type": "string" }, "description": "Raw compiler switches, appended last" }
+        "args": { "type": "array", "items": { "type": "string" }, "description": "Raw compiler switches, appended last" },
+        "resources": { "type": "array", "items": { "$ref": "#/$defs/resource" }, "description": "Embedded resources only this framework has (an EmbeddedResource under a condition on the framework)" }
       }
     },
     "resource": {
@@ -33,7 +34,7 @@
       "additionalProperties": false,
       "properties": {
         "file": { "type": "string", "description": "A plain file, embedded as is, or a .resx, compiled to a .resources by `project`" },
-        "name": { "type": "string", "description": "Manifest name (msbuild's LogicalName); default msbuild's: rootNamespace (else name), the folder path as an identifier, the file name (a .resx: without extension, plus .resources)" }
+        "name": { "type": "string", "description": "Manifest name (msbuild's LogicalName, or the ManifestResourceName msbuild gave it when the import ran its targets); default msbuild's: rootNamespace (else name), the folder path as an identifier, the file name (a .resx: without extension, plus .resources)" }
       }
     },
     "options": {

@@ -62,6 +62,7 @@ type ``Sbom cycloneDx``() =
                   Analyzers = analyzers } }
           Evaluation = { Project = ""; ProjectRefs = []; Imports = []; Sdk = "8.0.100"; SdkPin = None; Properties = Map.ofList [ "Version", "1.0.0" ] }
           Prerequisites = []
+          Recorded = None
           Packages = packages }
 
     let sampleBom hashContent : Bom =
@@ -226,6 +227,7 @@ type ``Sbom cycloneDx``() =
                             References = [ { Path = coreDll; Sha256 = Csc.sha256 coreDll; Alias = "" } ] } }
               Evaluation = { Project = ""; ProjectRefs = []; Imports = []; Sdk = "8.0.100"; SdkPin = None; Properties = Map.ofList [ "Version", "2.0.0" ] }
               Prerequisites = []
+              Recorded = None
               Packages = [ { Id = "FSharp.Core"; Version = "8.0.100"; Sha512 = "AAAA"; Direct = true; DependsOn = [] } ] }
 
         let bom = Sbom.forAssembly cacheRoot entry assemblyFile
@@ -359,6 +361,7 @@ type ``Sbom package scope``() =
                   Analyzers = [] } }
           Evaluation = { Project = ""; ProjectRefs = []; Imports = []; Sdk = "8.0.100"; SdkPin = None; Properties = Map.ofList [ "Version", "1.0.0" ] }
           Prerequisites = []
+          Recorded = None
           Packages = packages }
 
     let myPkgNuspec = """<?xml version="1.0" encoding="utf-8"?>

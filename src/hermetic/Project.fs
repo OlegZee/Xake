@@ -317,6 +317,7 @@ module Project =
             Packages = packages
             // derived by `import`, which knows the roots and the pin's file
             Prerequisites = []
+            Recorded = None
         }
         // the round trip: the structured entry must give back msbuild's command line exactly,
         // or the lock would describe a compilation other than the one msbuild ran

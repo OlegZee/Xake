@@ -56,6 +56,7 @@ type ``Project import``() =
                       Compiler = { Tool = "csc"; Path = "/dotnet/sdk/8.0.425/Roslyn/bincore/csc.dll"; Sha256 = "ab01"; Version = "4.11.0-3.25569.22" } } }
           Evaluation = { Project = project; ProjectRefs = []; Imports = []; Sdk = "8.0.425"; SdkPin = Some (Lock.Pinned "8.0.425"); Properties = Map.empty }
           Prerequisites = []
+          Recorded = None
           Packages = [] }
 
     [<Test>]
@@ -230,6 +231,7 @@ type ``Project import``() =
     member x.``a lock with a document-level framework reads into the entries``() =
         let roots = Roots.builtin (Directory.GetCurrentDirectory())
         let old = """{
+  "Format": 2,
   "Framework": "net472",
   "Configuration": "Release",
   "Properties": { "Brand": "X" },

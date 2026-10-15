@@ -204,7 +204,7 @@ type ``Import fidelity``() =
                     [ "PackageReference", [ "System.Text.Json", Map.ofList [ "identity", "System.Text.Json"; "version", "8.0.5"; "privateassets", "All" ] ]
                       "EmbeddedResource", [ "x.txt", Map.ofList [ "Identity", "x.txt"; "logicalname", "X" ] ]
                       "Compile", [ "A.fs", Map.ofList [ "Identity", "A.fs" ] ] ] }
-        let d, _ = Import.describe dir dump [ "netstandard2.0", dump ] (fun _ -> false) [] None
+        let d, _ = Import.describe dir dump [ "netstandard2.0", dump ] (fun _ -> false) [] None []
         Assert.That(d.Packages, Is.EqualTo ([ { Id = "System.Text.Json"; Version = Some "8.0.5"; Private = true } ] : Description.Package list))
         Assert.That(d.Resources, Is.EqualTo ([ { File = "x.txt"; Name = Some "X" } ] : Description.Resource list))
         Assert.That(d.Options.NoWarn, Is.EqualTo [ "FS0044"; "3370" ], "F#: the SDK suppresses nothing")

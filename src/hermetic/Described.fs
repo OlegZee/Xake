@@ -29,6 +29,43 @@ module Described =
 
     let private same (a: string) (b: string) = System.String.Equals (a, b, System.StringComparison.OrdinalIgnoreCase)
 
+    /// <summary>
+    /// A platform framework of .NET as (base framework, platform, platform version): the
+    /// version msbuild gives it (`TargetPlatformVersion`), the SDK's default `7.0` for Windows
+    /// when the moniker names none -- `net8.0-windows` -> (`net8.0`, `Windows`, `7.0`),
+    /// `net8.0-windows10.0.19041.0` -> (`net8.0`, `Windows`, `10.0.19041.0`). `None` for a
+    /// framework without a platform.
+    /// </summary>
+    let platformOf (framework: string) : (string * string * string) option =
+        let m = System.Text.RegularExpressions.Regex.Match (framework, @"^([A-Za-z]+\d+(?:\.\d+)*)-([A-Za-z]+)(\d+(?:\.\d+)*)?$")
+        if not m.Success then None
+        else
+            let name = m.Groups.[2].Value.ToLowerInvariant ()
+            let identifier =
+                match name with
+                | "windows" -> "Windows"
+                | "ios" -> "iOS" | "maccatalyst" -> "MacCatalyst" | "macos" -> "macOS" | "tvos" -> "tvOS"
+                | "android" -> "Android" | "browser" -> "Browser"
+                | n -> string (System.Char.ToUpperInvariant n.[0]) + n.Substring 1
+            let version =
+                match m.Groups.[3].Value with
+                | "" -> if identifier = "Windows" then "7.0" else ""
+                | v -> if v.Contains "." then v else v + ".0"
+            Some (m.Groups.[1].Value.ToLowerInvariant (), identifier, version)
+
+    /// The base framework of a platform framework (`net8.0-windows` -> `net8.0`), the framework
+    /// itself otherwise: what the reference pack of `Microsoft.NETCore.App` is resolved for.
+    let baseFramework (framework: string) : string =
+        match platformOf framework with
+        | Some (b, _, _) -> b
+        | None -> framework
+
+    /// A dotted version as numbers, for ordering (`10.0.19041.0` -> [10; 0; 19041; 0]).
+    let private versionKey (v: string) =
+        v.Split ([| '.' |], System.StringSplitOptions.RemoveEmptyEntries)
+        |> Array.map (fun p -> match System.Int32.TryParse p with | true, n -> n | _ -> 0) |> List.ofArray
+
+
     /// The symbols the .NET SDK defines for a target framework (`_ImplicitDefineConstant` in
     /// `Microsoft.NET.Sdk.BeforeCommon.targets`), in the SDK's order: `netstandard2.0` ->
     /// `NETSTANDARD; NETSTANDARD2_0; NETSTANDARD1_0_OR_GREATER .. NETSTANDARD2_0_OR_GREATER`,
@@ -184,13 +221,34 @@ module Described =
     /// "nearest" in its simplest form: `target` itself; else the highest of the same family
     /// not above it (`net8.0` takes `net6.0`, `net472` takes `net462`); else the highest
     /// `netstandard` the target implements (.NET and .NET Core: up to 2.1; .NET Framework
-    /// 4.6.1 and later: up to 2.0; `netstandard` itself: not above it). `None` when nothing fits.
+    /// 4.6.1 and later: up to 2.0; `netstandard` itself: not above it). A platform framework
+    /// (`net8.0-windows`) takes the same platform first (`net8.0-windows`, `net6.0-windows`),
+    /// then a framework without a platform by those rules; a framework without a platform never
+    /// takes a platform one. `None` when nothing fits.
     /// </summary>
-    let nearestFramework (target: string) (available: string list) : string option =
-        match available |> List.tryFind (same target), moniker target with
+    let rec nearestFramework (target: string) (available: string list) : string option =
+        match available |> List.tryFind (same target), platformOf target with
         | Some exact, _ -> Some exact
-        | None, None -> None
-        | None, Some (family, version) ->
+        | None, Some (baseTarget, identifier, version) ->
+            // a platform framework (`net8.0-windows`): the same platform at a version not above
+            // it on the nearest base, else a framework without a platform by the rules below
+            // (NuGet's FrameworkReducer)
+            let samePlatform =
+                available |> List.choose (fun a ->
+                    match platformOf a with
+                    | Some (b, i, v) when same i identifier && versionKey v <= versionKey version -> Some (a, b, v)
+                    | _ -> None)
+            let viaPlatform =
+                nearestFramework baseTarget (samePlatform |> List.map (fun (_, b, _) -> b) |> List.distinct)
+                |> Option.bind (fun b ->
+                    samePlatform |> List.filter (fun (_, b2, _) -> same b b2)
+                    |> List.sortBy (fun (_, _, v) -> versionKey v) |> List.tryLast |> Option.map (fun (a, _, _) -> a))
+            viaPlatform |> Option.orElse (nearestFramework baseTarget (available |> List.filter (platformOf >> Option.isNone)))
+        | None, None ->
+        match moniker target with
+        | None -> None
+        | Some (family, version) ->
+            let available = available |> List.filter (platformOf >> Option.isNone)
             let candidates = available |> List.choose (fun a -> moniker a |> Option.map (fun m -> a, m))
             let highest pick = candidates |> List.filter pick |> List.sortBy (snd >> snd) |> List.tryLast |> Option.map fst
             let standardUpTo =
@@ -614,6 +672,28 @@ module Described =
                     |> List.sortWith (fun a b -> System.String.CompareOrdinal (a, b))
         }
 
+    /// <summary>
+    /// The folder key of a described compilation's generated files (`obj/xake/&lt;key&gt;/&lt;framework&gt;[/&lt;config&gt;]`
+    /// under the build's project root): the assembly name when the description is the project's
+    /// own (beside the project file), else the description's folder relative to the project
+    /// root (`mescius/projects/Tests`): two descriptions of one project (brands) or two
+    /// projects of one assembly name then never share generated sources. An assembly name
+    /// again for a description outside the project root.
+    /// </summary>
+    let generatedKey (root: string) (descriptionPath: string) (projectDir: string) (assemblyName: string) : string =
+        let comparison = if Env.isUnix then System.StringComparison.Ordinal else System.StringComparison.OrdinalIgnoreCase
+        let full (p: string) = (normal (Path.GetFullPath (if Path.IsPathRooted p then p else Path.Combine (root, p)))).TrimEnd '/'
+        let descriptionDir = full (Path.GetDirectoryName (full descriptionPath))
+        if System.String.Equals (descriptionDir, full projectDir, comparison) then assemblyName
+        else
+            let r = full root
+            if descriptionDir.StartsWith (r + "/", comparison) then descriptionDir.Substring (r.Length + 1) else assemblyName
+
+    /// The generated folder of a described compilation: `obj/xake/<key>/<framework>[/<config>]`
+    /// under the build's project root (`generatedKey`).
+    let generatedDirOf (root: string) (key: string) (framework: string) (config: string option) : string =
+        normal (Path.Combine (Array.append [| root; "obj"; "xake" |] (Array.append (key.Split '/') (Array.append [| framework |] (Option.toArray config)))))
+
     /// What `project` contributes to a compilation, resolved at recipe time.
     type internal Plan = {
         Project: Description.Project
@@ -718,8 +798,12 @@ module Described =
             // obj/xake/<assembly>/<framework>[/<config>]/ (a build product, compiled by the runner)
             let resxDir =
                 normal (Path.Combine (Array.append [| root; "obj"; "xake"; assemblyName; framework |] (Option.toArray spec.Config)))
+            // the project-wide resources, then those of this framework only (`byFramework`)
+            let frameworkResources =
+                d.ByFramework |> List.tryPick (fun (tfm, items) -> if same tfm framework then Some items.Resources else None)
+                |> Option.defaultValue []
             let resources =
-                d.Resources |> List.map (fun r ->
+                d.Resources @ frameworkResources |> List.map (fun r ->
                     let name = r.Name |> Option.defaultValue (manifestName (rootNamespace d) r.File)
                     if r.File.EndsWith (".resx", System.StringComparison.OrdinalIgnoreCase) then
                         let compiled = resxDir + "/" + name
@@ -845,13 +929,18 @@ module Described =
                             Resources = c.Resources @ p.Resx; Directory = p.ProjectDir }
         }
 
-    /// `c` with every source mask replaced by the files it names now (`expand`).
+    /// `c` with every source mask replaced by the files it names now (`expand`). The generated
+    /// sources are files and keep their place: those before the first mask stay in front (a
+    /// composed compilation's), those after the masks stay after the files (a recorded one's,
+    /// in msbuild's order).
     let expandCsc (c: Csc) : Recipe<ExecContext, Csc> =
         recipe {
-            // the generated sources are files, kept in front; the rest are the masks
             let generated = c.Generated |> List.map fst
-            let! files = expand (c.Sources |> List.filter (fun s -> not (List.contains s generated)))
-            return { c with Sources = (c.Sources |> List.filter (fun s -> List.contains s generated)) @ files }
+            let isGenerated s = List.contains s generated
+            let before = c.Sources |> List.takeWhile isGenerated
+            let rest = c.Sources |> List.skip before.Length
+            let! files = expand (rest |> List.filter (isGenerated >> not))
+            return { c with Sources = before @ files @ (rest |> List.filter isGenerated) }
         }
 
     /// <summary>

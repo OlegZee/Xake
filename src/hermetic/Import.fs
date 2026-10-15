@@ -5,6 +5,7 @@ open System.IO
 open System.Xml.Linq
 
 open Xake
+open Xake.Tasks
 open Xake.Dotnet
 
 /// Imports a project file (csproj, fsproj) into its description (`xake.project.json`,
@@ -28,7 +29,9 @@ module Import =
           Inputs: string list
           /// what msbuild knows that the description does not carry (no schema field for it),
           /// one line each, e.g. `Xake.fsproj: property PackageIconUrl`
-          Dropped: string list }
+          Dropped: string list
+          /// the locks written (`record`), relative to the project root; empty for `project`
+          Locks: string list }
 
     let private properties =
         [ "MSBuildProjectName"; "MSBuildProjectExtension"; "MSBuildProjectDirectory"; "TargetFrameworks"; "TargetFramework"
@@ -189,6 +192,62 @@ module Import =
     /// a `!` marks an exclude, applied in order. msbuild's `dir/**` (every file below) is
     /// written as Xake's `dir/**/*`.
     let internal csharpMasks (d: Dump) (xmlFiles: (string * XDocument) list) (dropped: string -> unit) =
+        let projectDir = slash (prop d "MSBuildProjectDirectory")
+        // the folder of a repository file, from its base URI (`XDocument.Load` with `SetBaseUri`)
+        let fileDir (doc: XDocument) =
+            match doc.BaseUri with
+            | null | "" -> None
+            | uri -> Some (slash (Path.GetDirectoryName (Uri(uri).LocalPath)))
+        // a mask with `$(Name)`: the properties msbuild knows here substituted (the file's own
+        // `MSBuildThisFile*`, the evaluated ones); `None` when one is unknown
+        let substitute (doc: XDocument) (mask: string) =
+            let unknown = ref false
+            let value =
+                Text.RegularExpressions.Regex.Replace (mask, @"\$\(([A-Za-z_][A-Za-z0-9_.-]*)\)", fun m ->
+                    let name = m.Groups.[1].Value
+                    match name.ToLowerInvariant (), fileDir doc with
+                    | "msbuildthisfiledirectory", Some dir -> dir + "/"
+                    | "msbuildthisfiledirectorynoroot", Some dir -> dir.TrimStart('/') + "/"
+                    | "msbuildprojectdirectory", _ -> projectDir
+                    | _ ->
+                        match d.Props |> Map.tryPick (fun k v -> if k.Equals (name, StringComparison.OrdinalIgnoreCase) then Some v else None) with
+                        | Some v -> v
+                        | None -> unknown.Value <- true; m.Value)
+            if unknown.Value then None
+            else
+                // relative to the project's folder, as every other mask
+                let v = slash value
+                let v = if Path.IsPathRooted v then relativeTo projectDir v else v
+                Some (v.Replace ("//", "/"))
+        // the evaluated `Compile` items a repository file defines, relative to the project's folder
+        let definedIn (doc: XDocument) =
+            match doc.BaseUri with
+            | null | "" -> []
+            | uri ->
+                let path = slash (Uri(uri).LocalPath)
+                [ for id, m in items d "Compile" do
+                    if String.Equals (slash (meta "DefiningProjectFullPath" m), path, comparison) then
+                        let full = if Path.IsPathRooted id then id else Path.Combine (projectDir, id)
+                        yield relativeTo projectDir full ]
+        // the files the other `Compile Include`s of a repository file name (literal masks and
+        // the ones `substitute` resolves), full paths: what the items evaluated from that file
+        // hold besides the include with an unknown property
+        let coveredIn (doc: XDocument) =
+            let masks =
+                [ for e in doc.Descendants () do
+                    if e.Name.LocalName = "Compile" && not (e.Ancestors () |> Seq.exists (fun a -> a.Name.LocalName = "Target")) then
+                        match e.Attribute (XName.Get "Include") with
+                        | null -> ()
+                        | a ->
+                            for mask in split a.Value do
+                                if mask.Contains "@(" || mask.Contains "%(" then ()
+                                elif mask.Contains "$(" then match substitute doc mask with Some m -> yield m | None -> ()
+                                else yield slash mask ]
+            if masks.IsEmpty then Set.empty
+            else
+                let elements = masks |> List.map (fun m -> Includes (Path.parse (if m.EndsWith "**" then m + "/*" else m)))
+                let (Filelist files) = Fileset ({ Xake.Fileset.DefaultOptions with BaseDir = Some projectDir }, elements) |> Fileset.toFileList projectDir
+                files |> List.map (fun f -> slash f.FullName) |> Set.ofList
         let defaults =
             if isTrue (prop d "EnableDefaultItems") && isTrue (prop d "EnableDefaultCompileItems") then
                 let excludes =
@@ -201,6 +260,7 @@ module Import =
                     excludes |> List.exists (fun o -> o <> e && o.EndsWith "/**" && e.StartsWith (o.Substring (0, o.Length - 2)))
                 "**/*.cs" :: (excludes |> List.filter (subsumed >> not) |> List.map ((+) "!"))
             else []
+        let expandedDocs = Collections.Generic.HashSet<XDocument> (HashIdentity.Reference)
         let explicit =
             [ for file, doc in xmlFiles do
                 for e in doc.Descendants () do
@@ -210,8 +270,25 @@ module Import =
                             dropped (sprintf "%s: the condition of a Compile item (its masks are kept unconditionally)" file)
                         for name, prefix in [ "Include", ""; "Exclude", "!"; "Remove", "!" ] do
                             for mask in split (attr name) do
-                                if mask.Contains "$(" || mask.Contains "@(" || mask.Contains "%(" then
+                                if mask.Contains "@(" || mask.Contains "%(" then
                                     dropped (sprintf "%s: Compile %s=\"%s\" (not a plain mask)" file name mask)
+                                elif mask.Contains "$(" then
+                                    // the evaluated path (`$(BuildTmpPath)\VersionInfo.cs`, a shared
+                                    // project's `$(MSBuildThisFileDirectory)X.cs`)
+                                    match substitute doc mask with
+                                    | Some m -> yield prefix + m
+                                    | None when prefix = "" ->
+                                        // a property the evaluation does not report: the items
+                                        // msbuild evaluated from this file, by name, but those
+                                        // the file's other includes name (they are at their
+                                        // own place already: msbuild lists each item once)
+                                        let covered = coveredIn doc
+                                        let full (f: string) = slash (Path.GetFullPath (Path.Combine (projectDir, f)))
+                                        match definedIn doc |> List.filter (fun f -> not (covered.Contains (full f))) with
+                                        | _ when not (expandedDocs.Add doc) -> ()
+                                        | [] -> dropped (sprintf "%s: Compile %s=\"%s\" (a property the import does not know)" file name mask)
+                                        | fs -> yield! fs
+                                    | None -> dropped (sprintf "%s: Compile %s=\"%s\" (a property the import does not know)" file name mask)
                                 else yield prefix + slash mask ]
         // msbuild's `dir/**` is every file below; Xake's is the directories, files are `dir/**/*`
         let xake (m: string) = if m.EndsWith "**" then m + "/*" else m
@@ -226,8 +303,12 @@ module Import =
 
     /// The description of one project from its evaluations: `outer` (no `TargetFramework`) and
     /// one per framework, in `frameworks` order. Pure but for `expandMasks` reading the folder.
+    /// `targets` are the design-time builds of the frameworks (`record`), when there are: the
+    /// embedded resources then take the names and cultures msbuild gave them
+    /// (`ManifestResourceName`, `LogicalName`, `WithCulture`), per framework.
     let internal describe (descriptionDir: string) (outer: Dump) (inner: (string * Dump) list)
-                          (isSdkFile: string -> bool) (xmlFiles: (string * XDocument) list) (previous: Description.Project option) =
+                          (isSdkFile: string -> bool) (xmlFiles: (string * XDocument) list) (previous: Description.Project option)
+                          (targets: (string * Dump) list) =
         let dropped = ResizeArray<string> ()
         let drop s = if not (dropped.Contains s) then dropped.Add s
         let p = prop outer
@@ -273,16 +354,81 @@ module Import =
                              Private = (meta "PrivateAssets" m).Split ';' |> Array.exists (fun a -> a.Trim().Equals ("all", StringComparison.OrdinalIgnoreCase)) }
                            : Description.Package)
                 else drop (sprintf "%s: implicit package %s %s (%s), added by the SDK" name id (meta "Version" m) tfm) ]
-        let perFramework = inner |> List.map (fun (tfm, d) -> tfm, (definesOf d, referencesOf d, packagesOf tfm d))
+        // ---- embedded resources, per framework: with the design-time builds (`targets`) as
+        // msbuild named them, else from the evaluation
+        let rootNs = match p "RootNamespace" with "" -> name.Replace (" ", "_") | r -> r
+        let cultures =
+            lazy (Globalization.CultureInfo.GetCultures Globalization.CultureTypes.AllCultures
+                  |> Array.map (fun c -> c.Name) |> Array.filter ((<>) "") |> set)
+        let resourcesOf (tfm: string) (evaluated: Dump) =
+            let fromTargets = targets |> List.tryFind (fst >> (=) tfm) |> Option.map snd
+            let d = defaultArg fromTargets evaluated
+            items d "EmbeddedResource" |> List.distinctBy fst |> List.choose (fun (id, m) ->
+                // a shared project's (`.projitems`) item is an absolute path: relative to the project
+                let file = relative (slash id)
+                let isResx = file.EndsWith (".resx", StringComparison.OrdinalIgnoreCase)
+                let byDefault = Described.manifestName rootNs file
+                match fromTargets with
+                | Some _ ->
+                    if isTrue (meta "WithCulture" m) then
+                        drop (sprintf "%s: EmbeddedResource %s (culture %s: a satellite assembly, not built)" name file (meta "Culture" m)); None
+                    else
+                        // csc embeds a resx as the `.resources` it compiles to, named
+                        // `<ManifestResourceName>.resources`; any other file by its `LogicalName`
+                        let given =
+                            match meta "LogicalName" m, meta "ManifestResourceName" m with
+                            | "", "" -> byDefault
+                            | "", manifest -> if isResx then manifest + ".resources" else manifest
+                            | logical, _ -> logical
+                        Some ({ File = file; Name = if given = byDefault then None else Some given } : Description.Resource)
+                | None ->
+                    // the evaluation alone (`project`, the composed route): what the project
+                    // states. A culture is the suffix of the file name, as msbuild's
+                    // `AssignCulture` sees it; a satellite assembly is not built
+                    let culture =
+                        let n = Path.GetFileNameWithoutExtension file
+                        match n.LastIndexOf '.' with
+                        | -1 -> None
+                        | i -> let c = n.Substring (i + 1) in if cultures.Value.Contains c then Some c else None
+                    // the manifest name msbuild gives it, when it is not the default of the file
+                    // path: `LogicalName` as is; `ManifestResourceName` on a resx + `.resources`
+                    // (what GenerateResource writes); on another file msbuild then sets no
+                    // `LogicalName` and csc names it after the file; a `Link`, whose path stands
+                    // for the file's in the default name (`CreateCSharpManifestResourceName`)
+                    let logical =
+                        match meta "LogicalName" m, meta "ManifestResourceName" m, slash (meta "Link" m) with
+                        | "", "", "" -> ""
+                        | "", "", link -> Described.manifestName rootNs link
+                        | "", manifest, _ -> if isResx then manifest + ".resources" else Path.GetFileName file
+                        | logical, _, _ -> logical
+                    let dependentUpon = meta "DependentUpon" m
+                    match culture with
+                    | Some c when meta "WithCulture" m <> "false" ->
+                        drop (sprintf "%s: EmbeddedResource %s (culture %s: a satellite assembly, not built)" name file c); None
+                    | _ ->
+                        // msbuild names a resx after the class of its DependentUpon source (by
+                        // convention the `.cs` of the same name beside it); the evaluation does not
+                        // tell which -- `record` takes the name msbuild gives
+                        let besideSource =
+                            isResx && language = Description.CSharp
+                            && File.Exists (Path.Combine (projectDir, Path.ChangeExtension (file, ".cs")))
+                        if logical = "" && (dependentUpon <> "" || besideSource) then
+                            drop (sprintf "%s: EmbeddedResource %s is named after the class of %s (DependentUpon); the description takes the default name, set its `name`"
+                                      name file (if dependentUpon <> "" then dependentUpon else Path.ChangeExtension (Path.GetFileName file, ".cs")))
+                        Some ({ File = file; Name = match logical with "" -> None | n -> Some n } : Description.Resource))
+        let perFramework = inner |> List.map (fun (tfm, d) -> tfm, (definesOf d, referencesOf d, packagesOf tfm d, resourcesOf tfm d))
         let common pick = perFramework |> List.map (snd >> pick) |> List.reduce (fun a b -> a |> List.filter (fun x -> List.contains x b))
-        let defines, references, packages = common (fun (d, _, _) -> d), common (fun (_, r, _) -> r), common (fun (_, _, p) -> p)
+        let defines, references, packages = common (fun (d, _, _, _) -> d), common (fun (_, r, _, _) -> r), common (fun (_, _, p, _) -> p)
+        let resources = common (fun (_, _, _, r) -> r)
         let byFramework =
             if inner.Length < 2 then []
             else
-                perFramework |> List.choose (fun (tfm, (d, r, p)) ->
+                perFramework |> List.choose (fun (tfm, (d, r, p, rs)) ->
                     let extra all common = all |> List.filter (fun x -> not (List.contains x common))
-                    let i : Description.Items = { Defines = extra d defines; References = extra r references; Packages = extra p packages; Args = [] }
-                    if i.Defines.IsEmpty && i.References.IsEmpty && i.Packages.IsEmpty then None else Some (tfm, i))
+                    let i : Description.Items =
+                        { Defines = extra d defines; References = extra r references; Packages = extra p packages; Args = []
+                          Resources = extra rs resources }
+                    if i.Defines.IsEmpty && i.References.IsEmpty && i.Packages.IsEmpty && i.Resources.IsEmpty then None else Some (tfm, i))
 
         // ---- sources
         let sources =
@@ -316,46 +462,6 @@ module Import =
                     match attributeArgs (language = Description.FSharp) id m (fun s -> drop (sprintf "%s: %s" name s)) with
                     | Some args -> yield ({ Type = id; Args = args } : Description.Attribute)
                     | None -> () ]
-        let cultures =
-            lazy (Globalization.CultureInfo.GetCultures Globalization.CultureTypes.AllCultures
-                  |> Array.map (fun c -> c.Name) |> Array.filter ((<>) "") |> set)
-        let resources =
-            items first "EmbeddedResource" |> List.choose (fun (id, m) ->
-                let file = slash id
-                let culture =
-                    let n = Path.GetFileNameWithoutExtension file
-                    match n.LastIndexOf '.' with
-                    | -1 -> None
-                    | i -> let c = n.Substring (i + 1) in if cultures.Value.Contains c then Some c else None
-                let isResx = file.EndsWith (".resx", StringComparison.OrdinalIgnoreCase)
-                // the manifest name msbuild gives it, when it is not the default of the file
-                // path: `LogicalName` as is; `ManifestResourceName` on a resx + `.resources` (what
-                // GenerateResource writes); on another file msbuild then sets no `LogicalName`
-                // and csc names it after the file (checked against `dotnet build`); a `Link`,
-                // whose path stands for the file's in the default name
-                // (`CreateCSharpManifestResourceName`)
-                let logical =
-                    match meta "LogicalName" m, meta "ManifestResourceName" m, slash (meta "Link" m) with
-                    | "", "", "" -> ""
-                    | "", "", link ->
-                        let rootNs = match p "RootNamespace" with "" -> name.Replace (" ", "_") | r -> r
-                        Described.manifestName rootNs link
-                    | "", manifest, _ -> if isResx then manifest + ".resources" else Path.GetFileName file
-                    | logical, _, _ -> logical
-                let dependentUpon = meta "DependentUpon" m
-                match culture with
-                | Some c when meta "WithCulture" m <> "false" ->
-                    drop (sprintf "%s: EmbeddedResource %s (culture %s: a satellite assembly, not built)" name file c); None
-                | _ ->
-                    // msbuild names a resx after the class of its DependentUpon source (by convention
-                    // the `.cs` of the same name beside it); the import does not read C#
-                    let besideSource =
-                        isResx && language = Description.CSharp
-                        && File.Exists (Path.Combine (projectDir, Path.ChangeExtension (file, ".cs")))
-                    if logical = "" && (dependentUpon <> "" || besideSource) then
-                        drop (sprintf "%s: EmbeddedResource %s is named after the class of %s (DependentUpon); the description takes the default name, set its `name`"
-                                  name file (if dependentUpon <> "" then dependentUpon else Path.ChangeExtension (Path.GetFileName file, ".cs")))
-                    Some ({ File = file; Name = match logical with "" -> None | n -> Some n } : Description.Resource))
 
         // ---- options
         let fp = prop first
@@ -446,12 +552,120 @@ module Import =
               Package = package }
         project, List.ofSeq dropped
 
+    // ---- running msbuild ------------------------------------------------------------------
+
+    /// The recipes run concurrently (the msbuild runs among them are `throttled`), their
+    /// results in order; the dependencies each records are the caller's.
+    let private concurrently (recipes: Recipe<ExecContext, 'a> list) : Recipe<ExecContext, 'a list> =
+        Recipe (fun (r, ctx) ->
+            async {
+                let! results = Async.Parallel (recipes |> List.map (fun (Recipe f) -> f (r, ctx)))
+                let added =
+                    results |> Seq.collect (fun (b, _) -> b.Depends |> Seq.filter (fun d -> not (List.contains d r.Depends)))
+                    |> Seq.distinct |> List.ofSeq
+                return { r with Depends = r.Depends @ added }, (results |> Array.map snd |> List.ofArray)
+            })
+
+    /// The msbuild processes an import runs at once, over every project and every run of each:
+    /// the processor count.
+    let private msbuildSlots = new Threading.SemaphoreSlim (Environment.ProcessorCount)
+
+    /// `r` (an msbuild run) once one of the slots is free.
+    let private throttled (r: Recipe<ExecContext, 'a>) : Recipe<ExecContext, 'a> =
+        let (Recipe f) = r
+        Recipe (fun state ->
+            async {
+                do! msbuildSlots.WaitAsync () |> Async.AwaitTask
+                try return! f state
+                finally msbuildSlots.Release () |> ignore
+            })
+
+    /// `dotnet msbuild <arguments>`, throttled; a non-zero exit fails the import
+    /// (`Project.runMsbuild`): a description or a lock written from a failed run would be
+    /// silently incomplete.
+    let private msbuild (environment: (string * string) list) (arguments: string list) (projectFile: string) =
+        throttled (Project.runMsbuild environment arguments projectFile)
+
+    /// What msbuild's evaluation of one project gave: the project without a framework, each
+    /// framework, the files it imported.
+    type internal Evaluated = { Outer: Dump; Inner: (string * Dump) list; Imports: string list }
+
+    /// The evaluations of `projectFile` (properties and items, and the preprocessed text for the
+    /// files it imports): the project, then each of its frameworks, concurrently.
+    let private evaluate (environment: (string * string) list) (projectFile: string) (switches: string list) (temp: string) =
+        recipe {
+            let one (framework: string option) =
+                recipe {
+                    let tf = match framework with Some f -> [ "-p:TargetFramework=" + f ] | None -> []
+                    let tag = defaultArg framework "outer"
+                    let dump, pp = temp </> tag + ".json", temp </> tag + ".pp"
+                    do! msbuild environment ([ projectFile; "-nologo"; "-verbosity:quiet" ] @ switches @ tf
+                                             @ [ "-getProperty:" + String.concat "," properties
+                                                 "-getItem:" + String.concat "," itemTypes
+                                                 "-getResultOutputFile:" + dump ]) projectFile
+                    do! msbuild environment ([ projectFile; "-nologo" ] @ switches @ tf @ [ "-pp:" + pp ]) projectFile
+                    return readDump dump, Project.parseImports (File.ReadAllText pp)
+                }
+            let! outer, outerImports = one None
+            let declared =
+                match split (prop outer "TargetFrameworks") with
+                | [] -> split (prop outer "TargetFramework")
+                | fs -> fs
+            if declared.IsEmpty then failwithf "'%s': msbuild reports no TargetFramework(s)" projectFile
+            let! inner =
+                if prop outer "TargetFrameworks" = "" then recipe { return [ declared.Head, (outer, []) ] }
+                else
+                    recipe {
+                        let! evaluated = declared |> List.map (Some >> one) |> concurrently
+                        return List.zip declared evaluated
+                    }
+            return { Outer = outer; Inner = inner |> List.map (fun (f, (d, _)) -> f, d)
+                     Imports = outerImports @ (inner |> List.collect (fun (_, (_, i)) -> i)) }
+        }
+
+    /// The repository's msbuild files among `imports` (not the SDK's, not a package's, not
+    /// restore's output under `obj/`), and the test for an SDK or package file.
+    let private repositoryFiles (outer: Dump) (packageRoot: string) (imports: string list) =
+        let under (dirs: string list) (path: string) =
+            let path = slash path
+            dirs |> List.exists (fun d -> d <> "" && path.StartsWith ((slash d).TrimEnd '/' + "/", comparison))
+        let sdkDirs = [ for n in [ "NetCoreRoot"; "MSBuildExtensionsPath"; "MSBuildSDKsPath"; "MSBuildBinPath" ] -> prop outer n ]
+        let isSdkFile = under (sdkDirs @ [ prop outer "NuGetPackageRoot"; packageRoot ])
+        let obj =
+            let b = slash (prop outer "BaseIntermediateOutputPath")
+            if b = "" then "" elif Path.IsPathRooted b then b else Path.Combine (prop outer "MSBuildProjectDirectory", b)
+        let files = imports |> List.map slash |> List.distinct |> List.filter (fun f -> not (isSdkFile f) && not (under [ obj ] f))
+        files, isSdkFile
+
+    /// Writes the description of an evaluated project (`describe`; `targets`, the design-time
+    /// builds of `record`, may be empty) when its content changes; the import's result and
+    /// the description.
+    let private writeDescription (root: string) (projectFile: string) (descriptionFile: string) (packageRoot: string)
+                                 (ev: Evaluated) (targets: (string * Dump) list) =
+        recipe {
+            let repoFiles, isSdkFile = repositoryFiles ev.Outer packageRoot ev.Imports
+            let xmlFiles = repoFiles |> List.map (fun f -> relativeTo root f, XDocument.Load (f, LoadOptions.SetBaseUri))
+            let previous = if File.Exists descriptionFile then Some (Description.read descriptionFile) else None
+            let description, dropped = describe (Path.GetDirectoryName descriptionFile) ev.Outer ev.Inner isSdkFile xmlFiles previous targets
+            let written = Description.write descriptionFile description
+            do! trace Info "%s '%s'" (if written then "wrote" else "unchanged:") (relativeTo root descriptionFile)
+            for d in dropped do do! trace Info "  not in the description (%s): %s" (Path.GetFileName projectFile) d
+            let imported : Imported =
+                { Project = relativeTo root projectFile
+                  Description = relativeTo root descriptionFile
+                  Written = written
+                  Inputs = repoFiles |> List.map (relativeTo root) |> List.sortWith (fun a b -> String.CompareOrdinal (a, b))
+                  Dropped = dropped
+                  Locks = [] }
+            return imported, description, repoFiles
+        }
+
     /// Imports `project` (a csproj or fsproj, relative to the project root or absolute) into
     /// the description at `descriptionOf project`, msbuild evaluating it under `globals` (e.g.
     /// `["Configuration", "Release"; "Brand", "MESCIUS"]`). The file is written only when its
     /// content changes; an existing file's `$schema` is kept. Records no input: an explicit
     /// command, not a rule (`Imported.Inputs` is the list of files msbuild read, for a
-    /// fingerprint).
+    /// fingerprint). Only the description: `record` also writes the locks.
     let project (project: string) (descriptionOf: string -> string) (globals: (string * string) list) : Recipe<ExecContext, Imported> =
         recipe {
             let! options = getCtxOptions ()
@@ -461,67 +675,445 @@ module Import =
             let descriptionFile = full (descriptionOf project)
             let! packageRoot = DotNetFwk.packageRoot ()
             let switches = [ for k, v in globals -> sprintf "-p:%s=%s" k v ]
-
             let temp = Path.Combine (Path.GetTempPath (), "xake-import-" + Guid.NewGuid().ToString "N")
             Directory.CreateDirectory temp |> ignore
-            let evaluate (framework: string option) =
-                recipe {
-                    let tf = match framework with Some f -> [ "-p:TargetFramework=" + f ] | None -> []
-                    let tag = defaultArg framework "outer"
-                    let dump, pp = temp </> tag + ".json", temp </> tag + ".pp"
-                    do! Project.runMsbuild [] ([ projectFile; "-nologo"; "-verbosity:quiet" ] @ switches @ tf
-                                               @ [ "-getProperty:" + String.concat "," properties
-                                                   "-getItem:" + String.concat "," itemTypes
-                                                   "-getResultOutputFile:" + dump ]) projectFile
-                    do! Project.runMsbuild [] ([ projectFile; "-nologo" ] @ switches @ tf @ [ "-pp:" + pp ]) projectFile
-                    return readDump dump, Project.parseImports (File.ReadAllText pp)
-                }
-            let! outer, outerImports = evaluate None
-            let declared =
-                match split (prop outer "TargetFrameworks") with
-                | [] -> split (prop outer "TargetFramework")
-                | fs -> fs
-            if declared.IsEmpty then failwithf "'%s': msbuild reports no TargetFramework(s)" project
-            let inner = ResizeArray<string * Dump> ()
-            let imports = ResizeArray<string> (outerImports)
-            if prop outer "TargetFrameworks" = "" then inner.Add (declared.Head, outer)
-            else
-                for f in declared do
-                    let! d, i = evaluate (Some f)
-                    inner.Add (f, d)
-                    imports.AddRange i
+            let! ev = evaluate [] projectFile switches temp
             Directory.Delete (temp, true)
-
-            // what is not the repository's: the SDK, packages, restore's output
-            let under (dirs: string list) (path: string) =
-                let path = slash path
-                dirs |> List.exists (fun d -> d <> "" && path.StartsWith ((slash d).TrimEnd '/' + "/", comparison))
-            let sdkDirs = [ for n in [ "NetCoreRoot"; "MSBuildExtensionsPath"; "MSBuildSDKsPath"; "MSBuildBinPath" ] -> prop outer n ]
-            let isSdkFile = under (sdkDirs @ [ prop outer "NuGetPackageRoot"; packageRoot ])
-            let obj =
-                let b = slash (prop outer "BaseIntermediateOutputPath")
-                if b = "" then "" elif Path.IsPathRooted b then b else Path.Combine (prop outer "MSBuildProjectDirectory", b)
-            let repoFiles = List.ofSeq imports |> List.map slash |> List.distinct |> List.filter (fun f -> not (isSdkFile f) && not (under [ obj ] f))
-            let xmlFiles = repoFiles |> List.map (fun f -> relativeTo root f, XDocument.Load f)
-
-            let previous = if File.Exists descriptionFile then Some (Description.read descriptionFile) else None
-            let description, dropped = describe (Path.GetDirectoryName descriptionFile) outer (List.ofSeq inner) isSdkFile xmlFiles previous
-            let written = Description.write descriptionFile description
-            do! trace Info "%s '%s'" (if written then "wrote" else "unchanged:") (relativeTo root descriptionFile)
-            for d in dropped do do! trace Info "  not in the description: %s" d
-            return ({ Project = relativeTo root projectFile
-                      Description = relativeTo root descriptionFile
-                      Written = written
-                      Inputs = repoFiles |> List.map (relativeTo root) |> List.sortWith (fun a b -> String.CompareOrdinal (a, b))
-                      Dropped = dropped } : Imported)
+            let! imported, _, _ = writeDescription root projectFile descriptionFile packageRoot ev []
+            return imported
         }
 
-    /// `project` for each of `projects`, in order.
+    /// `project` for each of `projects`, concurrently (at most the processor count of msbuild
+    /// processes at once); the results in order.
     let descriptions (projects: string list) (descriptionOf: string -> string) (globals: (string * string) list) : Recipe<ExecContext, Imported list> =
+        projects |> List.map (fun p -> project p descriptionOf globals) |> concurrently
+
+    // ---- recording msbuild's resolved compile inputs ----------------------------------------
+
+    /// What `record` is told: the configurations to record, the properties msbuild runs with,
+    /// the script's extra roots and its layout.
+    type RecordOptions = {
+        /// One lock per project and configuration, e.g. `["Release"]`
+        Configurations: string list
+        /// What else selects the compilation, e.g. `["Brand", "GCCN"]` (not `Configuration`)
+        Properties: (string * string) list
+        /// The script's extra roots (`Roots.make`): a path under one is written tokenized
+        Roots: (string * string) list
+        /// The description of a project file (`Description.beside`)
+        DescriptionOf: string -> string
+        /// The lock of a project (by its description's name) and configuration
+        LockOf: string -> string -> string
+        /// The output folder of a project for a configuration and framework (`outOf cfg fwk name`):
+        /// where a project reference is found (`project:<name>`)
+        OutOf: string -> string -> string -> string
+    } with
+        static member Default =
+            { Configurations = [ "Release" ]; Properties = []; Roots = []
+              DescriptionOf = Description.beside
+              LockOf = (fun name cfg -> sprintf "locks/%s/%s.json" name cfg)
+              OutOf = (fun cfg fwk name -> sprintf "out/%s/%s/%s" cfg fwk name) }
+
+    /// The items and properties of the design-time build `record` reads.
+    let internal designTimeItems =
+        [ "CscCommandLineArgs"; "FscCommandLineArgs"; "ReferencePath"; "Analyzer"; "Compile"; "EmbeddedResource"; "EditorConfigFiles" ]
+    let internal designTimeProperties =
+        [ "AssemblyName"; "MSBuildProjectFullPath"; "MSBuildProjectDirectory"; "MSBuildProjectName"; "TargetFramework"
+          "TargetFrameworkIdentifier"; "TargetFrameworkMoniker"; "DefineConstants"; "LangVersion"; "Version"; "OutputType"
+          "NETCoreSdkVersion"; "NetCoreRoot"; "NuGetPackageRoot"; "ProjectAssetsFile"; "IntermediateOutputPath"
+          "CscToolPath"; "CscToolExe"; "CSharpCoreTargetsPath"; "RoslynTargetsPath"; "DotnetFscCompilerPath"
+          "SourceRevisionId"; "GenerateResourceUsePreserializedResources"; "Deterministic"; "SignAssembly"; "AssemblyOriginatorKeyFile" ]
+
+    /// The properties of the design-time build a lock entry keeps (`Evaluation.Properties`).
+    let private keptProperties =
+        [ "AssemblyName"; "TargetFrameworkMoniker"; "LangVersion"; "Version"; "OutputType"; "Deterministic"; "SignAssembly"
+          "GenerateResourceUsePreserializedResources" ]
+
+    /// What one project's entries are built from, besides its design-time builds.
+    type internal RecordContext = {
+        /// the build's project root, '/'
+        Root: string
+        ProjectFile: string
+        /// the project file's folder, absolute, '/'
+        ProjectDir: string
+        Description: Description.Project
+        DescriptionFile: string
+        PackageRoot: string
+        /// the project's SDK pin and the global.json stating it
+        Pin: Lock.SdkPin
+        PinFile: string option
+        /// the repository's msbuild files the evaluation read (absolute)
+        Inputs: string list
+        OutOf: string -> string -> string -> string
+    }
+
+    /// The file a design-time build reported, absolute, '/'.
+    let private absoluteIn (dir: string) (path: string) =
+        let path = slash path
+        slash (Path.GetFullPath (if Path.IsPathRooted path then path else Path.Combine (dir, path)))
+
+    /// The compiler msbuild would run: csc from `CscToolPath`/`CscToolExe`, else the
+    /// `bincore/csc.dll` beside the C# targets that drive the task (the SDK's own, or a
+    /// `Microsoft.Net.Compilers.Toolset` package's); fsc from `DotnetFscCompilerPath`.
+    let internal compilerOf (isFSharp: bool) (d: Dump) =
+        let p = prop d
+        if isFSharp then
+            match (p "DotnetFscCompilerPath").Trim().Trim '"' with
+            | "" -> failwithf "'%s': the design-time build reported no DotnetFscCompilerPath -- not an SDK-style F# project?" (p "MSBuildProjectFullPath")
+            | path -> slash (Path.GetFullPath path)
+        else
+            match p "CscToolPath" with
+            | "" ->
+                match p "CSharpCoreTargetsPath" with
+                | "" -> slash (p "RoslynTargetsPath" </> "bincore" </> "csc.dll")
+                | csTargets -> slash (Path.GetFullPath (Path.GetDirectoryName (slash csTargets) </> "bincore" </> "csc.dll"))
+            | toolPath -> slash (toolPath </> (match p "CscToolExe" with "" -> "csc.dll" | exe -> exe))
+
+    /// The project references of a design-time build: each referenced project's output in the
+    /// build's layout (`outOf cfg <framework msbuild chose> <name>`), and the paths msbuild
+    /// names it by (its output, its reference assembly).
+    let internal projectsOf (ctx: RecordContext) (cfg: string) (d: Dump) : (Lock.ProjectOutput * string list) list =
+        [ for id, m in items d "ReferencePath" do
+            let source = meta "MSBuildSourceProjectFile" m
+            if meta "ReferenceSourceTarget" m = "ProjectReference" || source <> "" then
+                let name =
+                    Path.GetFileNameWithoutExtension (slash (match source with "" -> meta "OriginalProjectReferenceItemSpec" m | s -> s))
+                let framework =
+                    match meta "NearestTargetFramework" m, meta "SetTargetFramework" m with
+                    | "", set when set.StartsWith "TargetFramework=" -> set.Substring 16
+                    | "", _ -> prop d "TargetFramework"
+                    | f, _ -> f
+                let output = absoluteIn ctx.Root (ctx.OutOf cfg framework name </> Path.GetFileName (slash id))
+                let names = [ id; meta "ReferenceAssembly" m ] |> List.filter ((<>) "") |> List.map (absoluteIn ctx.ProjectDir)
+                yield ({ Name = name; Configuration = cfg; Framework = framework; Path = output } : Lock.ProjectOutput), names ]
+        |> List.distinctBy (fun (p, _) -> p.Name)
+
+    /// Text as a lock records it: LF line ends.
+    let private lf (text: string) = text.Replace ("\r\n", "\n")
+
+    /// <summary>
+    /// The lock entry of one design-time build (`d`, of `cfg` and `framework`, whose
+    /// intermediate folder was `scratch`): msbuild's compiler command line as recorded, with
+    /// <list type="bullet">
+    /// <item>the output switches dropped (`/out:`, `/refout:`: the build's);</item>
+    /// <item>what msbuild generated under `scratch` (assembly info, global usings, the
+    /// framework attribute, the analyzer config, the compiled `.resources`) moved to the
+    /// entry's generated folder (`Described.generatedDirOf`), the text files recorded
+    /// (`Generated`, LF), the `.resx` it compiles as `Resources`;</item>
+    /// <item>a source from a package (Test.Sdk's entry point) recorded the same way;</item>
+    /// <item>for C#, the user sources as the description's masks when they name exactly the
+    /// files msbuild compiles (else msbuild's files, with a warning);</item>
+    /// <item>a project reference as the referenced project's output in the build's layout
+    /// (`Recorded.Projects`), unhashed; every other reference and analyzer hashed, but the
+    /// SDK's own files, which the SDK version identifies (`Prerequisites`).</item>
+    /// </list>
+    /// Pure but for reading the generated files and hashing.
+    /// </summary>
+    let internal entryOf (ctx: RecordContext) (cfg: string) (framework: string) (scratch: string) (d: Dump) : Lock.Entry * string list =
+        let warnings = ResizeArray<string> ()
+        let p = prop d
+        let scratch = (slash scratch).TrimEnd '/' + "/"
+        let assemblyName = match p "AssemblyName" with "" -> ctx.Description.Name | a -> a
+        let generatedDir =
+            let key = Described.generatedKey ctx.Root ctx.DescriptionFile ctx.ProjectDir assemblyName
+            (Described.generatedDirOf ctx.Root key framework (Some cfg)).TrimEnd '/' + "/"
+        let fscArgs = items d "FscCommandLineArgs" |> List.map fst
+        let isFSharp = not (List.isEmpty fscArgs)
+        let args =
+            if isFSharp then fscArgs |> FscArgs.absolutize ctx.ProjectDir
+            else items d "CscCommandLineArgs" |> List.map fst |> CscArgs.absolutize ctx.ProjectDir
+        if List.isEmpty args then
+            failwithf "'%s' (%s|%s): the design-time build reported no compiler command line -- CoreCompile did not run" ctx.ProjectFile cfg framework
+        let packageRoots =
+            [ ctx.PackageRoot; p "NuGetPackageRoot" ] |> List.filter ((<>) "") |> List.map (fun r -> (slash r).TrimEnd '/' + "/") |> List.distinct
+        let inPackage (path: string) = packageRoots |> List.exists (fun r -> path.StartsWith (r, comparison))
+        let sdkDir =
+            match p "NetCoreRoot", p "NETCoreSdkVersion" with
+            | "", _ | _, "" -> None
+            | root, v -> Some ((slash root).TrimEnd '/' + "/sdk/" + v + "/")
+        let inSdk (path: string) = sdkDir |> Option.exists (fun s -> path.StartsWith (s, comparison))
+
+        // the project references, by every path msbuild names them with
+        let projects = projectsOf ctx cfg d
+        let projectPaths = dict [ for o, names in projects do for n in names -> n, o.Path ]
+        let moved (path: string) =
+            let path = slash path
+            match projectPaths.TryGetValue path with
+            | true, output -> output
+            | _ -> if path.StartsWith (scratch, comparison) then generatedDir + path.Substring scratch.Length else path
+        // a source from a package: recorded beside the generated ones
+        let packaged (path: string) = generatedDir + Path.GetFileName path
+        let isOutput (o: string) =
+            not (o.StartsWith "@")
+            && (if isFSharp then
+                    match FscArgs.parse o with FscArgs.Switch (_, n, _) -> (let c = FscArgs.canonical n in c = "out" || c = "refout") | _ -> false
+                else
+                    match CscArgs.parse o with CscArgs.Switch (n, _) -> (let c = CscArgs.canonical n in c = "out" || c = "refout") | _ -> false)
+
+        // what msbuild generated: text inputs under the scratch folder, and package sources
+        let binary = set [ ".resources"; ".res"; ".dll"; ".exe"; ".pdb"; ".ico"; ".snk" ]
+        let inputs = if isFSharp then FscArgs.inputs args else CscArgs.inputs args
+        let generated =
+            [ for path in inputs |> List.map slash |> List.distinct do
+                if File.Exists path && not (binary.Contains ((Path.GetExtension path).ToLowerInvariant ())) then
+                    if path.StartsWith (scratch, comparison) then
+                        yield moved path, (lf (File.ReadAllText path)).Replace (scratch, generatedDir)
+                    elif inPackage path && (if isFSharp then FscArgs.sources args else CscArgs.sources args) |> List.exists (fun s -> slash s = path) then
+                        yield packaged path, lf (File.ReadAllText path) ]
+        let fromPackage = set [ for path in inputs |> List.map slash do if inPackage path then yield path ]
+
+        let composed =
+            if isFSharp then Lock.Compilation.Fsc (Fsc.ofArgs args) else Lock.Compilation.Csc (Csc.ofArgs args)
+        let entry0 = Lock.ofCompilation composed
+        // the package sources first (their path is the package's until moved), then the rest
+        let entry1 =
+            entry0 |> Lock.mapPaths (fun path ->
+                let path = slash path
+                if fromPackage.Contains path && (composed.Sources |> List.exists (fun s -> slash s = path)) then packaged path else moved path)
+        let c = entry1.Compilation
+
+        // the sources: for C#, the description's masks in place of the files msbuild compiles
+        let isGenerated (s: string) = generated |> List.exists (fst >> (=) s)
+        let user = c.Sources |> List.filter (isGenerated >> not)
+        let sources =
+            match ctx.Description.Language with
+            | Description.CSharp ->
+                let masks = ctx.Description.Sources
+                let expanded = expandMasks ctx.ProjectDir masks |> Set.ofList
+                let compiled = user |> List.map slash |> Set.ofList
+                if expanded = compiled then
+                    let inProject (s: string) = slash (Path.GetFullPath (Path.Combine (ctx.ProjectDir, s)))
+                    (masks |> List.map (fun m -> if m.StartsWith "!" then "!" + inProject (m.Substring 1) else inProject m))
+                    @ (c.Sources |> List.filter isGenerated)
+                else
+                    let missed = Set.difference compiled expanded |> Set.toList
+                    let extra = Set.difference expanded compiled |> Set.toList
+                    warnings.Add (
+                        sprintf "'%s' (%s|%s): the description's source masks do not name what msbuild compiles (missed: %s; extra: %s); the lock lists msbuild's files (an added .cs needs a re-import)"
+                            ctx.Description.Name cfg framework
+                            (match missed with [] -> "none" | m -> m |> List.map (relativeTo ctx.ProjectDir) |> String.concat ", ")
+                            (match extra with [] -> "none" | e -> e |> List.map (relativeTo ctx.ProjectDir) |> String.concat ", "))
+                    c.Sources
+            | Description.FSharp -> c.Sources
+
+        // the .resx msbuild compiles for the main assembly, as (resx, compiled .resources)
+        let resourceSwitches = if isFSharp then FscArgs.switchValues "resource" c.Options else CscArgs.switchValues "resource" c.Options
+        let named (path: string) = resourceSwitches |> List.exists (fun v -> v = path || v.StartsWith (path + ","))
+        let resources =
+            [ for id, m in items d "EmbeddedResource" do
+                if meta "OutputResource" m <> "" && not (isTrue (meta "WithCulture" m)) then
+                    let compiled = moved (absoluteIn ctx.ProjectDir (meta "OutputResource" m))
+                    if named compiled then yield absoluteIn ctx.ProjectDir id, compiled ]
+            |> List.distinct
+
+        // the hashes: a project's output and the SDK's own files carry none
+        let isProjectOutput (path: string) = projects |> List.exists (fun (o, _) -> o.Path = path)
+        let hash (path: string) = if isProjectOutput path || inSdk path then "" else Csc.sha256 path
+        let compilerPath = compilerOf isFSharp d
+        let dependencies (deps: Dependencies) : Dependencies =
+            { Compiler =
+                { Tool = (if isFSharp then "fsc" else "csc"); Path = compilerPath
+                  Sha256 = (if inSdk compilerPath then "" else Csc.sha256 compilerPath)
+                  Version = Csc.compilerVersion compilerPath }
+              References = deps.References |> List.map (fun r -> { r with Sha256 = hash r.Path })
+              Analyzers = deps.Analyzers |> List.map (fun a -> { a with Sha256 = hash a.Path }) }
+        let compilation =
+            match c with
+            | Lock.Compilation.Csc x ->
+                Lock.Compilation.Csc
+                    { x with
+                        Name = assemblyName; Framework = framework; Directory = ctx.ProjectDir
+                        Options = x.Options |> List.filter (isOutput >> not)
+                        Sources = sources; Generated = generated; Resources = resources
+                        Dependencies = dependencies x.Dependencies }
+            | Lock.Compilation.Fsc x ->
+                Lock.Compilation.Fsc
+                    { x with
+                        Fsc.Name = assemblyName; Fsc.Framework = framework; Fsc.Directory = ctx.ProjectDir
+                        Fsc.Options = x.Options |> List.filter (isOutput >> not)
+                        Fsc.Sources = sources; Fsc.Generated = generated; Fsc.Resources = resources
+                        Fsc.Dependencies = dependencies x.Dependencies }
+
+        // the restore graph of this framework, for the SBOM and the package hashes
+        let packages =
+            match p "ProjectAssetsFile" with
+            | assets when assets <> "" && File.Exists assets ->
+                try Nuget.readAssets assets framework |> Lock.packagesOf ctx.PackageRoot
+                with e -> warnings.Add (sprintf "'%s' (%s): the restore graph is not recorded: %s" ctx.Description.Name framework e.Message); []
+            | _ -> []
+        let sdk = p "NETCoreSdkVersion"
+        let entry : Lock.Entry =
+            { Compilation = compilation
+              Evaluation =
+                { Project = slash ctx.ProjectFile
+                  ProjectRefs = projects |> List.map (fun (o, _) -> o.Name)
+                  Imports = ctx.Inputs |> List.map Csc.hashed
+                  Sdk = sdk
+                  SdkPin = Some ctx.Pin
+                  Properties = d.Props |> Map.filter (fun k v -> List.contains k keptProperties && v <> "") }
+              Packages = packages
+              // the SDK the entry was recorded with: its compiler, analyzers and shims
+              Prerequisites =
+                if sdk = "" then []
+                else [ { Kind = Lock.DotnetSdk; Version = sdk; Pin = ctx.PinFile |> Option.map slash |> Option.defaultValue "" } ]
+              Recorded = Some { Projects = projects |> List.map fst } }
+        // the commit a SourceLink-free AssemblyInfo still names (`InformationalVersion`): a token
+        let entry = match p "SourceRevisionId" with "" -> entry | sha -> entry |> Lock.mapText (Git.tokenize sha)
+
+        // .NET Framework reads preserialized resources only through System.Resources.Extensions:
+        // msbuild writes them so when the project asks for it, so the recorded references must hold it
+        if isTrue (p "GenerateResourceUsePreserializedResources") && p "TargetFrameworkIdentifier" = ".NETFramework"
+           && not (List.isEmpty resources)
+           && not (entry.Dependencies.References |> List.exists (fun r -> (Path.GetFileName r.Path).Equals ("System.Resources.Extensions.dll", StringComparison.OrdinalIgnoreCase))) then
+            failwithf "'%s' (%s|%s): msbuild writes the .resx as preserialized resources (GenerateResourceUsePreserializedResources), which .NET Framework reads only through System.Resources.Extensions, and the recorded references do not have it; reference the package System.Resources.Extensions"
+                ctx.Description.Name cfg framework
+        entry, List.ofSeq warnings
+
+    /// The strings of this machine a portable lock must not contain (`record` checks the text
+    /// it writes): the project root, the package folder, the .NET root, the home and temp folders
+    /// -- each only where no token stands for it -- and a runtime identifier (`osx-arm64`) as a
+    /// path segment or a whole value.
+    let internal hostStrings (roots: (string * string) list) (text: string) : string list =
+        let home = Environment.GetFolderPath Environment.SpecialFolder.UserProfile
+        let candidates =
+            [ for _, root in roots -> root
+              yield home
+              yield Path.GetTempPath () ]
+            |> List.map (fun s -> (slash s).TrimEnd '/')
+            |> List.filter (fun s -> s.Length > 1)
+            |> List.distinct
+        // a runtime identifier: a lock recorded without one names no machine's
+        let rids =
+            [ for os in [ "osx"; "linux"; "linux-musl"; "win" ] do
+                for arch in [ "x64"; "x86"; "arm64"; "arm" ] -> sprintf "%s-%s" os arch ]
+        [ for line in text.Split '\n' do
+            let l = slash line
+            if candidates |> List.exists (fun c -> l.Contains c) || rids |> List.exists (fun r -> l.Contains ("/" + r + "/") || l.Contains ("\"" + r + "\"")) then
+                yield line.Trim () ]
+
+    /// <summary>
+    /// Imports the `projects` (csproj, fsproj; relative to the project root or absolute) as
+    /// msbuild resolves them, and writes, per project, its description (`describe`, as
+    /// `project`) and one lock per configuration (`options.LockOf name cfg`) whose entries --
+    /// one per framework -- record msbuild's resolved compile inputs:
+    /// <list type="number">
+    /// <item>one restore per project, without a framework (`-t:Restore`,
+    /// `RestoreRecursive=false`), concurrently;</item>
+    /// <item>the evaluations for the description, and one design-time build per
+    /// (configuration, framework) -- `ProvideCommandLineArgs`, `SkipCompilerExecution`,
+    /// `BuildProjectReferences=false`, `-t:PrepareResources;Compile` into a scratch
+    /// intermediate folder -- reporting the compiler's command line, `ReferencePath`,
+    /// `Analyzer`, `Compile`, `EmbeddedResource`; all concurrently, at most the processor
+    /// count of msbuild processes;</item>
+    /// <item>each entry (`entryOf`): the command line as msbuild hands it to the compiler, the
+    /// files msbuild generated as recorded texts, the references and analyzers by identity
+    /// (`Lock.Identity`: `pkg:`, `pack:`, `sdk:`, `project:`), the SDK version as a
+    /// prerequisite.</item>
+    /// </list>
+    /// Nothing about the compilation is derived by Xake. A file that cannot be named portably
+    /// (outside the package folder, the packs, the SDK and the roots) fails the import, and so
+    /// does a lock text that still holds a string of this machine (`hostStrings`). A lock is
+    /// written only when its text changes. Records no input: an explicit command, as `project`.
+    /// </summary>
+    let record (options: RecordOptions) (projects: string list) : Recipe<ExecContext, Imported list> =
         recipe {
-            let result = ResizeArray<Imported> ()
-            for p in projects do
-                let! imported = project p descriptionOf globals
-                result.Add imported
-            return List.ofSeq result
+            if List.isEmpty options.Configurations then failwith "RecordOptions.Configurations is empty: name at least one configuration"
+            let! ctxOptions = getCtxOptions ()
+            let root = slash (Path.GetFullPath ctxOptions.ProjectRoot)
+            let full (p: string) = slash (Path.GetFullPath (if Path.IsPathRooted p then p else root </> p))
+            let! packageRoot, packageSource = DotNetFwk.packageRootWithSource ()
+            // with the script variable `NUGET_PACKAGES`, msbuild restores into the build's folder too
+            let environment = if packageSource = DotNetFwk.ScriptVariable then [ "NUGET_PACKAGES", packageRoot ] else []
+            let! roots = Roots.currentWith options.Roots
+            let globals = [ "NuGetAudit", "false" ] @ options.Properties
+            let switches cfg = [ for k, v in ("Configuration", cfg) :: globals -> sprintf "-p:%s=%s" k v ]
+            let primary = List.head options.Configurations
+            let started = DateTime.UtcNow
+            let temp = root </> "obj" </> "xake" </> "import" </> Guid.NewGuid().ToString "N"
+            Directory.CreateDirectory temp |> ignore
+            try
+                let projectFiles = projects |> List.map full |> List.distinct
+                // 1. the restores: every one before any design-time build reads what they wrote
+                do! projectFiles
+                    |> List.map (fun pf ->
+                        msbuild environment ([ pf; "-nologo"; "-verbosity:quiet"; "-t:Restore" ] @ switches primary @ [ "-p:RestoreRecursive=false" ]) pf)
+                    |> concurrently |> Recipe.map ignore
+                // 2. per project: the evaluations, then its design-time builds
+                let one (index: int) (pf: string) =
+                    recipe {
+                        let projectTemp = temp </> string index
+                        Directory.CreateDirectory projectTemp |> ignore
+                        let! ev = evaluate environment pf (switches primary) projectTemp
+                        let frameworks = ev.Inner |> List.map fst
+                        let run (cfg: string) (framework: string) =
+                            recipe {
+                                let tag = sprintf "%s-%s" cfg framework
+                                let dump = projectTemp </> tag + ".json"
+                                let scratch = slash (projectTemp </> tag) + "/"
+                                do! msbuild environment
+                                        ([ pf; "-nologo"; "-verbosity:quiet" ] @ switches cfg
+                                         @ [ "-p:TargetFramework=" + framework
+                                             "-p:ProvideCommandLineArgs=true"; "-p:SkipCompilerExecution=true"
+                                             "-p:BuildProjectReferences=false"
+                                             "-p:IntermediateOutputPath=" + scratch
+                                             // CoreCompile lists this among its outputs: a file that never
+                                             // exists keeps it from being skipped as up to date
+                                             "-p:NonExistentFile=__NonExistentSubDir__/__NonExistentFile__"
+                                             "-t:PrepareResources;Compile"
+                                             "-getItem:" + String.concat "," designTimeItems
+                                             "-getProperty:" + String.concat "," designTimeProperties
+                                             "-getResultOutputFile:" + dump ]) pf
+                                if not (File.Exists dump) then
+                                    failwithf "'%s': msbuild wrote no result for %s|%s; the import stops" pf cfg framework
+                                return cfg, framework, scratch, readDump dump
+                            }
+                        let! runs = [ for cfg in options.Configurations do for f in frameworks -> run cfg f ] |> concurrently
+                        return pf, ev, runs
+                    }
+                let! evaluated = projectFiles |> List.mapi one |> concurrently
+
+                // 3. the descriptions and the locks
+                let results = ResizeArray<Imported> ()
+                for pf, ev, runs in evaluated do
+                    let descriptionFile = full (options.DescriptionOf pf)
+                    let targets = [ for cfg, f, _, d in runs do if cfg = primary then yield f, d ]
+                    let! imported, description, inputs = writeDescription root pf descriptionFile packageRoot ev targets
+                    let pinFile, pin = Lock.sdkPinAt (Path.GetDirectoryName pf)
+                    let ctx : RecordContext =
+                        { Root = root; ProjectFile = slash pf; ProjectDir = slash (Path.GetDirectoryName pf)
+                          Description = description; DescriptionFile = descriptionFile; PackageRoot = packageRoot
+                          Pin = pin; PinFile = pinFile; Inputs = inputs; OutOf = options.OutOf }
+                    let locks = ResizeArray<string> ()
+                    for cfg in options.Configurations do
+                        let built = [ for c, f, scratch, d in runs do if c = cfg then yield entryOf ctx cfg f scratch d ]
+                        for _, warnings in built do
+                            for w in warnings do do! trace Warning "%s" w
+                        let entries = built |> List.map fst
+                        let lockPath = options.LockOf description.Name cfg
+                        let lockFull = full lockPath
+                        // HERMETIC=on: what a lock may not be written with (messages 2 and 9)
+                        let! refused = Lock.hermeticRecordGate lockPath roots entries
+                        if not (List.isEmpty refused) then
+                            let msg = refused |> String.concat "\n"
+                            do! trace Error "%s" msg
+                            failwith msg
+                        let text = Lock.format roots { Configuration = cfg; Properties = options.Properties; Entries = entries }
+                        match hostStrings roots text with
+                        | [] -> ()
+                        | lines ->
+                            failwithf "'%s': the lock '%s' would hold strings of this machine, so it would not build elsewhere:\n%s"
+                                description.Name lockPath (lines |> List.truncate 10 |> String.concat "\n")
+                        let existing = if File.Exists lockFull then Some (lf (File.ReadAllText lockFull)) else None
+                        if existing = Some text then
+                            do! trace Info "'%s': the lock '%s' is unchanged" description.Name lockPath
+                        else
+                            Directory.CreateDirectory (Path.GetDirectoryName lockFull) |> ignore
+                            File.WriteAllText (lockFull, text)
+                            do! trace Info "'%s': wrote the lock '%s'" description.Name lockPath
+                        locks.Add lockPath
+                    results.Add { imported with Locks = List.ofSeq locks }
+                do! trace Info "imported %d project(s) for %s in %.1f s" projectFiles.Length (String.concat ", " options.Configurations)
+                        (DateTime.UtcNow - started).TotalSeconds
+                return List.ofSeq results
+            finally
+                try Directory.Delete (temp, true) with _ -> ()
         }

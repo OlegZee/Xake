@@ -69,6 +69,7 @@ type ``Restore``() =
                                     else { r with Sha256 = Csc.sha256 r.Path }) } }
             Evaluation = { Project = Path.Combine (dir, "Hello.csproj"); ProjectRefs = []; Imports = []; Sdk = fwk.Version; SdkPin = None; Properties = Map.empty }
             Prerequisites = []
+            Recorded = None
             Packages = [ { Id = packageId; Version = packageVersion; Sha512 = packageSha512; Direct = true; DependsOn = [] } ]
         }
         entry, outDll

@@ -22,13 +22,16 @@ module Description =
     /// range, resolved at lock generation, never by the compiler. `Private`: compile-time only.
     type Package = { Id: string; Version: string option; Private: bool }
 
-    /// The lists a framework can add to (`byFramework`), also the project-wide ones.
-    type Items = { Defines: string list; References: string list; Packages: Package list; Args: string list }
-
     /// An embedded resource: a plain file, or a `.resx` that `project` compiles to a
-    /// `.resources` first. `Name` is the manifest name (msbuild's `LogicalName`); `None` is
+    /// `.resources` first. `Name` is the manifest name (msbuild's `LogicalName`, or the
+    /// `ManifestResourceName` msbuild gave it, when that is not the default); `None` is
     /// msbuild's default (`Described.manifestName`).
     type Resource = { File: string; Name: string option }
+
+    /// The lists a framework can add to (`byFramework`), also the project-wide ones.
+    /// `Resources`: the embedded resources only this framework has (an `EmbeddedResource` under
+    /// a condition on the framework).
+    type Items = { Defines: string list; References: string list; Packages: Package list; Args: string list; Resources: Resource list }
 
     /// `NoWarn`: the warnings the project suppresses beyond the SDK's own defaults (C#'s
     /// `1701;1702`), which `project` adds back.
@@ -94,7 +97,7 @@ module Description =
                            "sources"; "resources"; "defines"; "references"; "projectRefs"; "packages"; "options"
                            "internalsVisibleTo"; "assemblyAttributes"; "byFramework"; "package" ]
               "package", [ "id"; "version"; "private" ]
-              "items", [ "defines"; "references"; "packages"; "args" ]
+              "items", [ "defines"; "references"; "packages"; "args"; "resources" ]
               "resource", [ "file"; "name" ]
               "options", [ "doc"; "langVersion"; "warningsAsErrors"; "noWarn"; "nullable"; "keyFile"; "args" ]
               "friend", [ "name"; "key" ]
@@ -132,9 +135,14 @@ module Description =
         { Id = req ms path "id" str; Version = opt ms path "version" str
           Private = opt ms path "private" bool |> Option.defaultValue false }
 
+    let private resource path v =
+        let rs = members path fields.["resource"] v
+        { File = req rs path "file" str; Name = opt rs path "name" str }
+
     let private items path ms =
         { Defines = orEmpty ms path "defines" strs; References = orEmpty ms path "references" strs
-          Packages = orEmpty ms path "packages" (fun p -> list p package); Args = orEmpty ms path "args" strs }
+          Packages = orEmpty ms path "packages" (fun p -> list p package); Args = orEmpty ms path "args" strs
+          Resources = orEmpty ms path "resources" (fun p -> list p resource) }
 
     let private options path v =
         let ms = members path fields.["options"] v
@@ -188,10 +196,7 @@ module Description =
                 |> Option.defaultValue Library
               Frameworks = req ms "" "frameworks" (fun p v -> match strs p v with [] -> fail p "needs at least one framework" | f -> f)
               Sources = req ms "" "sources" strs
-              Resources =
-                orEmpty ms "" "resources" (fun p -> list p (fun p v ->
-                    let rs = members p fields.["resource"] v
-                    { File = req rs p "file" str; Name = opt rs p "name" str }))
+              Resources = orEmpty ms "" "resources" (fun p -> list p resource)
               Defines = orEmpty ms "" "defines" strs
               References = orEmpty ms "" "references" strs
               ProjectRefs = orEmpty ms "" "projectRefs" strs
@@ -263,9 +268,11 @@ module Description =
         let flag name b = if b then Some (name, JOther "true") else None
         let package (p: Package) =
             JObject (List.choose id [ some "id" (s p.Id); maybe "version" p.Version; flag "private" p.Private ])
+        let resource (r: Resource) = JObject (List.choose id [ some "file" (s r.File); maybe "name" r.Name ])
         let items (i: Items) =
             [ nonEmpty "defines" (List.map s i.Defines); nonEmpty "references" (List.map s i.References)
-              nonEmpty "packages" (List.map package i.Packages); nonEmpty "args" (List.map s i.Args) ]
+              nonEmpty "packages" (List.map package i.Packages); nonEmpty "args" (List.map s i.Args)
+              nonEmpty "resources" (List.map resource i.Resources) ]
         let o = d.Options
         let options =
             if o = Options.Default then None
@@ -296,8 +303,7 @@ module Description =
               some "kind" (s (match d.Kind with Library -> "library" | Exe -> "exe"))
               some "frameworks" (strs d.Frameworks)
               some "sources" (strs d.Sources)
-              nonEmpty "resources" (d.Resources |> List.map (fun r ->
-                  JObject (List.choose id [ some "file" (s r.File); maybe "name" r.Name ])))
+              nonEmpty "resources" (List.map resource d.Resources)
               nonEmpty "defines" (List.map s d.Defines)
               nonEmpty "references" (List.map s d.References)
               nonEmpty "projectRefs" (List.map s d.ProjectRefs)

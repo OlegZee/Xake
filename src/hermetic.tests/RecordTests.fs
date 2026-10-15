@@ -269,3 +269,15 @@ type ``Import record``() =
         let third = x.Import "import-3"
         Assert.That(third |> List.exists (fun i -> i.Written), Is.False)
         Assert.That(x.Locks (), Is.EqualTo locks)
+
+
+/// One synthesized restore downloads one version of an id: the fetch of a recorded lock set
+/// (each project's own restore graph) splits the packages into rounds of distinct ids.
+[<TestFixture>]
+type ``Restore rounds``() =
+
+    [<Test>]
+    member x.``packages of one id in several versions go into separate rounds``() =
+        let rounds = Restore.rounds [ "Azure.Core", "1.47.1"; "Castle.Core", "4.4.0"; "azure.core", "1.51.1"; "Azure.Core", "1.47.1"; "Azure.Core", "2.0.0" ]
+        Assert.That(rounds, Is.EqualTo [ [ "Azure.Core", "1.47.1"; "Castle.Core", "4.4.0" ]; [ "azure.core", "1.51.1" ]; [ "Azure.Core", "2.0.0" ] ])
+        Assert.That(Restore.rounds [], Is.Empty)

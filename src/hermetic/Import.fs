@@ -713,6 +713,13 @@ module Import =
               LockOf = (fun name cfg -> sprintf "locks/%s/%s.json" name cfg)
               OutOf = (fun cfg fwk name -> sprintf "out/%s/%s/%s" cfg fwk name) }
 
+    /// The targets of the design-time build: what `CoreBuild` runs up to the compiler, but the
+    /// project's `PreBuildEvent` -- `BuildOnlySettings` (what a build, not a design-time
+    /// evaluation, resolves), `PrepareForBuild` (with the SDK's `AssignLinkMetadata`: the link
+    /// of a shared project's item, hence its manifest name), the references, the resources, the
+    /// key, and `Compile`, whose compiler reports its command line instead of running.
+    let internal designTimeTargets = "BuildOnlySettings;PrepareForBuild;ResolveReferences;PrepareResources;ResolveKeySource;Compile"
+
     /// The items of the design-time build `record` reads, with the metadata it reads of each.
     let internal designTimeItems =
         [ "CscCommandLineArgs", []
@@ -735,7 +742,7 @@ module Import =
     /// <summary>
     /// The targets file `record` hands every project (`CustomAfterMicrosoftCommonTargets`; the
     /// script's own value is imported from it, `XakeChainedAfterCommonTargets`): the target
-    /// `XakeRecordDump`, run after `PrepareResources;Compile` in the same project instance,
+    /// `XakeRecordDump`, run after the design-time targets in the same project instance,
     /// writes the properties and items `record` reads to a file of its own under
     /// `$(XakeDumpRoot)`, one per line, tab-separated: <c>P name value</c>, <c>I type identity
     /// metadata...</c> (the metadata of `designTimeItems`, in that order). One msbuild process
@@ -1105,10 +1112,10 @@ module Import =
     /// `RestoreRecursive=false`), concurrently;</item>
     /// <item>the evaluations for the description, and one design-time build per
     /// (configuration, framework) -- `ProvideCommandLineArgs`, `SkipCompilerExecution`,
-    /// `BuildProjectReferences=false`, `-t:PrepareResources;Compile` into a scratch
-    /// intermediate folder -- reporting the compiler's command line, `ReferencePath`,
-    /// `Analyzer`, `Compile`, `EmbeddedResource`; all concurrently, at most the processor
-    /// count of msbuild processes;</item>
+    /// `BuildProjectReferences=false`, the targets `CoreBuild` runs up to the compiler
+    /// (`designTimeTargets`) -- reporting the compiler's command line, `ReferencePath`,
+    /// `Analyzer`, `Compile`, `EmbeddedResource`; every design-time build of a configuration in
+    /// one msbuild process;</item>
     /// <item>each entry (`entryOf`): the command line as msbuild hands it to the compiler, the
     /// files msbuild generated as recorded texts, the references and analyzers by identity
     /// (`Lock.Identity`: `pkg:`, `pack:`, `sdk:`, `project:`), the SDK version as a
@@ -1187,7 +1194,7 @@ module Import =
                             File.WriteAllText (traversal, String.concat "\n" ([ "<Project>"; "  <ItemGroup>" ] @ runItems @
                                                                               [ "  </ItemGroup>"
                                                                                 "  <Target Name=\"Build\">"
-                                                                                "    <MSBuild Projects=\"@(XakeRun)\" Targets=\"PrepareResources;Compile;XakeRecordDump\" BuildInParallel=\"true\" />"
+                                                                                (sprintf "    <MSBuild Projects=\"@(XakeRun)\" Targets=\"%s;XakeRecordDump\" BuildInParallel=\"true\" />" designTimeTargets)
                                                                                 "  </Target>"; "</Project>"; "" ]))
                             do! msbuild environment
                                     ([ traversal; "-nologo"; "-verbosity:quiet"; "-m"; "-nodeReuse:false"; "-p:XakeDumpRoot=" + slash dumpRoot ]

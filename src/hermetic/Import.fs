@@ -721,12 +721,13 @@ module Import =
           "TargetFrameworkIdentifier"; "TargetFrameworkMoniker"; "DefineConstants"; "LangVersion"; "Version"; "OutputType"
           "NETCoreSdkVersion"; "NetCoreRoot"; "NuGetPackageRoot"; "ProjectAssetsFile"; "IntermediateOutputPath"
           "CscToolPath"; "CscToolExe"; "CSharpCoreTargetsPath"; "RoslynTargetsPath"; "DotnetFscCompilerPath"
-          "SourceRevisionId"; "GenerateResourceUsePreserializedResources"; "Deterministic"; "SignAssembly"; "AssemblyOriginatorKeyFile" ]
+          "SourceRevisionId"; "GenerateResourceUsePreserializedResources"; "Deterministic"; "SignAssembly"; "AssemblyOriginatorKeyFile"
+          "TargetFileName" ]
 
     /// The properties of the design-time build a lock entry keeps (`Evaluation.Properties`).
     let private keptProperties =
         [ "AssemblyName"; "TargetFrameworkMoniker"; "LangVersion"; "Version"; "OutputType"; "Deterministic"; "SignAssembly"
-          "GenerateResourceUsePreserializedResources" ]
+          "GenerateResourceUsePreserializedResources"; "TargetFileName" ]
 
     /// What one project's entries are built from, besides its design-time builds.
     type internal RecordContext = {
@@ -741,6 +742,9 @@ module Import =
         /// the project's SDK pin and the global.json stating it
         Pin: Lock.SdkPin
         PinFile: string option
+        /// the global.json as a prerequisite names it: tokenized, or `global.json` alone when it
+        /// lies outside the roots (it is quoted in messages, never opened)
+        Pin': string
         /// the repository's msbuild files the evaluation read (absolute)
         Inputs: string list
         OutOf: string -> string -> string -> string
@@ -787,6 +791,19 @@ module Import =
                 yield ({ Name = name; Configuration = cfg; Framework = framework; Path = output } : Lock.ProjectOutput), names ]
         |> List.distinctBy (fun (p, _) -> p.Name)
 
+    /// An argument without the quotes msbuild puts around a path with a character it deems
+    /// special (`~`, a space): a source `"<path>"`, a switch value `"<path>"` or `"<path>",<name>`.
+    /// A quoted path with a comma keeps its quotes (the switch's list syntax needs them).
+    let internal unquote (arg: string) =
+        let strip (v: string) =
+            let m = Text.RegularExpressions.Regex.Match (v, "^\"([^\",]*)\"(,.*)?$")
+            if m.Success then m.Groups.[1].Value + m.Groups.[2].Value else v
+        if arg.StartsWith "/" || arg.StartsWith "-" then
+            match arg.IndexOf ':' with
+            | -1 -> arg
+            | i -> arg.Substring (0, i + 1) + strip (arg.Substring (i + 1))
+        else strip arg
+
     /// Text as a lock records it: LF line ends.
     let private lf (text: string) = text.Replace ("\r\n", "\n")
 
@@ -818,9 +835,12 @@ module Import =
             (Described.generatedDirOf ctx.Root key framework (Some cfg)).TrimEnd '/' + "/"
         let fscArgs = items d "FscCommandLineArgs" |> List.map fst
         let isFSharp = not (List.isEmpty fscArgs)
+        let parked (a: string) =
+            let a = a.TrimStart('-', '/').ToLowerInvariant ()
+            a.StartsWith "sourcelink:" || a = "embed" || a.StartsWith "embed:" || a.StartsWith "embed+" || a.StartsWith "embed-"
         let args =
-            if isFSharp then fscArgs |> FscArgs.absolutize ctx.ProjectDir
-            else items d "CscCommandLineArgs" |> List.map fst |> CscArgs.absolutize ctx.ProjectDir
+            if isFSharp then fscArgs |> List.filter (parked >> not) |> List.map unquote |> FscArgs.absolutize ctx.ProjectDir
+            else items d "CscCommandLineArgs" |> List.map fst |> List.filter (parked >> not) |> List.map unquote |> CscArgs.absolutize ctx.ProjectDir
         if List.isEmpty args then
             failwithf "'%s' (%s|%s): the design-time build reported no compiler command line -- CoreCompile did not run" ctx.ProjectFile cfg framework
         let packageRoots =
@@ -842,12 +862,16 @@ module Import =
             | _ -> if path.StartsWith (scratch, comparison) then generatedDir + path.Substring scratch.Length else path
         // a source from a package: recorded beside the generated ones
         let packaged (path: string) = generatedDir + Path.GetFileName path
+        // the build's own (the output, the reference assembly), and what is parked: SourceLink's
+        // map and the embedded untracked sources (`pr/sourcelink`; they name the commit and the
+        // remote of the importing checkout)
+        let dropped = set [ "out"; "refout"; "sourcelink"; "embed" ]
         let isOutput (o: string) =
             not (o.StartsWith "@")
             && (if isFSharp then
-                    match FscArgs.parse o with FscArgs.Switch (_, n, _) -> (let c = FscArgs.canonical n in c = "out" || c = "refout") | _ -> false
+                    match FscArgs.parse o with FscArgs.Switch (_, n, _) -> dropped.Contains (FscArgs.canonical n) | _ -> false
                 else
-                    match CscArgs.parse o with CscArgs.Switch (n, _) -> (let c = CscArgs.canonical n in c = "out" || c = "refout") | _ -> false)
+                    match CscArgs.parse o with CscArgs.Switch (n, _) -> dropped.Contains (CscArgs.canonical n) | _ -> false)
 
         // what msbuild generated: text inputs under the scratch folder, and package sources
         let binary = set [ ".resources"; ".res"; ".dll"; ".exe"; ".pdb"; ".ico"; ".snk" ]
@@ -954,7 +978,7 @@ module Import =
               // the SDK the entry was recorded with: its compiler, analyzers and shims
               Prerequisites =
                 if sdk = "" then []
-                else [ { Kind = Lock.DotnetSdk; Version = sdk; Pin = ctx.PinFile |> Option.map slash |> Option.defaultValue "" } ]
+                else [ { Kind = Lock.DotnetSdk; Version = sdk; Pin = ctx.Pin' } ]
               Recorded = Some { Projects = projects |> List.map fst } }
         // the commit a SourceLink-free AssemblyInfo still names (`InformationalVersion`): a token
         let entry = match p "SourceRevisionId" with "" -> entry | sha -> entry |> Lock.mapText (Git.tokenize sha)
@@ -1081,7 +1105,12 @@ module Import =
                     let ctx : RecordContext =
                         { Root = root; ProjectFile = slash pf; ProjectDir = slash (Path.GetDirectoryName pf)
                           Description = description; DescriptionFile = descriptionFile; PackageRoot = packageRoot
-                          Pin = pin; PinFile = pinFile; Inputs = inputs; OutOf = options.OutOf }
+                          Pin = pin; PinFile = pinFile; Inputs = inputs; OutOf = options.OutOf
+                          Pin' =
+                            match pinFile |> Option.map (Roots.tokenize roots) with
+                            | Some t when t.StartsWith "$(" -> t
+                            | Some t -> Path.GetFileName t
+                            | None -> "" }
                     let locks = ResizeArray<string> ()
                     for cfg in options.Configurations do
                         let built = [ for c, f, scratch, d in runs do if c = cfg then yield entryOf ctx cfg f scratch d ]

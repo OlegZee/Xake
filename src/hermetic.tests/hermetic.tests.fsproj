@@ -32,6 +32,7 @@
     <Compile Include="LocksTests.fs" />
     <Compile Include="BuildFromLockTests.fs" />
     <Compile Include="ImportFidelityTests.fs" />
+    <Compile Include="RecordTests.fs" />
   </ItemGroup>
   <ItemGroup>
     <!-- The `Xake` package (engine and Xake.Dotnet) flows in through this reference. -->

@@ -478,7 +478,8 @@ module Lock =
             | [| a; b; rest |] when a <> "" && b <> "" && rest <> "" -> Some (a, b, rest)
             | _ -> None
 
-        /// The portable name of `path`: `project:`, `pack:`, `pkg:`, `sdk:` (in that order),
+        /// The portable name of `path`: `project:`, `pack:` (a targeting pack under the .NET root
+        /// or in the package folder), `pkg:`, `sdk:` (in that order),
         /// else the tokenized path when it lies under a root other than `$(DotnetRoot)`, else
         /// `None`. Pure.
         let ofPath (ctx: Context) (path: string) : string option =
@@ -493,9 +494,14 @@ module Lock =
                     match rel.Split ([| '/' |], 2) with
                     | [| v; rest |] when v = ctx.Sdk && rest <> "" -> Some rest
                     | _ -> None)
+            // a targeting pack (`Microsoft.<X>.App.Ref`) is the same `pack:` whether this .NET has
+            // it or msbuild downloaded it into the package folder: the id in lower case, as the
+            // package folder spells it
+            let isPack (id: string) = id.EndsWith (".app.ref", System.StringComparison.OrdinalIgnoreCase)
             match project, inPacks, inPackages, inSdk with
             | Some p, _, _, _ -> Some ("project:" + p.Name)
-            | _, Some (pack, version, rest), _, _ -> Some (sprintf "pack:%s/%s/%s" pack version rest)
+            | _, Some (pack, version, rest), _, _ -> Some (sprintf "pack:%s/%s/%s" (pack.ToLowerInvariant ()) version rest)
+            | _, _, Some (id, version, rest), _ when isPack id -> Some (sprintf "pack:%s/%s/%s" (id.ToLowerInvariant ()) version rest)
             | _, _, Some (id, version, rest), _ -> Some (sprintf "pkg:%s/%s/%s" id version rest)
             | _, _, _, Some rest -> Some ("sdk:" + rest)
             | _ ->
@@ -518,9 +524,18 @@ module Lock =
             elif identity.StartsWith "pack:" then
                 match threeParts (rest "pack:") with
                 | Some (pack, version, file) ->
-                    let installed = root "$(DotnetRoot)" + "/packs/" + pack + "/" + version + "/" + file
-                    if File.Exists installed then installed
-                    else root Roots.nugetPackageRootToken + "/" + pack.ToLowerInvariant () + "/" + version.ToLowerInvariant () + "/" + file
+                    // the pack folder of this .NET, whatever its case (`Microsoft.NETCore.App.Ref`)
+                    let packs = root "$(DotnetRoot)" + "/packs"
+                    let installed =
+                        if not (Directory.Exists packs) then None
+                        else
+                            Directory.GetDirectories packs
+                            |> Array.tryFind (fun d -> System.String.Equals (Path.GetFileName d, pack, System.StringComparison.OrdinalIgnoreCase))
+                            |> Option.map (fun d -> slash d + "/" + version + "/" + file)
+                            |> Option.filter File.Exists
+                    match installed with
+                    | Some path -> path
+                    | None -> root Roots.nugetPackageRootToken + "/" + pack.ToLowerInvariant () + "/" + version.ToLowerInvariant () + "/" + file
                 | None -> failwithf "'%s' is not pack:<pack>/<version>/<path>" identity
             elif identity.StartsWith "sdk:" then
                 if ctx.Sdk = "" then failwithf "'%s': the entry records no SDK version (Evaluation.Sdk)" identity

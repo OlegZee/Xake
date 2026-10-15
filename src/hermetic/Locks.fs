@@ -374,6 +374,13 @@ module Locks =
             : Recipe<ExecContext, unit> =
         restoreAllWith [] descriptions cfg lockOf descriptionOf
 
+    /// The file name of an entry's output: the one msbuild gives it (`TargetFileName`, recorded:
+    /// `X.exe` for a .NET Framework application), else `<assembly>.dll`.
+    let outputName (entry: Lock.Entry) : string =
+        match entry.Evaluation.Properties |> Map.tryFind "TargetFileName" with
+        | Some name when name <> "" -> name
+        | _ -> entry.Name + ".dll"
+
     /// The token a lock's `Generated` sources carry where the assembly version goes; the lock
     /// does not depend on the version, the build substitutes it (`compileAs`).
     let VersionToken = "$(Version)"
@@ -429,7 +436,7 @@ module Locks =
                         (many |> List.map (fun e -> e.Name) |> String.concat ", ")
             let asm = Path.GetFileNameWithoutExtension target
             if entry.Name <> asm then
-                failwithf "'%s': the target '%s' is not the assembly of the lock '%s' (%s.dll)" entry.Name target lockPath entry.Name
+                failwithf "'%s': the target '%s' is not the assembly of the lock '%s' (%s)" entry.Name target lockPath (outputName entry)
 
             // project-reference outputs first (unhashed in the lock): another rule's targets. The
             // hashed ones are packages, which may not be fetched yet: the runner needs them after
@@ -487,11 +494,11 @@ module Locks =
         recipe {
             let! doc = Lock.loadWith extraRoots lockPath
             let asm = Path.GetFileNameWithoutExtension xml
-            let asked = doc.Entries |> List.exists (fun e -> same e.Framework fwk && e.Name = asm && asksDoc e.Compilation)
-            if not asked then
+            let entry = doc.Entries |> List.tryFind (fun e -> same e.Framework fwk && e.Name = asm && asksDoc e.Compilation)
+            if entry.IsNone then
                 failwithf "'%s': the lock '%s' asks for no XML doc for %s: nothing writes '%s' (set `options.doc` in the description and update the lock)"
                     asm lockPath fwk xml
-            let dll = Path.ChangeExtension (xml, ".dll")
+            let dll = Path.Combine (Path.GetDirectoryName xml, outputName entry.Value)
             do! needFiles (Filelist [ File.make dll ])
             if not (File.Exists xml) then
                 failwithf "'%s': '%s' is missing while '%s' is up to date; delete the dll to compile it again" asm xml dll
@@ -575,16 +582,22 @@ module Locks =
             if not (List.isEmpty missing) then
                 failwithf "no %s lock for %s; generate the locks first (e.g. the script's `update-locks`, over Locks.generate)"
                     cfg (missing |> List.map (fun d -> sprintf "'%s' ('%s')" d.Name (lockOf d.Name cfg)) |> String.concat ", ")
+            let! docs = loaded |> List.map (fun d -> Lock.loadWith extraRoots (lockOf d.Name cfg)) |> sequence
+            // the output of each framework: the name msbuild gives it when the lock records one
             let targets =
-                [ for d in loaded do
+                [ for d, doc in List.zip loaded docs do
                     let asm = d.AssemblyName |> Option.defaultValue d.Name
-                    for fwk in d.Frameworks -> normal (Path.Combine (outOf cfg fwk d.Name, asm + ".dll")) ]
+                    for fwk in d.Frameworks ->
+                        let name =
+                            match doc.Entries |> List.tryFind (fun e -> same e.Framework fwk) with
+                            | Some e -> outputName e
+                            | None -> asm + ".dll"
+                        normal (Path.Combine (outOf cfg fwk d.Name, name)) ]
             // the packages every lock names that the folder lacks, fetched in one restore before
             // the compiles (each would otherwise start its own); nothing missing costs a
             // `File.Exists` per path. What is still wrong is reported by each compile
             // A failing restore (a bad feed, a missing version in one lock) does not fail the
             // build here: each compile restores what it misses again and fails, or not, alone
-            let! docs = loaded |> List.map (fun d -> Lock.loadWith extraRoots (lockOf d.Name cfg)) |> sequence
             let! problems =
                 recipe {
                     try

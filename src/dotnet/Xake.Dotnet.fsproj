@@ -42,6 +42,7 @@
     <!-- Resx has no dependency on Fsproj/DotnetTasks; it is compiled here (ahead of
          DotnetTasks.fs) because DotnetTasks.fs's Impl.compileResx calls into it on
          netstandard2.0. -->
+    <Compile Include="ResxFormat.fs" />
     <Compile Include="Resx.fs" />
 
     <Compile Include="DotnetTasks.fs" />
@@ -85,6 +86,11 @@
 
   <ItemGroup Condition="'$(TargetFramework)' == 'netstandard2.0'">
     <PackageReference Include="Microsoft.Win32.Registry" Version="5.0.0" />
+  </ItemGroup>
+
+  <!-- PreserializedResourceWriter: .resx compiled as the .NET SDK's GenerateResource does (ResxFormat.fs) -->
+  <ItemGroup>
+    <PackageReference Include="System.Resources.Extensions" Version="8.0.0" />
   </ItemGroup>
 
   <!-- Kept in step with src/core: this is the FSharp.Core floor the package imposes on its

@@ -891,7 +891,9 @@ module Import =
                 let projectFile = absoluteIn ctx.ProjectDir (match source with "" -> meta "OriginalProjectReferenceItemSpec" m | s -> s)
                 let name = Path.GetFileNameWithoutExtension projectFile
                 // its output is found by the lock of that project, which this import must write
-                if not (ctx.Imported |> List.exists (fun p -> String.Equals (p, projectFile, comparison))) then
+                // (ignoring case: a reference may spell a folder otherwise on a file system that
+                // ignores it, as macOS's and Windows' do)
+                if not (ctx.Imported |> List.exists (fun p -> String.Equals (p, projectFile, StringComparison.OrdinalIgnoreCase))) then
                     failwithf "'%s' (%s|%s) references the project '%s', which this import does not record: its output would have no lock; add it to the imported projects"
                         ctx.ProjectFile cfg (prop d "TargetFramework") projectFile
                 let framework =
@@ -903,7 +905,7 @@ module Import =
                 let names = [ id; meta "ReferenceAssembly" m ] |> List.filter ((<>) "") |> List.map (absoluteIn ctx.ProjectDir)
                 yield projectFile, (({ Name = name; Configuration = cfg; Framework = framework; Path = output } : Lock.ProjectOutput), names) ]
         // a project is `project:<name>`: two project files of one name cannot both be
-        match found |> List.map fst |> List.distinct |> List.groupBy Path.GetFileNameWithoutExtension |> List.tryFind (fun (_, fs) -> fs.Length > 1) with
+        match found |> List.map fst |> List.distinctBy (fun f -> f.ToLowerInvariant ()) |> List.groupBy Path.GetFileNameWithoutExtension |> List.tryFind (fun (_, fs) -> fs.Length > 1) with
         | Some (name, files) ->
             failwithf "'%s' (%s|%s) references two projects named '%s' (%s); a recorded lock names a project reference by its name: rename one"
                 ctx.ProjectFile cfg (prop d "TargetFramework") name (String.concat ", " files)
@@ -1284,9 +1286,17 @@ module Import =
                     sha.ComputeHash (Text.Encoding.UTF8.GetBytes text) |> Array.take 6 |> Array.map (sprintf "%02x") |> String.concat ""
                 let runProperties (key: string) (ev: Evaluated) (framework: string) =
                     let escape (v: string) = v.Replace("%", "%25").Replace(";", "%3B")
-                    let projectDir = prop ev.Outer "MSBuildProjectDirectory"
+                    let projectDir = slash (prop ev.Outer "MSBuildProjectDirectory")
                     let baseObj = match prop ev.Outer "BaseIntermediateOutputPath" with "" -> "obj/" | b -> b
-                    let intermediate = sprintf "%s/xake-record/%s/%s/" ((absoluteIn projectDir baseObj).TrimEnd '/') key framework
+                    // relative to the project when under it (`obj/xake-record/...`): the same value
+                    // for every project, so a target that hands it on to a referenced project
+                    // (one that does not remove it, as the code coverage's does not) makes no
+                    // more instances of that project than there are frameworks
+                    let baseDir = (absoluteIn projectDir baseObj).TrimEnd '/'
+                    let baseDir =
+                        if baseDir.StartsWith (projectDir.TrimEnd '/' + "/", comparison) then baseDir.Substring (projectDir.TrimEnd('/').Length + 1)
+                        else baseDir
+                    let intermediate = sprintf "%s/xake-record/%s/%s/" baseDir key framework
                     // the project's own targets after the common targets (a repository's
                     // `Directory.Build.props`, or the script's): imported from Xake's
                     let chained =

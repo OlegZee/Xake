@@ -117,6 +117,12 @@ module Apps =
             Array.sub b 0 symtabEnd
         | _ -> bytes
 
+    /// Copies `source` over `destination` unless it has those bytes already: a recompile that
+    /// writes the same apphost leaves the file (and every hard link to it) as it is.
+    let private copyIfChanged (source: string) (destination: string) =
+        if not (File.Exists destination) || File.ReadAllBytes source <> File.ReadAllBytes destination then
+            File.Copy (source, destination, true)
+
     /// The apphost's placeholder for the application's file name (`HostWriter`), UTF-8.
     let private appBinaryPlaceholder = System.Text.Encoding.UTF8.GetBytes "c3ab8ff13720e8ad9047dd39466b3c8974e592c2fa383d4a3960714caef0c4f2"
 
@@ -169,10 +175,10 @@ module Apps =
                 let file = Path.Combine (temp, "apphost")
                 File.WriteAllBytes (file, result)
                 runTool "/usr/bin/codesign" [ "-s"; "-"; file ] temp
-                File.Copy (file, destination, true)
+                copyIfChanged file destination
             finally
                 try Directory.Delete (temp, true) with _ -> ()
-        else File.WriteAllBytes (destination, result)
+        elif not (File.Exists destination) || File.ReadAllBytes destination <> result then File.WriteAllBytes (destination, result)
         if not Env.isWindows then
             try runTool "chmod" [ "755"; Path.GetFullPath destination ] (Path.GetDirectoryName (Path.GetFullPath destination)) with _ -> ()
 
@@ -228,7 +234,7 @@ module Apps =
             (try create.Invoke (null, args) |> ignore
              with :? System.Reflection.TargetInvocationException as e when not (isNull e.InnerException) -> raise e.InnerException)
             Directory.CreateDirectory (Path.GetDirectoryName (Path.GetFullPath destination)) |> ignore
-            File.Copy (file, destination, true)
+            copyIfChanged file destination
             true
         finally
             try Directory.Delete (temp, true) with _ -> ()

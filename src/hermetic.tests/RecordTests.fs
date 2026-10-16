@@ -62,7 +62,7 @@ type ``Recorded lock identities``() =
         { Lock.ofCsc c with
             Evaluation = { Lock.Evaluation.Empty with Project = "/r/proj/src/App.csproj"; ProjectRefs = [ "Lib" ]; Sdk = "8.0.425" }
             Prerequisites = [ { Kind = Lock.DotnetSdk; Version = "8.0.425"; Pin = "$(ProjectRoot)/global.json" } ]
-            Recorded = Some { Projects = [ lib ]; Masks = [ "/r/proj/src/**/*.cs"; "!/r/proj/src/obj/**/*" ] } }
+            Recorded = Some { Projects = [ lib ]; Masks = [ "/r/proj/src/**/*.cs"; "!/r/proj/src/obj/**/*" ]; Placed = None } }
 
     [<Test>]
     member x.``a recorded entry is written with identities and the Recorded section, and reads back to paths``() =
@@ -79,13 +79,67 @@ type ``Recorded lock identities``() =
         Assert.That(text, Does.Not.Contain "/r/")
         let back = Lock.parse roots text
         let e = back.Entries.Head
-        Assert.That(e.Recorded, Is.EqualTo entry.Recorded)
+        Assert.That(e.Recorded.Value.Projects, Is.EqualTo entry.Recorded.Value.Projects)
+        Assert.That(e.Recorded.Value.Masks, Is.EqualTo entry.Recorded.Value.Masks)
+        // one source, in the masks' place: nothing is placed
+        Assert.That(e.Recorded.Value.Placed, Is.EqualTo (Some ([]: (string * string) list)))
         Assert.That(e.Dependencies.References |> List.map (fun r -> r.Path), Is.EqualTo [ lib.Path; "/r/pkgs/system.memory/4.5.5/lib/net461/System.Memory.dll" ])
         Assert.That(e.Dependencies.Compiler.Path, Is.EqualTo "/r/dotnet/sdk/8.0.425/Roslyn/bincore/csc.dll")
         // the pack is not installed here: it reads as the package
         Assert.That(e.Dependencies.Analyzers.Head.Path, Is.EqualTo "/r/pkgs/microsoft.netcore.app.ref/8.0.11/analyzers/dotnet/cs/Gen.dll")
         // read on a machine without the pack, written again: the same text
         Assert.That(Lock.format roots back, Is.EqualTo text)
+
+    [<Test>]
+    member x.``with masks, a lock writes only the sources the masks do not put in place, and a build puts them back``() =
+        let masks = [ "/r/proj/**/*.cs"; "/r/shared/Link.cs"; "!/r/proj/obj/**/*" ]
+        let gen = "/r/proj/obj/xake/App.AssemblyInfo.cs"
+        // msbuild's order: the masks' (per mask, ordinal ignoring case) but Z.cs, compiled first,
+        // and the generated file last
+        let sources = [ "/r/proj/Z.cs"; "/r/proj/a.cs"; "/r/proj/B.cs"; "/r/proj/sub/C.cs"; "/r/shared/Link.cs"; gen ]
+        Assert.That(Lock.canonicalSources masks (List.take 5 sources),
+                    Is.EqualTo [ "/r/proj/a.cs"; "/r/proj/B.cs"; "/r/proj/sub/C.cs"; "/r/proj/Z.cs"; "/r/shared/Link.cs" ])
+        let placed = Lock.placedSources masks ((=) gen) sources
+        Assert.That(placed, Is.EqualTo [ "/r/proj/Z.cs", ""; gen, "/r/shared/Link.cs" ])
+        let files = List.take 5 sources |> List.sort
+        Assert.That(Lock.reconstructSources masks placed (fun _ -> true) files, Is.EqualTo sources)
+        // a file added since takes its place in the masks' order; a deleted one is left out
+        let now = files |> List.filter ((<>) "/r/proj/B.cs") |> List.append [ "/r/proj/b2.cs" ]
+        Assert.That(Lock.reconstructSources masks placed (fun f -> f = gen || List.contains f now) now,
+                    Is.EqualTo [ "/r/proj/Z.cs"; "/r/proj/a.cs"; "/r/proj/b2.cs"; "/r/proj/sub/C.cs"; "/r/shared/Link.cs"; gen ])
+        // written and read back: the same text, the placed files only in Sources
+        let c = { Csc.ofArgs ([ "/noconfig" ] @ sources) with Name = "App"; Framework = "net8.0"; Directory = "/r/proj"; Generated = [ gen, "// g" ] }
+        let c = { c with Dependencies = { c.Dependencies with Compiler = { Tool = "csc"; Path = "/r/dotnet/sdk/8.0.425/Roslyn/bincore/csc.dll"; Sha256 = ""; Version = "" } } }
+        let entry =
+            { Lock.ofCsc c with
+                Evaluation = { Lock.Evaluation.Empty with Project = "/r/proj/App.csproj"; Sdk = "8.0.425" }
+                Recorded = Some { Projects = []; Masks = masks; Placed = None } }
+        let rootsHere = [ "$(ProjectRoot)", "/r/proj"; "$(Shared)", "/r/shared"; "$(DotnetRoot)", "/r/dotnet"; "$(NuGetPackageRoot)", "/r/pkgs" ]
+        let text = Lock.format rootsHere { Configuration = "Release"; Properties = []; Entries = [ entry ] }
+        Assert.That(text, Does.Contain "\"Sources\": [\n          \"$(ProjectRoot)/Z.cs\",\n          \"$(ProjectRoot)/obj/xake/App.AssemblyInfo.cs\"\n        ]")
+        Assert.That(text, Does.Contain "\"Placed\": {\n          \"$(ProjectRoot)/Z.cs\": \"\",\n          \"$(ProjectRoot)/obj/xake/App.AssemblyInfo.cs\": \"$(Shared)/Link.cs\"\n        }")
+        let back = Lock.parse rootsHere text
+        Assert.That(back.Entries.Head.Recorded.Value.Placed, Is.EqualTo (Some placed))
+        Assert.That(Lock.format rootsHere back, Is.EqualTo text)
+
+    [<Test>]
+    member x.``document properties are tokenized like paths``() =
+        let text = Lock.format roots { Configuration = "Release"; Properties = [ "Brand", "X"; "RestoreConfigFile", "/r/proj/NuGet.config" ]; Entries = [] }
+        Assert.That(text, Does.Contain "\"RestoreConfigFile\": \"$(ProjectRoot)/NuGet.config\"")
+        Assert.That(text, Does.Contain "\"Brand\": \"X\"")
+        Assert.That((Lock.parse roots text).Properties, Is.EqualTo [ "Brand", "X"; "RestoreConfigFile", "/r/proj/NuGet.config" ])
+
+    [<Test>]
+    member x.``msbuild's quotes are taken off a path, but not off a path list item with a comma``() =
+        Assert.That(Import.unquote "/analyzerconfig:\"/a/~b/x.editorconfig\"", Is.EqualTo "/analyzerconfig:/a/~b/x.editorconfig")
+        Assert.That(Import.unquote "\"/a b/c.cs\"", Is.EqualTo "/a b/c.cs")
+        Assert.That(Import.unquote "/reference:\"/a,b.dll\",alias", Is.EqualTo "/reference:\"/a,b.dll\",alias")
+        Assert.That(Import.unquote "/reference:\"/a~/b.dll\",alias", Is.EqualTo "/reference:/a~/b.dll,alias")
+        Assert.That(Import.unquote "/define:\"A;B\"", Is.EqualTo "/define:A;B")
+        Assert.That(Import.unquote "/nowarn:1591", Is.EqualTo "/nowarn:1591")
+        // a path with a space, unquoted, is quoted again in the response file the runner writes
+        let c = Csc.ofArgs [ Import.unquote "\"/a b/c.cs\"" ]
+        Assert.That(c.Sources, Is.EqualTo [ "/a b/c.cs" ])
 
     [<Test>]
     member x.``a recorded file outside every root and package folder is refused, naming it``() =
@@ -271,9 +325,13 @@ type ``Import record``() =
         Assert.That(third |> List.exists (fun i -> i.Written), Is.False)
         Assert.That(x.Locks (), Is.EqualTo locks)
 
-        // the lock keeps msbuild's file order and the description's masks: a source added since
-        // is compiled without a new import
+        // the lock keeps the description's masks and only the sources they do not put in place
+        // (the generated ones): a source added since is compiled without a new import
         Assert.That(app, Does.Contain "\"Masks\": [")
+        Assert.That(app, Does.Contain "\"Placed\": {")
+        // P.cs only as what the first generated source follows, once per framework
+        Assert.That(app.Split("\"$(ProjectRoot)/app/P.cs\"").Length - 1, Is.EqualTo 2)
+        Assert.That(app, Does.Contain "\"$(ProjectRoot)/obj/xake/app/net8.0/Release/app.GlobalUsings.g.cs\": \"$(ProjectRoot)/app/P.cs\"")
         let types, _, _ = metadata "out/Release/net8.0/app/app.dll"
         File.WriteAllText ("app/Extra.cs", "public class Extra { }\n")
         x.Build "build-2"
@@ -584,7 +642,7 @@ type ``Import record switch files``() =
         let c =
             { Csc.ofArgs [ "/noconfig"; "/keyfile:/opt/keys/k.snk"; "/analyzerconfig:/r/dotnet/sdk/8.0.425/x.globalconfig"; "/ruleset:/r/proj/a.ruleset"
                            "/pathmap:/r/proj/=/_/,/opt/src/=/_2/"; "/r/proj/A.cs" ] with Name = "A"; Framework = "net8.0" }
-        let entry = { Lock.ofCsc c with Evaluation = { Lock.Evaluation.Empty with Project = "/r/proj/A.csproj"; Sdk = "8.0.425" }; Recorded = Some { Projects = []; Masks = [] } }
+        let entry = { Lock.ofCsc c with Evaluation = { Lock.Evaluation.Empty with Project = "/r/proj/A.csproj"; Sdk = "8.0.425" }; Recorded = Some { Projects = []; Masks = []; Placed = None } }
         let problems = Import.unportablePaths roots entry
         Assert.That(problems, Has.Length.EqualTo 2)
         Assert.That(problems.[0], Does.Contain "'/opt/keys/k.snk'")

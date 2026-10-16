@@ -480,6 +480,14 @@ module Locks =
                 match c, entry.Recorded with
                 // recorded from msbuild: msbuild's files in its order, those the masks no longer
                 // name dropped, a file the masks name since appended
+                // read from a lock: the masks' files in their order, the placed ones (generated,
+                // msbuild's exceptions) where msbuild had them
+                | Lock.Compilation.Csc recorded, Some ({ Placed = Some placed } as r) when not (List.isEmpty r.Masks) -> recipe {
+                    let! files = Described.expand r.Masks
+                    let generated = recorded.Generated |> List.map fst |> set
+                    let named = set files
+                    let keep (f: string) = generated.Contains f || named.Contains (normal f)
+                    return Lock.Compilation.Csc { recorded with Sources = Lock.reconstructSources r.Masks placed keep files } }
                 | Lock.Compilation.Csc recorded, Some r when not (List.isEmpty r.Masks) -> recipe {
                     let! files = Described.expand r.Masks
                     let generated = recorded.Generated |> List.map fst

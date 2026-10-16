@@ -1126,7 +1126,7 @@ module Import =
               Prerequisites =
                 if sdk = "" then []
                 else [ { Kind = Lock.DotnetSdk; Version = sdk; Pin = ctx.Pin' } ]
-              Recorded = Some { Projects = projects |> List.map fst; Masks = masks } }
+              Recorded = Some { Projects = projects |> List.map fst; Masks = masks; Placed = None } }
         // the commit a SourceLink-free AssemblyInfo still names (`InformationalVersion`): a token
         let entry = match p "SourceRevisionId" with "" -> entry | sha -> entry |> Lock.mapText (Git.tokenize sha)
 

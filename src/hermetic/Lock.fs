@@ -212,7 +212,84 @@ module Lock =
         /// order; a build compiles the files the masks name then -- msbuild's order first, a file
         /// added since after them (`Locks.compileAs`)
         Masks: string list
+        /// With masks, how `Sources` is written: only the files the masks do not put in place
+        /// -- the generated ones and msbuild's exceptions to the masks' order
+        /// (`canonicalSources`) -- each with the file msbuild compiles before it ("" first).
+        /// `None` in an entry an import just made (its `Sources` is msbuild's whole list, and
+        /// `format` computes this, `placedSources`); `Some` in an entry read from a lock, whose
+        /// `Sources` then holds the placed files only and a build reconstructs the rest from
+        /// the masks (`reconstructSources`)
+        Placed: (string * string) list option
     }
+
+    /// <summary>
+    /// The order a recorded entry's masks put `files` in, as msbuild's globbing does: for each
+    /// include mask in turn, the files it names that no earlier one did, sorted ordinally
+    /// ignoring case; a file no include names last, in the given order. Pure.
+    /// </summary>
+    let canonicalSources (masks: string list) (files: string list) : string list =
+        let remaining = System.Collections.Generic.HashSet<string> (files)
+        [ for m in masks do
+            if not (m.StartsWith "!") then
+                let pattern = Xake.Path.parse (if m.EndsWith "**" then m + "/*" else m)
+                let named =
+                    files |> List.filter (fun f -> remaining.Contains f && Xake.Path.matchesPattern pattern f)
+                    |> List.distinct |> List.sortWith (fun a b -> System.String.Compare (a, b, System.StringComparison.OrdinalIgnoreCase))
+                for f in named do
+                    remaining.Remove f |> ignore
+                    yield f
+          yield! files |> List.filter remaining.Contains |> List.distinct ]
+
+    /// <summary>
+    /// The `Placed` of a recorded entry whose `sources` are msbuild's whole list: the longest
+    /// run of user sources already in the masks' order (`canonicalSources`) is left to the
+    /// masks; every other source -- a generated one (`isGenerated`), or one msbuild puts
+    /// elsewhere -- is placed after the source msbuild compiles before it ("" for the first).
+    /// `reconstructSources` gives `sources` back. Pure.
+    /// </summary>
+    let placedSources (masks: string list) (isGenerated: string -> bool) (sources: string list) : (string * string) list =
+        let user = sources |> List.filter (isGenerated >> not)
+        let rank = canonicalSources masks user |> List.mapi (fun i f -> f, i) |> dict
+        // the longest increasing run of ranks (patience sorting), as the set of its files
+        let kept =
+            let ranks = user |> List.map (fun f -> rank.[f]) |> Array.ofList
+            let tails = ResizeArray<int> ()          // index into `ranks` of the tail of each length
+            let previous = Array.create ranks.Length -1
+            for i in 0 .. ranks.Length - 1 do
+                let mutable lo, hi = 0, tails.Count
+                while lo < hi do
+                    let mid = (lo + hi) / 2
+                    if ranks.[tails.[mid]] < ranks.[i] then lo <- mid + 1 else hi <- mid
+                if lo > 0 then previous.[i] <- tails.[lo - 1]
+                if lo = tails.Count then tails.Add i else tails.[lo] <- i
+            let set = System.Collections.Generic.HashSet<string> ()
+            let mutable i = if tails.Count = 0 then -1 else tails.[tails.Count - 1]
+            while i >= 0 do
+                set.Add (List.item i user) |> ignore
+                i <- previous.[i]
+            set
+        sources |> List.mapi (fun i f -> f, (if i = 0 then "" else List.item (i - 1) sources))
+        |> List.filter (fun (f, _) -> isGenerated f || not (kept.Contains f))
+
+    /// <summary>
+    /// The sources of a recorded entry from its masks' expansion now (`files`) and its `Placed`:
+    /// the files no `placed` entry names, in the masks' order, then each placed file `keep`
+    /// accepts (a generated one, one the masks still name) after the one msbuild compiled
+    /// before it, at the end when that one is gone. A file added since takes its place in the
+    /// masks' order; a deleted one is left out. Pure.
+    /// </summary>
+    let reconstructSources (masks: string list) (placed: (string * string) list) (keep: string -> bool) (files: string list) : string list =
+        let placedFiles = placed |> List.map fst |> set
+        let result = ResizeArray<string> (canonicalSources masks (files |> List.filter (placedFiles.Contains >> not)))
+        for f, after in placed do
+            if keep f then
+                match after with
+                | "" -> result.Insert (0, f)
+                | a ->
+                    match result.IndexOf a with
+                    | -1 -> result.Add f
+                    | i -> result.Insert (i + 1, f)
+        List.ofSeq result
 
     /// One project's compilation, as recorded in a lock: what the compiler is handed
     /// (`Compilation`, which carries the entry's identity, `Name` and `Framework`) plus the
@@ -621,6 +698,15 @@ module Lock =
         // compilation's fields as `Compilation`, and its dependencies together with the
         // entry's package graph as `Dependencies`
         let e, c, d = entry.Evaluation, entry.Compilation, entry.Compilation.Dependencies
+        let placed =
+            match entry.Recorded with
+            | Some r when not (List.isEmpty r.Masks) ->
+                match r.Placed with
+                | Some p -> Some p
+                | None ->
+                    let generated = c.Generated |> List.map fst |> set
+                    Some (placedSources r.Masks generated.Contains c.Sources)
+            | _ -> None
         [ sprintf "      \"Name\": %s" (escape c.Name)
           sprintf "      \"Framework\": %s" (escape c.Framework)
           section "Evaluation"
@@ -634,7 +720,8 @@ module Lock =
             [ sprintf "%s\"Directory\": %s" indent (str c.Directory)
               strings "Options" c.Options
               strings "Defines" c.Defines
-              strings "Sources" c.Sources
+              // with masks, only what the masks do not put in place (`Recorded.Placed`)
+              strings "Sources" (match placed with Some p -> p |> List.map fst | None -> c.Sources)
               // the content of a generated source is text, not a path: its `\` stay
               pairsWith (Roots.tokenizeText roots >> escape) "Generated" c.Generated
               pairs "Resources" c.Resources
@@ -661,14 +748,19 @@ module Lock =
           | None -> ()
           | Some r ->
               section "Recorded"
-                [ sprintf "%s\"By\": \"msbuild\"" indent
-                  strings "Masks" r.Masks
-                  r.Projects
-                  |> List.map (fun p ->
-                      sprintf "%s  { \"Name\": %s, \"Configuration\": %s, \"Framework\": %s, \"Path\": %s }"
-                          indent (escape p.Name) (escape p.Configuration) (escape p.Framework) (str p.Path))
-                  |> String.concat ",\n"
-                  |> fun body -> if body = "" then sprintf "%s\"Projects\": []" indent else sprintf "%s\"Projects\": [\n%s\n%s]" indent body indent ] ]
+                [ yield sprintf "%s\"By\": \"msbuild\"" indent
+                  yield strings "Masks" r.Masks
+                  match placed with
+                  | Some p when not (List.isEmpty p) -> yield pairs "Placed" p
+                  | Some _ -> yield sprintf "%s\"Placed\": {}" indent
+                  | None -> ()
+                  let projects =
+                      r.Projects
+                      |> List.map (fun p ->
+                          sprintf "%s  { \"Name\": %s, \"Configuration\": %s, \"Framework\": %s, \"Path\": %s }"
+                              indent (escape p.Name) (escape p.Configuration) (escape p.Framework) (str p.Path))
+                      |> String.concat ",\n"
+                  yield if projects = "" then sprintf "%s\"Projects\": []" indent else sprintf "%s\"Projects\": [\n%s\n%s]" indent projects indent ] ]
         |> String.concat ",\n" |> sprintf "    {\n%s\n    }"
 
     /// The lock as text: paths tokenized against the given roots, one line per item, so the
@@ -719,7 +811,11 @@ module Lock =
                          |> List.map (fun p ->
                              { Name = str "Name" p; Configuration = str "Configuration" p; Framework = str "Framework" p
                                Path = str "Path" p |> expand })
-                       Masks = strings "Masks" r }
+                       Masks = strings "Masks" r
+                       Placed =
+                         match field "Placed" r with
+                         | Some (JObject members) -> Some (members |> List.choose (fun (k, v) -> asString v |> Option.map (fun v -> expand k, expand v)))
+                         | _ -> None }
             | _ -> None
         let context : Identity.Context =
             { Roots = roots; Sdk = str "Sdk" e; Projects = recorded |> Option.map (fun r -> r.Projects) |> Option.defaultValue [] }

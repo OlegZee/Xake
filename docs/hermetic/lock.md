@@ -135,6 +135,13 @@ condition the masks do not know, the two can drift; the import checks them only 
    evaluated once. The assets files are copied before the next configuration's restore: a
    package may depend on the configuration.
 
+   The same targets file also writes, for an application (`HasRuntimeOutput`), msbuild's
+   copy-local files (`ReferenceCopyLocalPaths`), the apphost template (`ResolvedAppHostPack`),
+   the config file before binding redirects and the related extensions
+   (`AllowedReferenceRelatedFileExtensions`). A second msbuild run over the applications only
+   writes their `runtimeconfig.json` and `deps.json` (`GenerateBuildRuntimeConfigurationFiles`,
+   `GenerateBuildDependencyFile`), see [Applications](#applications-the-app-section).
+
    Each design-time build writes what it generates (assembly info, compiled resources) into an
    intermediate folder of its own, `<BaseIntermediateOutputPath>/xake-record/<key>/<tfm>/`, where
    the key is a hash of the configuration and the properties. Two imports with different
@@ -178,8 +185,11 @@ condition the masks do not know, the two can drift; the import checks them only 
    - a `ProjectReference` to a project that is not in `projects` fails: its output would be
      `project:<name>` with no lock behind it. Two referenced project files with the same name
      fail too;
-   - the text must contain no string of this machine (`Import.hostStrings`: the roots, the home
-     and temp folders, a runtime identifier).
+   - the text, and the text files recorded beside it, must contain no string of this machine
+     (`Import.hostStrings`: the roots, the home and temp folders, a runtime identifier). A
+     runtime identifier is allowed where a package names it -- its folder `runtimes/<rid>/` (a
+     copy-local asset, a `deps.json` path) or a `deps.json` asset's `"rid"` -- and where the
+     project declares it (`RuntimeIdentifier`), but not in a `$(DotnetRoot)` path.
 
    When the SDK that recorded the lock is pinned more strictly than `global.json` pins it (any
    `rollForward` but `disable`, or no `global.json`), the import warns and shows the `global.json`
@@ -196,7 +206,7 @@ paths (`Lock.Identity`):
 | Identity | The file | On another machine |
 |---|---|---|
 | `pkg:<id>/<version>/<path>` | a package file in the package folder | `$(NuGetPackageRoot)/<id>/<version>/<path>`; a missing package is fetched (`NUGET_FETCH`) |
-| `pack:<pack>/<version>/<path>` | a file of a targeting pack (`Microsoft.<X>.App.Ref`), under `$(DotnetRoot)/packs` or downloaded into the package folder | the pack under this .NET's `packs/` when it has that version, else the package of that name (fetched like any package) |
+| `pack:<pack>/<version>/<path>` | a file of a targeting pack (`Microsoft.<X>.App.Ref`), an apphost pack (`Microsoft.NETCore.App.Host.<rid>`) or a runtime pack (`Microsoft.<X>.App.Runtime.<rid>`), under `$(DotnetRoot)/packs` or downloaded into the package folder | the pack under this .NET's `packs/` when it has that version, else the package of that name (fetched like any package) |
 | `sdk:<path>` | a file of the SDK the entry was recorded with (the compiler, the SDK's analyzers and shims) | `$(DotnetRoot)/sdk/<Evaluation.Sdk>/<path>`; the `dotnet-sdk` prerequisite fails first when that SDK is not installed |
 | `project:<name>` | a referenced project's output | `Recorded.Projects[name].Path` (tokenized, the build's layout) |
 | `$(ProjectRoot)/...`, `$(Sibling)/...` | a file under a root | the root on this machine |
@@ -261,6 +271,87 @@ machines record the same lock.
   application, `app.dll` for .NET).
 - Document `Properties` are tokenized like paths.
 
+### Applications: the `App` section
+
+An entry whose project has runtime output (`HasRuntimeOutput`: an exe, a winexe, a .NET test
+project) has an `App` section: what msbuild makes of the project besides the compile, recorded
+from msbuild, nothing derived. The build writes it beside the assembly (`Apps.write`, called by
+`Locks.compileAs` after the compile; the files are side outputs of the assembly's rule, like the
+`.xml`).
+
+```json
+"App": {
+  "OutputType": "Exe",
+  "Host": { "Rid": "" },
+  "Files": [
+    { "Name": "app.runtimeconfig.json", "Path": "$(ProjectRoot)/locks/app/Release.files/net8.0/app/app.runtimeconfig.json", "Sha256": "..." },
+    { "Name": "app.deps.json", "Path": "$(ProjectRoot)/locks/app/Release.files/net8.0/app/app.deps.json", "Sha256": "..." },
+    { "Name": "app.dll.config", "Path": "$(ProjectRoot)/app/App.config", "Sha256": "..." }
+  ],
+  "Copy": [
+    { "Id": "pkg:newtonsoft.json/13.0.3/lib/net6.0/Newtonsoft.Json.dll", "Sha256": "...", "To": "Newtonsoft.Json.dll" },
+    { "Id": "pkg:sqlitepclraw.lib.e_sqlite3/2.1.6/runtimes/linux-x64/native/libe_sqlite3.so", "Sha256": "...", "To": "runtimes/linux-x64/native/libe_sqlite3.so" },
+    { "Id": "project:lib", "Sha256": "", "To": "Lib.Core.dll" }
+  ],
+  "Related": [ ".pdb", ".xml", ".pri", ".dll.config", ".exe.config" ],
+  "BindingRedirects": false
+}
+```
+
+- **`Host`, the apphost** (only when msbuild uses one, `UseAppHost`), decision 3 "the apphost
+  is part of the SDK":
+  - no `RuntimeIdentifier`: `{ "Rid": "" }`. msbuild takes the template of the SDK's own
+    runtime identifier, so the lock records only that. The build takes the template of the SDK
+    the lock pins (`Evaluation.Sdk`): its `NETCoreSdkRuntimeIdentifier` and its
+    `KnownAppHostPack` version for the framework, from `$(DotnetRoot)/packs`, else the package
+    `Microsoft.NETCore.App.Host.<rid>` (fetched). Identified by the SDK version, not hashed and
+    not in the `HERMETIC=on` path gate, like the SDK's compiler. On macOS the lock builds a
+    Mach-O apphost, on Linux an ELF one, on Windows an `.exe`.
+  - an explicit `RuntimeIdentifier`: `{ "Rid": "win-x64", "Id": "pack:microsoft.netcore.app.host.win-x64/8.0.31/runtimes/win-x64/native/apphost.exe", "Sha256": "..." }`,
+    the template msbuild resolved, hashed; the restore fetches it with the lock's packages.
+  - The apphost is written by the SDK's own `HostWriter.CreateAppHost`
+    (`Microsoft.NET.HostModel.dll` of that SDK, loaded into the build's process): the
+    application's file name patched in, the GUI subsystem for a `WinExe`, the assembly's
+    version resource and icon, the macOS ad hoc signature, as `dotnet build`. When that
+    HostModel cannot load (an SDK newer than the runtime Xake runs on: SDK 10 under .NET 8), the
+    apphost is the template with the file name patched in, signed on macOS, and a warning says
+    it has no resources. Named `<assembly name>` (`.exe` for a Windows template).
+- **`Files`**: the `runtimeconfig.json` and `deps.json` msbuild generated, and the config file
+  `AppConfigWithTargetPath` names before `GenerateBindingRedirects` (for .NET Framework the
+  SDK's `supportedRuntime` added). Recorded beside the lock in
+  `<lock without .json>.files/<tfm>/app/` as text (LF), each with its hash; the project's own
+  config that msbuild copies as it is (a .NET application's `App.config`) is named where it is,
+  by its hash, and copied byte for byte. A changed file beside the lock fails the build (*does
+  not have the hash the lock records; run the import again*).
+- **`deps.json` and the referenced projects**: msbuild reads a referenced project's versions
+  from its built file (SDK 8 fails when the file is missing; SDK 10 writes `0.0.0.0`). The
+  import does not build, so the second design-time run puts every output in a folder of its own
+  (`OutDir`) where each referenced project's output is a stand-in: an empty library of that
+  assembly name and of version `65534.65533.65532.65531` (`Import.stubAssembly`). Every version
+  msbuild read from a stand-in becomes a token, `$(AssemblyVersion:<file>)` or
+  `$(FileVersion:<file>)` (also in SDK 8's `<assembly>.Reference/<version>` library names), and
+  the build replaces it by the version of the file it copied into the output
+  (`Import.depsTokens`, `Apps.depsResolved`). What msbuild did not read from the file (SDK 8: a
+  project's version as its assembly version) stays as written. The recorded `deps.json` is
+  therefore the same whether the referenced projects were built when the import ran or not.
+- **`Copy`**: msbuild's copy-local files (`ReferenceCopyLocalPaths`) in msbuild's order, each
+  with its destination (`DestinationSubDirectory`): package files by identity and hash (a
+  `runtimes/<rid>/` asset of a RID-agnostic application included), a referenced project's
+  output as `project:<name>`. A file beside or below a referenced project's msbuild output (its
+  pdb, a satellite assembly, a dependency RAR found there) is left out: msbuild finds it only
+  when that project is built. The build copies the referenced project's output and the files
+  beside it with one of the `Related` extensions that exist (`AllowedReferenceRelatedFileExtensions`).
+- **`BindingRedirects`**: `true` when msbuild adds binding redirects to the config
+  (`AutoGenerateBindingRedirects` and `GenerateBindingRedirectsOutputType`). The recorded config
+  has none: the redirects depend on what RAR finds in the referenced projects' built outputs
+  (S55, open).
+
+Not recorded yet: satellite assemblies (the project's own and a referenced project's; their
+entries in `deps.json`), the items msbuild copies from `None`/`Content` with
+`CopyToOutputDirectory` (test adapters, test data, `GetCopyToOutputDirectoryItems`: PR 4), a
+referenced application's own `runtimeconfig.json`/`deps.json`, a library's `deps.json`, the
+copy-local files of a library (a .NET Framework test library's packages and `.dll.config`).
+
 ### Building a recorded lock
 
 The build is the same as for any lock (`Locks.needAll`, `Locks.compileAs`, `Lock.compileFrom`):
@@ -304,6 +395,9 @@ There is no `update-locks` step for a recorded project: the import is that step.
 - The outputs: the same files as `dotnet build` (assembly, `.pdb`, `.xml`), with the same types,
   methods, manifest resources, assembly references and version. Bytes are not a goal: msbuild
   writes some generated sources with CRLF on every OS, the lock records LF.
+- An application: the same files in its output folder as `dotnet build` but what is listed as
+  not recorded above; `runtimeconfig.json` and `deps.json` equal to msbuild's; it runs
+  (`dotnet app.dll`, the apphost on this OS).
 
 ## F# entries
 

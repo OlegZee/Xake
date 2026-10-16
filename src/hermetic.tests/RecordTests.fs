@@ -160,8 +160,17 @@ type ``Recorded lock identities``() =
         Assert.That(e.Message, Does.Contain "lock format 1 is older than 2")
         Assert.That(e.Message, Does.Contain "run the import again")
         Assert.That((Lock.parse roots (lockOf (entry "Composed" ""))).Entries.Head.Name, Is.EqualTo "Composed")
+        Assert.That(e.Message, Does.Contain "Xake's own resolution of the project, not msbuild's")
         let newer = Assert.Throws<exn>(fun () -> Lock.parse roots """{ "Format": 3, "Configuration": "", "Properties": {}, "Entries": [] }""" |> ignore)
         Assert.That(newer.Message, Does.Contain "newer")
+        // what Project.import writes is marked: format 1, legacy, read as before
+        let legacy = sprintf """{ "Format": 1, "Legacy": "Project.import", "Configuration": "Release", "Properties": {}, "Entries": [ %s ] }""" (entry "App" "$(ProjectRoot)/App.csproj")
+        let doc = Lock.parse roots legacy
+        Assert.That(doc.Entries.Head.Name, Is.EqualTo "App")
+        Assert.That(Lock.format roots doc, Does.StartWith "{\n  \"Format\": 1,\n  \"Legacy\": \"Project.import\",\n")
+        // and a format-2 lock never holds such an entry
+        let unrecorded = Assert.Throws<exn>(fun () -> Lock.parse roots (sprintf """{ "Format": 2, "Configuration": "Release", "Properties": {}, "Entries": [ %s ] }""" (entry "App" "$(ProjectRoot)/App.csproj")) |> ignore)
+        Assert.That(unrecorded.Message, Does.Contain "msbuild did not record")
 
     [<Test>]
     member x.``host strings: a root, the home folder or a runtime identifier left in a lock text``() =

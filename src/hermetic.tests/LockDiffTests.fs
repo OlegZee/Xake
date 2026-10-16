@@ -124,7 +124,8 @@ type ``Lock file format``() =
     let roots = [ "$(NuGetPackageRoot)", "/r/pkgs"; "$(ProjectRoot)", "/r/proj"; "$(DotnetRoot)", "/r/dotnet" ]
 
     static let golden = """{
-  "Format": 2,
+  "Format": 1,
+  "Legacy": "Project.import",
   "Configuration": "Release",
   "Properties": {
     "Brand": "X"
@@ -263,7 +264,8 @@ type ``Lock file format, F# entry``() =
     let roots = [ "$(NuGetPackageRoot)", "/r/pkgs"; "$(ProjectRoot)", "/r/proj"; "$(DotnetRoot)", "/r/dotnet" ]
 
     let golden = """{
-  "Format": 2,
+  "Format": 1,
+  "Legacy": "Project.import",
   "Configuration": "Release",
   "Properties": {
 

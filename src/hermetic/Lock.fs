@@ -635,6 +635,12 @@ module Lock =
     [<Literal>]
     let FormatVersion = 2
 
+    /// The `"Legacy"` value of a lock `Project.import` writes: format 1, its imported entries
+    /// Xake's own resolution of the project (not msbuild's, as `Import.record`'s are). Read as
+    /// before; a format-1 lock of an imported project without it (an older preview's) is not.
+    [<Literal>]
+    let LegacyMarker = "Project.import"
+
     open Json
 
     /// The context `Identity` names a recorded entry's files with, under `roots`.
@@ -769,12 +775,18 @@ module Lock =
     /// via `Roots.make`), longest root first. Pure; `save` is the recipe that takes the roots
     /// from the build.
     let format roots (lock: Document) =
-        [ sprintf "  \"Format\": %d" FormatVersion
-          sprintf "  \"Configuration\": %s" (escape lock.Configuration)
-          sprintf "  \"Properties\": {\n%s\n  }"
-            // a value may be a path (`RestoreConfigFile`): tokenized as every path
-            (lock.Properties |> List.map (fun (k, v) -> sprintf "    %s: %s" (escape k) (escape (Roots.tokenizeAll roots v))) |> String.concat ",\n")
-          sprintf "  \"Entries\": [\n%s\n  ]" (lock.Entries |> List.map (writeEntry roots) |> String.concat ",\n") ]
+        // an entry of an imported project that msbuild did not record (`Project.import`: Xake's
+        // own resolution of the project) is format 1, marked as such: never a format-2 lock
+        let legacy = lock.Entries |> List.exists (fun e -> e.Evaluation.Project <> "" && e.Recorded.IsNone)
+        [ if legacy then
+              yield "  \"Format\": 1"
+              yield sprintf "  \"Legacy\": %s" (escape LegacyMarker)
+          else yield sprintf "  \"Format\": %d" FormatVersion
+          yield sprintf "  \"Configuration\": %s" (escape lock.Configuration)
+          yield sprintf "  \"Properties\": {\n%s\n  }"
+                    // a value may be a path (`RestoreConfigFile`): tokenized as every path
+                    (lock.Properties |> List.map (fun (k, v) -> sprintf "    %s: %s" (escape k) (escape (Roots.tokenizeAll roots v))) |> String.concat ",\n")
+          yield sprintf "  \"Entries\": [\n%s\n  ]" (lock.Entries |> List.map (writeEntry roots) |> String.concat ",\n") ]
         |> String.concat ",\n" |> sprintf "{\n%s\n}\n"
 
     /// `documentFramework` is the file-level `"Framework"` of a lock written before the
@@ -907,15 +919,16 @@ module Lock =
             | Some _ -> failwith "lock format: expected a number"
         if format > FormatVersion then
             failwithf "lock format %d is newer than this Xake.Hermetic.Dotnet reads (%d); update the package" format FormatVersion
-        // format 1 named an imported project's references by machine path: such a lock is not
-        // read (the entries composed by Xake, which no import wrote, still are)
-        if format < FormatVersion then
-            let imported =
-                field "Entries" root |> Option.map asArray |> Option.defaultValue []
-                |> List.exists (fun e ->
-                    field "Evaluation" e |> Option.bind (field "Project") |> Option.bind asString |> Option.exists ((<>) ""))
-            if imported then
-                failwithf "lock format %d is older than %d: it records an imported project by machine paths; regenerate the lock (run the import again)" format FormatVersion
+        // an imported project's entry in format 1 is Xake's own resolution of the project, not
+        // msbuild's: read only from a lock `Project.import` marks as such (`LegacyMarker`); the
+        // entries composed by Xake, which no import wrote, are read in any format
+        let entries = field "Entries" root |> Option.map asArray |> Option.defaultValue []
+        let isImported e = field "Evaluation" e |> Option.bind (field "Project") |> Option.bind asString |> Option.exists ((<>) "")
+        let legacy = field "Legacy" root |> Option.bind asString |> Option.exists ((=) LegacyMarker)
+        if format < FormatVersion && not legacy && entries |> List.exists isImported then
+            failwithf "lock format %d is older than %d: its imported entries are Xake's own resolution of the project, not msbuild's; regenerate the lock (run the import again: Import.record)" format FormatVersion
+        if format = FormatVersion && entries |> List.exists (fun e -> isImported e && (field "Recorded" e).IsNone) then
+            failwithf "lock format %d holds an imported entry msbuild did not record (no 'Recorded'); regenerate the lock (run the import again: Import.record)" format
         {
             Configuration = str "Configuration"
             Properties =

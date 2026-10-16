@@ -231,7 +231,8 @@ type ``Project import``() =
     member x.``a lock with a document-level framework reads into the entries``() =
         let roots = Roots.builtin (Directory.GetCurrentDirectory())
         let old = """{
-  "Format": 2,
+  "Format": 1,
+  "Legacy": "Project.import",
   "Framework": "net472",
   "Configuration": "Release",
   "Properties": { "Brand": "X" },

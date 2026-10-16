@@ -971,12 +971,28 @@ module Import =
     /// A stand-in for a referenced project's output while msbuild writes an application's
     /// `deps.json` at import (`record`, the second design-time run): msbuild reads the built
     /// file's versions (and SDK 8 fails when it is missing), which the import does not build.
-    /// An empty library (mscorlib only, 3 KB) whose assembly and file version are
-    /// `stubVersion`; compiled once from
+    /// An empty library (mscorlib only, 4.5 KB) whose assembly and file version are
+    /// `stubVersion` and whose assembly name is `name` (the reference's file name: msbuild's
+    /// reference resolution keeps one assembly per name). Compiled once from
     /// <c>[assembly: AssemblyVersion("65534.65533.65532.65531")] [assembly: AssemblyFileVersion("65534.65533.65532.65531")]</c>
-    /// (`csc -noconfig -nostdlib -target:library -deterministic -optimize -debug- -r:mscorlib.dll`).
+    /// (`csc -noconfig -nostdlib -target:library -deterministic -optimize -debug- -r:mscorlib.dll`)
+    /// into a file named by a 200-character placeholder, which is replaced by `name` (padded
+    /// with NULs: the metadata's strings end at the first one).
     /// </summary>
-    let internal stubAssembly () = Convert.FromBase64String "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"
+    let internal stubAssembly (name: string) : byte[] =
+        let bytes = Convert.FromBase64String "TVqQAAMAAAAEAAAA//8AALgAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgAAAAA4fug4AtAnNIbgBTM0hVGhpcyBwcm9ncmFtIGNhbm5vdCBiZSBydW4gaW4gRE9TIG1vZGUuDQ0KJAAAAAAAAABQRQAATAEDANaOFcMAAAAAAAAAAOAAIiALATAAAAYAAAAKAAAAAAAA5iQAAAAgAAAAQAAAAAAAEAAgAAAAAgAABAAAAAAAAAAEAAAAAAAAAACAAAAAAgAAAAAAAAMAQIUAABAAABAAAAAAEAAAEAAAAAAAABAAAAAAAAAAAAAAAJQkAABPAAAAAEAAAAgGAAAAAAAAAAAAAAAAAAAAAAAAAGAAAAwAAAB4JAAAHAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIAAACAAAAAAAAAAAAAAACCAAAEgAAAAAAAAAAAAAAC50ZXh0AAAA7AQAAAAgAAAABgAAAAIAAAAAAAAAAAAAAAAAACAAAGAucnNyYwAAAAgGAAAAQAAAAAgAAAAIAAAAAAAAAAAAAAAAAABAAABALnJlbG9jAAAMAAAAAGAAAAACAAAAEAAAAAAAAAAAAAAAAAAAQAAAQgAAAAAAAAAAAAAAAAAAAADIJAAAAAAAAEgAAAACAAUAUCAAACgEAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEJTSkIBAAEAAAAAAAwAAAB2NC4wLjMwMzE5AAAAAAUAbAAAAMgAAAAjfgAANAEAAHQCAAAjU3RyaW5ncwAAAACoAwAABAAAACNVUwCsAwAAEAAAACNHVUlEAAAAvAMAAGwAAAAjQmxvYgAAAAAAAAACAAABBxQAAAkAAAAA+gEzABYAAAEAAAAFAAAAAQAAAAQAAAAEAAAAAQAAAAEAAAAAAIIAAQAAAAAABgBEAHoBBgBkAHoBBgATAGcBDwCaAQAABgAnAE8BAAAAAAEAAAAAAAEAAQAJAGEBAQARAGEBBgAZAGEBCgApAGEBEAAuAAsAHgAuABMAJwAuABsARgAuACMATwAEgAAA/v/9//z/+/8AAAAAAACpAQAABAAAAAAAAAAAAAAAFQAKAAAAAAAAAAAAADxNb2R1bGU+AG1zY29ybGliAERlYnVnZ2FibGVBdHRyaWJ1dGUAQXNzZW1ibHlGaWxlVmVyc2lvbkF0dHJpYnV0ZQBDb21waWxhdGlvblJlbGF4YXRpb25zQXR0cmlidXRlAFJ1bnRpbWVDb21wYXRpYmlsaXR5QXR0cmlidXRlAFhha2VTdHVieHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4LmRsbABTeXN0ZW0uUmVmbGVjdGlvbgAuY3RvcgBTeXN0ZW0uRGlhZ25vc3RpY3MAU3lzdGVtLlJ1bnRpbWUuQ29tcGlsZXJTZXJ2aWNlcwBEZWJ1Z2dpbmdNb2RlcwBYYWtlU3R1Ynh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eAAAAAAAAADwD8CFDo12RqmaAYFQD+b9AAQgAQEIAyAAAQUgAQEREQQgAQEOCLd6XFYZNOCJCAEACAAAAAAAHgEAAQBUAhZXcmFwTm9uRXhjZXB0aW9uVGhyb3dzAQgBAAIAAAAAABwBABc2NTUzNC42NTUzMy42NTUzMi42NTUzMQAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAALwkAAAAAAAAAAAAANYkAAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAADIJAAAAAAAAAAAAAAAAF9Db3JEbGxNYWluAG1zY29yZWUuZGxsAAAAAAD/JQAgABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEAEAAAABgAAIAAAAAAAAAAAAAAAAAAAAEAAQAAADAAAIAAAAAAAAAAAAAAAAAAAAEAAAAAAEgAAABYQAAArAUAAAAAAAAAAAAArAU0AAAAVgBTAF8AVgBFAFIAUwBJAE8ATgBfAEkATgBGAE8AAAAAAL0E7/4AAAEA/f/+//v//P/9//7/+//8/z8AAAAAAAAABAAAAAIAAAAAAAAAAAAAAAAAAABEAAAAAQBWAGEAcgBGAGkAbABlAEkAbgBmAG8AAAAAACQABAAAAFQAcgBhAG4AcwBsAGEAdABpAG8AbgAAAAAAAACwBAwFAAABAFMAdAByAGkAbgBnAEYAaQBsAGUASQBuAGYAbwAAAOgEAAABADAAMAAwADAAMAA0AGIAMAAAACwAAgABAEYAaQBsAGUARABlAHMAYwByAGkAcAB0AGkAbwBuAAAAAAAgAAAAUAAYAAEARgBpAGwAZQBWAGUAcgBzAGkAbwBuAAAAAAA2ADUANQAzADQALgA2ADUANQAzADMALgA2ADUANQAzADIALgA2ADUANQAzADEAAAC6Ac0AAQBJAG4AdABlAHIAbgBhAGwATgBhAG0AZQAAAFgAYQBrAGUAUwB0AHUAYgB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAAuAGQAbABsAAAAAAAoAAIAAQBMAGUAZwBhAGwAQwBvAHAAeQByAGkAZwBoAHQAAAAgAAAAwgHNAAEATwByAGkAZwBpAG4AYQBsAEYAaQBsAGUAbgBhAG0AZQAAAFgAYQBrAGUAUwB0AHUAYgB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAAuAGQAbABsAAAAAABUABgAAQBQAHIAbwBkAHUAYwB0AFYAZQByAHMAaQBvAG4AAAA2ADUANQAzADQALgA2ADUANQAzADMALgA2ADUANQAzADIALgA2ADUANQAzADEAAABYABgAAQBBAHMAcwBlAG0AYgBsAHkAIABWAGUAcgBzAGkAbwBuAAAANgA1ADUAMwA0AC4ANgA1ADUAMwAzAC4ANgA1ADUAMwAyAC4ANgA1ADUAMwAxAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgAAAMAAAA6DQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        let placeholder = Text.Encoding.ASCII.GetBytes ("XakeStub" + String.replicate 192 "x")
+        let value = Text.Encoding.UTF8.GetBytes name
+        if value.Length > placeholder.Length then
+            failwithf "the referenced assembly name '%s' is longer than %d bytes; the import's stand-in cannot carry it" name placeholder.Length
+        let mutable i = 0
+        while i <= bytes.Length - placeholder.Length do
+            if bytes.[i] = placeholder.[0] && Array.sub bytes i placeholder.Length = placeholder then
+                Array.fill bytes i placeholder.Length 0uy
+                value.CopyTo (bytes, i)
+                i <- i + placeholder.Length
+            else i <- i + 1
+        bytes
 
     /// <summary>
     /// A `deps.json` msbuild wrote with stand-ins for the referenced projects (`stubAssembly`),
@@ -1039,8 +1055,8 @@ module Import =
     /// msbuild names them in the output;</item>
     /// <item>msbuild's copy-local files (`ReferenceCopyLocalPaths`, in its order): a referenced
     /// project's output as that project's output in the build's layout, unhashed; a file
-    /// beside a referenced project's msbuild output (its pdb, a dependency, found only when
-    /// that project is built) left out -- the build copies the related files of the project
+    /// beside or below a referenced project's msbuild output (its pdb, a dependency, a
+    /// satellite assembly: found only when that project is built) left out -- the build copies the related files of the project
     /// it built (`Related`); every other file hashed, named by identity when the lock is
     /// written.</item>
     /// </list>
@@ -1052,7 +1068,8 @@ module Import =
         let binaryDir = (slash binaryDir).TrimEnd '/' + "/"
         let assemblyName = p "AssemblyName"
         let projectOutputs = dict [ for o, names in projects do for n in names -> n, o ]
-        let projectDirs = set [ for _, names in projects do for n in names -> slash (Path.GetDirectoryName n) ]
+        let projectDirs = [ for _, names in projects do for n in names -> (slash (Path.GetDirectoryName n)).TrimEnd '/' + "/" ] |> List.distinct
+        let besideProject (path: string) = projectDirs |> List.exists (fun d -> path.StartsWith (d, comparison))
         let copy =
             [ for id, m in items d "ReferenceCopyLocalPaths" do
                 let path = absoluteIn ctx.ProjectDir id
@@ -1060,7 +1077,7 @@ module Import =
                 let destination = if destination = "" || destination.EndsWith "/" then destination else destination + "/"
                 match projectOutputs.TryGetValue path with
                 | true, o -> yield ({ Path = o.Path; Sha256 = ""; To = destination + Path.GetFileName o.Path } : Lock.CopyItem)
-                | _ when projectDirs.Contains (slash (Path.GetDirectoryName path)) -> ()
+                | _ when besideProject path -> ()
                 | _ -> yield { Path = path; Sha256 = Csc.sha256 path; To = destination + Path.GetFileName path } ]
             |> List.distinctBy (fun c -> c.To.ToLowerInvariant ())
         let host =
@@ -1081,15 +1098,17 @@ module Import =
                 Some (name, Text.Encoding.UTF8.GetBytes text)
             else None
         let named (property: string) (fallback: string) = match p property with "" -> fallback | n -> n
-        let config =
+        // the config file: one msbuild wrote (the SDK's `supportedRuntime` added) is recorded; the
+        // project's own (copied as it is for .NET) is named where it is, by its hash
+        let config, ownConfig =
             match items d "_XakeAppConfig", items d "AppConfigWithTargetPath" with
             | (id, m) :: _, _ | [], (id, m) :: _ ->
                 let path = absoluteIn ctx.ProjectDir id
-                if File.Exists path then
-                    let name = match meta "TargetPath" m with "" -> p "TargetFileName" + ".config" | t -> Path.GetFileName t
-                    Some (name, Text.Encoding.UTF8.GetBytes (lf (File.ReadAllText path)))
-                else None
-            | [], [] -> None
+                let name = match meta "TargetPath" m with "" -> p "TargetFileName" + ".config" | t -> Path.GetFileName t
+                if not (File.Exists path) then None, None
+                elif path.StartsWith (scratch, comparison) then Some (name, Text.Encoding.UTF8.GetBytes (lf (File.ReadAllText path))), None
+                else None, Some ({ Name = name; Path = path; Sha256 = Csc.sha256 path } : Lock.AppFile)
+            | [], [] -> None, None
         let files =
             [ generated appRuntimeConfig (named "ProjectRuntimeConfigFileName" (assemblyName + ".runtimeconfig.json")) id
               generated appDeps (named "ProjectDepsFileName" (assemblyName + ".deps.json")) depsTokens
@@ -1103,11 +1122,10 @@ module Import =
             { OutputType = p "OutputType"
               Host = host
               Files = [ for (name, bytes), (path, _) in List.zip files recorded -> ({ Name = name; Path = path; Sha256 = sha bytes } : Lock.AppFile) ]
+                      @ Option.toList ownConfig
               Copy = copy
               Related = items d "_XakeRelatedExtension" |> List.map fst |> List.filter ((<>) "")
-              BindingRedirects =
-                p "TargetFrameworkIdentifier" = ".NETFramework"
-                && isTrue (p "AutoGenerateBindingRedirects") && isTrue (p "GenerateBindingRedirectsOutputType") }
+              BindingRedirects = isTrue (p "AutoGenerateBindingRedirects") && isTrue (p "GenerateBindingRedirectsOutputType") }
         Some app, recorded
 
     /// <summary>
@@ -1581,7 +1599,6 @@ module Import =
                                 let phase = DateTime.UtcNow
                                 let outDir = slash (temp </> ("app-out-" + cfg)) + "/"
                                 Directory.CreateDirectory outDir |> ignore
-                                let stub = stubAssembly ()
                                 for pf, _, _, d in appRuns do
                                     let scratch = absoluteIn (slash (Path.GetDirectoryName pf)) (prop d "IntermediateOutputPath")
                                     for f in [ appDeps; appRuntimeConfig ] do
@@ -1590,7 +1607,7 @@ module Import =
                                     for id, m in items d "ReferencePath" do
                                         if meta "ReferenceSourceTarget" m = "ProjectReference" || meta "MSBuildSourceProjectFile" m <> "" then
                                             let path = outDir + Path.GetFileName (slash id)
-                                            if not (File.Exists path) then File.WriteAllBytes (path, stub)
+                                            if not (File.Exists path) then File.WriteAllBytes (path, stubAssembly (Path.GetFileNameWithoutExtension path))
                                 let appTraversal = temp </> sprintf "record-app-%s.proj" cfg
                                 let appItems =
                                     appRuns |> List.map (fun (pf, ev, f, _) ->

@@ -593,6 +593,12 @@ module Lock =
                 let tokenized = Roots.tokenize ctx.Roots path
                 if tokenized.StartsWith "$(" && not (tokenized.StartsWith "$(DotnetRoot)") then Some tokenized else None
 
+        /// The folders of a .NET's `packs` (one listing per change of the folder, not one per
+        /// `pack:` identity of every lock read).
+        let private packListings = System.Collections.Concurrent.ConcurrentDictionary<string * System.DateTime, string[]> ()
+        let private packFolders (packs: string) =
+            packListings.GetOrAdd ((packs, Directory.GetLastWriteTimeUtc packs), fun _ -> Directory.GetDirectories packs)
+
         /// Whether `text` is a portable name `ofPath` writes for a file outside the roots.
         let isIdentity (text: string) =
             text.StartsWith "pkg:" || text.StartsWith "pack:" || text.StartsWith "sdk:" || text.StartsWith "project:"
@@ -614,7 +620,7 @@ module Lock =
                     let installed =
                         if not (Directory.Exists packs) then None
                         else
-                            Directory.GetDirectories packs
+                            packFolders packs
                             |> Array.tryFind (fun d -> System.String.Equals (Path.GetFileName d, pack, System.StringComparison.OrdinalIgnoreCase))
                             |> Option.map (fun d -> slash d + "/" + version + "/" + file)
                             |> Option.filter File.Exists
@@ -941,11 +947,24 @@ module Lock =
             Entries = field "Entries" root |> Option.map asArray |> Option.defaultValue [] |> List.map (readEntry roots (str "Framework"))
         }
 
+    let private parsedLocks =
+        System.Collections.Concurrent.ConcurrentDictionary<string * int64 * System.DateTime * (string * string) list, Document> ()
+
     /// `parse` of the file at `path` (taken as given, not against the project root), with
     /// the roots passed explicitly -- for code outside a recipe. Inside one use `load`, which
     /// also records the lock as a dependency.
     let read roots (path: string) =
-        try System.IO.File.ReadAllText path |> parse roots
+        try
+            // a lock is read by several rules of one build (needAll, each compile, the doc
+            // rule): parsed once per content and roots
+            let info = FileInfo path
+            let key = (info.FullName, info.Length, info.LastWriteTimeUtc, roots)
+            match parsedLocks.TryGetValue key with
+            | true, doc -> doc
+            | _ ->
+                let doc = System.IO.File.ReadAllText path |> parse roots
+                parsedLocks.[key] <- doc
+                doc
         with e when e.Message.StartsWith "lock format" -> failwithf "'%s': %s" path e.Message
 
     /// A lock path resolved the way the engine resolves a target: against the build's project

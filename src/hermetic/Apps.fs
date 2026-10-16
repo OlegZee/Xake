@@ -7,8 +7,8 @@ open Xake.Dotnet
 
 /// <summary>
 /// What a build writes beside an application's assembly from its recorded `Lock.App`: the
-/// copy-local files, the files msbuild generated (`runtimeconfig.json`, `deps.json`, the
-/// `&lt;exe&gt;.config`) and the apphost. Nothing here is derived from the project: every list,
+/// files msbuild generated (`runtimeconfig.json`, `deps.json`, the `&lt;exe&gt;.config`) and the
+/// apphost (the copy-local files are the run folder's, `Locks.runFolderWith`). Nothing here is derived from the project: every list,
 /// every text and the apphost template come from the lock; what the build adds is what msbuild
 /// would add at build time -- a referenced project's versions read from its built file, the
 /// files beside it with msbuild's related extensions, the apphost written from the template by
@@ -283,15 +283,6 @@ module Apps =
             let a, f = assemblyVersions path
             (if m.Groups.[1].Value = "AssemblyVersion" then a else f) |> Option.defaultValue "")
 
-    /// Copies `source` to `destination` when the bytes differ (or it is missing).
-    let private place (source: string) (destination: string) =
-        Directory.CreateDirectory (Path.GetDirectoryName (Path.GetFullPath destination)) |> ignore
-        let same =
-            File.Exists destination
-            && (FileInfo source).Length = (FileInfo destination).Length
-            && File.ReadAllBytes source = File.ReadAllBytes destination
-        if not same then File.Copy (source, destination, true)
-
     /// <summary>
     /// The project outputs an application copies (`Copy` items without a hash): the rule needs
     /// them before it writes the application.
@@ -300,13 +291,13 @@ module Apps =
         app.Copy |> List.filter (fun c -> c.Sha256 = "") |> List.map (fun c -> c.Path)
 
     /// <summary>
-    /// Writes what the lock records for an application (`app` of entry `name`, framework
-    /// `framework`, recorded with the SDK `sdk`) beside its assembly `assembly`:
+    /// Writes what the compile of an application adds beside its assembly `assembly`, from what
+    /// the lock records (`app` of entry `name`, framework `framework`, recorded with the SDK
+    /// `sdk`) -- the files named after the assembly, which one output folder can hold for every
+    /// project (the copy-local files and copy items are the run folder's, `Locks.runFolderWith`):
     /// <list type="number">
-    /// <item>the copy-local files, each checked against its hash (a project's output unhashed,
-    /// with the files beside it that have one of the `Related` extensions);</item>
-    /// <item>the recorded files under their names, each checked against its hash, a project's
-    /// versions in `deps.json` read from its copy;</item>
+    /// <item>the recorded files under their names, each checked against its hash; a referenced
+    /// project's versions in `deps.json` read from the file the lock copies (its output);</item>
     /// <item>the apphost: the SDK's own template (`SdkHost`, by the SDK version) or the lock's
     /// (`PackHost`, checked against its hash), written by the SDK's `HostWriter`, named
     /// `&lt;assembly name&gt;` (`.exe` for a Windows template).</item>
@@ -322,30 +313,24 @@ module Apps =
                 if not (File.Exists path) then failwithf "'%s' (%s): the %s '%s' is missing" name framework what path
                 if sha <> "" && FileHash.sha256 path <> sha then
                     failwithf "'%s' (%s): the %s '%s' does not have the hash the lock '%s' records; run the import again" name framework what path lockPath
-            // 1. the copy-local files
-            for c in app.Copy do
-                checkHash "copy-local file" c.Path c.Sha256
-                let destination = Path.Combine (outDir, c.To)
-                place c.Path destination
-                if c.Sha256 = "" then
-                    let stem = Path.GetFileNameWithoutExtension c.Path
-                    let destStem = Path.Combine (Path.GetDirectoryName destination, stem)
-                    for ext in app.Related do
-                        let related = Path.Combine (Path.GetDirectoryName c.Path, stem + ext)
-                        if File.Exists related then place related (destStem + ext)
-            // 2. the files msbuild generated
+            // a file deps.json names: the copy-local source placed under that name
+            let sourceOf (file: string) =
+                match app.Copy |> List.tryFind (fun c -> System.String.Equals (normal c.To, normal file, System.StringComparison.OrdinalIgnoreCase)) with
+                | Some c -> c.Path
+                | None -> Path.Combine (outDir, file)
+            // 1. the files msbuild generated
             for f in app.Files do
                 checkHash "recorded file" f.Path f.Sha256
                 let bytes = File.ReadAllBytes f.Path
                 // as it is (a project's own config keeps its BOM and line ends), but a deps.json's tokens
                 let bytes =
                     if f.Name.EndsWith (".deps.json", System.StringComparison.OrdinalIgnoreCase) then
-                        System.Text.Encoding.UTF8.GetBytes (depsResolved (fun file -> Path.Combine (outDir, file)) (System.Text.Encoding.UTF8.GetString bytes))
+                        System.Text.Encoding.UTF8.GetBytes (depsResolved sourceOf (System.Text.Encoding.UTF8.GetString bytes))
                     else bytes
                 let destination = Path.Combine (outDir, f.Name)
                 if not (File.Exists destination) || File.ReadAllBytes destination <> bytes then
                     File.WriteAllBytes (destination, bytes)
-            // 3. the apphost
+            // 2. the apphost
             match app.Host with
             | None -> ()
             | Some host ->

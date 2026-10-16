@@ -141,6 +141,10 @@ description, `record` differs from `descriptions` in two points:
   no culture table of the importing machine are used.
 - `byFramework.<tfm>.resources` holds the resources only one framework has.
 
+For a recorded project the build takes the source masks from the lock (`Recorded.Masks`), not
+from the description: an edit of the description's `sources` has no effect on the build. Change
+the project file and import again.
+
 Both imports read a `Compile Include` with a property (`$(BuildTmpPath)\VersionInfo.cs`, a
 shared project's `$(MSBuildThisFileDirectory)X.cs`) as the evaluated path, relative to the
 project folder, and write the path of a shared project's resource relative to the project

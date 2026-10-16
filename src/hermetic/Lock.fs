@@ -103,8 +103,11 @@ module Lock =
     /// which a replay of the lock checks before doing any work (`compileWith`). One kind
     /// today: `"dotnet-sdk"`, the .NET SDK at exactly `Version`, which covers the paths
     /// under <c>$(DotnetRoot)/sdk/&lt;Version&gt;/</c> (the SDK's fsc, an imported project's
-    /// compiler and analyzers). It is written only when `global.json` pins that version
-    /// exactly (`rollForward: "disable"`); `Pin` names that file.
+    /// compiler and analyzers, and every file of a recorded entry under it). A composed or
+    /// `Project.import` entry gets it only when `global.json` pins that version exactly
+    /// (`rollForward: "disable"`); an entry recorded from msbuild (`Import.record`) always has
+    /// it -- the SDK that recorded it, which may be stricter than `global.json` (the import
+    /// warns). `Pin` names that `global.json` ("" when there is none).
     /// </summary>
     /// <remarks>
     /// `Pin` is kept tokenized (<c>$(ProjectRoot)/global.json</c>) in memory as well as on
@@ -1176,10 +1179,12 @@ module Lock =
     /// that break the `HERMETIC=on` invariant on the lock side: outside `$(ProjectRoot)` (and
     /// any extra root a script declared, `Roots.make`) and `$(NuGetPackageRoot)`, and not
     /// covered by one of the entry's prerequisites. A <c>dotnet-sdk &lt;v&gt;</c> prerequisite
-    /// covers <c>$(DotnetRoot)/sdk/&lt;v&gt;/</c> -- fsc's compiler always, and an imported
-    /// entry's compiler and analyzers (msbuild chose them); never a reference, and never
-    /// <c>$(DotnetRoot)/packs/</c>. The comparison itself is `HermeticMode.check` over the
-    /// tokenized roots. Pure.
+    /// covers <c>$(DotnetRoot)/sdk/&lt;v&gt;/</c> -- fsc's compiler always, an imported
+    /// entry's compiler and analyzers (msbuild chose them), and for an entry recorded from
+    /// msbuild (`Recorded`) every file under it, references included. A file under
+    /// <c>$(DotnetRoot)/packs/</c> is accepted only in a recorded entry, by its hash (a
+    /// `pack:` identity). The comparison itself is `HermeticMode.check` over the tokenized
+    /// roots. Pure.
     /// </summary>
     let hermeticViolations roots (entry: Entry) : string list =
         let builtinOther = set [ Roots.nugetPackageRootToken; "$(DotnetRoot)" ]

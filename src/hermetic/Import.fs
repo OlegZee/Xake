@@ -1228,23 +1228,31 @@ module Import =
     /// `project`) and one lock per configuration (`options.LockOf name cfg`) whose entries --
     /// one per framework -- record msbuild's resolved compile inputs:
     /// <list type="number">
-    /// <item>one restore per project, without a framework (`-t:Restore`,
-    /// `RestoreRecursive=false`), concurrently;</item>
-    /// <item>the evaluations for the description, and one design-time build per
-    /// (configuration, framework) -- `ProvideCommandLineArgs`, `SkipCompilerExecution`,
-    /// `BuildProjectReferences=false`, the targets `CoreBuild` runs up to the compiler
-    /// (`designTimeTargets`) -- reporting the compiler's command line, `ReferencePath`,
-    /// `Analyzer`, `Compile`, `EmbeddedResource`; every design-time build of a configuration in
-    /// one msbuild process;</item>
+    /// <item>a restore of all projects under the first configuration (a generated solution
+    /// declaring every configuration on the script's `Platform`, `-t:Restore`), then the
+    /// evaluations for the descriptions, concurrently;</item>
+    /// <item>per configuration, one after the other: its restore (but the first's), then one
+    /// msbuild process running every design-time build of that configuration (a traversal over
+    /// (project, framework); `ProvideCommandLineArgs`, `SkipCompilerExecution`,
+    /// `BuildProjectReferences=false`, the targets `CoreBuild` runs up to the compiler,
+    /// `designTimeTargets`), each writing what it generates into an intermediate folder of its
+    /// own (`obj/xake-record/&lt;key of the configuration and properties&gt;/&lt;framework&gt;/`)
+    /// and reporting the compiler's command line, `ReferencePath`, `Analyzer`, `Compile`,
+    /// `EmbeddedResource` (`dumpTargets`; the project's own `CustomAfterMicrosoftCommonTargets`
+    /// is chained); the assets files are copied before the next configuration's restore;</item>
     /// <item>each entry (`entryOf`): the command line as msbuild hands it to the compiler, the
-    /// files msbuild generated as recorded texts, the references and analyzers by identity
-    /// (`Lock.Identity`: `pkg:`, `pack:`, `sdk:`, `project:`), the SDK version as a
+    /// text files msbuild generated as recorded texts and any other generated file copied beside
+    /// the lock (`&lt;lock&gt;.files/&lt;framework&gt;/`), the references and analyzers by
+    /// identity (`Lock.Identity`: `pkg:`, `pack:`, `sdk:`, `project:`), the SDK version as a
     /// prerequisite.</item>
     /// </list>
-    /// Nothing about the compilation is derived by Xake. A file that cannot be named portably
-    /// (outside the package folder, the packs, the SDK and the roots) fails the import, and so
-    /// does a lock text that still holds a string of this machine (`hostStrings`). A lock is
-    /// written only when its text changes. Records no input: an explicit command, as `project`.
+    /// Nothing about the compilation is derived by Xake. The import fails on a file that cannot
+    /// be named portably (outside the package folder, the packs, the SDK and the roots), also
+    /// one a compiler switch names (`unportablePaths`), on a project reference outside
+    /// `projects`, and on a lock text that still holds a string of this machine
+    /// (`hostStrings`). It warns when the lock pins the SDK more strictly than `global.json`.
+    /// A lock is written only when its text changes. Records no input: an explicit command, as
+    /// `project`; a build finds a lock stale by the `Imports` it records (`Locks.compileAs`).
     /// </summary>
     let record (options: RecordOptions) (projects: string list) : Recipe<ExecContext, Imported list> =
         recipe {

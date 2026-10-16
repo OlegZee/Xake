@@ -80,6 +80,13 @@ exactly pinned SDK, with the mode on or off (`Lock.record`, the first `Lock.buil
 `Project.import`); the mode only decides whether a missing one is an error. Details:
 [lock.md](lock.md#prerequisites).
 
+**A recorded entry** (`Import.record`) is msbuild's resolution, and the rules differ in two
+points. It always has the `dotnet-sdk` prerequisite of the SDK that recorded it, whatever
+`global.json` says (the import warns when `global.json` pins less strictly), and that
+prerequisite covers every file of the entry under `$(DotnetRoot)/sdk/<v>/`, in any role:
+compiler, analyzer, reference, configuration file. A file under `$(DotnetRoot)/packs/` is
+accepted by its hash: the entry names it by a `pack:` identity with a `Sha256`.
+
 ## What `HERMETIC=on` requires
 
 `HERMETIC` is a script variable (`var "HERMETIC" "on"`, or `-d HERMETIC=on`), default off, read

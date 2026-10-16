@@ -681,3 +681,235 @@ module Locks =
     let needAll (descriptions: Fileset) (cfg: string)
                 (lockOf: string -> string -> string) (outOf: string -> string -> string -> string) : Recipe<ExecContext, unit> =
         needAllWith [] descriptions cfg lockOf outOf
+
+    /// The prototype's flat output layout: every project of a configuration and framework in one
+    /// folder, `out/<cfg>/<fwk>` (a script's `outOf`; `Import.RecordOptions.OutOf` the same).
+    let flatOutOf (cfg: string) (fwk: string) (_: string) : string = sprintf "out/%s/%s" cfg fwk
+
+    /// The prototype's run folders: `run/<cfg>/<fwk>/<name>` (a script's `runOf`).
+    let runOf (cfg: string) (fwk: string) (name: string) : string = sprintf "run/%s/%s/%s" cfg fwk name
+
+    /// Whether a lock entry runs (a run folder is built for it): an application or a test
+    /// project, as msbuild recorded it (`App` with an `Exe`/`WinExe` output type or generated
+    /// runtime files, or `IsTestProject`).
+    let runs (entry: Lock.Entry) : bool =
+        let app = entry.Recorded |> Option.bind (fun r -> r.App)
+        let isTest = entry.Evaluation.Properties |> Map.tryFind "IsTestProject" |> Option.exists (fun v -> v.Trim().ToLowerInvariant () = "true")
+        isTest
+        || (app |> Option.exists (fun a -> a.OutputType = "Exe" || a.OutputType = "WinExe" || not (List.isEmpty a.Files)))
+
+    /// The files of an entry's compile beside its output (`dir`): the assembly (the compile
+    /// rule's target), then its side outputs that exist (the pdb, the XML doc, the application's
+    /// files `withFiles` selects, the apphost when `withHost`).
+    let private outputsOf (dir: string) (e: Lock.Entry) (withFiles: Lock.AppFile -> bool) (withHost: bool) : string * (string * string) list =
+        let app = e.Recorded |> Option.bind (fun r -> r.App)
+        let asm = outputName e
+        let side =
+            [ yield e.Name + ".pdb"
+              if asksDoc e.Compilation then yield e.Name + ".xml"
+              match app with
+              | Some a ->
+                  for f in a.Files do if withFiles f then yield f.Name
+                  if withHost && a.Host.IsSome then
+                      for h in [ e.Name; e.Name + ".exe" ] do if h <> asm then yield h
+              | None -> () ]
+        normal (Path.Combine (dir, asm)),
+        [ for f in side do
+            let p = normal (Path.Combine (dir, f))
+            if File.Exists p then yield f, p ]
+
+    /// <summary>
+    /// Builds the run folder of project `name` (configuration `cfg`, framework `fwk`) -- the
+    /// folder of the calling rule's target, the manifest `.xake-run.txt` -- from that project's
+    /// lock closure only, everything as msbuild recorded it:
+    /// <code>
+    /// rule ("run/(cfg:*)/(fwk:*)/(name:*)/.xake-run.txt" ..> recipe {
+    ///     let! cfg = getRuleMatch "cfg"
+    ///     let! fwk = getRuleMatch "fwk"
+    ///     let! name = getRuleMatch "name"
+    ///     do! Locks.runFolder lockOf outOf cfg fwk name })
+    /// </code>
+    /// <list type="number">
+    /// <item>the root's own files, never replaced: its compile outputs in `outOf cfg fwk name`
+    /// (the assembly -- a dependency on the compile rule's target --, pdb, XML doc,
+    /// runtimeconfig/deps.json/config, apphost), its copy-to-output items (`App.Content`), its
+    /// copy-local files (`App.Copy`: the package runtime assets at the versions its own restore
+    /// resolved);</item>
+    /// <item>then the closure of project references in dependency order (a recorded entry's
+    /// `Recorded.Projects`, at the configuration and framework msbuild chose; else
+    /// `refConfig`/`nearestFramework`): each one's assembly in `outOf` with the files beside it
+    /// that have the root's `Related` extensions, a referenced application's runtimeconfig and
+    /// deps.json (the SDK's items for referencing projects), its copy-to-output items and its
+    /// copy-local files;</item>
+    /// <item>one source per path: the first, except that in the closure a higher assembly
+    /// version replaces a lower one; every dropped source with other content is written to
+    /// `.xake-run.conflicts.txt` beside the manifest (a warning);</item>
+    /// <item>placed by `mode` (hard link, else clone, else copy; `RunFolder.apply`): an unchanged
+    /// file is kept, a changed one unlinked and placed again, a file of the previous run no longer
+    /// planned removed; a no-op touches nothing.</item>
+    /// </list>
+    /// The rule depends on the locks it reads, the closure's assemblies (rule targets: a
+    /// recompile, in this run or an earlier one, re-runs it), the package files and items; the
+    /// side outputs (pdb, xml, runtime files) are not needed through the compile rule -- they
+    /// change with their assembly.
+    /// </summary>
+    let runFolderWith (extraRoots: (string * string) list) (mode: RunFolder.Mode) (lockOf: string -> string -> string)
+                      (outOf: string -> string -> string -> string) (cfg: string) (fwk: string) (name: string) : Recipe<ExecContext, unit> =
+        recipe {
+            let! options = getCtxOptions ()
+            let full (p: string) = normal (Path.GetFullPath (if Path.IsPathRooted p then p else Path.Combine (options.ProjectRoot, p)))
+            let! target = getTargetFile ()
+            let manifest = target.FullName
+            let what = sprintf "run folder %s/%s/%s" cfg fwk name
+            let entryOf (lockPath: string) (doc: Lock.Document) (f: string) =
+                match doc.Entries |> List.filter (fun e -> same e.Framework f) with
+                | [ e ] -> e
+                | [] -> failwithf "%s: the lock '%s' has no entry for %s (%s)" what lockPath f (doc.Entries |> List.map (fun e -> e.Framework) |> String.concat ", ")
+                | _ -> failwithf "%s: the lock '%s' has more than one entry for %s" what lockPath f
+            let rootLock = lockOf name cfg
+            let! doc = Lock.loadWith extraRoots rootLock
+            let root = entryOf rootLock doc fwk
+            let rootApp = root.Recorded |> Option.bind (fun r -> r.App)
+            let related = rootApp |> Option.map (fun a -> a.Related) |> Option.defaultValue [ ".pdb"; ".xml" ]
+            let candidates = ResizeArray<RunFolder.Candidate> ()
+            let assemblies = ResizeArray<string> ()
+            let hashes = System.Collections.Generic.Dictionary<string, string> ()
+            let itemSources = System.Collections.Generic.HashSet<string> ()
+            let entries = ResizeArray<Lock.Entry> [ root ]
+            let add own (src: string) (To: string) = candidates.Add { To = To; Source = src; Own = own }
+            let items own (app: Lock.App option) =
+                match app with
+                | None -> ()
+                | Some a ->
+                    // msbuild copies the items after the copy-local files: an item wins its path
+                    for c in a.Content do
+                        if c.Sha256 <> "" then hashes.[c.Path] <- c.Sha256
+                        itemSources.Add c.Path |> ignore
+                        add own c.Path c.To
+                    for c in a.Copy do
+                        // a referenced project's output comes with the closure (its related files too)
+                        if c.Sha256 <> "" then
+                            hashes.[c.Path] <- c.Sha256
+                            itemSources.Add c.Path |> ignore
+                            add own c.Path c.To
+            // 1. the root's own
+            let asm, side = outputsOf (full (outOf cfg fwk name)) root (fun _ -> true) true
+            assemblies.Add asm
+            add true asm (Path.GetFileName asm)
+            for f, p in side do add true p f
+            items true rootApp
+            // 2. the closure, breadth first in msbuild's reference order
+            let seen = System.Collections.Generic.HashSet<string> ([ name ], System.StringComparer.OrdinalIgnoreCase)
+            let queue = System.Collections.Generic.Queue<string * string * string option> ()
+            let enqueue (e: Lock.Entry) (c: string) =
+                match e.Recorded with
+                | Some r -> for p in r.Projects do queue.Enqueue (p.Name, p.Configuration, Some p.Framework)
+                | None -> for p in e.Evaluation.ProjectRefs do queue.Enqueue (p, c, None)
+            enqueue root cfg
+            while queue.Count > 0 do
+                let r, c, f = queue.Dequeue ()
+                if seen.Add r then
+                    let c =
+                        if File.Exists (full (lockOf r c)) then c
+                        else
+                            match refConfig c (fun x -> File.Exists (full (lockOf r x))) with
+                            | Some x -> x
+                            | None -> failwithf "%s: the referenced project '%s' has no lock ('%s')" what r (lockOf r c)
+                    let! l = Lock.loadWith extraRoots (lockOf r c)
+                    let f =
+                        match f with
+                        | Some f -> f
+                        | None ->
+                            match nearestFramework fwk (l.Entries |> List.map (fun e -> e.Framework) |> List.distinct) with
+                            | Some f -> f
+                            | None -> failwithf "%s: the referenced project '%s' has no framework for %s" what r fwk
+                    let e = entryOf (lockOf r c) l f
+                    entries.Add e
+                    let dir = full (outOf c f r)
+                    // a referenced application's runtime files and apphost: the SDK's items for
+                    // referencing projects (`AddDepsJsonAndRuntimeConfigToCopyItemsForReferencingProjects`,
+                    // the `None` item of `AppHostIntermediatePath`)
+                    let isRuntimeFile (f: Lock.AppFile) =
+                        f.Name.EndsWith (".runtimeconfig.json", System.StringComparison.OrdinalIgnoreCase)
+                        || f.Name.EndsWith (".deps.json", System.StringComparison.OrdinalIgnoreCase)
+                    let asm, side = outputsOf dir e isRuntimeFile true
+                    assemblies.Add asm
+                    add false asm (Path.GetFileName asm)
+                    let stem = Path.GetFileNameWithoutExtension asm
+                    for ext in related do
+                        let p = normal (Path.Combine (dir, stem + ext))
+                        if File.Exists p then add false p (stem + ext)
+                    // pdb and xml come by the root's related extensions above
+                    for f, p in side do
+                        if not (f.EndsWith ".pdb" || f.EndsWith ".xml") then add false p f
+                    let app = e.Recorded |> Option.bind (fun x -> x.App)
+                    items false app
+                    enqueue e c
+            // the assemblies are the compile rules' targets (built first; a recompile re-runs this)
+            do! needFiles (Filelist (assemblies |> Seq.map File.make |> List.ofSeq))
+            // and their write times as plain file dependencies: an engine before Xake 3.8 (the
+            // published 3.7 this package builds on) records a rule's target without its change
+            // stamp, so an assembly rebuilt by an earlier run would leave this folder "up to date"
+            // (S66; Xake 3.8's ArtifactDep2 sees it by itself)
+            let! result = getResult ()
+            do! setResult { result with Depends = result.Depends @ [ for a in assemblies -> let f = File.make a in FileDep (f, File.getLastWriteTime f) ] }
+            // the package files the folder lacks, fetched (the versions the locks resolved)
+            let missing = candidates |> Seq.map (fun c -> c.Source) |> Seq.filter (fun s -> hashes.ContainsKey s && not (File.Exists s)) |> Seq.distinct |> List.ofSeq
+            if not (List.isEmpty missing) then
+                let! problems = Restore.ensure Restore.Options.Default { Packages = entries |> Seq.collect (fun e -> e.Packages) |> List.ofSeq; Paths = missing }
+                if not (List.isEmpty problems) then failwithf "%s: fetching the copy-local packages failed:\n%s" what (String.concat "\n" problems)
+            let files, conflicts = RunFolder.plan RunFolder.assemblyVersion RunFolder.sameContent (List.ofSeq candidates)
+            let absent = files |> List.filter (fun (_, s) -> not (File.Exists s)) |> List.map snd
+            if not (List.isEmpty absent) then
+                failwithf "%s: missing %s" what (absent |> List.map (sprintf "'%s'") |> String.concat ", ")
+            // the inputs no rule builds: package files and items (the outputs beside the
+            // assemblies change with them)
+            do! needFiles (Filelist [ for _, s in files do if itemSources.Contains s then yield File.make s ])
+            let check (src: string) =
+                match hashes.TryGetValue src with
+                | true, sha when sha <> "" && Csc.sha256 src <> sha ->
+                    failwithf "%s: '%s' does not have the hash its lock records; run the import again" what src
+                | _ -> ()
+            let header = [ sprintf "# %s: lock %s; mode<TAB>path<TAB>source" what (normal rootLock) ]
+            let summary = RunFolder.apply mode manifest header check files
+            // the conflicts report beside the manifest, written when its text changes
+            let report = Path.Combine (Path.GetDirectoryName manifest, RunFolder.ConflictsReport)
+            let lines =
+                [ for c in conflicts -> sprintf "%s\tkept %s\tdropped %s\t(%s)" c.Path c.Kept c.Dropped c.Reason ]
+                @ [ for p in summary.Foreign -> sprintf "%s\tkept the file the folder had\tdropped the planned source\t(not placed by a run: never overwritten)" p ]
+            if List.isEmpty lines then
+                if File.Exists report then File.Delete report
+            else
+                let text = String.concat "\n" (sprintf "# %s: path<TAB>kept<TAB>dropped<TAB>(why)" what :: lines) + "\n"
+                if not (File.Exists report) || File.ReadAllText report <> text then File.WriteAllText (report, text)
+                do! trace Warning "%s: %d conflicts (%s)" what lines.Length report
+            let modes = summary.Modes |> List.map (fun (m, n) -> sprintf "%d %s" n m) |> String.concat ", "
+            do! trace Message "%s: %d files (%s), %d placed, %d unchanged, %d removed" what summary.Files modes summary.Placed summary.Kept summary.Removed
+        }
+
+    /// `runFolderWith` without extra roots, by hard links.
+    let runFolder (lockOf: string -> string -> string) (outOf: string -> string -> string -> string) (cfg: string) (fwk: string) (name: string) : Recipe<ExecContext, unit> =
+        runFolderWith [] RunFolder.Link lockOf outOf cfg fwk name
+
+    /// <summary>
+    /// The run folder manifests (`runOf cfg fwk name` + `/.xake-run.txt`) of every project of
+    /// `descriptions` (a fileset of `xake.project.json`) whose lock entry runs (`runs`: an
+    /// application or a test project), in each of its frameworks -- what a script's `deploy`
+    /// needs.
+    /// </summary>
+    let runFoldersWith (extraRoots: (string * string) list) (descriptions: Fileset) (cfg: string) (lockOf: string -> string -> string)
+                       (runOf: string -> string -> string -> string) : Recipe<ExecContext, string list> =
+        recipe {
+            let! options = getCtxOptions ()
+            let! (Filelist files) = getFiles descriptions
+            let! loaded = files |> List.map (fun f -> Description.load f.FullName) |> sequence
+            let withLock =
+                loaded |> List.filter (fun d ->
+                    let p = lockOf d.Name cfg
+                    File.Exists (if Path.IsPathRooted p then p else Path.Combine (options.ProjectRoot, p)))
+            let! docs = withLock |> List.map (fun d -> Lock.loadWith extraRoots (lockOf d.Name cfg)) |> sequence
+            return
+                [ for d, doc in List.zip withLock docs do
+                    for e in doc.Entries do
+                        if runs e then yield normal (Path.Combine (runOf cfg e.Framework d.Name, RunFolder.Manifest)) ]
+        }

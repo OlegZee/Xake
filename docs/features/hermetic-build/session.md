@@ -1200,3 +1200,21 @@ dev brought PRs #44-#54 incl. #54 `ArtifactDep2`); conflicts `.gitignore` (union
 feature's fsc-design.md reference re-added); `build test` passes, tests 333 passed + 1 skipped
 (334), hermetic.tests 206 passed; no hermetic test change was needed for `ArtifactDep2`. Night
 base 74bf4d9 dry-run (`git merge-tree`) on top of e6acb95: no conflicts (28 commits, 39 files).
+
+## 2026-10-16 — PR sequence 0–4 done
+
+Principle: no msbuild emulation; the locks path (everything the build needs is recorded in the lock, msbuild is only an importer).
+
+- PR 0: merge dev (e6acb95, incl. #54 ArtifactDep2).
+- PR 1 `pr/dotnet-resx`: draft #55 to dev (ResxFormat, csc crash report, platform monikers); behaviour change: preserialized resx needs System.Resources.Extensions on net462 too.
+- PR 2 `pr/resolved-inputs`: `Import.record`, lock format 2 with `Recorded`, portable identities, critic fixes B1/S2–S12, hermetic 250, the trial project 172/172 metadata parity, re-import stable, locks −25%.
+- PR 3 `pr/apps`: App section, apphost = SDK, deps/runtimeconfig/config from msbuild, hermetic 258, the trial project 177/177.
+- PR 4 `pr/deploy`: `Locks.runFolderWith`, run folders of hard links, 0 extra / 0 conflicts on the trial project, hermetic 267.
+
+Branch chain and worktrees: `feature/hermetic-build` ← `pr/resolved-inputs` ← `pr/apps` ← `pr/deploy` (all pushed except the feature branch; the draft PR for PR 2 is not opened because `feature/hermetic-build` is not pushed). Commands: `git push origin feature/hermetic-build`, then `gh pr create --draft --base feature/hermetic-build --head pr/deploy --repo OlegZee/Xake` for the whole stack, or one PR per branch.
+
+Night branches parked: `pr/apphost-resx` (docs: triage, decisions-ru, group1-ru, critics), `pr/win-import-3`, `night-2`, `pr/wpf-exe-satellites` (WPF/satellites), `pr/s66-repro` (superseded).
+
+Open: binding redirects S55, satellites, `Project.import` legacy, Windows/Linux unverified, HERMETIC=on on the trial project, `LOCK_STALE` switch name, SDK-pin warning 85× on the trial project, 34–38 s build (analyzers).
+
+**Exact next step**: owner reviews/merges #54 and #55 into dev → release Xake 3.8; pushes the feature branch and opens the stack PRs; meanwhile `exp-repo` moves to 0.4.2-night (in progress).

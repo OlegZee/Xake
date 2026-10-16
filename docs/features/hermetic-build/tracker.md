@@ -22,6 +22,8 @@ mechanism, release. Details: session.md, README.md.
 
 **Status 2026-10-13 (night run):** fixes plan rounds A1, B1, B2.1, D1 (hermetic stack `pr/import-fidelity` -> `pr/lock-fidelity` -> `pr/batch-restore` -> `pr/lock-roots`) and C1, C2a (core `pr/fileset-perf` -> `pr/rule-match-cache`) implemented, critic-reviewed, local only (nothing pushed or merged); the trial project rerun on local packages: 33 -> 7 s clean, 224 -> 20 s four configs, script without workarounds; report `fsc-rework/night-report-2026-10-13.html`.
 
+**Status 2026-10-16 (PR sequence 0-4):** PR 0 (dev merged), PR 1 (#55 draft), PR 2 (+critic fixes), PR 3, PR 4 done; chain `feature/hermetic-build` <- `pr/resolved-inputs` <- `pr/apps` <- `pr/deploy` pushed except the feature branch; hermetic tests 267, the trial project 177/177. Next: merge #54/#55, release Xake 3.8. Details: session.md.
+
 ## Fixes plan (fsc-rework/fixes-plan.md, 2026-10-13)
 - [x] A1 import/project fidelity G1-G4, G13 — `pr/import-fidelity`
 - [x] B1 transitive refs, framework assemblies, directory, xml rule, G14 — `pr/lock-fidelity`
@@ -206,3 +208,14 @@ to that rule rather than the deliverable. Items are ordered by what they unblock
 - [ ] **fsc-rework implementation**: the PR plan in `fsc-rework/brief.md` (one tracker line per PR once started)
 - [ ] **`cached` rule decorator** + fingerprints file (after the explicit-command form lands)
 - [ ] **the trial product experiment** on the new system (repo-a + page, `develop`, two brands)
+
+## PR sequence (2026-10-16)
+- [x] PR 0 merge dev into the feature branch (e6acb95, incl. #54 ArtifactDep2)
+- [x] PR 1 `pr/dotnet-resx` (#55 draft)
+- [x] PR 2 `pr/resolved-inputs` (+critic fixes)
+- [x] PR 3 `pr/apps`
+- [x] PR 4 `pr/deploy`
+- [ ] merge #54/#55, release Xake 3.8
+- [ ] push feature/hermetic-build, open stack PRs
+- [ ] exp-repo on 0.4.2-night: format-2 locks, flat out + run folders, minimal pack
+- [ ] hermetic release 0.4 after the stack lands

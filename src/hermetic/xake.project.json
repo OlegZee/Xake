@@ -15,6 +15,7 @@
     "Lock.fs",
     "Described.fs",
     "Apps.fs",
+    "RunFolder.fs",
     "Locks.fs",
     "Project.fs",
     "Import.fs",

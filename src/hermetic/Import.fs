@@ -1112,6 +1112,28 @@ module Import =
                 with e -> warnings.Add (sprintf "'%s' (%s): the restore graph is not recorded: %s" ctx.Description.Name framework e.Message); []
             | _ -> []
         let sdk = p "NETCoreSdkVersion"
+        // a targeting pack (`pack:`) is a package too: a row for the SBOM, with the sha512 of the
+        // package folder's copy when it has one (a build without the pack fetches that package)
+        let packages =
+            let identities : Lock.Identity.Context =
+                { Roots = [ "$(DotnetRoot)", (slash (p "NetCoreRoot")).TrimEnd '/'; Roots.nugetPackageRootToken, (slash ctx.PackageRoot).TrimEnd '/' ]
+                  Sdk = sdk; Projects = [] }
+            let d = compilation.Dependencies
+            let packs =
+                [ for path in (d.References |> List.map (fun r -> r.Path)) @ (d.Analyzers |> List.map (fun a -> a.Path)) do
+                    match Lock.Identity.ofPath identities path with
+                    | Some id when id.StartsWith "pack:" ->
+                        match (id.Substring 5).Split '/' with
+                        | parts when parts.Length > 2 -> yield parts.[0], parts.[1]
+                        | _ -> ()
+                    | _ -> () ]
+                |> List.distinct
+            let known = packages |> List.map (fun (k: Package) -> k.Id.ToLowerInvariant (), k.Version) |> set
+            packages
+            @ [ for id, version in packs do
+                  if not (known.Contains (id, version)) then
+                      yield ({ Id = id; Version = version; Sha512 = (Nuget.readCache ctx.PackageRoot id version).Sha512
+                               Direct = false; DependsOn = [] } : Package) ]
         let entry : Lock.Entry =
             { Compilation = compilation
               Evaluation =

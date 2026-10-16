@@ -298,6 +298,8 @@ type ``Import record``() =
         Assert.That(app, Does.Contain "/resource:$(ProjectRoot)/app/Data/t.txt,X.txt")
         Assert.That(app, Does.Contain "app.GlobalUsings.g.cs")
         Assert.That(app, Does.Contain "\"TargetFileName\": \"app.exe\"")
+        // the targeting pack is a package row too (the SBOM's component)
+        Assert.That(app, Does.Contain "{ \"Id\": \"microsoft.netcore.app.ref\", \"Version\": \"8.0.")
         Assert.That(app, Does.Not.Contain "/out:")
         Assert.That(app, Does.Not.Contain "/refout:")
 

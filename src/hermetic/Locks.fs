@@ -739,11 +739,12 @@ module Locks =
     /// `Recorded.Projects`, at the configuration and framework msbuild chose; else
     /// `refConfig`/`nearestFramework`): each one's assembly in `outOf` with the files beside it
     /// that have the root's `Related` extensions, a referenced application's runtimeconfig and
-    /// deps.json (the SDK's items for referencing projects), its copy-to-output items and its
-    /// copy-local files;</item>
+    /// deps.json and apphost (the SDK's items for referencing projects), its copy-to-output
+    /// items, and its copy-local files that are not package files (a package's files are the
+    /// versions the root's own restore resolved: msbuild never copies a referenced project's);</item>
     /// <item>one source per path: the first, except that in the closure a higher assembly
-    /// version replaces a lower one; every dropped source with other content is written to
-    /// `.xake-run.conflicts.txt` beside the manifest (a warning);</item>
+    /// version (not the package version) replaces a lower one; every dropped source with other
+    /// content is written to `.xake-run.conflicts.txt` beside the manifest (a warning);</item>
     /// <item>placed by `mode` (hard link, else clone, else copy; `RunFolder.apply`): an unchanged
     /// file is kept, a changed one unlinked and placed again, a file of the previous run no longer
     /// planned removed; a no-op touches nothing.</item>
@@ -777,6 +778,15 @@ module Locks =
             let itemSources = System.Collections.Generic.HashSet<string> ()
             let entries = ResizeArray<Lock.Entry> [ root ]
             let add own (src: string) (To: string) = candidates.Add { To = To; Source = src; Own = own }
+            // the package folder and the .NET installation: a package's (or pack's) file in a
+            // referenced project's copy-local list is that project's restore, not this one's
+            let! packageRoot = DotNetFwk.packageRoot ()
+            let! roots = Roots.currentWith extraRoots
+            let packageDirs =
+                [ packageRoot
+                  roots |> List.tryFind (fst >> (=) "$(DotnetRoot)") |> Option.map snd |> Option.defaultValue "" ]
+                |> List.filter ((<>) "") |> List.map (fun d -> (normal (Path.GetFullPath d)).TrimEnd '/' + "/")
+            let isPackageFile (path: string) = packageDirs |> List.exists (fun d -> (normal path).StartsWith (d, System.StringComparison.OrdinalIgnoreCase))
             let items own (app: Lock.App option) =
                 match app with
                 | None -> ()
@@ -787,8 +797,11 @@ module Locks =
                         itemSources.Add c.Path |> ignore
                         add own c.Path c.To
                     for c in a.Copy do
-                        // a referenced project's output comes with the closure (its related files too)
-                        if c.Sha256 <> "" then
+                        // a referenced project's output comes with the closure (its related files
+                        // too); the package files are the root's own restore's only -- a referenced
+                        // project's are the versions its restore resolved, which msbuild never
+                        // copies here (its other copy-local files, found beside its output, it does)
+                        if c.Sha256 <> "" && (own || not (isPackageFile c.Path)) then
                             hashes.[c.Path] <- c.Sha256
                             itemSources.Add c.Path |> ignore
                             add own c.Path c.To

@@ -186,3 +186,49 @@ the PDB document checksum and the PDB id differ.
   files of any role by the SDK prerequisite; not run on AR under HERMETIC=on.
 - Not verified on Windows/Linux: CRLF in recorded texts (normalised), case of
   `$(DotnetRoot)/packs` lookups (case-insensitive by design).
+
+## 7. Critic fixes (2026-10-16, after `critic-pr2.md`)
+
+One commit per finding, on top of the critic (ea9177f..4afac7e). Tests: core **341 passed + 1
+skipped** (unchanged), hermetic **250 passed** (234 before; +16, all in `RecordTests.fs`).
+`dotnet fsi build.fsx -- -- build test` green (2 min 46 s); `build.fsc.fsx build check` green.
+
+| Finding | Fix | Test |
+|---|---|---|
+| **B1** restore solution only `Release\|Any CPU` | `solutionText` declares every configuration on the script's `Platform` (default `Any CPU`) | `Import record configurations`: Debug+Release, one project, a Debug-only package; `Platform=x64` (`/platform:x64` recorded) |
+| **S1** restore under the first configuration only | per configuration, in order: its restore, its design-time builds, a copy of each assets file (the next restore rewrites it) | same test: the Debug lock has `pkg:newtonsoft.json`, the Release lock has none |
+| **S3** concurrent imports share `obj/<cfg>/<tfm>/` | each design-time build gets `IntermediateOutputPath=<base obj>/xake-record/<hash of configuration and properties>/<tfm>/` through the traversal item; removed from referenced projects (`_GlobalPropertiesToRemoveFromProjectReferences`); relative to the project, so a target that does not remove it (the code coverage's `MsCoverageReferencedPathMaps`) makes no new instances (AR: 1124 evaluations and 7.2 s with an absolute value, 320 and 3.6 s now) | `Import record concurrent brands`: three brands of one project at once, each lock has its own `AssemblyTitle`; nothing in `obj/Release/` |
+| **S2** repository's `CustomAfterMicrosoftCommonTargets` overridden | the evaluated value (added to the evaluation's properties) is passed per build as `XakeChainedAfterCommonTargets` and imported from Xake's targets file | `Import record repository settings`: `Directory.Build.props` sets it, its `DefineConstants` reach the lock |
+| **S4** `ProjectReference` outside the import | `projectsOf` fails naming the referrer and the referenced project file (paths compared ignoring case: AR's `src/exports` vs `src/Exports`); two referenced files of one name fail too | `Import record project chain`: c -> b -> a imported without a fails; with a, `project:a` and `project:b` in c's lock, all build |
+| **S5** switch files not identity-checked | `Import.unportablePaths`: every input a switch or a source names needs an identity; `/pathmap:` keys under a root | `Import record switch files`: an `.editorconfig` above the repository fails; a key file in a declared root is `$(Keys)/k.snk` and fails without the root; a pure case for `/pathmap` |
+| **S10** generated binaries read as text | `Import.isRecordedText` (`.cs .fs .vb .editorconfig .globalconfig .json .txt`) goes into `Generated`; a resx's `.resources` is compiled again; anything else is copied byte for byte to `<lock>.files/<tfm>/` (written when the bytes change, stale copies removed) and the switch names the copy. Chosen over base64: no runner change, the file stays a file | e2e: a generated `app.g.resources` handed to csc (as WPF does) is byte-identical in the lock folder and in the built assembly; `Record entry`: classification on a hand-made dump |
+| **S8** `Imports` never checked | `Locks.compileAs` depends on and hashes `Evaluation.Imports` of a recorded entry: a change fails with "run the import again"; `LOCK_STALE=warn` makes it a warning, never under CI | chain fixture: a csproj edited after the import fails, warns under the variable, passes after a new import |
+| **S6** source list duplicated | with masks, `Sources` holds only the files the masks do not put in place, `Recorded.Placed` says where (`Lock.canonicalSources`: per include mask, ordinal ignoring case, which is msbuild's glob order for 164/172 AR entries; `placedSources`: the longest run in that order stays implicit; `reconstructSources` at build) | pure test of the three and a round trip; the two-project e2e (P.cs only as a `Placed` value; outputs as `dotnet build`). AR: **80,544 -> 61,730 lines** (11.4 -> 9.2 MB); Design.Win **5,887 -> 1,543** lines (801 -> 259 KB) |
+| **S7** format-1 message; `Project.import` labelled format 2 | message: "its imported entries are Xake's own resolution of the project, not msbuild's"; a lock with an imported entry that has no `Recorded` is written `"Format": 1, "Legacy": "Project.import"` (read as before); format 1 without the marker refused; format 2 with such an entry refused | identities fixture; goldens of `Project.import` moved to the legacy header |
+| **S9** pin stricter than global.json | warning per project with the exact `global.json`; prerequisite message says "the import" without a pin file | repository fixture reads the warning in the log; on AR it also shows Design.AI's nested `global.json` (9.0.203) is not the one the import ran under (8.0.425) |
+| **S11** stale doc comments | `Lock.Prerequisite`, `hermeticViolations`, `Import.record`; `lock.md` Prerequisites and the import steps; `description.md` (masks come from the lock); `hermetic-mode.md` (recorded rules) | -- |
+| **S12** release note | `docs/hermetic/README.md` "Next (hermetic, after PR 2)" | -- |
+| item 10 | -- | `unquote` cases (incl. the space re-quoted by `Csc.ofArgs`); a linked resource's name from `Link` (`app.Shared.resources`); the tokenized global.json pin (`$(ProjectRoot)/global.json`); tokenized document `Properties`; the S.R.E guard on recorded references; the masks-mismatch fallback; `project:` chaining |
+| item 11 | each `pack:` id/version is a `Packages` row (sha512 from the package folder's copy when present) | two-project e2e: `microsoft.netcore.app.ref` row |
+
+**AR check** (scratch, mescius Release, local dll, no tests): import 22.8 s (restore 2.0 s,
+evaluations 13-16 s, design-time builds 3.6 s), 85/85 locks unchanged on re-import; clean build
+**172/172** assemblies with equal type and method counts, resources, references and versions
+(444/444 outputs, Xake extra 0).
+
+**Item 12, the 34 s clean build** (night 30.4 s; msbuild 29-31 s with its compiler server):
+the critical path is compiler time (Design.Win waits 25 s for its references, then csc 7 s;
+Xake's own steps between a reference and `compiling` are under a second). Measured:
+`CSC_SERVER=off` 34.7 s; the same with `/skipanalyzers+` added to every entry **25 s**; with
+`CSC_SERVER=on` 27 s cold, **19 s** warm. So about 10 s is msbuild's full analyzer set
+(NetAnalyzers, code style, the generators of the ref packs), which the recorded lock runs
+because msbuild does; not cut (fidelity). Cheap fixes done: a lock is parsed once per content
+(`Lock.read`), the packs folder listed once per change (`Identity.toPath`). Mask globbing per
+entry is a `getFiles` per compile (the dependency on added files) and was not visible.
+
+**Not done / notes:** the self-build locks (`locks/*`) stay composed format 1: the repo's own
+build uses `Locks.generate`, not imported locks, and the published 0.3.0.28 that
+`build.fsc.fsx` runs writes format 1 anyway. The critic's nits not in the task list (CI
+environment variables, `NETStandard.Library.Ref` identity, composed `outputName`, `/tmp`
+segment match, F# `record` e2e, `NuGetPackageId` metadata) are open. 85 pin warnings on AR
+(one per project) are loud; a single summary line may be better.

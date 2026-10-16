@@ -166,6 +166,7 @@ type ``Import record applications``() =
     /// The files under `dir`, relative, '/', sorted.
     let filesOf (dir: string) =
         Directory.GetFiles (dir, "*", SearchOption.AllDirectories)
+        |> Array.filter (fun f -> not (Path.GetFileName(f).StartsWith ".xake-run"))
         |> Array.map (fun f -> Path.GetRelativePath(dir, f).Replace ('\\', '/')) |> Array.sort |> List.ofArray
 
     /// The lock texts and the files beside them, by path.
@@ -181,13 +182,14 @@ type ``Import record applications``() =
             RecordKit.import x.TestOptions "import-1" RecordKit.recordDefault projects |> ignore
             firstImport <- recorded ()
             RecordKit.build x.TestOptions "build-1" "Release"
+            RecordKit.deploy x.TestOptions "deploy-1" "Release" RunFolder.Link
             for a in apps do RecordKit.runDotnet (Path.GetFullPath a) [ "build"; a + ".csproj"; "-c"; "Release"; "-p:NuGetAudit=false" ]
             prepared <- true
 
-    /// (Xake's output folder, msbuild's) of an application.
+    /// (Xake's run folder, msbuild's output folder) of an application.
     member private x.Outputs (name: string) (msbuildDir: string) =
         x.Prepare ()
-        sprintf "out/Release/%s/%s" (if name = "winexe" then "net472" else "net8.0") name, name + "/bin/Release/" + msbuildDir
+        sprintf "run/Release/%s/%s" (if name = "winexe" then "net472" else "net8.0") name, name + "/bin/Release/" + msbuildDir
 
     [<Test>]
     member x.``the locks hold no host string and an import after both builds records the same``() =
@@ -263,14 +265,13 @@ type ``Import record applications``() =
         // not run: a win-x64 application does not start on another OS (msbuild's neither)
 
     [<Test>]
-    member x.``a Test.Sdk project: copy-local, deps.json and runtimeconfig as msbuild's; the files msbuild copies from items are PR 4's``() =
+    member x.``a Test.Sdk project: copy-local, the adapter's items, deps.json and runtimeconfig as msbuild's``() =
         let ours, theirs = x.Outputs "tests" "net8.0"
-        let xake, msbuild = set (filesOf ours), set (filesOf theirs)
-        Assert.That(Set.difference xake msbuild, Is.Empty)
-        // what msbuild copies through items (`None` with CopyToOutputDirectory in the packages'
-        // build files, GetCopyToOutputDirectoryItems): the deploy step's (PR 4)
-        let missing = Set.difference msbuild xake |> Set.toList
-        Assert.That(missing, Is.EqualTo [ "NUnit3.TestAdapter.dll"; "NUnit3.TestAdapter.pdb"; "nunit.engine.api.dll"; "nunit.engine.core.dll"; "nunit.engine.dll"; "testcentric.engine.metadata.dll" ])
+        Assert.That(filesOf ours, Is.EqualTo (filesOf theirs))
+        // the adapter's files come from `None` items of the package's build props (`Content`)
+        let lock = File.ReadAllText (RecordKit.lockOf "tests" "Release")
+        Assert.That(lock, Does.Match "\"Id\": \"pkg:nunit3testadapter/4\\.2\\.1/build/netcoreapp[0-9.]+/NUnit3\\.TestAdapter\\.dll\", \"Sha256\": \"[0-9a-f]{64}\", \"To\": \"NUnit3\\.TestAdapter\\.dll\"")
+        Assert.That(lock, Does.Contain "\"IsTestProject\": \"true\"")
         for f in [ "tests.deps.json"; "tests.runtimeconfig.json" ] do
             Assert.That(File.ReadAllText (ours </> f), Is.EqualTo (File.ReadAllText (theirs </> f)), f)
         // its generated entry point runs (the runtime finds the framework and the copy-local files)

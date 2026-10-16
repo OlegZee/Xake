@@ -707,7 +707,7 @@ type ``Record entry``() =
         File.WriteAllBytes ("proj/obj/s/X.exe.licenses", licenses)
         let binaryDir = here () + "/locks/X/Release.files/net472"
         let entry, _, binaries = Import.entryOf (context [ "**/*.cs"; "!obj/**/*" ]) "Release" "net472" (here () + "/proj/obj/s") binaryDir (dump [] false)
-        Assert.That(binaries, Is.EqualTo [ here () + "/proj/obj/s/X.exe.licenses", binaryDir + "/X.exe.licenses" ])
+        Assert.That(binaries, Is.EqualTo [ binaryDir + "/X.exe.licenses", licenses ])
         let c = entry.Compilation
         Assert.That(c.Options, Does.Contain ("/resource:" + binaryDir + "/X.exe.licenses"))
         Assert.That(c.Generated |> List.map fst, Is.EqualTo [ here () + "/obj/xake/X/net472/Release/X.AssemblyInfo.cs" ])

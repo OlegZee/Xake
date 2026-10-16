@@ -145,6 +145,12 @@ For a recorded project the build takes the source masks from the lock (`Recorded
 from the description: an edit of the description's `sources` has no effect on the build. Change
 the project file and import again.
 
+An application (an exe, a winexe, a .NET test project) has nothing more in its description:
+the apphost, `runtimeconfig.json`, `deps.json`, the config file and the copy-local files are in
+the lock's `App` section, recorded from msbuild
+([lock.md, "Applications"](lock.md#applications-the-app-section)). The description schema has
+no field for them.
+
 Both imports read a `Compile Include` with a property (`$(BuildTmpPath)\VersionInfo.cs`, a
 shared project's `$(MSBuildThisFileDirectory)X.cs`) as the evaluated path, relative to the
 project folder, and write the path of a shared project's resource relative to the project

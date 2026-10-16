@@ -126,6 +126,8 @@ type ``Import record applications``() =
                 RecordKit.sdkProject "<TargetFramework>net8.0</TargetFramework><OutputType>Exe</OutputType>"
                     "<ProjectReference Include=\"../lib/lib.csproj\" /><PackageReference Include=\"SQLitePCLRaw.lib.e_sqlite3\" Version=\"2.1.6\" />"
               "console/P.cs", main
+              // the project's own config: msbuild copies it as it is (BOM, CRLF)
+              "console/App.config", "\uFEFF<?xml version=\"1.0\" encoding=\"utf-8\"?>\r\n<configuration>\r\n</configuration>\r\n"
               "winexe/winexe.csproj",
                 RecordKit.sdkProject "<TargetFramework>net472</TargetFramework><OutputType>WinExe</OutputType>"
                     "<ProjectReference Include=\"../lib/lib.csproj\" />"
@@ -209,6 +211,9 @@ type ``Import record applications``() =
         Assert.That(filesOf ours, Is.EqualTo (filesOf theirs))
         for f in [ "console.deps.json"; "console.runtimeconfig.json" ] do
             Assert.That(File.ReadAllText (ours </> f), Is.EqualTo (File.ReadAllText (theirs </> f)), f)
+        // named where it is, by its hash, and copied byte for byte
+        Assert.That(lock, Does.Contain "{ \"Name\": \"console.dll.config\", \"Path\": \"$(ProjectRoot)/console/App.config\"")
+        Assert.That(File.ReadAllBytes (ours </> "console.dll.config"), Is.EqualTo (File.ReadAllBytes (theirs </> "console.dll.config")))
         Assert.That(runProcess "dotnet" [ "console.dll" ] (Path.GetFullPath ours), Does.StartWith "[1,2]")
         let apphost = Path.GetFullPath (ours </> (if Env.isWindows then "console.exe" else "console"))
         Assert.That(runProcess apphost [] (Path.GetFullPath ours), Does.StartWith "[1,2]")

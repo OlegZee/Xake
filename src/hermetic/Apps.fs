@@ -310,10 +310,13 @@ module Apps =
             // 2. the files msbuild generated
             for f in app.Files do
                 checkHash "recorded file" f.Path f.Sha256
-                let text = File.ReadAllText f.Path
-                let text = if text.Contains "$(" then depsResolved (fun file -> Path.Combine (outDir, file)) text else text
+                let bytes = File.ReadAllBytes f.Path
+                // as it is (a project's own config keeps its BOM and line ends), but a deps.json's tokens
+                let bytes =
+                    if f.Name.EndsWith (".deps.json", System.StringComparison.OrdinalIgnoreCase) then
+                        System.Text.Encoding.UTF8.GetBytes (depsResolved (fun file -> Path.Combine (outDir, file)) (System.Text.Encoding.UTF8.GetString bytes))
+                    else bytes
                 let destination = Path.Combine (outDir, f.Name)
-                let bytes = System.Text.Encoding.UTF8.GetBytes text
                 if not (File.Exists destination) || File.ReadAllBytes destination <> bytes then
                     File.WriteAllBytes (destination, bytes)
             // 3. the apphost

@@ -220,9 +220,10 @@ module Lock =
         | SdkHost
         | PackHost of rid: string * template: Hashed
 
-    /// A file msbuild wrote for an application (`runtimeconfig.json`, `deps.json`, the
+    /// A file msbuild writes for an application (`runtimeconfig.json`, `deps.json`, the
     /// `<exe>.config`), recorded beside the lock (`Path`, `<lock>.files/<framework>/app/`,
-    /// with its sha256) and written into the output as `Name`.
+    /// with its sha256) -- or the project's own config file msbuild copies as it is (a .NET
+    /// application's `App.config`), named where it is -- and written into the output as `Name`.
     type AppFile = { Name: string; Path: string; Sha256: string }
 
     /// A file msbuild copies into an application's output (`ReferenceCopyLocalPaths`): the
@@ -247,7 +248,8 @@ module Lock =
     /// <item>`Related`: the extensions of the files copied beside a referenced project's
     /// output when they exist (`AllowedReferenceRelatedFileExtensions`: `.pdb`, `.xml`, ...);</item>
     /// <item>`BindingRedirects`: msbuild adds binding redirects to the config
-    /// (`AutoGenerateBindingRedirects` and `GenerateBindingRedirectsOutputType`); the recorded
+    /// (`AutoGenerateBindingRedirects` and `GenerateBindingRedirectsOutputType`, .NET Framework
+    /// and .NET alike); the recorded
     /// config has none (they depend on what is built when the import runs; S55).</item>
     /// </list>
     /// </summary>

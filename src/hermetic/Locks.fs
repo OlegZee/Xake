@@ -417,6 +417,33 @@ module Locks =
             Path.matchesPattern (Path.parse mask) (normal projectPath)
         versions |> List.tryFind (fst >> covers) |> Option.map snd
 
+    /// <summary>
+    /// Checks the msbuild files a recorded entry's import read (`Evaluation.Imports`: the
+    /// project file, `Directory.Build.props`, ...) against the hashes the lock records, and
+    /// depends on them. A changed or missing one fails the build naming it, "run the import
+    /// again" -- the lock is msbuild's resolution of what those files said. With the variable
+    /// `LOCK_STALE=warn` it is a warning instead, but never under CI (`Lock.underCi`).
+    /// </summary>
+    let private staleImports (lockPath: string) (entry: Lock.Entry) : Recipe<ExecContext, unit> =
+        recipe {
+            let imports = entry.Evaluation.Imports
+            do! needFiles (Filelist (imports |> List.filter (fun h -> File.Exists h.Path) |> List.map (fun h -> File.make h.Path)))
+            let changed =
+                imports |> List.filter (fun h -> h.Sha256 <> "" && (not (File.Exists h.Path) || Csc.sha256 h.Path <> h.Sha256))
+            if not (List.isEmpty changed) then
+                let msg =
+                    sprintf "'%s' (%s): the lock '%s' is stale: %s changed since the import that wrote it; run the import again"
+                        entry.Name entry.Framework lockPath (changed |> List.map (fun h -> sprintf "'%s'" h.Path) |> String.concat ", ")
+                let! stale = getVar "LOCK_STALE"
+                let! ci = Lock.underCi
+                match stale |> Option.map (fun v -> v.Trim().ToLowerInvariant ()) with
+                | Some "warn" when not ci -> do! trace Warning "%s" msg
+                | Some ("warn" | "fail") | None ->
+                    do! trace Error "%s" msg
+                    failwith msg
+                | Some other -> failwithf "LOCK_STALE='%s': expected fail or warn" other
+        }
+
     /// `compileAs` for a `.dll` target.
     let private compileDll (extraRoots: (string * string) list) (lockPath: string) (fwk: string) (versions: (string * RequiredVar<string>) list) : Recipe<ExecContext, unit> =
         recipe {
@@ -437,6 +464,11 @@ module Locks =
             let asm = Path.GetFileNameWithoutExtension target
             if entry.Name <> asm then
                 failwithf "'%s': the target '%s' is not the assembly of the lock '%s' (%s)" entry.Name target lockPath (outputName entry)
+
+            // a recorded entry is msbuild's resolution of the files its import read: one changed
+            // since (a PackageReference added to the csproj) makes the lock stale
+            if entry.Recorded.IsSome then
+                do! staleImports lockPath entry
 
             // project-reference outputs first (unhashed in the lock): another rule's targets. The
             // hashed ones are packages, which may not be fetched yet: the runner needs them after

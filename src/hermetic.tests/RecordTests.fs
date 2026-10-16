@@ -326,7 +326,7 @@ module internal RecordKit =
             File.WriteAllText (path, text)
 
     let run (options: ExecOptions) (label: string) (rules': Rule<ExecContext> list) (targets: string list) =
-        xake {options with FileLog = label + ".log"; ThrowOnError = true; Vars = [ "CI", "off"; "CSC_SERVER", "off" ]; FileLogLevel = Loud} {
+        xake {options with FileLog = label + ".log"; ThrowOnError = true; Vars = [ "CI", "off"; "CSC_SERVER", "off" ] @ options.Vars; FileLogLevel = Loud} {
             wantOverride targets
             rules rules'
         }
@@ -513,6 +513,22 @@ type ``Import record project chain``() =
         Assert.That(c, Does.Contain "{ \"Name\": \"a\", \"Configuration\": \"Release\", \"Framework\": \"net8.0\", \"Path\": \"$(ProjectRoot)/out/Release/net8.0/a/a.dll\" }")
         RecordKit.build x.TestOptions "build-chain" "Release"
         for p in [ "a"; "b"; "c" ] do Assert.That(File.Exists (sprintf "out/Release/net8.0/%s/%s.dll" p p), p)
+
+    [<Test>]
+    member x.``a project file edited since the import fails the build: run the import again``() =
+        fixture ()
+        RecordKit.import x.TestOptions "import-stale" RecordKit.recordDefault [ "a/a.csproj"; "b/b.csproj"; "c/c.csproj" ] |> ignore
+        RecordKit.build x.TestOptions "build-stale-1" "Release"
+        File.AppendAllText ("b/b.csproj", "<!-- a PackageReference would go here -->\n")
+        let e = Assert.Catch(fun () -> RecordKit.build x.TestOptions "build-stale-2" "Release")
+        Assert.That(string e, Does.Contain "/b/b.csproj' changed since the import that wrote it; run the import again")
+        // a warning only, when asked for (not under CI)
+        RecordKit.build { x.TestOptions with Vars = [ "LOCK_STALE", "warn" ] } "build-stale-3" "Release"
+        Assert.That(File.ReadAllText "build-stale-3.log", Does.Contain "is stale")
+        // imported again: the build is quiet
+        RecordKit.import x.TestOptions "import-stale-2" RecordKit.recordDefault [ "a/a.csproj"; "b/b.csproj"; "c/c.csproj" ] |> ignore
+        RecordKit.build x.TestOptions "build-stale-4" "Release"
+        Assert.That(File.ReadAllText "build-stale-4.log", Does.Not.Contain "is stale")
 
     [<Test>]
     member x.``a referenced project the import does not record fails it, naming both``() =

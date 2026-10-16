@@ -13,40 +13,56 @@ open Xake.Hermetic.Dotnet
 [<TestFixture>]
 type ``App recording``() =
 
-    let deps (asset: string) =
-        String.concat "\n"
-            [ "{"
-              "  \"targets\": {"
-              "    \".NETCoreApp,Version=v8.0\": {"
-              "      \"app/1.0.0\": {"
-              "        \"runtime\": {"
-              "          \"app.dll\": {}"
-              "        }"
-              "      },"
-              "      \"lib/1.0.0\": {"
-              "        \"runtime\": {"
-              asset
-              "        }"
-              "      }"
-              "    }"
-              "  }"
-              "}" ]
+    let marker = Import.stubVersion
 
     [<Test>]
-    member _.``a project's versions in deps.json become tokens, as each SDK writes them``() =
-        let sdk8 = deps "          \"lib.dll\": {\n            \"assemblyVersion\": \"1.0.0\",\n            \"fileVersion\": \"\"\n          }"
-        let tokens8 = Import.depsTokens 8 (set [ "lib/1.0.0" ]) sdk8
-        Assert.That(tokens8, Does.Contain "\"assemblyVersion\": \"1.0.0\",\n            \"fileVersion\": \"$(FileVersion:lib.dll)\"\n          }")
-        // SDK 10 when the project is not built: no assembly version, file version 0.0.0.0
-        let sdk10 = deps "          \"lib.dll\": {\n            \"fileVersion\": \"0.0.0.0\"\n          }"
-        let tokens10 = Import.depsTokens 10 (set [ "lib/1.0.0" ]) sdk10
-        Assert.That(tokens10, Does.Contain "\"assemblyVersion\": \"$(AssemblyVersion:lib.dll)\",\n            \"fileVersion\": \"$(FileVersion:lib.dll)\"\n          }")
-        // and when it is built: the same tokens
-        let built10 = deps "          \"lib.dll\": {\n            \"assemblyVersion\": \"1.0.0.0\",\n            \"fileVersion\": \"1.0.0.0\"\n          }"
-        Assert.That(Import.depsTokens 10 (set [ "lib/1.0.0" ]) built10, Is.EqualTo tokens10)
-        // the application's own runtime file and a package's are left alone
-        Assert.That(tokens10, Does.Contain "\"app.dll\": {}")
-        Assert.That(Import.depsTokens 10 Set.empty built10, Is.EqualTo built10)
+    member _.``the versions msbuild read from a stand-in become tokens, the rest stays``() =
+        let deps =
+            String.concat "\n"
+                [ "{"
+                  "  \"targets\": {"
+                  "    \".NETCoreApp,Version=v8.0\": {"
+                  "      \"app/1.0.0\": {"
+                  "        \"dependencies\": {"
+                  "          \"Lib.Core\": \"2.3.4\","
+                  sprintf "          \"Lib.Core.Reference\": \"%s\"" marker
+                  "        },"
+                  "        \"runtime\": {"
+                  "          \"app.dll\": {}"
+                  "        }"
+                  "      },"
+                  "      \"Lib.Core/2.3.4\": {"
+                  "        \"runtime\": {"
+                  "          \"Lib.Core.dll\": {"
+                  "            \"assemblyVersion\": \"2.3.4\","
+                  "            \"fileVersion\": \"\""
+                  "          }"
+                  "        }"
+                  "      },"
+                  sprintf "      \"Lib.Core.Reference/%s\": {" marker
+                  "        \"runtime\": {"
+                  "          \"Lib.Core.dll\": {"
+                  sprintf "            \"assemblyVersion\": \"%s\"," marker
+                  sprintf "            \"fileVersion\": \"%s\"" marker
+                  "          }"
+                  "        }"
+                  "      }"
+                  "    }"
+                  "  },"
+                  "  \"libraries\": {"
+                  sprintf "    \"Lib.Core.Reference/%s\": {" marker
+                  "      \"type\": \"reference\""
+                  "    }"
+                  "  }"
+                  "}" ]
+        let tokens = Import.depsTokens deps
+        Assert.That(tokens, Does.Not.Contain marker)
+        Assert.That(tokens, Does.Contain "\"Lib.Core.Reference\": \"$(AssemblyVersion:Lib.Core.dll)\"")
+        Assert.That(tokens.Split("\"Lib.Core.Reference/$(AssemblyVersion:Lib.Core.dll)\": {").Length - 1, Is.EqualTo 2)
+        Assert.That(tokens, Does.Contain "\"assemblyVersion\": \"$(AssemblyVersion:Lib.Core.dll)\",\n            \"fileVersion\": \"$(FileVersion:Lib.Core.dll)\"")
+        // what msbuild did not read from the file: as written
+        Assert.That(tokens, Does.Contain "\"assemblyVersion\": \"2.3.4\",\n            \"fileVersion\": \"\"")
+        Assert.That(Import.depsTokens tokens, Is.EqualTo tokens)
 
     [<Test>]
     member _.``a package's runtimes folder and the declared RID are not host strings``() =
@@ -103,7 +119,7 @@ type ``Import record applications``() =
     let fixture () =
         RecordKit.write [ "lib"; "console"; "winexe"; "ridapp"; "tests"; "out"; "locks"; "obj" ]
             [ "lib/lib.csproj",
-                RecordKit.sdkProject "<TargetFrameworks>netstandard2.0;net8.0</TargetFrameworks><GenerateDocumentationFile>true</GenerateDocumentationFile><NoWarn>$(NoWarn);1591</NoWarn>"
+                RecordKit.sdkProject "<TargetFrameworks>netstandard2.0;net8.0</TargetFrameworks><AssemblyName>Lib.Core</AssemblyName><Version>2.3.4</Version><GenerateDocumentationFile>true</GenerateDocumentationFile><NoWarn>$(NoWarn);1591</NoWarn>"
                     "<PackageReference Include=\"Newtonsoft.Json\" Version=\"13.0.3\" />"
               "lib/C.cs", "namespace Lib { public class C { public static string S() => Newtonsoft.Json.JsonConvert.SerializeObject (new [] { 1, 2 }); } }\n"
               "console/console.csproj",
@@ -189,7 +205,7 @@ type ``Import record applications``() =
         let lock = File.ReadAllText (RecordKit.lockOf "console" "Release")
         Assert.That(lock, Does.Contain "\"Host\": { \"Rid\": \"\" }")
         Assert.That(lock, Does.Contain "\"To\": \"runtimes/linux-x64/native/libe_sqlite3.so\"")
-        Assert.That(lock, Does.Contain "{ \"Id\": \"project:lib\", \"Sha256\": \"\", \"To\": \"lib.dll\" }")
+        Assert.That(lock, Does.Contain "{ \"Id\": \"project:lib\", \"Sha256\": \"\", \"To\": \"Lib.Core.dll\" }")
         Assert.That(filesOf ours, Is.EqualTo (filesOf theirs))
         for f in [ "console.deps.json"; "console.runtimeconfig.json" ] do
             Assert.That(File.ReadAllText (ours </> f), Is.EqualTo (File.ReadAllText (theirs </> f)), f)

@@ -963,52 +963,69 @@ module Import =
         | ".cs" | ".fs" | ".vb" | ".editorconfig" | ".globalconfig" | ".json" | ".txt" -> true
         | _ -> false
 
+    /// The version of the stand-in assembly (`stubAssembly`): a value no project has, so a
+    /// `deps.json` names it only where msbuild read a referenced project's built file.
+    let internal stubVersion = "65534.65533.65532.65531"
+
     /// <summary>
-    /// A recorded `deps.json` (`text`, msbuild's) with each referenced project's runtime file
-    /// versions as tokens: msbuild reads them from the project's built file (`GenerateDepsFile`),
-    /// which the import does not build -- the file version (SDK 8: empty when not built), and
-    /// from SDK 10 the assembly version too (`0.0.0.0` file version and no assembly version
-    /// when not built); SDK 8 writes the project's version as the assembly version, kept. The
-    /// build reads them from the file it copies (`Locks`). `projects`: the `libraries` keys of
-    /// type `project` but the application's own. Line-based on msbuild's indented writer
-    /// (targets at six spaces, a runtime file at ten). Pure.
+    /// A stand-in for a referenced project's output while msbuild writes an application's
+    /// `deps.json` at import (`record`, the second design-time run): msbuild reads the built
+    /// file's versions (and SDK 8 fails when it is missing), which the import does not build.
+    /// An empty library (mscorlib only, 3 KB) whose assembly and file version are
+    /// `stubVersion`; compiled once from
+    /// <c>[assembly: AssemblyVersion("65534.65533.65532.65531")] [assembly: AssemblyFileVersion("65534.65533.65532.65531")]</c>
+    /// (`csc -noconfig -nostdlib -target:library -deterministic -optimize -debug- -r:mscorlib.dll`).
     /// </summary>
-    let internal depsTokens (sdkMajor: int) (projects: Set<string>) (text: string) : string =
+    let internal stubAssembly () = Convert.FromBase64String "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"
+
+    /// <summary>
+    /// A `deps.json` msbuild wrote with stand-ins for the referenced projects (`stubAssembly`),
+    /// with every version it read from them as a token the build replaces by the version of
+    /// the file it copies (`Apps.depsResolved`): a runtime file's `"assemblyVersion"` and
+    /// `"fileVersion"` as `$(AssemblyVersion:&lt;file&gt;)`/`$(FileVersion:&lt;file&gt;)`, and a
+    /// library named by the version (SDK 8's `&lt;assembly&gt;.Reference/&lt;version&gt;`) as
+    /// `&lt;name&gt;/$(AssemblyVersion:&lt;file&gt;)`, where the file is that library's runtime file.
+    /// What msbuild took elsewhere (SDK 8: a project's version as its assembly version, an
+    /// empty file version) stays. Line-based on msbuild's indented writer (a target's library
+    /// at six spaces, a runtime file at ten). Pure.
+    /// </summary>
+    let internal depsTokens (text: string) : string =
         let lines = text.Split '\n'
-        let out = ResizeArray<string> ()
-        let mutable library = ""
-        let mutable section = ""
-        let mutable i = 0
-        let key (line: string) (indent: int) =
-            let m = Text.RegularExpressions.Regex.Match (line, sprintf "^ {%d}\"([^\"]+)\": \\{(\\})?,?$" indent)
-            if m.Success then Some (m.Groups.[1].Value, m.Groups.[2].Success) else None
-        while i < lines.Length do
-            let line = lines.[i]
-            match key line 6, key line 8 with
-            | Some (k, _), _ -> library <- k; section <- ""; out.Add line; i <- i + 1
-            | _, Some (k, _) -> section <- k; out.Add line; i <- i + 1
-            | _ ->
-                match key line 10 with
-                | Some (file, empty) when section = "runtime" && projects.Contains library ->
-                    // the file's object up to its closing brace at ten spaces
-                    let mutable j = i + 1
-                    let body = ResizeArray<string> ()
-                    if not empty then
-                        while j < lines.Length && not (lines.[j].StartsWith "          }") do
-                            body.Add lines.[j]
-                            j <- j + 1
-                        j <- j + 1
-                    let closing = if empty then line.Substring (line.IndexOf "{}" + 2) else lines.[j - 1].Trim().Substring 1
-                    let assembly =
-                        if sdkMajor >= 10 then Some (sprintf "            \"assemblyVersion\": \"$(AssemblyVersion:%s)\"" file)
-                        else body |> Seq.tryFind (fun l -> l.TrimStart().StartsWith "\"assemblyVersion\"") |> Option.map (fun l -> l.TrimEnd ',')
-                    let fields = [ yield! Option.toList assembly; yield sprintf "            \"fileVersion\": \"$(FileVersion:%s)\"" file ]
-                    out.Add (sprintf "          \"%s\": {" file)
-                    fields |> List.iteri (fun n f -> out.Add (if n < fields.Length - 1 then f + "," else f))
-                    out.Add ("          }" + closing)
-                    i <- j
-                | _ -> out.Add line; i <- i + 1
-        String.concat "\n" out
+        let keyAt (indent: int) (line: string) =
+            let m = Text.RegularExpressions.Regex.Match (line, sprintf "^ {%d}\"([^\"]+)\": \\{" indent)
+            if m.Success then Some m.Groups.[1].Value else None
+        // each library's runtime file (its first one), from the targets
+        let fileOf =
+            let map = Collections.Generic.Dictionary<string, string> ()
+            let mutable library = ""
+            let mutable section = ""
+            for line in lines do
+                match keyAt 6 line, keyAt 8 line, keyAt 10 line with
+                | Some k, _, _ -> library <- k; section <- ""
+                | _, Some k, _ -> section <- k
+                | _, _, Some f when section = "runtime" && library <> "" && not (map.ContainsKey library) -> map.[library] <- f
+                | _ -> ()
+            map
+        let marker = Text.RegularExpressions.Regex.Escape stubVersion
+        let library (name: string) =
+            match fileOf.TryGetValue (name + "/" + stubVersion) with
+            | true, f -> sprintf "%s/$(AssemblyVersion:%s)" name f
+            | _ -> name + "/" + stubVersion
+        let mutable file = ""
+        [ for line in lines do
+            match keyAt 10 line with
+            | Some f -> file <- f
+            | None -> ()
+            let line = Text.RegularExpressions.Regex.Replace (line, sprintf "^(\\s*)\"assemblyVersion\": \"%s\"" marker, sprintf "$1\"assemblyVersion\": \"$(AssemblyVersion:%s)\"" (file.Replace ("$", "$$")))
+            let line = Text.RegularExpressions.Regex.Replace (line, sprintf "^(\\s*)\"fileVersion\": \"%s\"" marker, sprintf "$1\"fileVersion\": \"$(FileVersion:%s)\"" (file.Replace ("$", "$$")))
+            // a library key, and a dependency on it
+            let line = Text.RegularExpressions.Regex.Replace (line, sprintf "\"([^\"]+)/%s\"" marker, fun m -> "\"" + library m.Groups.[1].Value + "\"")
+            let line =
+                Text.RegularExpressions.Regex.Replace (line, sprintf "^(\\s*)\"([^\"]+)\": \"%s\"" marker, fun m ->
+                    let token = library m.Groups.[2].Value
+                    sprintf "%s\"%s\": \"%s\"" m.Groups.[1].Value m.Groups.[2].Value (token.Substring (m.Groups.[2].Value.Length + 1)))
+            yield line ]
+        |> String.concat "\n"
 
     /// <summary>
     /// The `App` of a design-time build with runtime output (`HasRuntimeOutput`), and the files
@@ -1057,18 +1074,6 @@ module Import =
                 | _ ->
                     failwithf "'%s' (%s): msbuild uses an apphost for the runtime identifier %s but resolved no template (ResolvedAppHostPack)"
                         ctx.ProjectFile (p "TargetFramework") (p "RuntimeIdentifier")
-        let sdkMajor =
-            match (p "NETCoreSdkVersion").Split '.' with
-            | parts when parts.Length > 0 -> (match Int32.TryParse parts.[0] with | true, v -> v | _ -> 0)
-            | _ -> 0
-        let projectLibraries (text: string) =
-            match Json.field "libraries" (Json.parse text) with
-            | Some (Json.JObject members) ->
-                members |> List.filter (fun (k, v) ->
-                    Json.field "type" v |> Option.bind Json.asString = Some "project"
-                    && not (k.StartsWith (assemblyName + "/", StringComparison.OrdinalIgnoreCase)))
-                |> List.map fst |> set
-            | _ -> Set.empty
         let generated (file: string) (name: string) (transform: string -> string) =
             let path = scratch + file
             if File.Exists path then
@@ -1087,7 +1092,7 @@ module Import =
             | [], [] -> None
         let files =
             [ generated appRuntimeConfig (named "ProjectRuntimeConfigFileName" (assemblyName + ".runtimeconfig.json")) id
-              generated appDeps (named "ProjectDepsFileName" (assemblyName + ".deps.json")) (fun t -> depsTokens sdkMajor (projectLibraries t) t)
+              generated appDeps (named "ProjectDepsFileName" (assemblyName + ".deps.json")) depsTokens
               config ]
             |> List.choose id
         let recorded = [ for name, bytes in files -> binaryDir + "app/" + name, bytes ]
@@ -1545,7 +1550,7 @@ module Import =
                             File.WriteAllText (traversal, String.concat "\n" ([ "<Project>"; "  <ItemGroup>" ] @ runItems @
                                                                               [ "  </ItemGroup>"
                                                                                 "  <Target Name=\"Build\">"
-                                                                                (sprintf "    <MSBuild Projects=\"@(XakeRun)\" Targets=\"%s;XakeAppFiles;XakeRecordDump\" BuildInParallel=\"true\" />" designTimeTargets)
+                                                                                (sprintf "    <MSBuild Projects=\"@(XakeRun)\" Targets=\"%s;XakeRecordDump\" BuildInParallel=\"true\" />" designTimeTargets)
                                                                                 "  </Target>"; "</Project>"; "" ]))
                             do! msbuild environment
                                     ([ traversal; "-nologo"; "-verbosity:quiet"; "-m"; "-nodeReuse:false"; "-p:XakeDumpRoot=" + slash dumpRoot ]
@@ -1563,6 +1568,44 @@ module Import =
                                         | _ -> d
                                     (slash (prop d "MSBuildProjectFullPath"), prop d "TargetFramework"), d)
                                 |> Map.ofArray
+                            // the applications' runtimeconfig.json and deps.json: a second run over them,
+                            // every output in a folder of its own (`OutDir`) where each referenced
+                            // project's output is a stand-in (`stubAssembly`), whose versions the
+                            // recorded deps.json names as tokens (`depsTokens`)
+                            let appRuns =
+                                [ for pf, ev, f in runs do
+                                    match byRun |> Map.tryFind (slash pf, f) with
+                                    | Some d when isTrue (prop d "HasRuntimeOutput") -> yield pf, ev, f, d
+                                    | _ -> () ]
+                            if not (List.isEmpty appRuns) then
+                                let phase = DateTime.UtcNow
+                                let outDir = slash (temp </> ("app-out-" + cfg)) + "/"
+                                Directory.CreateDirectory outDir |> ignore
+                                let stub = stubAssembly ()
+                                for pf, _, _, d in appRuns do
+                                    let scratch = absoluteIn (slash (Path.GetDirectoryName pf)) (prop d "IntermediateOutputPath")
+                                    for f in [ appDeps; appRuntimeConfig ] do
+                                        let path = scratch.TrimEnd '/' + "/" + f
+                                        if File.Exists path then File.Delete path
+                                    for id, m in items d "ReferencePath" do
+                                        if meta "ReferenceSourceTarget" m = "ProjectReference" || meta "MSBuildSourceProjectFile" m <> "" then
+                                            let path = outDir + Path.GetFileName (slash id)
+                                            if not (File.Exists path) then File.WriteAllBytes (path, stub)
+                                let appTraversal = temp </> sprintf "record-app-%s.proj" cfg
+                                let appItems =
+                                    appRuns |> List.map (fun (pf, ev, f, _) ->
+                                        sprintf "    <XakeRun Include=\"%s\" AdditionalProperties=\"%s\" />"
+                                            (Security.SecurityElement.Escape pf)
+                                            (Security.SecurityElement.Escape (runProperties (key cfg) ev f)))
+                                File.WriteAllText (appTraversal, String.concat "\n" ([ "<Project>"; "  <ItemGroup>" ] @ appItems @
+                                                                                     [ "  </ItemGroup>"
+                                                                                       "  <Target Name=\"Build\">"
+                                                                                       "    <MSBuild Projects=\"@(XakeRun)\" Targets=\"BuildOnlySettings;PrepareForBuild;ResolveReferences;XakeAppFiles\" BuildInParallel=\"true\" />"
+                                                                                       "  </Target>"; "</Project>"; "" ]))
+                                do! msbuild environment
+                                        ([ appTraversal; "-nologo"; "-verbosity:quiet"; "-m"; "-nodeReuse:false"; "-p:OutDir=" + outDir ]
+                                         @ recordSwitches cfg) appTraversal
+                                do! trace Info "import: the runtime files of %d application build(s) for %s in %.1f s" appRuns.Length cfg (elapsed phase)
                             return
                                 [ for pf, _, f in runs ->
                                     match byRun |> Map.tryFind (slash pf, f) with

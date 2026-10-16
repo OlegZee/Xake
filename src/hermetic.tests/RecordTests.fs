@@ -449,14 +449,19 @@ type ``Import record repository settings``() =
                 "<Project><PropertyGroup><CustomAfterMicrosoftCommonTargets>$(MSBuildThisFileDirectory)custom.targets</CustomAfterMicrosoftCommonTargets></PropertyGroup></Project>\n"
               "custom.targets", "<Project><PropertyGroup><DefineConstants>$(DefineConstants);CUSTOM_AFTER</DefineConstants></PropertyGroup></Project>\n"
               "global.json", "{ \"sdk\": { \"rollForward\": \"latestMajor\", \"version\": \"8.0.0\" } }\n"
+              // a binary msbuild generates in its intermediate folder and hands the compiler (as
+              // WPF does with g.resources): copied beside the lock byte for byte
               "app/app.csproj",
                 RecordKit.sdkProject "<TargetFramework>net8.0</TargetFramework>" "<EmbeddedResource Include=\"../shared/Shared.resx\" />"
+                |> fun t -> t.Replace ("</Project>", "  <Target Name=\"Blob\" BeforeTargets=\"CoreCompile\">\n    <Copy SourceFiles=\"blob.bin\" DestinationFiles=\"$(IntermediateOutputPath)app.g.resources\" />\n    <ItemGroup><_CoreCompileResourceInputs Include=\"$(IntermediateOutputPath)app.g.resources\" LogicalName=\"app.g.resources\" /></ItemGroup>\n  </Target>\n</Project>")
               "app/C.cs", "namespace App { public class C {\n#if CUSTOM_AFTER\n  public static int X = 1;\n#endif\n} }\n"
               "shared/Shared.resx", RecordKit.resx [ "A", "a" ] ]
 
     [<Test>]
     member x.``the repository's targets, a linked resource and the global.json pin are recorded``() =
         fixture ()
+        let blob = Array.init 512 (fun i -> byte (i * 7 % 256)) |> Array.append "\r\n\xff\xfe"B
+        File.WriteAllBytes ("app/blob.bin", blob)
         RecordKit.import x.TestOptions "import-repo" RecordKit.recordDefault [ "app/app.csproj" ] |> ignore
         let lock = File.ReadAllText (RecordKit.lockOf "app" "Release")
         // the repository's CustomAfterMicrosoftCommonTargets ran in the design-time build
@@ -470,8 +475,16 @@ type ``Import record repository settings``() =
         let log = File.ReadAllText "import-repo.log"
         Assert.That(log, Does.Contain "pins the .NET SDK")
         RecordKit.build x.TestOptions "build-repo" "Release"
-        let types, _, resources = RecordKit.metadata "out/Release/net8.0/app/app.dll"
-        Assert.That(resources, Is.EqualTo [ "app.Shared.resources" ])
+        let _, _, resources = RecordKit.metadata "out/Release/net8.0/app/app.dll"
+        Assert.That(resources, Is.EqualTo [ "app.Shared.resources"; "app.g.resources" ])
+        // the generated binary: beside the lock, named there, embedded unchanged
+        Assert.That(lock, Does.Contain "\"/resource:$(ProjectRoot)/locks/app/Release.files/net8.0/app.g.resources,app.g.resources\"")
+        Assert.That(File.ReadAllBytes "locks/app/Release.files/net8.0/app.g.resources", Is.EqualTo blob)
+        let asm = Reflection.Assembly.Load (File.ReadAllBytes "out/Release/net8.0/app/app.dll")
+        use stream = asm.GetManifestResourceStream "app.g.resources"
+        use copy = new MemoryStream ()
+        stream.CopyTo copy
+        Assert.That(copy.ToArray (), Is.EqualTo blob)
 
 
 /// `Import.record` of a chain of project references (c -> b -> a): the transitive reference
@@ -560,6 +573,91 @@ type ``Import record switch files``() =
         Assert.That(problems, Has.Length.EqualTo 2)
         Assert.That(problems.[0], Does.Contain "'/opt/keys/k.snk'")
         Assert.That(problems.[1], Does.Contain "/pathmap: maps '/opt/src/'")
+
+
+/// `Import.entryOf` on a hand-made design-time build (no msbuild): the guard on preserialized
+/// resources reads the recorded references, a description whose masks do not name what msbuild
+/// compiles falls back to msbuild's files, and generated files are classified by kind.
+[<TestFixture>]
+type ``Record entry``() =
+    inherit XakeTestBase("record-entry")
+
+    let here () = (Directory.GetCurrentDirectory ()).Replace ('\\', '/')
+    let sre () = here () + "/pkgs/system.resources.extensions/8.0.0/lib/net462/System.Resources.Extensions.dll"
+    let setup () =
+        RecordKit.write [ "proj"; "pkgs"; "dotnet" ]
+            [ "proj/A.cs", "class A { }\n"
+              "proj/Sub/B.cs", "class B { }\n"
+              "proj/R.resx", RecordKit.resx [ "A", "a" ]
+              "proj/obj/s/X.AssemblyInfo.cs", "[assembly: System.Reflection.AssemblyTitle(\"X\")]\r\n"
+              "proj/obj/s/X.R.resources", "compiled"
+              "pkgs/system.resources.extensions/8.0.0/lib/net462/System.Resources.Extensions.dll", "dll" ]
+    let context (masks: string list) : Import.RecordContext =
+        let dir = here () + "/proj"
+        let description =
+            Description.parse (sprintf "{ \"name\": \"X\", \"project\": \"X.csproj\", \"language\": \"csharp\", \"frameworks\": [ \"net472\" ], \"sources\": [ %s ] }"
+                                   (masks |> List.map (sprintf "\"%s\"") |> String.concat ", "))
+        { Root = here (); ProjectFile = dir + "/X.csproj"; ProjectDir = dir; Description = description
+          DescriptionFile = dir + "/xake.project.json"; PackageRoot = here () + "/pkgs"
+          Pin = Lock.NoGlobalJson; PinFile = None; Pin' = ""; Inputs = []; OutOf = RecordKit.outOf; Imported = [ dir + "/X.csproj" ] }
+    let dump (references: string list) (preserialized: bool) : Import.Dump =
+        let dir = here () + "/proj"
+        let args =
+            [ "/noconfig"; "/target:library"; "/out:obj/s/X.dll" ]
+            @ (references |> List.map (sprintf "/reference:%s"))
+            @ [ "/resource:obj/s/X.R.resources"; "/resource:obj/s/X.exe.licenses"; "A.cs"; "Sub/B.cs"; "obj/s/X.AssemblyInfo.cs" ]
+        { Props =
+            Map [ "AssemblyName", "X"; "TargetFramework", "net472"; "TargetFrameworkIdentifier", ".NETFramework"
+                  "NETCoreSdkVersion", "8.0.425"; "NetCoreRoot", here () + "/dotnet"; "RoslynTargetsPath", here () + "/dotnet/sdk/8.0.425/Roslyn"
+                  "MSBuildProjectFullPath", dir + "/X.csproj"
+                  "GenerateResourceUsePreserializedResources", (if preserialized then "true" else "false") ]
+          Items =
+            Map [ "CscCommandLineArgs", args |> List.map (fun a -> a, Map.empty)
+                  "EmbeddedResource", [ dir + "/R.resx", Map [ "OutputResource", "obj/s/X.R.resources" ] ] ] }
+
+    [<Test>]
+    member x.``generated files: known text kinds in the lock, any other kind copied, a compiled resx compiled again``() =
+        setup ()
+        let licenses = [| 0uy; 255uy; 13uy; 10uy; 0xC3uy; 0x28uy |]
+        File.WriteAllBytes ("proj/obj/s/X.exe.licenses", licenses)
+        let binaryDir = here () + "/locks/X/Release.files/net472"
+        let entry, _, binaries = Import.entryOf (context [ "**/*.cs"; "!obj/**/*" ]) "Release" "net472" (here () + "/proj/obj/s") binaryDir (dump [] false)
+        Assert.That(binaries, Is.EqualTo [ here () + "/proj/obj/s/X.exe.licenses", binaryDir + "/X.exe.licenses" ])
+        let c = entry.Compilation
+        Assert.That(c.Options, Does.Contain ("/resource:" + binaryDir + "/X.exe.licenses"))
+        Assert.That(c.Generated |> List.map fst, Is.EqualTo [ here () + "/obj/xake/X/net472/Release/X.AssemblyInfo.cs" ])
+        Assert.That(snd c.Generated.Head, Does.Not.Contain "\r")
+        Assert.That(c.Resources, Is.EqualTo [ here () + "/proj/R.resx", here () + "/obj/xake/X/net472/Release/X.R.resources" ])
+        Assert.That(Import.isRecordedText "a/X.GlobalUsings.g.cs" && Import.isRecordedText "x.editorconfig", Is.True)
+        Assert.That(Import.isRecordedText "X.g.resources" || Import.isRecordedText "X.exe.licenses" || Import.isRecordedText "X.res", Is.False)
+
+    [<Test>]
+    member x.``preserialized resources on .NET Framework need System.Resources.Extensions among the recorded references``() =
+        setup ()
+        File.WriteAllText ("proj/obj/s/X.exe.licenses", "")
+        let entryOf refs preserialized = Import.entryOf (context [ "**/*.cs"; "!obj/**/*" ]) "Release" "net472" (here () + "/proj/obj/s") (here () + "/b") (dump refs preserialized)
+        let e = Assert.Catch(fun () -> entryOf [] true |> ignore)
+        Assert.That(e.Message, Does.Contain "reference the package System.Resources.Extensions")
+        let entry, _, _ = entryOf [ sre () ] true
+        Assert.That(entry.Dependencies.References |> List.map (fun r -> r.Path), Is.EqualTo [ sre () ])
+        // not asked for: no guard
+        entryOf [] false |> ignore
+
+    [<Test>]
+    member x.``masks that do not name msbuild's files: a warning, and the lock keeps msbuild's files only``() =
+        setup ()
+        File.WriteAllText ("proj/obj/s/X.exe.licenses", "")
+        File.WriteAllText ("proj/Extra.cs", "class Extra { }\n")
+        let entry, warnings, _ = Import.entryOf (context [ "**/*.cs"; "!obj/**/*" ]) "Release" "net472" (here () + "/proj/obj/s") (here () + "/b") (dump [] false)
+        Assert.That(entry.Recorded.Value.Masks, Is.Empty)
+        Assert.That(warnings |> String.concat "\n", Does.Contain "extra: Extra.cs")
+        Assert.That(entry.Compilation.Sources |> List.filter (fun s -> s.EndsWith ".cs" && not (s.Contains "/obj/")),
+                    Is.EqualTo [ here () + "/proj/A.cs"; here () + "/proj/Sub/B.cs" ])
+        // the masks that do name them are kept, absolute
+        File.Delete "proj/Extra.cs"
+        let entry, warnings, _ = Import.entryOf (context [ "**/*.cs"; "!obj/**/*" ]) "Release" "net472" (here () + "/proj/obj/s") (here () + "/b") (dump [] false)
+        Assert.That(warnings, Is.Empty)
+        Assert.That(entry.Recorded.Value.Masks, Is.EqualTo [ here () + "/proj/**/*.cs"; "!" + here () + "/proj/obj/**/*" ])
 
 
 /// One synthesized restore downloads one version of an id: the fetch of a recorded lock set

@@ -927,6 +927,18 @@ module Import =
     let private lf (text: string) = text.Replace ("\r\n", "\n")
 
     /// <summary>
+    /// The kinds of file msbuild generates that a lock records as text (`Generated`): sources
+    /// (`.cs`, `.fs`, `.vb` -- AssemblyInfo, GlobalUsings, the framework attribute, a package's
+    /// entry point), analyzer configurations (`.editorconfig`, `.globalconfig`) and `.json`,
+    /// `.txt`. By content kind, not by a list of binaries: any other file is copied byte for
+    /// byte beside the lock (`entryOf`).
+    /// </summary>
+    let internal isRecordedText (path: string) =
+        match (Path.GetExtension path).ToLowerInvariant () with
+        | ".cs" | ".fs" | ".vb" | ".editorconfig" | ".globalconfig" | ".json" | ".txt" -> true
+        | _ -> false
+
+    /// <summary>
     /// The lock entry of one design-time build (`d`, of `cfg` and `framework`, whose
     /// intermediate folder was `scratch`): msbuild's compiler command line as recorded, with
     /// <list type="bullet">
@@ -944,10 +956,12 @@ module Import =
     /// </list>
     /// Pure but for reading the generated files and hashing.
     /// </summary>
-    let internal entryOf (ctx: RecordContext) (cfg: string) (framework: string) (scratch: string) (d: Dump) : Lock.Entry * string list =
+    let internal entryOf (ctx: RecordContext) (cfg: string) (framework: string) (scratch: string) (binaryDir: string) (d: Dump)
+                         : Lock.Entry * string list * (string * string) list =
         let warnings = ResizeArray<string> ()
         let p = prop d
         let scratch = (slash scratch).TrimEnd '/' + "/"
+        let binaryDir = (slash binaryDir).TrimEnd '/' + "/"
         let assemblyName = match p "AssemblyName" with "" -> ctx.Description.Name | a -> a
         let generatedDir =
             let key = Described.generatedKey ctx.Root ctx.DescriptionFile ctx.ProjectDir assemblyName
@@ -974,11 +988,26 @@ module Import =
         // the project references, by every path msbuild names them with
         let projects = projectsOf ctx cfg d
         let projectPaths = dict [ for o, names in projects do for n in names -> n, o.Path ]
+        // what msbuild generated under its intermediate folder: a known text kind is recorded
+        // in the lock (`Generated`), a `.resources` compiled from a `.resx` is compiled again by
+        // the build, anything else (a WinForms `.licenses`, a WPF `g.resources`, a `.res`) is
+        // copied byte for byte beside the lock (`binaryDir`) and named there
+        let inputs = if isFSharp then FscArgs.inputs args else CscArgs.inputs args
+        let inScratch (path: string) = path.StartsWith (scratch, comparison)
+        let resxOutputs =
+            set [ for _, m in items d "EmbeddedResource" do
+                    if meta "OutputResource" m <> "" then yield absoluteIn ctx.ProjectDir (meta "OutputResource" m) ]
+        let binaries =
+            [ for path in inputs |> List.map slash |> List.distinct do
+                if inScratch path && File.Exists path && not (isRecordedText path) && not (resxOutputs.Contains path) then
+                    yield path, binaryDir + path.Substring scratch.Length ]
+        let binaryOf = dict binaries
         let moved (path: string) =
             let path = slash path
-            match projectPaths.TryGetValue path with
-            | true, output -> output
-            | _ -> if path.StartsWith (scratch, comparison) then generatedDir + path.Substring scratch.Length else path
+            match projectPaths.TryGetValue path, binaryOf.TryGetValue path with
+            | (true, output), _ -> output
+            | _, (true, copy) -> copy
+            | _ -> if inScratch path then generatedDir + path.Substring scratch.Length else path
         // a source from a package: recorded beside the generated ones
         let packaged (path: string) = generatedDir + Path.GetFileName path
         // the build's own (the output, the reference assembly), and what is parked: SourceLink's
@@ -993,12 +1022,10 @@ module Import =
                     match CscArgs.parse o with CscArgs.Switch (n, _) -> dropped.Contains (CscArgs.canonical n) | _ -> false)
 
         // what msbuild generated: text inputs under the scratch folder, and package sources
-        let binary = set [ ".resources"; ".res"; ".dll"; ".exe"; ".pdb"; ".ico"; ".snk" ]
-        let inputs = if isFSharp then FscArgs.inputs args else CscArgs.inputs args
         let generated =
             [ for path in inputs |> List.map slash |> List.distinct do
-                if File.Exists path && not (binary.Contains ((Path.GetExtension path).ToLowerInvariant ())) then
-                    if path.StartsWith (scratch, comparison) then
+                if File.Exists path && isRecordedText path then
+                    if inScratch path then
                         yield moved path, (lf (File.ReadAllText path)).Replace (scratch, generatedDir)
                     elif inPackage path && (if isFSharp then FscArgs.sources args else CscArgs.sources args) |> List.exists (fun s -> slash s = path) then
                         yield packaged path, lf (File.ReadAllText path) ]
@@ -1110,7 +1137,7 @@ module Import =
            && not (entry.Dependencies.References |> List.exists (fun r -> (Path.GetFileName r.Path).Equals ("System.Resources.Extensions.dll", StringComparison.OrdinalIgnoreCase))) then
             failwithf "'%s' (%s|%s): msbuild writes the .resx as preserialized resources (GenerateResourceUsePreserializedResources), which .NET Framework reads only through System.Resources.Extensions, and the recorded references do not have it; reference the package System.Resources.Extensions"
                 ctx.Description.Name cfg framework
-        entry, List.ofSeq warnings
+        entry, List.ofSeq warnings, binaries
 
     /// <summary>
     /// What a recorded entry's command line names that no portable name covers, as messages:
@@ -1364,15 +1391,17 @@ module Import =
                     | _ -> ()
                     let locks = ResizeArray<string> ()
                     for cfg in options.Configurations do
-                        let built = [ for c, f, scratch, d in runs do if c = cfg then yield entryOf ctx cfg f scratch d ]
-                        for _, warnings in built do
+                        let lockPath = options.LockOf description.Name cfg
+                        let lockFull = full lockPath
+                        // the generated binaries of the lock, beside it: `<lock>.files/<framework>/`
+                        let filesDir = Path.ChangeExtension (lockFull, null) + ".files"
+                        let built = [ for c, f, scratch, d in runs do if c = cfg then yield f, entryOf ctx cfg f scratch (filesDir </> f) d ]
+                        for _, (_, warnings, _) in built do
                             for w in warnings do do! trace Warning "%s" w
-                        let entries = built |> List.map fst
+                        let entries = built |> List.map (fun (_, (e, _, _)) -> e)
                         match entries |> List.collect (unportablePaths roots) |> List.distinct with
                         | [] -> ()
                         | problems -> failwith (String.concat "\n" problems)
-                        let lockPath = options.LockOf description.Name cfg
-                        let lockFull = full lockPath
                         // HERMETIC=on: what a lock may not be written with (messages 2 and 9)
                         let! refused = Lock.hermeticRecordGate lockPath roots entries
                         if not (List.isEmpty refused) then
@@ -1385,6 +1414,19 @@ module Import =
                         | lines ->
                             failwithf "'%s': the lock '%s' would hold strings of this machine, so it would not build elsewhere:\n%s"
                                 description.Name lockPath (lines |> List.truncate 10 |> String.concat "\n")
+                        // the binaries first (a lock never names a file that is not there), each
+                        // written when its bytes change, and nothing else left in the folder
+                        let copies = built |> List.collect (fun (_, (_, _, b)) -> b)
+                        for source, copy in copies do
+                            let bytes = File.ReadAllBytes source
+                            if not (File.Exists copy) || File.ReadAllBytes copy <> bytes then
+                                Directory.CreateDirectory (Path.GetDirectoryName copy) |> ignore
+                                File.WriteAllBytes (copy, bytes)
+                        if Directory.Exists filesDir then
+                            let kept = copies |> List.map (snd >> Path.GetFullPath) |> set
+                            for f in Directory.GetFiles (filesDir, "*", SearchOption.AllDirectories) do
+                                if not (kept.Contains (Path.GetFullPath f)) then File.Delete f
+                            if List.isEmpty copies then Directory.Delete (filesDir, true)
                         let existing = if File.Exists lockFull then Some (lf (File.ReadAllText lockFull)) else None
                         if existing = Some text then
                             do! trace Info "'%s': the lock '%s' is unchanged" description.Name lockPath

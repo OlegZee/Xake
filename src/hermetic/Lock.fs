@@ -247,9 +247,13 @@ module Lock =
     type CopyItem = { Path: string; Sha256: string; To: string }
 
     /// <summary>
-    /// What msbuild makes of a project with runtime output (`HasRuntimeOutput`: an exe, a
-    /// winexe, a .NET test project) besides the compile, as `Import.record` records it -- the
-    /// build writes it beside the assembly, deriving nothing:
+    /// What msbuild makes of a project besides the compile, as `Import.record` records it --
+    /// for a project with runtime output (`HasRuntimeOutput`: an exe, a winexe, a .NET test
+    /// project) always, for a library when msbuild copies something into its output
+    /// (`OutputType` `Library`, no `Host`, no `Files`: a .NET Framework test library's
+    /// copy-local packages, a library's content items). The compile writes `Files` and the
+    /// apphost beside the assembly; a run folder (`Locks.runFolderWith`) places the rest,
+    /// deriving nothing:
     /// <list type="bullet">
     /// <item>`Host`: the apphost (`UseAppHost`), `None` without one;</item>
     /// <item>`Files`: the `runtimeconfig.json` and `deps.json` msbuild generated
@@ -259,6 +263,12 @@ module Lock =
     /// tokens `$(AssemblyVersion:&lt;file&gt;)`/`$(FileVersion:&lt;file&gt;)`, read from the built file
     /// at build time, as msbuild reads them;</item>
     /// <item>`Copy`: msbuild's copy-local files, packages and referenced projects;</item>
+    /// <item>`Content`: the project's own items msbuild copies to the output
+    /// (`_GetCopyToOutputDirectoryItemsFromThisProject`: `None`, `Content`, `EmbeddedResource`,
+    /// `Compile` with `CopyToOutputDirectory`), each at its `TargetPath` -- a file of the
+    /// repository by its path (unhashed: an input of the run folder, like a source), a package's
+    /// by identity with its hash. A referencing project's run folder takes them too, as
+    /// msbuild's transitive `GetCopyToOutputDirectoryItems` does;</item>
     /// <item>`Related`: the extensions of the files copied beside a referenced project's
     /// output when they exist (`AllowedReferenceRelatedFileExtensions`: `.pdb`, `.xml`, ...);</item>
     /// <item>`BindingRedirects`: msbuild adds binding redirects to the config
@@ -272,6 +282,7 @@ module Lock =
         Host: AppHost option
         Files: AppFile list
         Copy: CopyItem list
+        Content: CopyItem list
         Related: string list
         BindingRedirects: bool
     }
@@ -872,6 +883,7 @@ module Lock =
                       yield sprintf "%s\"Host\": { \"Rid\": %s, %s, \"Sha256\": %s }" indent (escape rid) (fileField "apphost template" t.Path) (escape t.Sha256)
                   yield listOf "Files" [ for f in a.Files -> sprintf "{ \"Name\": %s, \"Path\": %s, \"Sha256\": %s }" (escape f.Name) (str f.Path) (escape f.Sha256) ]
                   yield listOf "Copy" [ for c in a.Copy -> sprintf "{ %s, \"Sha256\": %s, \"To\": %s }" (fileField "copy-local file" c.Path) (escape c.Sha256) (escape c.To) ]
+                  yield listOf "Content" [ for c in a.Content -> sprintf "{ %s, \"Sha256\": %s, \"To\": %s }" (fileField "copy item" c.Path) (escape c.Sha256) (escape c.To) ]
                   yield listOf "Related" [ for r in a.Related -> escape r ]
                   yield sprintf "%s\"BindingRedirects\": %s" indent (if a.BindingRedirects then "true" else "false") ] ]
         |> String.concat ",\n" |> sprintf "    {\n%s\n    }"
@@ -959,6 +971,7 @@ module Lock =
                         | _ -> None
                       Files = items "Files" |> List.map (fun f -> { Name = str "Name" f; Path = str "Path" f |> expand; Sha256 = str "Sha256" f })
                       Copy = items "Copy" |> List.map (fun c -> { Path = fileOf c; Sha256 = str "Sha256" c; To = str "To" c })
+                      Content = items "Content" |> List.map (fun c -> { Path = fileOf c; Sha256 = str "Sha256" c; To = str "To" c })
                       Related = items "Related" |> List.choose asString
                       BindingRedirects = field "BindingRedirects" a |> Option.bind asBool |> Option.defaultValue false }
                 Some { r with App = Some app }
@@ -1227,6 +1240,7 @@ module Lock =
                 match e.Recorded |> Option.bind (fun r -> r.App) with
                 | Some app ->
                     for c in app.Copy do if c.Sha256 <> "" then yield c.Path
+                    for c in app.Content do if c.Sha256 <> "" then yield c.Path
                     match app.Host with
                     | Some (PackHost (_, t)) -> yield t.Path
                     | _ -> ()

@@ -1,6 +1,6 @@
 # Xake.Hermetic.Dotnet
 
-## Next (hermetic, after PR 2)
+## Next (hermetic, after PR 2; 0.4.2-night with PR 4)
 
 - **`Import.record`**: the import that records msbuild's resolved compile inputs (references,
   defines, generated sources, resource names, compiler switches) per configuration and
@@ -33,8 +33,23 @@
   config file beside the lock (`<lock>.files/<framework>/app/`), msbuild's copy-local files.
   `Locks.compileAs` writes them beside the assembly; a lock of an application changes on the
   next import ([lock.md](lock.md#applications-the-app-section)). The import runs a second
-  msbuild pass over the applications. Not yet: binding redirects, satellites, `None`/`Content`
-  copy items.
+  msbuild pass over the applications. Not yet: binding redirects, satellites.
+- **Run folders (PR 4)**: `Locks.runFolderWith` builds the folder an application or a test
+  project runs from, from its own lock closure only, by hard links (fallbacks: clone, copy), with
+  the manifest `.xake-run.txt` as the rule's target, a conflicts report, stale files removed and
+  a no-op that writes nothing; `Locks.runFoldersWith`, `Locks.flatOutOf`, `Locks.runOf`,
+  `Locks.runs`; the file side in `RunFolder` ([lock.md](lock.md#run-folders)). Replaces the
+  night builds' `Locks.deployWith` (it copied every file of the project's output folder, which a
+  flat layout cannot use); it is not in this package.
+- **The compile no longer copies copy-local files** (breaking against PR 3's previews):
+  `Locks.compileAs` writes an application's `Files` and apphost only; the copy-local files and
+  items are the run folder's. A script that ran an application from its output folder builds its
+  run folder.
+- **`App.Content`** and **an `App` for libraries**: the import records the project's own
+  copy-to-output items (`None`, `Content`, `EmbeddedResource`, `Compile` with
+  `CopyToOutputDirectory`) and gives a library an `App` section when msbuild copies something
+  into its output (copy-local files of a .NET Framework test library: S59). `IsTestProject` is
+  kept in `Evaluation.Properties`. Every lock with project references changes on the next import.
 - **`pack:` covers apphost and runtime packs** (`Microsoft.NETCore.App.Host.<rid>`,
   `*.App.Runtime.<rid>`), wherever the machine has them.
 

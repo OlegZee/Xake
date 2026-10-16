@@ -426,6 +426,29 @@ module internal RecordKit =
               "out/(cfg:*)/(fwk:*)/(name:*)/*.xml" ..> compile ]
             [ "build" ]
 
+    /// The run folders (`run/<cfg>/<fwk>/<name>/`, `Locks.runFolderWith` by `mode`) of every
+    /// application and test project of configuration `cfg`, over the fixture's per-project
+    /// outputs (the compile rules of `build`).
+    let deploy (options: ExecOptions) (label: string) (cfg: string) (mode: RunFolder.Mode) =
+        let compile = recipe {
+            let! cfg = getRuleMatch "cfg"
+            let! fwk = getRuleMatch "fwk"
+            let! name = getRuleMatch "name"
+            do! Locks.compileAs (lockOf name cfg) fwk [] }
+        run options label
+            [ command "deploy" {
+                let! folders = Locks.runFoldersWith [] (!! "*/xake.project.json") cfg lockOf Locks.runOf
+                do! need folders }
+              "run/(cfg:*)/(fwk:*)/(name:*)/.xake-run.txt" ..> recipe {
+                let! cfg = getRuleMatch "cfg"
+                let! fwk = getRuleMatch "fwk"
+                let! name = getRuleMatch "name"
+                do! Locks.runFolderWith [] mode lockOf outOf cfg fwk name }
+              "out/(cfg:*)/(fwk:*)/(name:*)/*.dll" ..> compile
+              "out/(cfg:*)/(fwk:*)/(name:*)/*.exe" ..> compile
+              "out/(cfg:*)/(fwk:*)/(name:*)/*.xml" ..> compile ]
+            [ "deploy" ]
+
     let sdkProject (properties: string) (items: string) =
         sprintf "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>%s</PropertyGroup>\n  <ItemGroup>%s</ItemGroup>\n</Project>\n" properties items
 

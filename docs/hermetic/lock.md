@@ -441,7 +441,7 @@ command "deploy" {
     let! cfg = getRuleMatch "cfg"
     let! fwk = getRuleMatch "fwk"
     let! name = getRuleMatch "name"
-    do! Locks.runFolderWith [] RunFolder.Link lockOf Locks.flatOutOf cfg fwk name }
+    do! Locks.runFolderWith [] RunFolder.Clone lockOf Locks.flatOutOf cfg fwk name }
 "out/(cfg:*)/(fwk:*)/(asm:*).dll" ..> compile      // finds the project by the assembly name
 "out/(cfg:*)/(fwk:*)/(asm:*).exe" ..> compile
 ```
@@ -462,32 +462,69 @@ What a run folder holds, step by step:
      items for referencing projects);
    - its `Content` items;
    - its `Copy` files that are not package files. A package's file in a referenced project's
-     list is the version that project's restore resolved; msbuild never copies it here.
+     list is the version that project's restore resolved; msbuild never copies it here. This
+     holds under PackageReference transitivity, where the root's restore has the referenced
+     project's packages at its own versions. A package the root's restore lacks
+     (`PrivateAssets="all"` or `ExcludeAssets` on a runtime package of a referenced .NET
+     Framework library, whose `bin/` msbuild's RAR copies from) is not placed either, but the
+     build warns naming the file (*is not placed: the root's restore lacks that package*); add
+     the package to the root project, or place the file from the script.
 3. One source per path (paths compare ignoring case). The first source is kept. In the closure
    a higher assembly version replaces a lower one (the assembly version, not the package
    version). Each dropped source with other content goes to `.xake-run.conflicts.txt` beside the
    manifest, and the build warns.
-4. Each file is placed by `RunFolder.Mode`: `Link` (a hard link, else a clone, else a copy),
-   `Clone` (APFS `clonefile`, Linux `FICLONE`, else a copy; on Windows `CopyFile` clones on ReFS
-   and Dev Drive by itself), or `Copy`. A placed file is never written into: a changed one is
-   unlinked and placed again. A file at a planned path that no run placed is kept when it has
-   other content, and is listed in the conflicts report.
-5. The manifest `.xake-run.txt` is the rule's target: one line per file (mode, path, source).
-   A later run compares with it. An entry whose file still is its source is kept (a link: the
-   same file identity, `dev`/`ino` or volume and file index; a clone or a copy: the same size
-   and write time). A path that is no longer planned is removed, with the folders it leaves
-   empty. The manifest is written only when its text changes, so a no-op touches nothing.
+4. Each file is placed by `RunFolder.Mode`: `Clone` (APFS `clonefile`, Linux `FICLONE` on
+   btrfs/XFS, else a copy; on Windows `CopyFile` clones on ReFS and Dev Drive by itself), `Link`
+   (a hard link, else a clone, else a copy) or `Copy`. `Locks.runFolder` places by `Clone`; hard
+   links are the explicit opt-in (see below). Every path, planned or read from the previous
+   manifest, must stay inside the folder: a rooted path, a `..` step or a folder on the way that
+   is a symbolic link or junction fails the rule naming the path and where it came from. A
+   placed file is never written into: a changed one is unlinked and placed again, but only when
+   it still is what a run placed (a link to its source, or the stamp the manifest records); a
+   file changed since (by a test, by hand) is left alone and listed in the conflicts report. A
+   file at a planned path that no run placed is kept when it has other content, and is listed
+   in the conflicts report.
+5. The manifest `.xake-run.txt` is the rule's target: one line per file (mode, path, source,
+   and the source's stamp: size and write time). A later run compares with it. An entry whose
+   file still is its source is kept (a link: the same file identity, `dev`/`ino` or volume and
+   file index; a clone or a copy: the same size and write time). A path that is no longer
+   planned is removed, with the folders it leaves empty, only when its file is unchanged since a
+   run placed it; else it stays, listed in the conflicts report. Paths compare as the file
+   system does: ignoring case on macOS and Windows, so a case-only rename keeps the file. The
+   manifest is written only when its text changes: a no-op touches nothing, and a recompiled
+   source (a new stamp, also for a hard link whose file csc rewrote in place) rewrites it, so a
+   rule that needs the manifest (tests, a pack over the folder) runs again. A manifest written
+   before stamps (0.4.2) is read as before.
 
-Dependencies: the locks the rule reads; the closure's assemblies as the compile rules' targets
-and with their write times (on Xake 3.7 a rule's target carries no change stamp, so an assembly
+Dependencies: the locks the rule reads; the closure's assemblies as the compile rules' targets,
+needed before anything beside them is looked at (so `deploy` on an unbuilt tree builds first and
+places the whole folder), and with their write times (on Xake 3.7 a rule's target carries no change stamp, so an assembly
 rebuilt by an earlier run would leave the folder "up to date": S66; Xake 3.8's `ArtifactDep2`
 sees that by itself); the package files and the items. The side outputs (pdb, xml, runtime
 files, apphost) change with their assembly and are not needed through the compile rule. So a
 .NET Framework application's `.xml` is never asked for as `<asm>.dll` (S64).
 
-With hard links, a recompile that writes its output in place (csc does) is visible in every run
-folder at once. A test that writes into a file it finds in its run folder writes into the
-source. Use `RunFolder.Copy` (or `Clone`) for such a folder.
+Hard links (`RunFolder.Link`) cost no copy at all, which is why they are offered, but they share
+the file with its source:
+
+- **Windows:** file locks apply to the file, not the name. A test or an application running from
+  its run folder holds `out/X.dll` open, and the next compile of `X` fails with a sharing
+  violation, which msbuild's copied `bin/` never does.
+- **Unix:** rewriting a memory-mapped assembly in place under a running process can crash it.
+- **Everywhere:** a recompile that writes its output in place (csc does) is visible in every run
+  folder at once, and a test that writes into a file of its run folder writes into the source
+  (the NuGet cache, a repository `Content` file).
+
+`Clone` shares the blocks on APFS, btrfs/XFS and ReFS without sharing the file.
+
+Copy items are the import's expansion: a wildcard item (`<None Include="TestFiles/**"
+CopyToOutputDirectory=...>`) is recorded as the files it matched at import. A file added under
+it later is not placed until the next import; a file deleted or renamed fails the rule
+(*missing ...; run the import again*).
+
+A script's check target uses `Locks.check locks` (fails naming every stale lock and its changed
+files) or `Locks.staleWith extraRoots locks` (the stale locks and their messages, no failure),
+the check `Locks.compileAs` runs before a compile.
 
 `Locks.runFoldersWith` lists the manifests of every project of a fileset whose entry runs
 (`Locks.runs`: `OutputType` `Exe`/`WinExe`, generated runtime files, or `IsTestProject`), in

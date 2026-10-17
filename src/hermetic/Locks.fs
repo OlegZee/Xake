@@ -417,6 +417,50 @@ module Locks =
             Path.matchesPattern (Path.parse mask) (normal projectPath)
         versions |> List.tryFind (fst >> covers) |> Option.map snd
 
+    /// The files an entry's import read (`Evaluation.Imports`: the project file,
+    /// `Directory.Build.props`, an application's `App.config`, ...) that are missing or no
+    /// longer have the hash the lock records. Pure (reads the files).
+    let staleOf (entry: Lock.Entry) : string list =
+        entry.Evaluation.Imports
+        |> List.filter (fun h -> h.Sha256 <> "" && (not (File.Exists h.Path) || FileHash.sha256 h.Path <> h.Sha256))
+        |> List.map (fun h -> h.Path)
+
+    let private staleMessage (lockPath: string) (entry: Lock.Entry) (changed: string list) =
+        sprintf "'%s' (%s): the lock '%s' is stale: %s changed since the import that wrote it; run the import again"
+            entry.Name entry.Framework lockPath (changed |> List.map (sprintf "'%s'") |> String.concat ", ")
+
+    /// <summary>
+    /// The stale locks among `locks` (lock paths, relative to the project root or absolute):
+    /// for each lock with an entry whose imports changed (`staleOf`), the lock and the
+    /// messages naming the changed files ("run the import again"). Depends on the files it
+    /// reads; does not fail -- what a script's `check` target reports (`check`).
+    /// </summary>
+    let staleWith (extraRoots: (string * string) list) (locks: string list) : Recipe<ExecContext, (string * string list) list> =
+        recipe {
+            let! docs = locks |> List.map (Lock.loadWith extraRoots) |> sequence
+            let imports = [ for d in docs do for e in d.Entries do for h in e.Evaluation.Imports do if File.Exists h.Path then yield h.Path ] |> List.distinct
+            do! needFiles (Filelist (imports |> List.map File.make))
+            return
+                [ for lockPath, d in List.zip locks docs do
+                    match [ for e in d.Entries do match staleOf e with [] -> () | changed -> yield staleMessage lockPath e changed ] with
+                    | [] -> ()
+                    | messages -> yield lockPath, messages ]
+        }
+
+    /// `staleWith` that fails naming every stale lock and its changed files ("run the import
+    /// again"); nothing when every lock is current.
+    let checkWith (extraRoots: (string * string) list) (locks: string list) : Recipe<ExecContext, unit> =
+        recipe {
+            let! stale = staleWith extraRoots locks
+            if not (List.isEmpty stale) then
+                let messages = stale |> List.collect snd
+                for m in messages do do! trace Error "%s" m
+                failwith (String.concat "\n" messages)
+        }
+
+    /// `checkWith` without extra roots.
+    let check (locks: string list) : Recipe<ExecContext, unit> = checkWith [] locks
+
     /// <summary>
     /// Checks the msbuild files a recorded entry's import read (`Evaluation.Imports`: the
     /// project file, `Directory.Build.props`, ...) against the hashes the lock records, and
@@ -428,12 +472,10 @@ module Locks =
         recipe {
             let imports = entry.Evaluation.Imports
             do! needFiles (Filelist (imports |> List.filter (fun h -> File.Exists h.Path) |> List.map (fun h -> File.make h.Path)))
-            let changed =
-                imports |> List.filter (fun h -> h.Sha256 <> "" && (not (File.Exists h.Path) || Csc.sha256 h.Path <> h.Sha256))
-            if not (List.isEmpty changed) then
-                let msg =
-                    sprintf "'%s' (%s): the lock '%s' is stale: %s changed since the import that wrote it; run the import again"
-                        entry.Name entry.Framework lockPath (changed |> List.map (fun h -> sprintf "'%s'" h.Path) |> String.concat ", ")
+            match staleOf entry with
+            | [] -> ()
+            | changed ->
+                let msg = staleMessage lockPath entry changed
                 let! stale = getVar "LOCK_STALE"
                 let! ci = Lock.underCi
                 match stale |> Option.map (fun v -> v.Trim().ToLowerInvariant ()) with
@@ -906,7 +948,8 @@ module Locks =
             let files, conflicts = RunFolder.plan RunFolder.assemblyVersion RunFolder.sameContent (List.ofSeq candidates)
             let absent = files |> List.filter (fun (_, s) -> not (File.Exists s)) |> List.map snd
             if not (List.isEmpty absent) then
-                failwithf "%s: missing %s" what (absent |> List.map (sprintf "'%s'") |> String.concat ", ")
+                failwithf "%s: missing %s; a copy item deleted or renamed since the import (a wildcard's files are the import's expansion): run the import again"
+                    what (absent |> List.map (sprintf "'%s'") |> String.concat ", ")
             // the inputs no rule builds: package files and items (the outputs beside the
             // assemblies change with them)
             do! needFiles (Filelist [ for _, s in files do if itemSources.Contains s then yield File.make s ])

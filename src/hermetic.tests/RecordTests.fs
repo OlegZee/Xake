@@ -651,15 +651,21 @@ type ``Import record refusals and descriptions``() =
     inherit XakeTestBase("import-record-refusals")
 
     [<Test>]
-    member x.``a project with XAML Page items is refused before msbuild's markup compiler runs``() =
-        RecordKit.write [ "wpf"; "out"; "locks"; "obj" ]
-            [ "wpf/wpf.csproj", RecordKit.sdkProject "<TargetFramework>net8.0</TargetFramework>" "<Page Include=\"MainWindow.xaml\" />"
+    member x.``a WPF project is refused before msbuild's markup compiler runs; Page items alone are not WPF``() =
+        RecordKit.write [ "wpf"; "pages"; "out"; "locks"; "obj" ]
+            [ "wpf/wpf.csproj", RecordKit.sdkProject "<TargetFramework>net472</TargetFramework><UseWPF>true</UseWPF>" "<Page Include=\"MainWindow.xaml\" />"
+              "pages/pages.csproj", RecordKit.sdkProject "<TargetFramework>net8.0</TargetFramework>" "<Page Include=\"X.xaml\" />"
+              "pages/X.xaml", "<x />\n"
+              "pages/C.cs", "class C { }\n"
               "wpf/MainWindow.xaml", "<Window xmlns=\"http://schemas.microsoft.com/winfx/2006/xaml/presentation\" />\n"
               "wpf/C.cs", "class C { }\n" ]
         let e = Assert.Catch(fun () -> RecordKit.import x.TestOptions "import-wpf" RecordKit.recordDefault [ "wpf/wpf.csproj" ] |> ignore)
         Assert.That(string e, Does.Contain "WPF is not supported by the import yet")
         Assert.That(string e, Does.Contain "/wpf/wpf.csproj'")
         Assert.That(string e, Does.Not.Contain "MC3050")
+        Assert.That(string e, Does.Not.Contain "pages.csproj")
+        RecordKit.import x.TestOptions "import-pages" RecordKit.recordDefault [ "pages/pages.csproj" ] |> ignore
+        Assert.That(File.Exists (RecordKit.lockOf "pages" "Release"))
 
     [<Test>]
     member x.``an output folder outside the project or named by the configuration is no host path in the description``() =

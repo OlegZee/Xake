@@ -61,11 +61,12 @@ module Apps =
     /// (`Lock.SdkHost`), and that runtime identifier: the SDK at `sdkDir` (the lock's
     /// prerequisite) names both, as it does to msbuild -- its own runtime identifier
     /// (`NETCoreSdkRuntimeIdentifier`) and its `KnownAppHostPack` version for `framework`. The
-    /// template is the installation's (`dotnetRoot/packs`) when it is there, else the package
-    /// of that name and version in `packageRoot` (`None` for the package to fetch: id, version).
+    /// template is the installation's (`dotnetRoot/packs`), part of the SDK (decision 3); the
+    /// package of that name and version in `packageRoot` when msbuild's restore put it there (a
+    /// framework older than the SDK's runtime). Neither: a broken prerequisite, an error --
+    /// nothing is fetched at build time (no lock names it, no hash covers it).
     /// </summary>
-    let sdkAppHost (dotnetRoot: string) (sdkDir: string) (framework: string) (packageRoot: string)
-                   : string * string * (string * string) option =
+    let sdkAppHost (dotnetRoot: string) (sdkDir: string) (framework: string) (packageRoot: string) : string * string =
         let rid =
             match sdkRuntimeIdentifier sdkDir with
             | Some r -> r
@@ -75,10 +76,12 @@ module Apps =
             | Some v -> v
             | None -> failwithf "the SDK at '%s' names no apphost pack for %s (KnownAppHostPack)" sdkDir framework
         let installed = appHostInstalled dotnetRoot rid version
-        if File.Exists installed then installed, rid, None
+        let package = appHostInPackages packageRoot rid version
+        if File.Exists installed then installed, rid
+        elif File.Exists package then package, rid
         else
-            let package = appHostInPackages packageRoot rid version
-            package, rid, (if File.Exists package then None else Some ("Microsoft.NETCore.App.Host." + rid, version))
+            failwithf "broken prerequisite: the SDK at '%s' lacks its own apphost pack 'packs/Microsoft.NETCore.App.Host.%s/%s' (and the package folder '%s' has no copy); the apphost is part of the SDK: repair or reinstall the SDK %s"
+                sdkDir rid version packageRoot (Path.GetFileName (sdkDir.TrimEnd ('/', '\\')))
 
     /// <summary>
     /// Removes the code signature of a Mach-O apphost the way the SDK's
@@ -135,12 +138,12 @@ module Apps =
     /// <summary>
     /// The apphost as written without the SDK's `HostModel` (when it cannot be loaded here):
     /// the template with the application's file name (`appBinary`, UTF-8, zero-padded) in place
-    /// of the placeholder; a Windows apphost's GUI subsystem (`gui`) only on a Windows host,
-    /// without the assembly's resources; a Mach-O apphost's signature removed and, on macOS for
-    /// an `osx` apphost, signed ad hoc (`codesign -s -`) as a file named `apphost`; executable
-    /// on Unix.
+    /// of the placeholder; a Windows apphost's GUI subsystem (`gui`, a byte of the PE header, as
+    /// `HostWriter` sets it on every host), without the assembly's resources; a Mach-O
+    /// apphost's signature removed and, on macOS for an `osx` apphost, signed ad hoc
+    /// (`codesign -s -`) as a file named `apphost`; executable on Unix.
     /// </summary>
-    let private createAppHostHere (template: string) (destination: string) (appBinary: string) (gui: bool) (rid: string) : unit =
+    let internal createAppHostHere (template: string) (destination: string) (appBinary: string) (gui: bool) (rid: string) : unit =
         let bytes = File.ReadAllBytes template
         let name = System.Text.Encoding.UTF8.GetBytes appBinary
         if name.Length >= 1024 then failwithf "the application's file name '%s' is too long for an apphost" appBinary
@@ -156,7 +159,7 @@ module Apps =
         System.Array.Clear (patched, at, appBinaryPlaceholder.Length)
         name.CopyTo (patched, at)
         let isPE = patched.Length > 0x40 && patched.[0] = byte 'M' && patched.[1] = byte 'Z'
-        if isPE && gui && Env.isWindows then
+        if isPE && gui then
             let pe = System.BitConverter.ToInt32 (patched, 0x3C)
             let subsystem = pe + 4 + 20 + 68
             System.BitConverter.GetBytes(2us).CopyTo (patched, subsystem)
@@ -186,52 +189,75 @@ module Apps =
             | _ -> System.Int32.MaxValue
         File.Exists (Path.Combine (sdkDir, "Microsoft.NET.HostModel.dll")) && major <= System.Environment.Version.Major
 
+    /// The `Microsoft.NET.HostModel` this process loaded, by path: an assembly of that name
+    /// loads once per process (the default load context), so one SDK's HostModel per process.
+    let private loadedHostModels = System.Collections.Generic.Dictionary<string, System.Reflection.Assembly> (System.StringComparer.Ordinal)
+
+    /// The SDK's HostModel at `path`, loaded once; an error when another SDK's is loaded
+    /// already (one per process).
+    let private hostModel (path: string) : System.Reflection.Assembly =
+        lock loadedHostModels (fun () ->
+            match loadedHostModels.TryGetValue path with
+            | true, a -> a
+            | _ ->
+                match Seq.tryHead loadedHostModels.Keys with
+                | Some other -> failwithf "this process loaded the HostModel of '%s' already; one SDK's HostModel per process" other
+                | None ->
+                    let a = System.Reflection.Assembly.LoadFrom path
+                    loadedHostModels.[path] <- a
+                    a)
+
     /// <summary>
     /// Writes the apphost of an application as the SDK's `CreateAppHost` task does, through the
     /// SDK's own `HostWriter.CreateAppHost` (`Microsoft.NET.HostModel.dll` of `sdkDir`, loaded
     /// into this process): the template with the application's file name (`appBinary`) patched
     /// in, for a Windows apphost the GUI subsystem (`gui`) and the assembly's version resource
     /// and icon (`assembly`; on Windows only, as the SDK), for a macOS one the ad hoc signature.
-    /// `true` when written so; `false` when the HostModel cannot be loaded here (an SDK newer
-    /// than the runtime Xake runs on) and the apphost was written without it
-    /// (`createAppHostHere`).
+    /// `None` when written so; else the reason it was written without it (`createAppHostHere`):
+    /// the HostModel cannot be loaded here (an SDK newer than the runtime Xake runs on; another
+    /// SDK's HostModel loaded in this process already -- one per process) or it failed.
     /// </summary>
-    let createAppHost (sdkDir: string) (template: string) (destination: string) (appBinary: string) (gui: bool) (assembly: string) (rid: string) : bool =
-        if not (hostModelUsable sdkDir) then
+    let createAppHost (sdkDir: string) (template: string) (destination: string) (appBinary: string) (gui: bool) (assembly: string) (rid: string) : string option =
+        let fallback (reason: string) =
             createAppHostHere template destination appBinary gui rid
-            false
+            Some reason
+        if not (hostModelUsable sdkDir) then
+            fallback (sprintf "the SDK's HostModel does not load on this runtime (%s)" (string System.Environment.Version))
         else
-        let hostModel = System.Reflection.Assembly.LoadFrom (Path.Combine (sdkDir, "Microsoft.NET.HostModel.dll"))
-        let writer = hostModel.GetType ("Microsoft.NET.HostModel.AppHost.HostWriter", true)
-        let macSign = isMacHost && File.Exists "/usr/bin/codesign" && rid.StartsWith "osx"
-        let create =
-            writer.GetMethods ()
-            |> Array.filter (fun m -> m.Name = "CreateAppHost" && m.IsStatic)
-            |> Array.sortByDescending (fun m -> m.GetParameters().Length)
-            |> Array.head
-        // msbuild writes `<obj>/apphost` and copies it: a macOS signature's identifier is the
-        // file name it was signed under
-        let temp = Path.Combine (Path.GetTempPath (), "xake-apphost-" + System.Guid.NewGuid().ToString "N")
-        Directory.CreateDirectory temp |> ignore
-        try
-            let file = Path.Combine (temp, "apphost" + (if template.EndsWith ".exe" then ".exe" else ""))
-            let args =
-                create.GetParameters () |> Array.map (fun p ->
-                    match p.Name with
-                    | "appHostSourceFilePath" -> box template
-                    | "appHostDestinationFilePath" -> box file
-                    | "appBinaryFilePath" -> box appBinary
-                    | "windowsGraphicalUserInterface" -> box gui
-                    | "assemblyToCopyResourcesFrom" -> box (Path.GetFullPath assembly)
-                    | "enableMacOSCodeSign" -> box macSign
-                    | _ -> if p.HasDefaultValue then p.DefaultValue else null)
-            (try create.Invoke (null, args) |> ignore
-             with :? System.Reflection.TargetInvocationException as e when not (isNull e.InnerException) -> raise e.InnerException)
-            Directory.CreateDirectory (Path.GetDirectoryName (Path.GetFullPath destination)) |> ignore
-            File.Copy (file, destination, true)
-            true
-        finally
-            try Directory.Delete (temp, true) with _ -> ()
+        let viaSdk () =
+            let hostModel = hostModel (Path.Combine (sdkDir, "Microsoft.NET.HostModel.dll"))
+            let writer = hostModel.GetType ("Microsoft.NET.HostModel.AppHost.HostWriter", true)
+            let macSign = isMacHost && File.Exists "/usr/bin/codesign" && rid.StartsWith "osx"
+            let create =
+                writer.GetMethods ()
+                |> Array.filter (fun m -> m.Name = "CreateAppHost" && m.IsStatic)
+                |> Array.sortByDescending (fun m -> m.GetParameters().Length)
+                |> Array.tryHead
+                |> Option.defaultWith (fun () -> failwith "HostWriter has no CreateAppHost")
+            // msbuild writes `<obj>/apphost` and copies it: a macOS signature's identifier is the
+            // file name it was signed under
+            let temp = Path.Combine (Path.GetTempPath (), "xake-apphost-" + System.Guid.NewGuid().ToString "N")
+            Directory.CreateDirectory temp |> ignore
+            try
+                let file = Path.Combine (temp, "apphost" + (if template.EndsWith ".exe" then ".exe" else ""))
+                let args =
+                    create.GetParameters () |> Array.map (fun p ->
+                        match p.Name with
+                        | "appHostSourceFilePath" -> box template
+                        | "appHostDestinationFilePath" -> box file
+                        | "appBinaryFilePath" -> box appBinary
+                        | "windowsGraphicalUserInterface" -> box gui
+                        | "assemblyToCopyResourcesFrom" -> box (Path.GetFullPath assembly)
+                        | "enableMacOSCodeSign" -> box macSign
+                        | _ -> if p.HasDefaultValue then p.DefaultValue else null)
+                (try create.Invoke (null, args) |> ignore
+                 with :? System.Reflection.TargetInvocationException as e when not (isNull e.InnerException) -> raise e.InnerException)
+                Directory.CreateDirectory (Path.GetDirectoryName (Path.GetFullPath destination)) |> ignore
+                File.Copy (file, destination, true)
+            finally
+                try Directory.Delete (temp, true) with _ -> ()
+        try viaSdk (); None
+        with e -> fallback (sprintf "the SDK's HostModel failed: %s: %s" (e.GetType().Name) e.Message)
 
     /// (assembly version, file version) of an assembly as the SDK's `deps.json` names them: the
     /// metadata's version and the numeric file version; `None` for what cannot be read.
@@ -330,18 +356,12 @@ module Apps =
                         recipe {
                             checkHash "apphost template" t.Path t.Sha256
                             return t.Path, rid }
-                    | Lock.SdkHost ->
-                        recipe {
-                            let template, rid, missing = sdkAppHost dotnetRoot sdkDir framework packageRoot
-                            match missing with
-                            | Some (id, version) ->
-                                let! dir = DotNetFwk.restorePackage None id version
-                                return normal (Path.Combine (dir, "runtimes", rid, "native", appHostFileName rid)), rid
-                            | None -> return template, rid }
+                    | Lock.SdkHost -> recipe { return sdkAppHost dotnetRoot sdkDir framework packageRoot }
                 let hostName = Path.GetFileNameWithoutExtension assembly + (if template.EndsWith ".exe" then ".exe" else "")
-                let viaSdk = createAppHost sdkDir template (Path.Combine (outDir, hostName)) (Path.GetFileName assembly) (app.OutputType = "WinExe") assembly rid
-                if not viaSdk then
-                    warnings.Add (sprintf "'%s' (%s): the SDK %s's HostModel does not load on this runtime (%s); the apphost was written without it (no resources, no GUI subsystem)"
-                                    name framework sdk (string System.Environment.Version))
+                match createAppHost sdkDir template (Path.Combine (outDir, hostName)) (Path.GetFileName assembly) (app.OutputType = "WinExe") assembly rid with
+                | None -> ()
+                | Some reason ->
+                    warnings.Add (sprintf "'%s' (%s): the apphost was written without the SDK %s's HostModel (no version resource, no icon): %s"
+                                    name framework sdk reason)
             return List.ofSeq warnings
         }

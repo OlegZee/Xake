@@ -154,7 +154,7 @@ module RunFolder =
         a = b
         || (File.Exists a && File.Exists b
             && (fileId a |> Option.exists (fun i -> Some i = fileId b)
-                || ((FileInfo a).Length = (FileInfo b).Length && Csc.sha256 a = Csc.sha256 b)))
+                || ((FileInfo a).Length = (FileInfo b).Length && FileHash.sha256 a = FileHash.sha256 b)))
 
     /// The assembly version of a managed assembly, `None` for any other file.
     let assemblyVersion (path: string) : System.Version option =
@@ -205,12 +205,55 @@ module RunFolder =
                         | _ -> conflicts.Add { Path = c.To; Kept = kept.Source; Dropped = c.Source; Reason = "first in dependency order" }
         [ for c in chosen -> c.To, c.Source ], List.ofSeq conflicts
 
-    /// The entries (path -> mode, source) of a manifest's text.
-    let readManifest (text: string) : Map<string, string * string> =
-        text.Split '\n'
-        |> Array.filter (fun l -> l <> "" && not (l.StartsWith "#"))
-        |> Array.choose (fun l -> match l.TrimEnd('\r').Split '\t' with [| m; p; s |] -> Some (p, (m, s)) | _ -> None)
-        |> Map.ofArray
+    /// <summary>
+    /// The stamp of a file as a manifest records it: its size and write time
+    /// (`&lt;length&gt;:&lt;UTC ticks&gt;`), "" when it is missing. A clone or a copy gets its
+    /// source's write time, so a placed file and its source have one stamp until either changes.
+    /// </summary>
+    let stampOf (path: string) : string =
+        let info = FileInfo path
+        if info.Exists then sprintf "%d:%d" info.Length info.LastWriteTimeUtc.Ticks else ""
+
+    /// One manifest line: how the file was placed, its source and the source's stamp when it
+    /// was placed or last found unchanged (`stampOf`; "" in a manifest written before stamps).
+    type Entry = { Mode: string; Source: string; Stamp: string }
+
+    /// Whether file names ignore case here (macOS, Windows): a manifest's paths are compared so.
+    let private ignoresCase = isMac || Env.isWindows
+    let private pathComparer = if ignoresCase then System.StringComparer.OrdinalIgnoreCase else System.StringComparer.Ordinal
+
+    /// The entries (path -> entry) of a manifest's text, paths compared as the file system does.
+    let readManifest (text: string) : System.Collections.Generic.IDictionary<string, Entry> =
+        let map = System.Collections.Generic.Dictionary<string, Entry> (pathComparer)
+        for l in text.Split '\n' do
+            if l <> "" && not (l.StartsWith "#") then
+                match l.TrimEnd('\r').Split '\t' with
+                | [| m; p; s |] -> map.[p] <- { Mode = m; Source = s; Stamp = "" }
+                | [| m; p; s; t |] -> map.[p] <- { Mode = m; Source = s; Stamp = t }
+                | _ -> ()
+        map :> _
+
+    /// <summary>
+    /// `path` (relative, '/') under the run folder `folder`, absolute; an error unless it stays
+    /// inside it: not rooted, no `..` step, and no folder on the way that is a link (a symbolic
+    /// link or junction would lead a placement or a removal outside). `what` names where the
+    /// path comes from.
+    /// </summary>
+    let inside (folder: string) (what: string) (path: string) : string =
+        let folder = Path.GetFullPath folder
+        let fail why = failwithf "%s: '%s' %s; a run folder's paths stay inside it ('%s')" what path why folder
+        let normal = path.Replace ('\\', '/')
+        if normal = "" || Path.IsPathRooted normal || normal.StartsWith "/" || (normal.Length > 1 && normal.[1] = ':') then fail "is not a relative path"
+        if normal.Split '/' |> Array.exists (fun s -> s = "..") then fail "has a '..' step"
+        let full = Path.GetFullPath (Path.Combine (folder, normal))
+        let prefix = folder.TrimEnd (Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + string Path.DirectorySeparatorChar
+        if not (full.StartsWith (prefix, System.StringComparison.Ordinal)) then fail "leads outside the folder"
+        let mutable dir = Path.GetDirectoryName full
+        while dir.Length >= prefix.Length do
+            if Directory.Exists dir && (File.GetAttributes dir).HasFlag FileAttributes.ReparsePoint then
+                fail (sprintf "goes through the link '%s'" dir)
+            dir <- Path.GetDirectoryName dir
+        full
 
     /// What `apply` did.
     type Summary = {
@@ -218,9 +261,13 @@ module RunFolder =
         Placed: int
         Kept: int
         Removed: int
-        /// files the folder had that no run placed, with other content than planned: left as
-        /// they are (never overwritten), not in the manifest
+        /// files at planned paths that no run placed (or that changed since a run placed them),
+        /// with other content than planned: left as they are (never overwritten), not in the
+        /// manifest
         Foreign: string list
+        /// files of the previous manifest no longer planned that changed since they were placed:
+        /// left in place (never removed)
+        Modified: string list
         /// how many files each way ("link", "clone", "copy")
         Modes: (string * int) list
         /// whether the manifest was written (it is not when nothing changed)
@@ -229,56 +276,78 @@ module RunFolder =
 
     /// <summary>
     /// Brings the run folder of manifest `manifest` to `files` (path relative to the folder,
-    /// source), against the previous manifest: an entry whose destination still is its source
-    /// (`placedFrom`) is kept, any other placed again (the old file unlinked first, never written
-    /// into), a path of the previous manifest no longer planned removed (and folders left
-    /// empty). A file at a planned path that no previous run placed is taken over when it is
-    /// the source's content, else left alone and reported (`Foreign`). `check` runs before a file
-    /// is placed (a hash check). The manifest -- `header` lines (`#`), then mode, path, source
-    /// per line -- is written only when its text changes, so a run that changes nothing touches
-    /// nothing.
+    /// source), against the previous manifest:
+    /// <list type="bullet">
+    /// <item>every path must stay inside the folder (`inside`), planned or read from the old
+    /// manifest;</item>
+    /// <item>an entry whose destination still is its source (`placedFrom`) is kept; one whose
+    /// source changed is placed again (the old file unlinked first, never written into) when the
+    /// destination is what a run placed (a link to its source, or the stamp the manifest
+    /// records), else left alone and reported (`Foreign`);</item>
+    /// <item>a file at a planned path that no previous run placed is taken over when it is the
+    /// source's content, else left alone and reported (`Foreign`);</item>
+    /// <item>a path of the previous manifest no longer planned is removed (and folders left
+    /// empty) only when it is unchanged since it was placed; else left and reported
+    /// (`Modified`).</item>
+    /// </list>
+    /// Paths compare as the file system does (ignoring case on macOS and Windows: a case-only
+    /// rename keeps the file). `check` runs before a file is placed (a hash check). The manifest
+    /// -- `header` lines (`#`), then mode, path, source and the source's stamp per line -- is
+    /// written only when its text changes: a run that changes nothing touches nothing, a
+    /// recompiled source (a new stamp) rewrites it, so a rule needing the manifest runs again.
     /// </summary>
     let apply (preferred: Mode) (manifest: string) (header: string list) (check: string -> unit) (files: (string * string) list) : Summary =
         let folder = Path.GetDirectoryName (Path.GetFullPath manifest)
-        let old = if File.Exists manifest then readManifest (File.ReadAllText manifest) else Map.empty
+        let old = if File.Exists manifest then readManifest (File.ReadAllText manifest) else readManifest ""
         let placed, kept = ref 0, ref 0
         let foreign = ResizeArray<string> ()
+        let modified = ResizeArray<string> ()
         let modes = System.Collections.Generic.SortedDictionary<string, int> ()
         let lines = ResizeArray<string> ()
-        for path, src in files |> List.sortBy fst do
-            let dest = Path.Combine (folder, path)
+        // still what a run placed there: a link to its source, or the stamp it was placed with
+        // (a manifest written before stamps cannot tell: taken as placed, as those runs did)
+        let unchanged (e: Entry) (dest: string) =
+            e.Stamp = ""
+            || (e.Mode = "link" && File.Exists e.Source && fileId e.Source |> Option.exists (fun i -> Some i = fileId dest))
+            || stampOf dest = e.Stamp
+        let placeNew (src: string) (dest: string) =
+            check src
+            placed.Value <- placed.Value + 1
+            Some (modeName (place preferred src dest))
+        let paths = [ for path, src in files -> path, src, inside folder (sprintf "'%s'" src) path ]
+        for KeyValue (path, _) in old do inside folder (sprintf "the manifest '%s'" manifest) path |> ignore
+        for path, src, dest in paths |> List.sortBy (fun (p, _, _) -> p) do
             let mode =
-                match old.TryFind path with
-                | Some (m, s) when s = src && placedFrom m src dest -> kept.Value <- kept.Value + 1; Some m
-                | Some _ ->
-                    if File.Exists dest then File.Delete dest                  // unlink: never write into a placed file
-                    check src
-                    placed.Value <- placed.Value + 1
-                    Some (modeName (place preferred src dest))
-                | None when File.Exists dest ->
+                match old.TryGetValue path with
+                | true, e when e.Source = src && placedFrom e.Mode src dest -> kept.Value <- kept.Value + 1; Some e.Mode
+                | true, e when File.Exists dest ->
+                    if unchanged e dest then
+                        File.Delete dest                  // unlink: never write into a placed file
+                        placeNew src dest
+                    elif sameContent src dest then kept.Value <- kept.Value + 1; Some (if fileId src = fileId dest then "link" else "copy")
+                    else foreign.Add path; None
+                | true, _ -> placeNew src dest
+                | false, _ when File.Exists dest ->
                     // not placed by a run: taken over only when it is the source's content
                     if fileId src |> Option.exists (fun i -> Some i = fileId dest) then kept.Value <- kept.Value + 1; Some "link"
                     elif sameContent src dest then
                         File.Delete dest
-                        check src
-                        placed.Value <- placed.Value + 1
-                        Some (modeName (place preferred src dest))
+                        placeNew src dest
                     else foreign.Add path; None
-                | None ->
-                    check src
-                    placed.Value <- placed.Value + 1
-                    Some (modeName (place preferred src dest))
+                | false, _ -> placeNew src dest
             match mode with
             | Some m ->
                 modes.[m] <- (match modes.TryGetValue m with | true, n -> n | _ -> 0) + 1
-                lines.Add (sprintf "%s\t%s\t%s" m path src)
+                lines.Add (sprintf "%s\t%s\t%s\t%s" m path src (stampOf src))
             | None -> ()
-        let planned = System.Collections.Generic.HashSet<string> (files |> List.map fst)
+        let planned = System.Collections.Generic.HashSet<string> (files |> List.map fst, pathComparer)
         let mutable removed = 0
-        for KeyValue (path, _) in old do
+        for KeyValue (path, e) in old do
             if not (planned.Contains path) then
                 let dest = Path.Combine (folder, path)
                 if File.Exists dest then
+                    if not (unchanged e dest) then modified.Add path
+                    else
                     File.Delete dest
                     removed <- removed + 1
                     // the folders it leaves empty, up to the run folder
@@ -292,4 +361,4 @@ module RunFolder =
             Directory.CreateDirectory folder |> ignore
             File.WriteAllText (manifest, text)
         { Files = lines.Count; Placed = placed.Value; Kept = kept.Value; Removed = removed; Foreign = List.ofSeq foreign
-          Modes = [ for kv in modes -> kv.Key, kv.Value ]; Written = written }
+          Modified = List.ofSeq modified; Modes = [ for kv in modes -> kv.Key, kv.Value ]; Written = written }

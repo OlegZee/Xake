@@ -6,6 +6,20 @@ open Xake
 open Xake.Tasks
 open Xake.Dotnet
 
+/// The SHA-256 of a file, memoised for the process by (full path, length, write time): an
+/// import hashes the same package files for every entry that copies them (on the trial product
+/// 13,638 copy-local items, mostly the same files in 72 test projects), a run folder checks
+/// them again. A file rewritten in place gets a new write time, hence a new key.
+module FileHash =
+
+    let private memo = System.Collections.Concurrent.ConcurrentDictionary<struct (string * int64 * int64), string> ()
+
+    /// `Csc.sha256 path`, memoised; a missing file is hashed (and fails) as `Csc.sha256` does.
+    let sha256 (path: string) : string =
+        let info = FileInfo path
+        if not info.Exists then Csc.sha256 path
+        else memo.GetOrAdd (struct (info.FullName, info.Length, info.LastWriteTimeUtc.Ticks), fun _ -> Csc.sha256 path)
+
 /// The imported compilation of a project: exactly what `dotnet build` would have handed the
 /// compiler, plus the identity (path and SHA-256) of everything the compiler would read that
 /// is not in the repository -- packages, analyzers, the compiler itself, the msbuild files

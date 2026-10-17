@@ -320,7 +320,7 @@ module Apps =
             let warnings = ResizeArray<string> ()
             let checkHash (what: string) (path: string) (sha: string) =
                 if not (File.Exists path) then failwithf "'%s' (%s): the %s '%s' is missing" name framework what path
-                if sha <> "" && Csc.sha256 path <> sha then
+                if sha <> "" && FileHash.sha256 path <> sha then
                     failwithf "'%s' (%s): the %s '%s' does not have the hash the lock '%s' records; run the import again" name framework what path lockPath
             // 1. the copy-local files
             for c in app.Copy do

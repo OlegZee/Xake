@@ -1086,7 +1086,7 @@ module Import =
                 match projectOutputs.TryGetValue path with
                 | true, o -> yield ({ Path = o.Path; Sha256 = ""; To = destination + Path.GetFileName o.Path } : Lock.CopyItem)
                 | _ when besideProject path -> ()
-                | _ -> yield { Path = path; Sha256 = Csc.sha256 path; To = destination + Path.GetFileName path } ]
+                | _ -> yield { Path = path; Sha256 = FileHash.sha256 path; To = destination + Path.GetFileName path } ]
             |> List.distinctBy (fun c -> c.To.ToLowerInvariant ())
         let host =
             if not (isTrue (p "UseAppHost")) then None
@@ -1095,7 +1095,7 @@ module Import =
                 match items d "ResolvedAppHostPack" |> List.tryHead |> Option.map (fun (_, m) -> meta "Path" m) with
                 | Some template when template <> "" ->
                     let template = absoluteIn ctx.ProjectDir template
-                    Some (Lock.PackHost (p "RuntimeIdentifier", { Path = template; Sha256 = Csc.sha256 template }))
+                    Some (Lock.PackHost (p "RuntimeIdentifier", { Path = template; Sha256 = FileHash.sha256 template }))
                 | _ ->
                     failwithf "'%s' (%s): msbuild uses an apphost for the runtime identifier %s but resolved no template (ResolvedAppHostPack)"
                         ctx.ProjectFile (p "TargetFramework") (p "RuntimeIdentifier")
@@ -1115,7 +1115,7 @@ module Import =
                 let name = match meta "TargetPath" m with "" -> p "TargetFileName" + ".config" | t -> Path.GetFileName t
                 if not (File.Exists path) then None, None
                 elif path.StartsWith (scratch, comparison) then Some (name, Text.Encoding.UTF8.GetBytes (lf (File.ReadAllText path))), None
-                else None, Some ({ Name = name; Path = path; Sha256 = Csc.sha256 path } : Lock.AppFile)
+                else None, Some ({ Name = name; Path = path; Sha256 = FileHash.sha256 path } : Lock.AppFile)
             | [], [] -> None, None
         let files =
             [ generated appRuntimeConfig (named "ProjectRuntimeConfigFileName" (assemblyName + ".runtimeconfig.json")) id
@@ -1276,12 +1276,12 @@ module Import =
 
         // the hashes: a project's output and the SDK's own files carry none
         let isProjectOutput (path: string) = projects |> List.exists (fun (o, _) -> o.Path = path)
-        let hash (path: string) = if isProjectOutput path || inSdk path then "" else Csc.sha256 path
+        let hash (path: string) = if isProjectOutput path || inSdk path then "" else FileHash.sha256 path
         let compilerPath = compilerOf isFSharp d
         let dependencies (deps: Dependencies) : Dependencies =
             { Compiler =
                 { Tool = (if isFSharp then "fsc" else "csc"); Path = compilerPath
-                  Sha256 = (if inSdk compilerPath then "" else Csc.sha256 compilerPath)
+                  Sha256 = (if inSdk compilerPath then "" else FileHash.sha256 compilerPath)
                   Version = Csc.compilerVersion compilerPath }
               References = deps.References |> List.map (fun r -> { r with Sha256 = hash r.Path })
               Analyzers = deps.Analyzers |> List.map (fun a -> { a with Sha256 = hash a.Path }) }

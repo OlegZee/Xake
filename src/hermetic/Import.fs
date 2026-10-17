@@ -1003,9 +1003,14 @@ module Import =
     /// `&lt;name&gt;/$(AssemblyVersion:&lt;file&gt;)`, where the file is that library's runtime file.
     /// What msbuild took elsewhere (SDK 8: a project's version as its assembly version, an
     /// empty file version) stays. Line-based on msbuild's indented writer (a target's library
-    /// at six spaces, a runtime file at ten). Pure.
+    /// at six spaces, a runtime file at ten). Fails, naming `file`, when the stand-in version
+    /// is still in the text afterwards: a deps.json layout this code does not know (another
+    /// SDK's writer) would otherwise record the stand-in's version as msbuild's. Pure.
     /// </summary>
-    let internal depsTokens (text: string) : string =
+    let internal depsTokens (file: string) (text: string) : string =
+        let unknown (what: string) =
+            failwithf "'%s': %s; this SDK's deps.json layout is not known to the import (the stand-in version %s of a referenced project would be recorded as msbuild's)"
+                file what stubVersion
         let lines = text.Split '\n'
         let keyAt (indent: int) (line: string) =
             let m = Text.RegularExpressions.Regex.Match (line, sprintf "^ {%d}\"([^\"]+)\": \\{" indent)
@@ -1026,7 +1031,7 @@ module Import =
         let library (name: string) =
             match fileOf.TryGetValue (name + "/" + stubVersion) with
             | true, f -> sprintf "%s/$(AssemblyVersion:%s)" name f
-            | _ -> name + "/" + stubVersion
+            | _ -> unknown (sprintf "the library '%s/%s' has no runtime file in the targets" name stubVersion)
         let mutable file = ""
         [ for line in lines do
             match keyAt 10 line with
@@ -1042,6 +1047,7 @@ module Import =
                     sprintf "%s\"%s\": \"%s\"" m.Groups.[1].Value m.Groups.[2].Value (token.Substring (m.Groups.[2].Value.Length + 1)))
             yield line ]
         |> String.concat "\n"
+        |> fun result -> if result.Contains stubVersion then unknown "the stand-in version is left after its versions became tokens" else result
 
     /// <summary>
     /// The `App` of a design-time build with runtime output (`HasRuntimeOutput`), and the files
@@ -1111,7 +1117,7 @@ module Import =
             | [], [] -> None, None
         let files =
             [ generated appRuntimeConfig (named "ProjectRuntimeConfigFileName" (assemblyName + ".runtimeconfig.json")) id
-              generated appDeps (named "ProjectDepsFileName" (assemblyName + ".deps.json")) depsTokens
+              generated appDeps (named "ProjectDepsFileName" (assemblyName + ".deps.json")) (depsTokens (scratch + appDeps))
               config ]
             |> List.choose id
         let recorded = [ for name, bytes in files -> binaryDir + "app/" + name, bytes ]

@@ -23,7 +23,7 @@ open System.Xml.Linq
 /// One writer for every file: msbuild writes a resx whose entries are all strings (or
 /// primitives) with `ResourceWriter` when `GenerateResourceUsePreserializedResources` is off,
 /// and that output is the same bytes `PreserializedResourceWriter` writes for those entries
-/// (checked on 22 such files of ActiveReports); a resx with anything else only builds with
+/// (checked on 22 such files of the trial project); a resx with anything else only builds with
 /// the property on, and then msbuild uses `PreserializedResourceWriter` too.
 /// </summary>
 module ResxFormat =

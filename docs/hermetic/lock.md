@@ -304,25 +304,37 @@ from msbuild, nothing derived. The build writes it beside the assembly (`Apps.wr
     runtime identifier, so the lock records only that. The build takes the template of the SDK
     the lock pins (`Evaluation.Sdk`): its `NETCoreSdkRuntimeIdentifier` and its
     `KnownAppHostPack` version for the framework, from `$(DotnetRoot)/packs`, else the package
-    `Microsoft.NETCore.App.Host.<rid>` (fetched). Identified by the SDK version, not hashed and
-    not in the `HERMETIC=on` path gate, like the SDK's compiler. On macOS the lock builds a
+    `Microsoft.NETCore.App.Host.<rid>` when msbuild's restore put it into the package folder (a
+    framework older than the SDK's runtime). Nothing is fetched at build time: without either,
+    the build fails as a broken prerequisite (*the SDK ... lacks its own apphost pack*; repair
+    the SDK). Identified by the SDK version, not hashed and not in the `HERMETIC=on` path gate,
+    like the SDK's compiler. On macOS the lock builds a
     Mach-O apphost, on Linux an ELF one, on Windows an `.exe`.
   - an explicit `RuntimeIdentifier`: `{ "Rid": "win-x64", "Id": "pack:microsoft.netcore.app.host.win-x64/8.0.31/runtimes/win-x64/native/apphost.exe", "Sha256": "..." }`,
     the template msbuild resolved, hashed; the restore fetches it with the lock's packages.
   - The apphost is written by the SDK's own `HostWriter.CreateAppHost`
     (`Microsoft.NET.HostModel.dll` of that SDK, loaded into the build's process): the
     application's file name patched in, the GUI subsystem for a `WinExe`, the assembly's
-    version resource and icon, the macOS ad hoc signature, as `dotnet build`. When that
-    HostModel cannot load (an SDK newer than the runtime Xake runs on: SDK 10 under .NET 8), the
-    apphost is the template with the file name patched in, signed on macOS, and a warning says
-    it has no resources. Named `<assembly name>` (`.exe` for a Windows template).
+    version resource and icon, the macOS ad hoc signature, as `dotnet build`. An assembly of
+    that name loads once per process, so **one SDK's HostModel per Xake process**: an
+    application whose lock pins another SDK in the same run takes the fallback. The fallback
+    is also taken when the HostModel cannot load (an SDK newer than the runtime Xake runs on:
+    SDK 10 under .NET 8) or fails inside `CreateAppHost`: the template with the file name
+    patched in, the GUI subsystem of a `WinExe` set (a byte of the PE header, on every host, as
+    `HostWriter` does), signed on macOS; a warning names the reason and says it has no version
+    resource and no icon. Named `<assembly name>` (`.exe` for a Windows template).
 - **`Files`**: the `runtimeconfig.json` and `deps.json` msbuild generated, and the config file
   `AppConfigWithTargetPath` names before `GenerateBindingRedirects` (for .NET Framework the
   SDK's `supportedRuntime` added). Recorded beside the lock in
   `<lock without .json>.files/<tfm>/app/` as text (LF), each with its hash; the project's own
   config that msbuild copies as it is (a .NET application's `App.config`) is named where it is,
   by its hash, and copied byte for byte. A changed file beside the lock fails the build (*does
-  not have the hash the lock records; run the import again*).
+  not have the hash the lock records; run the import again*). The repository files the
+  recorded ones come from, the project's `App.config` (msbuild's `AppConfig`) and its
+  `runtimeconfig.template.json` (`UserRuntimeConfig`), are in `Evaluation.Imports` with the
+  project file: an edit fails the build with *changed since the import that wrote it; run the
+  import again* (`LOCK_STALE=warn` makes it a warning). The `deps.json` comes from the restore's
+  assets file, whose packages the lock hashes.
 - **`deps.json` and the referenced projects**: msbuild reads a referenced project's versions
   from its built file (SDK 8 fails when the file is missing; SDK 10 writes `0.0.0.0`). The
   import does not build, so the second design-time run puts every output in a folder of its own
@@ -331,7 +343,9 @@ from msbuild, nothing derived. The build writes it beside the assembly (`Apps.wr
   msbuild read from a stand-in becomes a token, `$(AssemblyVersion:<file>)` or
   `$(FileVersion:<file>)` (also in SDK 8's `<assembly>.Reference/<version>` library names), and
   the build replaces it by the version of the file it copied into the output
-  (`Import.depsTokens`, `Apps.depsResolved`). What msbuild did not read from the file (SDK 8: a
+  (`Import.depsTokens`, `Apps.depsResolved`). When the stand-in version is still in the text
+  after that (a `deps.json` layout the import does not know, from another SDK's writer), the
+  import fails naming the file instead of recording the stand-in's version as msbuild's. What msbuild did not read from the file (SDK 8: a
   project's version as its assembly version) stays as written. The recorded `deps.json` is
   therefore the same whether the referenced projects were built when the import ran or not.
 - **`Copy`**: msbuild's copy-local files (`ReferenceCopyLocalPaths`) in msbuild's order, each

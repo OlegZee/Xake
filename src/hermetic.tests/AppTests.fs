@@ -208,7 +208,7 @@ type ``Import record applications``() =
     let main = "class P { static void Main() { System.Console.WriteLine(Lib.C.S()); } }\n"
 
     let fixture () =
-        RecordKit.write [ "lib"; "console"; "winexe"; "ridapp"; "tests"; "out"; "locks"; "obj" ]
+        RecordKit.write [ "lib"; "console"; "winexe"; "ridapp"; "tests"; "out"; "run"; "locks"; "obj" ]
             [ "lib/lib.csproj",
                 RecordKit.sdkProject "<TargetFrameworks>netstandard2.0;net8.0</TargetFrameworks><AssemblyName>Lib.Core</AssemblyName><Version>2.3.4</Version><GenerateDocumentationFile>true</GenerateDocumentationFile><NoWarn>$(NoWarn);1591</NoWarn>"
                     "<PackageReference Include=\"Newtonsoft.Json\" Version=\"13.0.3\" />"

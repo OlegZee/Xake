@@ -117,6 +117,96 @@ type ``Run folder placing``() =
         Assert.That(File.ReadAllText manifest, Does.Contain "e.txt")
 
 
+    [<Test>]
+    member _.``a path outside the run folder is refused, planned or read from the manifest``() =
+        fresh "src3"
+        fresh "run3"
+        write "src3/a.txt" "a"
+        let manifest = Path.GetFullPath "run3/app/.xake-run.txt"
+        let src = Path.GetFullPath "src3/a.txt"
+        for bad in [ "../escape.txt"; "sub/../../escape.txt"; Path.GetFullPath "run3/abs.txt"; "/etc/x.txt" ] do
+            let e = Assert.Catch(fun () -> RunFolder.apply RunFolder.Copy manifest [] ignore [ bad, src ] |> ignore)
+            Assert.That(e.Message, Does.Contain "a run folder's paths stay inside it", bad)
+        Assert.That(File.Exists "run3/escape.txt", Is.False)
+        // a folder on the way that is a link to elsewhere
+        if not Env.isWindows then
+            Directory.CreateDirectory "run3/app" |> ignore
+            Directory.CreateDirectory "run3/elsewhere" |> ignore
+            Directory.CreateSymbolicLink ("run3/app/linked", Path.GetFullPath "run3/elsewhere") |> ignore
+            let e = Assert.Catch(fun () -> RunFolder.apply RunFolder.Copy manifest [] ignore [ "linked/a.txt", src ] |> ignore)
+            Assert.That(e.Message, Does.Contain "goes through the link")
+            Assert.That(File.Exists "run3/elsewhere/a.txt", Is.False)
+        // a hand-edited manifest naming a file outside: refused, the file stays
+        write "run3/victim.txt" "keep me"
+        write manifest (sprintf "copy\t../victim.txt\t%s\t\n" src)
+        Assert.Catch(fun () -> RunFolder.apply RunFolder.Copy manifest [] ignore [ "a.txt", src ] |> ignore) |> ignore
+        Assert.That(File.ReadAllText "run3/victim.txt", Is.EqualTo "keep me")
+
+    [<Test>]
+    member _.``a file changed since a run placed it is neither removed nor overwritten``() =
+        fresh "src4"
+        fresh "run4"
+        write "src4/a.txt" "a"
+        write "src4/b.txt" "b"
+        let manifest = Path.GetFullPath "run4/app/.xake-run.txt"
+        let a, b = Path.GetFullPath "src4/a.txt", Path.GetFullPath "src4/b.txt"
+        RunFolder.apply RunFolder.Copy manifest [] ignore [ "a.txt", a; "b.txt", b ] |> ignore
+        // the user (or a test) writes into both placed copies
+        File.WriteAllText ("run4/app/a.txt", "the user's a")
+        File.WriteAllText ("run4/app/b.txt", "the user's b")
+        // b's source changes; a is no longer planned
+        File.WriteAllText (b, "b2")
+        File.SetLastWriteTimeUtc (b, DateTime.UtcNow.AddMinutes 1.0)
+        let s = RunFolder.apply RunFolder.Copy manifest [] ignore [ "b.txt", b ]
+        Assert.That(s.Modified, Is.EqualTo [ "a.txt" ])
+        Assert.That(s.Foreign, Is.EqualTo [ "b.txt" ])
+        Assert.That(s.Removed, Is.EqualTo 0)
+        Assert.That(File.ReadAllText "run4/app/a.txt", Is.EqualTo "the user's a")
+        Assert.That(File.ReadAllText "run4/app/b.txt", Is.EqualTo "the user's b")
+        // an unchanged placed file no longer planned still goes
+        write "src4/c.txt" "c"
+        let c = Path.GetFullPath "src4/c.txt"
+        RunFolder.apply RunFolder.Copy manifest [] ignore [ "c.txt", c ] |> ignore
+        let s2 = RunFolder.apply RunFolder.Copy manifest [] ignore []
+        Assert.That(s2.Removed, Is.EqualTo 1)
+        Assert.That(File.Exists "run4/app/c.txt", Is.False)
+
+    [<Test>]
+    member _.``a case-only rename keeps the file where names ignore case``() =
+        fresh "src5"
+        fresh "run5"
+        write "src5/Foo.dll" "foo"
+        let manifest = Path.GetFullPath "run5/app/.xake-run.txt"
+        let src = Path.GetFullPath "src5/Foo.dll"
+        RunFolder.apply RunFolder.Link manifest [] ignore [ "Foo.dll", src ] |> ignore
+        let s = RunFolder.apply RunFolder.Link manifest [] ignore [ "foo.dll", src ]
+        // where names ignore case (macOS, Windows) one file, kept; elsewhere two names, the old removed
+        Assert.That(s.Removed, Is.EqualTo (if Env.isWindows || OperatingSystem.IsMacOS () then 0 else 1))
+        Assert.That(File.Exists "run5/app/foo.dll")
+        Assert.That(File.ReadAllText manifest, Does.Contain "\tfoo.dll\t")
+
+    [<Test>]
+    member _.``a source rewritten in place rewrites the manifest: a rule needing it runs again``() =
+        fresh "src6"
+        fresh "run6"
+        write "src6/a.dll" "a"
+        let manifest = Path.GetFullPath "run6/app/.xake-run.txt"
+        let src = Path.GetFullPath "src6/a.dll"
+        RunFolder.apply RunFolder.Link manifest [] ignore [ "a.dll", src ] |> ignore
+        let text = File.ReadAllText manifest
+        Assert.That(text, Does.Contain (sprintf "link\ta.dll\t%s\t%s" src (RunFolder.stampOf src)))
+        let s0 = RunFolder.apply RunFolder.Link manifest [] ignore [ "a.dll", src ]
+        Assert.That(s0.Written, Is.False)
+        // the same file (a link keeps it), new bytes and time
+        let id = RunFolder.fileId src
+        File.WriteAllText (src, "a, recompiled")
+        File.SetLastWriteTimeUtc (src, DateTime.UtcNow.AddMinutes 1.0)
+        Assert.That(RunFolder.fileId src, Is.EqualTo id)
+        let s = RunFolder.apply RunFolder.Link manifest [] ignore [ "a.dll", src ]
+        Assert.That((s.Placed, s.Kept, s.Written), Is.EqualTo ((0, 1, true)))
+        Assert.That(File.ReadAllText manifest, Is.Not.EqualTo text)
+
+
 /// Run folders over a flat output (`out/<cfg>/<fwk>/`, every project of a framework in one
 /// folder; `run/<cfg>/<fwk>/<name>/`, `Locks.runFolderWith`): a library, two console apps
 /// wanting different versions of one package, a Test.Sdk project referencing the library and
@@ -278,20 +368,29 @@ type ``Run folders``() =
         script x.TestOptions "deploy-noop" [ "deploy" ]
         Assert.That(File.ReadAllText "deploy-noop.log", Does.Not.Contain "Started run")
         Assert.That(File.ReadAllText "deploy-noop.log", Does.Not.Contain "/.xake-run.txt as task")
-        // a rule that runs again (an input's time moved, not its content) finds every file in place
+        // a rule that runs again (an input's time moved, not its content) finds every file in
+        // place; the manifests naming that input record its new stamp (a rule needing them runs
+        // again, as for any input whose time moved), the others are untouched
         File.SetLastWriteTimeUtc ("console/data/input.txt", DateTime.UtcNow.AddMinutes 1.0)
         script x.TestOptions "deploy-rerun" [ "deploy" ]
         Assert.That(File.ReadAllText "deploy-rerun.log", Does.Match "run folder Release/net8.0/console: \\d+ files \\(\\d+ link\\), 0 placed, \\d+ unchanged, 0 removed")
-        Assert.That(state (), Is.EqualTo before)
+        let naming (m: string) = (File.ReadAllText m).Contains "data/input.txt"
+        Assert.That(state () |> List.filter (fst >> naming >> not), Is.EqualTo (before |> List.filter (fst >> naming >> not)))
+        Assert.That(state () |> List.filter (fst >> naming), Is.Not.EqualTo (before |> List.filter (fst >> naming)))
         Assert.That(ids (), Is.EqualTo beforeIds)
+        script x.TestOptions "deploy-noop-2" [ "deploy" ]
+        Assert.That(File.ReadAllText "deploy-noop-2.log", Does.Not.Contain "/.xake-run.txt as task")
 
     [<Test>]
     member x.``an edit, a build and a deploy in separate runs place the changed assembly``() =
         x.Prepare ()
         let copied = "runc/Release/net8.0/console/Lib.Core.dll"
         let target = "runc/Release/net8.0/console/.xake-run.txt"
+        let linked = "run/Release/net8.0/console/.xake-run.txt"
         try
-            script x.TestOptions "s66-deploy-1" [ target ]
+            script x.TestOptions "s66-deploy-1" [ target; linked ]
+            let manifests () = File.ReadAllText target, File.ReadAllText linked
+            let manifestsBefore = manifests ()
             let before = File.ReadAllBytes copied
             Assert.That(before, Is.EqualTo (File.ReadAllBytes "out/Release/net8.0/Lib.Core.dll"))
             Assert.That(File.ReadAllText target, Does.Contain "copy\tLib.Core.dll\t")
@@ -300,11 +399,33 @@ type ``Run folders``() =
             Assert.That(File.ReadAllBytes "out/Release/net8.0/Lib.Core.dll", Is.Not.EqualTo before)
             // a run of its own: the compile is up to date, the run folder sees that its
             // assembly was rebuilt by the earlier run (ArtifactDep2) and copies it again
-            script x.TestOptions "s66-deploy-2" [ target ]
+            script x.TestOptions "s66-deploy-2" [ target; linked ]
             Assert.That(File.ReadAllBytes copied, Is.EqualTo (File.ReadAllBytes "out/Release/net8.0/Lib.Core.dll"))
+            // the manifests, the rules' targets, change with the recompiled assembly (copies and
+            // links alike): a rule needing them (tests, pack) runs again
+            let after = manifests ()
+            Assert.That(fst after, Is.Not.EqualTo (fst manifestsBefore))
+            Assert.That(snd after, Is.Not.EqualTo (snd manifestsBefore))
         finally
             File.WriteAllText ("lib/C.cs", libSource "")
             script x.TestOptions "s66-revert" [ "build"; "deploy" ]
+
+    [<Test>]
+    member x.``deploy alone on a clean tree builds first and places what build then deploy places``() =
+        x.Prepare ()
+        let folders = [ "net8.0/console"; "net8.0/console2"; "net8.0/tests"; "net472/desk" ]
+        let state () = [ for f in folders -> f, filesOf ("run/Release/" + f) ]
+        let reference = state ()
+        for d in [ "out"; "run"; "runc" ] do Directory.Delete (d, true)
+        File.Delete ".xake"
+        script x.TestOptions "b1-deploy" [ "deploy" ]
+        Assert.That(state (), Is.EqualTo reference)
+        for f in [ "console.runtimeconfig.json"; "console.deps.json"; "console.pdb"; "Lib.Core.pdb"; "Lib.Core.xml" ] do
+            Assert.That(File.Exists ("run/Release/net8.0/console/" + f), f)
+        Assert.That(runProcess "dotnet" [ "console.dll" ] (Path.GetFullPath "run/Release/net8.0/console"), Does.StartWith "[1,2]input")
+        // and the next deploy is a no-op
+        script x.TestOptions "b1-deploy-2" [ "deploy" ]
+        Assert.That(File.ReadAllText "b1-deploy-2.log", Does.Not.Contain "/.xake-run.txt as task")
 
     [<Test>]
     member x.``needing the XML doc of a .NET Framework application builds its exe``() =

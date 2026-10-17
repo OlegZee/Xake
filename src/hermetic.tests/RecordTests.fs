@@ -599,6 +599,10 @@ type ``Import record project chain``() =
     member x.``a transitive project reference is a project identity, built from its own lock``() =
         fixture ()
         RecordKit.import x.TestOptions "import-chain" RecordKit.recordDefault [ "a/a.csproj"; "b/b.csproj"; "c/c.csproj" ] |> ignore
+        // the SDK pin warning, when there is one: once for the import, not once per project
+        let pinWarnings = Text.RegularExpressions.Regex.Matches(File.ReadAllText "import-chain.log", "pin the \\.NET SDK|pins the \\.NET SDK").Count
+        Assert.That(pinWarnings, Is.LessThanOrEqualTo 1)
+        if pinWarnings = 1 then Assert.That(File.ReadAllText "import-chain.log", Does.Contain "3 projects ('a', 'b', 'c'): their locks pin")
         let c = File.ReadAllText (RecordKit.lockOf "c" "Release")
         Assert.That(c, Does.Contain "\"Id\": \"project:a\"")
         Assert.That(c, Does.Contain "\"Id\": \"project:b\"")
@@ -614,6 +618,14 @@ type ``Import record project chain``() =
         File.AppendAllText ("b/b.csproj", "<!-- a PackageReference would go here -->\n")
         let e = Assert.Catch(fun () -> RecordKit.build x.TestOptions "build-stale-2" "Release")
         Assert.That(string e, Does.Contain "/b/b.csproj' changed since the import that wrote it; run the import again")
+        // what a script's check target asks (`Locks.staleWith`, `Locks.check`)
+        let locks = [ for p in [ "a"; "b"; "c" ] -> RecordKit.lockOf p "Release" ]
+        let stale = ref []
+        RecordKit.run x.TestOptions "stale-with" [ "stale-with" => recipe { let! s = Locks.staleWith [] locks in stale.Value <- s } ] [ "stale-with" ]
+        Assert.That(stale.Value |> List.map fst, Is.EqualTo [ RecordKit.lockOf "b" "Release" ])
+        Assert.That(stale.Value |> List.collect snd |> String.concat "\n", Does.Contain "/b/b.csproj' changed since the import that wrote it; run the import again")
+        let e2 = Assert.Catch(fun () -> RecordKit.run x.TestOptions "check" [ "check" => Locks.check locks ] [ "check" ])
+        Assert.That(string e2, Does.Contain "/b/b.csproj' changed since the import")
         // a warning only, when asked for (not under CI)
         RecordKit.build { x.TestOptions with Vars = [ "LOCK_STALE", "warn" ] } "build-stale-3" "Release"
         Assert.That(File.ReadAllText "build-stale-3.log", Does.Contain "is stale")
@@ -630,6 +642,39 @@ type ``Import record project chain``() =
         Assert.That(message, Does.Contain "/a/a.csproj', which this import does not record")
         Assert.That(message, Does.Contain "/b/b.csproj' (Release|net8.0) references")
         Assert.That(File.Exists (RecordKit.lockOf "c" "Release"), Is.False)
+
+
+/// `Import.record` refuses a WPF project up front (S69) and writes no host path into a
+/// description whose output folder lies outside the project (S70).
+[<TestFixture>]
+type ``Import record refusals and descriptions``() =
+    inherit XakeTestBase("import-record-refusals")
+
+    [<Test>]
+    member x.``a project with XAML Page items is refused before msbuild's markup compiler runs``() =
+        RecordKit.write [ "wpf"; "out"; "locks"; "obj" ]
+            [ "wpf/wpf.csproj", RecordKit.sdkProject "<TargetFramework>net8.0</TargetFramework>" "<Page Include=\"MainWindow.xaml\" />"
+              "wpf/MainWindow.xaml", "<Window xmlns=\"http://schemas.microsoft.com/winfx/2006/xaml/presentation\" />\n"
+              "wpf/C.cs", "class C { }\n" ]
+        let e = Assert.Catch(fun () -> RecordKit.import x.TestOptions "import-wpf" RecordKit.recordDefault [ "wpf/wpf.csproj" ] |> ignore)
+        Assert.That(string e, Does.Contain "WPF is not supported by the import yet")
+        Assert.That(string e, Does.Contain "/wpf/wpf.csproj'")
+        Assert.That(string e, Does.Not.Contain "MC3050")
+
+    [<Test>]
+    member x.``an output folder outside the project or named by the configuration is no host path in the description``() =
+        let outside = (Path.GetFullPath "elsewhere").Replace ('\\', '/')
+        RecordKit.write [ "p"; "q"; "elsewhere"; "out"; "locks"; "obj" ]
+            [ "p/p.csproj", RecordKit.sdkProject (sprintf "<TargetFramework>net8.0</TargetFramework><OutputPath>%s/bin/$(Configuration)/</OutputPath>" outside) ""
+              "p/C.cs", "class C { }\n"
+              "q/q.csproj", RecordKit.sdkProject "<TargetFramework>net8.0</TargetFramework><OutputPath>build/$(Configuration)/</OutputPath>" ""
+              "q/C.cs", "class C { }\n" ]
+        RecordKit.import x.TestOptions "import-excludes" RecordKit.recordDefault [ "p/p.csproj"; "q/q.csproj" ] |> ignore
+        let p, q = File.ReadAllText "p/xake.project.json", File.ReadAllText "q/xake.project.json"
+        Assert.That(p, Does.Not.Contain outside)
+        Assert.That(p, Does.Not.Contain (x.TestOptions.ProjectRoot.Replace('\\', '/').TrimEnd('/')))
+        Assert.That(q, Does.Contain "\"!build/*/**/*\"")
+        Assert.That(q, Does.Not.Contain "Debug")
 
 
 /// `Import.record` checks the files the compiler's switches name, not only the references:

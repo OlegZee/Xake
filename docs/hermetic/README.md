@@ -1,5 +1,33 @@
 # Xake.Hermetic.Dotnet
 
+## Next (hermetic, after PR 2)
+
+- **`Import.record`**: the import that records msbuild's resolved compile inputs (references,
+  defines, generated sources, resource names, compiler switches) per configuration and
+  framework, and writes the locks itself; there is no `update-locks` step for such a project
+  ([lock.md](lock.md#recorded-locks-importrecord)). It writes into the projects' `obj/` (the
+  restore's assets file, the design-time builds' own `obj/xake-record/` folder) and creates
+  their `bin/` folders, as an IDE does. Every configuration and the script's `Platform` are
+  restored for themselves.
+- **Lock format 2** (breaking for imported locks): the references, analyzers and compiler of a
+  recorded entry are identities (`pkg:`, `pack:`, `sdk:`, `project:`), `Recorded` marks the
+  entry, and with masks `Sources` holds only the files the masks do not put in place. A format-1
+  lock of an imported project is refused: run the import again. Composed locks read as before.
+- **`Project.import`** stays, as legacy: its locks are `"Format": 1` with
+  `"Legacy": "Project.import"` and read as before. Use `Import.record` for new imports.
+- **Outputs named by `TargetFileName`**: a .NET Framework application is `app.exe`; a script
+  that builds one declares an `*.exe` rule beside its `*.dll` rule.
+- **The SDK pin is stricter than `global.json`**: a recorded entry always has the `dotnet-sdk`
+  prerequisite of the SDK that recorded it. Another SDK means a new import (all its locks
+  change); the import warns and shows the exact `global.json` pin.
+- **Stale locks fail the build**: a project file or other msbuild file changed since the import
+  fails `Locks.compileAs` with "run the import again" (`LOCK_STALE=warn`: a warning, except
+  under CI).
+- **Generated binaries beside the lock**: a file msbuild generates that is not text (a
+  `.licenses`, a `g.resources`) is copied to `<lock>.files/<framework>/`; commit the folder.
+- **`Restore.download` in rounds**: one version of a package id per synthesized restore, so a
+  lock set that needs two versions of one id fetches both.
+
 Version **0.3.0, preview**: the API may break while the package is 0.x. 0.3 is built on
 **Xake 3.7** (`[3.7.0.26, 3.8)`) and adds:
 

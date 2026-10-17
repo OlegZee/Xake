@@ -103,8 +103,11 @@ module Lock =
     /// which a replay of the lock checks before doing any work (`compileWith`). One kind
     /// today: `"dotnet-sdk"`, the .NET SDK at exactly `Version`, which covers the paths
     /// under <c>$(DotnetRoot)/sdk/&lt;Version&gt;/</c> (the SDK's fsc, an imported project's
-    /// compiler and analyzers). It is written only when `global.json` pins that version
-    /// exactly (`rollForward: "disable"`); `Pin` names that file.
+    /// compiler and analyzers, and every file of a recorded entry under it). A composed or
+    /// `Project.import` entry gets it only when `global.json` pins that version exactly
+    /// (`rollForward: "disable"`); an entry recorded from msbuild (`Import.record`) always has
+    /// it -- the SDK that recorded it, which may be stricter than `global.json` (the import
+    /// warns). `Pin` names that `global.json` ("" when there is none).
     /// </summary>
     /// <remarks>
     /// `Pin` is kept tokenized (<c>$(ProjectRoot)/global.json</c>) in memory as well as on
@@ -194,6 +197,103 @@ module Lock =
         /// The output assembly (`/out:` or `-o:`/`--out:`), if the options carry one
         member this.Output = match this with Compilation.Csc c -> c.Output | Compilation.Fsc f -> f.Output
 
+    /// The output of a project another one references, as an entry recorded from msbuild
+    /// names it: the reference is `project:<Name>` in the lock, and `Path` (the build's own
+    /// layout, `outOf Configuration Framework Name`) is where the build puts it. `Framework` is
+    /// the one msbuild chose (`NearestTargetFramework`).
+    type ProjectOutput = { Name: string; Configuration: string; Framework: string; Path: string }
+
+    /// What only an entry recorded from msbuild (`Import.record`) carries. Its presence is the
+    /// marker the SBOM and a staleness check read ("msbuild" against "composed"): such an
+    /// entry is msbuild's resolution written down, never Xake's. On disk its references,
+    /// analyzers and compiler are identities (`Identity`), not paths.
+    type Recorded = {
+        /// The referenced projects (`project:<name>` references), in msbuild's order
+        Projects: ProjectOutput list
+        /// The description's source masks (absolute; `!` an exclude) when they name exactly the
+        /// sources msbuild compiles, else empty. `Sources` holds msbuild's files in msbuild's
+        /// order; a build compiles the files the masks name then -- msbuild's order first, a file
+        /// added since after them (`Locks.compileAs`)
+        Masks: string list
+        /// With masks, how `Sources` is written: only the files the masks do not put in place
+        /// -- the generated ones and msbuild's exceptions to the masks' order
+        /// (`canonicalSources`) -- each with the file msbuild compiles before it ("" first).
+        /// `None` in an entry an import just made (its `Sources` is msbuild's whole list, and
+        /// `format` computes this, `placedSources`); `Some` in an entry read from a lock, whose
+        /// `Sources` then holds the placed files only and a build reconstructs the rest from
+        /// the masks (`reconstructSources`)
+        Placed: (string * string) list option
+    }
+
+    /// <summary>
+    /// The order a recorded entry's masks put `files` in, as msbuild's globbing does: for each
+    /// include mask in turn, the files it names that no earlier one did, sorted ordinally
+    /// ignoring case; a file no include names last, in the given order. Pure.
+    /// </summary>
+    let canonicalSources (masks: string list) (files: string list) : string list =
+        let remaining = System.Collections.Generic.HashSet<string> (files)
+        [ for m in masks do
+            if not (m.StartsWith "!") then
+                let pattern = Xake.Path.parse (if m.EndsWith "**" then m + "/*" else m)
+                let named =
+                    files |> List.filter (fun f -> remaining.Contains f && Xake.Path.matchesPattern pattern f)
+                    |> List.distinct |> List.sortWith (fun a b -> System.String.Compare (a, b, System.StringComparison.OrdinalIgnoreCase))
+                for f in named do
+                    remaining.Remove f |> ignore
+                    yield f
+          yield! files |> List.filter remaining.Contains |> List.distinct ]
+
+    /// <summary>
+    /// The `Placed` of a recorded entry whose `sources` are msbuild's whole list: the longest
+    /// run of user sources already in the masks' order (`canonicalSources`) is left to the
+    /// masks; every other source -- a generated one (`isGenerated`), or one msbuild puts
+    /// elsewhere -- is placed after the source msbuild compiles before it ("" for the first).
+    /// `reconstructSources` gives `sources` back. Pure.
+    /// </summary>
+    let placedSources (masks: string list) (isGenerated: string -> bool) (sources: string list) : (string * string) list =
+        let user = sources |> List.filter (isGenerated >> not)
+        let rank = canonicalSources masks user |> List.mapi (fun i f -> f, i) |> dict
+        // the longest increasing run of ranks (patience sorting), as the set of its files
+        let kept =
+            let ranks = user |> List.map (fun f -> rank.[f]) |> Array.ofList
+            let tails = ResizeArray<int> ()          // index into `ranks` of the tail of each length
+            let previous = Array.create ranks.Length -1
+            for i in 0 .. ranks.Length - 1 do
+                let mutable lo, hi = 0, tails.Count
+                while lo < hi do
+                    let mid = (lo + hi) / 2
+                    if ranks.[tails.[mid]] < ranks.[i] then lo <- mid + 1 else hi <- mid
+                if lo > 0 then previous.[i] <- tails.[lo - 1]
+                if lo = tails.Count then tails.Add i else tails.[lo] <- i
+            let set = System.Collections.Generic.HashSet<string> ()
+            let mutable i = if tails.Count = 0 then -1 else tails.[tails.Count - 1]
+            while i >= 0 do
+                set.Add (List.item i user) |> ignore
+                i <- previous.[i]
+            set
+        sources |> List.mapi (fun i f -> f, (if i = 0 then "" else List.item (i - 1) sources))
+        |> List.filter (fun (f, _) -> isGenerated f || not (kept.Contains f))
+
+    /// <summary>
+    /// The sources of a recorded entry from its masks' expansion now (`files`) and its `Placed`:
+    /// the files no `placed` entry names, in the masks' order, then each placed file `keep`
+    /// accepts (a generated one, one the masks still name) after the one msbuild compiled
+    /// before it, at the end when that one is gone. A file added since takes its place in the
+    /// masks' order; a deleted one is left out. Pure.
+    /// </summary>
+    let reconstructSources (masks: string list) (placed: (string * string) list) (keep: string -> bool) (files: string list) : string list =
+        let placedFiles = placed |> List.map fst |> set
+        let result = ResizeArray<string> (canonicalSources masks (files |> List.filter (placedFiles.Contains >> not)))
+        for f, after in placed do
+            if keep f then
+                match after with
+                | "" -> result.Insert (0, f)
+                | a ->
+                    match result.IndexOf a with
+                    | -1 -> result.Add f
+                    | i -> result.Insert (i + 1, f)
+        List.ofSeq result
+
     /// One project's compilation, as recorded in a lock: what the compiler is handed
     /// (`Compilation`, which carries the entry's identity, `Name` and `Framework`) plus the
     /// provenance the runner never reads -- the msbuild evaluation and the restore graph.
@@ -209,6 +309,9 @@ module Lock =
         /// replay; written at record time when the entry depends on an exactly pinned SDK,
         /// empty otherwise
         Prerequisites: Prerequisite list
+        /// `Some` for an entry recorded from msbuild (`Import.record`), `None` for one composed
+        /// by Xake (`csc {}`, `Locks.generate`) or imported by `Project.import`
+        Recorded: Recorded option
     } with
         member this.Name = this.Compilation.Name
         member this.Framework = this.Compilation.Framework
@@ -238,7 +341,7 @@ module Lock =
 
     /// A composed compilation as a lock entry: no evaluation, no package graph.
     let ofCompilation (c: Compilation) : Entry =
-        { Compilation = c; Evaluation = Evaluation.Empty; Packages = []; Prerequisites = [] }
+        { Compilation = c; Evaluation = Evaluation.Empty; Packages = []; Prerequisites = []; Recorded = None }
 
     /// A composed C# compilation as a lock entry (`ofCompilation`).
     let ofCsc (c: Csc) : Entry = ofCompilation (Compilation.Csc c)
@@ -422,10 +525,154 @@ module Lock =
     let diffText roots (a: Entry) (b: Entry) : string list =
         diff a b |> List.map (Roots.tokenizeAll roots)
 
+    /// <summary>
+    /// The portable names a recorded entry (`Entry.Recorded`) gives the files msbuild resolved,
+    /// in place of their paths on the machine that imported:
+    /// <list type="bullet">
+    /// <item><c>pkg:&lt;id&gt;/&lt;version&gt;/&lt;path&gt;</c> -- a file of a package in the
+    /// package folder (`$(NuGetPackageRoot)`), id as the folder spells it (lower case);</item>
+    /// <item><c>pack:&lt;pack&gt;/&lt;version&gt;/&lt;path&gt;</c> -- a file of a targeting
+    /// pack under <c>$(DotnetRoot)/packs</c>; on a machine whose .NET has not that pack
+    /// version it is the same file of the package of that name in the package folder (a
+    /// targeting pack is a NuGet package, fetched like any other);</item>
+    /// <item><c>sdk:&lt;path&gt;</c> -- a file of the .NET SDK the entry was recorded with
+    /// (`Evaluation.Sdk`, a prerequisite of the entry): the compiler, the SDK's analyzers and
+    /// shims;</item>
+    /// <item><c>project:&lt;name&gt;</c> -- the output of a referenced project
+    /// (`Recorded.Projects`).</item>
+    /// </list>
+    /// A path under one of the lock's roots (`$(ProjectRoot)`, a script's extra root) is the
+    /// tokenized path, as in every lock. Anything else cannot be named portably and fails the
+    /// import (`ofPath` gives `None`).
+    /// </summary>
+    module Identity =
+
+        /// What naming and resolving needs: the roots of the lock (`$(NuGetPackageRoot)`,
+        /// `$(DotnetRoot)`, `$(ProjectRoot)` and the extra ones), the SDK version of the entry
+        /// and its referenced projects' outputs.
+        type Context = { Roots: (string * string) list; Sdk: string; Projects: ProjectOutput list }
+
+        let private comparison = if Env.isUnix then System.StringComparison.Ordinal else System.StringComparison.OrdinalIgnoreCase
+        let private slash (p: string) = p.Replace ('\\', '/')
+        let private rootOf (ctx: Context) token = ctx.Roots |> List.tryFind (fst >> (=) token) |> Option.map snd
+        let private under (root: string) (path: string) =
+            if path.StartsWith (root.TrimEnd '/' + "/", comparison) then Some (path.Substring (root.TrimEnd('/').Length + 1)) else None
+        /// `<a>/<b>/<rest>` as (a, b, rest), when all three are non-empty.
+        let private threeParts (rel: string) =
+            match rel.Split ([| '/' |], 3) with
+            | [| a; b; rest |] when a <> "" && b <> "" && rest <> "" -> Some (a, b, rest)
+            | _ -> None
+
+        /// The portable name of `path`: `project:`, `pack:` (a targeting pack under the .NET root
+        /// or in the package folder), `pkg:`, `sdk:` (in that order),
+        /// else the tokenized path when it lies under a root other than `$(DotnetRoot)`, else
+        /// `None`. Pure.
+        let ofPath (ctx: Context) (path: string) : string option =
+            let path = slash path
+            let project = ctx.Projects |> List.tryFind (fun p -> System.String.Equals (slash p.Path, path, comparison))
+            let dotnet = rootOf ctx "$(DotnetRoot)"
+            let inPacks = dotnet |> Option.bind (fun d -> under (d + "/packs") path) |> Option.bind threeParts
+            let inPackages = rootOf ctx Roots.nugetPackageRootToken |> Option.bind (fun r -> under r path) |> Option.bind threeParts
+            let inSdk =
+                dotnet |> Option.bind (fun d -> under (d + "/sdk") path)
+                |> Option.bind (fun rel ->
+                    match rel.Split ([| '/' |], 2) with
+                    | [| v; rest |] when v = ctx.Sdk && rest <> "" -> Some rest
+                    | _ -> None)
+            // a targeting pack (`Microsoft.<X>.App.Ref`) is the same `pack:` whether this .NET has
+            // it or msbuild downloaded it into the package folder: the id in lower case, as the
+            // package folder spells it
+            let isPack (id: string) = id.EndsWith (".app.ref", System.StringComparison.OrdinalIgnoreCase)
+            match project, inPacks, inPackages, inSdk with
+            | Some p, _, _, _ -> Some ("project:" + p.Name)
+            | _, Some (pack, version, rest), _, _ -> Some (sprintf "pack:%s/%s/%s" (pack.ToLowerInvariant ()) version rest)
+            | _, _, Some (id, version, rest), _ when isPack id -> Some (sprintf "pack:%s/%s/%s" (id.ToLowerInvariant ()) version rest)
+            | _, _, Some (id, version, rest), _ -> Some (sprintf "pkg:%s/%s/%s" id version rest)
+            | _, _, _, Some rest -> Some ("sdk:" + rest)
+            | _ ->
+                let tokenized = Roots.tokenize ctx.Roots path
+                if tokenized.StartsWith "$(" && not (tokenized.StartsWith "$(DotnetRoot)") then Some tokenized else None
+
+        /// The folders of a .NET's `packs` (one listing per change of the folder, not one per
+        /// `pack:` identity of every lock read).
+        let private packListings = System.Collections.Concurrent.ConcurrentDictionary<string * System.DateTime, string[]> ()
+        let private packFolders (packs: string) =
+            packListings.GetOrAdd ((packs, Directory.GetLastWriteTimeUtc packs), fun _ -> Directory.GetDirectories packs)
+
+        /// Whether `text` is a portable name `ofPath` writes for a file outside the roots.
+        let isIdentity (text: string) =
+            text.StartsWith "pkg:" || text.StartsWith "pack:" || text.StartsWith "sdk:" || text.StartsWith "project:"
+
+        /// The file `identity` names on this machine; a tokenized path is expanded. A `pack:`
+        /// is the targeting pack under `$(DotnetRoot)/packs` when this .NET has that version,
+        /// else the package of that name in the package folder (a restore fetches it). Pure but
+        /// for that one `File.Exists`.
+        let toPath (ctx: Context) (identity: string) : string =
+            let root token = match rootOf ctx token with Some r -> r | None -> failwithf "'%s': no %s on this machine" identity token
+            let rest (prefix: string) = identity.Substring prefix.Length
+            if identity.StartsWith "pkg:" then
+                root Roots.nugetPackageRootToken + "/" + rest "pkg:"
+            elif identity.StartsWith "pack:" then
+                match threeParts (rest "pack:") with
+                | Some (pack, version, file) ->
+                    // the pack folder of this .NET, whatever its case (`Microsoft.NETCore.App.Ref`)
+                    let packs = root "$(DotnetRoot)" + "/packs"
+                    let installed =
+                        if not (Directory.Exists packs) then None
+                        else
+                            packFolders packs
+                            |> Array.tryFind (fun d -> System.String.Equals (Path.GetFileName d, pack, System.StringComparison.OrdinalIgnoreCase))
+                            |> Option.map (fun d -> slash d + "/" + version + "/" + file)
+                            |> Option.filter File.Exists
+                    match installed with
+                    | Some path -> path
+                    | None -> root Roots.nugetPackageRootToken + "/" + pack.ToLowerInvariant () + "/" + version.ToLowerInvariant () + "/" + file
+                | None -> failwithf "'%s' is not pack:<pack>/<version>/<path>" identity
+            elif identity.StartsWith "sdk:" then
+                if ctx.Sdk = "" then failwithf "'%s': the entry records no SDK version (Evaluation.Sdk)" identity
+                root "$(DotnetRoot)" + "/sdk/" + ctx.Sdk + "/" + rest "sdk:"
+            elif identity.StartsWith "project:" then
+                let name = rest "project:"
+                match ctx.Projects |> List.tryFind (fun p -> p.Name = name) with
+                | Some p -> p.Path
+                | None -> failwithf "'%s': the entry's Recorded.Projects has no '%s'" identity name
+            else Roots.expand ctx.Roots identity
+
+    /// The version of the lock format `format` writes. 2: an entry recorded from msbuild
+    /// (`Recorded`) names its references, analyzers and compiler by identity (`Identity`).
+    /// A lock without the field is format 1.
+    [<Literal>]
+    let FormatVersion = 2
+
+    /// The `"Legacy"` value of a lock `Project.import` writes: format 1, its imported entries
+    /// Xake's own resolution of the project (not msbuild's, as `Import.record`'s are). Read as
+    /// before; a format-1 lock of an imported project without it (an older preview's) is not.
+    [<Literal>]
+    let LegacyMarker = "Project.import"
+
     open Json
+
+    /// The context `Identity` names a recorded entry's files with, under `roots`.
+    let private identityContext roots (entry: Entry) : Identity.Context =
+        { Roots = roots; Sdk = entry.Evaluation.Sdk
+          Projects = entry.Recorded |> Option.map (fun r -> r.Projects) |> Option.defaultValue [] }
+
+    /// The identity of a file a recorded entry names, or a failure saying the import cannot
+    /// make it portable.
+    let private identityOf roots (entry: Entry) (role: string) (path: string) =
+        match Identity.ofPath (identityContext roots entry) path with
+        | Some id -> id
+        | None ->
+            failwithf "'%s' (%s): the %s '%s' cannot be named portably: it is not in the package folder, the .NET packs or the SDK %s, nor under $(ProjectRoot) or a root the script declares; declare its folder as a root (Roots.make) or fix the project"
+                entry.Name entry.Framework role path entry.Evaluation.Sdk
 
     let private writeEntry roots (entry: Entry) =
         let str = Roots.tokenizeAll roots >> escape
+        let recorded = entry.Recorded.IsSome
+        // a file of a recorded entry is named by its identity, any other entry's by its path
+        let fileField role (path: string) =
+            if recorded then sprintf "\"Id\": %s" (escape (identityOf roots entry role path))
+            else sprintf "\"Path\": %s" (str path)
         let indent = "        "
         let strings name (items: string list) =
             items |> List.map (str >> sprintf "%s  %s" indent) |> String.concat ",\n"
@@ -435,11 +682,16 @@ module Lock =
             |> List.map (fun h -> sprintf "%s  { \"Path\": %s, \"Sha256\": %s }" indent (str h.Path) (escape h.Sha256))
             |> String.concat ",\n"
             |> fun body -> sprintf "%s%s: [\n%s\n%s]" indent (escape name) body indent
+        let analyzerList name (items: Hashed list) =
+            items
+            |> List.map (fun h -> sprintf "%s  { %s, \"Sha256\": %s }" indent (fileField "analyzer" h.Path) (escape h.Sha256))
+            |> String.concat ",\n"
+            |> fun body -> sprintf "%s%s: [\n%s\n%s]" indent (escape name) body indent
         let referenceList name (items: Reference list) =
             items
             |> List.map (fun r ->
-                if r.Alias = "" then sprintf "%s  { \"Path\": %s, \"Sha256\": %s }" indent (str r.Path) (escape r.Sha256)
-                else sprintf "%s  { \"Path\": %s, \"Sha256\": %s, \"Alias\": %s }" indent (str r.Path) (escape r.Sha256) (escape r.Alias))
+                if r.Alias = "" then sprintf "%s  { %s, \"Sha256\": %s }" indent (fileField "reference" r.Path) (escape r.Sha256)
+                else sprintf "%s  { %s, \"Sha256\": %s, \"Alias\": %s }" indent (fileField "reference" r.Path) (escape r.Sha256) (escape r.Alias))
             |> String.concat ",\n"
             |> fun body -> sprintf "%s%s: [\n%s\n%s]" indent (escape name) body indent
         let packageList name (items: Package list) =
@@ -450,9 +702,10 @@ module Lock =
                     (p.DependsOn |> List.map escape |> String.concat ", "))
             |> String.concat ",\n"
             |> fun body -> sprintf "%s%s: [\n%s\n%s]" indent (escape name) body indent
-        let pairs name (items: (string * string) list) =
-            items |> List.map (fun (k, v) -> sprintf "%s  %s: %s" indent (str k) (str v)) |> String.concat ",\n"
+        let pairsWith value name (items: (string * string) list) =
+            items |> List.map (fun (k, v) -> sprintf "%s  %s: %s" indent (str k) (value v)) |> String.concat ",\n"
             |> fun body -> sprintf "%s%s: {\n%s\n%s}" indent (escape name) body indent
+        let pairs = pairsWith str
         let section name (fields: string list) =
             fields |> String.concat ",\n" |> sprintf "      %s: {\n%s\n      }" (escape name)
 
@@ -460,6 +713,15 @@ module Lock =
         // compilation's fields as `Compilation`, and its dependencies together with the
         // entry's package graph as `Dependencies`
         let e, c, d = entry.Evaluation, entry.Compilation, entry.Compilation.Dependencies
+        let placed =
+            match entry.Recorded with
+            | Some r when not (List.isEmpty r.Masks) ->
+                match r.Placed with
+                | Some p -> Some p
+                | None ->
+                    let generated = c.Generated |> List.map fst |> set
+                    Some (placedSources r.Masks generated.Contains c.Sources)
+            | _ -> None
         [ sprintf "      \"Name\": %s" (escape c.Name)
           sprintf "      \"Framework\": %s" (escape c.Framework)
           section "Evaluation"
@@ -473,18 +735,20 @@ module Lock =
             [ sprintf "%s\"Directory\": %s" indent (str c.Directory)
               strings "Options" c.Options
               strings "Defines" c.Defines
-              strings "Sources" c.Sources
-              pairs "Generated" c.Generated
+              // with masks, only what the masks do not put in place (`Recorded.Placed`)
+              strings "Sources" (match placed with Some p -> p |> List.map fst | None -> c.Sources)
+              // the content of a generated source is text, not a path: its `\` stay
+              pairsWith (Roots.tokenizeText roots >> escape) "Generated" c.Generated
               pairs "Resources" c.Resources
               // only when the rule declares one: every other lock stays byte-identical to what
               // was written before the key existed
               if c.RuntimeConfig.IsSome then
                   sprintf "%s\"RuntimeConfig\": %s" indent (str c.RuntimeConfig.Value) ]
           section "Dependencies"
-            [ sprintf "%s\"Compiler\": { \"Tool\": %s, \"Path\": %s, \"Sha256\": %s, \"Version\": %s }" indent
-                (escape d.Compiler.Tool) (str d.Compiler.Path) (escape d.Compiler.Sha256) (escape d.Compiler.Version)
+            [ sprintf "%s\"Compiler\": { \"Tool\": %s, %s, \"Sha256\": %s, \"Version\": %s }" indent
+                (escape d.Compiler.Tool) (fileField "compiler" d.Compiler.Path) (escape d.Compiler.Sha256) (escape d.Compiler.Version)
               referenceList "References" d.References
-              hashedList "Analyzers" d.Analyzers
+              analyzerList "Analyzers" d.Analyzers
               packageList "Packages" entry.Packages
               // only when there is one: every lock without prerequisites stays byte-identical
               // to what was written before the key existed
@@ -493,7 +757,25 @@ module Lock =
                   |> List.map (fun p ->
                       sprintf "%s  { \"Kind\": %s, \"Version\": %s, \"Pin\": %s }" indent (escape p.Kind) (escape p.Version) (escape p.Pin))
                   |> String.concat ",\n"
-                  |> fun body -> sprintf "%s\"Prerequisites\": [\n%s\n%s]" indent body indent ] ]
+                  |> fun body -> sprintf "%s\"Prerequisites\": [\n%s\n%s]" indent body indent ]
+          // the marker of an entry recorded from msbuild, and where its project references are
+          match entry.Recorded with
+          | None -> ()
+          | Some r ->
+              section "Recorded"
+                [ yield sprintf "%s\"By\": \"msbuild\"" indent
+                  yield strings "Masks" r.Masks
+                  match placed with
+                  | Some p when not (List.isEmpty p) -> yield pairs "Placed" p
+                  | Some _ -> yield sprintf "%s\"Placed\": {}" indent
+                  | None -> ()
+                  let projects =
+                      r.Projects
+                      |> List.map (fun p ->
+                          sprintf "%s  { \"Name\": %s, \"Configuration\": %s, \"Framework\": %s, \"Path\": %s }"
+                              indent (escape p.Name) (escape p.Configuration) (escape p.Framework) (str p.Path))
+                      |> String.concat ",\n"
+                  yield if projects = "" then sprintf "%s\"Projects\": []" indent else sprintf "%s\"Projects\": [\n%s\n%s]" indent projects indent ] ]
         |> String.concat ",\n" |> sprintf "    {\n%s\n    }"
 
     /// The lock as text: paths tokenized against the given roots, one line per item, so the
@@ -502,10 +784,18 @@ module Lock =
     /// via `Roots.make`), longest root first. Pure; `save` is the recipe that takes the roots
     /// from the build.
     let format roots (lock: Document) =
-        [ sprintf "  \"Configuration\": %s" (escape lock.Configuration)
-          sprintf "  \"Properties\": {\n%s\n  }"
-            (lock.Properties |> List.map (fun (k, v) -> sprintf "    %s: %s" (escape k) (escape v)) |> String.concat ",\n")
-          sprintf "  \"Entries\": [\n%s\n  ]" (lock.Entries |> List.map (writeEntry roots) |> String.concat ",\n") ]
+        // an entry of an imported project that msbuild did not record (`Project.import`: Xake's
+        // own resolution of the project) is format 1, marked as such: never a format-2 lock
+        let legacy = lock.Entries |> List.exists (fun e -> e.Evaluation.Project <> "" && e.Recorded.IsNone)
+        [ if legacy then
+              yield "  \"Format\": 1"
+              yield sprintf "  \"Legacy\": %s" (escape LegacyMarker)
+          else yield sprintf "  \"Format\": %d" FormatVersion
+          yield sprintf "  \"Configuration\": %s" (escape lock.Configuration)
+          yield sprintf "  \"Properties\": {\n%s\n  }"
+                    // a value may be a path (`RestoreConfigFile`): tokenized as every path
+                    (lock.Properties |> List.map (fun (k, v) -> sprintf "    %s: %s" (escape k) (escape (Roots.tokenizeAll roots v))) |> String.concat ",\n")
+          yield sprintf "  \"Entries\": [\n%s\n  ]" (lock.Entries |> List.map (writeEntry roots) |> String.concat ",\n") ]
         |> String.concat ",\n" |> sprintf "{\n%s\n}\n"
 
     /// `documentFramework` is the file-level `"Framework"` of a lock written before the
@@ -518,9 +808,6 @@ module Lock =
         let hashedList name value =
             field name value |> Option.map asArray |> Option.defaultValue []
             |> List.map (fun h -> { Path = str "Path" h |> expand; Sha256 = str "Sha256" h })
-        let referenceList name value =
-            field name value |> Option.map asArray |> Option.defaultValue []
-            |> List.map (fun r -> { Path = str "Path" r |> expand; Sha256 = str "Sha256" r; Alias = str "Alias" r })
         let packageList name value =
             field name value |> Option.map asArray |> Option.defaultValue []
             |> List.map (fun p ->
@@ -536,13 +823,41 @@ module Lock =
             | Some (JObject _ as section) -> section
             | _ -> failwithf "lock entry '%s' has no '%s' section: lock written by an older Xake; re-import" (str "Name" value) name
         let e, c, d = sectionOf "Evaluation", sectionOf "Compilation", sectionOf "Dependencies"
+        // an entry recorded from msbuild: its files are identities, resolved for this machine
+        let recorded =
+            match field "Recorded" value with
+            | Some (JObject _ as r) ->
+                Some { Projects =
+                         field "Projects" r |> Option.map asArray |> Option.defaultValue []
+                         |> List.map (fun p ->
+                             { Name = str "Name" p; Configuration = str "Configuration" p; Framework = str "Framework" p
+                               Path = str "Path" p |> expand })
+                       Masks = strings "Masks" r
+                       Placed =
+                         match field "Placed" r with
+                         | Some (JObject members) -> Some (members |> List.choose (fun (k, v) -> asString v |> Option.map (fun v -> expand k, expand v)))
+                         | _ -> None }
+            | _ -> None
+        let context : Identity.Context =
+            { Roots = roots; Sdk = str "Sdk" e; Projects = recorded |> Option.map (fun r -> r.Projects) |> Option.defaultValue [] }
+        // `Id` (an identity) or `Path` (tokenized), whichever the item carries
+        let fileOf item =
+            match field "Id" item |> Option.bind asString with
+            | Some id when id <> "" -> Identity.toPath context id
+            | _ -> str "Path" item |> expand
+        let hashedFiles name value =
+            field name value |> Option.map asArray |> Option.defaultValue []
+            |> List.map (fun h -> ({ Path = fileOf h; Sha256 = str "Sha256" h } : Hashed))
+        let referenceList name value =
+            field name value |> Option.map asArray |> Option.defaultValue []
+            |> List.map (fun r -> { Path = fileOf r; Sha256 = str "Sha256" r; Alias = str "Alias" r })
         let compiler = field "Compiler" d |> Option.defaultValue (JObject [])
         let name = str "Name" value
         let framework = field "Framework" value |> Option.bind asString |> Option.defaultValue documentFramework
         let dependencies : Dependencies =
-            { Compiler = { Tool = str "Tool" compiler; Path = str "Path" compiler |> expand; Sha256 = str "Sha256" compiler; Version = str "Version" compiler }
+            { Compiler = { Tool = str "Tool" compiler; Path = fileOf compiler; Sha256 = str "Sha256" compiler; Version = str "Version" compiler }
               References = referenceList "References" d
-              Analyzers = hashedList "Analyzers" d }
+              Analyzers = hashedFiles "Analyzers" d }
         // absent in every lock written before the key existed, and whenever the rule declares
         // no runtimeconfig
         let runtimeConfig = field "RuntimeConfig" c |> Option.bind asString |> Option.filter ((<>) "") |> Option.map expand
@@ -591,6 +906,7 @@ module Lock =
             Prerequisites =
                 field "Prerequisites" d |> Option.map asArray |> Option.defaultValue []
                 |> List.map (fun p -> { Kind = str "Kind" p; Version = str "Version" p; Pin = str "Pin" p })
+            Recorded = recorded
         }
 
     /// Reads a lock `format` produced, paths expanded for this machine. `roots` must be the
@@ -605,19 +921,51 @@ module Lock =
         let str name = field name root |> Option.bind asString |> Option.defaultValue ""
         if (field "Projects" root).IsSome && (field "Entries" root).IsNone then
             failwith "lock written by an older Xake (flat format with 'Projects'/'Args'); re-import"
+        let format =
+            match field "Format" root with
+            | Some (JOther n) -> (match System.Int32.TryParse n with | true, v -> v | _ -> failwithf "lock format '%s' is not a number" n)
+            | None -> 1
+            | Some _ -> failwith "lock format: expected a number"
+        if format > FormatVersion then
+            failwithf "lock format %d is newer than this Xake.Hermetic.Dotnet reads (%d); update the package" format FormatVersion
+        // an imported project's entry in format 1 is Xake's own resolution of the project, not
+        // msbuild's: read only from a lock `Project.import` marks as such (`LegacyMarker`); the
+        // entries composed by Xake, which no import wrote, are read in any format
+        let entries = field "Entries" root |> Option.map asArray |> Option.defaultValue []
+        let isImported e = field "Evaluation" e |> Option.bind (field "Project") |> Option.bind asString |> Option.exists ((<>) "")
+        let legacy = field "Legacy" root |> Option.bind asString |> Option.exists ((=) LegacyMarker)
+        if format < FormatVersion && not legacy && entries |> List.exists isImported then
+            failwithf "lock format %d is older than %d: its imported entries are Xake's own resolution of the project, not msbuild's; regenerate the lock (run the import again: Import.record)" format FormatVersion
+        if format = FormatVersion && entries |> List.exists (fun e -> isImported e && (field "Recorded" e).IsNone) then
+            failwithf "lock format %d holds an imported entry msbuild did not record (no 'Recorded'); regenerate the lock (run the import again: Import.record)" format
         {
             Configuration = str "Configuration"
             Properties =
                 match field "Properties" root with
-                | Some (JObject members) -> members |> List.choose (fun (k, v) -> asString v |> Option.map (fun v -> k, v))
+                | Some (JObject members) -> members |> List.choose (fun (k, v) -> asString v |> Option.map (fun v -> k, Roots.expand roots v))
                 | _ -> []
             Entries = field "Entries" root |> Option.map asArray |> Option.defaultValue [] |> List.map (readEntry roots (str "Framework"))
         }
 
+    let private parsedLocks =
+        System.Collections.Concurrent.ConcurrentDictionary<string * int64 * System.DateTime * (string * string) list, Document> ()
+
     /// `parse` of the file at `path` (taken as given, not against the project root), with
     /// the roots passed explicitly -- for code outside a recipe. Inside one use `load`, which
     /// also records the lock as a dependency.
-    let read roots (path: string) = System.IO.File.ReadAllText path |> parse roots
+    let read roots (path: string) =
+        try
+            // a lock is read by several rules of one build (needAll, each compile, the doc
+            // rule): parsed once per content and roots
+            let info = FileInfo path
+            let key = (info.FullName, info.Length, info.LastWriteTimeUtc, roots)
+            match parsedLocks.TryGetValue key with
+            | true, doc -> doc
+            | _ ->
+                let doc = System.IO.File.ReadAllText path |> parse roots
+                parsedLocks.[key] <- doc
+                doc
+        with e when e.Message.StartsWith "lock format" -> failwithf "'%s': %s" path e.Message
 
     /// A lock path resolved the way the engine resolves a target: against the build's project
     /// root (`ExecOptions.ProjectRoot`), not the process's current directory.
@@ -836,7 +1184,7 @@ module Lock =
                 if not installed then
                     let rootText = root |> Option.map (fun r -> r.Replace('\\', '/')) |> Option.defaultValue "<no .NET installation found>"
                     yield sprintf "'%s': the lock needs the .NET SDK %s (prerequisite from %s), which is not installed under '%s'; install it (dotnet-install --version %s --install-dir %s)"
-                            entry.Name p.Version p.Pin rootText p.Version rootText ]
+                            entry.Name p.Version (if p.Pin = "" then "the import" else p.Pin) rootText p.Version rootText ]
 
     /// The compilation's inputs as `HERMETIC=on` sees them (`Csc.hermeticInputs`,
     /// `Fsc.hermeticInputs`): the compiler, references, analyzers and every other path.
@@ -850,10 +1198,12 @@ module Lock =
     /// that break the `HERMETIC=on` invariant on the lock side: outside `$(ProjectRoot)` (and
     /// any extra root a script declared, `Roots.make`) and `$(NuGetPackageRoot)`, and not
     /// covered by one of the entry's prerequisites. A <c>dotnet-sdk &lt;v&gt;</c> prerequisite
-    /// covers <c>$(DotnetRoot)/sdk/&lt;v&gt;/</c> -- fsc's compiler always, and an imported
-    /// entry's compiler and analyzers (msbuild chose them); never a reference, and never
-    /// <c>$(DotnetRoot)/packs/</c>. The comparison itself is `HermeticMode.check` over the
-    /// tokenized roots. Pure.
+    /// covers <c>$(DotnetRoot)/sdk/&lt;v&gt;/</c> -- fsc's compiler always, an imported
+    /// entry's compiler and analyzers (msbuild chose them), and for an entry recorded from
+    /// msbuild (`Recorded`) every file under it, references included. A file under
+    /// <c>$(DotnetRoot)/packs/</c> is accepted only in a recorded entry, by its hash (a
+    /// `pack:` identity). The comparison itself is `HermeticMode.check` over the tokenized
+    /// roots. Pure.
     /// </summary>
     let hermeticViolations roots (entry: Entry) : string list =
         let builtinOther = set [ Roots.nugetPackageRootToken; "$(DotnetRoot)" ]
@@ -870,13 +1220,25 @@ module Lock =
         }
         let imported = entry.Evaluation.Project <> ""
         let sdks = entry.Prerequisites |> List.filter (fun p -> p.Kind = DotnetSdk) |> List.map (fun p -> p.Version) |> Set.ofList
+        let recorded = entry.Recorded.IsSome
+        // a recorded entry names a targeting pack by identity and hash (`pack:`): the hash,
+        // not the folder, is what pins it
+        let hashedPack (path: string) =
+            let hashed =
+                [ for r in entry.Dependencies.References do if r.Sha256 <> "" then yield r.Path
+                  for a in entry.Dependencies.Analyzers do if a.Sha256 <> "" then yield a.Path ]
+            recorded && path.StartsWith "$(DotnetRoot)/packs/"
+            && (hashed |> List.exists (fun p -> Roots.tokenize roots p = path))
         let covered (input: HermeticMode.Input) =
             let role =
                 match input.Role with
                 | HermeticMode.Compiler "fsc" -> true
                 | HermeticMode.Compiler _ | HermeticMode.Analyzer -> imported
-                | _ -> false
-            role && (DotNetFwk.sdkVersionOf "$(DotnetRoot)" input.Path |> Option.exists sdks.Contains)
+                // msbuild chose every file of a recorded entry: the SDK's shims and
+                // configuration files are the SDK prerequisite's as much as its compiler is
+                | _ -> recorded
+            (role && (DotNetFwk.sdkVersionOf "$(DotnetRoot)" input.Path |> Option.exists sdks.Contains))
+            || hashedPack input.Path
         hermeticInputs entry.Compilation
         |> List.map (fun i -> { i with Path = Roots.tokenize roots i.Path })
         |> List.filter (fun i -> not (covered i))
@@ -946,7 +1308,7 @@ module Lock =
     ///     .NET SDK is not hash-checked (`withoutSdkCompilerHash`): step 0 and its path pin
     ///     its version.
     /// </summary>
-    let private compileEntry (lockPath: string option) (options: Options) (entry: Entry) : Recipe<ExecContext, unit> =
+    let private compileEntry (extraRoots: (string * string) list) (lockPath: string option) (options: Options) (entry: Entry) : Recipe<ExecContext, unit> =
         recipe {
             // an SDK compiler is identified by the SDK version (the path, the prerequisite),
             // never by its bytes: a hash an older lock carries for it is ignored
@@ -965,7 +1327,10 @@ module Lock =
             // prerequisite, is not replayed (message 10) -- a hard failure, like the base's gate
             let! hermetic = HermeticMode.enabled ()
             if hermetic then
-                let! roots = Roots.currentWith (Roots.packageRootOverride (Restore.packageRoot restore))
+                // the script's extra roots (sibling checkouts) count as project roots; the
+                // package folder is the one the restore uses
+                let extra = extraRoots |> List.filter (fst >> (<>) Roots.nugetPackageRootToken)
+                let! roots = Roots.currentWith (extra @ Roots.packageRootOverride (Restore.packageRoot restore))
                 match hermeticViolations roots entry with
                 | [] -> ()
                 | paths ->
@@ -1024,13 +1389,18 @@ module Lock =
     /// (`Restore.resolve`: the build's package folder, `NUGET_FETCH`).
     /// </summary>
     let compileWith (options: Options) (entry: Entry) : Recipe<ExecContext, unit> =
-        compileEntry None options entry
+        compileEntry [] None options entry
 
     /// `compileWith` of an entry read from the lock at `lockPath`, the path the `HERMETIC=on`
     /// refusal (message 10) names -- what `buildWith` does with a matching lock, for a caller
     /// that read the lock itself (`Locks.compileAs`).
     let compileFrom (lockPath: string) (options: Options) (entry: Entry) : Recipe<ExecContext, unit> =
-        compileEntry (Some lockPath) options entry
+        compileEntry [] (Some lockPath) options entry
+
+    /// `compileFrom` of a lock read with the script's extra roots (`loadWith extraRoots`): a
+    /// path under one of them counts as under the project root for `HERMETIC=on` (message 10).
+    let compileFromWith (extraRoots: (string * string) list) (lockPath: string) (options: Options) (entry: Entry) : Recipe<ExecContext, unit> =
+        compileEntry extraRoots (Some lockPath) options entry
 
     /// `compileWith` with the default options, the compiler server resolved for this build
     /// (`CompilerServer.resolve`: `CSC_SERVER`, then `XAKE_CSC_SERVER`; csc only, fsc has no
@@ -1073,9 +1443,11 @@ module Lock =
     /// incomplete (`hermeticRecordGate`, messages 2 and 9; `path` is the lock it is meant for,
     /// quoted in the messages). The references whose path is in `unhashed` -- the outputs of
     /// project references, which a lock keeps without a hash (`Locks.generate`) -- are
-    /// neither depended on nor hashed, whether or not a build left them on disk.
+    /// neither depended on nor hashed, whether or not a build left them on disk. `extraRoots`
+    /// are the script's (`Roots.make`): a path under one counts as under the project root for
+    /// the gate.
     /// </summary>
-    let recorded (path: string) (unhashed: string list) (entry: Entry) : Recipe<ExecContext, Entry> =
+    let recordedWith (extraRoots: (string * string) list) (path: string) (unhashed: string list) (entry: Entry) : Recipe<ExecContext, Entry> =
         recipe {
             let isUnhashed (p: string) = List.contains p unhashed
             // what gets hashed is what the recorded lock depends on: a target that only
@@ -1089,8 +1461,9 @@ module Lock =
                 |> List.filter File.Exists
             do! needFiles (Filelist (hashedPaths |> List.map File.make))
             let! entry = withPrerequisites true entry
-            // HERMETIC=on: a lock that is not complete is not written (messages 2 and 9)
-            let! roots = Roots.current
+            // HERMETIC=on: a lock that is not complete is not written (messages 2 and 9); a
+            // path under an extra root of the script counts as under the project root
+            let! roots = Roots.currentWith extraRoots
             let! refused = hermeticRecordGate path roots [ entry ]
             if not (List.isEmpty refused) then
                 let msg = refused |> String.concat "\n"
@@ -1107,6 +1480,10 @@ module Lock =
                         |> mapCompilation (fun c -> { c with Dependencies = deps c.Dependencies })
                                           (fun f -> { f with Fsc.Dependencies = deps f.Dependencies }) }
         }
+
+    /// `recordedWith` without extra roots.
+    let recorded (path: string) (unhashed: string list) (entry: Entry) : Recipe<ExecContext, Entry> =
+        recordedWith [] path unhashed entry
 
     /// Writes `entry`, hashed (`rehash`, the record-time step) and with its prerequisites
     /// (`withPrerequisites`), as a one-entry lock at `path` and returns what was written. There
@@ -1207,7 +1584,7 @@ module Lock =
                 // no lock yet: record what was just resolved and compile that -- the hashes
                 // `Csc.run` verifies are the ones taken a moment ago
                 let! recorded = recordEntry path (ofCompilation c)
-                do! compileEntry (Some path) options (forCompile recorded)
+                do! compileEntry [] (Some path) options (forCompile recorded)
             else
                 let! doc = load full
                 let recorded = entry c.Name doc
@@ -1216,7 +1593,7 @@ module Lock =
                 | [] ->
                     // compile the recorded entry, not the resolved one: its hashes are what
                     // gate the build
-                    do! compileEntry (Some path) options (forCompile recorded)
+                    do! compileEntry [] (Some path) options (forCompile recorded)
                 | differences ->
                     do! failStep options c
                             (sprintf "'%s': the resolved compilation differs from the lock '%s':\n%s\nUpdate the lock deliberately: delete '%s', or run the target that calls Lock.record \"%s\"."

@@ -25,9 +25,15 @@ module internal WorkerPool =
 
     let mapKey (artifact:Target) = artifact.FullName
 
-    throttler, MailboxProcessor.Start(fun mbox ->
-        let rec loop (running, finished) = async {
-          match! mbox.Receive() with
+    // Logging the agent's own failure must not throw out of the loop again.
+    let logError fmt = Printf.kprintf (fun s -> try log Error "%s" s with _ -> ()) fmt
+
+    let agent = new MailboxProcessor<_>(fun mbox ->
+
+        // Handles one message and returns the next state. `acquired` tells the failure handler
+        // whether a slot was taken for a task that never started.
+        let handle (running, finished) acquired msg = async {
+          match msg with
           | Run(artifact, targets, action, chnl) ->
               let mkey = artifact |> mapKey
 
@@ -37,11 +43,12 @@ module internal WorkerPool =
               | Some result ->
                   log Never "Task found for '%s'" artifact.ShortName
                   chnl.Reply result
-                  return! loop (running, finished)
+                  return running, finished
 
               | None ->
                   do log Info "Task queued '%s'" artifact.ShortName
                   do! throttler.WaitAsync(-1) |> Async.AwaitTask |> Async.Ignore
+                  acquired := true
                   let keys = targets |> List.map mapKey
                   let task = Async.StartAsTask (async {
                       try
@@ -52,21 +59,49 @@ module internal WorkerPool =
                           throttler.Release() |> ignore
                           mbox.Post (Done keys)
                     })
+                  acquired := false   // the task owns the slot now
                   let result = Async.AwaitTask task
                   chnl.Reply result
-                  return! loop (keys |> List.fold (fun m k -> m |> Map.add k result) running, finished)
+                  return keys |> List.fold (fun m k -> m |> Map.add k result) running, finished
 
           | Done keys ->
               let move (running, finished) key =
                   match running |> Map.tryFind key with
                   | Some result -> running |> Map.remove key, finished |> Map.add key result
                   | None -> running, finished
-              return! loop (keys |> List.fold move (running, finished))
+              return keys |> List.fold move (running, finished)
 
           | NewRun ->
-              return! loop (running, Map.empty)
+              return running, Map.empty
+        }
+
+        // An exception escaping the loop would kill the agent silently, and every later
+        // PostAndAsyncReply would wait forever. So a failed message is logged, its requester
+        // gets the failure (the build fails), and the agent keeps serving.
+        let rec loop state = async {
+          let! msg = mbox.Receive()
+          let acquired = ref false
+          let! next = async {
+              try
+                  return! handle state acquired msg
+              with ex ->
+                  if acquired.Value then throttler.Release() |> ignore
+                  match msg with
+                  | Run(artifact, _, _, chnl) ->
+                      let text = sprintf "WorkerPool agent failed to schedule '%s': %s" (try artifact.ShortName with _ -> "?") ex.Message
+                      logError "%s" text
+                      let error = XakeException text
+                      try chnl.Reply (async { return raise error }) with _ -> ()
+                  | Done _ | NewRun ->
+                      logError "WorkerPool agent failed on %s: %O" (match msg with Done _ -> "Done" | _ -> "NewRun") ex
+                  return state
+            }
+          return! loop next
         }
         loop (Map.empty, Map.empty) )
+    agent.Error.Add (fun ex -> logError "WorkerPool agent stopped: %O" ex)
+    agent.Start()
+    throttler, agent
 
 open System.Threading
 

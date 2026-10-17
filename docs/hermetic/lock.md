@@ -1,4 +1,4 @@
-# The lock: format, `Lock.*` and `Project.import`
+# The lock: format, `Lock.*`, `Import.record` and `Project.import`
 
 A lock is a JSON file that records, per project and target framework, exactly what the compiler
 is handed (the command line, generated inputs, resx pairs) and the SHA-256 of everything it
@@ -27,7 +27,11 @@ open Xake.Hermetic.Dotnet
 | Name | Kind | What it does |
 |---|---|---|
 | `Lock.Compilation = Csc of Csc \| Fsc of Fsc` | type | what the compiler is handed, C# or F#; `[<RequireQualifiedAccess>]`, so `Lock.Compilation.Csc c`. Members `Name`, `Framework`, `Directory`, `Options`, `Defines`, `Sources`, `Generated`, `Resources`, `Dependencies`, `Args`, `Output` |
-| `Lock.Entry = { Compilation; Evaluation; Packages; Prerequisites }` | type | one project's compilation, where the answer came from, the restore graph, what the environment must provide ([Prerequisites](#prerequisites)). Members `Name`, `Framework`, `Dependencies`, `Args`, `Output` (the compilation's), and `Csc` / `Fsc`, which return that case and fail for the other |
+| `Lock.Entry = { Compilation; Evaluation; Packages; Prerequisites; Recorded }` | type | one project's compilation, where the answer came from, the restore graph, what the environment must provide ([Prerequisites](#prerequisites)), and `Recorded` (`Some` for an entry recorded from msbuild by `Import.record`, `None` for a composed one). Members `Name`, `Framework`, `Dependencies`, `Args`, `Output` (the compilation's), and `Csc` / `Fsc`, which return that case and fail for the other |
+| `Lock.Recorded = { Projects; Masks }`, `Lock.ProjectOutput = { Name; Configuration; Framework; Path }` | type | the marker of a recorded entry: the referenced projects' outputs (`project:<name>`) and the description's source masks ([Recorded locks](#recorded-locks-importrecord)) |
+| `Lock.Identity.ofPath ctx path` / `toPath ctx id` | pure (`toPath` reads one directory) | the portable name of a file of a recorded entry (`pkg:`, `pack:`, `sdk:`, `project:`, or the tokenized path) and back |
+| `Lock.FormatVersion` | literal | `2`: the version `format` writes as `"Format"` |
+| `Import.record RecordOptions projects` | recipe | descriptions and recorded locks from msbuild's design-time builds ([Recorded locks](#recorded-locks-importrecord)) |
 | `Lock.Document = { Configuration; Properties; Entries }` | type | one lock file |
 | `Lock.Prerequisite = { Kind; Version; Pin }` | type | an input no restore fetches, checked before a replay; `Kind` is `Lock.DotnetSdk` (`"dotnet-sdk"`) today ([Prerequisites](#prerequisites)) |
 | `Lock.sdkPinAt dir` | pure (reads disk) | the `global.json` found from `dir` upwards and the `SdkPin` it states (`Project.sdkPin` is its second half) |
@@ -52,10 +56,15 @@ open Xake.Hermetic.Dotnet
 | `csc { ...; lock "path" }` | operation | `Lock.build` as an operation of a `csc {}` block; only `nofetch` may follow |
 | `fsc { ...; lock "path" }` | operation | the same for an `fsc {}` block |
 | `csc`/`fsc { ...; project "path"; config "Release"; packages p; lock "path" }` | operation | a compilation from a project description, gated the same way; a C# lock keeps the description's masks in `Sources` (an exclude as `!$(ProjectRoot)/...`), expanded when compiled ([../csc-syntax.md](../csc-syntax.md#from-a-project-description-project-config-packages)). No format change: `Sources` entries are strings the reader takes as written |
-| `Described.restore d framework` | recipe | a description's packages through an msbuild restore: compile assets and the graph for `Entry.Packages` |
+| `Described.restore d framework` | recipe | a description's packages through an msbuild restore: compile assets, the graph for `Entry.Packages`, the packages' `frameworkAssemblies` (`FrameworkReferences`, referenced by name on .NET Framework) |
+| `Described.restoreWith descriptionOf d framework` | recipe | `restore` plus the packages `d`'s project references declare (their closure; each description at `descriptionOf name`; not `private` ones): for a project compiled without a lock |
+| `Described.restoreAll descriptionOf descriptions frameworks` | recipe | the `restoreWith` sets of every description (paths) x framework (`[]`: each one's own) in ONE `dotnet restore`, kept in the build's cache: the direct route's batch ([one restore per build](#one-restore-per-build)) |
+| `Described.prefetch requests` | recipe | (framework, packages) sets restored with one `dotnet restore` into the build's cache; what both `restoreAll`s call |
+| `Described.closure descriptionOf d` | recipe | the transitive project references of `d`, a project after the ones it references, each once; a cycle fails: the direct route's `ref` list |
+| `Locks.restoreAll descriptions cfg lockOf descriptionOf` | recipe | the sets the lock rules' `generate` will restore, in ONE `dotnet restore`, before `need`ing them ([one restore per build](#one-restore-per-build)) |
 | `Locks.generate lockOf outOf config descriptionPath` | recipe | the lock of one described project in one configuration, nothing compiled, written only on change; the referenced projects' locks must exist ([Xake-generated locks](#xake-generated-locks)) |
-| `Locks.compileAs lockPath fwk versions` | recipe | inside the layout's `.dll` rule: the lock's entry for `fwk` compiled into the rule's target ([Building from Xake-generated locks](#building-from-xake-generated-locks)) |
-| `Locks.needAll descriptions cfg lockOf outOf` | recipe | needs the layout `.dll` of every framework of every described project; a project without a lock fails naming `update-locks` |
+| `Locks.compileAs lockPath fwk versions` | recipe | inside the layout's `.dll` rule: the lock's entry for `fwk` compiled into the rule's target; inside an `.xml` rule with the same body: needs the `.dll`, whose rule writes the doc ([Building from Xake-generated locks](#building-from-xake-generated-locks)) |
+| `Locks.needAll descriptions cfg lockOf outOf` | recipe | needs the layout `.dll` of every framework of every described project; a project without a lock fails naming `update-locks`; the packages all locks name and the folder lacks are fetched first in one restore |
 | `Lock.compileFrom lockPath options entry` | recipe | `compileWith` of an entry read from the lock at `lockPath` (named by the HERMETIC refusal) |
 | `Lock.recorded path unhashed entry` | recipe | the record-time step of `record` (hashes, prerequisites, the HERMETIC gate) without writing; the references in `unhashed` keep an empty hash |
 
@@ -90,6 +99,211 @@ open Xake.Hermetic.Dotnet
     lock "locks/lib.json"
 }
 ```
+
+## Recorded locks: `Import.record`
+
+A recorded lock is msbuild's resolution of a project, written down. Xake does not derive
+references, defines, generated sources, resource names or compiler switches of an imported
+project: msbuild resolves them, the import records them, the build materialises them. (The
+composed route -- `csc {}`, hand-written descriptions and `Locks.generate` -- keeps its own
+simple resolution, below.) One exception: the C# source **masks**. When the description's masks
+name exactly msbuild's `Compile` files, the lock keeps the masks, and a build compiles what the
+masks name then: an added `.cs` file needs no new import. Where msbuild excludes a file under a
+condition the masks do not know, the two can drift; the import checks them only when it runs.
+
+### What the import does
+
+`Import.record options projects` (module `Import`, `src/hermetic/Import.fs`):
+
+1. A restore of all `projects` under the first configuration: a generated solution that
+   declares every configuration of `RecordOptions.Configurations` on the script's `Platform`
+   (`Any CPU` when `Properties` has none), `-t:Restore`.
+2. The evaluations of each project, for its description
+   ([description.md](description.md#import-that-records-msbuilds-compile-inputs-importrecord)).
+3. Per configuration, one after the other: the restore of that configuration (the first one is
+   done), then one msbuild process that runs every design-time build of every (project,
+   framework): a generated traversal project, `-m`, with `ProvideCommandLineArgs=true`,
+   `SkipCompilerExecution=true`, `BuildProjectReferences=false` and the targets `CoreBuild`
+   runs up to the compiler, except the project's `PreBuildEvent`
+   (`BuildOnlySettings;PrepareForBuild;ResolveReferences;PrepareResources;ResolveKeySource;Compile`).
+   A targets file given to every project (`CustomAfterMicrosoftCommonTargets`) writes the
+   compiler's command line (`CscCommandLineArgs`/`FscCommandLineArgs`), `ReferencePath`,
+   `Analyzer`, `Compile`, `EmbeddedResource`, `EditorConfigFiles` and some properties to a file.
+   The project's own value of `CustomAfterMicrosoftCommonTargets` (set by the repository, for
+   example in `Directory.Build.props`, or by the script) is imported from that file, so its
+   targets run as in `dotnet build`. In one process a project that many others reference is
+   evaluated once. The assets files are copied before the next configuration's restore: a
+   package may depend on the configuration.
+
+   Each design-time build writes what it generates (assembly info, compiled resources) into an
+   intermediate folder of its own, `<BaseIntermediateOutputPath>/xake-record/<key>/<tfm>/`, where
+   the key is a hash of the configuration and the properties. Two imports with different
+   properties at the same time (two brands), an IDE and `dotnet build` do not share these files.
+   The restore still writes the project's own `obj/project.assets.json`, as `dotnet build` does,
+   and `PrepareForBuild` creates the `bin/` folders.
+4. Each entry is the recorded command line, changed only as follows:
+   - `/out:` and `/refout:` are removed (the output is the build's). `/sourcelink:` and `/embed`
+     are removed: SourceLink is parked.
+   - What msbuild generated under the intermediate folder is sorted by kind
+     (`Import.isRecordedText`). A text kind (`.cs`, `.fs`, `.vb`, `.editorconfig`,
+     `.globalconfig`, `.json`, `.txt`: assembly info, global usings, the framework attribute, the
+     analyzer config) moves to `obj/xake/<key>/<tfm>/<cfg>/` and goes into `Generated` as text:
+     LF line ends, the commit as `$(SourceRevisionId)`, paths under a root tokenized. A source
+     from a package (Test.Sdk's entry point) is recorded the same way.
+   - The `.resx` msbuild compiles go into `Resources`; their `/resource:` switches name the
+     moved `.resources`, which the build compiles again.
+   - Any other generated file (a WinForms `.licenses`, a WPF `g.resources`, a `.res`) is copied
+     byte for byte beside the lock, to `<lock without .json>.files/<tfm>/`
+     (`locks/app/Release.files/net8.0/app.g.resources`), and the switch names the copy. Commit
+     that folder with the lock. The import writes a copy only when its bytes change and removes
+     the copies it no longer names.
+   - `Sources` is msbuild's `Compile` list in msbuild's order. For C#, when the description's
+     masks name exactly these files, the masks go into `Recorded.Masks` (else a warning, and
+     `Sources` keeps msbuild's whole list). With masks, the lock writes in `Sources` only the
+     files the masks do not put in place, and `Recorded.Placed` says where each goes (below).
+   - A project reference is the referenced project's output in the build's layout
+     (`OutOf cfg <NearestTargetFramework> <name>`), in `Recorded.Projects`.
+   - Every reference and analyzer is hashed, except a project's output (unhashed, as in every
+     lock) and a file of the SDK (identified by the SDK version).
+   - `Prerequisites` always has `dotnet-sdk <NETCoreSdkVersion>`: the lock pins the SDK.
+     Another SDK means a new import.
+5. The lock is written only when its text changes. Before that, these checks stop the import
+   and name the file or line:
+   - every reference, analyzer and compiler must have a portable name (below), and so must every
+     file a compiler switch or a source names (`/analyzerconfig:`, `/keyfile:`, `/ruleset:`,
+     `/win32icon:`, `/win32manifest:`, `/additionalfile:`, `/resource:`, ...;
+     `Import.unportablePaths`). A `/pathmap:` source path must be under a root. An
+     `.editorconfig` above the repository fails here: move it in, or declare its folder as a
+     root;
+   - a `ProjectReference` to a project that is not in `projects` fails: its output would be
+     `project:<name>` with no lock behind it. Two referenced project files with the same name
+     fail too;
+   - the text must contain no string of this machine (`Import.hostStrings`: the roots, the home
+     and temp folders, a runtime identifier).
+
+   When the SDK that recorded the lock is pinned more strictly than `global.json` pins it (any
+   `rollForward` but `disable`, or no `global.json`), the import warns and shows the `global.json`
+   that says the same.
+
+A design-time build that fails stops the import (msbuild's exit code). Nothing is written
+from a partial answer.
+
+### Identities
+
+On disk, the references, analyzers and compiler of a recorded entry are **identities**, not
+paths (`Lock.Identity`):
+
+| Identity | The file | On another machine |
+|---|---|---|
+| `pkg:<id>/<version>/<path>` | a package file in the package folder | `$(NuGetPackageRoot)/<id>/<version>/<path>`; a missing package is fetched (`NUGET_FETCH`) |
+| `pack:<pack>/<version>/<path>` | a file of a targeting pack (`Microsoft.<X>.App.Ref`), under `$(DotnetRoot)/packs` or downloaded into the package folder | the pack under this .NET's `packs/` when it has that version, else the package of that name (fetched like any package) |
+| `sdk:<path>` | a file of the SDK the entry was recorded with (the compiler, the SDK's analyzers and shims) | `$(DotnetRoot)/sdk/<Evaluation.Sdk>/<path>`; the `dotnet-sdk` prerequisite fails first when that SDK is not installed |
+| `project:<name>` | a referenced project's output | `Recorded.Projects[name].Path` (tokenized, the build's layout) |
+| `$(ProjectRoot)/...`, `$(Sibling)/...` | a file under a root | the root on this machine |
+
+Anything else (an absolute path outside the package folder, the packs, the SDK and the roots)
+fails the import: declare its folder as a root (`RecordOptions.Roots`) or fix the project. The
+same pack has the same identity whether this .NET has it or msbuild downloaded it, so two
+machines record the same lock.
+
+### Format 2
+
+```json
+{
+  "Format": 2,
+  "Configuration": "Release",
+  "Properties": { "Brand": "Globex", "RestoreConfigFile": "$(ProjectRoot)/NuGet.config" },
+  "Entries": [
+    {
+      "Name": "app", "Framework": "net472",
+      "Evaluation": { "Project": "$(ProjectRoot)/app/app.csproj", "ProjectRefs": [ "lib" ], "Sdk": "8.0.425", ... },
+      "Compilation": { "Directory": "$(ProjectRoot)/app", "Options": [ ... ], "Sources": [ "$(ProjectRoot)/obj/xake/app/net472/Release/app.AssemblyInfo.cs" ], "Generated": { ... }, ... },
+      "Dependencies": {
+        "Compiler": { "Tool": "csc", "Id": "sdk:Roslyn/bincore/csc.dll", "Sha256": "", "Version": "4.11.0-3.25569.22" },
+        "References": [
+          { "Id": "project:lib", "Sha256": "" },
+          { "Id": "pkg:newtonsoft.json/13.0.3/lib/net45/Newtonsoft.Json.dll", "Sha256": "..." },
+          { "Id": "pkg:microsoft.netframework.referenceassemblies.net472/1.0.3/build/.NETFramework/v4.7.2/mscorlib.dll", "Sha256": "..." }
+        ],
+        "Analyzers": [ { "Id": "pack:microsoft.netcore.app.ref/8.0.11/analyzers/dotnet/cs/System.Text.Json.SourceGeneration.dll", "Sha256": "..." } ],
+        "Packages": [ ... ],
+        "Prerequisites": [ { "Kind": "dotnet-sdk", "Version": "8.0.425", "Pin": "$(ProjectRoot)/global.json" } ]
+      },
+      "Recorded": {
+        "By": "msbuild",
+        "Masks": [ "$(ProjectRoot)/app/**/*.cs", "!$(ProjectRoot)/app/bin/**/*", "!$(ProjectRoot)/app/obj/**/*" ],
+        "Placed": { "$(ProjectRoot)/obj/xake/app/net472/Release/app.AssemblyInfo.cs": "$(ProjectRoot)/app/P.cs" },
+        "Projects": [ { "Name": "lib", "Configuration": "Release", "Framework": "netstandard2.0", "Path": "$(ProjectRoot)/out/Release/netstandard2.0/lib/lib.dll" } ]
+      }
+    }
+  ]
+}
+```
+
+- `"Format": 2` is written in every lock of recorded or composed entries. A lock without it is
+  format 1. A format-1 lock with an imported entry (`Evaluation.Project` not empty) is refused:
+  *lock format 1 is older than 2: its imported entries are Xake's own resolution of the project,
+  not msbuild's; regenerate the lock (run the import again: Import.record)*. A format-1 lock of
+  composed entries only still reads. A format above 2 is refused.
+- `Project.import` (the import before `Import.record`, which writes Xake's own resolution of the
+  project) writes `"Format": 1` with `"Legacy": "Project.import"`. Such a lock reads as before.
+  A format-2 lock with an imported entry that has no `Recorded` section is refused.
+- With masks, `Sources` holds only the files the masks do not put in place: the generated ones
+  and msbuild's exceptions to the masks' order. The masks' order is msbuild's globbing: for each
+  include mask in turn, the files it names that no earlier one did, sorted ordinally ignoring
+  case (`Lock.canonicalSources`). `Recorded.Placed` names, for each of those files, the file
+  msbuild compiles before it (`""` for the first). For the trial product this removes about 19,600
+  of the 20,010 source lines of 172 entries (Designer.App: 2,179 per framework down to 4).
+- `Recorded` is the marker of an entry recorded from msbuild (`"By": "msbuild"`). A composed
+  entry has no such section and keeps `Path` items.
+- `Evaluation.Properties` keeps a few of msbuild's properties, among them `TargetFileName`:
+  `Locks.needAll` and `Locks.compileAs` name the output after it (`app.exe` for a .NET Framework
+  application, `app.dll` for .NET).
+- Document `Properties` are tokenized like paths.
+
+### Building a recorded lock
+
+The build is the same as for any lock (`Locks.needAll`, `Locks.compileAs`, `Lock.compileFrom`):
+the reader turns identities into paths for this machine, the restore fetches what is missing,
+the runner checks the hashes, the prerequisite checks the SDK. Two points are specific:
+
+- Sources: the files the masks name now, in the masks' order, with each placed file where
+  msbuild had it (`Lock.reconstructSources`). An added `.cs` takes its place in the masks' order
+  and needs no new import; a deleted one is left out. The masks are read through `getFiles`, so
+  an added file reruns the compile. Without masks, `Sources` is msbuild's list as recorded.
+- Staleness: the lock records the hash of each msbuild file the import read
+  (`Evaluation.Imports`: the project file, `Directory.Build.props`, and so on). The build depends
+  on them and compares the hashes. A changed or missing file fails the build: *the lock '...' is
+  stale: '.../app.csproj' changed since the import that wrote it; run the import again*. With
+  the variable `LOCK_STALE=warn` this is a warning, except under CI.
+- The lock records `Recorded.Projects[].Path`, the script's `OutOf` layout at import time: a
+  script that changes its layout imports again.
+- `$(SourceRevisionId)` is resolved from the project's own git repository at build time: a
+  lock imported in a git checkout does not build from a source tarball.
+- The output name is `TargetFileName`; a script declares an `*.exe` rule beside its `*.dll` rule
+  for .NET Framework applications.
+
+```fsharp
+command "import" {
+    let! (Filelist files) = getFiles (!! "src/*/*.csproj")
+    let! _ = Import.record { Import.RecordOptions.Default with LockOf = lockOf; OutOf = outOf } [ for f in files -> f.FullName ]
+    () }
+command "build" { do! Locks.needAll (!! "src/*/xake.project.json") "Release" lockOf outOf }
+"out/(cfg:*)/(fwk:*)/(name:*)/*.dll" ..> compile
+"out/(cfg:*)/(fwk:*)/(name:*)/*.exe" ..> compile
+```
+
+There is no `update-locks` step for a recorded project: the import is that step.
+
+### What is checked
+
+- Import, build, import again: the same lock (also after `dotnet build` filled `bin/` and `obj/`).
+  RAR does not take facades from the referenced projects' outputs here: the reference metadata
+  (`TargetFrameworkIdentifier` of the project reference) is enough.
+- The lock text holds no absolute path and no string of the importing machine.
+- The outputs: the same files as `dotnet build` (assembly, `.pdb`, `.xml`), with the same types,
+  methods, manifest resources, assembly references and version. Bytes are not a goal: msbuild
+  writes some generated sources with CRLF on every OS, the lock records LF.
 
 ## F# entries
 
@@ -163,11 +377,20 @@ A prerequisite is an input the environment must provide by itself: no restore st
 and a replay checks it before doing any work, with a message that says what to install. There
 is one kind, the **.NET SDK at an exact version** (`"dotnet-sdk"`), covering the paths under
 `$(DotnetRoot)/sdk/<v>/` -- the SDK's `fsc.dll`, the compiler and analyzers of an imported
-project. Not `$(DotnetRoot)/packs/`.
+project (and every file of a recorded one under that folder). A file under
+`$(DotnetRoot)/packs/` is not covered by it; a recorded entry names such a file by a `pack:`
+identity and its hash.
 
-**Written always, at record time**, when the entry depends on the SDK: `Lock.record`, the first
-`Lock.build` / `csc { lock }` / `fsc { lock }` (the recording branch of `buildWith`), and
-`Project.import`. The signal is a tokenized path under `$(DotnetRoot)/sdk/<v>/`: the compiler
+**A recorded entry** (`Import.record`) always has `dotnet-sdk <NETCoreSdkVersion>`: the SDK
+that recorded it. This can be stricter than `global.json` (the trial project: `8.0.100 rollForward:latestFeature`
+with the prerequisite `8.0.425`); the import warns then. Another SDK means a new import. For a
+recorded entry the prerequisite covers every file under `$(DotnetRoot)/sdk/<v>/`, references
+included, and a file under `$(DotnetRoot)/packs/` is accepted by its hash (a `pack:` identity).
+With no `global.json`, `Pin` is `""` and a message names "the import" as the source.
+
+For the other entries, **written at record time**, when the entry depends on the SDK:
+`Lock.record`, the first `Lock.build` / `csc { lock }` / `fsc { lock }` (the recording branch of
+`buildWith`), and `Project.import`. The signal is a tokenized path under `$(DotnetRoot)/sdk/<v>/`: the compiler
 for a composed entry, the compiler and the analyzers for an imported one. Then:
 
 - the `global.json` found from the project root upwards (for an import: from the project's
@@ -184,8 +407,7 @@ pin loosened (or tightened) after recording is a difference:
 `- Prerequisite dotnet-sdk 10.0.401 ($(ProjectRoot)/global.json)`.
 
 **On disk** a key under `Dependencies`, after `Packages`, written **only when the list is not
-empty**: every lock without one, including every lock written before the key existed, is
-byte-identical to what 0.1 and 0.2 previews wrote. Read back when present.
+empty**. Read back when present.
 
 ```json
 "Dependencies": {
@@ -1027,7 +1249,9 @@ let descriptionOf name = $"src/{name}/xake.project.json"
     do! alwaysRerun ()
     do! Locks.generate lockOf outOf cfg (descriptionOf name)
 }
-"update-locks" <== [ for n in projects do for cfg in ["Release"] -> $"lock::{n}::{cfg}" ]
+command "update-locks" {
+    do! Locks.restoreAll (!! "src/*/xake.project.json") "Release" lockOf descriptionOf   // one dotnet restore
+    do! need [ for n in projects do for cfg in ["Release"] -> $"lock::{n}::{cfg}" ] }
 ```
 
 `xake update-locks` regenerates them; `xake lock::Xake.Dotnet::Debug` does one (and the locks it
@@ -1073,7 +1297,11 @@ What `Locks.generate lockOf outOf config descriptionPath` does for the descripti
   `/<B's assembly>.dll`, **with an empty `Sha256`**, also when a build left the file on disk
   (`Lock.recorded ... unhashed`; [roadmap](../roadmap.md): in-lock project references stay
   unhashed). `Evaluation.ProjectRefs` holds B's name, as the description names it. A reference
-  without any lock fails, naming it and pointing at `update-locks`.
+  without any lock fails, naming it and pointing at `update-locks`. B's own project references
+  (the unhashed references of B's lock, so B's closure) are references of A too, after the
+  direct ones, each once: msbuild hands the compiler the transitive project references, and a
+  type of C that A uses through B needs C (CS0234/CS0012, FS0074 otherwise). A's description
+  names only B.
 - **Packages** come from `Described.restore` (an msbuild restore of a synthesized project). A
   version the current lock's entry holds is passed as exact (`[v]`), so it stays when the
   description floats (`8.0.*`) or a newer version appears. The script variable, else the
@@ -1081,8 +1309,43 @@ What `Locks.generate lockOf outOf config descriptionPath` does for the descripti
   a comma/semicolon list, or `*` for all): `xake update-locks -d LOCK_REFRESH=FSharp.Core`.
   B's direct packages (from B's lock) flow into A's restore at B's locked version, as msbuild
   flows them through a project reference.
+- **One restore per build** <a id="one-restore-per-build"></a>. A restore is keyed by its
+  framework, the package folder and the package set (sorted): the synthesized project is
+  `obj/xake/restore/<framework>-<hash>/restore.csproj` and the result is kept for the build (one
+  engine run), so projects with the same set restore once. `Locks.restoreAll descriptions cfg
+  lockOf descriptionOf` computes, before the lock rules run, the set each `generate` will
+  restore -- the versions the current locks hold, `LOCK_REFRESH`, a reference's packages from
+  its lock or, before it has one, from its description (`descriptionOf`) at the exact declared
+  version -- and restores them all with ONE `dotnet restore` of a plain msbuild project
+  referencing the synthesized ones (`obj/xake/restore/batch-<hash>.proj`; restore resolves each
+  graph on its own, in parallel, in one process). A set it cannot know ahead (a reference's
+  floating version before its lock exists) or that the run changes (a reference whose lock is
+  rewritten) is restored by its rule alone, as without `restoreAll`; a failing batch caches
+  nothing and warns, and each rule then reports its own error. The direct route's twin is
+  `Described.restoreAll descriptionOf descriptions frameworks` (the `restoreWith` sets).
+  Self-build `update-locks` (3 descriptions x 2 frameworks): 6 restores, 2.3-2.5 s -> 1, 0.9 s.
+- **`Directory`** is the project's folder (`$(ProjectRoot)/<folder of the project file>`): the
+  compiler runs there, as under `dotnet build`, so a doc comment's relative
+  `<include file='../docs/x.xml' .../>` resolves (CS1589 otherwise). `--pathmap` is unchanged.
+- **Extra roots** <a id="extra-roots-for-generated-locks"></a>. Sources, a key file or a whole
+  project in a sibling checkout (outside the project root) are tokenised only against a root the
+  script declares, as for `Lock.loadWith`: `Locks.generateWith roots lockOf outOf cfg path` with
+  `roots = [ "$(Engine)", "../engine-repo" ]` (`Roots.make`: `$(Name)`, a path relative to the
+  project root or absolute). The lock then names `$(Engine)/src/**/*.cs`,
+  `/keyfile:$(Engine)/key.snk`, `Directory` `$(Engine)/src/X`, and the compilation gets one
+  `pathmap` per extra root, `<root>/=/Engine/`, in front of the project root's `/_/` (so the pdb
+  and `CallerFilePath` name no machine path). Without the roots those paths stay absolute and the
+  lock builds only in that checkout. The build passes the same list: `Locks.compileAsWith roots`,
+  `Locks.needAllWith roots`, `Locks.restoreAllWith roots`; `generate`, `compileAs`, `needAll` and
+  `restoreAll` are the same with no extra root. Under `HERMETIC=on` a path under an extra root
+  counts as under the project root (record gate and replay). Test (`BuildFromLockTests`): a C#
+  project in a sibling folder, its lock without an absolute path, built from a copy of both
+  folders at another path into the same bytes.
 - **Written only on change**: the text is compared with the file on disk (CRLF read as LF);
   regenerating with nothing changed writes nothing and leaves the timestamp alone.
+- **Prerequisites**: as `Lock.record`: under an exact `global.json` pin the entry records
+  `dotnet-sdk <v>` for an SDK compiler (fsc), without one the generation warns
+  ([Prerequisites](#prerequisites)); see [hermetic-mode.md](hermetic-mode.md#generated-locks-under-the-mode).
 - **No format change**: the locks use existing slots only, and the 0.2 reader (`Lock.parse`)
   reads them and `Lock.format` writes them back byte-identically.
 
@@ -1121,13 +1384,23 @@ target "out/(cfg:*)/(fwk:*)/(name:*).dll" {
 - **`needAll descriptions cfg lockOf outOf`** reads every description and needs
   `outOf cfg fwk name` + `/<assembly>.dll` for each of its frameworks, all at once. A described
   project with no lock at `lockOf name cfg` fails the build pointing at `update-locks`; nothing
-  regenerates a lock on its own.
+  regenerates a lock on its own. The packages all the locks name that the folder lacks are
+  fetched first in one restore; if that fails (a bad feed, one wrong version) it is a warning, the
+  compiles go on and each restores, and fails, alone.
 - **`compileAs lockPath fwk versions`** runs inside the rule whose target is the `.dll`. It reads
   the lock (a dependency), takes its one entry for `fwk` (the target's file name must be the
   entry's assembly name) and compiles it into the target: `--out:`/`/out:` is the rule's target
   (the lock has none); a `--doc:`/`/doc:` the lock carries is re-targeted beside it. The `.xml` is
-  a side output, not a target, so a lock without doc (a Debug lock, say) expects no `.xml` and is
-  up to date on the next run.
+  a side output of the `.dll` rule, so a lock without doc (a Debug lock, say) expects no `.xml` and
+  is up to date on the next run; `needAll` needs the `.dll`s only.
+- **The `.xml` first**: a script that needs the doc file before the dll (a pack rule) adds a rule
+  over the `.xml` with the same body; `compileAs` there needs the `.dll` beside it (whose rule
+  writes the `.xml`) and fails when the lock asks for no doc:
+  ```fsharp
+  target "out/(cfg:*)/(fwk:*)/(name:*).xml" { ... do! Locks.compileAs (lockOf name cfg) fwk versions }
+  ```
+  One rule declaring both (`targets [dll; xml]`) is not the form: the engine reruns a rule while
+  one of its targets is missing, and a lock without doc never writes the `.xml`.
 - **Dependencies**: the unhashed project-reference outputs are needed before the compile, so
   the referenced `.dll` is built first by the same rule and a change to it rebuilds the
   referencer. The hashed references are packages: a missing one (an empty package folder on a
@@ -1139,6 +1412,8 @@ target "out/(cfg:*)/(fwk:*)/(name:*).dll" {
   relative to the project root, the folder being where its first source lies. The variable is
   read (and so a dependency) only when the token is there; the lock keeps the token. The locks
   `Locks.generate` writes today carry none (assembly versioning is an open topic).
+- **Extra roots**: a script whose locks were generated with `generateWith roots` builds with
+  `needAllWith roots` and `compileAsWith roots` ([above](#extra-roots-for-generated-locks)).
 - **Replay** is `Lock.compileFrom` (what `buildWith` does with a matching lock): prerequisites,
   the **HERMETIC=on gate** (a lock naming a path outside the roots is refused, message 10, before
   anything compiles), restore of what the lock names (`NUGET_PACKAGES`, `NUGET_FETCH`), csc's
@@ -1153,7 +1428,10 @@ rebuilds A, two clean builds byte-identical; a C# lock with masks rebuilds on an
 without a lock change; a description without a lock fails pointing at `update-locks`;
 `HERMETIC=on` refuses inside `compileAs`; `$(Version)` substituted and a new version rebuilds;
 with `.xake` deleted, `build` over the committed locks of A -> B runs no lock rule; Xake's three
-projects from the locks `update-locks` writes into `out/Release/<fwk>/`. Every test generates
+projects from the locks `update-locks` writes into `out/Release/<fwk>/`; A3 -> B3 -> C with A3
+naming only B3 compiles (C's output in A3's lock after B3's); a C# doc `<include file='../docs/..'>`
+resolves (lock `Directory` the project folder); B's `.xml` needed first through its own rule, a
+no-doc lock's `.xml` refused. Every test generates
 its locks through the phony `lock::` rule and `update-locks`.
 
 ### Known difference: another checkout folder

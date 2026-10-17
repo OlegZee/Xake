@@ -178,12 +178,20 @@ module internal matchImpl =
     let normalizeSlashes (pat: string) =
         pat.Replace('\\', '/')
 
-    let maskToRegex (pattern:string) =
+    let private buildRegex (pattern:string) =
         let pat = Regex.Replace(pattern |> normalizeSlashes, @"\((?'tag'\w+?)\:|\*\*|([*.?$^+!={}])", wildcardToRegex)
         // TODO mask with sq brackets
         let ignoreCase = if Env.isUnix then RegexOptions.None else RegexOptions.IgnoreCase
         in
         Regex(@"^" + pat + "$", RegexOptions.Compiled + ignoreCase)
+
+    // Building a compiled Regex costs about a millisecond; the masks are few (a script's
+    // patterns and their segments) and matched against every file or target, so each is
+    // built once. A Regex is safe to share between threads for matching.
+    let private regexCache = System.Collections.Concurrent.ConcurrentDictionary<string, Regex> ()
+
+    /// The anchored regex for an Ant-style mask, built once per distinct mask.
+    let maskToRegex (pattern:string) = regexCache.GetOrAdd (pattern, fun p -> buildRegex p)
 
     let matchPart (mask:Part) (path:Part) =
         let matchByMask (rx:Regex) value = rx.Match(value).Success

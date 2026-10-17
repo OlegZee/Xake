@@ -756,7 +756,9 @@ module Import =
           "SourceRevisionId"; "GenerateResourceUsePreserializedResources"; "Deterministic"; "SignAssembly"; "AssemblyOriginatorKeyFile"
           "TargetFileName"; "Configuration"
           "HasRuntimeOutput"; "UseAppHost"; "RuntimeIdentifier"; "SelfContained"; "ProjectDepsFileName"; "ProjectRuntimeConfigFileName"
-          "ProjectDepsFilePath"; "ProjectRuntimeConfigFilePath"; "AutoGenerateBindingRedirects"; "GenerateBindingRedirectsOutputType" ]
+          "ProjectDepsFilePath"; "ProjectRuntimeConfigFilePath"; "AutoGenerateBindingRedirects"; "GenerateBindingRedirectsOutputType"
+          // the sources of an application's recorded files: its `App.config`, `runtimeconfig.template.json`
+          "AppConfig"; "UserRuntimeConfig" ]
 
     /// <summary>
     /// The targets file `record` hands every project (`CustomAfterMicrosoftCommonTargets`; the
@@ -1332,12 +1334,23 @@ module Import =
                                Direct = false; DependsOn = [] } : Package) ]
         // what msbuild makes of a project with runtime output besides the compile (`Lock.App`)
         let app, appFiles = if isTrue (p "HasRuntimeOutput") then appOf ctx d scratch binaryDir projects else None, []
+        // the repository files an application's recorded files come from (its `App.config`, its
+        // `runtimeconfig.template.json`): inputs of the import like the project file, so an edit
+        // fails the build with "run the import again" (`Locks.compileAs`)
+        let appSources =
+            match app with
+            | None -> []
+            | Some _ ->
+                [ p "AppConfig"; p "UserRuntimeConfig" ]
+                |> List.filter ((<>) "")
+                |> List.map (absoluteIn ctx.ProjectDir)
+                |> List.filter (fun f -> File.Exists f && not (f.StartsWith (scratch, comparison)))
         let entry : Lock.Entry =
             { Compilation = compilation
               Evaluation =
                 { Project = slash ctx.ProjectFile
                   ProjectRefs = projects |> List.map (fun (o, _) -> o.Name)
-                  Imports = ctx.Inputs |> List.map Csc.hashed
+                  Imports = ctx.Inputs @ appSources |> List.distinct |> List.map Csc.hashed
                   Sdk = sdk
                   SdkPin = Some ctx.Pin
                   Properties = d.Props |> Map.filter (fun k v -> List.contains k keptProperties && v <> "") }

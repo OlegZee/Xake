@@ -101,6 +101,11 @@ module CscTypes =
         /// the script variable `CSC_SERVER`, then the environment variable `XAKE_CSC_SERVER`
         /// (see `CompilerServer.resolve`).
         Server: CompilerServer option
+        /// A project description (`xake.project.json`, relative to the project root) the
+        /// compilation is composed from (`csc { project "path" }`, `ProjectPlan`): its sources,
+        /// resources, defines, options, attributes and references fill what the settings leave
+        /// unset; the settings given explicitly win. `None`: the settings alone.
+        Project: string option
     } with static member Default = {
             Platform = AnyCpu
             Target = Auto    // try to resolve the type from name etc
@@ -117,6 +122,7 @@ module CscTypes =
             CscPath = None
             Toolset = None
             Server = None
+            Project = None
         }
 
     /// Default settings for the CSC task, so that you could only override required settings.
@@ -554,7 +560,7 @@ module Csc =
     /// Under `HERMETIC=on` it ends with `HermeticMode.enforce` over `hermeticInputs` (and
     /// `cscpath`): every violation of the mode fails the resolve, all of them in one message.
     /// </summary>
-    let ofSettings (settings: CscSettingsType) : Recipe<ExecContext, Csc> =
+    let private composeSettings (settings: CscSettingsType) : Recipe<ExecContext, Csc> =
         recipe {
             let! options = getCtxOptions()
             let getFiles = toFileList options.ProjectRoot
@@ -713,6 +719,69 @@ module Csc =
         }
 
     /// <summary>
+    /// The settings `project` (a description, `ProjectPlan.make`) fills in, with the plan: the
+    /// description's framework (`targetfwk` picks one, else its only one, else `NETFX-TARGET`),
+    /// its kind unless `target` is given, its sources unless `src` is, its defines unless
+    /// `define` is (the framework's implicit symbols either way), its references, framework
+    /// assemblies and shared frameworks before the block's, its switches before the block's
+    /// `args` (a later switch wins with csc), and `/doc:` beside the output when it asks for
+    /// documentation.
+    /// </summary>
+    let describedSettings (settings: CscSettingsType) (path: string) : Recipe<ExecContext, CscSettingsType * ProjectPlan.Plan> =
+        recipe {
+            let! options = getCtxOptions ()
+            let! ctx = getCtx ()
+            let! outFile =
+                if settings.Out = File.undefined then
+                    match Impl.fileTargets ctx.Targets |> List.filter (Impl.isRuntimeConfig >> not) with
+                    | file :: _ -> recipe.Return file
+                    | [] -> getTargetFile ()
+                else recipe.Return settings.Out
+            let (Filelist given) = settings.Ref |> toFileList options.ProjectRoot
+            let! p = ProjectPlan.make Description.CSharp path settings.TargetFramework (Path.GetFileNameWithoutExtension outFile.Name) given
+            let filesOf (paths: string list) = paths |> List.fold (fun fs f -> fs + (!! f)) Fileset.Empty
+            let doc = if p.Doc then [ "/doc:" + Path.ChangeExtension(outFile.FullName, ".xml").Replace('\\', '/') ] else []
+            return
+                { settings with
+                    Project = None
+                    TargetFramework = p.Framework
+                    Out = outFile
+                    Target =
+                        match settings.Target, p.Kind with
+                        | Auto, Description.Exe -> Exe
+                        | Auto, Description.Library -> Library
+                        | t, _ -> t
+                    Src = if settings.Src = Fileset.Empty then filesOf p.Sources else settings.Src
+                    Ref = filesOf p.References + settings.Ref
+                    RefGlobal = p.GlobalRefs @ settings.RefGlobal |> List.distinctBy (fun r -> r.ToLowerInvariant ())
+                    Define = (if List.isEmpty settings.Define then p.Defines else settings.Define) @ p.FrameworkDefines |> List.distinct
+                    CommandArgs = p.Args @ doc @ settings.CommandArgs }, p
+        }
+
+    /// <summary>
+    /// Composes a `Csc` from the settings at recipe time without running the compiler (what
+    /// `csc { ...; resolve }` returns): `composeSettings` (the argument list above), after
+    /// `describedSettings` when the settings name a `Project`. A described compilation also
+    /// gets the generated attribute source (first among the sources), the description's
+    /// `.resx` pairs and the project folder as the compiler's directory.
+    /// </summary>
+    let ofSettings (settings: CscSettingsType) : Recipe<ExecContext, Csc> =
+        recipe {
+            match settings.Project with
+            | None ->
+                let! c = composeSettings settings
+                return c
+            | Some path ->
+                let! s, p = describedSettings settings path
+                let! c = composeSettings s
+                let generated = Option.toList p.Generated
+                return { c with Sources = (generated |> List.map fst) @ c.Sources
+                                Generated = generated @ c.Generated
+                                Resources = c.Resources @ p.Resx
+                                Directory = p.ProjectDir }
+        }
+
+    /// <summary>
     /// Runs the compiler over a resolved compilation -- composed by `ofSettings`, taken from
     /// a lock entry, or built by hand. This is the only place that shells out to csc.
     ///
@@ -786,6 +855,7 @@ module Csc =
         recipe {
             do! trace Level.Debug "Csc: settings=%A" settings
             let! c = ofSettings settings
-            let! options = runOptions settings
+            // a described compilation's framework may come from the description
+            let! options = runOptions (match settings.Project with Some _ -> { settings with TargetFramework = c.Framework } | None -> settings)
             do! run options c
         }

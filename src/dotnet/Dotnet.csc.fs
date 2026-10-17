@@ -46,6 +46,15 @@ module CscBuilder =
 
         /// <summary>Passes custom arguments to the compiler</summary>
         [<CustomOperation("args")>]       member __.Args(s:CscSettingsType, args) =   {s with CommandArgs = args}
+        /// <summary>Composes the compilation from the project description at `path`
+        /// (`xake.project.json`, relative to the project root; an input of the target): its
+        /// sources, resources, defines, options, attributes, framework assemblies and shared
+        /// frameworks for the framework `targetfwk` (else its only one, else `NETFX-TARGET`)
+        /// picks. Whatever the block gives explicitly wins, wherever `project` stands in it.
+        /// A description with `packages`, or a `projectRefs` entry whose output is not among the
+        /// block's `ref`, is rejected (Xake.Hermetic.Dotnet builds those). See
+        /// docs/description.md.</summary>
+        [<CustomOperation("project")>]    member __.Project(s:CscSettingsType, path: string) = {s with Project = Some path}
         /// <summary>Does not fail the build on a compile error</summary>
         [<CustomOperation("nofailonerror")>] member __.NoFailOnError(s:CscSettingsType) = {s with FailOnError = false}
 

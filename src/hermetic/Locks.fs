@@ -843,7 +843,7 @@ module Locks =
                 else None
             let rootPackages = System.Collections.Generic.HashSet<string> (root.Packages |> List.map (fun p -> p.Id.ToLowerInvariant ()))
             let notTaken = ResizeArray<string> ()
-            let items own (app: Lock.App option) =
+            let items own (framework: string) (app: Lock.App option) =
                 match app with
                 | None -> ()
                 | Some a ->
@@ -863,11 +863,15 @@ module Locks =
                             add own c.Path c.To
                         elif c.Sha256 <> "" then
                             // the rule holds under PackageReference transitivity: the root's restore
-                            // has the referenced project's packages. One it lacks (`PrivateAssets`,
-                            // `ExcludeAssets` in a .NET Framework library) msbuild may still copy
-                            // from that project's output: said, not placed
+                            // has the referenced project's packages. One it lacks in a .NET Framework
+                            // library's list (`PrivateAssets`, `ExcludeAssets`; such a library copies
+                            // its packages into its `bin/`, whence msbuild's RAR copies them) may
+                            // still be copied by msbuild: said, not placed. Elsewhere a package the
+                            // root's graph lacks is one its framework does not need (a netstandard
+                            // library's System.Memory under net8.0), which msbuild drops too
+                            let netFramework = System.Text.RegularExpressions.Regex.IsMatch (framework, "^net[1-4][0-9]*$")
                             match packageIdOf c.Path with
-                            | Some id when not (rootPackages.Contains id) ->
+                            | Some id when netFramework && not (rootPackages.Contains id) ->
                                 notTaken.Add (sprintf "%s: '%s' (package %s) is not placed: the root's restore lacks that package (PrivateAssets/ExcludeAssets in a referenced project?); msbuild may copy it from the referenced project's output" what c.To id)
                             | _ -> ()
             // the closure first, breadth first in msbuild's reference order: (entry, output folder)
@@ -913,7 +917,7 @@ module Locks =
             let asm, side = outputsOf rootDir root (fun _ -> true) true
             add true asm (Path.GetFileName asm)
             for f, p in side do add true p f
-            items true rootApp
+            items true fwk rootApp
             // 2. the closure
             for e, dir in closure do
                 // a referenced application's runtime files and apphost: the SDK's items for
@@ -931,7 +935,7 @@ module Locks =
                 // pdb and xml come by the root's related extensions above
                 for f, p in side do
                     if not (f.EndsWith ".pdb" || f.EndsWith ".xml") then add false p f
-                items false (e.Recorded |> Option.bind (fun x -> x.App))
+                items false e.Framework (e.Recorded |> Option.bind (fun x -> x.App))
             for w in Seq.distinct notTaken do do! trace Warning "%s" w
             // the assemblies' write times as plain file dependencies: an engine before Xake 3.8
             // (the published 3.7 this package builds on, `[3.7.0.26, 3.8)` in

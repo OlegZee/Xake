@@ -12,6 +12,12 @@ open Xake
 ///
 /// `project` is relative to the description; every other path is relative to the project
 /// file's folder. Nothing here resolves paths or reads the project file.
+///
+/// TODO: the model moved into the Xake package (`Xake.Dotnet.Description`, src/dotnet/Description.fs,
+/// Xake 3.9; schema docs/schemas/xake.project.schema.json, a superset with `frameworkReferences`).
+/// When this package's base moves to `Xake [3.9, 4.0)`, delete this module and Json.fs, use the
+/// core's, and point the schema test back at docs/schemas/ (this package's copy is
+/// docs/hermetic/xake.project.schema.json until then).
 module Description =
 
     type Language = FSharp | CSharp

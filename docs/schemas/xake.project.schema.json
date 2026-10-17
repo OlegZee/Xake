@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/OlegZee/Xake/schemas/xake.project.json",
   "title": "Xake project description",
-  "description": "What a project is: data only, rarely changes; written by an explicit import or by hand, committed. `project` is relative to this file; every other path is relative to the project file's folder. No placeholders: a variant msbuild evaluates differently (a brand) is a separate description; configurations, output layout and versions are the script's knowledge. Read and written by Xake.Hermetic.Dotnet `Description` (docs/hermetic/description.md); properties are listed in the order the writer emits them.",
+  "description": "What a project is: data only, rarely changes; written by an explicit import or by hand, committed. `project` is relative to this file; every other path is relative to the project file's folder. No placeholders: a variant msbuild evaluates differently (a brand) is a separate description; configurations, output layout and versions are the script's knowledge. Read and written by `Xake.Dotnet.Description` in the Xake package (docs/description.md), composed into a compilation by csc/fsc { project }; properties are listed in the order the writer emits them.",
   "type": "object",
   "required": ["name", "project", "language", "frameworks", "sources"],
   "additionalProperties": false,
@@ -22,9 +22,11 @@
       "additionalProperties": false,
       "properties": {
         "defines": { "type": "array", "items": { "type": "string" } },
-        "references": { "type": "array", "items": { "type": "string" }, "description": "Framework assemblies by name (grefs), e.g. System.Windows.Forms" },
+        "references": { "type": "array", "items": { "type": "string" }, "description": "Framework assemblies by name (grefs), e.g. System.Windows.Forms; an entry with a folder (lib/Foo.dll) is an assembly by path, relative to the project file's folder" },
+        "frameworkReferences": { "type": "array", "items": { "enum": ["Microsoft.NETCore.App", "Microsoft.AspNetCore.App", "Microsoft.WindowsDesktop.App"] }, "description": "Shared frameworks (msbuild's FrameworkReference items), referenced from the SDK's targeting packs" },
         "packages": { "type": "array", "items": { "$ref": "#/$defs/package" } },
-        "args": { "type": "array", "items": { "type": "string" }, "description": "Raw compiler switches, appended last" }
+        "args": { "type": "array", "items": { "type": "string" }, "description": "Raw compiler switches, appended last" },
+        "resources": { "type": "array", "items": { "$ref": "#/$defs/resource" }, "description": "Embedded resources only this framework has (an EmbeddedResource under a condition on the framework)" }
       }
     },
     "resource": {
@@ -32,8 +34,8 @@
       "required": ["file"],
       "additionalProperties": false,
       "properties": {
-        "file": { "type": "string" },
-        "name": { "type": "string", "description": "Manifest name; default derived from rootNamespace and path" }
+        "file": { "type": "string", "description": "A plain file, embedded as is, or a .resx, compiled to a .resources by `project`" },
+        "name": { "type": "string", "description": "Manifest name (msbuild's LogicalName, or the ManifestResourceName msbuild gave it when the import ran its targets); default msbuild's: rootNamespace (else name), the folder path as an identifier, the file name (a .resx: without extension, plus .resources)" }
       }
     },
     "options": {
@@ -43,6 +45,7 @@
         "doc": { "type": "boolean", "description": "Generate the XML documentation file", "default": false },
         "langVersion": { "type": "string" },
         "warningsAsErrors": { "type": "boolean", "default": false },
+        "noWarn": { "type": "array", "items": { "type": "string" }, "description": "Warnings suppressed beyond the SDK's defaults (C# 1701, 1702), which `project` adds" },
         "nullable": { "enum": ["enable", "disable", "warnings", "annotations"] },
         "keyFile": { "type": "string", "description": "Strong-name key" },
         "args": { "$ref": "#/$defs/items/properties/args" }
@@ -58,6 +61,15 @@
           "properties": { "name": { "type": "string" }, "key": { "type": "string", "description": "Public key of the friend assembly" } }
         }
       ]
+    },
+    "attribute": {
+      "type": "object",
+      "required": ["type"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "type": "string", "description": "The attribute type, e.g. System.CLSCompliantAttribute" },
+        "args": { "type": "array", "items": { "type": "string" }, "description": "Arguments as source text, emitted verbatim: [\"true\"], [\"\\\"text\\\"\"]" }
+      }
     },
     "metadata": {
       "type": "object",
@@ -97,6 +109,7 @@
     "resources": { "type": "array", "items": { "$ref": "#/$defs/resource" } },
     "defines": { "$ref": "#/$defs/items/properties/defines" },
     "references": { "$ref": "#/$defs/items/properties/references" },
+    "frameworkReferences": { "$ref": "#/$defs/items/properties/frameworkReferences" },
     "projectRefs": {
       "type": "array", "items": { "type": "string" },
       "description": "Names of other described projects. Lock generation picks each one's configuration and framework and records the choice as the reference's output path in the referencer's lock"
@@ -104,6 +117,10 @@
     "packages": { "$ref": "#/$defs/items/properties/packages" },
     "options": { "$ref": "#/$defs/options" },
     "internalsVisibleTo": { "type": "array", "items": { "$ref": "#/$defs/friend" } },
+    "assemblyAttributes": {
+      "type": "array", "items": { "$ref": "#/$defs/attribute" },
+      "description": "Assembly-level attributes (msbuild's AssemblyAttribute items), generated into the same source as internalsVisibleTo"
+    },
     "byFramework": {
       "type": "object",
       "description": "Additions for one target framework only, keyed by a TFM listed in frameworks",

@@ -135,6 +135,14 @@ module Description =
     let private req ms parent name read = match opt ms parent name read with Some v -> v | None -> fail (at parent name) "required"
     let private orEmpty ms parent name read = opt ms parent name read |> Option.defaultValue []
 
+    /// shared framework names, each one of `DotNetFwk.sharedFrameworks` (case as written there)
+    let private frameworkRefs path =
+        list path (fun p v ->
+            let name = str p v
+            match DotNetFwk.sharedFrameworks |> List.tryFind (fun f -> System.String.Equals (f, name, System.StringComparison.OrdinalIgnoreCase)) with
+            | Some f -> f
+            | None -> fail p (sprintf "'%s' is not one of %s" name (String.concat ", " DotNetFwk.sharedFrameworks)))
+
     let private package path v =
         let ms = members path fields.["package"] v
         { Id = req ms path "id" str; Version = opt ms path "version" str
@@ -146,7 +154,7 @@ module Description =
 
     let private items path ms =
         { Defines = orEmpty ms path "defines" strs; References = orEmpty ms path "references" strs
-          FrameworkReferences = orEmpty ms path "frameworkReferences" strs
+          FrameworkReferences = orEmpty ms path "frameworkReferences" frameworkRefs
           Packages = orEmpty ms path "packages" (fun p -> list p package); Args = orEmpty ms path "args" strs
           Resources = orEmpty ms path "resources" (fun p -> list p resource) }
 
@@ -205,7 +213,7 @@ module Description =
               Resources = orEmpty ms "" "resources" (fun p -> list p resource)
               Defines = orEmpty ms "" "defines" strs
               References = orEmpty ms "" "references" strs
-              FrameworkReferences = orEmpty ms "" "frameworkReferences" strs
+              FrameworkReferences = orEmpty ms "" "frameworkReferences" frameworkRefs
               ProjectRefs = orEmpty ms "" "projectRefs" strs
               Packages = orEmpty ms "" "packages" (fun p -> list p package)
               Options = opt ms "" "options" options |> Option.defaultValue Options.Default

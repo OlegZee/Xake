@@ -15,6 +15,19 @@ type ``App recording``() =
 
     let marker = Import.stubVersion
 
+    /// A minimal PE "apphost": `MZ`, the PE header at 0x80, the application placeholder at 0x100.
+    let fakePeAppHost () =
+        let bytes = Array.zeroCreate<byte> 0x200
+        bytes.[0] <- byte 'M'; bytes.[1] <- byte 'Z'
+        BitConverter.GetBytes(0x80).CopyTo (bytes, 0x3C)
+        Text.Encoding.UTF8.GetBytes("c3ab8ff13720e8ad9047dd39466b3c8974e592c2fa383d4a3960714caef0c4f2").CopyTo (bytes, 0x100)
+        bytes
+
+    let scratch () =
+        let dir = Path.Combine (Path.GetTempPath (), "xake-apps-" + Guid.NewGuid().ToString "N")
+        Directory.CreateDirectory dir |> ignore
+        dir
+
     [<Test>]
     member _.``the versions msbuild read from a stand-in become tokens, the rest stays``() =
         let deps =
@@ -55,14 +68,88 @@ type ``App recording``() =
                   "    }"
                   "  }"
                   "}" ]
-        let tokens = Import.depsTokens deps
+        let tokens = Import.depsTokens "app.deps.json" deps
         Assert.That(tokens, Does.Not.Contain marker)
         Assert.That(tokens, Does.Contain "\"Lib.Core.Reference\": \"$(AssemblyVersion:Lib.Core.dll)\"")
         Assert.That(tokens.Split("\"Lib.Core.Reference/$(AssemblyVersion:Lib.Core.dll)\": {").Length - 1, Is.EqualTo 2)
         Assert.That(tokens, Does.Contain "\"assemblyVersion\": \"$(AssemblyVersion:Lib.Core.dll)\",\n            \"fileVersion\": \"$(FileVersion:Lib.Core.dll)\"")
         // what msbuild did not read from the file: as written
         Assert.That(tokens, Does.Contain "\"assemblyVersion\": \"2.3.4\",\n            \"fileVersion\": \"\"")
-        Assert.That(Import.depsTokens tokens, Is.EqualTo tokens)
+        Assert.That(Import.depsTokens "app.deps.json" tokens, Is.EqualTo tokens)
+
+    [<Test>]
+    member _.``a stand-in version left in a deps.json fails the import, naming the file``() =
+        // another writer's layout (indents this code does not read): the marker would stay
+        let deps =
+            String.concat "\n"
+                [ "{"
+                  "  \"targets\": {"
+                  "   \".NETCoreApp,Version=v8.0\": {"
+                  sprintf "     \"Lib.Core.Reference/%s\": {" marker
+                  "       \"runtime\": {"
+                  "         \"Lib.Core.dll\": {"
+                  sprintf "           \"assemblyVersion\": \"%s\"" marker
+                  "         }"
+                  "       }"
+                  "     }"
+                  "   }"
+                  "  }"
+                  "}" ]
+        let e = Assert.Catch(fun () -> Import.depsTokens "obj/xake/app.deps.json" deps |> ignore)
+        Assert.That(e.Message, Does.Contain "'obj/xake/app.deps.json'")
+        Assert.That(e.Message, Does.Contain "deps.json layout is not known")
+        // a version in the text that is not the marker passes
+        Assert.That(Import.depsTokens "x.deps.json" "{ \"a\": \"1.2.3\" }", Is.EqualTo "{ \"a\": \"1.2.3\" }")
+
+    [<Test>]
+    member _.``the apphost written without the HostModel has the GUI subsystem of a WinExe on every host``() =
+        let dir = scratch ()
+        try
+            let template = Path.Combine (dir, "apphost.exe")
+            File.WriteAllBytes (template, fakePeAppHost ())
+            let subsystem = 0x80 + 4 + 20 + 68
+            Apps.createAppHostHere template (Path.Combine (dir, "gui.exe")) "gui.dll" true "win-x64"
+            Apps.createAppHostHere template (Path.Combine (dir, "cui.exe")) "cui.dll" false "win-x64"
+            let gui, cui = File.ReadAllBytes (Path.Combine (dir, "gui.exe")), File.ReadAllBytes (Path.Combine (dir, "cui.exe"))
+            Assert.That(BitConverter.ToUInt16 (gui, subsystem), Is.EqualTo 2us)
+            Assert.That(BitConverter.ToUInt16 (cui, subsystem), Is.EqualTo 0us)
+            Assert.That(Text.Encoding.UTF8.GetString (gui, 0x100, 7), Is.EqualTo "gui.dll")
+        finally Directory.Delete (dir, true)
+
+    [<Test>]
+    member _.``a HostModel that fails to load falls back to the byte-patch writer with a reason``() =
+        let dir = scratch ()
+        try
+            // an SDK folder of this runtime's major version whose HostModel is not an assembly
+            let sdkDir = Path.Combine (dir, sprintf "%d.0.100" Environment.Version.Major)
+            Directory.CreateDirectory sdkDir |> ignore
+            File.WriteAllText (Path.Combine (sdkDir, "Microsoft.NET.HostModel.dll"), "not an assembly")
+            Assert.That(Apps.hostModelUsable sdkDir, Is.True)
+            let template = Path.Combine (dir, "apphost.exe")
+            File.WriteAllBytes (template, fakePeAppHost ())
+            let reason = Apps.createAppHost sdkDir template (Path.Combine (dir, "app.exe")) "app.dll" true (Path.Combine (dir, "app.dll")) "win-x64"
+            Assert.That(reason, Is.Not.EqualTo None)
+            Assert.That(BitConverter.ToUInt16 (File.ReadAllBytes (Path.Combine (dir, "app.exe")), 0x80 + 92), Is.EqualTo 2us)
+        finally Directory.Delete (dir, true)
+
+    [<Test>]
+    member _.``an SDK without its own apphost pack is a broken prerequisite: nothing is fetched``() =
+        let dir = scratch ()
+        try
+            let sdkDir = Path.Combine (dir, "dotnet", "sdk", "8.0.425")
+            Directory.CreateDirectory sdkDir |> ignore
+            File.WriteAllText (Path.Combine (sdkDir, "Microsoft.NETCoreSdk.BundledVersions.props"),
+                               "<Project><PropertyGroup><NETCoreSdkRuntimeIdentifier>osx-arm64</NETCoreSdkRuntimeIdentifier></PropertyGroup>"
+                               + "<ItemGroup><KnownAppHostPack Include=\"Microsoft.NETCore.App\" TargetFramework=\"net8.0\" AppHostPackVersion=\"8.0.31\" /></ItemGroup></Project>")
+            let e = Assert.Catch(fun () -> Apps.sdkAppHost (Path.Combine (dir, "dotnet")) sdkDir "net8.0-windows" (Path.Combine (dir, "packages")) |> ignore)
+            Assert.That(e.Message, Does.StartWith "broken prerequisite")
+            Assert.That(e.Message, Does.Contain "packs/Microsoft.NETCore.App.Host.osx-arm64/8.0.31")
+            // the installation's pack: found
+            let installed = Apps.appHostInstalled (Path.Combine (dir, "dotnet")) "osx-arm64" "8.0.31"
+            Directory.CreateDirectory (Path.GetDirectoryName installed) |> ignore
+            File.WriteAllText (installed, "")
+            Assert.That(Apps.sdkAppHost (Path.Combine (dir, "dotnet")) sdkDir "net8.0" (Path.Combine (dir, "packages")), Is.EqualTo ((installed, "osx-arm64")))
+        finally Directory.Delete (dir, true)
 
     [<Test>]
     member _.``a package's runtimes folder and the declared RID are not host strings``() =
@@ -128,6 +215,8 @@ type ``Import record applications``() =
               "console/P.cs", main
               // the project's own config: msbuild copies it as it is (BOM, CRLF)
               "console/App.config", "\uFEFF<?xml version=\"1.0\" encoding=\"utf-8\"?>\r\n<configuration>\r\n</configuration>\r\n"
+              // the source of its runtimeconfig.json's configProperties
+              "console/runtimeconfig.template.json", "{ \"configProperties\": { \"System.Globalization.Invariant\": true } }\n"
               "winexe/winexe.csproj",
                 RecordKit.sdkProject "<TargetFramework>net472</TargetFramework><OutputType>WinExe</OutputType>"
                     "<ProjectReference Include=\"../lib/lib.csproj\" />"
@@ -228,6 +317,20 @@ type ``Import record applications``() =
         Assert.That(filesOf ours, Is.EqualTo (filesOf theirs))
         Assert.That(File.ReadAllText (ours </> "winexe.exe.config"), Is.EqualTo (File.ReadAllText (theirs </> "winexe.exe.config")))
         Assert.That(File.ReadAllText (ours </> "winexe.exe.config"), Does.Contain "<supportedRuntime version=\"v4.0\" sku=\".NETFramework,Version=v4.7.2\" />")
+
+    [<Test>]
+    member x.``an edited App.config or runtimeconfig template fails the build: run the import again``() =
+        x.Prepare ()
+        Assert.That(File.ReadAllText (RecordKit.lockOf "winexe" "Release"), Does.Contain "\"Path\": \"$(ProjectRoot)/winexe/App.config\"")
+        Assert.That(File.ReadAllText (RecordKit.lockOf "console" "Release"), Does.Contain "\"Path\": \"$(ProjectRoot)/console/runtimeconfig.template.json\"")
+        for file in [ "winexe/App.config"; "console/runtimeconfig.template.json" ] do
+            let text = File.ReadAllText file
+            try
+                File.AppendAllText (file, "\n")
+                let e = Assert.Catch(fun () -> RecordKit.build x.TestOptions "build-app-stale" "Release")
+                Assert.That(string e, Does.Contain (sprintf "/%s' changed since the import that wrote it; run the import again" file))
+            finally File.WriteAllText (file, text)
+        RecordKit.build x.TestOptions "build-app-stale-2" "Release"
 
     [<Test>]
     member x.``an explicit RID: the apphost pack pinned with its hash, its bytes in the output``() =

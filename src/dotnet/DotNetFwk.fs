@@ -315,10 +315,13 @@ module DotNetFwk =
         /// target frameworks, `net5.0` and later, whose reference assemblies are the SDK's
         /// `Microsoft.NETCore.App.Ref` targeting pack. Kept apart from `moniker`, which knows
         /// only the .NET Framework ones (`net472`, no dot).
+        /// A platform framework (`net8.0-windows`, `net8.0-windows10.0.19041`) is its base
+        /// framework here: the platform adds a targeting pack of its own (the WindowsDesktop one,
+        /// with `UseWindowsForms`/`UseWPF`), the `Microsoft.NETCore.App.Ref` one is the base's.
         let netcoreMoniker (fwk: string) =
             let m = fwk.ToLowerInvariant().Replace("sdk-", "")
-            let rx = System.Text.RegularExpressions.Regex.Match(m, @"^net(\d+)\.(\d+)$")
-            if rx.Success && int rx.Groups.[1].Value >= 5 then Some m else None
+            let rx = System.Text.RegularExpressions.Regex.Match(m, @"^net(\d+)\.(\d+)(-[a-z]+(\d+(\.\d+)*)?)?$")
+            if rx.Success && int rx.Groups.[1].Value >= 5 then Some (sprintf "net%s.%s" rx.Groups.[1].Value rx.Groups.[2].Value) else None
 
         /// Numeric-aware pick of the latest subdirectory: "10.0.400" beats "8.0.424",
         /// and a released version beats a preview one.
@@ -1091,7 +1094,8 @@ module DotNetFwk =
         sdkImpl.sdkFramework (Path.GetFullPath projectRoot)
 
     /// "net8.0" | "net10.0" | "sdk-net10.0" -> Some "net8.0" / "net10.0": a .NET (net5.0 and
-    /// later) target framework, normalized; `None` for .NET Framework, netstandard, anything else.
+    /// later) target framework, normalized; a platform one is its base ("net8.0-windows" ->
+    /// "net8.0"); `None` for .NET Framework, netstandard, anything else.
     let netcoreMoniker (fwk: string) : string option =
         if System.String.IsNullOrEmpty fwk then None else sdkImpl.netcoreMoniker fwk
 

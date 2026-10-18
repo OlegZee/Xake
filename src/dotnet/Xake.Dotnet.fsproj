@@ -49,6 +49,12 @@
     <Compile Include="CscArgs.fs" />
     <Compile Include="FscArgs.fs" />
     <Compile Include="CompilerRunner.fs" />
+    <!-- The project description (xake.project.json) as data, and what a description adds to a
+         composed compilation (csc/fsc { project "path" }); ahead of Csc.fs and Fsc.fs, whose
+         ofSettings apply it. Lock-free: no restore, no msbuild. -->
+    <Compile Include="Json.fs" />
+    <Compile Include="Description.fs" />
+    <Compile Include="ProjectPlan.fs" />
     <!-- The resolved compilations (`Csc`, `Fsc`), their settings and runners; then the csc {}
          and fsc {} builders over them. The lock, restore, SBOM, verification, packing and signing live in a
          package of their own (Xake.Hermetic.Dotnet), which references this project, never the other

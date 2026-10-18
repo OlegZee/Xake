@@ -420,11 +420,12 @@ the runner checks the hashes, the prerequisite checks the SDK. Two points are sp
   compiler server (`CSC_SERVER`, on by default) many compilations share one `VBCSCompiler`, as
   with `msbuild -m`, but a Xake build runs more of them at once. An analyzer that crashes there
   (`AD0001`, an error under `TreatWarningsAsErrors`) fails the compile intermittently; seen once
-  in a large solution's clean build, not reproduced. The compile writes an error log
-  (`/errorlog:`, its own when the lock has one), and a failure whose log names a crashed analyzer
-  is reported with the analyzer and compiled once more without the server: *('X') an analyzer
+  in a large solution's clean build, not reproduced. A failure whose printed errors name a
+  crashed analyzer is reported with the analyzer and compiled once more without the server: *('X') an analyzer
   crashed under the compiler server (AD0001): A.B (System.NullReferenceException); compiling once
   more without the server*. A crash without the server, or any other failure, fails as before.
+  The compile adds no `/errorlog:` of its own: an error log makes csc report every diagnostic,
+  hidden and suppressed ones included, a quarter to a half more compiler CPU per compile.
 
 ```fsharp
 command "import" {

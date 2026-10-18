@@ -38,9 +38,14 @@ and:
   from the description (`Pack.tokensOf`: id, version, authors, description, ...) plus the
   script's, its `<files>`, and `lib/<tfm>` from flat output folders (`Pack.libOf`); `Pack.expand`
   fails naming a token without a value ([pack.md](pack.md#the-minimal-pack-from-a-projects-own-nuspec)).
-- **An analyzer crash under the compiler server** (S72, `AD0001`): the compile writes an error
-  log; a failure whose log names a crashed analyzer is reported with the analyzer and compiled
-  once more without the server ([lock.md](lock.md#building-a-recorded-lock)).
+- **An analyzer crash under the compiler server** (S72, `AD0001`): a failure whose printed
+  errors name a crashed analyzer is reported with the analyzer and compiled once more without
+  the server ([lock.md](lock.md#building-a-recorded-lock)).
+- **No `/errorlog:` on every compile** (0.4.2; S74): 0.4.0 added an error log to each compile
+  under the server to find an analyzer crash, and csc then reports every diagnostic, hidden and
+  suppressed ones included: about a quarter to a half more compiler CPU per compile (on a trial
+  project, 258 s of `VBCSCompiler` CPU against 161 s). The crash is now named from the failed
+  compile's own output.
 - **`Locks.check`** documented with an example for a script's check target (S67;
   [lock.md](lock.md#run-folders)).
 - Verified with tests (fixed in the critic round): no host path in a description written by

@@ -877,6 +877,29 @@ type ``Compile under the compiler server``() =
         RecordKit.build x.TestOptions "build-crash-2" "Release"
         Assert.That(File.ReadAllText "build-crash-2.log", Does.Not.Contain "AD0001")
 
+    [<Test; Platform(Exclude = "Win")>]
+    member x.``a compile under the server carries no /errorlog``() =
+        // `/errorlog:` makes csc report every diagnostic, hidden and suppressed ones included:
+        // a quarter to a half more compiler CPU on each compile (0.4.2). A stand-in compiler
+        // (`CscPath`) keeps the response file it is given.
+        RecordKit.write [ "app"; "out"; "locks"; "obj" ]
+            [ "app/app.csproj", RecordKit.sdkProject "<TargetFramework>net8.0</TargetFramework>" ""
+              "app/C.cs", "namespace App { public class C { } }\n" ]
+        RecordKit.import x.TestOptions "import-plain" RecordKit.recordDefault [ "app/app.csproj" ] |> ignore
+        let seen = Path.GetFullPath "seen.rsp"
+        let fake = Path.GetFullPath "fake-csc.sh"
+        File.WriteAllText (fake, sprintf "#!/bin/sh\nfor a in \"$@\"; do case \"$a\" in @*) cat \"${a#@}\" > '%s';; esac; done\n" seen)
+        File.SetUnixFileMode (fake, UnixFileMode.UserRead ||| UnixFileMode.UserWrite ||| UnixFileMode.UserExecute)
+        let entry = (Lock.read (Roots.builtin (Directory.GetCurrentDirectory ())) (RecordKit.lockOf "app" "Release")).Entries.Head
+        let options = { Lock.Options.Default with Run = { RunOptions.Default with Server = Shared None; CscPath = Some fake } }
+        let compile = recipe {
+            do! alwaysRerun ()
+            do! Lock.compileWith options entry }
+        RecordKit.run x.TestOptions "build-plain" [ "plain" => compile ] [ "plain" ]
+        let rsp = File.ReadAllText seen
+        Assert.That(rsp, Does.Contain "/analyzerconfig:")
+        Assert.That(rsp, Does.Not.Contain "/errorlog:")
+
     [<Test>]
     member x.``the crashed analyzers are read from a SARIF error log``() =
         let sarif =
@@ -885,4 +908,8 @@ type ``Compile under the compiler server``() =
             + "{ \"ruleId\": \"CS0168\", \"message\": { \"text\": \"unused\" } } ] } ] }"
         Assert.That(Lock.analyzerCrashes sarif, Is.EqualTo [ "A.B (System.NullReferenceException)" ])
         Assert.That(Lock.analyzerCrashes "{ \"runs\": [ { \"results\": [ { \"ruleId\": \"CS0168\" } ] } ] }", Is.Empty)
+        // and from what csc printed
+        Assert.That(Lock.analyzerCrashes "CSC : error AD0001: Analyzer 'A.B' threw an exception of type 'System.NullReferenceException' with message 'x'.",
+                    Is.EqualTo [ "A.B (System.NullReferenceException)" ])
+        Assert.That(Lock.analyzerCrashes "C.cs(1,1): error CS0168: Analyzer 'A.B' threw an exception of type 'X'", Is.Empty)
 

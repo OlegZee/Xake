@@ -391,3 +391,36 @@ deriving for the projects it covers (decision 5).
 8. **Releases**: Xake 3.8 first (`ArtifactDep2`, `ResxFormat`, the csc crash report; published
    as 3.8.0.29), then Xake.Hermetic.Dotnet 0.4 on it. Project descriptions move into the core
    with 3.9 (#59), in a later PR.
+
+### 2026-10-18 — design note: a lock without msbuild, if ever needed
+
+Decided with the owner. Two ways exist to turn an imported project into a lock:
+
+- **Recording** (the current path, PR 2): the import runs msbuild's own targets
+  (`ResolveAssemblyReferences`, `ResolvePackageAssets`, `ResolveTargetingPackAssets`,
+  `ResolvePackageFileConflicts`, `GenerateAssemblyInfo`, `CreateManifestResourceNames`,
+  `GenerateDepsFile`, …) once at `update-locks` and records their result as portable identities.
+  Whatever the SDK does, the lock follows; the cost is a design-time build per configuration ×
+  framework and a dependency on the SDK being present at import time.
+- **A faithful port**: Xake's own planner computes the same inputs from the description, the
+  assets file and the reference packs. The night of 2026-10-14 did this ad hoc (special cases
+  in four places); the critic rejected the shape, not the idea.
+
+Rule for the port, should a need arise (locks on a machine without SDK targets, composed
+descriptions with packages, import speed): it is **not** re-invented but **transliterated** from
+msbuild — one function per msbuild target or task, **named after it** (`ResolvePackageAssets`,
+`ResolveTargetingPackAssets`, `ResolvePackageFileConflicts`, `ImplicitlyExpandDesignTimeFacades`,
+`ImplicitlyExpandNETStandardFacades`, `GenerateAssemblyInfo`, `GenerateGlobalUsings`,
+`CreateManifestResourceNames`, `GenerateBindingRedirects`), called in the order of
+`Microsoft.Common.CurrentVersion.targets` and `Microsoft.NET.Sdk.*.targets`, so that review is
+a diff against the `.targets` source. The full `ResolveAssemblyReference` is out of scope: for SDK
+projects NuGet has already resolved the paths. Estimated size 2–3k lines in 8–10 stages; the real
+cost is tracking SDK changes per version (SDK 8 → 10 already changed the GlobalUsings text, the
+`WriteCodeFragment` flags and the `_OR_GREATER` symbols).
+
+Shape: a pure function `description + assets + packs -> compile inputs` inside the `lock::`
+rule (the core's `ProjectPlan` already has this form); imperative stages are fine there, Xake's
+rules stay about files and dependencies. Mandatory **conformance test**: the port must produce
+the same lock as the recording path on the fixtures (`Import.record` is the oracle).
+
+Not started: recording stays the default for hermetic mode and the trial project.

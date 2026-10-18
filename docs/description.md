@@ -49,10 +49,8 @@ composed `csc {}` / `fsc {}` can be fed from a committed description. That is th
 
 The schema is the hermetic package's latest (0.3 on branch `pr/deploy`: `resources` with
 `byFramework` resources, `noWarn`, `assemblyAttributes`) plus one field, `frameworkReferences`.
-Until Xake.Hermetic.Dotnet builds on Xake `[3.9, 4.0)` it keeps its own copy of the module
-(`src/hermetic/Description.fs`) and of the schema (`docs/hermetic/xake.project.schema.json`),
-which does not know `frameworkReferences`; after the 3.9 release it deletes both and uses
-`Xake.Dotnet.Description`.
+Xake.Hermetic.Dotnet 0.4 builds on Xake `[3.9.0.30, 3.10)` and uses the core module
+`Xake.Dotnet.Description` and the schema `docs/schemas/xake.project.schema.json`; it keeps no copy.
 
 ## Example
 

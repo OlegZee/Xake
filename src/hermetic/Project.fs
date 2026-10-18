@@ -109,10 +109,10 @@ module Project =
     /// concurrent import of the same project (once the lock is released) restores over the
     /// shared `obj/project.assets.json`.
     let internal readDumpProperty (dumpFile: string) (name: string) : string option =
-        let root = File.ReadAllText dumpFile |> Json.parse
-        Json.field "Properties" root
-        |> Option.bind (Json.field name)
-        |> Option.bind Json.asString
+        let root = File.ReadAllText dumpFile |> ToolJson.parse
+        ToolJson.field "Properties" root
+        |> Option.bind (ToolJson.field name)
+        |> Option.bind ToolJson.asString
         |> Option.filter ((<>) "")
 
     /// Which of the `requested` frameworks this project actually has, and which it does not,
@@ -163,16 +163,16 @@ module Project =
     /// entry (`Entry.Args`) is not exactly msbuild's -- the fidelity guarantee of brief §8c,
     /// checked here rather than trusted.
     let internal parseImport (framework: string) (resultFile: string) (imports: string list) (pin: SdkPin) (packages: Lock.Package list) =
-        let root = File.ReadAllText resultFile |> Json.parse
+        let root = File.ReadAllText resultFile |> ToolJson.parse
         let items name =
-            Json.field "Items" root |> Option.bind (Json.field name)
-            |> Option.map Json.asArray |> Option.defaultValue []
-        let identity item = Json.field "Identity" item |> Option.bind Json.asString |> Option.defaultValue ""
-        let metadata name item = Json.field name item |> Option.bind Json.asString |> Option.defaultValue ""
+            ToolJson.field "Items" root |> Option.bind (ToolJson.field name)
+            |> Option.map ToolJson.asArray |> Option.defaultValue []
+        let identity item = ToolJson.field "Identity" item |> Option.bind ToolJson.asString |> Option.defaultValue ""
+        let metadata name item = ToolJson.field name item |> Option.bind ToolJson.asString |> Option.defaultValue ""
         let properties =
-            match Json.field "Properties" root with
-            | Some (Json.JObject members) ->
-                members |> List.choose (fun (name, value) -> Json.asString value |> Option.map (fun v -> name, v)) |> Map.ofList
+            match ToolJson.field "Properties" root with
+            | Some (ToolJson.JObject members) ->
+                members |> List.choose (fun (name, value) -> ToolJson.asString value |> Option.map (fun v -> name, v)) |> Map.ofList
             | _ -> Map.empty
         let prop name = properties |> Map.tryFind name |> Option.defaultValue ""
 
@@ -317,6 +317,7 @@ module Project =
             Packages = packages
             // derived by `import`, which knows the roots and the pin's file
             Prerequisites = []
+            Recorded = None
         }
         // the round trip: the structured entry must give back msbuild's command line exactly,
         // or the lock would describe a compilation other than the one msbuild ran

@@ -4,6 +4,7 @@ open System.IO
 open NUnit.Framework
 
 open Xake
+open Xake.Dotnet
 open Xake.Hermetic.Dotnet
 
 /// `Import`: a project file evaluated by msbuild into its description -- Xake's own three
@@ -82,7 +83,7 @@ type ``Description import``() =
             Assert.That((pkg.Icon, pkg.Readme), Is.EqualTo ((Some "../../Icon.png", Some "../../readme.md")))
             Assert.That(pkg.License, Is.EqualTo (Some "MIT"))
             Assert.That(hermetic.Packages |> List.map (fun p -> p.Id, p.Version),
-                        Is.EqualTo [ "Xake", Some "[3.7.0.26, 3.8)"; "FSharp.Core", Some "8.0.100" ])
+                        Is.EqualTo [ "Xake", Some "[3.9.0.30, 3.10)"; "FSharp.Core", Some "8.0.100" ])
             Assert.That(hermetic.Sources, Does.Contain "Import.fs")
             Assert.That(hermetic.Package.Value.Readme, Is.EqualTo (Some "readme.md"))
         | _ -> Assert.Fail "three descriptions expected"
@@ -101,6 +102,29 @@ type ``Description import``() =
         let again = x.Import projects x.Own []
         Assert.That(again.Head.Written, Is.False)
         Assert.That(File.GetLastWriteTimeUtc file, Is.EqualTo stamp)
+
+    [<Test; Category("Integration")>]
+    member x.``the shared frameworks are written as frameworkReferences, not the target's own``() =
+        let dir = Directory.GetCurrentDirectory () </> "shared-fwk"
+        if Directory.Exists dir then Directory.Delete (dir, true)
+        for d in [ dir </> "Web"; dir </> "Lib" ] do Directory.CreateDirectory d |> ignore
+        // the Web SDK's implicit Microsoft.AspNetCore.App
+        File.WriteAllText (dir </> "Web" </> "Web.csproj", """<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup><TargetFramework>net8.0</TargetFramework></PropertyGroup>
+</Project>""")
+        File.WriteAllText (dir </> "Web" </> "P.cs", "class P { static void Main() {} }\n")
+        // an explicit one, and a plain library (Microsoft.NETCore.App only: nothing written)
+        File.WriteAllText (dir </> "Lib" </> "Lib.csproj", """<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><TargetFrameworks>net8.0;netstandard2.0</TargetFrameworks></PropertyGroup>
+  <ItemGroup Condition="'$(TargetFramework)' == 'net8.0'"><FrameworkReference Include="Microsoft.AspNetCore.App" /></ItemGroup>
+</Project>""")
+        File.WriteAllText (dir </> "Lib" </> "L.cs", "class L {}\n")
+        let imported = x.Import [ dir </> "Web" </> "Web.csproj"; dir </> "Lib" </> "Lib.csproj" ] Description.beside []
+        let web, lib = Description.read imported.[0].Description, Description.read imported.[1].Description
+        Assert.That(web.FrameworkReferences, Is.EqualTo [ "Microsoft.AspNetCore.App" ])
+        Assert.That(lib.FrameworkReferences, Is.Empty)
+        Assert.That((lib.ByFramework |> List.find (fst >> (=) "net8.0") |> snd).FrameworkReferences, Is.EqualTo [ "Microsoft.AspNetCore.App" ])
+        Assert.That(lib.ByFramework |> List.exists (fst >> (=) "netstandard2.0"), Is.False)
 
     [<Test; Category("Integration")>]
     member x.``a global property picks the brand, and the description lives in the brand's folder``() =

@@ -256,15 +256,8 @@ module Pack =
             "<?xml version=\"1.0\" encoding=\"utf-8\"?><coreProperties xmlns=\"http://schemas.openxmlformats.org/package/2006/metadata/core-properties\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\" xmlns:dcterms=\"http://purl.org/dc/terms/\" xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\"><dc:creator>%s</dc:creator><dc:identifier>%s</dc:identifier><version>%s</version><keywords /><lastModifiedBy>Xake.Hermetic.Dotnet.Pack</lastModifiedBy></coreProperties>"
             id id version
 
-    /// A nupkg from a nuspec plus files: adds the nuspec at the root, `[Content_Types].xml`,
-    /// `_rels/.rels`, and `package/services/metadata/core-properties/<id>.psmdcp` with a GUID
-    /// derived from SHA-256 of (id, version, sorted file hashes) instead of a random one and no
-    /// creation date -- so two packs of the same inputs are byte-identical. `files` are (zip
-    /// path, source) pairs (e.g. `lib/netstandard2.0/X.dll`).
-    let nupkg (output: string) (nuspec: string) (files: Entry list) (options: Options) : unit =
-        let id, version = readNuspecIdVersion nuspec
+    let private nupkgOf (output: string) (id: string) (version: string) (nuspecBytes: byte[]) (files: Entry list) (options: Options) : unit =
         let nuspecName = id + ".nuspec"
-        let nuspecBytes = File.ReadAllBytes nuspec
         let fileEntries = files |> List.map (fun e -> { RPath = e.Path; Bytes = File.ReadAllBytes e.Source })
         let allContent = { RPath = nuspecName; Bytes = nuspecBytes } :: fileEntries
 
@@ -285,6 +278,140 @@ module Pack =
               { RPath = psmdcpPath; Bytes = Encoding.UTF8.GetBytes (buildPsmdcp id version) } ]
 
         writeZip output (allContent @ generated) options
+
+    /// A nupkg from a nuspec plus files: adds the nuspec at the root, `[Content_Types].xml`,
+    /// `_rels/.rels`, and `package/services/metadata/core-properties/<id>.psmdcp` with a GUID
+    /// derived from SHA-256 of (id, version, sorted file hashes) instead of a random one and no
+    /// creation date -- so two packs of the same inputs are byte-identical. `files` are (zip
+    /// path, source) pairs (e.g. `lib/netstandard2.0/X.dll`).
+    let nupkg (output: string) (nuspec: string) (files: Entry list) (options: Options) : unit =
+        let id, version = readNuspecIdVersion nuspec
+        nupkgOf output id version (File.ReadAllBytes nuspec) files options
+
+    // ---- the minimal pack from a project's own nuspec (S68) ----
+
+    /// <summary>
+    /// The `$token$` values a nuspec gets from a project description, the ones `nuget pack`
+    /// infers from a project: `id` (the package id, else the project name), `version` (the
+    /// script's, as `Locks.compileAs` gets it), `assemblyName`, and from the description's
+    /// `package` section `author`/`authors`, `description`, `copyright`, `title` (the id),
+    /// `tags`, `projectUrl`, `license`, `icon`, `readme`, `repositoryUrl`. Absent values are
+    /// left out. A script adds or overrides its own (`Map.add "configuration" "Release"`).
+    /// </summary>
+    let tokensOf (d: Xake.Dotnet.Description.Project) (version: string) : Map<string, string> =
+        let m = d.Package
+        let id = m |> Option.map (fun m -> m.Id) |> Option.defaultValue d.Name
+        let opt name (v: string option) = v |> Option.toList |> List.map (fun v -> name, v)
+        [ yield "id", id
+          yield "version", version
+          yield "title", id
+          yield "assemblyName", (d.AssemblyName |> Option.defaultValue d.Name)
+          match m with
+          | None -> ()
+          | Some m ->
+              yield! opt "author" m.Authors
+              yield! opt "authors" m.Authors
+              yield! opt "description" m.Description
+              yield! opt "copyright" m.Copyright
+              yield! opt "projectUrl" m.ProjectUrl
+              yield! opt "license" m.License
+              yield! opt "icon" m.Icon
+              yield! opt "readme" m.Readme
+              yield! opt "repositoryUrl" (m.Repository |> Option.bind (fun r -> r.Url))
+              if not (List.isEmpty m.Tags) then yield "tags", String.concat " " m.Tags ]
+        |> Map.ofList
+
+    /// <summary>
+    /// `text` with every `$name$` replaced by its value in `tokens` (names compared ignoring
+    /// case, as `nuget pack` does). Fails naming every token `tokens` lacks: a nuspec packed
+    /// with a token left in it is not what msbuild's pack writes.
+    /// </summary>
+    let expand (tokens: Map<string, string>) (text: string) : string =
+        let lookup = Collections.Generic.Dictionary<string, string> (StringComparer.OrdinalIgnoreCase)
+        for KeyValue (k, v) in tokens do lookup.[k] <- v
+        let missing = Collections.Generic.List<string> ()
+        let result =
+            RegularExpressions.Regex.Replace (text, @"\$([A-Za-z_][A-Za-z0-9_.\-]*)\$", fun m ->
+                match lookup.TryGetValue m.Groups.[1].Value with
+                | true, v -> System.Security.SecurityElement.Escape v
+                | _ -> missing.Add m.Groups.[1].Value; m.Value)
+        if missing.Count > 0 then
+            failwithf "the nuspec has tokens without a value: %s (pass them in the tokens)"
+                (missing |> Seq.distinct |> Seq.map (sprintf "$%s$") |> String.concat ", ")
+        result
+
+    /// <summary>
+    /// The `lib/<tfm>/` files of an assembly from flat output folders: for each
+    /// (framework, folder) the assembly `<assemblyName>.dll` (or `.exe`) and the `.xml`
+    /// beside it when there is one -- what `dotnet pack` puts in `lib/` by default (the pdb
+    /// goes to a symbols package). Fails naming a folder without the assembly.
+    /// </summary>
+    let libOf (assemblyName: string) (outputs: (string * string) list) : Entry list =
+        [ for fwk, dir in outputs do
+            let asm =
+                [ ".dll"; ".exe" ] |> List.map (fun ext -> Path.Combine (dir, assemblyName + ext)) |> List.tryFind File.Exists
+            match asm with
+            | None -> failwithf "'%s' (%s): no %s.dll in '%s'; build it first" assemblyName fwk assemblyName dir
+            | Some asm ->
+                yield { Path = sprintf "lib/%s/%s" fwk (Path.GetFileName asm); Source = asm }
+                let xml = Path.Combine (dir, assemblyName + ".xml")
+                if File.Exists xml then yield { Path = sprintf "lib/%s/%s.xml" fwk assemblyName; Source = xml } ]
+
+    /// The `<files>` of an expanded nuspec as entries: `src` relative to the nuspec's folder
+    /// (`\` or `/`; `*` and `?` in the file name only), `target` a folder when it ends with a
+    /// separator, has no extension or `src` is a wildcard. `exclude` is not supported.
+    let private nuspecFiles (baseDir: string) (files: System.Xml.XmlElement) : Entry list =
+        [ for f in files.ChildNodes |> Seq.cast<System.Xml.XmlNode> do
+            match f with
+            | :? System.Xml.XmlElement as f when f.LocalName = "file" ->
+                let src = f.GetAttribute("src").Replace ('\\', '/')
+                let target = f.GetAttribute("target").Replace ('\\', '/')
+                if f.HasAttribute "exclude" then failwithf "nuspec <file src=\"%s\">: exclude is not supported" src
+                if src.Contains "**" then failwithf "nuspec <file src=\"%s\">: '**' is not supported; list the folders" src
+                let full = if Path.IsPathRooted src then src else Path.Combine (baseDir, src)
+                let dir, name = Path.GetDirectoryName full, Path.GetFileName full
+                let wildcard = name.IndexOfAny [| '*'; '?' |] >= 0
+                let sources =
+                    if wildcard then (if Directory.Exists dir then Directory.GetFiles (dir, name) |> Array.sort |> List.ofArray else [])
+                    elif File.Exists full then [ full ]
+                    else failwithf "nuspec <file src=\"%s\">: '%s' does not exist" src full
+                let asFolder = wildcard || target = "" || target.EndsWith "/" || Path.GetExtension target = ""
+                for s in sources do
+                    let path = if asFolder then (target.TrimEnd '/' + "/" + Path.GetFileName s).TrimStart '/' else target
+                    yield { Path = path; Source = s }
+            | _ -> () ]
+
+    /// <summary>
+    /// The minimal pack from a project's own nuspec (S68): the nuspec's `$token$`s replaced
+    /// from `tokens` (`tokensOf` a description, plus the script's), its `<files>` (if any)
+    /// packed as listed and dropped from the packed manifest, as `nuget pack` does, then the
+    /// `lib` entries (`libOf` a flat output folder). Deterministic as `nupkg`. No
+    /// dependencies are computed: the nuspec states them, with tokens for their versions.
+    /// </summary>
+    let fromNuspec (output: string) (nuspec: string) (tokens: Map<string, string>) (lib: Entry list) (options: Options) : unit =
+        let text = expand tokens (File.ReadAllText nuspec)
+        let doc = System.Xml.XmlDocument ()
+        doc.PreserveWhitespace <- true
+        doc.LoadXml text
+        let metadata = doc.DocumentElement |> xmlChild "metadata"
+        let id = metadata |> Option.bind (xmlChild "id") |> xmlText
+        let version = metadata |> Option.bind (xmlChild "version") |> xmlText
+        if id = "" || version = "" then failwithf "'%s': the nuspec has no id or version" nuspec
+        let listed, bytes =
+            match doc.DocumentElement |> xmlChild "files" with
+            | None -> [], Encoding.UTF8.GetBytes text
+            | Some files ->
+                let entries = nuspecFiles (Path.GetDirectoryName (Path.GetFullPath nuspec)) files
+                doc.DocumentElement.RemoveChild files |> ignore
+                let settings = System.Xml.XmlWriterSettings (Encoding = UTF8Encoding false)
+                use ms = new MemoryStream ()
+                (use w = System.Xml.XmlWriter.Create (ms, settings) in doc.Save w)
+                entries, ms.ToArray ()
+        let all = listed @ lib
+        match all |> List.countBy (fun e -> e.Path.ToLowerInvariant ()) |> List.filter (fun (_, n) -> n > 1) with
+        | [] -> ()
+        | dups -> failwithf "'%s': packed twice: %s" nuspec (dups |> List.map fst |> String.concat ", ")
+        nupkgOf output id version bytes all options
 
     /// Lists a zip: (path, size, crc32, dos time) in central-directory order -- for tests and
     /// for `Verify`-style comparison of two packages. `size` is the uncompressed length.

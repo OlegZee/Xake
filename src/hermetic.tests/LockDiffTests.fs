@@ -28,6 +28,7 @@ type ``Lock rehash and diff``() =
                       References = c.Dependencies.References |> List.map (fun r -> { r with Sha256 = "hash-a" }) } }
           Evaluation = { Project = "/proj/Sample.csproj"; ProjectRefs = []; Imports = []; Sdk = "8.0.100"; SdkPin = None; Properties = Map.empty }
           Prerequisites = []
+          Recorded = None
           Packages = [ { Id = "Foo.Bar"; Version = "1.2.3"; Sha512 = "AAAA"; Direct = true; DependsOn = [] } ] }
 
     [<Test>]
@@ -123,6 +124,8 @@ type ``Lock file format``() =
     let roots = [ "$(NuGetPackageRoot)", "/r/pkgs"; "$(ProjectRoot)", "/r/proj"; "$(DotnetRoot)", "/r/dotnet" ]
 
     static let golden = """{
+  "Format": 1,
+  "Legacy": "Project.import",
   "Configuration": "Release",
   "Properties": {
     "Brand": "X"
@@ -214,6 +217,7 @@ type ``Lock file format``() =
                   Sdk = "8.0.100"; SdkPin = Some (Lock.RollsForward ("8.0.100", "latestFeature"))
                   Properties = Map.ofList [ "AssemblyName", "Sample"; "Version", "1.0.0" ] }
               Prerequisites = []
+              Recorded = None
               Packages =
                 [ { Id = "Foo.Bar"; Version = "1.2.3"; Sha512 = "AAAA=="; Direct = true; DependsOn = [ "Baz.Qux" ] }
                   { Id = "Baz.Qux"; Version = "4.5.6"; Sha512 = ""; Direct = false; DependsOn = [] } ] }
@@ -231,6 +235,24 @@ type ``Lock file format``() =
         Assert.That(parsed, Is.EqualTo (document ()))
         Assert.That(Lock.format roots parsed, Is.EqualTo golden)
 
+    /// The content of a generated source is text: a `\` in a string literal (an attribute
+    /// argument) stays, only the path fields have theirs turned into `/`.
+    [<Test>]
+    member x.``a backslash in generated content is kept``() =
+        let doc = document ()
+        let content = "[assembly: System.Reflection.AssemblyDescription(\"a\\\\b \\\"q\\\"\")]\n"
+        let withText (e: Lock.Entry) =
+            match e.Compilation with
+            | Lock.Compilation.Csc c ->
+                { e with Compilation = Lock.Compilation.Csc { c with Generated = [ "/r/proj/src/Sample/obj/AssemblyInfo.cs", content ]
+                                                                     Resources = [ "C:\\r\\S.resx", "/r/proj/src/Sample/obj/S.resources" ] } }
+            | _ -> e
+        let doc = { doc with Entries = doc.Entries |> List.map withText }
+        let text = Lock.format roots doc
+        let back = Lock.parse roots text
+        Assert.That(back.Entries.Head.Compilation.Generated, Is.EqualTo [ "/r/proj/src/Sample/obj/AssemblyInfo.cs", content ])
+        Assert.That(back.Entries.Head.Compilation.Resources |> List.map fst, Is.EqualTo [ "C:/r/S.resx" ], "a path field still gets '/'")
+
 /// An F# entry has the C# entry's shape: the same sections and keys in the same order, the
 /// options in fsc's own `-`/`--` dialect, references as `-r:` behind `@References`, no
 /// `@Analyzers` marker and an empty `Analyzers` list (written the way the writer writes an
@@ -242,6 +264,8 @@ type ``Lock file format, F# entry``() =
     let roots = [ "$(NuGetPackageRoot)", "/r/pkgs"; "$(ProjectRoot)", "/r/proj"; "$(DotnetRoot)", "/r/dotnet" ]
 
     let golden = """{
+  "Format": 1,
+  "Legacy": "Project.import",
   "Configuration": "Release",
   "Properties": {
 
@@ -344,6 +368,7 @@ type ``Lock file format, F# entry``() =
               Sdk = "8.0.100"; SdkPin = Some (Lock.Pinned "8.0.100")
               Properties = Map.ofList [ "AssemblyName", "Lib" ] }
           Prerequisites = []
+          Recorded = None
           Packages = [ { Id = "FSharp.Core"; Version = "8.0.100"; Sha512 = "BBBB=="; Direct = true; DependsOn = [] } ] }
 
     let document () : Lock.Document = { Configuration = "Release"; Properties = []; Entries = [ fscEntry () ] }
@@ -515,7 +540,8 @@ type ``Lock runtimeconfig and hermetic rule``() =
                                     References = references |> List.map (fun p -> ({ Path = p; Sha256 = ""; Alias = "" }: Lock.Reference))
                                     Analyzers = [] } }
                 Evaluation = { e.Evaluation with Project = if imported then "/r/proj/a.csproj" else "" }
-                Prerequisites = prerequisites }
+                Prerequisites = prerequisites
+                Recorded = None }
         let sdk : Lock.Prerequisite = { Kind = Lock.DotnetSdk; Version = "8.0.100"; Pin = "$(ProjectRoot)/global.json" }
         let toolset = "/r/pkgs/microsoft.net.compilers.toolset/4.12.0/tasks/netcore/bincore/csc.dll"
         let sdkCsc = "/r/dotnet/sdk/8.0.100/Roslyn/bincore/csc.dll"

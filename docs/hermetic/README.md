@@ -1,5 +1,126 @@
 # Xake.Hermetic.Dotnet
 
+## 0.4 (next release)
+
+Built on **Xake 3.9** (`[3.9.0.30, 3.10)`, nuget.org 3.9.0.30). Everything under "Next" below,
+and:
+
+- **Range policy.** The dependency is `Xake [3.9.0.30, 3.10)`, not the next major: a core minor may add fields to the F# records this package constructs (3.9 broke 0.3 that way), so Xake.Hermetic.Dotnet is re-released on each core minor.
+- **Xake 3.9 floor; the project description is the core's.** `xake.project.json` is
+  `Xake.Dotnet.Description` (the module, the schema `docs/schemas/xake.project.schema.json`) and
+  `Xake.Dotnet.ProjectPlan`; this package's copies (`Description.fs`, `Json.fs` as a description
+  reader, `docs/hermetic/xake.project.schema.json`) are gone. Its JSON reader of tool output
+  (msbuild, `project.assets.json`) is the internal `ToolJson`. The helpers that moved with the
+  description are `ProjectPlan`'s now: `frameworkDefines`, `baseFramework`,
+  `implicitFrameworkReferences`, `sdkNoWarn`, `manifestName`, `rootNamespace`, `generatedKey`
+  (`Described.*` of 0.3; `Described.platformOf`, `preset`, `nearestFramework` and the restore
+  stay here).
+- **`csc { project }` / `fsc { project }` are the core's.** The core's intrinsic `project`
+  composes a description by itself (no packages, no lock, docs/description.md). This package
+  adds to it: `config "Release"` (the SDK's preset), `packages p` (what `Described.restore`
+  resolved) and `lock "path"` (with `nofetch`); any of them makes the compilation this package's
+  (`Described.fsc`/`csc`: packages, `--pathmap`, C# masks kept in the lock), as in 0.3. What a
+  script changes: nothing when `config`/`packages`/`lock` follow `project` (the 0.3 order);
+  they cannot come before it any more. `csc { project p }` alone is the core's composition,
+  which rejects a description with packages. The `lock` builder modules (`CscLocked`,
+  `FscLocked`) moved from `Lock.fs` to `Described.fs` (same names, same namespace).
+- **The import writes `frameworkReferences`** (msbuild's `FrameworkReference` items, the Web
+  SDK's implicit `Microsoft.AspNetCore.App` included, `Microsoft.NETCore.App` left out, the
+  WindowsDesktop profiles as `Microsoft.WindowsDesktop.App`), and the described composition
+  references the shared frameworks' packs (`DotNetFwk.sharedFrameworkReferences`).
+- **Xake 3.8** brought the run folder rule's `ArtifactDep2` (a dependent sees a dependee rebuilt
+  by an earlier run). `Described.refreshResources` stays: Xake 3.9's runner still compiles a
+  missing `.resources` only (a core follow-up: recompile it when the resx changed).
+- **Upper bound `4.0`**: a 3.x minor that adds a field to `CscSettingsType`, `FscSettingsType`,
+  `Csc`, `Fsc` or the run options breaks this build binary-wise (F# record construction) and
+  needs a release of this package with it.
+- **`Pack.fromNuspec`** (S68): the minimal pack from a project's own nuspec, with `$token$`s
+  from the description (`Pack.tokensOf`: id, version, authors, description, ...) plus the
+  script's, its `<files>`, and `lib/<tfm>` from flat output folders (`Pack.libOf`); `Pack.expand`
+  fails naming a token without a value ([pack.md](pack.md#the-minimal-pack-from-a-projects-own-nuspec)).
+- **An analyzer crash under the compiler server** (S72, `AD0001`): the compile writes an error
+  log; a failure whose log names a crashed analyzer is reported with the analyzer and compiled
+  once more without the server ([lock.md](lock.md#building-a-recorded-lock)).
+- **`Locks.check`** documented with an example for a script's check target (S67;
+  [lock.md](lock.md#run-folders)).
+- Verified with tests (fixed in the critic round): no host path in a description written by
+  `Import.record` for an output folder outside the project (S70); one SDK pin warning per
+  import.
+
+## Next (hermetic, after PR 2; 0.4.3-night with PR 4 and the critic fixes)
+
+- **`Import.record`**: the import that records msbuild's resolved compile inputs (references,
+  defines, generated sources, resource names, compiler switches) per configuration and
+  framework, and writes the locks itself; there is no `update-locks` step for such a project
+  ([lock.md](lock.md#recorded-locks-importrecord)). It writes into the projects' `obj/` (the
+  restore's assets file, the design-time builds' own `obj/xake-record/` folder) and creates
+  their `bin/` folders, as an IDE does. Every configuration and the script's `Platform` are
+  restored for themselves.
+- **Lock format 2** (breaking for imported locks): the references, analyzers and compiler of a
+  recorded entry are identities (`pkg:`, `pack:`, `sdk:`, `project:`), `Recorded` marks the
+  entry, and with masks `Sources` holds only the files the masks do not put in place. A format-1
+  lock of an imported project is refused: run the import again. Composed locks read as before.
+- **`Project.import`** stays, as legacy: its locks are `"Format": 1` with
+  `"Legacy": "Project.import"` and read as before. Use `Import.record` for new imports.
+- **Outputs named by `TargetFileName`**: a .NET Framework application is `app.exe`; a script
+  that builds one declares an `*.exe` rule beside its `*.dll` rule.
+- **The SDK pin is stricter than `global.json`**: a recorded entry always has the `dotnet-sdk`
+  prerequisite of the SDK that recorded it. Another SDK means a new import (all its locks
+  change); the import warns and shows the exact `global.json` pin.
+- **Stale locks fail the build**: a project file or other msbuild file changed since the import
+  fails `Locks.compileAs` with "run the import again" (`LOCK_STALE=warn`: a warning, except
+  under CI).
+- **Generated binaries beside the lock**: a file msbuild generates that is not text (a
+  `.licenses`, a `g.resources`) is copied to `<lock>.files/<framework>/`; commit the folder.
+- **`Restore.download` in rounds**: one version of a package id per synthesized restore, so a
+  lock set that needs two versions of one id fetches both.
+- **Applications (PR 3)**: a recorded entry with runtime output has an `App` section -- the
+  apphost (the SDK's own without a `RuntimeIdentifier`, identified by the SDK version; with one,
+  the pack's template pinned with its hash), msbuild's `runtimeconfig.json`, `deps.json` and
+  config file beside the lock (`<lock>.files/<framework>/app/`), msbuild's copy-local files.
+  `Locks.compileAs` writes them beside the assembly; a lock of an application changes on the
+  next import ([lock.md](lock.md#applications-the-app-section)). The import runs a second
+  msbuild pass over the applications. Not yet: binding redirects, satellites.
+- **Run folders (PR 4)**: `Locks.runFolderWith` builds the folder an application or a test
+  project runs from, from its own lock closure only, by hard links (fallbacks: clone, copy), with
+  the manifest `.xake-run.txt` as the rule's target, a conflicts report, stale files removed and
+  a no-op that writes nothing; `Locks.runFoldersWith`, `Locks.flatOutOf`, `Locks.runOf`,
+  `Locks.runs`; the file side in `RunFolder` ([lock.md](lock.md#run-folders)). Replaces the
+  night builds' `Locks.deployWith` (it copied every file of the project's output folder, which a
+  flat layout cannot use); it is not in this package.
+- **Critic fixes (0.4.3-night)**: a run folder needs its closure's assemblies first, so
+  `deploy` on an unbuilt tree builds and places the whole folder; every run folder path stays
+  inside the folder (no rooted path, `..` or link on the way), a file changed since a run placed
+  it is never replaced or removed, a case-only rename keeps the file; each manifest line carries
+  the source's stamp, so a recompile rewrites the manifest and a rule needing it runs again;
+  **`Locks.runFolder` places by clone** (APFS, btrfs/XFS reflink, ReFS; else a copy), hard
+  links are the opt-in (`RunFolder.Link`; on Windows they lock the compile's output while a test
+  runs); `Locks.check`/`checkWith`/`staleWith`/`staleOf` for a script's check target; a
+  referenced project's package file the root's restore lacks is warned about. The import: a
+  deps.json stand-in version left over fails it naming the file; an application's `App.config`
+  and `runtimeconfig.template.json` are lock inputs (an edit: *run the import again*); a WPF
+  project is refused up front; description excludes are relative and hold for every
+  configuration; one SDK pin warning per import; package files hashed once (memo). The
+  apphost: the SDK's own pack missing is a broken prerequisite (nothing fetched at build time);
+  one SDK's HostModel per process, a failing one falls back to the byte-patch writer, which
+  sets the GUI subsystem on every host.
+- **Satellite assemblies: deferred by decision** (S71). Neither a project's own satellites
+  (`ja/X.resources.dll`) nor a referenced project's are built or placed, and their
+  `"resources"` lines are missing from `deps.json`; against 0.3.7-0.3.8 this is a regression
+  for the package entries that shipped them. Recording msbuild's `GenerateSatelliteAssemblies`
+  inputs is a later step.
+- **The compile no longer copies copy-local files** (breaking against PR 3's previews):
+  `Locks.compileAs` writes an application's `Files` and apphost only; the copy-local files and
+  items are the run folder's. A script that ran an application from its output folder builds its
+  run folder.
+- **`App.Content`** and **an `App` for libraries**: the import records the project's own
+  copy-to-output items (`None`, `Content`, `EmbeddedResource`, `Compile` with
+  `CopyToOutputDirectory`) and gives a library an `App` section when msbuild copies something
+  into its output (copy-local files of a .NET Framework test library: S59). `IsTestProject` is
+  kept in `Evaluation.Properties`. Every lock with project references changes on the next import.
+- **`pack:` covers apphost and runtime packs** (`Microsoft.NETCore.App.Host.<rid>`,
+  `*.App.Runtime.<rid>`), wherever the machine has them.
+
 Version **0.3.0, preview**: the API may break while the package is 0.x. 0.3 is built on
 **Xake 3.7** (`[3.7.0.26, 3.8)`) and adds:
 
@@ -65,10 +186,10 @@ explained and checked: a **lock** file records exactly what the compiler was han
 of everything it read, the build compiles from the lock and fails when anything differs, and the
 result can be turned into a deterministic package with an SBOM and a signing step. It is a
 separate NuGet package that depends on `Xake` (the engine and the `csc`/`fsc`/`msbuild`/`resgen`
-tasks of `Xake.Dotnet`, Xake 3.7.0.26 or later, below 3.8); nothing in `Xake` knows about it.
+tasks of `Xake.Dotnet`, Xake 3.9.0.30 or later, below 3.10); nothing in `Xake` knows about it.
 
 ```fsharp
-#r "nuget: Xake.Hermetic.Dotnet, 0.3.0"
+#r "nuget: Xake.Hermetic.Dotnet, 0.4.0"
 
 open Xake
 open Xake.Dotnet

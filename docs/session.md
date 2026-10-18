@@ -21,14 +21,19 @@ touched, so it is not re-litigated:
   tighter than `</>`, and `;` is not the Unix separator. Fixed, but the mono path has no test
   coverage.
 - `build.fsx` bootstraps from nuget.org (`#r "nuget: Xake, 3.7.0.26"`, the 3.7.0 release as
-  nuget.org carries it); `build.fsc.fsx` from `Xake 3.7.0.26` and `Xake.Hermetic.Dotnet 0.3.0.28`
+  nuget.org carries it); `build.fsc.fsx` from `Xake 3.9.0.30` and `Xake.Hermetic.Dotnet 0.3.0.28`
+  (NuGet warns NU1608: 0.3 asks for `< 3.8`). On 3.9, 0.3 runs `import`, `build` and `check`,
+  but **not `update-locks`** (`MissingMethodException` on the `FscSettingsType` constructor: 3.9
+  added `Project`); until hermetic 0.4 is published, regenerate locks with a temporary
+  `#r` on the built `src/hermetic/bin/Release/netstandard2.0/Xake.Hermetic.Dotnet.dll` (copied
+  elsewhere first), then bump to `0.4.0.<run>`
   (see "The fsc build" below). The base script stays on the base package only. The nuget
   references stay behind the release being made; bump
   them only after a release lands on nuget.org, to the exact published `X.Y.Z.<run>`.
   Developing against unreleased libraries: a temporary `#r` on dlls (or a `#i` local feed);
   see docs/devprocess.md, "Bootstrapping note". `samples/gettingstarted.fsx` references the
   published package (`#r "nuget: Xake"`) and is checked against it after each release.
-- `src/hermetic` builds on the *published* `Xake` (PackageReference `[3.7.0.26, 3.8)`), not on
+- `src/hermetic` builds on the *published* `Xake` (PackageReference `[3.9.0.30, 3.10)`), not on
   `src/core`/`src/dotnet`. The floor is the exact published version: `[3.4.0, 4.0)` warns NU1603
   because no plain `3.4.0` exists. A local feed (`-d NUGET_SOURCE=<folder>`) is only for working
   against an unreleased base; a packed `3.4.0.99` in `~/.nuget/packages/xake/` shadows the
@@ -177,7 +182,8 @@ data, no msbuild for them. `build.fsx` stays the build of record (packages, rele
 - `build` = `Fingerprints.warn` + `Locks.needAll`, the rule `out/(cfg:*)/(fwk:*)/(name:*).dll` =
   `Locks.compileAs`; `check` = `Fingerprints.check`. `test` is `dotnet test` as in `build.fsx`.
   Release only; `pack` waits for `Package.nupkg` (PR 8).
-- Bootstrap: `#r "nuget: Xake, 3.7.0.26"` and `#r "nuget: Xake.Hermetic.Dotnet, 0.3.0.28"`, no
+- Bootstrap: `#r "nuget: Xake, 3.9.0.30"` and `#r "nuget: Xake.Hermetic.Dotnet, 0.3.0.28"` (no
+  `update-locks` on that pair, see above; bump hermetic once 0.4 is on nuget.org), no
   `build.fsx` run first. Its `clean` removes `out/Release` only (`out/netstandard2.0` is
   `build.fsx`'s).
 - Own database `.xake.fsc` (`xake { ExecOptions.Default with DbFileName = ... }`): the scripts no

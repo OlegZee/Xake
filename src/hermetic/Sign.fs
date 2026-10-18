@@ -209,7 +209,7 @@ module Sign =
     /// one property that matters to the design -- signing the same input twice gives two
     /// different files.
     let private fakePayload (req: Request) : byte[] =
-        let field name value = sprintf "%s:%s" (Json.escape name) (Json.escape value)
+        let field name value = sprintf "%s:%s" (ToolJson.escape name) (ToolJson.escape value)
         let fields =
             [ field "signer" "Xake.Hermetic.Dotnet.Sign.fakeSigner (NOT A VALID SIGNATURE)"
               field "imageHash" (imageHash req.File)

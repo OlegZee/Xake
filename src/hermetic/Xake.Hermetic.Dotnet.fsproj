@@ -8,7 +8,7 @@
          break. Same mechanism as src/dotnet: the build script and CI override it with
          /p:Version=...; this is the value a plain `dotnet pack` produces. -->
     <PackageId>Xake.Hermetic.Dotnet</PackageId>
-    <Version>0.3.0</Version>
+    <Version>0.4.0</Version>
     <OutputType>Library</OutputType>
     <!-- The SDK would otherwise reference its own FSharp.Core, see the pin below. -->
     <DisableImplicitFSharpCoreReference>true</DisableImplicitFSharpCoreReference>
@@ -34,23 +34,24 @@
     <None Include="readme.md" Pack="true" PackagePath="\" />
   </ItemGroup>
 
-  <!-- Order follows the dependencies: the json reader, the project description (data only,
-       Description.fs) and the root tokens first, then
+  <!-- Order follows the dependencies: the json reader of tool output and the root tokens
+       first (the project description is the core's, `Xake.Dotnet.Description`), then
        Nuget (assets, nuspec, cache) and Restore (which names no lock type), Git (revision
-       token), the lock format and the lock's side of a build (Lock.build/compile/record/verify,
-       csc { lock }, fsc { lock }), a description as a compilation (Described.fs: csc/fsc
-       { project }, config, packages), the import (csproj and fsproj), and the release
+       token), the lock format and the lock's side of a build (Lock.build/compile/record/verify),
+       a description as a compilation and the builder operations (Described.fs: config,
+       packages, lock and nofetch on top of the core's `project`), the import (csproj and fsproj), and the release
        pipeline. Signing is the one delegated rule (signing.md); it uses Verify, StrongName
        and Pack, so it compiles after all three. -->
   <ItemGroup>
-    <Compile Include="Json.fs" />
-    <Compile Include="Description.fs" />
+    <Compile Include="ToolJson.fs" />
     <Compile Include="Roots.fs" />
     <Compile Include="Nuget.fs" />
     <Compile Include="Restore.fs" />
     <Compile Include="Git.fs" />
     <Compile Include="Lock.fs" />
     <Compile Include="Described.fs" />
+    <Compile Include="Apps.fs" />
+    <Compile Include="RunFolder.fs" />
     <Compile Include="Locks.fs" />
     <Compile Include="Project.fs" />
     <Compile Include="Import.fs" />
@@ -64,17 +65,19 @@
   <ItemGroup>
     <!-- Built on the published package, not on src/dotnet and src/core: the `Xake` package
          carries both Xake.dll and Xake.Dotnet.dll, and the range is what the nuspec
-         dependency says. 3.7.0 is the release this package builds on (3.6.0 was the first with the base
-         it needs: `HermeticMode`, `DotNetFwk.packageRoot`/`fetchEnabled`/`globalJsonPin`, the
-         `Csc`/`Fsc` fields this package reads); nuget.org carries 3.7.0 as 3.7.0.26 (publish.yml appends the
-         run number), and the lower bound is that exact published version, or NuGet warns
-         NU1603 on every restore.
+         dependency says. 3.9.0 is the release this package builds on: it owns the project
+         description (`Xake.Dotnet.Description`, `ProjectPlan`) and the `Project` field of
+         `CscSettingsType`/`FscSettingsType` (3.8.0 brought `ArtifactDep2`, the run folder rule
+         relies on it, and `ResxFormat`). nuget.org carries 3.9.0 as 3.9.0.30 (publish.yml
+         appends the run number); the lower bound is that exact published version, or NuGet
+         warns NU1603 on every restore.
 
-         The upper bound is the next minor, not the next major: F# records are not
-         binary-compatible across releases that add a field (a new field changes the
-         constructor and the compiled pattern matches), and the base releases that touch
-         `Csc`/`Fsc` are minors. Each base minor gets a release of this package. -->
-    <PackageReference Include="Xake" Version="[3.7.0.26, 3.8)" />
+         The upper bound is the next major (the owner's decision for 0.4). The price: F#
+         records are not binary-compatible across releases that add a field (a copy-and-update
+         expression compiles to the full constructor), so a 3.x minor that adds a field to a
+         record this package builds (`CscSettingsType`, `FscSettingsType`, `Csc`, `Fsc`, the
+         run options) needs a release of this package with it. -->
+    <PackageReference Include="Xake" Version="[3.9.0.30, 3.10)" />
   </ItemGroup>
 
   <!-- Test assemblies only; no other package sees these internals. hermetic.tests tests the

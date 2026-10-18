@@ -3,6 +3,15 @@
 Ideas and larger items that are agreed in direction but not scheduled. Working state of a
 feature lives in `docs/features/<name>/`; this page is the cross-feature list.
 
+## Principles
+
+- **Hosts: the .NET SDK only; targets: every platform.** No backports of the engine or the
+  tasks to the full framework or mono as build hosts. Composed `csc {}`/`fsc {}` must produce
+  `netN.0`, `netstandard2.x` and `.NET Framework 4.x` outputs from any host (macOS, Linux,
+  Windows) with no manual setup: reference packs and facades restored or taken from the SDK.
+  Verified 2026-10-04 on macOS: csc net462 works; fsc net462 needs an implicit `netstandard.dll`
+  facade and a default `FSharp.Core` (fix in 3.5).
+
 ## Engine
 
 ### Rules with arguments (idea, 2026-10-02)
@@ -41,7 +50,8 @@ fsproj), so a repository needs no script target for the import. Today the script
 ### B6: `Fsc` through the shared runner (done in 3.5 / hermetic 0.2)
 
 Done: `Fsc` record, `fsc { resolve }`, `fsc { lock }`, `Fsc.run` on the shared runner core;
-kept below as the original plan.
+kept below as the original plan (designed 2026-10-04, `docs/features/hermetic-build/fsc-design.md`;
+breaking for fsc in 3.5: `Fsc settings` -> `Fsc.compile`, `targetfwk` required).
 
 `fsc {}` has no resolved record, no `resolve` operation and no hash-checked runner, so there is
 no `fsc { lock }` and `build.fsc.fsx` (the build of record) is hermetic only through its kept
@@ -52,7 +62,54 @@ then `fsc { lock }` as an extension in Xake.Hermetic.Dotnet, `Project.import` fo
 compiler is not a NuGet package, so the only reproducible compiler path for fsc is the SDK pinned
 by `global.json`; the net462 leg still comes from `dotnet pack`.
 
+## Xake.Dotnet, later
+
+### SDK restore by the lock
+
+An fsc lock names an SDK's `fsc.dll` that NuGet cannot restore. The official `dotnet-install`
+script installs an exact version into a private folder without admin rights, and Microsoft
+publishes release hashes: a "restore SDK" step into the project's `DOTNET_ROOT` would make the
+SDK as restorable as a package.
+
+### An F# compiler `toolset`
+
+`FSharp.Compiler.Service` is a current NuGet package carrying the whole compiler; `fsc.dll` is a
+thin host over it. A small host shipped with Xake.Dotnet would give `fsc` a restorable
+`toolset` like csc's `Microsoft.Net.Compilers.Toolset`.
+
+### Small base fixes found while writing workflows-ru (2026-10-04)
+
+- Composed `csc {}` does not pass `/deterministic` (fsc `--deterministic+`): lock-built outputs
+  are not byte-reproducible unless the script adds it. Make it the default in composed mode.
+- `norestore`/`packageroot` do not cover `toolset`/`CSC_TOOLSET`, the framework reference
+  packages or fsc's default `FSharp.Core`: those resolve through `restorePackage None` into the
+  machine cache before the lock is read. Offline builds need them routed through the same
+  options.
+- Decided 2026-10-06 (PR #35 reworked): `runtimeconfig.json` for a `netN.0` application is
+  written only when the rule declares it as a target, `["hw.dll"; "hw.runtimeconfig.json"] *..> csc { ... }`.
+  A rule declared for one file never puts a second one next to it on its own; the task produces
+  what is declared (like `doc`).
+- With the `netN.0` default the lock names the SDK's targeting pack under `$(DotnetRoot)`, so
+  `CSC_TOOLSET` alone does not make a lock portable; `global.json` is still required. Document
+  loudly; the "SDK restore" idea above is the real fix.
+
+### Binary compatibility between the packages (found 2026-10-07)
+
+Adding a field to the `Csc`/`Fsc` records (`RuntimeConfig`, PR #35) makes the released
+`Xake.Hermetic.Dotnet 0.1.0.22` fail at run time against the new base (`Method not found:
+Csc..ctor`), although its nuspec range `[3.4.0.21, 4.0)` says it is compatible. F# records are not
+binary-compatible across field changes. Proposed rule: the hermetic package depends on the base
+**within one minor** (`[3.5.0.23, 3.6)`), and every base release that touches `Csc`/`Fsc`/
+`RunOptions`/`FscRunOptions` is followed by a hermetic release. To be decided by the user.
+
 ## Xake.Hermetic.Dotnet
+
+### Small: in-lock project references must stay unhashed (found 2026-10-11)
+
+`Project.import` hashes a project reference's output when an old `src/<x>/bin/...` happens to
+exist, so the lock differs depending on leftover build output (empty hash vs a real one). A
+reference whose project is in the same lock should always be recorded without a hash, as the
+lock format intends; `check-locks` ignores empty hashes, so this is churn, not a failure.
 
 From `docs/hermetic/workflows.md` ("Gaps"), in priority order:
 

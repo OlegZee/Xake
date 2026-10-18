@@ -62,6 +62,7 @@ type ``Sbom cycloneDx``() =
                   Analyzers = analyzers } }
           Evaluation = { Project = ""; ProjectRefs = []; Imports = []; Sdk = "8.0.100"; SdkPin = None; Properties = Map.ofList [ "Version", "1.0.0" ] }
           Prerequisites = []
+          Recorded = None
           Packages = packages }
 
     let sampleBom hashContent : Bom =
@@ -226,6 +227,7 @@ type ``Sbom cycloneDx``() =
                             References = [ { Path = coreDll; Sha256 = Csc.sha256 coreDll; Alias = "" } ] } }
               Evaluation = { Project = ""; ProjectRefs = []; Imports = []; Sdk = "8.0.100"; SdkPin = None; Properties = Map.ofList [ "Version", "2.0.0" ] }
               Prerequisites = []
+              Recorded = None
               Packages = [ { Id = "FSharp.Core"; Version = "8.0.100"; Sha512 = "AAAA"; Direct = true; DependsOn = [] } ] }
 
         let bom = Sbom.forAssembly cacheRoot entry assemblyFile
@@ -247,10 +249,10 @@ type ``Sbom cycloneDx``() =
         let bom = sampleBom "112233"
         let json = cycloneDx bom
 
-        let parsed = Json.parse json
+        let parsed = ToolJson.parse json
         let componentsCount =
-            match Json.field "components" parsed with
-            | Some v -> (Json.asArray v).Length
+            match ToolJson.field "components" parsed with
+            | Some v -> (ToolJson.asArray v).Length
             | None -> 0
 
         Assert.That (componentsCount, Is.EqualTo 1)
@@ -359,6 +361,7 @@ type ``Sbom package scope``() =
                   Analyzers = [] } }
           Evaluation = { Project = ""; ProjectRefs = []; Imports = []; Sdk = "8.0.100"; SdkPin = None; Properties = Map.ofList [ "Version", "1.0.0" ] }
           Prerequisites = []
+          Recorded = None
           Packages = packages }
 
     let myPkgNuspec = """<?xml version="1.0" encoding="utf-8"?>
@@ -536,8 +539,8 @@ type ``Sbom package scope``() =
         Assert.That (json1, Does.Not.Contain "Transitive.Pkg")
         Assert.That (json1, Does.Not.Contain "CycloneDX.Core")
         Assert.That (json1, Does.Not.Contain "tool:csc")
-        let parsed = Json.parse json1
-        Assert.That (Json.field "compositions" parsed |> Option.map (Json.asArray >> List.length), Is.EqualTo (Some 2))
+        let parsed = ToolJson.parse json1
+        Assert.That (ToolJson.field "compositions" parsed |> Option.map (ToolJson.asArray >> List.length), Is.EqualTo (Some 2))
         Assert.That (Sbom.packageSbomPath "netstandard2.0", Is.EqualTo "sbom/netstandard2.0/bom.cdx.json")
 
     [<Test>]

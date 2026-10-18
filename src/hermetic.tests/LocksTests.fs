@@ -4,6 +4,7 @@ open System.IO
 open NUnit.Framework
 
 open Xake
+open Xake.Dotnet
 open Xake.Hermetic.Dotnet
 
 /// `Locks.generate`: the lock of one described project, generated without compiling, driven
@@ -37,8 +38,8 @@ type ``Lock generation``() =
         let d : Description.Project =
             { Schema = None; Name = name; Project = name + ".fsproj"; AssemblyName = None; RootNamespace = None
               Language = Description.FSharp; Kind = Description.Library; Frameworks = frameworks; Sources = [ "Lib.fs" ]
-              Resources = []; Defines = []; References = []; ProjectRefs = refs; Packages = packages
-              Options = Description.Options.Default; InternalsVisibleTo = []; ByFramework = []; Package = None }
+              Resources = []; Defines = []; References = []; FrameworkReferences = []; ProjectRefs = refs; Packages = packages
+              Options = Description.Options.Default; InternalsVisibleTo = []; AssemblyAttributes = []; ByFramework = []; Package = None }
         Description.write (dir </> Description.FileName) d |> ignore
         "tiny/" + name + "/" + Description.FileName
 
@@ -251,3 +252,38 @@ type ``Lock generation``() =
         generate "floating-4" [ "LOCK_REFRESH", "FSharp.Core" ]
         Assert.That(fsharpCore (), Does.StartWith "8.0.")
         Assert.That(fsharpCore (), Is.Not.EqualTo "8.0.100", "the refreshed version floats to the latest 8.0.x")
+
+    /// B2.1: `Locks.restoreAll` before the lock rules restores every set `generate` needs in one
+    /// `dotnet restore`, on a first generation (references without locks yet) and on a second
+    /// one (locks present); the lock rules then start none, and the locks are the ones
+    /// generated without it.
+    [<Test; Category("Integration")>]
+    member x.``update-locks after Locks.restoreAll starts one restore and writes the same locks``() =
+        let pkg id v : Description.Package = { Id = id; Version = Some v; Private = false }
+        let fwks = [ "netstandard2.0"; "net472" ]
+        tiny "BrC" fwks [] [ pkg "FSharp.Core" "8.0.100" ] |> ignore
+        tiny "BrB" fwks [ "BrC" ] [ pkg "System.Memory" "4.6.0" ] |> ignore
+        tiny "BrA" fwks [ "BrB" ] [] |> ignore
+        let names = [ "BrA"; "BrB"; "BrC" ]
+        let locks = names |> List.map (fun n -> lockOf n "Release")
+        let ran = ResizeArray ()
+        let plain = [ lockRule tinyOf id ran; updateLocks [ "BrA" ] ]
+        clean names
+        x.Run "batch-plain" [] [ "update-locks" ] plain
+        let texts = locks |> List.map File.ReadAllText
+
+        let batched =
+            [ lockRule tinyOf id ran
+              "update-locks" => recipe {
+                  do! Locks.restoreAll (!! ("tiny/Br*/" + Description.FileName)) "Release" lockOf tinyOf
+                  do! need [ "lock::BrA::Release" ] } ]
+        clean names
+        let before = Described.restoreProcesses ()
+        x.Run "batch-1" [] [ "update-locks" ] batched
+        Assert.That(Described.restoreProcesses () - before, Is.EqualTo 1, "first generation: one restore")
+        Assert.That(locks |> List.map File.ReadAllText, Is.EqualTo texts)
+
+        let before = Described.restoreProcesses ()
+        x.Run "batch-2" [] [ "update-locks" ] batched
+        Assert.That(Described.restoreProcesses () - before, Is.EqualTo 1, "with the locks present: one restore")
+        Assert.That(locks |> List.map File.ReadAllText, Is.EqualTo texts)

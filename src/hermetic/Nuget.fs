@@ -45,6 +45,11 @@ module Nuget =
         /// the project's direct PackageReferences (ids), from `project.frameworks.<tfm>.dependencies`
         Direct: string list
         Framework: string
+        /// the .NET Framework assemblies the packages of the graph ask for
+        /// (`targets.<framework>.<id>/<version>.frameworkAssemblies`, a nuspec's
+        /// `frameworkAssemblies` for that framework, e.g. `WindowsBase`), by name, each once,
+        /// in the file's order; msbuild adds them as references. Empty for other frameworks
+        FrameworkAssemblies: string list
     }
 
     let private ic = System.StringComparison.OrdinalIgnoreCase
@@ -76,7 +81,7 @@ module Nuget =
     /// is the alias for a multi-target project and the full framework name
     /// (`frameworkFullName`) for a single-target one -- both are tried, exact first; then a key
     /// merely starting with either, in case a restore ever wrote something else there.
-    let private selectTarget (framework: string) (targets: (string * Json.Value) list) =
+    let private selectTarget (framework: string) (targets: (string * ToolJson.Value) list) =
         let candidates = [ framework; frameworkFullName framework ] |> List.distinct
         candidates |> List.tryPick (fun name -> targets |> List.tryFind (fun (key, _) -> System.String.Equals (key, name, ic)))
         |> Option.orElseWith (fun () ->
@@ -89,17 +94,17 @@ module Nuget =
     /// exactly what a restore run with `-p:TargetFramework=X` produced for every *other*
     /// framework of a multi-targeted project: see the repo-a verification notes §6.
     let readAssets (assetsFile: string) (framework: string) : Assets =
-        let root = File.ReadAllText assetsFile |> Json.parse
+        let root = File.ReadAllText assetsFile |> ToolJson.parse
 
         let targets =
-            Json.field "targets" root
+            ToolJson.field "targets" root
             |> function
-                | Some (Json.JObject members) -> members
+                | Some (ToolJson.JObject members) -> members
                 | _ -> []
 
         let entries =
             match selectTarget framework targets with
-            | Some (_, Json.JObject members) -> members
+            | Some (_, ToolJson.JObject members) -> members
             | Some _ -> []
             | None ->
                 failwithf "'%s' has no target for '%s' (it has: %s) -- restore it for that framework"
@@ -118,12 +123,12 @@ module Nuget =
             |> List.tryPick (fun (id, version) -> if System.String.Equals (id, depId, ic) then Some version else None)
             |> Option.defaultValue ""
 
-        let isProject entry = Json.field "type" entry |> Option.bind Json.asString = Some "project"
+        let isProject entry = ToolJson.field "type" entry |> Option.bind ToolJson.asString = Some "project"
 
         let dependenciesOf entry =
-            Json.field "dependencies" entry
+            ToolJson.field "dependencies" entry
             |> function
-                | Some (Json.JObject members) -> members |> List.map fst
+                | Some (ToolJson.JObject members) -> members |> List.map fst
                 | _ -> []
 
         let packages =
@@ -137,20 +142,28 @@ module Nuget =
                 dependenciesOf entry |> List.map (fun depId -> self, (depId, resolveVersion depId)))
 
         let direct =
-            Json.field "project" root
-            |> Option.bind (Json.field "frameworks")
+            ToolJson.field "project" root
+            |> Option.bind (ToolJson.field "frameworks")
             |> function
-                | Some (Json.JObject frameworks) ->
+                | Some (ToolJson.JObject frameworks) ->
                     frameworks
                     |> List.tryFind (fun (alias, _) -> System.String.Equals (alias, framework, ic))
                     |> Option.map snd
                 | _ -> None
-            |> Option.bind (Json.field "dependencies")
+            |> Option.bind (ToolJson.field "dependencies")
             |> function
-                | Some (Json.JObject members) -> members |> List.map fst
+                | Some (ToolJson.JObject members) -> members |> List.map fst
                 | _ -> []
 
-        { Packages = packages; Graph = graph; Direct = direct; Framework = framework }
+        let frameworkAssemblies =
+            entries
+            |> List.collect (fun (_, entry) ->
+                match ToolJson.field "frameworkAssemblies" entry with
+                | Some (ToolJson.JArray items) -> items |> List.choose ToolJson.asString
+                | _ -> [])
+            |> List.distinctBy (fun a -> a.ToLowerInvariant ())
+
+        { Packages = packages; Graph = graph; Direct = direct; Framework = framework; FrameworkAssemblies = frameworkAssemblies }
 
     /// The compile-time assets of every package in the restore graph of `framework`, as
     /// `project.assets.json` lists them (`targets.<framework>.<id>/<version>.compile`):
@@ -158,22 +171,22 @@ module Nuget =
     /// placeholder (`_._`) and `type: project` entries are left out. Fails like `readAssets`
     /// when the file has no target for `framework`.
     let compileItems (assetsFile: string) (framework: string) : (string * string * string) list =
-        let root = File.ReadAllText assetsFile |> Json.parse
+        let root = File.ReadAllText assetsFile |> ToolJson.parse
         let targets =
-            match Json.field "targets" root with
-            | Some (Json.JObject members) -> members
+            match ToolJson.field "targets" root with
+            | Some (ToolJson.JObject members) -> members
             | _ -> []
         match selectTarget framework targets with
         | None ->
             failwithf "'%s' has no target for '%s' (it has: %s) -- restore it for that framework"
                 assetsFile framework
                 (match targets |> List.map fst with | [] -> "no targets at all" | keys -> String.concat ", " keys)
-        | Some (_, Json.JObject entries) ->
+        | Some (_, ToolJson.JObject entries) ->
             entries |> List.collect (fun (key, entry) ->
-                if Json.field "type" entry |> Option.bind Json.asString = Some "project" then [] else
+                if ToolJson.field "type" entry |> Option.bind ToolJson.asString = Some "project" then [] else
                 let id, version = splitIdVersion key
-                match Json.field "compile" entry with
-                | Some (Json.JObject items) ->
+                match ToolJson.field "compile" entry with
+                | Some (ToolJson.JObject items) ->
                     items
                     |> List.map fst
                     |> List.filter (fun path -> Path.GetFileName path <> "_._")
@@ -202,8 +215,8 @@ module Nuget =
     let readContentHash (cacheRoot: string) (id: string) (version: string) : string option =
         let metadataFile = cacheRoot </> id.ToLowerInvariant () </> version.ToLowerInvariant () </> ".nupkg.metadata"
         if not (File.Exists metadataFile) then None else
-        File.ReadAllText metadataFile |> Json.parse
-        |> Json.field "contentHash" |> Option.bind Json.asString |> Option.defaultValue "" |> Some
+        File.ReadAllText metadataFile |> ToolJson.parse
+        |> ToolJson.field "contentHash" |> Option.bind ToolJson.asString |> Option.defaultValue "" |> Some
 
     /// Reads one package's identity, license and provenance from the cache. Never throws: a
     /// missing package directory yields `Directory = ""` and every other field empty -- the
@@ -218,9 +231,9 @@ module Nuget =
         let metadataFile = dir </> ".nupkg.metadata"
         let sha512, source =
             if not (File.Exists metadataFile) then "", "" else
-            let root = File.ReadAllText metadataFile |> Json.parse
-            (Json.field "contentHash" root |> Option.bind Json.asString |> Option.defaultValue ""),
-            (Json.field "source" root |> Option.bind Json.asString |> Option.defaultValue "")
+            let root = File.ReadAllText metadataFile |> ToolJson.parse
+            (ToolJson.field "contentHash" root |> Option.bind ToolJson.asString |> Option.defaultValue ""),
+            (ToolJson.field "source" root |> Option.bind ToolJson.asString |> Option.defaultValue "")
 
         let nuspecFile = dir </> (id.ToLowerInvariant () + ".nuspec")
         let supplier, license, repository, commit =

@@ -194,19 +194,19 @@ description is read -- no msbuild, no restore, no lock. Code: `src/dotnet/Projec
   entry whose output is not among the block's `ref`, a culture-specific resource, a description
   of the other language. The messages name Xake.Hermetic.Dotnet where it is the way out.
 - **Not here:** `config` (the SDK's Debug/Release presets), `packages`, `lock`: Xake.Hermetic.Dotnet
-  (next section). Its 0.3 release builds on Xake below 3.8, so its own `project` (below) and this
-  one never meet in a script; its next release builds on Xake 3.9 and this description model.
+  (next section). Since 0.4 it builds on Xake 3.9 and adds them to this `project`.
 
 ## From a project description in Xake.Hermetic.Dotnet: `project`, `config`, `packages`
 
-`Xake.Hermetic.Dotnet` adds three operations to `csc {}` and `fsc {}` that build a compilation
-from a project description (`xake.project.json`, [hermetic/description.md](hermetic/description.md))
-instead of listing sources and defines in the script. `project "path"` takes the description file
-(relative to the project root) and must follow every ordinary setting it builds on (`targetfwk`,
-`out`, `ref` for the outputs of `projectRefs`); after it only `config`, `packages`, `lock`,
-`nofetch` and `resolve` may come. Code: `src/hermetic/Described.fs`.
+`Xake.Hermetic.Dotnet` (0.4, on Xake 3.9) adds operations to the core's `project` (above) for a
+description with packages, a configuration or a lock
+([hermetic/description.md](hermetic/description.md#the-composition-this-package-adds-config-packages-lock)).
+`project "path"` is the core's setting; `config`, `packages` and `lock` come after it, then only
+`config`, `packages`, `lock`, `nofetch` and `resolve`; any of them makes the compilation the
+package's composition (below) instead of the core's. Code: `src/hermetic/Described.fs`.
 
 ```fsharp
+open Xake.Dotnet
 open Xake.Hermetic.Dotnet
 
 "out/Release/netstandard2.0/Xake.Dotnet.dll" ..> recipe {
@@ -225,9 +225,9 @@ open Xake.Hermetic.Dotnet
 
 | Operation | Argument | Does |
 |---|---|---|
-| `project` | `string` | the description at that path: sources (F# in order; C# as masks), defines, framework `references` (plus the SDK's implicit ones for .NET Framework), `byFramework` additions, options, `kind` as `target`, `internalsVisibleTo` as a generated source, `doc` as `<out>.xml`, `/deterministic+` and `/pathmap:<project root>/=/_/` |
+| `project` | `string` | the description at that path: sources (F# in order; C# as masks), defines, framework `references` (plus the SDK's implicit ones for .NET Framework), `byFramework` additions, options, `kind` as `target`, `internalsVisibleTo` and `assemblyAttributes` as one generated source, resources (`.resx` compiled), `noWarn` with the SDK's defaults, `doc` as `<out>.xml`, `/deterministic+` and `/pathmap:<project root>/=/_/` |
 | `config` | `"Debug"` \| `"Release"` | the SDK's configuration preset (below); without it no preset applies |
-| `packages` | `Described.Restored` | the description's packages as `Described.restore` resolved them; required when the description has packages for the framework |
+| `packages` | `Described.Restored` | the description's packages as `Described.restore` (or `restoreWith`) resolved them; required when the description has packages for the framework; every reference of the restore is passed, and its `FrameworkReferences` on .NET Framework |
 
 - **Framework.** `targetfwk` (it must be one of the description's `frameworks`), else the
   description's only framework, else `NETFX-TARGET`; otherwise it fails listing the frameworks.
@@ -244,26 +244,71 @@ open Xake.Hermetic.Dotnet
   | Debug | `--debug+ --debug:portable --optimize- --tailcalls-` | `/debug+ /debug:portable /optimize-` | `TRACE`, `DEBUG` |
   | Release | `--debug:portable --optimize+` | `/debug- /debug:portable /optimize+` | `TRACE`, `RELEASE` |
 
-  The SDK's configuration-independent switches (`--warn:3`, `/nowarn:1701,1702`,
-  `/highentropyva+`, `/filealign:512`, ...) are not carried: byte identity with `dotnet build` is
-  not a goal.
+  The SDK's configuration-independent switches (`--warn:3`, `/highentropyva+`,
+  `/filealign:512`, ...) are not carried: byte identity with `dotnet build` is not a goal. The
+  SDK's `NoWarn` is: `/nowarn:` is the SDK's defaults (`Described.sdkNoWarn`: C# `1701,1702`, F#
+  none) then the description's `options.noWarn`; `/warnaserror+` (`--warnaserror+`) only when
+  `options.warningsAsErrors`.
 - **Packages** are never resolved by the compiler. `Described.restore d framework` writes
-  `obj/xake/packages/<name>/<framework>/restore.csproj` (one `PackageReference` per package, the
+  `obj/xake/restore/<framework>-<hash>/restore.csproj` (one folder per package set; one `PackageReference` per package, the
   version as the description states it, floating left to msbuild; for F# on .NET Framework
   4.0-4.7 the SDK's implicit `System.ValueTuple` 4.6.2), runs `dotnet restore` on it into the
-  build's package folder (`NUGET_PACKAGES`), and reads `project.assets.json`
+  build's package folder (`NUGET_PACKAGES`) -- unless the build restored the same set already,
+  or `restoreAll` did in one batch: then the build's cache answers without a process -- and reads `project.assets.json`
   (`Nuget.readAssets`, `Nuget.compileItems`): `References` are the compile assets of the whole
-  graph, `Packages` the graph as a lock entry records it (`Lock.packagesOf`). A description with
-  packages and no `packages` fails, naming `Described.restore`.
+  graph, `Packages` the graph as a lock entry records it (`Lock.packagesOf`), `FrameworkReferences`
+  the packages' `frameworkAssemblies` for the framework (DocumentFormat.OpenXml on net472:
+  `WindowsBase`), which `project` references by name for a .NET Framework target, as msbuild
+  does (CS0012 otherwise). A description with packages and no `packages` fails, naming
+  `Described.restore`.
+- **Packages of project references** (no lock): msbuild flows a referenced project's packages to
+  the referrer; a description lists only its own. `Described.restoreWith descriptionOf d
+  framework` restores `d`'s packages plus those of the closure of its `projectRefs` (each
+  description read at `descriptionOf name`, the script's own name-to-path mapping, the one its
+  lock rule hands `Locks.generate`; for each, its nearest framework; declared versions; not
+  `private` ones; an id `d` declares wins). Lock generation flows them from the referenced
+  locks instead.
+- **The direct route at one restore** (no lock): `Described.restoreAll descriptionOf
+  descriptions frameworks` restores every description's `restoreWith` set in one `dotnet
+  restore` before the targets need them, and `Described.closure descriptionOf d` lists the
+  transitive project references (a project after the ones it references) the script passes with
+  `ref`:
+  ```fsharp
+  "main" => recipe {
+      do! Described.restoreAll descOf [ for n in names -> descOf n ] fwks
+      do! need [ for n in names do for f in fwks -> dllOf "Release" f n ] }
+  target "out/(cfg:*)/(fwk:*)/(name:*)/*.dll" {
+      // ... cfg, fwk, name from getRuleMatch
+      let! d = Description.load (descOf name)
+      let! pkgs = Described.restoreWith descOf d fwk               // from the cache
+      let! refs = Described.closure descOf d
+      do! need [ for r in refs -> dllOf cfg fwk r ]
+      do! csc { targetfwk fwk; ref (refs |> List.fold (fun fs r -> fs ++ dllOf cfg fwk r) Fileset.Empty)
+                project (descOf name); config cfg; packages pkgs } }
+  ```
+- **Directory.** The compiler runs in the project's folder (`Csc/Fsc.Directory`, a lock's
+  `Directory`), as under `dotnet build`: a relative `<include file=...>` resolves.
 - **C# masks.** A C# description's `sources` are Xake masks with the import's convention: a `!`
   prefix is an exclude, applied in order (`["**/*.cs", "!obj/**/*", "!bin/**/*"]`), and
   `dir/**/*` is every file below `dir`. `resolve` returns a `Csc` whose `Sources` are those
-  masks made absolute (the generated `InternalsVisibleTo` file first); `lock` records them as
+  masks made absolute (the generated attributes file first); `lock` records them as
   they are and compares them as written; compiling expands them (`Described.expand`: one fileset
   based at the first include's fixed folder, through `getFiles`, so the target depends on the
   listing and an added `.cs` rebuilds without touching the lock).
-- **Resources** are plain files: `--resource:`/`/resource:` with the given `name`, else the
-  root namespace (else the assembly name) and the path with `.` for `/`. A `.resx` fails for now.
+- **Resources**: `--resource:`/`/resource:` with the given `name`, else msbuild's default
+  (`Described.manifestName`: the root namespace, else the project name; the folder as an
+  identifier; the file name, a `.resx` as `<name>.resources`). A `.resx` is embedded as the
+  `.resources` it compiles to, `obj/xake/<assembly>/<framework>[/<config>]/<manifest>`: the pair
+  (resx, `.resources`) goes into `Csc.Resources`/`Fsc.Resources` (and so the lock: the resx path,
+  the manifest in the switch, no hash), and the runner compiles it with `Xake.Dotnet.Resx` (string
+  entries) every time it runs (the resx is an input, so an edit reruns it), writing the
+  `.resources` only when its bytes change. Xake 3.7's and 3.8's runner compile a missing one
+  only; on them, `Described.refreshResources` (run by `project` and
+  `Locks.compileAs`) deletes one older than its resx first.
+- **Generated attributes.** One source per compile, `obj/xake/<assembly>/<framework>/`: the
+  `internalsVisibleTo` friends, then `assemblyAttributes` (`[assembly: <type>(<args>)]`), in the
+  description's order. It is `<assembly>.InternalsVisibleTo.cs|fs` while it holds friends only
+  (so existing locks keep their text), `<assembly>.AssemblyAttributes.cs|fs` otherwise.
 - **No `-o` decision here.** The output is `out` or the rule's target, as for composed settings;
   leaving `-o` out of a lock is the lock generation's business.
 

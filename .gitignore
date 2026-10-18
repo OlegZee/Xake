@@ -45,4 +45,5 @@ temp
 paket-files/
 /out
 src/core/Xake.xml
+.claude/worktrees/
 .packages/

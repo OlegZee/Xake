@@ -1,9 +1,12 @@
 namespace Xake.Hermetic.Dotnet
 
-/// Just enough JSON for what msbuild's `-getItem`/`-getProperty` writes. A parser of our
+/// Just enough JSON for what the tools this package drives write (msbuild's `-getItem`/
+/// `-getProperty`, NuGet's `project.assets.json` and `.nupkg.metadata`), and the escaping of
+/// what it writes (SBOMs, signing manifests). The project description is read by the core's
+/// own reader (`Xake.Dotnet.Description`, internal to Xake.Dotnet). A parser of our
 /// own rather than System.Text.Json, which is a package dependency on netstandard2.0 and
 /// would land on every consumer of Xake.
-module internal Json =
+module internal ToolJson =
 
     type Value =
         | JString of string

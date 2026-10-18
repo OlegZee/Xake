@@ -101,7 +101,7 @@ Everything that *does* determine the output travels in the request: the argument
 
 `CscServerTests` "server and in-process compiles produce byte-identical output" compiles one
 library twice with `/deterministic`, `Server = InProcess` then `Server = Shared (Some 120)`,
-and asserts the two outputs are equal byte for byte. (Without `/deterministic` two compiles differ
+and `Verify.compare` (`Xake.Hermetic.Dotnet`) reports no differing range. (Without `/deterministic` two compiles differ
 in MVID and timestamp regardless of the server; and the output name matters -- the module name
 is in the PE, so the comparison compiles to the same `/out:` both times.) The same test checks
 the traced command line carries `/shared` in one run and not the other, and, on Unix, that a

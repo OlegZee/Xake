@@ -583,9 +583,9 @@ module Csc =
             // for a lock recorded from these settings to compile against once the caller
             // deleted it. Instead this records a permanent `(resx, .resources)` pair in
             // `Resources`, the same shape `Project.import` already produces for an imported
-            // project -- `run`'s resource step compiles it when the output is missing and
-            // `needFiles` the resx itself, so the engine (not this recipe) decides when a resx
-            // edit reruns the compile.
+            // project -- `run`'s resource step compiles it on every run (written when it
+            // changes) and `needFiles` the resx itself, so the engine (not this recipe) decides
+            // when a resx edit reruns the compile.
             let resNames = settings.Resources |> List.collect (Impl.collectResInfo options.ProjectRoot)
             let isResx (_, file: File) = file |> File.getFileName |> Impl.endsWith ".resx"
             let resxEntries, plainEntries = resNames |> List.partition isResx

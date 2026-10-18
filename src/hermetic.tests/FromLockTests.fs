@@ -59,6 +59,7 @@ type ``Csc fromlock``() =
                             References = c.Dependencies.References |> List.map (fun r -> { r with Sha256 = Csc.sha256 r.Path }) } }
             Evaluation = { Project = Path.Combine (dir, "Hello.csproj"); ProjectRefs = []; Imports = []; Sdk = fwk.Version; SdkPin = None; Properties = Map.empty }
             Prerequisites = []
+            Recorded = None
             Packages = []
         }
         project, outDll, assemblyInfoCs, assemblyInfoContent
@@ -230,6 +231,7 @@ type ``Csc fromlock``() =
                             References = c.Dependencies.References |> List.map (fun r -> { r with Sha256 = "ab" }) } }
             Evaluation = { Project = "/a/Sample.csproj"; ProjectRefs = []; Imports = []; Sdk = "8.0.0"; SdkPin = None; Properties = Map.empty }
             Prerequisites = []
+            Recorded = None
             Packages = []
         }
 

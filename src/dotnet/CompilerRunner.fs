@@ -53,7 +53,7 @@ module internal CompilerRunner =
         Hashed: (string * string) list
         /// (path, content) written back when missing or different
         Generated: (string * string) list
-        /// (resx, .resources) pairs; the output is compiled when missing
+        /// (resx, .resources) pairs; the output is compiled again on every run, written when it changes
         Resources: (string * string) list
         /// (path, content) of the `.runtimeconfig.json` the rule declares; written after a
         /// successful compile when missing or different
@@ -110,14 +110,13 @@ module internal CompilerRunner =
 
             // a resx is named on the command line as the `.resources` file it produces, which
             // has to exist before the `needFiles` of the inputs below sees it. The resx is
-            // `needFiles`d so the engine decides whether an edit reruns this recipe;
-            // regenerating only when the output is missing (not on a timestamp comparison)
-            // keeps `run` from being a second rebuilder next to the engine's
-            // (conceptual-review.md 2.3).
+            // `needFiles`d so the engine decides whether an edit reruns this recipe; when it
+            // runs, every `.resources` is compiled again from its resx (no timestamp
+            // comparison, so `run` is not a second rebuilder next to the engine's,
+            // conceptual-review.md 2.3) and written only when its bytes change.
             do! needFiles (Filelist (plan.Resources |> List.map (fst >> File.make)))
             for (resx, resourcesFile) in plan.Resources do
-                if not (File.Exists resourcesFile) then
-                    Resx.compile resx resourcesFile
+                Resx.refresh resx resourcesFile |> ignore
 
             // everything that carries a hash has to be exactly what was recorded, or the
             // compilation is not the one described

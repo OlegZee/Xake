@@ -257,12 +257,26 @@ module Restore =
     /// The synthesized restore project (see `DotNetFwk.downloadPackages`).
     let internal projectText (packages: (string * string) list) = DotNetFwk.restoreProjectText packages
 
-    /// Fetches the named `(id, version)` packages into the folder with **one** `dotnet
-    /// restore`, whatever the policy says -- this is the primitive, `ensure` is the one that
-    /// consults `Options.Enabled`. The mechanism is `DotNetFwk.downloadPackages`, shared with
-    /// `csc { toolset }`; `ensure` serializes its own restores on a `Resource`.
+    /// The packages in rounds that each name an id once: a synthesized project with two
+    /// `PackageDownload`s of one id downloads one of them. The first version of every id, then
+    /// the second of those that have one, and so on. Pure.
+    let internal rounds (packages: (string * string) list) : (string * string) list list =
+        let byId =
+            packages |> List.distinctBy (fun (id, v) -> id.ToLowerInvariant (), v.ToLowerInvariant ())
+            |> List.groupBy (fun (id, _) -> id.ToLowerInvariant ()) |> List.map snd
+        let deepest = byId |> List.map List.length |> List.fold max 0
+        [ for i in 0 .. deepest - 1 -> byId |> List.choose (List.tryItem i) ]
+
+    /// Fetches the named `(id, version)` packages into the folder with one `dotnet restore`
+    /// per round (`rounds`: one, unless an id comes in several versions), whatever the policy
+    /// says -- this is the primitive, `ensure` is the one that consults `Options.Enabled`. The
+    /// mechanism is `DotNetFwk.downloadPackages`, shared with `csc { toolset }`; `ensure`
+    /// serializes its own restores on a `Resource`.
     let download (options: Options) (packages: (string * string) list) : Recipe<ExecContext, unit> =
-        DotNetFwk.downloadPackages options.PackageRoot packages
+        recipe {
+            for round in rounds packages do
+                do! DotNetFwk.downloadPackages options.PackageRoot round
+        }
 
     /// One `Resource` per package folder, so that two compiles running in parallel and
     /// needing the same packages launch one restore between them rather than two competing

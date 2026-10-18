@@ -86,7 +86,7 @@
   },
   "properties": {
     "$schema": { "type": "string" },
-    "name": { "type": "string", "minLength": 1, "description": "Project key: the project file name without extension (Xake.Dotnet, Rendering); unique within a build; names the lock folder and the {name} of the layout" },
+    "name": { "type": "string", "minLength": 1, "description": "Project key: the project file name without extension (Xake.Dotnet, Layout); unique within a build; names the lock folder and the {name} of the layout" },
     "project": { "type": "string", "description": "The project file, relative to this description; lets a description live outside the project's repo. Other paths are relative to the project file's folder" },
     "assemblyName": { "type": "string", "description": "Default: name" },
     "rootNamespace": { "type": "string" },

@@ -104,6 +104,7 @@ type ``Project description``() =
             depends.Value |> List.choose (function
                 | FileDep (f, _) -> Some f.FullName
                 | ArtifactDep (FileTarget f) -> Some f.FullName
+                | ArtifactDep2 (FileTarget f, _) -> Some f.FullName
                 | GetFiles _ -> Some "GetFiles"
                 | _ -> None)
         Assert.That(inputs, Is.EqualTo [ Path.GetFullPath (root </> "find" </> "B" </> Description.FileName) ])

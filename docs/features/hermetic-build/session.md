@@ -1228,7 +1228,7 @@ reports in `fsc-rework/` are neutral summaries. The decisions of 2026-10-15 are 
 `fsc-rework/interview.md` ("Decisions of 2026-10-15"), with the principle *no msbuild emulation*.
 
 **Stack**: #56 (PR 2, recorded inputs) and #57 (PR 3, applications) merged into
-`feature/hermetic-build`; #58 (PR 4, run folders, `pr/deploy`) open; PR 5 `pr/hermetic-38`
+`feature/hermetic-build`; #58 (PR 4, run folders, `pr/deploy`) open; PR 5 #61 `pr/hermetic-38`
 (worktree `.claude/worktrees/pr/hermetic-38`) stacked on `pr/deploy`, draft against it. Core:
 Xake 3.8.0.29 is on nuget.org (#54 `ArtifactDep2`, #55 `ResxFormat` and the csc crash report);
 #59 (project descriptions in core, 3.9) is open and not released -- moving hermetic onto it is a

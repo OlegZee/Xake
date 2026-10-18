@@ -3,7 +3,7 @@
 // `build` compiles from them with fsc, no msbuild; `check` fails where `build` only warns (xake.fingerprints).
 // Bootstrap: the published packages (exact X.Y.Z.<run>, bumped only after a release lands on nuget.org).
 #r "nuget: Xake, 3.9.0.30"
-#r "nuget: Xake.Hermetic.Dotnet, 0.3.0.28"
+#r "nuget: Xake.Hermetic.Dotnet, 0.4.1.32"
 
 open Xake
 open Xake.Tasks

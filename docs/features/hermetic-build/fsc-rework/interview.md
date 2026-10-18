@@ -359,3 +359,35 @@ The user's remarks (overall: very good, the step-by-step format is what he likes
 9. Missing: the CI environment variable and how a script detects CI; the earlier idea of
    disabling the lock override on CI and failing on mismatch.
 Status: research + edits delegated (`arch-doc-review.md`), commit into `pr/hermetic-0.3`.
+
+## Decisions of 2026-10-15 (after the trial project runs)
+
+Restored here on 2026-10-18 in neutral wording; they were taken after the trial project runs on
+the night builds and drive PRs 0-5.
+
+**Principle: no msbuild emulation.** Xake does not re-derive what msbuild resolves (references,
+defines, generated sources, resource names, compiler switches, copy-local files). For an
+imported project the import records msbuild's answer in the lock, and the build replays the
+lock; msbuild is only the importer. The composed route (`csc {}`, `Locks.generate`) keeps
+deriving for the projects it covers (decision 5).
+
+1. **Lock texts are normalised**: text a lock carries or writes beside itself has LF line ends;
+   the commit sha is never in a lock (`$(SourceRevisionId)`, resolved at build time from the
+   repository); the lock pins the SDK that recorded it (the `dotnet-sdk` prerequisite), so
+   another SDK means a new import.
+2. **SourceLink is parked**: the import drops `/sourcelink` and `/embed`; a SourceLink build is a
+   later step.
+3. **apphost = the SDK's**: an application's host is the pinned SDK's own apphost (identified by
+   the SDK version), or the pack's template with its hash for an explicit RID; nothing is fetched
+   at build time.
+4. **Compiler switches and resource names are recorded from msbuild**, not computed by Xake.
+5. **Scope of the composed path**: `csc {}` / `fsc {}` with a description stay for simple cases
+   and for ASP.NET Core projects; everything else goes through the recorded import.
+6. **Byte-identity tests against `dotnet build` are dropped**: the checks are metadata parity
+   (types, methods, resources), run folders and import -> build -> import stability.
+7. **PR order**: 0 merge dev into the feature branch; 1 core ResxFormat and the csc crash report;
+   2 the recorded import; 3 applications; 4 run folders; 5 the core bump and the trial project
+   fixes.
+8. **Releases**: Xake 3.8 first (`ArtifactDep2`, `ResxFormat`, the csc crash report; published
+   as 3.8.0.29), then Xake.Hermetic.Dotnet 0.4 on it. Project descriptions move into the core
+   with 3.9 (#59), in a later PR.

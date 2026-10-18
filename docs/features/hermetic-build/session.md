@@ -1218,3 +1218,43 @@ Night branches parked: `pr/apphost-resx` (docs: triage, decisions-ru, group1-ru,
 Open: binding redirects S55, satellites, `Project.import` legacy, Windows/Linux unverified, HERMETIC=on on the trial project, `LOCK_STALE` switch name, SDK-pin warning 85× on the trial project, 34–38 s build (analyzers).
 
 **Exact next step**: owner reviews/merges #54 and #55 into dev → release Xake 3.8; pushes the feature branch and opens the stack PRs; meanwhile `exp-repo` moves to 0.4.2-night (in progress).
+
+## 2026-10-18 — scrub done; PR 5 (core bump and the trial project fixes)
+
+**Scrub**: the repository history was rewritten to remove customer-specific material; the branch
+`pr/ar-full` is deleted; the customer material (trial project scripts, logs, full reports) lives
+in a private experiment repository; draft #60 (`pr/scrub-docs`) fixes the docs on `dev`. The PR
+reports in `fsc-rework/` are neutral summaries. The decisions of 2026-10-15 are restored in
+`fsc-rework/interview.md` ("Decisions of 2026-10-15"), with the principle *no msbuild emulation*.
+
+**Stack**: #56 (PR 2, recorded inputs) and #57 (PR 3, applications) merged into
+`feature/hermetic-build`; #58 (PR 4, run folders, `pr/deploy`) open; PR 5 `pr/hermetic-38`
+(worktree `.claude/worktrees/pr/hermetic-38`) stacked on `pr/deploy`, draft against it. Core:
+Xake 3.8.0.29 is on nuget.org (#54 `ArtifactDep2`, #55 `ResxFormat` and the csc crash report);
+#59 (project descriptions in core, 3.9) is open and not released -- moving hermetic onto it is a
+later PR.
+
+PR 5 content:
+- `src/hermetic` on `Xake [3.8.0.29, 3.9)` (the next minor stays the upper bound: F# records are
+  not binary-compatible across minors). The S66 workaround (file dependencies on the closure's
+  write times in `Locks.runFolderWith`) is removed, `ArtifactDep2` covers it;
+  `Described.refreshResources` stays (3.8's runner still compiles a missing `.resources` only;
+  the night runner fix did not land in core -- a core follow-up). Hermetic did
+  not link its own `ResxFormat`: nothing to delete there. `DescriptionTests` match `ArtifactDep2`.
+- S67 `Locks.check`/`checkWith`/`staleWith`/`staleOf` were already public (critic round);
+  documented with an example in lock.md.
+- S68 `Pack.fromNuspec` + `Pack.tokensOf`/`expand`/`libOf`: the minimal pack from a project's
+  own nuspec, tokens from the description plus the script's.
+- S70 host path in descriptions and the one-per-import SDK pin warning: fixed in the critic
+  round, covered by `RecordTests` (verified).
+- S72 AD0001 under the compiler server: the replay passes msbuild's own `/analyzer:` and
+  `/analyzerconfig:` set (recorded); msbuild also shares one server across `-m` nodes, Xake
+  runs more compilations at once; not reproduced. The compile writes an error log, and a
+  failure whose log names a crashed analyzer is reported with the analyzer and retried once
+  without the server (test: an analyzer that throws only inside `VBCSCompiler`).
+- Satellites: deferred by decision (note already in the release notes).
+- Self-build: `build.fsc.fsx` bootstraps from Xake 3.8.0.29 (hermetic 0.3.0.28 still, NU1608);
+  `src/hermetic/xake.project.json` re-imported, the locks regenerated with this branch's hermetic
+  (`-d LOCK_REFRESH=Xake`, a temporary `#r` on the built dll, as docs/session.md allows): Xake
+  3.8.0.29 and its new dependencies (System.Resources.Extensions 8.0.0, System.Memory 4.5.5),
+  `"Format": 2` written; the published 0.3 bootstrap reads them (`build check` green).

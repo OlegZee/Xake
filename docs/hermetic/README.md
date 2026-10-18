@@ -1,5 +1,27 @@
 # Xake.Hermetic.Dotnet
 
+## 0.4 (next release)
+
+Built on **Xake 3.8** (`[3.8.0.29, 3.9)`, nuget.org 3.8.0.29). Everything under "Next" below,
+and:
+
+- **Xake 3.8 floor**: the run folder rule relies on the core's `ArtifactDep2` (a dependent sees
+  a dependee rebuilt by an earlier run); the temporary file dependencies on the closure's write
+  times are gone. `Described.refreshResources` stays: Xake 3.8's runner still compiles a
+  missing `.resources` only.
+- **`Pack.fromNuspec`** (S68): the minimal pack from a project's own nuspec, with `$token$`s
+  from the description (`Pack.tokensOf`: id, version, authors, description, ...) plus the
+  script's, its `<files>`, and `lib/<tfm>` from flat output folders (`Pack.libOf`); `Pack.expand`
+  fails naming a token without a value ([pack.md](pack.md#the-minimal-pack-from-a-projects-own-nuspec)).
+- **An analyzer crash under the compiler server** (S72, `AD0001`): the compile writes an error
+  log; a failure whose log names a crashed analyzer is reported with the analyzer and compiled
+  once more without the server ([lock.md](lock.md#building-a-recorded-lock)).
+- **`Locks.check`** documented with an example for a script's check target (S67;
+  [lock.md](lock.md#run-folders)).
+- Verified with tests (fixed in the critic round): no host path in a description written by
+  `Import.record` for an output folder outside the project (S70); one SDK pin warning per
+  import.
+
 ## Next (hermetic, after PR 2; 0.4.3-night with PR 4 and the critic fixes)
 
 - **`Import.record`**: the import that records msbuild's resolved compile inputs (references,

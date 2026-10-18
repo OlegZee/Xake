@@ -23,8 +23,45 @@ this release rebuild to the same package" cannot be answered by comparing bytes.
 - `Pack.zip : output -> Entry list -> Options -> unit`
 - `Pack.nupkg : output -> nuspec: string -> files: Entry list -> Options -> unit` -- `nuspec`
   is the path of the `.nuspec` file, read for `id`/`version` and packed at the root.
+- `Pack.fromNuspec`, `Pack.tokensOf`, `Pack.expand`, `Pack.libOf` -- the minimal pack from a
+  project's own nuspec ([below](#the-minimal-pack-from-a-projects-own-nuspec)).
 - `Pack.list : zipPath -> (string * int64 * uint32 * DateTime) list` -- path, uncompressed
   size, CRC-32, DOS time, in central-directory order. No entry bytes.
+
+## The minimal pack from a project's own nuspec
+
+A project that packs from its own `.nuspec` (`NuspecFile`) fills the nuspec's `$token$`s from
+msbuild properties. Xake records none of them (no pack emulation: a repository's own
+`NuspecProperties` target is not run), so the tokens come from the description and the script:
+
+- `Pack.tokensOf description version : Map<string, string>` -- `id` (the description's package
+  id, else the project name), `version`, `title`, `assemblyName`, and from the description's
+  `package` section `author`/`authors`, `description`, `copyright`, `projectUrl`, `license`,
+  `icon`, `readme`, `repositoryUrl`, `tags`. A script adds its own with `Map.add`.
+- `Pack.expand tokens text` -- every `$name$` replaced (names ignore case, as in `nuget pack`;
+  values XML-escaped); fails naming every token without a value.
+- `Pack.libOf assemblyName [ framework, folder ]` -- `lib/<framework>/<asm>.dll` (or `.exe`) and
+  the `.xml` beside it, from flat output folders; fails naming a folder without the assembly.
+- `Pack.fromNuspec output nuspec tokens lib options` -- the expanded nuspec, its `<files>`
+  packed as listed (`src` relative to the nuspec, `*`/`?` in the file name; no `**`, no
+  `exclude`) and removed from the packed manifest, then `lib`. Deterministic like `nupkg`. No
+  dependencies are computed: the nuspec states them (with tokens for their versions).
+
+```fsharp
+"out/pkg/(name:*).(ver:*).nupkg" ..> recipe {
+    let! name = getRuleMatch "name"
+    let! version = getRuleMatch "ver"
+    let! d = Description.load (descriptionOf name)
+    let fwks = [ for f in d.Frameworks -> f, outOf "Release" f name ]
+    do! need [ for f, dir in fwks -> $"{dir}/{name}.dll" ]
+    let tokens = Pack.tokensOf d version |> Map.add "brandSuffix" ".Acme"
+    let! target = getTargetFullName ()
+    Pack.fromNuspec target $"{dirOf name}/{name}.nuspec" tokens (Pack.libOf name fwks) Pack.Options.Default
+}
+```
+
+Not covered: satellite assemblies (not built yet), symbols packages, a `<files>` element with
+`exclude`.
 
 ## What `Pack.nupkg`/`Pack.zip` fix, and how
 

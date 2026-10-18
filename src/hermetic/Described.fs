@@ -224,6 +224,11 @@ module Described =
                            "-p:ImportDirectoryBuildProps=false"; "-p:ImportDirectoryBuildTargets=false"
                            "-p:ImportDirectoryPackagesProps=false"; "-p:ManagePackageVersionsCentrally=false" ]
                     env ("NUGET_PACKAGES", root)
+                    // no msbuild worker nodes left behind: a batch restore starts nodes, and a
+                    // reused node inherits this process's stdout and keeps the pipe open after
+                    // `dotnet restore` exits, so reading its output to the end waits for the
+                    // node's idle timeout (the Linux CI hang of 0.4.0)
+                    env ("MSBUILDDISABLENODEREUSE", "1")
                     workdir (Path.GetDirectoryName project)
                     logprefix "[restore]"
                     stdoutlevel (Tool.diagnosticLevel Level.Verbose)

@@ -23,6 +23,8 @@ type ``Project import of an fsproj``() =
     /// Runs `dotnet <args>` in `workDir`, failing with both streams on a non-zero exit.
     let runDotnet (workDir: string) (args: string list) =
         let psi = ProcessStartInfo ("dotnet")
+        // no msbuild node left holding the redirected output (ReadToEnd would wait for it)
+        psi.Environment.["MSBUILDDISABLENODEREUSE"] <- "1"
         psi.WorkingDirectory <- workDir
         psi.RedirectStandardOutput <- true
         psi.RedirectStandardError <- true

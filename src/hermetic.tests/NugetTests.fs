@@ -276,6 +276,8 @@ type ``Nuget assets``() =
         File.WriteAllText (projectDir </> "NugetIntegration.csproj", csproj)
 
         let psi = ProcessStartInfo ("dotnet", "restore")
+        // no msbuild node left holding the redirected output (ReadToEnd would wait for it)
+        psi.Environment.["MSBUILDDISABLENODEREUSE"] <- "1"
         psi.WorkingDirectory <- projectDir
         psi.RedirectStandardOutput <- true
         psi.RedirectStandardError <- true

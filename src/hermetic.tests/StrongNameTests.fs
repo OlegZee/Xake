@@ -39,6 +39,8 @@ type ``Strong name``() =
 
         // a plain Process rather than the engine's ProcessExec, which is internal to Xake
         let psi = Diagnostics.ProcessStartInfo ("dotnet", args, WorkingDirectory = dir, UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true)
+        // no msbuild node left holding the redirected output (ReadToEnd would wait for it)
+        psi.Environment.["MSBUILDDISABLENODEREUSE"] <- "1"
         use p = Diagnostics.Process.Start psi
         let stderr = p.StandardError.ReadToEndAsync ()
         let output = Text.StringBuilder (p.StandardOutput.ReadToEnd ())

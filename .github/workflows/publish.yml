@@ -18,6 +18,8 @@ on:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    # a hang fails here instead of at the 6-hour limit (see build.yml)
+    timeout-minutes: 40
 
     steps:
     - uses: actions/checkout@v7

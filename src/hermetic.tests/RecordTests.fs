@@ -194,6 +194,8 @@ type ``Import record``() =
 
     let runDotnet (workDir: string) (args: string list) =
         let psi = ProcessStartInfo ("dotnet")
+        // no msbuild node left holding the redirected output (ReadToEnd would wait for it)
+        psi.Environment.["MSBUILDDISABLENODEREUSE"] <- "1"
         psi.WorkingDirectory <- workDir
         psi.RedirectStandardOutput <- true
         psi.RedirectStandardError <- true
@@ -357,6 +359,8 @@ module internal RecordKit =
 
     let runDotnet (workDir: string) (args: string list) =
         let psi = ProcessStartInfo ("dotnet")
+        // no msbuild node left holding the redirected output (ReadToEnd would wait for it)
+        psi.Environment.["MSBUILDDISABLENODEREUSE"] <- "1"
         psi.WorkingDirectory <- workDir
         psi.RedirectStandardOutput <- true
         psi.RedirectStandardError <- true

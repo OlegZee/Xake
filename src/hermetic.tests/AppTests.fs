@@ -240,6 +240,8 @@ type ``Import record applications``() =
     /// stdout of `exe args` in `dir`; fails on a non-zero exit.
     let runProcess (exe: string) (args: string list) (dir: string) =
         let psi = ProcessStartInfo (exe)
+        // no msbuild node left holding the redirected output (ReadToEnd would wait for it)
+        psi.Environment.["MSBUILDDISABLENODEREUSE"] <- "1"
         psi.WorkingDirectory <- dir
         psi.RedirectStandardOutput <- true
         psi.RedirectStandardError <- true

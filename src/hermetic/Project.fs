@@ -94,7 +94,9 @@ module Project =
                 shell {
                     cmd "dotnet"
                     args ("msbuild" :: arguments)
-                    envs environment
+                    // no msbuild worker node left holding this process's stdout after msbuild
+                    // exits (`Described.runRestore`)
+                    envs (("MSBUILDDISABLENODEREUSE", "1") :: environment)
                     logprefix "[msbuild]"
                     stdoutlevel (Tool.diagnosticLevel Level.Verbose)
                     erroutlevel (Tool.diagnosticLevel Level.Error)

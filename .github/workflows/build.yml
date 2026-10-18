@@ -13,6 +13,9 @@ jobs:
   build:
     if: github.event_name != 'push' || !startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
+    # a normal run takes under 15 minutes; a hang fails here instead of at the 6-hour limit
+    # (the tests themselves are killed after 10 minutes each, build.fsx `test`)
+    timeout-minutes: 40
 
     strategy:
       fail-fast: false
@@ -48,6 +51,7 @@ jobs:
   build-fsc:
     if: github.event_name != 'push' || !startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
     - uses: actions/checkout@v7
     - name: Setup .NET

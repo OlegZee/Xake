@@ -1,6 +1,6 @@
-namespace Xake.Hermetic.Dotnet
+namespace Xake.Dotnet
 
-/// Just enough JSON for what msbuild's `-getItem`/`-getProperty` writes. A parser of our
+/// Just enough JSON for the project description (`Description`, `xake.project.json`). A parser of our
 /// own rather than System.Text.Json, which is a package dependency on netstandard2.0 and
 /// would land on every consumer of Xake.
 module internal Json =
@@ -9,8 +9,7 @@ module internal Json =
         | JString of string
         | JObject of (string * Value) list
         | JArray of Value list
-        /// numbers, booleans and null -- msbuild writes none of them, kept so that an
-        /// unexpected value does not fail the whole parse
+        /// numbers, booleans and null, as their source text (`true`, `false`, `12`)
         | JOther of string
 
     let parse (text: string) =

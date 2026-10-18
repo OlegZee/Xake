@@ -2,13 +2,37 @@
 
 ## 0.4 (next release)
 
-Built on **Xake 3.8** (`[3.8.0.29, 3.9)`, nuget.org 3.8.0.29). Everything under "Next" below,
+Built on **Xake 3.9** (`[3.9.0.30, 4.0)`, nuget.org 3.9.0.30). Everything under "Next" below,
 and:
 
-- **Xake 3.8 floor**: the run folder rule relies on the core's `ArtifactDep2` (a dependent sees
-  a dependee rebuilt by an earlier run); the temporary file dependencies on the closure's write
-  times are gone. `Described.refreshResources` stays: Xake 3.8's runner still compiles a
-  missing `.resources` only.
+- **Xake 3.9 floor; the project description is the core's.** `xake.project.json` is
+  `Xake.Dotnet.Description` (the module, the schema `docs/schemas/xake.project.schema.json`) and
+  `Xake.Dotnet.ProjectPlan`; this package's copies (`Description.fs`, `Json.fs` as a description
+  reader, `docs/hermetic/xake.project.schema.json`) are gone. Its JSON reader of tool output
+  (msbuild, `project.assets.json`) is the internal `ToolJson`. The helpers that moved with the
+  description are `ProjectPlan`'s now: `frameworkDefines`, `baseFramework`,
+  `implicitFrameworkReferences`, `sdkNoWarn`, `manifestName`, `rootNamespace`, `generatedKey`
+  (`Described.*` of 0.3; `Described.platformOf`, `preset`, `nearestFramework` and the restore
+  stay here).
+- **`csc { project }` / `fsc { project }` are the core's.** The core's intrinsic `project`
+  composes a description by itself (no packages, no lock, docs/description.md). This package
+  adds to it: `config "Release"` (the SDK's preset), `packages p` (what `Described.restore`
+  resolved) and `lock "path"` (with `nofetch`); any of them makes the compilation this package's
+  (`Described.fsc`/`csc`: packages, `--pathmap`, C# masks kept in the lock), as in 0.3. What a
+  script changes: nothing when `config`/`packages`/`lock` follow `project` (the 0.3 order);
+  they cannot come before it any more. `csc { project p }` alone is the core's composition,
+  which rejects a description with packages. The `lock` builder modules (`CscLocked`,
+  `FscLocked`) moved from `Lock.fs` to `Described.fs` (same names, same namespace).
+- **The import writes `frameworkReferences`** (msbuild's `FrameworkReference` items, the Web
+  SDK's implicit `Microsoft.AspNetCore.App` included, `Microsoft.NETCore.App` left out, the
+  WindowsDesktop profiles as `Microsoft.WindowsDesktop.App`), and the described composition
+  references the shared frameworks' packs (`DotNetFwk.sharedFrameworkReferences`).
+- **Xake 3.8** brought the run folder rule's `ArtifactDep2` (a dependent sees a dependee rebuilt
+  by an earlier run). `Described.refreshResources` stays: Xake 3.9's runner still compiles a
+  missing `.resources` only (a core follow-up: recompile it when the resx changed).
+- **Upper bound `4.0`**: a 3.x minor that adds a field to `CscSettingsType`, `FscSettingsType`,
+  `Csc`, `Fsc` or the run options breaks this build binary-wise (F# record construction) and
+  needs a release of this package with it.
 - **`Pack.fromNuspec`** (S68): the minimal pack from a project's own nuspec, with `$token$`s
   from the description (`Pack.tokensOf`: id, version, authors, description, ...) plus the
   script's, its `<files>`, and `lib/<tfm>` from flat output folders (`Pack.libOf`); `Pack.expand`
@@ -161,10 +185,10 @@ explained and checked: a **lock** file records exactly what the compiler was han
 of everything it read, the build compiles from the lock and fails when anything differs, and the
 result can be turned into a deterministic package with an SBOM and a signing step. It is a
 separate NuGet package that depends on `Xake` (the engine and the `csc`/`fsc`/`msbuild`/`resgen`
-tasks of `Xake.Dotnet`, Xake 3.7.0.26 or later, below 3.8); nothing in `Xake` knows about it.
+tasks of `Xake.Dotnet`, Xake 3.9.0.30 or later, below 4.0); nothing in `Xake` knows about it.
 
 ```fsharp
-#r "nuget: Xake.Hermetic.Dotnet, 0.3.0"
+#r "nuget: Xake.Hermetic.Dotnet, 0.4.0"
 
 open Xake
 open Xake.Dotnet

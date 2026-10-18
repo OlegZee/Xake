@@ -157,38 +157,19 @@ module internal Impl =
             let (Filelist l) = Fileset (fo,fs) |> (toFileList pathRoot) in
             l |> List.map mapFile
 
-    /// Compiles a `.resx` to a `.resources` file. Deliberately two paths, not one (B7):
-    /// - net462 uses `ResXResourceReader` (System.Windows.Forms), which handles everything
-    ///   msbuild does: typed values (images, icons, serialized objects), `ResXFileRef` entries
-    ///   and the 4.0.0.0 -> 2.0.0.0 type-name rewrite below.
-    /// - netstandard2.0 has no `ResXResourceReader`, so it uses `Resx.compile`, which is
-    ///   strings only and fails loudly on a typed or file-ref entry.
-    /// `Resx.compile` cannot replace the net462 path without regressing those entries; the
-    /// string-only output is what `ResxTests` compares byte for byte against msbuild (on the
-    /// netstandard2.0 build). Unifying would need `Resx.read` to grow typed/ResXFileRef support.
+    /// Compiles a `.resx` to a `.resources` file: one body for both targets, `Resx.compile`
+    /// (`ResxFormat`), which follows the .NET SDK's `GenerateResource` byte for byte -- strings,
+    /// typed values, `ResXNullRef`, `ResXFileRef` (text in the named encoding, code pages
+    /// included; `byte[]`; images and other types as activator streams), `bytearray.base64`
+    /// and `binary.base64` payloads. `ResxTests` compare it against msbuild.
+    /// A resx of strings (and primitives) compiles to the classic format any runtime reads; any
+    /// other entry makes the output preserialized (`System.Resources.Extensions`), which the
+    /// assembly carrying it needs at run time: in .NET 5+'s shared framework, a package
+    /// reference on .NET Framework (`ResxFormat.needsExtensions` tells which format a file is).
+    /// Before, net462 used `ResXResourceReader` and wrote the classic BinaryFormatter format;
+    /// both targets now write the same bytes.
     let compileResx (resxfile:File) (rcfile:File) =
-#if NETFRAMEWORK
-        use writer = new ResourceWriter (rcfile.FullName)
-
-        // TODO here we have deal with types somehow because we are running conversion under framework 4.5 but target could be 2.0
-        writer.TypeNameConverter <-
-            fun(t:System.Type) ->
-                t.AssemblyQualifiedName.Replace("4.0.0.0", "2.0.0.0")
-
-        use resxreader = new System.Resources.ResXResourceReader (resxfile.FullName)
-        resxreader.BasePath <- File.getDirName resxfile
-
-        let reader = resxreader.GetEnumerator()
-        while reader.MoveNext() do
-            writer.AddResource (reader.Key :?> string, reader.Value)
-        writer.Generate()
-#else
-        // netstandard2.0 has no ResXResourceReader (System.Windows.Forms, full framework
-        // only) but supports plain string resources via Xake.Dotnet.Resx, which reads the
-        // resx itself and writes with System.Resources.ResourceWriter -- typed values and
-        // ResXFileRef are not supported there.
         Xake.Dotnet.Resx.compile resxfile.FullName rcfile.FullName
-#endif
 
     let compileResxFiles = function
         | (res,(file:File)) when file |> File.getFileName |> endsWith ".resx" ->

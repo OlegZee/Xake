@@ -51,6 +51,10 @@ module FscBuilder =
         [<CustomOperation("notailcalls")>] member __.NoTailcalls(s:FscSettingsType) =   {s with Tailcalls = false}
         /// <summary>Passes custom arguments to the compiler</summary>
         [<CustomOperation("args")>]      member __.Args(s:FscSettingsType, args) =       {s with CommandArgs = args}
+        /// <summary>Composes the compilation from the project description at `path`
+        /// (`xake.project.json`, relative to the project root): as `csc { project }`; sources
+        /// in the listed order.</summary>
+        [<CustomOperation("project")>]   member __.Project(s:FscSettingsType, path: string) = {s with Project = Some path}
         /// <summary>Does not fail the build on a compile error</summary>
         [<CustomOperation("nofailonerror")>] member __.NoFailOnError(s:FscSettingsType) = {s with FailOnError = false}
 

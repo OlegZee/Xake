@@ -1,4 +1,4 @@
-namespace Xake.Hermetic.Dotnet
+namespace Xake.Dotnet
 
 open System.IO
 
@@ -6,9 +6,10 @@ open Xake
 
 /// What a project is (`xake.project.json`), as data: name, language, the project file,
 /// frameworks, sources, references, packages, options and package metadata. Rarely changes;
-/// written by an explicit import (or by hand), committed, read by the build. No placeholders:
-/// a variant msbuild evaluates differently is a separate description. Schema:
-/// `docs/schemas/xake.project.schema.json`, page `docs/hermetic/description.md`.
+/// written by an explicit import (Xake.Hermetic.Dotnet) or by hand, committed, read by the
+/// build: `csc { project "path" }` / `fsc { project "path" }` compose a compilation from it
+/// (`ProjectPlan`). No placeholders: a variant msbuild evaluates differently is a separate
+/// description. Schema: `docs/schemas/xake.project.schema.json`, page `docs/description.md`.
 ///
 /// `project` is relative to the description; every other path is relative to the project
 /// file's folder. Nothing here resolves paths or reads the project file.
@@ -25,13 +26,16 @@ module Description =
     /// An embedded resource: a plain file, or a `.resx` that `project` compiles to a
     /// `.resources` first. `Name` is the manifest name (msbuild's `LogicalName`, or the
     /// `ManifestResourceName` msbuild gave it, when that is not the default); `None` is
-    /// msbuild's default (`Described.manifestName`).
+    /// msbuild's default (`ProjectPlan.manifestName`).
     type Resource = { File: string; Name: string option }
 
     /// The lists a framework can add to (`byFramework`), also the project-wide ones.
     /// `Resources`: the embedded resources only this framework has (an `EmbeddedResource` under
-    /// a condition on the framework).
-    type Items = { Defines: string list; References: string list; Packages: Package list; Args: string list; Resources: Resource list }
+    /// a condition on the framework). `FrameworkReferences`: shared frameworks (msbuild's
+    /// `FrameworkReference` items), e.g. `Microsoft.AspNetCore.App`.
+    type Items =
+        { Defines: string list; References: string list; FrameworkReferences: string list
+          Packages: Package list; Args: string list; Resources: Resource list }
 
     /// `NoWarn`: the warnings the project suppresses beyond the SDK's own defaults (C#'s
     /// `1701;1702`), which `project` adds back.
@@ -73,6 +77,7 @@ module Description =
           Resources: Resource list
           Defines: string list
           References: string list
+          FrameworkReferences: string list
           ProjectRefs: string list
           Packages: Package list
           Options: Options
@@ -94,10 +99,10 @@ module Description =
     let internal fields =
         Map.ofList
             [ "project", [ "$schema"; "name"; "project"; "assemblyName"; "rootNamespace"; "language"; "kind"; "frameworks"
-                           "sources"; "resources"; "defines"; "references"; "projectRefs"; "packages"; "options"
+                           "sources"; "resources"; "defines"; "references"; "frameworkReferences"; "projectRefs"; "packages"; "options"
                            "internalsVisibleTo"; "assemblyAttributes"; "byFramework"; "package" ]
               "package", [ "id"; "version"; "private" ]
-              "items", [ "defines"; "references"; "packages"; "args"; "resources" ]
+              "items", [ "defines"; "references"; "frameworkReferences"; "packages"; "args"; "resources" ]
               "resource", [ "file"; "name" ]
               "options", [ "doc"; "langVersion"; "warningsAsErrors"; "noWarn"; "nullable"; "keyFile"; "args" ]
               "friend", [ "name"; "key" ]
@@ -130,6 +135,14 @@ module Description =
     let private req ms parent name read = match opt ms parent name read with Some v -> v | None -> fail (at parent name) "required"
     let private orEmpty ms parent name read = opt ms parent name read |> Option.defaultValue []
 
+    /// shared framework names, each one of `DotNetFwk.sharedFrameworks` (case as written there)
+    let private frameworkRefs path =
+        list path (fun p v ->
+            let name = str p v
+            match DotNetFwk.sharedFrameworks |> List.tryFind (fun f -> System.String.Equals (f, name, System.StringComparison.OrdinalIgnoreCase)) with
+            | Some f -> f
+            | None -> fail p (sprintf "'%s' is not one of %s" name (String.concat ", " DotNetFwk.sharedFrameworks)))
+
     let private package path v =
         let ms = members path fields.["package"] v
         { Id = req ms path "id" str; Version = opt ms path "version" str
@@ -141,6 +154,7 @@ module Description =
 
     let private items path ms =
         { Defines = orEmpty ms path "defines" strs; References = orEmpty ms path "references" strs
+          FrameworkReferences = orEmpty ms path "frameworkReferences" frameworkRefs
           Packages = orEmpty ms path "packages" (fun p -> list p package); Args = orEmpty ms path "args" strs
           Resources = orEmpty ms path "resources" (fun p -> list p resource) }
 
@@ -199,6 +213,7 @@ module Description =
               Resources = orEmpty ms "" "resources" (fun p -> list p resource)
               Defines = orEmpty ms "" "defines" strs
               References = orEmpty ms "" "references" strs
+              FrameworkReferences = orEmpty ms "" "frameworkReferences" frameworkRefs
               ProjectRefs = orEmpty ms "" "projectRefs" strs
               Packages = orEmpty ms "" "packages" (fun p -> list p package)
               Options = opt ms "" "options" options |> Option.defaultValue Options.Default
@@ -271,6 +286,7 @@ module Description =
         let resource (r: Resource) = JObject (List.choose id [ some "file" (s r.File); maybe "name" r.Name ])
         let items (i: Items) =
             [ nonEmpty "defines" (List.map s i.Defines); nonEmpty "references" (List.map s i.References)
+              nonEmpty "frameworkReferences" (List.map s i.FrameworkReferences)
               nonEmpty "packages" (List.map package i.Packages); nonEmpty "args" (List.map s i.Args)
               nonEmpty "resources" (List.map resource i.Resources) ]
         let o = d.Options
@@ -306,6 +322,7 @@ module Description =
               nonEmpty "resources" (List.map resource d.Resources)
               nonEmpty "defines" (List.map s d.Defines)
               nonEmpty "references" (List.map s d.References)
+              nonEmpty "frameworkReferences" (List.map s d.FrameworkReferences)
               nonEmpty "projectRefs" (List.map s d.ProjectRefs)
               nonEmpty "packages" (List.map package d.Packages)
               options

@@ -315,10 +315,13 @@ module DotNetFwk =
         /// target frameworks, `net5.0` and later, whose reference assemblies are the SDK's
         /// `Microsoft.NETCore.App.Ref` targeting pack. Kept apart from `moniker`, which knows
         /// only the .NET Framework ones (`net472`, no dot).
+        /// A platform framework (`net8.0-windows`, `net8.0-windows10.0.19041`) is its base
+        /// framework here: the platform adds a targeting pack of its own (the WindowsDesktop one,
+        /// with `UseWindowsForms`/`UseWPF`), the `Microsoft.NETCore.App.Ref` one is the base's.
         let netcoreMoniker (fwk: string) =
             let m = fwk.ToLowerInvariant().Replace("sdk-", "")
-            let rx = System.Text.RegularExpressions.Regex.Match(m, @"^net(\d+)\.(\d+)$")
-            if rx.Success && int rx.Groups.[1].Value >= 5 then Some m else None
+            let rx = System.Text.RegularExpressions.Regex.Match(m, @"^net(\d+)\.(\d+)(-[a-z]+(\d+(\.\d+)*)?)?$")
+            if rx.Success && int rx.Groups.[1].Value >= 5 then Some (sprintf "net%s.%s" rx.Groups.[1].Value rx.Groups.[2].Value) else None
 
         /// Numeric-aware pick of the latest subdirectory: "10.0.400" beats "8.0.424",
         /// and a released version beats a preview one.
@@ -503,13 +506,12 @@ module DotNetFwk =
         let sdkFramework (projectRoot: string) =
             sdkDir projectRoot |> Option.bind bundledFramework |> Option.map fst
 
-        /// The `TargetingPackVersion` the SDK in `sdkDir` names for `moniker`, from the
-        /// `KnownFrameworkReference` item of its `Microsoft.NETCoreSdk.BundledVersions.props`
-        /// with `Include="Microsoft.NETCore.App"`, `TargetFramework="<moniker>"` and
-        /// `TargetingPackName="Microsoft.NETCore.App.Ref"` -- the version `dotnet build`
-        /// restores when the pack is not installed ("6.0.36" for net6.0 on SDK 10.0.401).
-        /// `None` when the SDK does not know the framework (one newer than the SDK).
-        let internal knownTargetingPackVersion (sdkDir: string) (moniker: string) =
+        /// The `TargetingPackVersion` the SDK in `sdkDir` names for the shared framework
+        /// `framework` (`Microsoft.NETCore.App`, `Microsoft.AspNetCore.App`,
+        /// `Microsoft.WindowsDesktop.App`) and `moniker`: the `KnownFrameworkReference` item of its
+        /// `Microsoft.NETCoreSdk.BundledVersions.props` with that `Include`, `TargetFramework` and
+        /// `TargetingPackName="<framework>.Ref"`. `None` when the SDK does not know the pair.
+        let internal knownPackVersion (sdkDir: string) (framework: string) (moniker: string) =
             let props = sdkDir </> "Microsoft.NETCoreSdk.BundledVersions.props"
             if not (File.Exists props) then None else
             let text = File.ReadAllText props
@@ -520,10 +522,19 @@ module DotNetFwk =
             |> Seq.cast<System.Text.RegularExpressions.Match>
             |> Seq.map (fun m -> m.Value)
             |> Seq.filter (fun item ->
-                attr item "Include" = Some "Microsoft.NETCore.App"
+                attr item "Include" = Some framework
                 && (attr item "TargetFramework" |> Option.map (fun s -> s.ToLowerInvariant())) = Some moniker
-                && attr item "TargetingPackName" = Some netcoreRefPackageId)
+                && attr item "TargetingPackName" = Some (framework + ".Ref"))
             |> Seq.tryPick (fun item -> attr item "TargetingPackVersion" |> Option.filter ((<>) ""))
+
+        /// The `TargetingPackVersion` the SDK in `sdkDir` names for `moniker`, from the
+        /// `KnownFrameworkReference` item of its `Microsoft.NETCoreSdk.BundledVersions.props`
+        /// with `Include="Microsoft.NETCore.App"`, `TargetFramework="<moniker>"` and
+        /// `TargetingPackName="Microsoft.NETCore.App.Ref"` -- the version `dotnet build`
+        /// restores when the pack is not installed ("6.0.36" for net6.0 on SDK 10.0.401).
+        /// `None` when the SDK does not know the framework (one newer than the SDK).
+        let internal knownTargetingPackVersion (sdkDir: string) (moniker: string) =
+            knownPackVersion sdkDir "Microsoft.NETCore.App" moniker
 
         /// The `Microsoft.NETCore.App.Ref` version the SDK selected in `projectRoot` names for
         /// `moniker` (`knownTargetingPackVersion`, else the SDK's own bundled pack when it is for
@@ -614,6 +625,39 @@ module DotNetFwk =
                     | None, None ->
                         failwithf "reference assemblies for '%s' are not available: the SDK %s does not know target framework '%s' (its Microsoft.NETCoreSdk.BundledVersions.props names no %s for it) and no targeting pack under '%s' has ref/%s; use an SDK that supports it"
                             moniker (Path.GetFileName sdk) moniker netcoreRefPackageId packRoot moniker
+
+        /// Where the reference assemblies of the shared framework `framework` (its targeting pack
+        /// `<framework>.Ref`, e.g. `Microsoft.AspNetCore.App.Ref`) for a .NET `moniker` come
+        /// from, the way `netcoreRefSource` decides for `Microsoft.NETCore.App` without its pin:
+        /// the installed pack (`<dotnet>/packs/<framework>.Ref/<v>/ref/<moniker>`) at the version
+        /// the SDK names, else the newest installed one of that major.minor, else the NuGet
+        /// package at the SDK's version. Fails when the SDK knows no such pack for the moniker.
+        let internal sharedFrameworkSource projectRoot (framework: string) (moniker: string) =
+            match sdkDir projectRoot with
+            | None -> failwithf "reference assemblies of '%s' for '%s': the .NET SDK is not found" framework moniker
+            | Some sdk ->
+                let packRoot = Path.GetDirectoryName (Path.GetDirectoryName sdk) </> "packs" </> (framework + ".Ref")
+                let refDir version = packRoot </> version </> "ref" </> moniker
+                let wanted = knownPackVersion sdk framework moniker
+                match wanted with
+                | Some v when Directory.Exists (refDir v) -> InstalledPack (refDir v)
+                | _ ->
+                    let prefix = moniker.Substring 3 + "."
+                    let installed =
+                        if Directory.Exists packRoot then
+                            Directory.GetDirectories packRoot
+                            |> Array.filter (fun d -> (Path.GetFileName d).StartsWith prefix && Directory.Exists (d </> "ref" </> moniker))
+                        else [||]
+                    let versionKey (dir: string) =
+                        (Path.GetFileName dir).Split([| '.'; '-' |])
+                        |> Array.map (fun part -> match System.Int32.TryParse part with | true, v -> v | _ -> -1)
+                        |> List.ofArray
+                    match installed |> Array.sortBy versionKey |> Array.tryLast, wanted with
+                    | Some dir, _ -> InstalledPack (dir </> "ref" </> moniker)
+                    | None, Some v -> NugetPack v
+                    | None, None ->
+                        failwithf "reference assemblies of '%s' for '%s' are not available: the SDK %s names no %s.Ref for it and no pack under '%s' has ref/%s"
+                            framework moniker (Path.GetFileName sdk) framework packRoot moniker
 
         /// The reference assemblies of a .NET target framework (`net6.0`, `net10.0`):
         /// `netcoreRefSource` decides; a NuGet pack not in the cache yet is restored (normally
@@ -1091,7 +1135,8 @@ module DotNetFwk =
         sdkImpl.sdkFramework (Path.GetFullPath projectRoot)
 
     /// "net8.0" | "net10.0" | "sdk-net10.0" -> Some "net8.0" / "net10.0": a .NET (net5.0 and
-    /// later) target framework, normalized; `None` for .NET Framework, netstandard, anything else.
+    /// later) target framework, normalized; a platform one is its base ("net8.0-windows" ->
+    /// "net8.0"); `None` for .NET Framework, netstandard, anything else.
     let netcoreMoniker (fwk: string) : string option =
         if System.String.IsNullOrEmpty fwk then None else sdkImpl.netcoreMoniker fwk
 
@@ -1107,6 +1152,53 @@ module DotNetFwk =
             |> List.filter Directory.Exists
             |> List.collect (fun dir -> Directory.GetFiles (dir, "*.dll") |> List.ofArray)
             |> List.sortWith (fun a b -> System.String.CompareOrdinal (Path.GetFileName a, Path.GetFileName b))
+
+    /// The shared frameworks a project can name in `frameworkReferences` (msbuild's
+    /// `FrameworkReference` items) and the composed path can resolve from the SDK's packs.
+    let sharedFrameworks = [ "Microsoft.NETCore.App"; "Microsoft.AspNetCore.App"; "Microsoft.WindowsDesktop.App" ]
+
+    /// <summary>
+    /// The reference assemblies of the shared framework `framework` for the .NET target
+    /// framework `fwk` (`net8.0`, `net8.0-windows`): every `*.dll` of its targeting pack's
+    /// `ref/&lt;moniker&gt;`, in ordinal order -- what the SDK passes the compiler for a
+    /// `FrameworkReference`. `Microsoft.NETCore.App` is the target framework's own pack
+    /// (`resolveFramework`, `NETCORE_REF_VERSION` honoured); the others (`Microsoft.AspNetCore.App`,
+    /// `Microsoft.WindowsDesktop.App`) come from `&lt;dotnet&gt;/packs/&lt;framework&gt;.Ref` at the version the
+    /// SDK's `BundledVersions.props` names, or that NuGet package (`restorePackage`, which honours
+    /// `NUGET_FETCH`) when no pack is installed. No NuGet resolution beyond that one exact package.
+    /// Fails for an unknown framework, a target that is not .NET 5+, and
+    /// `Microsoft.WindowsDesktop.App` without a `-windows` target.
+    /// </summary>
+    let sharedFrameworkReferences (framework: string) (fwk: string) : Recipe<ExecContext, string list> =
+        recipe {
+            let known = sharedFrameworks |> List.tryFind (fun f -> System.String.Equals (f, framework, System.StringComparison.OrdinalIgnoreCase))
+            let moniker = netcoreMonikerOf fwk
+            match known, moniker with
+            | None, _ ->
+                return failwithf "framework reference '%s' is not one of %s" framework (String.concat ", " sharedFrameworks)
+            | Some _, None ->
+                return failwithf "framework reference '%s' needs a .NET 5+ target framework, not '%s'" framework fwk
+            | Some "Microsoft.NETCore.App", Some _ ->
+                let! fwkInfo = resolveFramework (Some fwk)
+                return frameworkReferences fwkInfo
+            | Some "Microsoft.WindowsDesktop.App", Some _ when not (fwk.ToLowerInvariant().Contains "-windows") ->
+                return failwithf "framework reference 'Microsoft.WindowsDesktop.App' needs a Windows target framework (net8.0-windows), not '%s'" fwk
+            | Some name, Some moniker ->
+                let! options = getCtxOptions ()
+                let! dir =
+                    match sdkImpl.sharedFrameworkSource options.ProjectRoot name moniker with
+                    | sdkImpl.InstalledPack dir -> recipe { return dir }
+                    | sdkImpl.NugetPack version ->
+                        recipe {
+                            let! pkg = restorePackage None (name + ".Ref") version
+                            return pkg </> "ref" </> moniker
+                        }
+                if not (Directory.Exists dir) then
+                    failwithf "reference assemblies of '%s' for '%s': '%s' does not exist" name fwk dir
+                return
+                    Directory.GetFiles (dir, "*.dll") |> List.ofArray
+                    |> List.sortWith (fun a b -> System.String.CompareOrdinal (Path.GetFileName a, Path.GetFileName b))
+        }
 
     /// The `FSharp.Core.dll` shipped next to the SDK's F# compiler (`<sdk>/FSharp/`), when the
     /// framework comes from the SDK provider and the file exists.

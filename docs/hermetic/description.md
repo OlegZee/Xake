@@ -7,74 +7,44 @@ There are no placeholders: a variant that msbuild evaluates differently (a brand
 gets its own description. Configurations, the output layout and versions belong to the build
 script, not to the description.
 
-Schema: [../schemas/xake.project.schema.json](../schemas/xake.project.schema.json). Module:
-`Description` in `Xake.Hermetic.Dotnet` (`src/hermetic/Description.fs`).
+The format is the core's since Xake 3.9: module `Xake.Dotnet.Description`
+(`src/dotnet/Description.fs`), schema
+[../schemas/xake.project.schema.json](../schemas/xake.project.schema.json), every field, the
+fixed text format and the API on [../description.md](../description.md). This page is what
+Xake.Hermetic.Dotnet adds: the import that writes descriptions, and the composition of a
+description with packages, a configuration and a lock.
 
-## Example
+## The composition this package adds: `config`, `packages`, `lock`
 
-```json
-{
-  "$schema": "../../docs/schemas/xake.project.schema.json",
-  "name": "Xake.Dotnet",
-  "project": "Xake.Dotnet.fsproj",
-  "language": "fsharp",
-  "kind": "library",
-  "frameworks": ["netstandard2.0", "net462"],
-  "sources": ["Tool.fs", "Hash.fs", "DotNetFwk.fs"],
-  "projectRefs": ["Xake"],
-  "packages": [{ "id": "FSharp.Core", "version": "8.0.100" }],
-  "options": { "doc": true },
-  "internalsVisibleTo": ["tests"],
-  "byFramework": {
-    "net462": { "references": ["System.Windows.Forms"] }
-  },
-  "package": { "id": "Xake", "license": "MIT", "bundle": ["Xake"] }
+The core's `csc { project "path" }` / `fsc { project "path" }` compose a description by
+themselves (sources, resources, defines, options, attributes, framework assemblies, shared
+frameworks) and reject one with `packages`. This package adds operations after `project`:
+
+```fsharp
+"out/Release/netstandard2.0/Xake.dll" ..> recipe {
+    let! d = Description.load "src/core/xake.project.json"
+    let! pkgs = Described.restore d "netstandard2.0"
+    do! fsc { targetfwk "netstandard2.0"; project "src/core/xake.project.json"
+              config "Release"; packages pkgs; lock "locks/Xake/Release.json" }
 }
 ```
 
-## Fields
+| Operation | What it adds |
+|---|---|
+| `config "Debug"` / `config "Release"` | the SDK's preset (`Described.preset`): defines `TRACE;DEBUG` or `TRACE;RELEASE`, debug/optimize switches, F# tail calls |
+| `packages p` | the compile-time assemblies of the packages `Described.restore` (or `restoreWith`) resolved, and their nuspec `frameworkAssemblies` for a .NET Framework target |
+| `lock "path"` (then `nofetch`) | gates the compilation by the lock ([lock.md](lock.md)); a C# lock keeps the description's masks |
+| `resolve` | the composed `Csc`/`Fsc` instead of compiling |
 
-`project` is relative to the description. Every other path is relative to the project file's
-folder.
-
-| Field | Type | Meaning |
-|---|---|---|
-| `$schema` | string | optional; kept as written |
-| `name` | string, required | project key: the project file name without extension; unique in a build; names the lock folder |
-| `project` | string, required | the project file, relative to the description (a description may live outside the project's repository) |
-| `assemblyName` | string | default: `name` |
-| `rootNamespace` | string | |
-| `language` | `fsharp` \| `csharp`, required | |
-| `kind` | `library` \| `exe` | default `library`; always written |
-| `frameworks` | string list, required, at least one | target frameworks (TFMs) |
-| `sources` | string list, required | in compile order (it matters for F#); for C#, msbuild's globs as Xake masks |
-| `resources` | `{ file, name? }` list | a plain file, embedded as is, or a `.resx`, compiled to a `.resources` by `project`; `name`: the manifest name (msbuild's `LogicalName`, or the `ManifestResourceName` msbuild gave it when `Import.record` ran its targets), default msbuild's (below) |
-| `defines` | string list | |
-| `references` | string list | framework assemblies by name, e.g. `System.Windows.Forms` |
-| `projectRefs` | string list | names of other described projects |
-| `packages` | `{ id, version?, private? }` list | `version` as declared (exact or a NuGet range), resolved at lock generation; `private`: compile time only |
-| `options` | object | `doc`, `langVersion`, `warningsAsErrors`, `noWarn` (warnings suppressed beyond the SDK's defaults, which `project` adds: C# `1701`, `1702`; F# none), `nullable` (`enable`/`disable`/`warnings`/`annotations`), `keyFile`, `args` (raw switches, appended last) |
-| `internalsVisibleTo` | list of string or `{ name, key? }` | friend assemblies |
-| `assemblyAttributes` | `{ type, args? }` list | assembly-level attributes, e.g. `{ "type": "System.CLSCompliantAttribute", "args": ["true"] }`; `args` are source text, emitted verbatim (`"\"text\""` for a string) |
-| `byFramework` | object keyed by TFM | additions for one framework: `defines`, `references`, `packages`, `args`, `resources` (an `EmbeddedResource` under a condition on the framework); each key must be one of `frameworks` |
-| `package` | object | present when the project is packed: `id` (required), `description`, `authors`, `copyright`, `tags`, `license` (SPDX), `projectUrl`, `repository { type, url }`, `icon`, `readme`, `bundle` (projectRefs packed into this package) |
-
-The default manifest name of a resource is msbuild's (`CreateCSharpManifestResourceName`,
-`Described.manifestName`): `rootNamespace` (else `name`), the file's folder with `/` -> `.` and
-each part made an identifier (`1st Folder` -> `_1st_Folder`; a folder that comes out as `_`, such
-as `_` or `-`, is `__`), the file name; a `.resx` without its extension, plus `.resources`
-(`Properties/Resources.resx` -> `<ns>.Properties.Resources.resources`).
-
-Unknown fields are errors. Every error names the field by its path, e.g.
-`'packages[0].id': required` or `'byFramework.net462': not one of the frameworks`.
-
-## Format
-
-`save` writes a fixed format, so that a description changes only when its content changes:
-fields in the order of the table, absent and empty fields left out (`kind` always written), a
-value on one line when it fits in 100 columns and one item per line otherwise, two-space
-indent, LF line ends, a final newline. Reading and writing a file in this format gives back the
-same bytes.
+Any of them makes the compilation this package's (`Described.fsc`/`Described.csc`): the plan is
+built from the core's `ProjectPlan` pieces (`pickFramework`, `itemsFor`, `frameworkDefines`,
+`manifestName`, `sdkNoWarn`, `implicitFrameworkReferences`, `DotNetFwk.sharedFrameworkReferences`)
+plus what only this package does: the restored packages, `--pathmap:<root>=/_/`, C# sources
+kept as masks (expanded when compiled, so an added `.cs` changes no lock), generated files
+under `obj/xake/<assembly>/<framework>[/<config>]`. As in 0.3, the block's `define`, `src` and
+`args` add to the description's (the core's composition replaces with them), and a `projectRefs`
+entry missing from `ref` is a warning. They come after `project` (`config "Release"` before it
+does not type-check).
 
 ## Import
 
@@ -92,7 +62,10 @@ run, nothing is restored, and a file is rewritten only when its content changes 
   `Include`/`Remove` attributes of the repository files; `!` marks an exclude, applied in order,
   and msbuild's `dir/**` is written `dir/**/*`. The masks are expanded and compared with
   msbuild's own list; a difference is reported.
-- `defines`, `references`, `packages`: what every framework has; the rest under `byFramework`.
+- `defines`, `references`, `frameworkReferences`, `packages`: what every framework has; the rest
+  under `byFramework`. `frameworkReferences` are msbuild's `FrameworkReference` items, the SDK's
+  implicit ones included (the Web SDK's `Microsoft.AspNetCore.App`), without
+  `Microsoft.NETCore.App`; the WindowsDesktop profiles are written `Microsoft.WindowsDesktop.App`.
   `TRACE` and the configuration's define, the SDK's implicit packages (`NETStandard.Library`,
   `System.ValueTuple`) and references are left out. Package versions are msbuild's
   (`Version`, `VersionOverride` or central `PackageVersion`); `PrivateAssets=all` is `private`.
@@ -169,21 +142,14 @@ folder.
 
 | Function | Signature | What it does |
 |---|---|---|
-| `Description.parse` | `string -> Project` | parse and validate JSON text |
-| `Description.read` | `string -> Project` | `parse` a file outside a recipe; errors are prefixed with the path |
-| `Description.load` | `string -> Recipe<ExecContext, Project>` | read a file (against the project root) and depend on it |
-| `Description.format` | `Project -> string` | the text `save` writes |
-| `Description.write` | `string -> Project -> bool` | write unless the file already holds the same text (CRLF and LF count as equal); the timestamp of an unchanged file is kept; returns whether it wrote |
-| `Description.save` | `string -> Project -> Recipe<ExecContext, unit>` | `write` against the project root; records no input |
-| `Description.find` | `Fileset -> string -> Recipe<ExecContext, Project>` | the description named `name` among the files of the fileset; only that file becomes an input (one file dependency). It fails when no file, or more than one file, describes the name |
-| `Description.names` | `Project list -> string list` | the project names, in order |
-| `Description.beside` | `string -> string` | the conventional description of a project file: `xake.project.json` in the same folder |
+| `Description.*` | | the core's (`Xake.Dotnet.Description`): see [../description.md](../description.md#api) |
 | `Import.descriptions` | `string list -> (string -> string) -> (string * string) list -> Recipe<ExecContext, Import.Imported list>` | import project files into descriptions (above) |
 | `Import.project` | `string -> (string -> string) -> (string * string) list -> Recipe<ExecContext, Import.Imported>` | the same for one project |
 | `Import.record` | `Import.RecordOptions -> string list -> Recipe<ExecContext, Import.Imported list>` | descriptions and recorded locks ([above](#import-that-records-msbuilds-compile-inputs-importrecord)); `Imported.Locks` names the locks written |
 
 ```fsharp
 open Xake
+open Xake.Dotnet
 open Xake.Hermetic.Dotnet
 
 let descriptions = !! "src/*/xake.project.json"

@@ -44,7 +44,7 @@ module Import =
           // the repository's own (`record` imports it from its targets file)
           "CustomAfterMicrosoftCommonTargets" ]
     let private itemTypes =
-        [ "Compile"; "Reference"; "PackageReference"; "PackageVersion"; "ProjectReference"; "AssemblyAttribute"
+        [ "Compile"; "Reference"; "FrameworkReference"; "PackageReference"; "PackageVersion"; "ProjectReference"; "AssemblyAttribute"
           "InternalsVisibleTo"; "EmbeddedResource"; "None"; "Content" ]
     /// What the evaluation reads only to refuse a project the import cannot record yet (WPF:
     /// `UseWPF` with XAML items), not carried by the description.
@@ -58,16 +58,16 @@ module Import =
     type internal Dump = { Props: Map<string, string>; Items: Map<string, (string * Map<string, string>) list> }
 
     let internal readDump (file: string) =
-        let root = File.ReadAllText file |> Json.parse
+        let root = File.ReadAllText file |> ToolJson.parse
         let strings = function
-            | Json.JObject ms -> ms |> List.choose (fun (k, v) -> Json.asString v |> Option.map (fun s -> k, s)) |> Map.ofList
+            | ToolJson.JObject ms -> ms |> List.choose (fun (k, v) -> ToolJson.asString v |> Option.map (fun s -> k, s)) |> Map.ofList
             | _ -> Map.empty
-        { Props = Json.field "Properties" root |> Option.map strings |> Option.defaultValue Map.empty
+        { Props = ToolJson.field "Properties" root |> Option.map strings |> Option.defaultValue Map.empty
           Items =
-            match Json.field "Items" root with
-            | Some (Json.JObject ms) ->
+            match ToolJson.field "Items" root with
+            | Some (ToolJson.JObject ms) ->
                 ms |> List.map (fun (k, v) ->
-                    k, Json.asArray v |> List.map (fun i ->
+                    k, ToolJson.asArray v |> List.map (fun i ->
                         let m = strings i
                         (m |> Map.tryPick (fun k v -> if k.Equals ("Identity", StringComparison.OrdinalIgnoreCase) then Some v else None)
                            |> Option.defaultValue ""), m))
@@ -363,6 +363,21 @@ module Import =
             items d "Reference" |> List.filter (snd >> inRepo) |> List.map (fun (id, m) ->
                 if meta "HintPath" m <> "" then drop (sprintf "%s: Reference %s HintPath=%s (references are by name)" name id (meta "HintPath" m))
                 id)
+        // shared frameworks (msbuild's `FrameworkReference` items), the SDK's implicit ones
+        // included: `Microsoft.AspNetCore.App` of the Web SDK is what the project is. Not
+        // Microsoft.NETCore.App (the target framework's own); the WindowsDesktop profiles
+        // (`UseWindowsForms`/`UseWPF`: `Microsoft.WindowsDesktop.App.WindowsForms`, `.WPF`) as the
+        // one shared framework they are part of. Spelled as the core spells them
+        // (`DotNetFwk.sharedFrameworks`); another name is reported as dropped
+        let frameworkRefsOf (d: Dump) =
+            items d "FrameworkReference" |> List.choose (fun (id, _) ->
+                let id = if id.StartsWith ("Microsoft.WindowsDesktop.App", StringComparison.OrdinalIgnoreCase) then "Microsoft.WindowsDesktop.App" else id
+                if id.Equals ("Microsoft.NETCore.App", StringComparison.OrdinalIgnoreCase) then None
+                else
+                    match DotNetFwk.sharedFrameworks |> List.tryFind (fun f -> f.Equals (id, StringComparison.OrdinalIgnoreCase)) with
+                    | Some f -> Some f
+                    | None -> drop (sprintf "%s: FrameworkReference %s (not one of %s)" name id (String.concat ", " DotNetFwk.sharedFrameworks)); None)
+            |> List.distinct
         let packagesOf (tfm: string) (d: Dump) =
             let central = items d "PackageVersion" |> List.map (fun (id, m) -> id, meta "Version" m) |> Map.ofList
             [ for id, m in items d "PackageReference" do
@@ -389,7 +404,7 @@ module Import =
                 // a shared project's (`.projitems`) item is an absolute path: relative to the project
                 let file = relative (slash id)
                 let isResx = file.EndsWith (".resx", StringComparison.OrdinalIgnoreCase)
-                let byDefault = Described.manifestName rootNs file
+                let byDefault = ProjectPlan.manifestName rootNs file
                 match fromTargets with
                 | Some _ ->
                     if isTrue (meta "WithCulture" m) then
@@ -420,7 +435,7 @@ module Import =
                     let logical =
                         match meta "LogicalName" m, meta "ManifestResourceName" m, slash (meta "Link" m) with
                         | "", "", "" -> ""
-                        | "", "", link -> Described.manifestName rootNs link
+                        | "", "", link -> ProjectPlan.manifestName rootNs link
                         | "", manifest, _ -> if isResx then manifest + ".resources" else Path.GetFileName file
                         | logical, _, _ -> logical
                     let dependentUpon = meta "DependentUpon" m
@@ -438,19 +453,20 @@ module Import =
                             drop (sprintf "%s: EmbeddedResource %s is named after the class of %s (DependentUpon); the description takes the default name, set its `name`"
                                       name file (if dependentUpon <> "" then dependentUpon else Path.ChangeExtension (Path.GetFileName file, ".cs")))
                         Some ({ File = file; Name = match logical with "" -> None | n -> Some n } : Description.Resource))
-        let perFramework = inner |> List.map (fun (tfm, d) -> tfm, (definesOf d, referencesOf d, packagesOf tfm d, resourcesOf tfm d))
+        let perFramework = inner |> List.map (fun (tfm, d) -> tfm, (definesOf d, referencesOf d, packagesOf tfm d, resourcesOf tfm d, frameworkRefsOf d))
         let common pick = perFramework |> List.map (snd >> pick) |> List.reduce (fun a b -> a |> List.filter (fun x -> List.contains x b))
-        let defines, references, packages = common (fun (d, _, _, _) -> d), common (fun (_, r, _, _) -> r), common (fun (_, _, p, _) -> p)
-        let resources = common (fun (_, _, _, r) -> r)
+        let defines, references, packages = common (fun (d, _, _, _, _) -> d), common (fun (_, r, _, _, _) -> r), common (fun (_, _, p, _, _) -> p)
+        let resources = common (fun (_, _, _, r, _) -> r)
+        let frameworkRefs = common (fun (_, _, _, _, f) -> f)
         let byFramework =
             if inner.Length < 2 then []
             else
-                perFramework |> List.choose (fun (tfm, (d, r, p, rs)) ->
+                perFramework |> List.choose (fun (tfm, (d, r, p, rs, f)) ->
                     let extra all common = all |> List.filter (fun x -> not (List.contains x common))
                     let i : Description.Items =
-                        { Defines = extra d defines; References = extra r references; Packages = extra p packages; Args = []
-                          Resources = extra rs resources }
-                    if i.Defines.IsEmpty && i.References.IsEmpty && i.Packages.IsEmpty && i.Resources.IsEmpty then None else Some (tfm, i))
+                        { Defines = extra d defines; References = extra r references; FrameworkReferences = extra f frameworkRefs
+                          Packages = extra p packages; Args = []; Resources = extra rs resources }
+                    if i.Defines.IsEmpty && i.References.IsEmpty && i.FrameworkReferences.IsEmpty && i.Packages.IsEmpty && i.Resources.IsEmpty then None else Some (tfm, i))
 
         // ---- sources
         let sources =
@@ -493,7 +509,7 @@ module Import =
               WarningsAsErrors = isTrue (fp "TreatWarningsAsErrors")
               // what the project adds to the SDK's defaults (`project` adds them back)
               NoWarn =
-                let sdk = set (Described.sdkNoWarn language)
+                let sdk = set (ProjectPlan.sdkNoWarn language)
                 (fp "NoWarn").Split ([| ';'; ',' |], StringSplitOptions.RemoveEmptyEntries)
                 |> Array.map (fun w -> w.Trim ()) |> Array.filter (fun w -> w <> "" && not (sdk.Contains w))
                 |> Array.distinct |> List.ofArray
@@ -565,6 +581,7 @@ module Import =
               Resources = resources
               Defines = defines
               References = references
+              FrameworkReferences = frameworkRefs
               ProjectRefs = List.map fst projectRefs
               Packages = packages
               Options = options
@@ -1223,7 +1240,7 @@ module Import =
         let binaryDir = (slash binaryDir).TrimEnd '/' + "/"
         let assemblyName = match p "AssemblyName" with "" -> ctx.Description.Name | a -> a
         let generatedDir =
-            let key = Described.generatedKey ctx.Root ctx.DescriptionFile ctx.ProjectDir assemblyName
+            let key = ProjectPlan.generatedKey ctx.Root ctx.DescriptionFile ctx.ProjectDir assemblyName
             (Described.generatedDirOf ctx.Root key framework (Some cfg)).TrimEnd '/' + "/"
         let fscArgs = items d "FscCommandLineArgs" |> List.map fst
         let isFSharp = not (List.isEmpty fscArgs)

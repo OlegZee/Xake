@@ -4,6 +4,7 @@ open System.IO
 open NUnit.Framework
 
 open Xake
+open Xake.Dotnet
 open Xake.Hermetic.Dotnet
 
 /// `Locks.compileAs` and `Locks.needAll`: the build from Xake-generated locks into the
@@ -31,7 +32,7 @@ type ``Building from Xake-generated locks``() =
         let d : Description.Project =
             { Schema = None; Name = name; Project = name + (if language = Description.FSharp then ".fsproj" else ".csproj")
               AssemblyName = None; RootNamespace = None; Language = language; Kind = Description.Library
-              Frameworks = [ "netstandard2.0" ]; Sources = sources; Resources = []; Defines = []; References = []
+              Frameworks = [ "netstandard2.0" ]; Sources = sources; Resources = []; Defines = []; References = []; FrameworkReferences = []
               ProjectRefs = refs; Packages = (if language = Description.FSharp then [ fsharpCore ] else [])
               Options = { Description.Options.Default with Doc = doc }; InternalsVisibleTo = []; AssemblyAttributes = []; ByFramework = []; Package = None }
         Description.write (dir </> Description.FileName) d |> ignore
@@ -368,7 +369,7 @@ type ``Building from Xake-generated locks``() =
         let d : Description.Project =
             { Schema = None; Name = "P"; Project = "../../../Sibling/P/P.csproj"; AssemblyName = None; RootNamespace = None
               Language = Description.CSharp; Kind = Description.Library; Frameworks = [ "netstandard2.0" ]
-              Sources = [ "**/*.cs"; "!obj/**/*"; "!bin/**/*" ]; Resources = []; Defines = []; References = []; ProjectRefs = []; Packages = []
+              Sources = [ "**/*.cs"; "!obj/**/*"; "!bin/**/*" ]; Resources = []; Defines = []; References = []; FrameworkReferences = []; ProjectRefs = []; Packages = []
               Options = { Description.Options.Default with KeyFile = Some "key.snk" }; InternalsVisibleTo = []; AssemblyAttributes = []; ByFramework = []; Package = None }
         Description.write (a </> "root/desc/P" </> Description.FileName) d |> ignore
         let descriptionOf (_: string) = "desc/P/" + Description.FileName
@@ -443,7 +444,7 @@ type ``Building from Xake-generated locks``() =
                 let d : Description.Project =
                     { Schema = None; Name = dir; Project = dir + (if language = Description.FSharp then ".fsproj" else ".csproj")
                       AssemblyName = None; RootNamespace = None; Language = language; Kind = Description.Library
-                      Frameworks = [ "netstandard2.0" ]; Sources = sources; Resources = []; Defines = []; References = []
+                      Frameworks = [ "netstandard2.0" ]; Sources = sources; Resources = []; Defines = []; References = []; FrameworkReferences = []
                       ProjectRefs = []; Packages = (if language = Description.FSharp then [ fsharpCore ] else [])
                       Options = Description.Options.Default; InternalsVisibleTo = []; AssemblyAttributes = []; ByFramework = []; Package = None }
                 Description.write (root </> "p" </> dir </> Description.FileName) d |> ignore

@@ -1,0 +1,68 @@
+{
+  "$schema": "../../../../docs/schemas/xake.project.schema.json",
+  "name": "Sample.Web",
+  "project": "src/Sample.Web.csproj",
+  "assemblyName": "Sample.Web.Api",
+  "rootNamespace": "Sample.Web",
+  "language": "csharp",
+  "kind": "exe",
+  "frameworks": ["net8.0", "net8.0-windows", "netstandard2.0"],
+  "sources": ["**/*.cs", "!obj/**/*", "!bin/**/*", "!**/.*/**/*"],
+  "resources": [
+    { "file": "Properties/Resources.resx" },
+    { "file": "data/logo.png", "name": "Sample.Logo" }
+  ],
+  "defines": ["FEATURE_A", "FEATURE_B"],
+  "references": ["System.Net.Http", "../lib/Vendor.dll"],
+  "frameworkReferences": ["Microsoft.AspNetCore.App"],
+  "projectRefs": ["Sample.Core"],
+  "packages": [
+    { "id": "Serilog", "version": "[3.1.1]" },
+    { "id": "StyleCop.Analyzers", "version": "1.1.118", "private": true }
+  ],
+  "options": {
+    "doc": true,
+    "langVersion": "12.0",
+    "warningsAsErrors": true,
+    "noWarn": ["CS1591", "CS0618"],
+    "nullable": "enable",
+    "keyFile": "../key.snk",
+    "args": ["/checked+"]
+  },
+  "internalsVisibleTo": [
+    "Sample.Web.Tests",
+    { "name": "DynamicProxyGenAssembly2", "key": "0024000004800000" }
+  ],
+  "assemblyAttributes": [
+    { "type": "System.CLSCompliantAttribute", "args": ["false"] },
+    {
+      "type": "System.Reflection.AssemblyMetadataAttribute",
+      "args": ["\"Channel\"", "\"preview\""]
+    }
+  ],
+  "byFramework": {
+    "net8.0-windows": {
+      "defines": ["WINDOWS"],
+      "frameworkReferences": ["Microsoft.WindowsDesktop.App"]
+    },
+    "netstandard2.0": {
+      "references": ["System.Memory"],
+      "packages": [{ "id": "System.Text.Json", "version": "8.0.5" }],
+      "args": ["/warn:3"],
+      "resources": [{ "file": "legacy/strings.txt" }]
+    }
+  },
+  "package": {
+    "id": "Sample.Web",
+    "description": "A sample",
+    "authors": "OlegZee",
+    "copyright": "(c) 2026",
+    "tags": ["sample", "web"],
+    "license": "MIT",
+    "projectUrl": "https://example.org/sample",
+    "repository": { "type": "git", "url": "https://example.org/sample.git" },
+    "icon": "icon.png",
+    "readme": "readme.md",
+    "bundle": ["Sample.Core"]
+  }
+}

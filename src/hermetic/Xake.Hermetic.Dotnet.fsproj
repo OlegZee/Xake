@@ -52,6 +52,7 @@
     <Compile Include="Lock.fs" />
     <Compile Include="Described.fs" />
     <Compile Include="Apps.fs" />
+    <Compile Include="RunFolder.fs" />
     <Compile Include="Locks.fs" />
     <Compile Include="Project.fs" />
     <Compile Include="Import.fs" />

@@ -275,9 +275,15 @@ machines record the same lock.
 
 An entry whose project has runtime output (`HasRuntimeOutput`: an exe, a winexe, a .NET test
 project) has an `App` section: what msbuild makes of the project besides the compile, recorded
-from msbuild, nothing derived. The build writes it beside the assembly (`Apps.write`, called by
-`Locks.compileAs` after the compile; the files are side outputs of the assembly's rule, like the
-`.xml`).
+from msbuild, nothing derived. A library has one too when msbuild copies something into its
+output: copy-local files (a referenced project's output; a .NET Framework test library's
+packages) or its own copy-to-output items. Then `OutputType` is `Library` and there is no
+`Host` and no `Files`.
+
+The compile writes the files named after the assembly beside it (`Apps.write`, called by
+`Locks.compileAs`; side outputs of the assembly's rule, like the `.xml`): `Files` and the
+apphost. One output folder can hold these for every project. The copy-local files and the
+copy-to-output items go into a run folder (`Locks.runFolderWith`, [Run folders](#run-folders)).
 
 ```json
 "App": {
@@ -292,6 +298,10 @@ from msbuild, nothing derived. The build writes it beside the assembly (`Apps.wr
     { "Id": "pkg:newtonsoft.json/13.0.3/lib/net6.0/Newtonsoft.Json.dll", "Sha256": "...", "To": "Newtonsoft.Json.dll" },
     { "Id": "pkg:sqlitepclraw.lib.e_sqlite3/2.1.6/runtimes/linux-x64/native/libe_sqlite3.so", "Sha256": "...", "To": "runtimes/linux-x64/native/libe_sqlite3.so" },
     { "Id": "project:lib", "Sha256": "", "To": "Lib.Core.dll" }
+  ],
+  "Content": [
+    { "Id": "$(ProjectRoot)/app/data/input.txt", "Sha256": "", "To": "data/input.txt" },
+    { "Id": "pkg:nunit3testadapter/4.2.1/build/netcoreapp2.1/NUnit3.TestAdapter.dll", "Sha256": "...", "To": "NUnit3.TestAdapter.dll" }
   ],
   "Related": [ ".pdb", ".xml", ".pri", ".dll.config", ".exe.config" ],
   "BindingRedirects": false
@@ -353,18 +363,31 @@ from msbuild, nothing derived. The build writes it beside the assembly (`Apps.wr
   `runtimes/<rid>/` asset of a RID-agnostic application included), a referenced project's
   output as `project:<name>`. A file beside or below a referenced project's msbuild output (its
   pdb, a satellite assembly, a dependency RAR found there) is left out: msbuild finds it only
-  when that project is built. The build copies the referenced project's output and the files
-  beside it with one of the `Related` extensions that exist (`AllowedReferenceRelatedFileExtensions`).
+  when that project is built. The run folder takes the referenced project's output and the
+  files beside it with one of the `Related` extensions that exist
+  (`AllowedReferenceRelatedFileExtensions`). `_ReferenceRelatedPaths` (a package's `.xml`,
+  `.pdb`) needs nothing of its own: the related files msbuild copies are in
+  `ReferenceCopyLocalPaths` already.
+- **`Content`**: the project's own items msbuild copies to the output, as
+  `_GetCopyToOutputDirectoryItemsFromThisProject` returns them: `None`, `Content`,
+  `EmbeddedResource` and `Compile` items with `CopyToOutputDirectory`, each at its `TargetPath`.
+  A file of the repository by its path, unhashed: it is an input of the run folder, as a source
+  is of the compile, and editing it does not make the lock stale. A package's file (the test
+  adapter's `None` items) by identity, with its hash. Left out: a file under the intermediate or
+  the output folder (written by a build target, such as the apphost or a coverage mapping file)
+  and a missing one. A referencing project's run folder takes these items too, as msbuild's
+  `GetCopyToOutputDirectoryItems` does transitively.
 - **`BindingRedirects`**: `true` when msbuild adds binding redirects to the config
   (`AutoGenerateBindingRedirects` and `GenerateBindingRedirectsOutputType`). The recorded config
   has none: the redirects depend on what RAR finds in the referenced projects' built outputs
   (S55, open).
 
-Not recorded yet: satellite assemblies (the project's own and a referenced project's; their
-entries in `deps.json`), the items msbuild copies from `None`/`Content` with
-`CopyToOutputDirectory` (test adapters, test data, `GetCopyToOutputDirectoryItems`: PR 4), a
-referenced application's own `runtimeconfig.json`/`deps.json`, a library's `deps.json`, the
-copy-local files of a library (a .NET Framework test library's packages and `.dll.config`).
+Not recorded: satellite assemblies (the project's own and a referenced project's; their
+entries in `deps.json`), binding redirects (a .NET Framework config, a test library's generated
+`.dll.config`), a library's `deps.json`, files a package's own build target copies (a `Copy` task
+after the build, not an item: `Microsoft.Data.SqlClient.SNI`'s `CopySNIFiles`), files a build
+target generates into the output (`.msCoverageSourceRootsMapping_*`,
+`CoverletSourceRootsMapping_*`).
 
 ### Building a recorded lock
 
@@ -400,6 +423,119 @@ command "build" { do! Locks.needAll (!! "src/*/xake.project.json") "Release" loc
 
 There is no `update-locks` step for a recorded project: the import is that step.
 
+### Run folders
+
+A run folder is the folder an application or a test project runs from: what `dotnet build`
+puts into its `bin/`, built only from that project's own lock closure. The compile output stays
+where the script's layout puts it (`outOf`), one folder per framework when the layout is flat
+(`Locks.flatOutOf`: `out/<cfg>/<fwk>`); a run folder links to it. The layout is the script's:
+`Locks.runFolderWith` takes the output layout (`outOf`) and the run folder is the folder of the
+rule's target.
+
+```fsharp
+command "build" { do! Locks.needAll (!! "src/*/xake.project.json") "Release" lockOf Locks.flatOutOf }
+command "deploy" {
+    let! folders = Locks.runFoldersWith [] (!! "src/*/xake.project.json") "Release" lockOf Locks.runOf
+    do! need folders }
+"run/(cfg:*)/(fwk:*)/(name:*)/.xake-run.txt" ..> recipe {
+    let! cfg = getRuleMatch "cfg"
+    let! fwk = getRuleMatch "fwk"
+    let! name = getRuleMatch "name"
+    do! Locks.runFolderWith [] RunFolder.Clone lockOf Locks.flatOutOf cfg fwk name }
+"out/(cfg:*)/(fwk:*)/(asm:*).dll" ..> compile      // finds the project by the assembly name
+"out/(cfg:*)/(fwk:*)/(asm:*).exe" ..> compile
+```
+
+What a run folder holds, step by step:
+
+1. The root project's own files. They are never replaced:
+   - its compile outputs in `outOf cfg fwk name`: the assembly (`TargetFileName`), the `.pdb`,
+     the `.xml` when the lock asks for doc, `Files` (runtimeconfig, deps.json, config), the
+     apphost;
+   - its `Content` items;
+   - its `Copy` files: the package runtime assets at the versions its own restore resolved.
+2. Then the closure of project references, breadth first in msbuild's order. A recorded entry
+   gives each reference's configuration and framework (`Recorded.Projects`); another entry uses
+   `refConfig` and `nearestFramework`. For each referenced project:
+   - its assembly in `outOf`, and the files beside it with the root's `Related` extensions;
+   - for a referenced application, its `runtimeconfig.json`, `deps.json` and apphost (the SDK's
+     items for referencing projects);
+   - its `Content` items;
+   - its `Copy` files that are not package files. A package's file in a referenced project's
+     list is the version that project's restore resolved; msbuild never copies it here. This
+     holds under PackageReference transitivity, where the root's restore has the referenced
+     project's packages at its own versions. A package the root's restore lacks
+     (`PrivateAssets="all"` or `ExcludeAssets` on a runtime package of a referenced .NET
+     Framework library, whose `bin/` msbuild's RAR copies from) is not placed either, but the
+     build warns naming the file (*is not placed: the root's restore lacks that package*); add
+     the package to the root project, or place the file from the script.
+3. One source per path (paths compare ignoring case). The first source is kept. In the closure
+   a higher assembly version replaces a lower one (the assembly version, not the package
+   version). Each dropped source with other content goes to `.xake-run.conflicts.txt` beside the
+   manifest, and the build warns.
+4. Each file is placed by `RunFolder.Mode`: `Clone` (APFS `clonefile`, Linux `FICLONE` on
+   btrfs/XFS, else a copy; on Windows `CopyFile` clones on ReFS and Dev Drive by itself), `Link`
+   (a hard link, else a clone, else a copy) or `Copy`. `Locks.runFolder` places by `Clone`; hard
+   links are the explicit opt-in (see below). Every path, planned or read from the previous
+   manifest, must stay inside the folder: a rooted path, a `..` step or a folder on the way that
+   is a symbolic link or junction fails the rule naming the path and where it came from. A
+   placed file is never written into: a changed one is unlinked and placed again, but only when
+   it still is what a run placed (a link to its source, or the stamp the manifest records); a
+   file changed since (by a test, by hand) is left alone and listed in the conflicts report. A
+   file at a planned path that no run placed is kept when it has other content, and is listed
+   in the conflicts report.
+5. The manifest `.xake-run.txt` is the rule's target: one line per file (mode, path, source,
+   and the source's stamp: size and write time). A later run compares with it. An entry whose
+   file still is its source is kept (a link: the same file identity, `dev`/`ino` or volume and
+   file index; a clone or a copy: the same size and write time). A path that is no longer
+   planned is removed, with the folders it leaves empty, only when its file is unchanged since a
+   run placed it; else it stays, listed in the conflicts report. Paths compare as the file
+   system does: ignoring case on macOS and Windows, so a case-only rename keeps the file. The
+   manifest is written only when its text changes: a no-op touches nothing, and a recompiled
+   source (a new stamp, also for a hard link whose file csc rewrote in place) rewrites it, so a
+   rule that needs the manifest (tests, a pack over the folder) runs again. A manifest written
+   before stamps (0.4.2) is read as before.
+
+Dependencies: the locks the rule reads; the closure's assemblies as the compile rules' targets,
+needed before anything beside them is looked at (so `deploy` on an unbuilt tree builds first and
+places the whole folder), and with their write times (on Xake 3.7 a rule's target carries no change stamp, so an assembly
+rebuilt by an earlier run would leave the folder "up to date": S66; Xake 3.8's `ArtifactDep2`
+sees that by itself); the package files and the items. The side outputs (pdb, xml, runtime
+files, apphost) change with their assembly and are not needed through the compile rule. So a
+.NET Framework application's `.xml` is never asked for as `<asm>.dll` (S64).
+
+Hard links (`RunFolder.Link`) cost no copy at all, which is why they are offered, but they share
+the file with its source:
+
+- **Windows:** file locks apply to the file, not the name. A test or an application running from
+  its run folder holds `out/X.dll` open, and the next compile of `X` fails with a sharing
+  violation, which msbuild's copied `bin/` never does.
+- **Unix:** rewriting a memory-mapped assembly in place under a running process can crash it.
+- **Everywhere:** a recompile that writes its output in place (csc does) is visible in every run
+  folder at once, and a test that writes into a file of its run folder writes into the source
+  (the NuGet cache, a repository `Content` file).
+
+`Clone` shares the blocks on APFS, btrfs/XFS and ReFS without sharing the file.
+
+Copy items are the import's expansion: a wildcard item (`<None Include="TestFiles/**"
+CopyToOutputDirectory=...>`) is recorded as the files it matched at import. A file added under
+it later is not placed until the next import; a file deleted or renamed fails the rule
+(*missing ...; run the import again*).
+
+A script's check target uses `Locks.check locks` (fails naming every stale lock and its changed
+files) or `Locks.staleWith extraRoots locks` (the stale locks and their messages, no failure),
+the check `Locks.compileAs` runs before a compile.
+
+`Locks.runFoldersWith` lists the manifests of every project of a fileset whose entry runs
+(`Locks.runs`: `OutputType` `Exe`/`WinExe`, generated runtime files, or `IsTestProject`), in
+each framework of its lock.
+
+Known differences from `dotnet build`'s `bin/` (checked on the trial product, 77 run folders):
+satellite assemblies; binding redirects (a .NET Framework config differs by its
+`<assemblyBinding>` lines; a .NET Framework test library's generated `.dll.config` is missing);
+files a package's build target copies with a `Copy` task; coverage mapping files a build target
+writes into the output.
+
 ### What is checked
 
 - Import, build, import again: the same lock (also after `dotnet build` filled `bin/` and `obj/`).
@@ -409,9 +545,10 @@ There is no `update-locks` step for a recorded project: the import is that step.
 - The outputs: the same files as `dotnet build` (assembly, `.pdb`, `.xml`), with the same types,
   methods, manifest resources, assembly references and version. Bytes are not a goal: msbuild
   writes some generated sources with CRLF on every OS, the lock records LF.
-- An application: the same files in its output folder as `dotnet build` but what is listed as
-  not recorded above; `runtimeconfig.json` and `deps.json` equal to msbuild's; it runs
-  (`dotnet app.dll`, the apphost on this OS).
+- An application or a test project: its run folder holds the same files as `dotnet build`'s
+  `bin/`, but what is listed as not recorded above; `runtimeconfig.json` and `deps.json` equal
+  to msbuild's; it runs from its run folder (`dotnet app.dll`, the apphost on this OS,
+  `dotnet test tests.dll`).
 
 ## F# entries
 

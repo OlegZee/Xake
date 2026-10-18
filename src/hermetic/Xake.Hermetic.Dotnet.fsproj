@@ -66,17 +66,18 @@
   <ItemGroup>
     <!-- Built on the published package, not on src/dotnet and src/core: the `Xake` package
          carries both Xake.dll and Xake.Dotnet.dll, and the range is what the nuspec
-         dependency says. 3.7.0 is the release this package builds on (3.6.0 was the first with the base
+         dependency says. 3.8.0 is the release this package builds on (3.6.0 was the first with the base
          it needs: `HermeticMode`, `DotNetFwk.packageRoot`/`fetchEnabled`/`globalJsonPin`, the
-         `Csc`/`Fsc` fields this package reads); nuget.org carries 3.7.0 as 3.7.0.26 (publish.yml appends the
-         run number), and the lower bound is that exact published version, or NuGet warns
+         `Csc`/`Fsc` fields this package reads; 3.8.0 adds `ArtifactDep2`, the run folder rule
+         relies on it, `ResxFormat` is in it too); nuget.org carries 3.8.0 as 3.8.0.29 (publish.yml appends
+         the run number), and the lower bound is that exact published version, or NuGet warns
          NU1603 on every restore.
 
          The upper bound is the next minor, not the next major: F# records are not
          binary-compatible across releases that add a field (a new field changes the
          constructor and the compiled pattern matches), and the base releases that touch
          `Csc`/`Fsc` are minors. Each base minor gets a release of this package. -->
-    <PackageReference Include="Xake" Version="[3.7.0.26, 3.8)" />
+    <PackageReference Include="Xake" Version="[3.8.0.29, 3.9)" />
   </ItemGroup>
 
   <!-- Test assemblies only; no other package sees these internals. hermetic.tests tests the

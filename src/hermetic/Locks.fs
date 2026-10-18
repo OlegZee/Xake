@@ -574,7 +574,7 @@ module Locks =
                             | Lock.Compilation.Fsc f -> Lock.Compilation.Fsc { f with Generated = f.Generated |> List.map subst }
                             | Lock.Compilation.Csc x -> Lock.Compilation.Csc { x with Generated = x.Generated |> List.map subst } }
 
-            // a `.resx` edited since its `.resources` was compiled (Xake 3.7's runner compiles a missing one only)
+            // a `.resx` edited since its `.resources` was compiled (Xake 3.8's runner still compiles a missing one only)
             Described.refreshResources c.Resources
             let! server = CompilerServer.resolve None
             let lockOptions = { Lock.Options.Default with Run = { Lock.Options.Default.Run with Server = server } }
@@ -937,13 +937,6 @@ module Locks =
                     if not (f.EndsWith ".pdb" || f.EndsWith ".xml") then add false p f
                 items false e.Framework (e.Recorded |> Option.bind (fun x -> x.App))
             for w in Seq.distinct notTaken do do! trace Warning "%s" w
-            // the assemblies' write times as plain file dependencies: an engine before Xake 3.8
-            // (the published 3.7 this package builds on, `[3.7.0.26, 3.8)` in
-            // Xake.Hermetic.Dotnet.fsproj) records a rule's target without its change stamp, so an
-            // assembly rebuilt by an earlier run would leave this folder "up to date" (S66; Xake
-            // 3.8's ArtifactDep2 sees it by itself: remove this with that reference)
-            let! result = getResult ()
-            do! setResult { result with Depends = result.Depends @ [ for a in assemblies -> let f = File.make a in FileDep (f, File.getLastWriteTime f) ] }
             // the package files the folder lacks, fetched (the versions the locks resolved)
             let missing = candidates |> Seq.map (fun c -> c.Source) |> Seq.filter (fun s -> hashes.ContainsKey s && not (File.Exists s)) |> Seq.distinct |> List.ofSeq
             if not (List.isEmpty missing) then

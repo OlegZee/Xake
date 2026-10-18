@@ -2,7 +2,7 @@
 // how it compiles in locks/<name>/Release.json; both committed, written only by `import` and `update-locks`.
 // `build` compiles from them with fsc, no msbuild; `check` fails where `build` only warns (xake.fingerprints).
 // Bootstrap: the published packages (exact X.Y.Z.<run>, bumped only after a release lands on nuget.org).
-#r "nuget: Xake, 3.7.0.26"
+#r "nuget: Xake, 3.8.0.29"
 #r "nuget: Xake.Hermetic.Dotnet, 0.3.0.28"
 
 open Xake

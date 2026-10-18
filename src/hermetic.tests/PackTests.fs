@@ -139,3 +139,76 @@ type ``Deterministic pack``() =
             |> List.ofSeq
 
         Assert.That (actual, Is.EqualTo expected)
+
+
+/// The minimal pack from a project's own nuspec (S68): tokens from the description, `lib/<tfm>`
+/// from flat output folders, the nuspec's `<files>`.
+[<TestFixture>]
+type ``Pack from a nuspec``() =
+
+    let testDir = Path.Combine (Path.GetTempPath (), "xake-nuspec-tests-" + Guid.NewGuid().ToString "N")
+    let at (p: string) = Path.Combine (testDir, p)
+    let write (p: string) (text: string) =
+        Directory.CreateDirectory (Path.GetDirectoryName (at p)) |> ignore
+        File.WriteAllText (at p, text)
+    let description =
+        Description.parse "{ \"name\": \"Acme.Core\", \"project\": \"Acme.Core.csproj\", \"language\": \"csharp\", \"frameworks\": [ \"net8.0\" ], \"sources\": [ \"**/*.cs\" ], \"package\": { \"id\": \"Acme.Core\", \"authors\": \"Acme & Co\", \"description\": \"Core\" } }"
+    let entryText (zip: string) (name: string) =
+        use z = Compression.ZipFile.OpenRead zip
+        use r = new StreamReader ((z.GetEntry name).Open ())
+        r.ReadToEnd ()
+
+    [<SetUp>]
+    member _.Setup () = Directory.CreateDirectory testDir |> ignore
+
+    [<TearDown>]
+    member _.Teardown () =
+        if Directory.Exists testDir then Directory.Delete (testDir, true)
+
+    [<Test>]
+    member _.``tokens come from the description and the script; lib from flat output folders`` () =
+        let tokens = Pack.tokensOf description "1.2.3"
+        Assert.That(tokens.["id"], Is.EqualTo "Acme.Core")
+        Assert.That(tokens.["version"], Is.EqualTo "1.2.3")
+        Assert.That(tokens.["authors"], Is.EqualTo "Acme & Co")
+        Assert.That(tokens.["assemblyName"], Is.EqualTo "Acme.Core")
+        write "out/net8.0/Acme.Core.dll" "dll8"
+        write "out/net8.0/Acme.Core.xml" "<doc/>"
+        write "out/net462/Acme.Core.dll" "dll4"
+        write "pkg/Acme.Core.nuspec"
+            ("<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<package xmlns=\"http://schemas.microsoft.com/packaging/2013/05/nuspec.xsd\">\n  <metadata>\n"
+             + "    <id>$id$$suffix$</id>\n    <version>$version$</version>\n    <authors>$Authors$</authors>\n    <description>$description$</description>\n"
+             + "  </metadata>\n</package>\n")
+        let lib = Pack.libOf "Acme.Core" [ "net8.0", at "out/net8.0"; "net462", at "out/net462" ]
+        Assert.That(lib |> List.map (fun e -> e.Path), Is.EqualTo [ "lib/net8.0/Acme.Core.dll"; "lib/net8.0/Acme.Core.xml"; "lib/net462/Acme.Core.dll" ])
+        // a token without a value fails, naming it
+        let e = Assert.Catch(fun () -> Pack.fromNuspec (at "a.nupkg") (at "pkg/Acme.Core.nuspec") tokens lib Pack.Options.Default)
+        Assert.That(e.Message, Does.Contain "$suffix$")
+        let tokens = tokens |> Map.add "suffix" ".Globex"
+        Pack.fromNuspec (at "a.nupkg") (at "pkg/Acme.Core.nuspec") tokens lib Pack.Options.Default
+        Pack.fromNuspec (at "b.nupkg") (at "pkg/Acme.Core.nuspec") tokens (List.rev lib) Pack.Options.Default
+        Assert.That(File.ReadAllBytes (at "a.nupkg"), Is.EqualTo (File.ReadAllBytes (at "b.nupkg")))
+        let names = Pack.list (at "a.nupkg") |> List.map (fun (n, _, _, _) -> n)
+        Assert.That(names, Does.Contain "Acme.Core.Globex.nuspec")
+        Assert.That(names, Does.Contain "lib/net462/Acme.Core.dll")
+        let nuspec = entryText (at "a.nupkg") "Acme.Core.Globex.nuspec"
+        Assert.That(nuspec, Does.Contain "<version>1.2.3</version>")
+        Assert.That(nuspec, Does.Contain "<authors>Acme &amp; Co</authors>")
+        // a folder without the assembly
+        let e2 = Assert.Catch(fun () -> Pack.libOf "Acme.Core" [ "net6.0", at "out/net6.0" ] |> ignore)
+        Assert.That(e2.Message, Does.Contain "no Acme.Core.dll")
+
+    [<Test>]
+    member _.``the nuspec's files are packed as listed and left out of the packed manifest`` () =
+        write "bin/Acme.Core.dll" "dll"
+        write "bin/Acme.Core.Extra.dll" "extra"
+        write "bin/readme.txt" "read me"
+        write "pkg/p.nuspec"
+            ("<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<package>\n  <metadata>\n    <id>$id$</id>\n    <version>$version$</version>\n  </metadata>\n"
+             + "  <files>\n    <file src=\"$bin$\\Acme.Core*.dll\" target=\"lib\\netstandard2.0\" />\n    <file src=\"../bin/readme.txt\" target=\"docs/readme.txt\" />\n  </files>\n</package>\n")
+        let tokens = Pack.tokensOf description "2.0.0" |> Map.add "bin" "../bin"
+        Pack.fromNuspec (at "p.nupkg") (at "pkg/p.nuspec") tokens [] Pack.Options.Default
+        let names = Pack.list (at "p.nupkg") |> List.map (fun (n, _, _, _) -> n)
+        Assert.That(names, Is.SupersetOf [ "lib/netstandard2.0/Acme.Core.dll"; "lib/netstandard2.0/Acme.Core.Extra.dll"; "docs/readme.txt"; "Acme.Core.nuspec" ])
+        Assert.That(entryText (at "p.nupkg") "Acme.Core.nuspec", Does.Not.Contain "<files>")
+

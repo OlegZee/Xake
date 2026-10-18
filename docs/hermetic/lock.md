@@ -12,9 +12,12 @@ and `fsc { ...; lock "path" }` operations. A lock entry holds a C# or an F# comp
 Everything here is in the package `Xake.Hermetic.Dotnet` (`src/hermetic/`: `Lock.fs`,
 `Project.fs`, `Roots.fs`, `Git.fs`, `Json.fs`); the compilations a lock entry wraps, `Csc` and
 `Fsc`, and their runners `Csc.run` and `Fsc.run` belong to `Xake.Dotnet` (inside the `Xake`
-package, 3.6 or later) and are described in [../csc-syntax.md](../csc-syntax.md). Scripts open both:
+package) and are described in [../csc-syntax.md](../csc-syntax.md). Xake.Hermetic.Dotnet 0.4 needs
+Xake 3.8 (`[3.8.0.29, 3.9)`): the run folder rule relies on its `ArtifactDep2` (a dependent sees
+a dependee rebuilt by an earlier run). Scripts open both:
 
 ```fsharp
+#r "nuget: Xake, 3.8.0.29"
 #r "nuget: Xake.Hermetic.Dotnet"
 
 open Xake
@@ -410,6 +413,17 @@ the runner checks the hashes, the prerequisite checks the SDK. Two points are sp
   lock imported in a git checkout does not build from a source tarball.
 - The output name is `TargetFileName`; a script declares an `*.exe` rule beside its `*.dll` rule
   for .NET Framework applications.
+- Analyzers: the replay runs msbuild's analyzer set, the same `/analyzer:` and
+  `/analyzerconfig:` switches the design-time build passed (the SDK's NetAnalyzers, the
+  `analysislevel_*.globalconfig`, the generated `.editorconfig`, package analyzers). Under the
+  compiler server (`CSC_SERVER`, on by default) many compilations share one `VBCSCompiler`, as
+  with `msbuild -m`, but a Xake build runs more of them at once. An analyzer that crashes there
+  (`AD0001`, an error under `TreatWarningsAsErrors`) fails the compile intermittently; seen once
+  in a large solution's clean build, not reproduced. The compile writes an error log
+  (`/errorlog:`, its own when the lock has one), and a failure whose log names a crashed analyzer
+  is reported with the analyzer and compiled once more without the server: *('X') an analyzer
+  crashed under the compiler server (AD0001): A.B (System.NullReferenceException); compiling once
+  more without the server*. A crash without the server, or any other failure, fails as before.
 
 ```fsharp
 command "import" {
@@ -498,9 +512,9 @@ What a run folder holds, step by step:
 
 Dependencies: the locks the rule reads; the closure's assemblies as the compile rules' targets,
 needed before anything beside them is looked at (so `deploy` on an unbuilt tree builds first and
-places the whole folder), and with their write times (on Xake 3.7 a rule's target carries no change stamp, so an assembly
-rebuilt by an earlier run would leave the folder "up to date": S66; Xake 3.8's `ArtifactDep2`
-sees that by itself); the package files and the items. The side outputs (pdb, xml, runtime
+places the whole folder; Xake 3.8 records them with their change stamps (`ArtifactDep2`), so an
+assembly rebuilt by an earlier run brings the folder up to date in the next one); the package
+files and the items. The side outputs (pdb, xml, runtime
 files, apphost) change with their assembly and are not needed through the compile rule. So a
 .NET Framework application's `.xml` is never asked for as `<asm>.dll` (S64).
 
@@ -524,7 +538,24 @@ it later is not placed until the next import; a file deleted or renamed fails th
 
 A script's check target uses `Locks.check locks` (fails naming every stale lock and its changed
 files) or `Locks.staleWith extraRoots locks` (the stale locks and their messages, no failure),
-the check `Locks.compileAs` runs before a compile.
+the check `Locks.compileAs` runs before a compile. `Locks.staleOf entry` is the pure part: the
+files of one entry's `Evaluation.Imports` that are missing or changed. A description is not
+covered: the build reads the masks from the lock, so a hand edit of `xake.project.json` shows
+only on the next import.
+
+```fsharp
+let locks () = [ for name in projects -> lockOf name "Release" ]
+rules [
+    // "are the committed locks still msbuild's answer?" -- before a build, in CI
+    "check" => Locks.check (locks ())
+    // or report and go on
+    "check-report" => recipe {
+        let! stale = Locks.staleWith [ "$(Shared)", "../shared" ] (locks ())
+        for lock, messages in stale do
+            do! trace Warning "%s: %s" lock (String.concat "; " messages)
+    }
+]
+```
 
 `Locks.runFoldersWith` lists the manifests of every project of a fileset whose entry runs
 (`Locks.runs`: `OutputType` `Exe`/`WinExe`, generated runtime files, or `IsTestProject`), in

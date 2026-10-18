@@ -62,7 +62,7 @@ type ``Recorded lock identities``() =
         { Lock.ofCsc c with
             Evaluation = { Lock.Evaluation.Empty with Project = "/r/proj/src/App.csproj"; ProjectRefs = [ "Lib" ]; Sdk = "8.0.425" }
             Prerequisites = [ { Kind = Lock.DotnetSdk; Version = "8.0.425"; Pin = "$(ProjectRoot)/global.json" } ]
-            Recorded = Some { Projects = [ lib ]; Masks = [ "/r/proj/src/**/*.cs"; "!/r/proj/src/obj/**/*" ]; Placed = None } }
+            Recorded = Some { Projects = [ lib ]; Masks = [ "/r/proj/src/**/*.cs"; "!/r/proj/src/obj/**/*" ]; Placed = None; App = None } }
 
     [<Test>]
     member x.``a recorded entry is written with identities and the Recorded section, and reads back to paths``() =
@@ -113,7 +113,7 @@ type ``Recorded lock identities``() =
         let entry =
             { Lock.ofCsc c with
                 Evaluation = { Lock.Evaluation.Empty with Project = "/r/proj/App.csproj"; Sdk = "8.0.425" }
-                Recorded = Some { Projects = []; Masks = masks; Placed = None } }
+                Recorded = Some { Projects = []; Masks = masks; Placed = None; App = None } }
         let rootsHere = [ "$(ProjectRoot)", "/r/proj"; "$(Shared)", "/r/shared"; "$(DotnetRoot)", "/r/dotnet"; "$(NuGetPackageRoot)", "/r/pkgs" ]
         let text = Lock.format rootsHere { Configuration = "Release"; Properties = []; Entries = [ entry ] }
         Assert.That(text, Does.Contain "\"Sources\": [\n          \"$(ProjectRoot)/Z.cs\",\n          \"$(ProjectRoot)/obj/xake/App.AssemblyInfo.cs\"\n        ]")
@@ -175,11 +175,11 @@ type ``Recorded lock identities``() =
     [<Test>]
     member x.``host strings: a root, the home folder or a runtime identifier left in a lock text``() =
         let home = (Environment.GetFolderPath Environment.SpecialFolder.UserProfile).Replace ('\\', '/')
-        Assert.That(Import.hostStrings roots "\"$(ProjectRoot)/a.cs\",\n\"pkg:x/1.0/lib/x.dll\"", Is.Empty)
-        Assert.That(Import.hostStrings roots "\"/r/proj/a.cs\"", Is.EqualTo [ "\"/r/proj/a.cs\"" ])
-        Assert.That(Import.hostStrings roots (sprintf "\"%s/.nuget/x.dll\"" home), Has.Length.EqualTo 1)
-        Assert.That(Import.hostStrings roots "\"pack:Microsoft.NETCore.App.Host.osx-arm64/8.0.11/x\"", Is.Empty)
-        Assert.That(Import.hostStrings roots "\"$(DotnetRoot)/packs/Host/8.0.11/runtimes/osx-arm64/native/apphost\"", Has.Length.EqualTo 1)
+        Assert.That(Import.hostStrings roots [] "\"$(ProjectRoot)/a.cs\",\n\"pkg:x/1.0/lib/x.dll\"", Is.Empty)
+        Assert.That(Import.hostStrings roots [] "\"/r/proj/a.cs\"", Is.EqualTo [ "\"/r/proj/a.cs\"" ])
+        Assert.That(Import.hostStrings roots [] (sprintf "\"%s/.nuget/x.dll\"" home), Has.Length.EqualTo 1)
+        Assert.That(Import.hostStrings roots [] "\"pack:Microsoft.NETCore.App.Host.osx-arm64/8.0.11/x\"", Is.Empty)
+        Assert.That(Import.hostStrings roots [] "\"$(DotnetRoot)/packs/Host/8.0.11/runtimes/osx-arm64/native/apphost\"", Has.Length.EqualTo 1)
 
 
 /// `Import.record` end to end on a two-project solution: a library (netstandard2.0 and net8.0,
@@ -653,7 +653,7 @@ type ``Import record switch files``() =
         let c =
             { Csc.ofArgs [ "/noconfig"; "/keyfile:/opt/keys/k.snk"; "/analyzerconfig:/r/dotnet/sdk/8.0.425/x.globalconfig"; "/ruleset:/r/proj/a.ruleset"
                            "/pathmap:/r/proj/=/_/,/opt/src/=/_2/"; "/r/proj/A.cs" ] with Name = "A"; Framework = "net8.0" }
-        let entry = { Lock.ofCsc c with Evaluation = { Lock.Evaluation.Empty with Project = "/r/proj/A.csproj"; Sdk = "8.0.425" }; Recorded = Some { Projects = []; Masks = []; Placed = None } }
+        let entry = { Lock.ofCsc c with Evaluation = { Lock.Evaluation.Empty with Project = "/r/proj/A.csproj"; Sdk = "8.0.425" }; Recorded = Some { Projects = []; Masks = []; Placed = None; App = None } }
         let problems = Import.unportablePaths roots entry
         Assert.That(problems, Has.Length.EqualTo 2)
         Assert.That(problems.[0], Does.Contain "'/opt/keys/k.snk'")
@@ -707,7 +707,7 @@ type ``Record entry``() =
         File.WriteAllBytes ("proj/obj/s/X.exe.licenses", licenses)
         let binaryDir = here () + "/locks/X/Release.files/net472"
         let entry, _, binaries = Import.entryOf (context [ "**/*.cs"; "!obj/**/*" ]) "Release" "net472" (here () + "/proj/obj/s") binaryDir (dump [] false)
-        Assert.That(binaries, Is.EqualTo [ here () + "/proj/obj/s/X.exe.licenses", binaryDir + "/X.exe.licenses" ])
+        Assert.That(binaries, Is.EqualTo [ binaryDir + "/X.exe.licenses", licenses ])
         let c = entry.Compilation
         Assert.That(c.Options, Does.Contain ("/resource:" + binaryDir + "/X.exe.licenses"))
         Assert.That(c.Generated |> List.map fst, Is.EqualTo [ here () + "/obj/xake/X/net472/Release/X.AssemblyInfo.cs" ])

@@ -6,6 +6,20 @@ open Xake
 open Xake.Tasks
 open Xake.Dotnet
 
+/// The SHA-256 of a file, memoised for the process by (full path, length, write time): an
+/// import hashes the same package files for every entry that copies them (on the trial product
+/// 13,638 copy-local items, mostly the same files in 72 test projects), a run folder checks
+/// them again. A file rewritten in place gets a new write time, hence a new key.
+module FileHash =
+
+    let private memo = System.Collections.Concurrent.ConcurrentDictionary<struct (string * int64 * int64), string> ()
+
+    /// `Csc.sha256 path`, memoised; a missing file is hashed (and fails) as `Csc.sha256` does.
+    let sha256 (path: string) : string =
+        let info = FileInfo path
+        if not info.Exists then Csc.sha256 path
+        else memo.GetOrAdd (struct (info.FullName, info.Length, info.LastWriteTimeUtc.Ticks), fun _ -> Csc.sha256 path)
+
 /// The imported compilation of a project: exactly what `dotnet build` would have handed the
 /// compiler, plus the identity (path and SHA-256) of everything the compiler would read that
 /// is not in the repository -- packages, analyzers, the compiler itself, the msbuild files
@@ -203,6 +217,65 @@ module Lock =
     /// the one msbuild chose (`NearestTargetFramework`).
     type ProjectOutput = { Name: string; Configuration: string; Framework: string; Path: string }
 
+    /// <summary>
+    /// The apphost of an application (`App.Host`), as `Import.record` writes it down (decision
+    /// 3, "the apphost is part of the SDK"):
+    /// <list type="bullet">
+    /// <item>`SdkHost` -- the project names no `RuntimeIdentifier`: msbuild takes the template
+    /// of the SDK's own runtime identifier, so the lock records only that; a build takes the
+    /// template of the SDK it builds with (`Evaluation.Sdk`: its `NETCoreSdkRuntimeIdentifier`
+    /// and `KnownAppHostPack`), identified by the SDK version and not hashed;</item>
+    /// <item>`PackHost` -- an explicit `RuntimeIdentifier`: the template file msbuild resolved
+    /// (`ResolvedAppHostPack`, a `pack:microsoft.netcore.app.host.&lt;rid&gt;/...` identity) with
+    /// its sha256.</item>
+    /// </list>
+    /// </summary>
+    type AppHost =
+        | SdkHost
+        | PackHost of rid: string * template: Hashed
+
+    /// A file msbuild writes for an application (`runtimeconfig.json`, `deps.json`, the
+    /// `<exe>.config`), recorded beside the lock (`Path`, `<lock>.files/<framework>/app/`,
+    /// with its sha256) -- or the project's own config file msbuild copies as it is (a .NET
+    /// application's `App.config`), named where it is -- and written into the output as `Name`.
+    type AppFile = { Name: string; Path: string; Sha256: string }
+
+    /// A file msbuild copies into an application's output (`ReferenceCopyLocalPaths`): the
+    /// file (`pkg:`/`pack:` identity, or `project:` for a referenced project's output, whose
+    /// `Sha256` is empty) and where it goes, relative to the output (`DestinationSubDirectory`
+    /// and the file name: `runtimes/win-x64/native/e_sqlite3.dll`).
+    type CopyItem = { Path: string; Sha256: string; To: string }
+
+    /// <summary>
+    /// What msbuild makes of a project with runtime output (`HasRuntimeOutput`: an exe, a
+    /// winexe, a .NET test project) besides the compile, as `Import.record` records it -- the
+    /// build writes it beside the assembly, deriving nothing:
+    /// <list type="bullet">
+    /// <item>`Host`: the apphost (`UseAppHost`), `None` without one;</item>
+    /// <item>`Files`: the `runtimeconfig.json` and `deps.json` msbuild generated
+    /// (`GenerateBuildRuntimeConfigurationFiles`, `GenerateBuildDependencyFile`) and the config
+    /// file `AppConfigWithTargetPath` names before binding redirects (for .NET Framework the
+    /// SDK's `supportedRuntime` added); a referenced project's versions in `deps.json` are the
+    /// tokens `$(AssemblyVersion:&lt;file&gt;)`/`$(FileVersion:&lt;file&gt;)`, read from the built file
+    /// at build time, as msbuild reads them;</item>
+    /// <item>`Copy`: msbuild's copy-local files, packages and referenced projects;</item>
+    /// <item>`Related`: the extensions of the files copied beside a referenced project's
+    /// output when they exist (`AllowedReferenceRelatedFileExtensions`: `.pdb`, `.xml`, ...);</item>
+    /// <item>`BindingRedirects`: msbuild adds binding redirects to the config
+    /// (`AutoGenerateBindingRedirects` and `GenerateBindingRedirectsOutputType`, .NET Framework
+    /// and .NET alike); the recorded
+    /// config has none (they depend on what is built when the import runs; S55).</item>
+    /// </list>
+    /// </summary>
+    type App = {
+        OutputType: string
+        Host: AppHost option
+        Files: AppFile list
+        Copy: CopyItem list
+        Related: string list
+        BindingRedirects: bool
+    }
+
     /// What only an entry recorded from msbuild (`Import.record`) carries. Its presence is the
     /// marker the SBOM and a staleness check read ("msbuild" against "composed"): such an
     /// entry is msbuild's resolution written down, never Xake's. On disk its references,
@@ -223,6 +296,9 @@ module Lock =
         /// `Sources` then holds the placed files only and a build reconstructs the rest from
         /// the masks (`reconstructSources`)
         Placed: (string * string) list option
+        /// What msbuild makes of a project with runtime output besides the compile (`App`);
+        /// `None` for a library
+        App: App option
     }
 
     /// <summary>
@@ -582,7 +658,11 @@ module Lock =
             // a targeting pack (`Microsoft.<X>.App.Ref`) is the same `pack:` whether this .NET has
             // it or msbuild downloaded it into the package folder: the id in lower case, as the
             // package folder spells it
-            let isPack (id: string) = id.EndsWith (".app.ref", System.StringComparison.OrdinalIgnoreCase)
+            // the same for an apphost pack and a runtime pack (`Microsoft.NETCore.App.Host.<rid>`,
+            // `Microsoft.<X>.App.Runtime.<rid>`), which an explicit runtime identifier brings
+            let isPack (id: string) =
+                let id = id.ToLowerInvariant ()
+                id.EndsWith ".app.ref" || id.Contains ".app.host." || id.Contains ".app.runtime."
             match project, inPacks, inPackages, inSdk with
             | Some p, _, _, _ -> Some ("project:" + p.Name)
             | _, Some (pack, version, rest), _, _ -> Some (sprintf "pack:%s/%s/%s" (pack.ToLowerInvariant ()) version rest)
@@ -775,7 +855,25 @@ module Lock =
                           sprintf "%s  { \"Name\": %s, \"Configuration\": %s, \"Framework\": %s, \"Path\": %s }"
                               indent (escape p.Name) (escape p.Configuration) (escape p.Framework) (str p.Path))
                       |> String.concat ",\n"
-                  yield if projects = "" then sprintf "%s\"Projects\": []" indent else sprintf "%s\"Projects\": [\n%s\n%s]" indent projects indent ] ]
+                  yield if projects = "" then sprintf "%s\"Projects\": []" indent else sprintf "%s\"Projects\": [\n%s\n%s]" indent projects indent ]
+          // what msbuild makes of a project with runtime output besides the compile
+          match entry.Recorded |> Option.bind (fun r -> r.App) with
+          | None -> ()
+          | Some a ->
+              let listOf name (lines: string list) =
+                  if List.isEmpty lines then sprintf "%s%s: []" indent (escape name)
+                  else sprintf "%s%s: [\n%s\n%s]" indent (escape name) (lines |> List.map (sprintf "%s  %s" indent) |> String.concat ",\n") indent
+              section "App"
+                [ yield sprintf "%s\"OutputType\": %s" indent (escape a.OutputType)
+                  match a.Host with
+                  | None -> ()
+                  | Some SdkHost -> yield sprintf "%s\"Host\": { \"Rid\": \"\" }" indent
+                  | Some (PackHost (rid, t)) ->
+                      yield sprintf "%s\"Host\": { \"Rid\": %s, %s, \"Sha256\": %s }" indent (escape rid) (fileField "apphost template" t.Path) (escape t.Sha256)
+                  yield listOf "Files" [ for f in a.Files -> sprintf "{ \"Name\": %s, \"Path\": %s, \"Sha256\": %s }" (escape f.Name) (str f.Path) (escape f.Sha256) ]
+                  yield listOf "Copy" [ for c in a.Copy -> sprintf "{ %s, \"Sha256\": %s, \"To\": %s }" (fileField "copy-local file" c.Path) (escape c.Sha256) (escape c.To) ]
+                  yield listOf "Related" [ for r in a.Related -> escape r ]
+                  yield sprintf "%s\"BindingRedirects\": %s" indent (if a.BindingRedirects then "true" else "false") ] ]
         |> String.concat ",\n" |> sprintf "    {\n%s\n    }"
 
     /// The lock as text: paths tokenized against the given roots, one line per item, so the
@@ -836,7 +934,8 @@ module Lock =
                        Placed =
                          match field "Placed" r with
                          | Some (JObject members) -> Some (members |> List.choose (fun (k, v) -> asString v |> Option.map (fun v -> expand k, expand v)))
-                         | _ -> None }
+                         | _ -> None
+                       App = None }
             | _ -> None
         let context : Identity.Context =
             { Roots = roots; Sdk = str "Sdk" e; Projects = recorded |> Option.map (fun r -> r.Projects) |> Option.defaultValue [] }
@@ -845,6 +944,25 @@ module Lock =
             match field "Id" item |> Option.bind asString with
             | Some id when id <> "" -> Identity.toPath context id
             | _ -> str "Path" item |> expand
+        let recorded =
+            match recorded, field "App" value with
+            | Some r, Some (JObject _ as a) ->
+                let items name = field name a |> Option.map asArray |> Option.defaultValue []
+                let app =
+                    { OutputType = str "OutputType" a
+                      Host =
+                        match field "Host" a with
+                        | Some (JObject _ as h) ->
+                            match str "Rid" h with
+                            | "" -> Some SdkHost
+                            | rid -> Some (PackHost (rid, { Path = fileOf h; Sha256 = str "Sha256" h }))
+                        | _ -> None
+                      Files = items "Files" |> List.map (fun f -> { Name = str "Name" f; Path = str "Path" f |> expand; Sha256 = str "Sha256" f })
+                      Copy = items "Copy" |> List.map (fun c -> { Path = fileOf c; Sha256 = str "Sha256" c; To = str "To" c })
+                      Related = items "Related" |> List.choose asString
+                      BindingRedirects = field "BindingRedirects" a |> Option.bind asBool |> Option.defaultValue false }
+                Some { r with App = Some app }
+            | _ -> recorded
         let hashedFiles name value =
             field name value |> Option.map asArray |> Option.defaultValue []
             |> List.map (fun h -> ({ Path = fileOf h; Sha256 = str "Sha256" h } : Hashed))
@@ -1104,7 +1222,15 @@ module Lock =
                 let d = e.Dependencies
                 yield d.Compiler.Path
                 for r in d.References do yield r.Path
-                for a in d.Analyzers do yield a.Path ] }
+                for a in d.Analyzers do yield a.Path
+                // an application's copy-local packages and its apphost template (explicit RID)
+                match e.Recorded |> Option.bind (fun r -> r.App) with
+                | Some app ->
+                    for c in app.Copy do if c.Sha256 <> "" then yield c.Path
+                    match app.Host with
+                    | Some (PackHost (_, t)) -> yield t.Path
+                    | _ -> ()
+                | None -> () ] }
 
     /// Fills the package folder from a whole lock in one step -- a script's "restore the
     /// build's dependencies" target, so a build agent can populate (and then cache) the folder

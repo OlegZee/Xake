@@ -474,6 +474,11 @@ module Locks =
             // hashed ones are packages, which may not be fetched yet: the runner needs them after
             // `compileFrom`'s restore
             do! needFiles (Filelist (entry.Dependencies.References |> List.filter (fun r -> r.Sha256 = "") |> List.map (fun r -> File.make r.Path)))
+            // an application copies its referenced projects' outputs too
+            let app = entry.Recorded |> Option.bind (fun r -> r.App)
+            match app |> Option.map Apps.projectCopies with
+            | Some (_ :: _ as outputs) -> do! needFiles (Filelist (outputs |> List.distinct |> List.map File.make))
+            | _ -> ()
 
             let c = entry.Compilation
             let! c =
@@ -532,6 +537,16 @@ module Locks =
             let! server = CompilerServer.resolve None
             let lockOptions = { Lock.Options.Default with Run = { Lock.Options.Default.Run with Server = server } }
             do! Lock.compileFromWith extraRoots lockPath lockOptions { entry with Compilation = outputAt target c }
+
+            // an application: what msbuild writes beside the assembly, from the lock (`Apps.write`)
+            match app with
+            | None -> ()
+            | Some app ->
+                let! roots = Roots.currentWith extraRoots
+                let dotnetRoot = roots |> List.tryFind (fst >> (=) "$(DotnetRoot)") |> Option.map snd |> Option.defaultValue ""
+                let! packageRoot = DotNetFwk.packageRoot ()
+                let! warnings = Apps.write dotnetRoot packageRoot lockPath entry.Name entry.Framework entry.Evaluation.Sdk app target
+                for w in warnings do do! trace Warning "%s" w
         }
 
     /// Whether the compilation asks for an XML doc file (`/doc:`, `--doc:`).

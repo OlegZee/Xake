@@ -27,6 +27,16 @@
   `.licenses`, a `g.resources`) is copied to `<lock>.files/<framework>/`; commit the folder.
 - **`Restore.download` in rounds**: one version of a package id per synthesized restore, so a
   lock set that needs two versions of one id fetches both.
+- **Applications (PR 3)**: a recorded entry with runtime output has an `App` section -- the
+  apphost (the SDK's own without a `RuntimeIdentifier`, identified by the SDK version; with one,
+  the pack's template pinned with its hash), msbuild's `runtimeconfig.json`, `deps.json` and
+  config file beside the lock (`<lock>.files/<framework>/app/`), msbuild's copy-local files.
+  `Locks.compileAs` writes them beside the assembly; a lock of an application changes on the
+  next import ([lock.md](lock.md#applications-the-app-section)). The import runs a second
+  msbuild pass over the applications. Not yet: binding redirects, satellites, `None`/`Content`
+  copy items.
+- **`pack:` covers apphost and runtime packs** (`Microsoft.NETCore.App.Host.<rid>`,
+  `*.App.Runtime.<rid>`), wherever the machine has them.
 
 Version **0.3.0, preview**: the API may break while the package is 0.x. 0.3 is built on
 **Xake 3.7** (`[3.7.0.26, 3.8)`) and adds:

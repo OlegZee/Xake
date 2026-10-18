@@ -740,14 +740,25 @@ module Import =
           "Analyzer", [ "NuGetPackageId"; "NuGetPackageVersion" ]
           "Compile", []
           "EmbeddedResource", [ "OutputResource"; "WithCulture"; "Culture"; "LogicalName"; "ManifestResourceName"; "Link"; "DependentUpon"; "Type" ]
-          "EditorConfigFiles", [] ]
+          "EditorConfigFiles", []
+          // an application's (`App`): msbuild's copy-local files, its apphost template, its
+          // config file before binding redirects (else the final one), the related extensions
+          "ReferenceCopyLocalPaths", [ "DestinationSubDirectory"; "ReferenceSourceTarget"; "MSBuildSourceProjectFile"; "NuGetPackageId" ]
+          "ResolvedAppHostPack", [ "Path"; "RuntimeIdentifier" ]
+          "_XakeAppConfig", [ "TargetPath" ]
+          "AppConfigWithTargetPath", [ "TargetPath" ]
+          "_XakeRelatedExtension", [] ]
     let internal designTimeProperties =
         [ "AssemblyName"; "MSBuildProjectFullPath"; "MSBuildProjectDirectory"; "MSBuildProjectName"; "TargetFramework"
           "TargetFrameworkIdentifier"; "TargetFrameworkMoniker"; "DefineConstants"; "LangVersion"; "Version"; "OutputType"
           "NETCoreSdkVersion"; "NetCoreRoot"; "NuGetPackageRoot"; "ProjectAssetsFile"; "IntermediateOutputPath"
           "CscToolPath"; "CscToolExe"; "CSharpCoreTargetsPath"; "RoslynTargetsPath"; "DotnetFscCompilerPath"
           "SourceRevisionId"; "GenerateResourceUsePreserializedResources"; "Deterministic"; "SignAssembly"; "AssemblyOriginatorKeyFile"
-          "TargetFileName"; "Configuration" ]
+          "TargetFileName"; "Configuration"
+          "HasRuntimeOutput"; "UseAppHost"; "RuntimeIdentifier"; "SelfContained"; "ProjectDepsFileName"; "ProjectRuntimeConfigFileName"
+          "ProjectDepsFilePath"; "ProjectRuntimeConfigFilePath"; "AutoGenerateBindingRedirects"; "GenerateBindingRedirectsOutputType"
+          // the sources of an application's recorded files: its `App.config`, `runtimeconfig.template.json`
+          "AppConfig"; "UserRuntimeConfig" ]
 
     /// <summary>
     /// The targets file `record` hands every project (`CustomAfterMicrosoftCommonTargets`; the
@@ -771,9 +782,18 @@ module Import =
               "  <Import Project=\"$(XakeChainedAfterCommonTargets)\" Condition=\"'$(XakeChainedAfterCommonTargets)' != '' and Exists('$(XakeChainedAfterCommonTargets)')\" />"
               // what the traversal hands one build only: not to a referenced project (which is
               // then evaluated once for all the projects referencing it)
-              "  <PropertyGroup><_GlobalPropertiesToRemoveFromProjectReferences>$(_GlobalPropertiesToRemoveFromProjectReferences);IntermediateOutputPath;XakeChainedAfterCommonTargets</_GlobalPropertiesToRemoveFromProjectReferences></PropertyGroup>"
+              "  <PropertyGroup><_GlobalPropertiesToRemoveFromProjectReferences>$(_GlobalPropertiesToRemoveFromProjectReferences);IntermediateOutputPath;XakeChainedAfterCommonTargets;ProjectDepsFilePath;ProjectRuntimeConfigFilePath</_GlobalPropertiesToRemoveFromProjectReferences></PropertyGroup>"
+              // an application's files msbuild generates (into the intermediate folder: the
+              // traversal points `ProjectDepsFilePath`/`ProjectRuntimeConfigFilePath` there)
+              "  <Target Name=\"XakeAppFiles\" Condition=\"'$(HasRuntimeOutput)' == 'true'\" DependsOnTargets=\"GenerateBuildDependencyFile;GenerateBuildRuntimeConfigurationFiles\" />"
+              // the config file as the SDK has it (`supportedRuntime` added) before
+              // `GenerateBindingRedirects`, whose redirects depend on what is built (S55)
+              "  <Target Name=\"_XakeAppConfigBeforeRedirects\" AfterTargets=\"GenerateSupportedRuntime\">"
+              "    <ItemGroup><_XakeAppConfig Include=\"@(AppConfigWithTargetPath)\" /></ItemGroup>"
+              "  </Target>"
               "  <Target Name=\"XakeRecordDump\">"
               "    <PropertyGroup><_XakeDumpFile>$(XakeDumpRoot)/$([System.Guid]::NewGuid().ToString('N')).txt</_XakeDumpFile></PropertyGroup>"
+              "    <ItemGroup><_XakeRelatedExtension Include=\"$(AllowedReferenceRelatedFileExtensions)\" /></ItemGroup>"
               sprintf "    <WriteLinesToFile File=\"$(_XakeDumpFile)\" Overwrite=\"true\" Lines=\"%s\" />"
                   (esc (designTimeProperties |> List.map property |> String.concat ";"))
               yield! designTimeItems |> List.map item
@@ -833,7 +853,12 @@ module Import =
     /// The properties of the design-time build a lock entry keeps (`Evaluation.Properties`).
     let private keptProperties =
         [ "AssemblyName"; "TargetFrameworkMoniker"; "LangVersion"; "Version"; "OutputType"; "Deterministic"; "SignAssembly"
-          "GenerateResourceUsePreserializedResources"; "TargetFileName" ]
+          "GenerateResourceUsePreserializedResources"; "TargetFileName"; "RuntimeIdentifier" ]
+
+    /// Where a design-time build writes an application's `deps.json` and `runtimeconfig.json`
+    /// (`ProjectDepsFilePath`, `ProjectRuntimeConfigFilePath`), in its intermediate folder.
+    let internal appDeps = "xake-app.deps.json"
+    let internal appRuntimeConfig = "xake-app.runtimeconfig.json"
 
     /// What one project's entries are built from, besides its design-time builds.
     type internal RecordContext = {
@@ -940,6 +965,177 @@ module Import =
         | ".cs" | ".fs" | ".vb" | ".editorconfig" | ".globalconfig" | ".json" | ".txt" -> true
         | _ -> false
 
+    /// The version of the stand-in assembly (`stubAssembly`): a value no project has, so a
+    /// `deps.json` names it only where msbuild read a referenced project's built file.
+    let internal stubVersion = "65534.65533.65532.65531"
+
+    /// <summary>
+    /// A stand-in for a referenced project's output while msbuild writes an application's
+    /// `deps.json` at import (`record`, the second design-time run): msbuild reads the built
+    /// file's versions (and SDK 8 fails when it is missing), which the import does not build.
+    /// An empty library (mscorlib only, 4.5 KB) whose assembly and file version are
+    /// `stubVersion` and whose assembly name is `name` (the reference's file name: msbuild's
+    /// reference resolution keeps one assembly per name). Compiled once from
+    /// <c>[assembly: AssemblyVersion("65534.65533.65532.65531")] [assembly: AssemblyFileVersion("65534.65533.65532.65531")]</c>
+    /// (`csc -noconfig -nostdlib -target:library -deterministic -optimize -debug- -r:mscorlib.dll`)
+    /// into a file named by a 200-character placeholder, which is replaced by `name` (padded
+    /// with NULs: the metadata's strings end at the first one).
+    /// </summary>
+    let internal stubAssembly (name: string) : byte[] =
+        let bytes = Convert.FromBase64String "TVqQAAMAAAAEAAAA//8AALgAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgAAAAA4fug4AtAnNIbgBTM0hVGhpcyBwcm9ncmFtIGNhbm5vdCBiZSBydW4gaW4gRE9TIG1vZGUuDQ0KJAAAAAAAAABQRQAATAEDANaOFcMAAAAAAAAAAOAAIiALATAAAAYAAAAKAAAAAAAA5iQAAAAgAAAAQAAAAAAAEAAgAAAAAgAABAAAAAAAAAAEAAAAAAAAAACAAAAAAgAAAAAAAAMAQIUAABAAABAAAAAAEAAAEAAAAAAAABAAAAAAAAAAAAAAAJQkAABPAAAAAEAAAAgGAAAAAAAAAAAAAAAAAAAAAAAAAGAAAAwAAAB4JAAAHAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIAAACAAAAAAAAAAAAAAACCAAAEgAAAAAAAAAAAAAAC50ZXh0AAAA7AQAAAAgAAAABgAAAAIAAAAAAAAAAAAAAAAAACAAAGAucnNyYwAAAAgGAAAAQAAAAAgAAAAIAAAAAAAAAAAAAAAAAABAAABALnJlbG9jAAAMAAAAAGAAAAACAAAAEAAAAAAAAAAAAAAAAAAAQAAAQgAAAAAAAAAAAAAAAAAAAADIJAAAAAAAAEgAAAACAAUAUCAAACgEAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEJTSkIBAAEAAAAAAAwAAAB2NC4wLjMwMzE5AAAAAAUAbAAAAMgAAAAjfgAANAEAAHQCAAAjU3RyaW5ncwAAAACoAwAABAAAACNVUwCsAwAAEAAAACNHVUlEAAAAvAMAAGwAAAAjQmxvYgAAAAAAAAACAAABBxQAAAkAAAAA+gEzABYAAAEAAAAFAAAAAQAAAAQAAAAEAAAAAQAAAAEAAAAAAIIAAQAAAAAABgBEAHoBBgBkAHoBBgATAGcBDwCaAQAABgAnAE8BAAAAAAEAAAAAAAEAAQAJAGEBAQARAGEBBgAZAGEBCgApAGEBEAAuAAsAHgAuABMAJwAuABsARgAuACMATwAEgAAA/v/9//z/+/8AAAAAAACpAQAABAAAAAAAAAAAAAAAFQAKAAAAAAAAAAAAADxNb2R1bGU+AG1zY29ybGliAERlYnVnZ2FibGVBdHRyaWJ1dGUAQXNzZW1ibHlGaWxlVmVyc2lvbkF0dHJpYnV0ZQBDb21waWxhdGlvblJlbGF4YXRpb25zQXR0cmlidXRlAFJ1bnRpbWVDb21wYXRpYmlsaXR5QXR0cmlidXRlAFhha2VTdHVieHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4LmRsbABTeXN0ZW0uUmVmbGVjdGlvbgAuY3RvcgBTeXN0ZW0uRGlhZ25vc3RpY3MAU3lzdGVtLlJ1bnRpbWUuQ29tcGlsZXJTZXJ2aWNlcwBEZWJ1Z2dpbmdNb2RlcwBYYWtlU3R1Ynh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eAAAAAAAAADwD8CFDo12RqmaAYFQD+b9AAQgAQEIAyAAAQUgAQEREQQgAQEOCLd6XFYZNOCJCAEACAAAAAAAHgEAAQBUAhZXcmFwTm9uRXhjZXB0aW9uVGhyb3dzAQgBAAIAAAAAABwBABc2NTUzNC42NTUzMy42NTUzMi42NTUzMQAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAALwkAAAAAAAAAAAAANYkAAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAADIJAAAAAAAAAAAAAAAAF9Db3JEbGxNYWluAG1zY29yZWUuZGxsAAAAAAD/JQAgABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEAEAAAABgAAIAAAAAAAAAAAAAAAAAAAAEAAQAAADAAAIAAAAAAAAAAAAAAAAAAAAEAAAAAAEgAAABYQAAArAUAAAAAAAAAAAAArAU0AAAAVgBTAF8AVgBFAFIAUwBJAE8ATgBfAEkATgBGAE8AAAAAAL0E7/4AAAEA/f/+//v//P/9//7/+//8/z8AAAAAAAAABAAAAAIAAAAAAAAAAAAAAAAAAABEAAAAAQBWAGEAcgBGAGkAbABlAEkAbgBmAG8AAAAAACQABAAAAFQAcgBhAG4AcwBsAGEAdABpAG8AbgAAAAAAAACwBAwFAAABAFMAdAByAGkAbgBnAEYAaQBsAGUASQBuAGYAbwAAAOgEAAABADAAMAAwADAAMAA0AGIAMAAAACwAAgABAEYAaQBsAGUARABlAHMAYwByAGkAcAB0AGkAbwBuAAAAAAAgAAAAUAAYAAEARgBpAGwAZQBWAGUAcgBzAGkAbwBuAAAAAAA2ADUANQAzADQALgA2ADUANQAzADMALgA2ADUANQAzADIALgA2ADUANQAzADEAAAC6Ac0AAQBJAG4AdABlAHIAbgBhAGwATgBhAG0AZQAAAFgAYQBrAGUAUwB0AHUAYgB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAAuAGQAbABsAAAAAAAoAAIAAQBMAGUAZwBhAGwAQwBvAHAAeQByAGkAZwBoAHQAAAAgAAAAwgHNAAEATwByAGkAZwBpAG4AYQBsAEYAaQBsAGUAbgBhAG0AZQAAAFgAYQBrAGUAUwB0AHUAYgB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHgAeAAuAGQAbABsAAAAAABUABgAAQBQAHIAbwBkAHUAYwB0AFYAZQByAHMAaQBvAG4AAAA2ADUANQAzADQALgA2ADUANQAzADMALgA2ADUANQAzADIALgA2ADUANQAzADEAAABYABgAAQBBAHMAcwBlAG0AYgBsAHkAIABWAGUAcgBzAGkAbwBuAAAANgA1ADUAMwA0AC4ANgA1ADUAMwAzAC4ANgA1ADUAMwAyAC4ANgA1ADUAMwAxAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgAAAMAAAA6DQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        let placeholder = Text.Encoding.ASCII.GetBytes ("XakeStub" + String.replicate 192 "x")
+        let value = Text.Encoding.UTF8.GetBytes name
+        if value.Length > placeholder.Length then
+            failwithf "the referenced assembly name '%s' is longer than %d bytes; the import's stand-in cannot carry it" name placeholder.Length
+        let mutable i = 0
+        while i <= bytes.Length - placeholder.Length do
+            if bytes.[i] = placeholder.[0] && Array.sub bytes i placeholder.Length = placeholder then
+                Array.fill bytes i placeholder.Length 0uy
+                value.CopyTo (bytes, i)
+                i <- i + placeholder.Length
+            else i <- i + 1
+        bytes
+
+    /// <summary>
+    /// A `deps.json` msbuild wrote with stand-ins for the referenced projects (`stubAssembly`),
+    /// with every version it read from them as a token the build replaces by the version of
+    /// the file it copies (`Apps.depsResolved`): a runtime file's `"assemblyVersion"` and
+    /// `"fileVersion"` as `$(AssemblyVersion:&lt;file&gt;)`/`$(FileVersion:&lt;file&gt;)`, and a
+    /// library named by the version (SDK 8's `&lt;assembly&gt;.Reference/&lt;version&gt;`) as
+    /// `&lt;name&gt;/$(AssemblyVersion:&lt;file&gt;)`, where the file is that library's runtime file.
+    /// What msbuild took elsewhere (SDK 8: a project's version as its assembly version, an
+    /// empty file version) stays. Line-based on msbuild's indented writer (a target's library
+    /// at six spaces, a runtime file at ten). Fails, naming `file`, when the stand-in version
+    /// is still in the text afterwards: a deps.json layout this code does not know (another
+    /// SDK's writer) would otherwise record the stand-in's version as msbuild's. Pure.
+    /// </summary>
+    let internal depsTokens (file: string) (text: string) : string =
+        let unknown (what: string) =
+            failwithf "'%s': %s; this SDK's deps.json layout is not known to the import (the stand-in version %s of a referenced project would be recorded as msbuild's)"
+                file what stubVersion
+        let lines = text.Split '\n'
+        let keyAt (indent: int) (line: string) =
+            let m = Text.RegularExpressions.Regex.Match (line, sprintf "^ {%d}\"([^\"]+)\": \\{" indent)
+            if m.Success then Some m.Groups.[1].Value else None
+        // each library's runtime file (its first one), from the targets
+        let fileOf =
+            let map = Collections.Generic.Dictionary<string, string> ()
+            let mutable library = ""
+            let mutable section = ""
+            for line in lines do
+                match keyAt 6 line, keyAt 8 line, keyAt 10 line with
+                | Some k, _, _ -> library <- k; section <- ""
+                | _, Some k, _ -> section <- k
+                | _, _, Some f when section = "runtime" && library <> "" && not (map.ContainsKey library) -> map.[library] <- f
+                | _ -> ()
+            map
+        let marker = Text.RegularExpressions.Regex.Escape stubVersion
+        let library (name: string) =
+            match fileOf.TryGetValue (name + "/" + stubVersion) with
+            | true, f -> sprintf "%s/$(AssemblyVersion:%s)" name f
+            | _ -> unknown (sprintf "the library '%s/%s' has no runtime file in the targets" name stubVersion)
+        let mutable file = ""
+        [ for line in lines do
+            match keyAt 10 line with
+            | Some f -> file <- f
+            | None -> ()
+            let line = Text.RegularExpressions.Regex.Replace (line, sprintf "^(\\s*)\"assemblyVersion\": \"%s\"" marker, sprintf "$1\"assemblyVersion\": \"$(AssemblyVersion:%s)\"" (file.Replace ("$", "$$")))
+            let line = Text.RegularExpressions.Regex.Replace (line, sprintf "^(\\s*)\"fileVersion\": \"%s\"" marker, sprintf "$1\"fileVersion\": \"$(FileVersion:%s)\"" (file.Replace ("$", "$$")))
+            // a library key, and a dependency on it
+            let line = Text.RegularExpressions.Regex.Replace (line, sprintf "\"([^\"]+)/%s\"" marker, fun m -> "\"" + library m.Groups.[1].Value + "\"")
+            let line =
+                Text.RegularExpressions.Regex.Replace (line, sprintf "^(\\s*)\"([^\"]+)\": \"%s\"" marker, fun m ->
+                    let token = library m.Groups.[2].Value
+                    sprintf "%s\"%s\": \"%s\"" m.Groups.[1].Value m.Groups.[2].Value (token.Substring (m.Groups.[2].Value.Length + 1)))
+            yield line ]
+        |> String.concat "\n"
+        |> fun result -> if result.Contains stubVersion then unknown "the stand-in version is left after its versions became tokens" else result
+
+    /// <summary>
+    /// The `App` of a design-time build with runtime output (`HasRuntimeOutput`), and the files
+    /// it records beside the lock (`binaryDir/app/&lt;name&gt;`, with their bytes):
+    /// <list type="bullet">
+    /// <item>the apphost (`UseAppHost`): the SDK's own without a `RuntimeIdentifier`, else the
+    /// template msbuild resolved (`ResolvedAppHostPack`), hashed;</item>
+    /// <item>the `runtimeconfig.json` and `deps.json` msbuild wrote into the intermediate folder
+    /// (`scratch`; LF, a project's versions as tokens, `depsTokens`) and the config file
+    /// before binding redirects (`_XakeAppConfig`, else `AppConfigWithTargetPath`), named as
+    /// msbuild names them in the output;</item>
+    /// <item>msbuild's copy-local files (`ReferenceCopyLocalPaths`, in its order): a referenced
+    /// project's output as that project's output in the build's layout, unhashed; a file
+    /// beside or below a referenced project's msbuild output (its pdb, a dependency, a
+    /// satellite assembly: found only when that project is built) left out -- the build copies the related files of the project
+    /// it built (`Related`); every other file hashed, named by identity when the lock is
+    /// written.</item>
+    /// </list>
+    /// </summary>
+    let internal appOf (ctx: RecordContext) (d: Dump) (scratch: string) (binaryDir: string) (projects: (Lock.ProjectOutput * string list) list)
+                       : Lock.App option * (string * byte[]) list =
+        let p = prop d
+        let scratch = (slash scratch).TrimEnd '/' + "/"
+        let binaryDir = (slash binaryDir).TrimEnd '/' + "/"
+        let assemblyName = p "AssemblyName"
+        let projectOutputs = dict [ for o, names in projects do for n in names -> n, o ]
+        let projectDirs = [ for _, names in projects do for n in names -> (slash (Path.GetDirectoryName n)).TrimEnd '/' + "/" ] |> List.distinct
+        let besideProject (path: string) = projectDirs |> List.exists (fun d -> path.StartsWith (d, comparison))
+        let copy =
+            [ for id, m in items d "ReferenceCopyLocalPaths" do
+                let path = absoluteIn ctx.ProjectDir id
+                let destination = (slash (meta "DestinationSubDirectory" m)).TrimStart '/'
+                let destination = if destination = "" || destination.EndsWith "/" then destination else destination + "/"
+                match projectOutputs.TryGetValue path with
+                | true, o -> yield ({ Path = o.Path; Sha256 = ""; To = destination + Path.GetFileName o.Path } : Lock.CopyItem)
+                | _ when besideProject path -> ()
+                | _ -> yield { Path = path; Sha256 = FileHash.sha256 path; To = destination + Path.GetFileName path } ]
+            |> List.distinctBy (fun c -> c.To.ToLowerInvariant ())
+        let host =
+            if not (isTrue (p "UseAppHost")) then None
+            elif p "RuntimeIdentifier" = "" then Some Lock.SdkHost
+            else
+                match items d "ResolvedAppHostPack" |> List.tryHead |> Option.map (fun (_, m) -> meta "Path" m) with
+                | Some template when template <> "" ->
+                    let template = absoluteIn ctx.ProjectDir template
+                    Some (Lock.PackHost (p "RuntimeIdentifier", { Path = template; Sha256 = FileHash.sha256 template }))
+                | _ ->
+                    failwithf "'%s' (%s): msbuild uses an apphost for the runtime identifier %s but resolved no template (ResolvedAppHostPack)"
+                        ctx.ProjectFile (p "TargetFramework") (p "RuntimeIdentifier")
+        let generated (file: string) (name: string) (transform: string -> string) =
+            let path = scratch + file
+            if File.Exists path then
+                let text = transform (lf (File.ReadAllText path))
+                Some (name, Text.Encoding.UTF8.GetBytes text)
+            else None
+        let named (property: string) (fallback: string) = match p property with "" -> fallback | n -> n
+        // the config file: one msbuild wrote (the SDK's `supportedRuntime` added) is recorded; the
+        // project's own (copied as it is for .NET) is named where it is, by its hash
+        let config, ownConfig =
+            match items d "_XakeAppConfig", items d "AppConfigWithTargetPath" with
+            | (id, m) :: _, _ | [], (id, m) :: _ ->
+                let path = absoluteIn ctx.ProjectDir id
+                let name = match meta "TargetPath" m with "" -> p "TargetFileName" + ".config" | t -> Path.GetFileName t
+                if not (File.Exists path) then None, None
+                elif path.StartsWith (scratch, comparison) then Some (name, Text.Encoding.UTF8.GetBytes (lf (File.ReadAllText path))), None
+                else None, Some ({ Name = name; Path = path; Sha256 = FileHash.sha256 path } : Lock.AppFile)
+            | [], [] -> None, None
+        let files =
+            [ generated appRuntimeConfig (named "ProjectRuntimeConfigFileName" (assemblyName + ".runtimeconfig.json")) id
+              generated appDeps (named "ProjectDepsFileName" (assemblyName + ".deps.json")) (depsTokens (scratch + appDeps))
+              config ]
+            |> List.choose id
+        let recorded = [ for name, bytes in files -> binaryDir + "app/" + name, bytes ]
+        let sha (bytes: byte[]) =
+            use algo = Security.Cryptography.SHA256.Create ()
+            algo.ComputeHash bytes |> Array.map (sprintf "%02x") |> String.concat ""
+        let app : Lock.App =
+            { OutputType = p "OutputType"
+              Host = host
+              Files = [ for (name, bytes), (path, _) in List.zip files recorded -> ({ Name = name; Path = path; Sha256 = sha bytes } : Lock.AppFile) ]
+                      @ Option.toList ownConfig
+              Copy = copy
+              Related = items d "_XakeRelatedExtension" |> List.map fst |> List.filter ((<>) "")
+              BindingRedirects = isTrue (p "AutoGenerateBindingRedirects") && isTrue (p "GenerateBindingRedirectsOutputType") }
+        Some app, recorded
+
     /// <summary>
     /// The lock entry of one design-time build (`d`, of `cfg` and `framework`, whose
     /// intermediate folder was `scratch`): msbuild's compiler command line as recorded, with
@@ -959,7 +1155,7 @@ module Import =
     /// Pure but for reading the generated files and hashing.
     /// </summary>
     let internal entryOf (ctx: RecordContext) (cfg: string) (framework: string) (scratch: string) (binaryDir: string) (d: Dump)
-                         : Lock.Entry * string list * (string * string) list =
+                         : Lock.Entry * string list * (string * byte[]) list =
         let warnings = ResizeArray<string> ()
         let p = prop d
         let scratch = (slash scratch).TrimEnd '/' + "/"
@@ -1080,12 +1276,12 @@ module Import =
 
         // the hashes: a project's output and the SDK's own files carry none
         let isProjectOutput (path: string) = projects |> List.exists (fun (o, _) -> o.Path = path)
-        let hash (path: string) = if isProjectOutput path || inSdk path then "" else Csc.sha256 path
+        let hash (path: string) = if isProjectOutput path || inSdk path then "" else FileHash.sha256 path
         let compilerPath = compilerOf isFSharp d
         let dependencies (deps: Dependencies) : Dependencies =
             { Compiler =
                 { Tool = (if isFSharp then "fsc" else "csc"); Path = compilerPath
-                  Sha256 = (if inSdk compilerPath then "" else Csc.sha256 compilerPath)
+                  Sha256 = (if inSdk compilerPath then "" else FileHash.sha256 compilerPath)
                   Version = Csc.compilerVersion compilerPath }
               References = deps.References |> List.map (fun r -> { r with Sha256 = hash r.Path })
               Analyzers = deps.Analyzers |> List.map (fun a -> { a with Sha256 = hash a.Path }) }
@@ -1136,12 +1332,25 @@ module Import =
                   if not (known.Contains (id, version)) then
                       yield ({ Id = id; Version = version; Sha512 = (Nuget.readCache ctx.PackageRoot id version).Sha512
                                Direct = false; DependsOn = [] } : Package) ]
+        // what msbuild makes of a project with runtime output besides the compile (`Lock.App`)
+        let app, appFiles = if isTrue (p "HasRuntimeOutput") then appOf ctx d scratch binaryDir projects else None, []
+        // the repository files an application's recorded files come from (its `App.config`, its
+        // `runtimeconfig.template.json`): inputs of the import like the project file, so an edit
+        // fails the build with "run the import again" (`Locks.compileAs`)
+        let appSources =
+            match app with
+            | None -> []
+            | Some _ ->
+                [ p "AppConfig"; p "UserRuntimeConfig" ]
+                |> List.filter ((<>) "")
+                |> List.map (absoluteIn ctx.ProjectDir)
+                |> List.filter (fun f -> File.Exists f && not (f.StartsWith (scratch, comparison)))
         let entry : Lock.Entry =
             { Compilation = compilation
               Evaluation =
                 { Project = slash ctx.ProjectFile
                   ProjectRefs = projects |> List.map (fun (o, _) -> o.Name)
-                  Imports = ctx.Inputs |> List.map Csc.hashed
+                  Imports = ctx.Inputs @ appSources |> List.distinct |> List.map Csc.hashed
                   Sdk = sdk
                   SdkPin = Some ctx.Pin
                   Properties = d.Props |> Map.filter (fun k v -> List.contains k keptProperties && v <> "") }
@@ -1150,7 +1359,7 @@ module Import =
               Prerequisites =
                 if sdk = "" then []
                 else [ { Kind = Lock.DotnetSdk; Version = sdk; Pin = ctx.Pin' } ]
-              Recorded = Some { Projects = projects |> List.map fst; Masks = masks; Placed = None } }
+              Recorded = Some { Projects = projects |> List.map fst; Masks = masks; Placed = None; App = app } }
         // the commit a SourceLink-free AssemblyInfo still names (`InformationalVersion`): a token
         let entry = match p "SourceRevisionId" with "" -> entry | sha -> entry |> Lock.mapText (Git.tokenize sha)
 
@@ -1161,7 +1370,7 @@ module Import =
            && not (entry.Dependencies.References |> List.exists (fun r -> (Path.GetFileName r.Path).Equals ("System.Resources.Extensions.dll", StringComparison.OrdinalIgnoreCase))) then
             failwithf "'%s' (%s|%s): msbuild writes the .resx as preserialized resources (GenerateResourceUsePreserializedResources), which .NET Framework reads only through System.Resources.Extensions, and the recorded references do not have it; reference the package System.Resources.Extensions"
                 ctx.Description.Name cfg framework
-        entry, List.ofSeq warnings, binaries
+        entry, List.ofSeq warnings, (binaries |> List.map (fun (source, copy) -> copy, File.ReadAllBytes source)) @ appFiles
 
     /// <summary>
     /// What a recorded entry's command line names that no portable name covers, as messages:
@@ -1202,11 +1411,16 @@ module Import =
         sprintf "'%s': the lock pins the .NET SDK %s (a prerequisite), more strictly than global.json does (%s); a machine with another SDK must install %s or import again. To say so in global.json: { \"sdk\": { \"version\": \"%s\", \"rollForward\": \"disable\" } }"
             name sdk (match pin with Lock.NoGlobalJson -> "no global.json" | p -> Lock.sdkPinText p) sdk sdk
 
+    /// <summary>
     /// The strings of this machine a portable lock must not contain (`record` checks the text
-    /// it writes): the project root, the package folder, the .NET root, the home and temp folders
-    /// -- each only where no token stands for it -- and a runtime identifier (`osx-arm64`) as a
-    /// path segment or a whole value.
-    let internal hostStrings (roots: (string * string) list) (text: string) : string list =
+    /// it writes and the files it records beside it): the project root, the package folder, the
+    /// .NET root, the home and temp folders -- each only where no token stands for it -- and a
+    /// runtime identifier (`osx-arm64`) as a path segment or a whole value. A runtime identifier
+    /// is not this machine's where a package names it -- its folder `runtimes/&lt;rid&gt;/` (a
+    /// copy-local asset, a `deps.json` path) or a `deps.json` asset's `"rid"` -- nor where it
+    /// is one the project declares (`declared`: its `RuntimeIdentifier`).
+    /// </summary>
+    let internal hostStrings (roots: (string * string) list) (declared: string list) (text: string) : string list =
         let home = Environment.GetFolderPath Environment.SpecialFolder.UserProfile
         let candidates =
             [ for _, root in roots -> root
@@ -1219,9 +1433,13 @@ module Import =
         let rids =
             [ for os in [ "osx"; "linux"; "linux-musl"; "win" ] do
                 for arch in [ "x64"; "x86"; "arm64"; "arm" ] -> sprintf "%s-%s" os arch ]
+        let packageRid = Text.RegularExpressions.Regex ("runtimes/[A-Za-z0-9.\\-]+/|\"rid\": \"[^\"]*\"")
         [ for line in text.Split '\n' do
             let l = slash line
-            if candidates |> List.exists (fun c -> l.Contains c) || rids |> List.exists (fun r -> l.Contains ("/" + r + "/") || l.Contains ("\"" + r + "\"")) then
+            // a package's folder, not the .NET installation's (`$(DotnetRoot)/packs/...`)
+            let inPackage = if l.Contains "$(DotnetRoot)" then l else packageRid.Replace (l, "")
+            let bare = declared |> List.filter ((<>) "") |> List.fold (fun (t: string) r -> t.Replace (r, "")) inPackage
+            if candidates |> List.exists (fun c -> l.Contains c) || rids |> List.exists (fun r -> bare.Contains ("/" + r + "/") || bare.Contains ("\"" + r + "\"")) then
                 yield line.Trim () ]
 
     /// <summary>
@@ -1303,7 +1521,8 @@ module Import =
                         match prop ev.Outer "CustomAfterMicrosoftCommonTargets" with
                         | "" -> []
                         | v -> [ "XakeChainedAfterCommonTargets", absoluteIn projectDir v ]
-                    [ "TargetFramework", framework; "IntermediateOutputPath", intermediate ] @ chained
+                    [ "TargetFramework", framework; "IntermediateOutputPath", intermediate
+                      "ProjectDepsFilePath", intermediate + appDeps; "ProjectRuntimeConfigFilePath", intermediate + appRuntimeConfig ] @ chained
                     |> List.map (fun (k, v) -> k + "=" + escape v) |> String.concat ";"
                 let elapsed (since: DateTime) = (DateTime.UtcNow - since).TotalSeconds
                 let platform =
@@ -1386,6 +1605,43 @@ module Import =
                                         | _ -> d
                                     (slash (prop d "MSBuildProjectFullPath"), prop d "TargetFramework"), d)
                                 |> Map.ofArray
+                            // the applications' runtimeconfig.json and deps.json: a second run over them,
+                            // every output in a folder of its own (`OutDir`) where each referenced
+                            // project's output is a stand-in (`stubAssembly`), whose versions the
+                            // recorded deps.json names as tokens (`depsTokens`)
+                            let appRuns =
+                                [ for pf, ev, f in runs do
+                                    match byRun |> Map.tryFind (slash pf, f) with
+                                    | Some d when isTrue (prop d "HasRuntimeOutput") -> yield pf, ev, f, d
+                                    | _ -> () ]
+                            if not (List.isEmpty appRuns) then
+                                let phase = DateTime.UtcNow
+                                let outDir = slash (temp </> ("app-out-" + cfg)) + "/"
+                                Directory.CreateDirectory outDir |> ignore
+                                for pf, _, _, d in appRuns do
+                                    let scratch = absoluteIn (slash (Path.GetDirectoryName pf)) (prop d "IntermediateOutputPath")
+                                    for f in [ appDeps; appRuntimeConfig ] do
+                                        let path = scratch.TrimEnd '/' + "/" + f
+                                        if File.Exists path then File.Delete path
+                                    for id, m in items d "ReferencePath" do
+                                        if meta "ReferenceSourceTarget" m = "ProjectReference" || meta "MSBuildSourceProjectFile" m <> "" then
+                                            let path = outDir + Path.GetFileName (slash id)
+                                            if not (File.Exists path) then File.WriteAllBytes (path, stubAssembly (Path.GetFileNameWithoutExtension path))
+                                let appTraversal = temp </> sprintf "record-app-%s.proj" cfg
+                                let appItems =
+                                    appRuns |> List.map (fun (pf, ev, f, _) ->
+                                        sprintf "    <XakeRun Include=\"%s\" AdditionalProperties=\"%s\" />"
+                                            (Security.SecurityElement.Escape pf)
+                                            (Security.SecurityElement.Escape (runProperties (key cfg) ev f)))
+                                File.WriteAllText (appTraversal, String.concat "\n" ([ "<Project>"; "  <ItemGroup>" ] @ appItems @
+                                                                                     [ "  </ItemGroup>"
+                                                                                       "  <Target Name=\"Build\">"
+                                                                                       "    <MSBuild Projects=\"@(XakeRun)\" Targets=\"BuildOnlySettings;PrepareForBuild;ResolveReferences;XakeAppFiles\" BuildInParallel=\"true\" />"
+                                                                                       "  </Target>"; "</Project>"; "" ]))
+                                do! msbuild environment
+                                        ([ appTraversal; "-nologo"; "-verbosity:quiet"; "-m"; "-nodeReuse:false"; "-p:OutDir=" + outDir ]
+                                         @ recordSwitches cfg) appTraversal
+                                do! trace Info "import: the runtime files of %d application build(s) for %s in %.1f s" appRuns.Length cfg (elapsed phase)
                             return
                                 [ for pf, _, f in runs ->
                                     match byRun |> Map.tryFind (slash pf, f) with
@@ -1449,7 +1705,14 @@ module Import =
                             do! trace Error "%s" msg
                             failwith msg
                         let text = Lock.format roots { Configuration = cfg; Properties = options.Properties; Entries = entries }
-                        match hostStrings roots text with
+                        // the lock and the text files beside it (an application's)
+                        let declared = entries |> List.choose (fun e -> e.Evaluation.Properties |> Map.tryFind "RuntimeIdentifier")
+                        let besides =
+                            [ for _, (_, _, files) in built do
+                                for copy, bytes in files do
+                                    if isRecordedText copy || copy.EndsWith ".config" then
+                                        for line in hostStrings roots declared (Text.Encoding.UTF8.GetString bytes) -> sprintf "%s: %s" (Path.GetFileName copy) line ]
+                        match hostStrings roots declared text @ besides with
                         | [] -> ()
                         | lines ->
                             failwithf "'%s': the lock '%s' would hold strings of this machine, so it would not build elsewhere:\n%s"
@@ -1457,13 +1720,12 @@ module Import =
                         // the binaries first (a lock never names a file that is not there), each
                         // written when its bytes change, and nothing else left in the folder
                         let copies = built |> List.collect (fun (_, (_, _, b)) -> b)
-                        for source, copy in copies do
-                            let bytes = File.ReadAllBytes source
+                        for copy, bytes in copies do
                             if not (File.Exists copy) || File.ReadAllBytes copy <> bytes then
                                 Directory.CreateDirectory (Path.GetDirectoryName copy) |> ignore
                                 File.WriteAllBytes (copy, bytes)
                         if Directory.Exists filesDir then
-                            let kept = copies |> List.map (snd >> Path.GetFullPath) |> set
+                            let kept = copies |> List.map (fst >> Path.GetFullPath) |> set
                             for f in Directory.GetFiles (filesDir, "*", SearchOption.AllDirectories) do
                                 if not (kept.Contains (Path.GetFullPath f)) then File.Delete f
                             if List.isEmpty copies then Directory.Delete (filesDir, true)

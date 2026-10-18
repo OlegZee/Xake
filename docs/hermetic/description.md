@@ -10,6 +10,11 @@ script, not to the description.
 Schema: [../schemas/xake.project.schema.json](../schemas/xake.project.schema.json). Module:
 `Description` in `Xake.Hermetic.Dotnet` (`src/hermetic/Description.fs`).
 
+> The model is moving into the Xake package (3.9): `Xake.Dotnet.Description`, page
+> [../description.md](../description.md), schema `docs/schemas/xake.project.schema.json` (adds
+> `frameworkReferences`). Until this package builds on Xake 3.9, its own `Description` reads the
+> schema copy [xake.project.schema.json](xake.project.schema.json) beside this page.
+
 ## Example
 
 ```json

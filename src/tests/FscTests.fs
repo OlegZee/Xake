@@ -218,6 +218,9 @@ type ``Fsc record tests``() =
         Assert.That(DotNetFwk.netcoreMoniker "net10.0", Is.EqualTo (Some "net10.0"))
         Assert.That(DotNetFwk.netcoreMoniker "sdk-net8.0", Is.EqualTo (Some "net8.0"))
         Assert.That(DotNetFwk.netcoreMoniker "NET9.0", Is.EqualTo (Some "net9.0"))
+        // a platform framework is its base: its NETCore.App reference pack is the base's
+        Assert.That(DotNetFwk.netcoreMoniker "net8.0-windows", Is.EqualTo (Some "net8.0"))
+        Assert.That(DotNetFwk.netcoreMoniker "net8.0-windows10.0.19041", Is.EqualTo (Some "net8.0"))
         for other in [ "net472"; "net-4.6.2"; "netstandard2.0"; "net4.8"; "4.0"; "mono-4.5"; "" ] do
             Assert.That(DotNetFwk.netcoreMoniker other, Is.EqualTo None, other)
 

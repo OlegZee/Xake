@@ -47,6 +47,10 @@ module FscTypes =
 
         /// Generate tailcalls where possible (`--tailcalls-` when false).
         Tailcalls: bool
+        /// A project description (`xake.project.json`, relative to the project root) the
+        /// compilation is composed from (`fsc { project "path" }`, `ProjectPlan`); the settings
+        /// given explicitly win. `None`: the settings alone.
+        Project: string option
     } with static member Default = {
             Platform = AnyCpu
             Target = Auto
@@ -63,6 +67,7 @@ module FscTypes =
             FailOnError = true
             NoFramework = false
             Tailcalls = true
+            Project = None
         }
 
     /// <summary>
@@ -286,7 +291,7 @@ module Fsc =
     /// Under `HERMETIC=on` it ends with `HermeticMode.enforce` over `hermeticInputs`: fsc's
     /// compiler may lie under the SDK only when `global.json` pins that SDK exactly.
     /// </summary>
-    let ofSettings (settings: FscSettingsType) : Recipe<ExecContext, Fsc> =
+    let private composeSettings (settings: FscSettingsType) : Recipe<ExecContext, Fsc> =
         recipe {
             let! options = getCtxOptions()
             let getFiles = toFileList options.ProjectRoot
@@ -454,6 +459,69 @@ module Fsc =
             return f
         }
 
+    /// <summary>
+    /// The settings `project` (a description, `ProjectPlan.make`) fills in, with the plan; as
+    /// `Csc.describedSettings`: the description's framework, kind, sources (in order) and
+    /// defines unless the block gives them, its references before the block's, its switches
+    /// before the block's `args`, and `Doc` beside the output when it asks for documentation
+    /// and the block names none. A description's `FSharp.Core` package is the default
+    /// `FSharp.Core` the composition adds (`FSHARP_CORE_VERSION`).
+    /// </summary>
+    let describedSettings (settings: FscSettingsType) (path: string) : Recipe<ExecContext, FscSettingsType * ProjectPlan.Plan> =
+        recipe {
+            let! options = getCtxOptions ()
+            let! ctx = getCtx ()
+            let! outFile =
+                if settings.Out = File.undefined then
+                    match Impl.fileTargets ctx.Targets |> List.filter (Impl.isRuntimeConfig >> not) with
+                    | file :: _ -> recipe.Return file
+                    | [] -> getTargetFile ()
+                else recipe.Return settings.Out
+            let (Filelist given) = settings.Ref |> toFileList options.ProjectRoot
+            let! p = ProjectPlan.make Description.FSharp path settings.TargetFramework (Path.GetFileNameWithoutExtension outFile.Name) given
+            let filesOf (paths: string list) = paths |> List.fold (fun fs f -> fs + (!! f)) Fileset.Empty
+            return
+                { settings with
+                    Project = None
+                    TargetFramework = p.Framework
+                    Out = outFile
+                    Target =
+                        match settings.Target, p.Kind with
+                        | Auto, Description.Exe -> Exe
+                        | Auto, Description.Library -> Library
+                        | t, _ -> t
+                    Src = if settings.Src = Fileset.Empty then filesOf p.Sources else settings.Src
+                    Ref = filesOf p.References + settings.Ref
+                    RefGlobal = p.GlobalRefs @ settings.RefGlobal |> List.distinctBy (fun r -> r.ToLowerInvariant ())
+                    Define = (if List.isEmpty settings.Define then p.Defines else settings.Define) @ p.FrameworkDefines |> List.distinct
+                    Doc =
+                        if settings.Doc = File.undefined && p.Doc then File.make (Path.ChangeExtension (outFile.FullName, ".xml"))
+                        else settings.Doc
+                    CommandArgs = p.Args @ settings.CommandArgs }, p
+        }
+
+    /// <summary>
+    /// Composes an `Fsc` from the settings (`composeSettings`, the argument list above), after
+    /// `describedSettings` when they name a `Project`; a described compilation also gets the
+    /// generated attribute source (first among the sources), the description's `.resx` pairs
+    /// and the project folder as the compiler's directory.
+    /// </summary>
+    let ofSettings (settings: FscSettingsType) : Recipe<ExecContext, Fsc> =
+        recipe {
+            match settings.Project with
+            | None ->
+                let! f = composeSettings settings
+                return f
+            | Some path ->
+                let! s, p = describedSettings settings path
+                let! f = composeSettings s
+                let generated = Option.toList p.Generated
+                return { f with Fsc.Sources = (generated |> List.map fst) @ f.Sources
+                                Fsc.Generated = generated @ f.Generated
+                                Fsc.Resources = f.Resources @ p.Resx
+                                Fsc.Directory = p.ProjectDir }
+        }
+
     /// The runner's options for composed settings: `FailOnError` from the settings and the
     /// environment of the framework they target. What `compile` runs with.
     let runOptions (settings: FscSettingsType) : Recipe<ExecContext, FscRunOptions> =
@@ -519,6 +587,6 @@ module Fsc =
         recipe {
             do! trace Level.Debug "Fsc: settings=%A" settings
             let! f = ofSettings settings
-            let! options = runOptions settings
+            let! options = runOptions (match settings.Project with Some _ -> { settings with TargetFramework = f.Framework } | None -> settings)
             do! run options f
         }

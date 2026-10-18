@@ -164,7 +164,40 @@ be determined (no SDK) does the compile fail with `csc needs a target framework`
   framework's pack always comes from NuGet, installed or not. See
   [dotnet-build.md](dotnet-build.md).
 
-## From a project description: `project`, `config`, `packages`
+## From a project description: `project` (Xake 3.9)
+
+`project "path"` composes the compilation from a project description (`xake.project.json`,
+[description.md](description.md)) instead of listing sources, resources and defines in the
+script. It is an operation of the `Xake` package's own `csc {}` and `fsc {}`; nothing beyond the
+description is read -- no msbuild, no restore, no lock. Code: `src/dotnet/ProjectPlan.fs`,
+`Csc.describedSettings`, `Fsc.describedSettings`.
+
+```fsharp
+"out/(fwk:*)/Sample.dll" ..> recipe {
+    let! fwk = getRuleMatch "fwk"
+    do! csc { targetfwk fwk; project "src/Sample/xake.project.json" }
+}
+"out/net8.0/Web.dll" ..> csc { project "src/Web/xake.project.json" }     // frameworkReferences: Microsoft.AspNetCore.App
+"out/netstandard2.0/App.dll" ..> csc { ref !!"out/netstandard2.0/Core.dll"; project "src/App/xake.project.json" }  // projectRefs: Core
+```
+
+| Operation | Argument | Does |
+|---|---|---|
+| `project` | `string` | the description at that path (relative to the project root; an input of the target): sources (expanded, `!` excludes, listed order unless masks), resources (msbuild's default manifest names; `.resx` compiled), defines plus the SDK's framework symbols, `options` (`/deterministic+`, `langversion`, `warnaserror`, `nowarn` with the SDK's `1701,1702`, `nullable`, `keyfile`, `doc`, raw `args`), `internalsVisibleTo`/`assemblyAttributes` as a generated source, `references` by name (`grefs`, plus the SDK's implicit .NET Framework ones) or by path (`ref`), `frameworkReferences` from the SDK's targeting packs, `kind` as `target`, the project folder as the compiler's directory |
+
+- **Framework.** `targetfwk` (one of the description's `frameworks`), else its only framework,
+  else `NETFX-TARGET`; otherwise it fails listing them.
+- **The block wins.** `project` may stand anywhere in the block. `target`, `src`, `define`
+  (framework symbols kept) and `doc` (fsc) given in the block replace the description's; `ref`,
+  `grefs`, `resources` add to it; the block's `args` come after the description's switches.
+- **Rejected:** `packages` (F# `FSharp.Core` aside, which fsc composes itself), a `projectRefs`
+  entry whose output is not among the block's `ref`, a culture-specific resource, a description
+  of the other language. The messages name Xake.Hermetic.Dotnet where it is the way out.
+- **Not here:** `config` (the SDK's Debug/Release presets), `packages`, `lock`: Xake.Hermetic.Dotnet
+  (next section). Its 0.3 release builds on Xake below 3.8, so its own `project` (below) and this
+  one never meet in a script; its next release builds on Xake 3.9 and this description model.
+
+## From a project description in Xake.Hermetic.Dotnet: `project`, `config`, `packages`
 
 `Xake.Hermetic.Dotnet` adds three operations to `csc {}` and `fsc {}` that build a compilation
 from a project description (`xake.project.json`, [hermetic/description.md](hermetic/description.md))
@@ -393,6 +426,11 @@ not temp files.
 
 ## Not yet
 
-- `Resx.read`/`compile` only support plain string entries (`<data name="X"><value>...</value></data>`).
-  A typed value (a `type` attribute) or a `ResXFileRef`/binary value (`mimetype`) fails with a
-  clear message rather than being compiled; the real projects this targets have none.
+- `Resx.read` is the plain-strings view and still fails on a typed or `ResXFileRef` entry.
+  `Resx.compile`/`refresh` (`ResxFormat`) compile every entry kind the .NET SDK's
+  `GenerateResource` does, byte for byte: typed values, `ResXNullRef`, `ResXFileRef` (text in
+  the named encoding, code pages included; `byte[]`; images and other types as activator
+  streams), `bytearray.base64` and `binary.base64` payloads. A resx of strings compiles to the
+  classic format; any other entry makes it preserialized, and the assembly then needs
+  `System.Resources.Extensions` at run time (in .NET 5+'s shared framework; a package on .NET
+  Framework). `ResxFormat.needsExtensions` tells which format a `.resources` file is.

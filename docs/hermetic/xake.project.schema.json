@@ -1,0 +1,114 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/OlegZee/Xake/schemas/xake.project.json",
+  "title": "Xake project description",
+  "description": "What a project is: data only, rarely changes; written by an explicit import or by hand, committed. `project` is relative to this file; every other path is relative to the project file's folder. No placeholders: a variant msbuild evaluates differently (a brand) is a separate description; configurations, output layout and versions are the script's knowledge. Read and written by Xake.Hermetic.Dotnet `Description` (docs/hermetic/description.md); properties are listed in the order the writer emits them.",
+  "type": "object",
+  "required": ["name", "project", "language", "frameworks", "sources"],
+  "additionalProperties": false,
+  "$defs": {
+    "package": {
+      "type": "object",
+      "required": ["id"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string" },
+        "version": { "type": "string", "description": "As the project file declares it (exact or NuGet range). Resolved at lock generation, never by fsc/csc." },
+        "private": { "type": "boolean", "description": "Compile-time only (PrivateAssets=all): not a nuspec dependency.", "default": false }
+      }
+    },
+    "items": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "defines": { "type": "array", "items": { "type": "string" } },
+        "references": { "type": "array", "items": { "type": "string" }, "description": "Framework assemblies by name (grefs), e.g. System.Windows.Forms" },
+        "packages": { "type": "array", "items": { "$ref": "#/$defs/package" } },
+        "args": { "type": "array", "items": { "type": "string" }, "description": "Raw compiler switches, appended last" }
+      }
+    },
+    "resource": {
+      "type": "object",
+      "required": ["file"],
+      "additionalProperties": false,
+      "properties": {
+        "file": { "type": "string" },
+        "name": { "type": "string", "description": "Manifest name; default derived from rootNamespace and path" }
+      }
+    },
+    "options": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "doc": { "type": "boolean", "description": "Generate the XML documentation file", "default": false },
+        "langVersion": { "type": "string" },
+        "warningsAsErrors": { "type": "boolean", "default": false },
+        "nullable": { "enum": ["enable", "disable", "warnings", "annotations"] },
+        "keyFile": { "type": "string", "description": "Strong-name key" },
+        "args": { "$ref": "#/$defs/items/properties/args" }
+      }
+    },
+    "friend": {
+      "oneOf": [
+        { "type": "string" },
+        {
+          "type": "object",
+          "required": ["name"],
+          "additionalProperties": false,
+          "properties": { "name": { "type": "string" }, "key": { "type": "string", "description": "Public key of the friend assembly" } }
+        }
+      ]
+    },
+    "metadata": {
+      "type": "object",
+      "description": "Present when the project is packed. Every field may be overridden by the script.",
+      "required": ["id"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string" },
+        "description": { "type": "string" },
+        "authors": { "type": "string" },
+        "copyright": { "type": "string" },
+        "tags": { "type": "array", "items": { "type": "string" } },
+        "license": { "type": "string", "description": "SPDX expression" },
+        "projectUrl": { "type": "string" },
+        "repository": { "$ref": "#/$defs/repository" },
+        "icon": { "type": "string", "description": "File packed at the package root" },
+        "readme": { "type": "string", "description": "File packed at the package root" },
+        "bundle": { "type": "array", "items": { "type": "string" }, "description": "projectRefs (names) whose assemblies go into this package's lib/<tfm>/ instead of becoming a dependency" }
+      }
+    },
+    "repository": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": { "type": { "type": "string" }, "url": { "type": "string" } }
+    }
+  },
+  "properties": {
+    "$schema": { "type": "string" },
+    "name": { "type": "string", "minLength": 1, "description": "Project key: the project file name without extension (Xake.Dotnet, Layout); unique within a build; names the lock folder and the {name} of the layout" },
+    "project": { "type": "string", "description": "The project file, relative to this description; lets a description live outside the project's repo. Other paths are relative to the project file's folder" },
+    "assemblyName": { "type": "string", "description": "Default: name" },
+    "rootNamespace": { "type": "string" },
+    "language": { "enum": ["fsharp", "csharp"] },
+    "kind": { "enum": ["library", "exe"], "default": "library" },
+    "frameworks": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+    "sources": { "type": "array", "items": { "type": "string" }, "description": "In compile order (semantic for F#). C#: msbuild's globs kept as Xake masks" },
+    "resources": { "type": "array", "items": { "$ref": "#/$defs/resource" } },
+    "defines": { "$ref": "#/$defs/items/properties/defines" },
+    "references": { "$ref": "#/$defs/items/properties/references" },
+    "projectRefs": {
+      "type": "array", "items": { "type": "string" },
+      "description": "Names of other described projects. Lock generation picks each one's configuration and framework and records the choice as the reference's output path in the referencer's lock"
+    },
+    "packages": { "$ref": "#/$defs/items/properties/packages" },
+    "options": { "$ref": "#/$defs/options" },
+    "internalsVisibleTo": { "type": "array", "items": { "$ref": "#/$defs/friend" } },
+    "byFramework": {
+      "type": "object",
+      "description": "Additions for one target framework only, keyed by a TFM listed in frameworks",
+      "additionalProperties": { "$ref": "#/$defs/items" }
+    },
+    "package": { "$ref": "#/$defs/metadata" }
+  }
+}

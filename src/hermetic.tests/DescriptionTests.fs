@@ -127,7 +127,10 @@ type ``Project description``() =
 
     [<Test>]
     member x.``the committed schema lists the fields the reader knows, in the writer's order``() =
-        let schema = Json.parse (File.ReadAllText (__SOURCE_DIRECTORY__ </> ".." </> ".." </> "docs" </> "schemas" </> "xake.project.schema.json"))
+        // this package's own copy of the schema (docs/hermetic/), the one its Description reads;
+        // docs/schemas/ is the core's (Xake.Dotnet.Description, Xake 3.9), a superset.
+        // TODO: drop both with this package's Description when it moves to Xake [3.9, 4.0)
+        let schema = Json.parse (File.ReadAllText (__SOURCE_DIRECTORY__ </> ".." </> ".." </> "docs" </> "hermetic" </> "xake.project.schema.json"))
         let rec get (path: string list) value =
             match path with
             | [] -> value

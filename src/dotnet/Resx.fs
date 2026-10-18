@@ -3,10 +3,10 @@ namespace Xake.Dotnet
 open System.IO
 open System.Xml
 
-/// Reads and compiles `.resx` string resources without `System.Windows.Forms`'s
-/// `ResXResourceReader`, which is only available under the full framework.
-/// `System.Resources.ResourceWriter` is available on netstandard2.0 already (it is used
-/// elsewhere with no `#if`), so only the reading side needed a replacement.
+/// Reads `.resx` string resources and compiles `.resx` files without `System.Windows.Forms`'s
+/// `ResXResourceReader`, which is only available under the full framework: `compile` and
+/// `refresh` follow the .NET SDK's `GenerateResource` (`ResxFormat`), every entry kind it
+/// supports; `read` is the plain-strings view.
 module Resx =
 
     /// Parses a `.resx` file: every `/root/data` element, in document order, as
@@ -34,34 +34,16 @@ module Resx =
                     | valueNode -> yield name, valueNode.InnerText
             | _ -> () ]
 
-    /// Compiles a `.resx` to a `.resources` file: entries added to a
-    /// `System.Resources.ResourceWriter` in document order, the same format
-    /// `GenerateResource`/`ResourceWriter` produces for a resx with only string entries, so the
-    /// output is byte-identical to what msbuild wrote. Creates the output directory if needed.
+    /// Compiles a `.resx` to a `.resources` file the way the .NET SDK's `GenerateResource`
+    /// does, byte for byte, typed values and `ResXFileRef` entries included (`ResxFormat`).
+    /// Creates the output directory if needed.
     let compile (resxFile: string) (resourcesFile: string) =
         let dir = Path.GetDirectoryName resourcesFile
         if not (System.String.IsNullOrWhiteSpace dir) then Directory.CreateDirectory dir |> ignore
-        use writer = new System.Resources.ResourceWriter (resourcesFile)
-        for (name, value) in read resxFile do
-            writer.AddResource (name, value)
-        writer.Generate ()
+        File.WriteAllBytes (resourcesFile, ResxFormat.compileBytes resxFile)
 
     /// `compile`, but the `.resources` file is written only when it is missing or its bytes
     /// differ from what the resx compiles to, so an unchanged one keeps its timestamp.
     /// Returns whether it wrote.
     let refresh (resxFile: string) (resourcesFile: string) : bool =
-        let bytes =
-            use stream = new MemoryStream ()
-            (
-                use writer = new System.Resources.ResourceWriter (stream)
-                for (name, value) in read resxFile do
-                    writer.AddResource (name, value)
-                writer.Generate ()
-            )
-            stream.ToArray ()
-        if File.Exists resourcesFile && File.ReadAllBytes resourcesFile = bytes then false
-        else
-            let dir = Path.GetDirectoryName resourcesFile
-            if not (System.String.IsNullOrWhiteSpace dir) then Directory.CreateDirectory dir |> ignore
-            File.WriteAllBytes (resourcesFile, bytes)
-            true
+        ResxFormat.refresh resxFile resourcesFile

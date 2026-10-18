@@ -1428,13 +1428,14 @@ module Lock =
         }
 
     /// <summary>
-    /// The analyzers a csc error log (SARIF, `/errorlog:`) reports as crashed (`AD0001`:
-    /// "Analyzer 'X' threw an exception of type 'Y'"), as `X (Y)`; empty when there is none.
+    /// The analyzers a compile's diagnostics report as crashed (`AD0001`: "Analyzer 'X' threw
+    /// an exception of type 'Y'"), as `X (Y)`; empty when there is none. `text` is what csc
+    /// printed (`error AD0001: Analyzer ...`) or a SARIF error log (`"ruleId": "AD0001"`).
     /// </summary>
-    let internal analyzerCrashes (sarif: string) : string list =
-        if not (System.Text.RegularExpressions.Regex.IsMatch (sarif, "\"(ruleId|id)\"\\s*:\\s*\"AD0001\"")) then []
+    let internal analyzerCrashes (text: string) : string list =
+        if not (text.Contains "AD0001") then []
         else
-            System.Text.RegularExpressions.Regex.Matches (sarif, "Analyzer '([^']+)' threw an exception of type '([^']+)'")
+            System.Text.RegularExpressions.Regex.Matches (text, "Analyzer '([^']+)' threw an exception of type '([^']+)'")
             |> Seq.cast<System.Text.RegularExpressions.Match>
             |> Seq.map (fun m -> sprintf "%s (%s)" m.Groups.[1].Value m.Groups.[2].Value)
             |> Seq.distinct
@@ -1444,33 +1445,34 @@ module Lock =
     /// `Csc.run` under the compiler server, retried once without it when the compile fails
     /// with an analyzer crash (`AD0001`, S72: seen once in a large solution's clean build, an
     /// analyzer's NullReferenceException in a shared `VBCSCompiler`; the next build of the
-    /// same project passed). The compile writes an error log (its own `/errorlog:`, or a
-    /// temporary one beside nothing else); a failure whose log names a crashed analyzer is
-    /// reported with the analyzer and compiled again in a fresh compiler process. Any other
-    /// failure fails as before, and so does a crash without the server.
+    /// same project passed). The crash is named from what the failed compile printed (a
+    /// crash that fails the compile is an error, and csc prints every error, at any
+    /// verbosity), so the compile
+    /// itself carries no `/errorlog:`: an error log makes csc report every diagnostic,
+    /// hidden and suppressed ones included, and costs a quarter to a half more compiler CPU
+    /// on each compile (0.4.2). A failure that names a crashed analyzer is reported with the
+    /// analyzer and compiled again in a fresh compiler process. Any other failure fails as
+    /// before, and so does a crash without the server.
     /// </summary>
     let private runCsc (run: RunOptions) (c: Csc) : Recipe<ExecContext, unit> =
+        // the lines the compile logs that name AD0001 (the compiler's output goes to the
+        // target's logger, `shell`), collected on the side; the log itself is unchanged
+        let crashLines = ResizeArray<string> ()
+        let collecting (Recipe inner: Recipe<ExecContext, unit>) =
+            Recipe (fun (r, ctx: ExecContext) ->
+                let tee = Logging.CustomLogger (fun _ -> true) (fun line -> if line.Contains "AD0001" then lock crashLines (fun () -> crashLines.Add line))
+                inner (r, { ctx with Logger = Logging.CombineLogger ctx.Logger tee }))
         recipe {
             match run.Server with
             | InProcess -> do! Csc.run run c
             | Shared _ when not run.FailOnError -> do! Csc.run run c
             | Shared _ ->
-                let isErrorLog (o: string) =
-                    o.StartsWith "/errorlog:" || o.StartsWith "-errorlog:"
-                let own =
-                    c.Options |> List.tryFind isErrorLog
-                    |> Option.map (fun o -> let v = o.Substring 10 in (match v.IndexOf ',' with -1 -> v | i -> v.Substring (0, i)).Trim '"')
-                let log = own |> Option.defaultWith (fun () -> Path.Combine (Path.GetTempPath (), sprintf "xake-%s-%s.sarif" c.Name (System.Guid.NewGuid().ToString "N")))
-                let c' = match own with Some _ -> c | None -> { c with Options = c.Options @ [ "/errorlog:" + log ] }
                 let crashed = ref []
                 try
-                    try
-                        do! Csc.run run c'
-                    with e ->
-                        crashed.Value <- (if File.Exists log then analyzerCrashes (File.ReadAllText log) else [])
-                        if List.isEmpty crashed.Value then raise e
-                finally
-                    if own.IsNone then try File.Delete log with _ -> ()
+                    do! collecting (Csc.run run c)
+                with e ->
+                    crashed.Value <- lock crashLines (fun () -> analyzerCrashes (String.concat "\n" crashLines))
+                    if List.isEmpty crashed.Value then raise e
                 if not (List.isEmpty crashed.Value) then
                     do! trace Warning "('%s') an analyzer crashed under the compiler server (AD0001): %s; compiling once more without the server"
                             c.Name (String.concat ", " crashed.Value)

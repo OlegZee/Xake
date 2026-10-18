@@ -322,3 +322,17 @@ let ``captureOutput ToLog suppresses default log for that stream`` () =
             }
         ]
     }
+
+/// A process that leaves a child running with its stdout (an msbuild node, a compiler server)
+/// does not hold the caller until that child exits: the exit code comes once the output is read
+/// or after the drain timeout, the output before the exit is there.
+[<Test; Platform("Unix,MacOsX,Linux")>]
+let ``pexec returns when the process exits though a child it left holds the output`` () =
+    let lines = System.Collections.Concurrent.ConcurrentQueue<string> ()
+    let watch = System.Diagnostics.Stopwatch.StartNew ()
+    let exitCode =
+        Xake.ProcessExec.pexecSync lines.Enqueue ignore "/bin/sh" "-c \"sleep 60 & echo started\"" [] None
+    watch.Stop ()
+    Assert.That(exitCode, Is.EqualTo 0)
+    Assert.That(List.ofSeq lines, Is.EqualTo [ "started" ])
+    Assert.That(watch.Elapsed.TotalSeconds, Is.LessThan 30.0)

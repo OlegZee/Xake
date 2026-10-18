@@ -280,6 +280,8 @@ type ``Run folders``() =
 
     let runProcess (exe: string) (args: string list) (dir: string) =
         let psi = ProcessStartInfo (exe)
+        // no msbuild node left holding the redirected output (ReadToEnd would wait for it)
+        psi.Environment.["MSBUILDDISABLENODEREUSE"] <- "1"
         psi.WorkingDirectory <- dir
         psi.RedirectStandardOutput <- true
         psi.RedirectStandardError <- true

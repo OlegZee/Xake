@@ -98,9 +98,12 @@ do xakeScript {
             let! testFilter = vars.TestFilter
             let where = [ for f in Option.toList testFilter do yield $"--filter Name~\"{f}\"" ]
 
+            // a test running longer than 10 minutes is a hang: the run is stopped and the
+            // test named (the sequence file under TestResults) instead of waiting forever
+            let hang = [ "--blame-hang"; "--blame-hang-timeout"; "10m"; "--blame-hang-dump-type"; "none" ]
             // one after the other, so the two logs do not interleave
-            do! sh "dotnet test src/tests -c Release" { args where; failonerror }
-            do! sh "dotnet test src/hermetic.tests -c Release" { args where; failonerror }
+            do! sh "dotnet test src/tests -c Release" { args (hang @ where); failonerror }
+            do! sh "dotnet test src/hermetic.tests -c Release" { args (hang @ where); failonerror }
         }
 
         // one rule compiles them all: which library and which framework is asked for

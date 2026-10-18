@@ -30,7 +30,7 @@ versions use different namespace URIs for the same element.
 `project.assets.json`'s `targets` section keys on `"<framework>"` or `"<framework>/<rid>"`,
 where `<framework>` is the alias (`netstandard2.0`) for a project with `TargetFrameworks` and the
 **full framework name** (`.NETStandard,Version=v2.0`) for one with a single `TargetFramework` --
-dataengine's, found when the import first read its assets (2026-09-24; page's multi-target
+repo-a's, found when the import first read its assets (2026-09-24; page's multi-target
 projects had hidden it). `readAssets` tries the alias and `Nuget.frameworkFullName alias`
 (`netstandard*`, `netcoreapp*`, `net4xx` folded; `net5.0`+ is its own full name), exact match
 first, then a prefix match -- the rid-qualified entries are for a self-contained publish, not the
@@ -219,7 +219,7 @@ two calls with the same inputs produce the same `Bom`, and rendering it is byte-
 
 Source: `SDP/.memory-bank/framework/docs/6-release/sbom-package-scope-nuget.md` — "Embedded SBOM
 for NuGet Packages — Package Scope", RFC draft under PDR-0010, comments open to 2026-10-07.
-Applies to every customer-facing `DS.*`/`MESCIUS.*`/`GrapeCity.*` nupkg. Read it before
+Applies to every customer-facing `DS.*`/`Acme.*`/`Initech.*` nupkg. Read it before
 changing `Sbom`; the summary below is deliberately short.
 
 **The thesis.** A restore-graph SBOM — which is what `dotnet CycloneDX` emits by default, and
@@ -280,7 +280,7 @@ supplier/license/hash of that package, what our assembly directly used), never w
 |---|---|
 | `metadata.component` (root) | the nupkg: `bom-ref = "nupkg:<file name>"`, `name`/`version`/`supplier`/`licenses`/`purl` from the nuspec inside it; property `xake:nuget:targetFramework`; **no hash of the nupkg** -- the document is packed *into* it at `Sbom.packageSbomPath tfm` = `sbom/<tfm>/bom.cdx.json`, so the nupkg bytes are not final when it is produced |
 | `metadata.component.components[]` (tier 1) | one per shipped file for the TFM: `lib/<tfm>/**` (satellites included), `runtimes/*/lib/<tfm>/**`, `runtimes/*/native/**`, `contentFiles/*/<tfm>\|any/**`, `analyzers/**`, `build*/[<tfm>/]**`, `tools/**`. `bom-ref = "<root ref>/<path>"`, property `xake:nuget:path`, SHA-256 **and** SHA-512 of the bytes in the zip. `.dll`/`.exe` are `library`, else `file`. A file whose SHA-256 equals an input BOM's root hash is one of ours: it takes that root's `name`/`version`. Not listed: `_rels/`, `[Content_Types].xml`, `package/`, the nuspec, `.signature.p7s`, `sbom/`, root-level icon/readme/license, `.xml` docs, `ref/`, any other TFM's folders |
-| `components[]` (tier 2) | the nuspec `<group>` for the TFM (`Nuget.nuspecDependenciesFor`: alias or `.NETStandard2.0`-style spelling, the ungrouped list as fallback, **never** the nearest-compatible group NuGet would pick): id verbatim, property `dt:nuget:declaredVersionRange` = the range as written, `version`/`purl` from the evidence BOMs' matching package (id, case-insensitive) -- `""`/`pkg:nuget/<id>` when nothing resolved it; supplier, license, package hash from that evidence too. Internal ids (none by default; name your prefixes in `IsInternal`, for example `idPrefixes [ "DS."; "MESCIUS."; "GrapeCity." ]`) stay one line: version and purl, no enrichment. Tooling ids (`CycloneDX.*`, `Microsoft.SourceLink.*`, `Microsoft.NETFramework.ReferenceAssemblies*`) are dropped even if a nuspec lists them |
+| `components[]` (tier 2) | the nuspec `<group>` for the TFM (`Nuget.nuspecDependenciesFor`: alias or `.NETStandard2.0`-style spelling, the ungrouped list as fallback, **never** the nearest-compatible group NuGet would pick): id verbatim, property `dt:nuget:declaredVersionRange` = the range as written, `version`/`purl` from the evidence BOMs' matching package (id, case-insensitive) -- `""`/`pkg:nuget/<id>` when nothing resolved it; supplier, license, package hash from that evidence too. Internal ids (none by default; name your prefixes in `IsInternal`, for example `idPrefixes [ "DS."; "Acme."; "Initech." ]`) stay one line: version and purl, no enrichment. Tooling ids (`CycloneDX.*`, `Microsoft.SourceLink.*`, `Microsoft.NETFramework.ReferenceAssemblies*`) are dropped even if a nuspec lists them |
 | tier 3 | nothing. A package the restore graph carries but the nuspec does not declare -- transitive, SDK pack, analyzer -- does not appear anywhere |
 | `dependencies[]` | root -> its own shipped assemblies + every tier-2 component; each own assembly (matched by hash) -> the tier-2 components its restore-scope BOM had it depend on *directly*, matched by package id. No entry has a tier-2 ref |
 | `compositions[]` | `complete` / `assemblies: [root]`; `incomplete` / `dependencies: [root; own assemblies]` |

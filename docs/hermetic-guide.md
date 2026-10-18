@@ -390,7 +390,7 @@ Each assembly is written where msbuild's compiler would write it, the `/out:` of
 With project references between the imported projects, use one file rule per output instead. A
 project reference in the lock has no hash and points at the path msbuild would have built it
 at; map it to the path your rule builds it at, `need` that first, then compile. This is the
-pattern of the maintainers' dataengine script **(untested here)**:
+pattern of the maintainers' repo-a script **(untested here)**:
 
 ```fsharp
 target "src/(proj:*)/obj/xake/(fwk:*)/(brand:*)/(name:*).dll" {

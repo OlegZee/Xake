@@ -130,10 +130,10 @@ type ``Description import``() =
         let project = dir </> "Widgets" </> "Widgets.csproj"
         let descriptionOf brand (p: string) = dir </> brand </> Path.GetFileNameWithoutExtension p + ".json"
 
-        let mescius = x.Import [ project ] (descriptionOf "mescius") [ "Brand", "MESCIUS" ] |> List.head
+        let globex = x.Import [ project ] (descriptionOf "globex") [ "Brand", "Globex" ] |> List.head
         let acme = x.Import [ project ] (descriptionOf "acme") [] |> List.head
-        let d = Description.read mescius.Description
-        Assert.That(d.AssemblyName, Is.EqualTo (Some "MESCIUS.Widgets"))
+        let d = Description.read globex.Description
+        Assert.That(d.AssemblyName, Is.EqualTo (Some "Globex.Widgets"))
         Assert.That((Description.read acme.Description).AssemblyName, Is.EqualTo (Some "ACME.Widgets"))
         Assert.That(d.Name, Is.EqualTo "Widgets")
         Assert.That(d.Project, Is.EqualTo "../Widgets/Widgets.csproj")
@@ -143,6 +143,6 @@ type ``Description import``() =
         Assert.That(d.Options.LangVersion, Is.EqualTo None, "the SDK's default for the framework is not the project's")
         // msbuild's default glob and its excludes, then the project's own items, as masks
         Assert.That(d.Sources, Is.EqualTo [ "**/*.cs"; "!bin/**/*"; "!obj/**/*"; "!**/.*/**/*"; "!Legacy/**/*"; "../Shared/Common.cs" ])
-        Assert.That(mescius.Dropped |> List.filter (fun s -> s.Contains "masks"), Is.Empty, "the masks expand to msbuild's Compile list")
+        Assert.That(globex.Dropped |> List.filter (fun s -> s.Contains "masks"), Is.Empty, "the masks expand to msbuild's Compile list")
         // what msbuild read: the project and its Directory.Build.props, nothing of the SDK
-        Assert.That(mescius.Inputs, Is.EqualTo [ "brand/Directory.Build.props"; "brand/Widgets/Widgets.csproj" ])
+        Assert.That(globex.Inputs, Is.EqualTo [ "brand/Directory.Build.props"; "brand/Widgets/Widgets.csproj" ])

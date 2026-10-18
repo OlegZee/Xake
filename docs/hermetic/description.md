@@ -78,7 +78,7 @@ same bytes.
 
 `Import.descriptions projects descriptionOf globals` (module `Import`, `src/hermetic/Import.fs`)
 writes the description of each project file from msbuild's evaluation under `globals`, e.g.
-`["Configuration", "Release"; "Brand", "MESCIUS"]`; `descriptionOf` maps a project file to its
+`["Configuration", "Release"; "Brand", "Acme"]`; `descriptionOf` maps a project file to its
 description file (`Description.beside`, or a brand folder). msbuild evaluates the project once
 without and once per target framework, through the same runner as the lock import; no targets
 run, nothing is restored, and a file is rewritten only when its content changes (an existing

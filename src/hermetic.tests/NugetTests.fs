@@ -98,7 +98,7 @@ type ``Nuget assets``() =
         Assert.That (assets.Graph, Contains.Item (("MyProj", "1.0.0"), ("Baz.Qux", "4.5.6")))
 
     /// A single-`TargetFramework` project: NuGet keys `targets` by the full framework name,
-    /// not the alias (dataengine's `project.assets.json` has `.NETStandard,Version=v2.0`).
+    /// not the alias (repo-a's `project.assets.json` has `.NETStandard,Version=v2.0`).
     [<Test>]
     member x.``finds the target keyed by the full framework name of a single-target project``() =
         let assetsFile = Directory.GetCurrentDirectory() </> "project.assets.single.json"
@@ -129,7 +129,7 @@ type ``Nuget assets``() =
     /// A restore run with a global `-p:TargetFramework=X` writes an assets file holding only
     /// X's target. Reading it for another framework used to give an empty graph, so the lock
     /// entry was recorded with `packages 0` and the SBOM came out without its package
-    /// components -- silently (verify-dataengine.md §6). It has to fail instead.
+    /// components -- silently (the repo-a verification notes §6). It has to fail instead.
     [<Test>]
     member x.``fails loudly when the assets file has no target for the framework``() =
         let assetsFile = Directory.GetCurrentDirectory() </> "project.assets.onetarget.json"

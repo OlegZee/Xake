@@ -175,13 +175,13 @@ do xakeScript {
             budget signBudget
         }
 
-        "release" <== [ "signed/Rdl.dll"; "signed/MESCIUS.ActiveReports.Core.Rdl.nupkg" ]
+        "release" <== [ "signed/Model.dll"; "signed/Acme.Reports.Core.Model.nupkg" ]
 
         // the gate: nothing is published until the signed file is provably the same image
         "verify-signed" => recipe {
-            do! need [ "signed/Rdl.dll" ]
-            let unsigned = "out/Rdl.dll"
-            if Verify.authenticodeHash "signed/Rdl.dll" <> Verify.authenticodeHash unsigned then
+            do! need [ "signed/Model.dll" ]
+            let unsigned = "out/Model.dll"
+            if Verify.authenticodeHash "signed/Model.dll" <> Verify.authenticodeHash unsigned then
                 failwith "signed file is not the attested image"
         }
     ]

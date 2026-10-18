@@ -228,16 +228,16 @@ type ``Import fidelity``() =
 
     [<Test>]
     member x.``manifest names are msbuild's``() =
-        Assert.That(Described.manifestName "Acme" "Strings.resx", Is.EqualTo "Acme.Strings.resources")
-        Assert.That(Described.manifestName "Acme" "Properties/Resources.resx", Is.EqualTo "Acme.Properties.Resources.resources")
-        Assert.That(Described.manifestName "Acme" "1st Folder/a-b.txt", Is.EqualTo "Acme._1st_Folder.a-b.txt")
-        Assert.That(Described.manifestName "Acme" "my.dir/x-y/z.xsd", Is.EqualTo "Acme.my.dir.x_y.z.xsd")
-        Assert.That(Described.manifestName "" "Res/a.txt", Is.EqualTo "Res.a.txt")
+        Assert.That(ProjectPlan.manifestName "Acme" "Strings.resx", Is.EqualTo "Acme.Strings.resources")
+        Assert.That(ProjectPlan.manifestName "Acme" "Properties/Resources.resx", Is.EqualTo "Acme.Properties.Resources.resources")
+        Assert.That(ProjectPlan.manifestName "Acme" "1st Folder/a-b.txt", Is.EqualTo "Acme._1st_Folder.a-b.txt")
+        Assert.That(ProjectPlan.manifestName "Acme" "my.dir/x-y/z.xsd", Is.EqualTo "Acme.my.dir.x_y.z.xsd")
+        Assert.That(ProjectPlan.manifestName "" "Res/a.txt", Is.EqualTo "Res.a.txt")
         // a folder that comes out as `_` is `__`, wherever it is in the path
-        Assert.That(Described.manifestName "Root" "_/x.txt", Is.EqualTo "Root.__.x.txt")
-        Assert.That(Described.manifestName "Root" "a/_/x.txt", Is.EqualTo "Root.a.__.x.txt")
-        Assert.That(Described.manifestName "Root" "a/-/x.txt", Is.EqualTo "Root.a.__.x.txt")
-        Assert.That(Described.manifestName "Root" "a/_b/x.txt", Is.EqualTo "Root.a._b.x.txt")
+        Assert.That(ProjectPlan.manifestName "Root" "_/x.txt", Is.EqualTo "Root.__.x.txt")
+        Assert.That(ProjectPlan.manifestName "Root" "a/_/x.txt", Is.EqualTo "Root.a.__.x.txt")
+        Assert.That(ProjectPlan.manifestName "Root" "a/-/x.txt", Is.EqualTo "Root.a.__.x.txt")
+        Assert.That(ProjectPlan.manifestName "Root" "a/_b/x.txt", Is.EqualTo "Root.a._b.x.txt")
 
     /// `project` composes `/nowarn:` from the SDK's defaults and the description's, `/warnaserror+`
     /// only when asked, and one generated source with the friends and the attributes.

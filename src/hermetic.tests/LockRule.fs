@@ -1,6 +1,7 @@
 namespace Tests
 
 open Xake
+open Xake.Dotnet
 open Xake.Hermetic.Dotnet
 
 /// The script side of lock generation (docs/hermetic/lock.md "Xake-generated locks"), shared

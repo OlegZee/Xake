@@ -298,7 +298,7 @@ module Pack =
     /// `tags`, `projectUrl`, `license`, `icon`, `readme`, `repositoryUrl`. Absent values are
     /// left out. A script adds or overrides its own (`Map.add "configuration" "Release"`).
     /// </summary>
-    let tokensOf (d: Description.Project) (version: string) : Map<string, string> =
+    let tokensOf (d: Xake.Dotnet.Description.Project) (version: string) : Map<string, string> =
         let m = d.Package
         let id = m |> Option.map (fun m -> m.Id) |> Option.defaultValue d.Name
         let opt name (v: string option) = v |> Option.toList |> List.map (fun v -> name, v)

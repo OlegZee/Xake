@@ -314,8 +314,8 @@ uses only public names of the base: `Tool.diagnosticLevel`, `Tool.failOnExitCode
 | 4 | `ResourceFileset.fs` | 4 | `Nuget.fs` |
 | 5 | `Resx.fs` | 5 | `Restore.fs` (also the namespace-level `Package` type) |
 | 6 | `DotnetTasks.fs` | 6 | `Git.fs` |
-| 7 | `CscArgs.fs`, `FscArgs.fs` | 7 | `Lock.fs` (also `CscLocked`, `CscLockBuilder`, `FscLocked`, `FscLockBuilder`) |
-| 8 | `CompilerRunner.fs`, `Csc.fs`, `Fsc.fs` | 8 | `Described.fs` (also `CscDescribedBuilder`, `FscDescribedBuilder`) |
+| 7 | `CscArgs.fs`, `FscArgs.fs` | 7 | `Lock.fs` |
+| 8 | `CompilerRunner.fs`, `Csc.fs`, `Fsc.fs` | 8 | `Described.fs` (also `CscDescribedBuilder`, `FscDescribedBuilder`, and since 0.4 `CscLocked`, `CscLockBuilder`, `FscLocked`, `FscLockBuilder`) |
 | 9 | `Dotnet.csc.fs` | 9 | `Locks.fs` |
 | 10 | `Dotnet.fsc.fs`, `Dotnet.resgen.fs`, `Dotnet.Msbuild.fs` | 10 | `Project.fs` |
 | | | 11 | `Import.fs` |
@@ -755,12 +755,13 @@ The model is data and needs no compiler code. That is why the roadmap moves it i
 
 #### The compile: `csc/fsc { project "path"; config "Release" }`
 
-`Described` (`src/hermetic/Described.fs`) turns a description into settings. The operation
-`project` is a type extension of the base builders (`CscDescribedBuilder`,
-`FscDescribedBuilder`), the same technique as `lock`. The operations before `project` stay in
-effect: `targetfwk` selects one framework of the description, `out` sets the output, and `ref`
-passes the outputs of project references. The operations after `project` are `config`,
-`packages`, `lock`, `nofetch` and `resolve`.
+`Described` (`src/hermetic/Described.fs`) turns a description into settings. Since 0.4 (Xake
+3.9) `project` is the core's setting (`CscSettingsType.Project`); this package's `config`,
+`packages` and `lock` are type extensions of the base builders (`CscDescribedBuilder`,
+`FscDescribedBuilder`, `CscLockBuilder`), the same technique as before. The block's other
+operations stay in effect: `targetfwk` selects one framework of the description, `out` sets the
+output, and `ref` passes the outputs of project references. After `config`/`packages` come
+`config`, `packages`, `lock`, `nofetch` and `resolve`; `lock` may follow `project` directly.
 
 - `Described.csc` and `Described.fsc` end in `Csc.ofSettings` and `Fsc.ofSettings`. So a
   description goes through the same composition, round-trip check and `HERMETIC=on` gate as any

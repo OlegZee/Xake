@@ -52,11 +52,11 @@ type ``Described compilation``() =
     [<Test>]
     member x.``framework defines are the SDK's``() =
         // `dotnet build -c Release` of SDK 10.0.401, DefineConstants after TRACE;RELEASE
-        Assert.That(Described.frameworkDefines "netstandard2.0" |> String.concat ";",
+        Assert.That(ProjectPlan.frameworkDefines "netstandard2.0" |> String.concat ";",
             Is.EqualTo "NETSTANDARD;NETSTANDARD2_0;NETSTANDARD1_0_OR_GREATER;NETSTANDARD1_1_OR_GREATER;NETSTANDARD1_2_OR_GREATER;NETSTANDARD1_3_OR_GREATER;NETSTANDARD1_4_OR_GREATER;NETSTANDARD1_5_OR_GREATER;NETSTANDARD1_6_OR_GREATER;NETSTANDARD2_0_OR_GREATER")
-        Assert.That(Described.frameworkDefines "net462" |> String.concat ";",
+        Assert.That(ProjectPlan.frameworkDefines "net462" |> String.concat ";",
             Is.EqualTo "NETFRAMEWORK;NET462;NET20_OR_GREATER;NET30_OR_GREATER;NET35_OR_GREATER;NET40_OR_GREATER;NET45_OR_GREATER;NET451_OR_GREATER;NET452_OR_GREATER;NET46_OR_GREATER;NET461_OR_GREATER;NET462_OR_GREATER")
-        Assert.That(Described.frameworkDefines "net8.0" |> String.concat ";",
+        Assert.That(ProjectPlan.frameworkDefines "net8.0" |> String.concat ";",
             Is.EqualTo "NET;NET8_0;NETCOREAPP;NET5_0_OR_GREATER;NET6_0_OR_GREATER;NET7_0_OR_GREATER;NET8_0_OR_GREATER;NETCOREAPP1_0_OR_GREATER;NETCOREAPP1_1_OR_GREATER;NETCOREAPP2_0_OR_GREATER;NETCOREAPP2_1_OR_GREATER;NETCOREAPP2_2_OR_GREATER;NETCOREAPP3_0_OR_GREATER;NETCOREAPP3_1_OR_GREATER")
 
     [<Test>]
@@ -134,7 +134,8 @@ type ``Described compilation``() =
         let core = place "core"
         let e = Assert.Throws<XakeException>(fun () ->
             x.Run "no-packages" (recipe {
-                let! _ = fsc { targetfwk "netstandard2.0"; out (File.make "out/nopkg/Xake.dll"); project core; resolve }
+                // `config` makes it this package's composition (the core's alone composes FSharp.Core itself)
+                let! _ = fsc { targetfwk "netstandard2.0"; out (File.make "out/nopkg/Xake.dll"); project core; config "Release"; resolve }
                 return () }))
         Assert.That(e.Data0, Does.Contain "resolve them with Described.restore")
 
@@ -226,6 +227,43 @@ type ``Described compilation``() =
         Assert.That(options, Is.SupersetOf [ "--debug+"; "--debug:portable"; "--optimize-"; "--tailcalls-"; "--deterministic+" ])
         Assert.That(options, Has.None.EqualTo "--optimize+")
         Assert.That(defines |> List.take 3, Is.EqualTo [ "TRACE"; "DEBUG"; "NETSTANDARD" ])
+
+    /// `project` is the core's (Xake 3.9): alone it is the core's composition (sources expanded,
+    /// no pathmap); `config`, `packages` or `lock` after it make it this package's (masks kept,
+    /// `/pathmap`), `lock` right after `project` included.
+    [<Test; Category("Integration")>]
+    member x.``the core's project alone, this package's composition after config or lock``() =
+        if Directory.Exists "route" then Directory.Delete ("route", true)
+        Directory.CreateDirectory "route" |> ignore
+        File.WriteAllText ("route/A.cs", "namespace R { public class A {} }\n")
+        File.WriteAllText ("route/xake.project.json",
+            "{\n  \"name\": \"R\",\n  \"project\": \"R.csproj\",\n  \"language\": \"csharp\",\n  \"kind\": \"library\",\n  \"frameworks\": [\"netstandard2.0\"],\n  \"sources\": [\"**/*.cs\"]\n}\n")
+        let lockPath = "locks/R.json"
+        if File.Exists lockPath then File.Delete lockPath
+        let mutable core, described = None, None
+        x.Run "route-resolve" (recipe {
+            let! c = csc { out (File.make "out/R.dll"); project "route/xake.project.json"; resolve }
+            core <- Some c
+            let! d = csc { out (File.make "out/R.dll"); project "route/xake.project.json"; config "Release"; resolve }
+            described <- Some d })
+        Assert.That(core.Value.Sources |> List.map Path.GetFileName, Is.EqualTo [ "A.cs" ])
+        Assert.That(core.Value.Options |> List.exists (fun o -> o.StartsWith "/pathmap"), Is.False)
+        Assert.That(described.Value.Sources |> List.exists (fun s -> s.EndsWith "/route/**/*.cs"), Is.True)
+        Assert.That(described.Value.Options |> List.exists (fun o -> o.StartsWith "/pathmap"), Is.True)
+        do xake {x.TestOptions with FileLog = "route-lock.log"; ThrowOnError = true; Vars = [ "CI", "off" ]} {
+            wantOverride [ "out/R.dll" ]
+            rules [ "out/R.dll" ..> csc { project "route/xake.project.json"; lock lockPath } ]
+        }
+        Assert.That(File.Exists "out/R.dll", Is.True)
+        Assert.That(File.ReadAllText lockPath, Does.Contain "\"$(ProjectRoot)/route/**/*.cs\"")
+
+    [<Test>]
+    member x.``config needs project``() =
+        let e = Assert.Throws<XakeException>(fun () ->
+            x.Run "config-no-project" (recipe {
+                let! _ = csc { out (File.make "out/N.dll"); src !!"none/*.cs"; config "Release"; resolve }
+                return () }))
+        Assert.That(e.Data0, Does.Contain "need `project")
 
     /// A C# description keeps its masks: in the resolved `Csc`, in the lock; an added `.cs` is
     /// compiled on the next build without a lock change; `obj/` is not a source.

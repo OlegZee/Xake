@@ -4,6 +4,7 @@ open System.IO
 open NUnit.Framework
 
 open Xake
+open Xake.Dotnet
 open Xake.Hermetic.Dotnet
 
 /// `Locks.generate`: the lock of one described project, generated without compiling, driven
@@ -37,7 +38,7 @@ type ``Lock generation``() =
         let d : Description.Project =
             { Schema = None; Name = name; Project = name + ".fsproj"; AssemblyName = None; RootNamespace = None
               Language = Description.FSharp; Kind = Description.Library; Frameworks = frameworks; Sources = [ "Lib.fs" ]
-              Resources = []; Defines = []; References = []; ProjectRefs = refs; Packages = packages
+              Resources = []; Defines = []; References = []; FrameworkReferences = []; ProjectRefs = refs; Packages = packages
               Options = Description.Options.Default; InternalsVisibleTo = []; AssemblyAttributes = []; ByFramework = []; Package = None }
         Description.write (dir </> Description.FileName) d |> ignore
         "tiny/" + name + "/" + Description.FileName

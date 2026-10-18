@@ -55,8 +55,7 @@
         ],
         "Sources": [
           "$(ProjectRoot)/obj/xake/Xake.Hermetic.Dotnet/net462/Xake.Hermetic.Dotnet.InternalsVisibleTo.fs",
-          "$(ProjectRoot)/src/hermetic/Json.fs",
-          "$(ProjectRoot)/src/hermetic/Description.fs",
+          "$(ProjectRoot)/src/hermetic/ToolJson.fs",
           "$(ProjectRoot)/src/hermetic/Roots.fs",
           "$(ProjectRoot)/src/hermetic/Nuget.fs",
           "$(ProjectRoot)/src/hermetic/Restore.fs",
@@ -91,8 +90,8 @@
           { "Path": "$(NuGetPackageRoot)/system.resources.extensions/8.0.0/lib/net462/System.Resources.Extensions.dll", "Sha256": "b69c9547c7bf0d6e357993d41228b6cef033f4f2e0ecba9f07325c7e980139ae" },
           { "Path": "$(NuGetPackageRoot)/system.runtime.compilerservices.unsafe/4.5.3/ref/net461/System.Runtime.CompilerServices.Unsafe.dll", "Sha256": "66f976ad7681ee58c0560a92c57b6f8d4215439e43ad420f12ef49aecafdd8af" },
           { "Path": "$(NuGetPackageRoot)/system.valuetuple/4.6.2/lib/net462/System.ValueTuple.dll", "Sha256": "400e432af60a6a2b3eedec5908be7e7ae0d063ecf0052595f7cd6cffb7e4e98e" },
-          { "Path": "$(NuGetPackageRoot)/xake/3.8.0.29/lib/net462/Xake.Dotnet.dll", "Sha256": "30f2a2e3ef26f460f0f1bd989438923b61dbbe2bc11f00d61c09fb1e7a36e862" },
-          { "Path": "$(NuGetPackageRoot)/xake/3.8.0.29/lib/net462/Xake.dll", "Sha256": "7faaf88b82038395d643675e473d1c043f55e379b38c7c51b5161d47a7c1bc30" },
+          { "Path": "$(NuGetPackageRoot)/xake/3.9.0.30/lib/net462/Xake.Dotnet.dll", "Sha256": "3d76a7bf77bb31892cbc041420e9829fd14da056a7e5ed6609d71c313c121e3f" },
+          { "Path": "$(NuGetPackageRoot)/xake/3.9.0.30/lib/net462/Xake.dll", "Sha256": "92773f286616c5ff5deecf417e6ca83d060f598d507e6e2a53185fc556b0c3f3" },
           { "Path": "$(NuGetPackageRoot)/microsoft.netframework.referenceassemblies.net462/1.0.3/build/.NETFramework/v4.6.2/mscorlib.dll", "Sha256": "f8b1e8838944f96ea36b670b32a54c0eb0eca3743946363acc676d1d7ef893b0" },
           { "Path": "$(NuGetPackageRoot)/microsoft.net.build.extensions/2.2.101/msbuildExtensions/Microsoft/Microsoft.NET.Build.Extensions/net461/lib/netstandard.dll", "Sha256": "8be4a2270f8b2bea40f33f79869fdcca34e07bb764e63b81ded49d90d2b720dd" },
           { "Path": "$(NuGetPackageRoot)/microsoft.netframework.referenceassemblies.net462/1.0.3/build/.NETFramework/v4.6.2/System.dll", "Sha256": "19359fe1fdef82d265afdd0f1ba15e978795ea483a63e6f2881f993bd20bbd65" },
@@ -118,7 +117,7 @@
           { "Id": "System.Resources.Extensions", "Version": "8.0.0", "Sha512": "psnQ6GRQOvt+evda5C4nD5EuV49mz2Tv0DD2JDVDEbE/TKoMukxSkGJcsBJ0pajpPuFRr67syFYlkJ4Wj6A5Zw==", "Direct": false, "DependsOn": ["System.Memory"] },
           { "Id": "System.Runtime.CompilerServices.Unsafe", "Version": "4.5.3", "Sha512": "3TIsJhD1EiiT0w2CcDMN/iSSwnNnsrnbzeVHSKkaEgV85txMprmuO+Yq2AdSbeVGcg28pdNDTPK87tJhX7VFHw==", "Direct": false, "DependsOn": [] },
           { "Id": "System.ValueTuple", "Version": "4.6.2", "Sha512": "yQgmjfFximrNm9LIV3mL6T5MzjeC+epeE5rl4hXxAlYmxby7RM1dPSkIKXk9HNkl6G54h2JHOmLD46+Pey+IRg==", "Direct": true, "DependsOn": [] },
-          { "Id": "Xake", "Version": "3.8.0.29", "Sha512": "c7zLCT6D+q+0N1kmyUnpEqbQ1erI+OBXrtxApKjb9rrzzF2x+HSEQb9ZZbwPuQWnjZsxm0RA7etwggm5BZtKzA==", "Direct": true, "DependsOn": ["FSharp.Core", "System.Resources.Extensions", "System.ValueTuple"] }
+          { "Id": "Xake", "Version": "3.9.0.30", "Sha512": "Mrs/O8h28o+jXIWLJ5jUwR15e5OAFEXs0EfiGdJExrElwQTa/22MLQOHwz0DtOX8CHEUCeLoo1lxZfa0ReKXgA==", "Direct": true, "DependsOn": ["FSharp.Core", "System.Resources.Extensions", "System.ValueTuple"] }
         ]
       }
     },
@@ -171,8 +170,7 @@
         ],
         "Sources": [
           "$(ProjectRoot)/obj/xake/Xake.Hermetic.Dotnet/netstandard2.0/Xake.Hermetic.Dotnet.InternalsVisibleTo.fs",
-          "$(ProjectRoot)/src/hermetic/Json.fs",
-          "$(ProjectRoot)/src/hermetic/Description.fs",
+          "$(ProjectRoot)/src/hermetic/ToolJson.fs",
           "$(ProjectRoot)/src/hermetic/Roots.fs",
           "$(ProjectRoot)/src/hermetic/Nuget.fs",
           "$(ProjectRoot)/src/hermetic/Restore.fs",
@@ -209,8 +207,8 @@
           { "Path": "$(NuGetPackageRoot)/system.runtime.compilerservices.unsafe/4.5.3/ref/netstandard2.0/System.Runtime.CompilerServices.Unsafe.dll", "Sha256": "66c4535699056ce79f1c08c00e2fdc685d0c9d60ed3396c0654f3bb035fd6bce" },
           { "Path": "$(NuGetPackageRoot)/system.security.accesscontrol/5.0.0/ref/netstandard2.0/System.Security.AccessControl.dll", "Sha256": "e61a6d931410f9a1a05048dbbdd17f485ebd76d3a6f9444dc178cd7026d2b0b5" },
           { "Path": "$(NuGetPackageRoot)/system.security.principal.windows/5.0.0/ref/netstandard2.0/System.Security.Principal.Windows.dll", "Sha256": "70c0811e06c306c86c53425c7ca8f4672515792fb721ec2d8af83fa80d563791" },
-          { "Path": "$(NuGetPackageRoot)/xake/3.8.0.29/lib/netstandard2.0/Xake.Dotnet.dll", "Sha256": "d2b332b3cc1a75f471758cb78cc318af01de7fedb23562cc740a8894ed623f0b" },
-          { "Path": "$(NuGetPackageRoot)/xake/3.8.0.29/lib/netstandard2.0/Xake.dll", "Sha256": "39f766d1ca79bbd3add01717405a374255f26cdff99b6b3997e63b997dc73b34" },
+          { "Path": "$(NuGetPackageRoot)/xake/3.9.0.30/lib/netstandard2.0/Xake.Dotnet.dll", "Sha256": "e71db4bb0cec38a12f66da87010a79a178c1181ced2c280056131773a719b42c" },
+          { "Path": "$(NuGetPackageRoot)/xake/3.9.0.30/lib/netstandard2.0/Xake.dll", "Sha256": "ce798e316a6f71ed89287cb5eb74b863c086863c7f42e9bfcf569cc99f6599f6" },
           { "Path": "$(NuGetPackageRoot)/netstandard.library/2.0.3/build/netstandard2.0/ref/netstandard.dll", "Sha256": "1799854d01a89d141fecc4c4548b01e51fa57118c9b18eac66a752f3bbe98c02" }
         ],
         "Analyzers": [
@@ -226,7 +224,7 @@
           { "Id": "System.Runtime.CompilerServices.Unsafe", "Version": "4.5.3", "Sha512": "3TIsJhD1EiiT0w2CcDMN/iSSwnNnsrnbzeVHSKkaEgV85txMprmuO+Yq2AdSbeVGcg28pdNDTPK87tJhX7VFHw==", "Direct": false, "DependsOn": [] },
           { "Id": "System.Security.AccessControl", "Version": "5.0.0", "Sha512": "dagJ1mHZO3Ani8GH0PHpPEe/oYO+rVdbQjvjJkBRNQkX4t0r1iaeGn8+/ybkSLEan3/slM0t59SVdHzuHf2jmw==", "Direct": false, "DependsOn": ["System.Security.Principal.Windows"] },
           { "Id": "System.Security.Principal.Windows", "Version": "5.0.0", "Sha512": "t0MGLukB5WAVU9bO3MGzvlGnyJPgUlcwerXn1kzBRjwLKixT96XV0Uza41W49gVd8zEMFu9vQEFlv0IOrytICA==", "Direct": false, "DependsOn": [] },
-          { "Id": "Xake", "Version": "3.8.0.29", "Sha512": "c7zLCT6D+q+0N1kmyUnpEqbQ1erI+OBXrtxApKjb9rrzzF2x+HSEQb9ZZbwPuQWnjZsxm0RA7etwggm5BZtKzA==", "Direct": true, "DependsOn": ["FSharp.Core", "Microsoft.Win32.Registry", "System.Resources.Extensions"] }
+          { "Id": "Xake", "Version": "3.9.0.30", "Sha512": "Mrs/O8h28o+jXIWLJ5jUwR15e5OAFEXs0EfiGdJExrElwQTa/22MLQOHwz0DtOX8CHEUCeLoo1lxZfa0ReKXgA==", "Direct": true, "DependsOn": ["FSharp.Core", "Microsoft.Win32.Registry", "System.Resources.Extensions"] }
         ]
       }
     }

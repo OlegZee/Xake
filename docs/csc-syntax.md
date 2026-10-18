@@ -194,19 +194,19 @@ description is read -- no msbuild, no restore, no lock. Code: `src/dotnet/Projec
   entry whose output is not among the block's `ref`, a culture-specific resource, a description
   of the other language. The messages name Xake.Hermetic.Dotnet where it is the way out.
 - **Not here:** `config` (the SDK's Debug/Release presets), `packages`, `lock`: Xake.Hermetic.Dotnet
-  (next section). Its 0.3 release builds on Xake below 3.8, so its own `project` (below) and this
-  one never meet in a script; its next release builds on Xake 3.9 and this description model.
+  (next section). Since 0.4 it builds on Xake 3.9 and adds them to this `project`.
 
 ## From a project description in Xake.Hermetic.Dotnet: `project`, `config`, `packages`
 
-`Xake.Hermetic.Dotnet` adds three operations to `csc {}` and `fsc {}` that build a compilation
-from a project description (`xake.project.json`, [hermetic/description.md](hermetic/description.md))
-instead of listing sources and defines in the script. `project "path"` takes the description file
-(relative to the project root) and must follow every ordinary setting it builds on (`targetfwk`,
-`out`, `ref` for the outputs of `projectRefs`); after it only `config`, `packages`, `lock`,
-`nofetch` and `resolve` may come. Code: `src/hermetic/Described.fs`.
+`Xake.Hermetic.Dotnet` (0.4, on Xake 3.9) adds operations to the core's `project` (above) for a
+description with packages, a configuration or a lock
+([hermetic/description.md](hermetic/description.md#the-composition-this-package-adds-config-packages-lock)).
+`project "path"` is the core's setting; `config`, `packages` and `lock` come after it, then only
+`config`, `packages`, `lock`, `nofetch` and `resolve`; any of them makes the compilation the
+package's composition (below) instead of the core's. Code: `src/hermetic/Described.fs`.
 
 ```fsharp
+open Xake.Dotnet
 open Xake.Hermetic.Dotnet
 
 "out/Release/netstandard2.0/Xake.Dotnet.dll" ..> recipe {

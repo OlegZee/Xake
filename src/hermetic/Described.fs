@@ -23,9 +23,12 @@ module Described =
           /// references them for a .NET Framework target the way it does the implicit ones
           FrameworkReferences: string list }
 
-    /// What follows `project` in a block: the description file, the configuration (`config`)
-    /// and the restored packages (`packages`).
-    type Spec = { Path: string; Config: string option; Restored: Restored option }
+    /// What this package adds to a block that names a description (the core's `project`
+    /// setting, `CscSettingsType.Project`): the configuration (`config`) and the restored
+    /// packages (`packages`).
+    type Spec =
+        { Config: string option; Restored: Restored option }
+        static member None = { Config = None; Restored = None }
 
     let private same (a: string) (b: string) = System.String.Equals (a, b, System.StringComparison.OrdinalIgnoreCase)
 
@@ -53,49 +56,11 @@ module Described =
                 | v -> if v.Contains "." then v else v + ".0"
             Some (m.Groups.[1].Value.ToLowerInvariant (), identifier, version)
 
-    /// The base framework of a platform framework (`net8.0-windows` -> `net8.0`), the framework
-    /// itself otherwise: what the reference pack of `Microsoft.NETCore.App` is resolved for.
-    let baseFramework (framework: string) : string =
-        match platformOf framework with
-        | Some (b, _, _) -> b
-        | None -> framework
-
     /// A dotted version as numbers, for ordering (`10.0.19041.0` -> [10; 0; 19041; 0]).
     let private versionKey (v: string) =
         v.Split ([| '.' |], System.StringSplitOptions.RemoveEmptyEntries)
         |> Array.map (fun p -> match System.Int32.TryParse p with | true, n -> n | _ -> 0) |> List.ofArray
 
-
-    /// The symbols the .NET SDK defines for a target framework (`_ImplicitDefineConstant` in
-    /// `Microsoft.NET.Sdk.BeforeCommon.targets`), in the SDK's order: `netstandard2.0` ->
-    /// `NETSTANDARD; NETSTANDARD2_0; NETSTANDARD1_0_OR_GREATER .. NETSTANDARD2_0_OR_GREATER`,
-    /// `net462` -> `NETFRAMEWORK; NET462; NET20_OR_GREATER .. NET462_OR_GREATER`, `net8.0` ->
-    /// `NET; NET8_0; NETCOREAPP; NET5_0_OR_GREATER .. NET8_0_OR_GREATER;
-    /// NETCOREAPP1_0_OR_GREATER .. NETCOREAPP3_1_OR_GREATER`. Unknown monikers give none.
-    let frameworkDefines (framework: string) : string list =
-        let f = framework.ToLowerInvariant ()
-        let upTo (versions: string list) (v: string) prefix =
-            match List.tryFindIndex ((=) v) versions with
-            | Some i -> versions |> List.take (i + 1) |> List.map (fun v -> prefix + v + "_OR_GREATER")
-            | None -> []
-        let netstandard = [ "1_0"; "1_1"; "1_2"; "1_3"; "1_4"; "1_5"; "1_6"; "2_0"; "2_1" ]
-        let netcoreapp = [ "1_0"; "1_1"; "2_0"; "2_1"; "2_2"; "3_0"; "3_1" ]
-        let netfx = [ "20"; "30"; "35"; "40"; "45"; "451"; "452"; "46"; "461"; "462"; "47"; "471"; "472"; "48"; "481" ]
-        let m = System.Text.RegularExpressions.Regex.Match (f, @"^(netstandard|netcoreapp|net)(\d+)\.(\d+)$")
-        if m.Success then
-            let kind, v = m.Groups.[1].Value, m.Groups.[2].Value + "_" + m.Groups.[3].Value
-            match kind with
-            | "netstandard" -> [ "NETSTANDARD"; "NETSTANDARD" + v ] @ upTo netstandard v "NETSTANDARD"
-            | "netcoreapp" -> [ "NETCOREAPP"; "NETCOREAPP" + v ] @ upTo netcoreapp v "NETCOREAPP"
-            | _ ->
-                let major = int m.Groups.[2].Value
-                [ "NET"; "NET" + v; "NETCOREAPP" ]
-                @ [ for n in 5 .. major -> sprintf "NET%d_0_OR_GREATER" n ]
-                @ (netcoreapp |> List.map (fun v -> "NETCOREAPP" + v + "_OR_GREATER"))
-        elif System.Text.RegularExpressions.Regex.IsMatch (f, @"^net\d+$") && List.contains (f.Substring 3) netfx then
-            let v = f.Substring 3
-            [ "NETFRAMEWORK"; "NET" + v ] @ upTo netfx v "NET"
-        else []
 
     /// The configuration preset the .NET SDK applies (SDK 10.0.401: `Microsoft.NET.Sdk.props`,
     /// `Microsoft.FSharp.NetSdk.props`, the `ImplicitConfigurationDefine` of
@@ -115,13 +80,6 @@ module Described =
         | Description.CSharp, "release" -> [ "TRACE"; "RELEASE" ], [ "/debug-"; "/debug:portable"; "/optimize+" ], true
         | _ -> failwithf "config '%s': only Debug and Release are known (the SDK's own presets)" config
 
-    /// The framework assemblies the SDK references implicitly for a .NET Framework 4.5+ target
-    /// (`_SDKImplicitReference`, `Microsoft.NET.Sdk.BeforeCommon.targets`); an import leaves
-    /// them out of a description, `project` adds them back.
-    let implicitFrameworkReferences =
-        [ "System"; "System.Data"; "System.Drawing"; "System.Xml"; "System.Core"; "System.Runtime.Serialization"
-          "System.Xml.Linq"; "System.Numerics"; "System.IO.Compression.FileSystem" ]
-
     /// The package the F# SDK references implicitly (`Microsoft.FSharp.NetSdk.props`): `System.ValueTuple`
     /// 4.6.2 for .NET Framework 4.0 to 4.7, unless the description names it.
     let implicitPackages (d: Description.Project) (framework: string) : Description.Package list =
@@ -134,67 +92,9 @@ module Described =
 
     let private normal (path: string) = path.Replace ('\\', '/')
 
-    /// The warnings the SDK suppresses for every project (`Microsoft.NET.Sdk.CSharp.props`:
-    /// `1701;1702`; the F# SDK sets none); `project` adds the description's `noWarn` to them.
-    let sdkNoWarn (language: Description.Language) : string list =
-        match language with
-        | Description.CSharp -> [ "1701"; "1702" ]
-        | Description.FSharp -> []
-
-    let private everettId (c: char) =
-        System.Char.IsLetterOrDigit c
-        || (match System.Char.GetUnicodeCategory c with
-            | System.Globalization.UnicodeCategory.ConnectorPunctuation
-            | System.Globalization.UnicodeCategory.NonSpacingMark
-            | System.Globalization.UnicodeCategory.SpacingCombiningMark
-            | System.Globalization.UnicodeCategory.EnclosingMark -> true
-            | _ -> false)
-    let private everettFirst (c: char) =
-        System.Char.IsLetter c || System.Char.GetUnicodeCategory c = System.Globalization.UnicodeCategory.ConnectorPunctuation
-
-    /// A folder path as msbuild makes it part of a manifest name (`MakeValidEverettIdentifier`):
-    /// `/` -> `.`, in each dot-separated part a character that is not an identifier character
-    /// becomes `_`, and a part that does not start like an identifier gets a leading `_`.
-    let private everett (dir: string) =
-        let b = System.Text.StringBuilder ()
-        let part (s: string) =
-            if s.Length > 0 then
-                if everettFirst s.[0] then b.Append s.[0] |> ignore
-                else
-                    b.Append '_' |> ignore
-                    if everettId s.[0] then b.Append s.[0] |> ignore
-                for c in s.Substring 1 do b.Append (if everettId c then c else '_') |> ignore
-        // a folder that comes out as a single `_` becomes `__` (`MakeValidEverettFolderIdentifier`):
-        // the folder's own span, wherever it is in the path
-        let folder (s: string) =
-            let start = b.Length
-            s.Split '.' |> Array.iteri (fun i p -> (if i > 0 then b.Append '.' |> ignore); part p)
-            if b.Length - start = 1 && b.[start] = '_' then b.Append '_' |> ignore
-        (normal dir).Split '/' |> Array.iteri (fun i f -> (if i > 0 then b.Append '.' |> ignore); folder f)
-        b.ToString ()
-
-    /// <summary>
-    /// msbuild's default manifest name of an embedded resource (`CreateCSharpManifestResourceName`,
-    /// no `DependentUpon`, no culture): `rootNamespace`, the folder of `file` (relative to the
-    /// project folder) as an identifier (`a/b c` -> `a.b_c`, `1st` -> `_1st`), the file name --
-    /// for a `.resx` without its extension, plus `.resources`. Empty parts are left out.
-    /// </summary>
-    let manifestName (rootNamespace: string) (file: string) : string =
-        let file = normal file
-        let dir, name = match file.LastIndexOf '/' with -1 -> "", file | i -> file.Substring (0, i), file.Substring (i + 1)
-        let leaf =
-            if name.EndsWith (".resx", System.StringComparison.OrdinalIgnoreCase) then Path.GetFileNameWithoutExtension name + ".resources"
-            else name
-        [ rootNamespace; (if dir = "" then "" else everett dir); leaf ] |> List.filter ((<>) "") |> String.concat "."
-
-    /// The root namespace of a description as msbuild defaults it: `rootNamespace`, else the
-    /// project name with ` ` -> `_`.
-    let rootNamespace (d: Description.Project) : string =
-        d.RootNamespace |> Option.defaultValue (d.Name.Replace (" ", "_"))
-
     /// <summary>
     /// Deletes each compiled `.resources` of `resources` ((resx, .resources) pairs) that is older
-    /// than its `.resx`. The runner of Xake 3.7 and 3.8 (`Xake.Dotnet`, the floor of this
+    /// than its `.resx`. The runner of Xake 3.7 to 3.9 (`Xake.Dotnet`, the floor of this
     /// package) compiles a `.resources` only when it is missing, so an edited resx (which reruns
     /// the compile: the runner depends on it) is compiled again. Remove this when a Xake runner
     /// that compiles it on every run is the package floor.
@@ -262,13 +162,6 @@ module Described =
                 match standardUpTo with
                 | Some top -> highest (fun (_, (f, v)) -> f = "netstandard" && v <= top)
                 | None -> None)
-
-    /// The package items of one framework: the project-wide ones, then `byFramework`'s.
-    let private itemsFor (d: Description.Project) (framework: string) =
-        let extra = d.ByFramework |> List.tryPick (fun (tfm, items) -> if same tfm framework then Some items else None)
-        let pick f = extra |> Option.map f |> Option.defaultValue []
-        d.Packages @ pick (fun i -> i.Packages), d.Defines @ pick (fun i -> i.Defines),
-        d.References @ pick (fun i -> i.References), d.Options.Args @ pick (fun i -> i.Args)
 
     /// The synthesized project `restore` runs `dotnet restore` on: one `PackageReference`
     /// per package of the description for `framework`, the version as the description states
@@ -463,8 +356,7 @@ module Described =
     /// The packages `restore` restores for description `d` and `framework`: its own (project-wide
     /// and `byFramework`) and the implicit ones (`implicitPackages`). Pure.
     let restoreInput (d: Description.Project) (framework: string) : Description.Package list =
-        let packages, _, _, _ = itemsFor d framework
-        packages @ implicitPackages d framework
+        (ProjectPlan.itemsFor d framework).Packages @ implicitPackages d framework
 
     /// <summary>
     /// Resolves the packages of description `d` for `framework` the way msbuild does: writes
@@ -528,8 +420,7 @@ module Described =
     let private withFlowing (descriptionOf: string -> string) (d: Description.Project) (framework: string) =
         recipe {
             let! flowing = flowingPackages descriptionOf d framework
-            let packages, _, _, _ = itemsFor d framework
-            return packages @ implicitPackages d framework @ flowing
+            return (ProjectPlan.itemsFor d framework).Packages @ implicitPackages d framework @ flowing
         }
 
     /// <summary>
@@ -672,25 +563,8 @@ module Described =
                     |> List.sortWith (fun a b -> System.String.CompareOrdinal (a, b))
         }
 
-    /// <summary>
-    /// The folder key of a described compilation's generated files (`obj/xake/&lt;key&gt;/&lt;framework&gt;[/&lt;config&gt;]`
-    /// under the build's project root): the assembly name when the description is the project's
-    /// own (beside the project file), else the description's folder relative to the project
-    /// root (`acme/projects/Tests`): two descriptions of one project (brands) or two
-    /// projects of one assembly name then never share generated sources. An assembly name
-    /// again for a description outside the project root.
-    /// </summary>
-    let generatedKey (root: string) (descriptionPath: string) (projectDir: string) (assemblyName: string) : string =
-        let comparison = if Env.isUnix then System.StringComparison.Ordinal else System.StringComparison.OrdinalIgnoreCase
-        let full (p: string) = (normal (Path.GetFullPath (if Path.IsPathRooted p then p else Path.Combine (root, p)))).TrimEnd '/'
-        let descriptionDir = full (Path.GetDirectoryName (full descriptionPath))
-        if System.String.Equals (descriptionDir, full projectDir, comparison) then assemblyName
-        else
-            let r = full root
-            if descriptionDir.StartsWith (r + "/", comparison) then descriptionDir.Substring (r.Length + 1) else assemblyName
-
     /// The generated folder of a described compilation: `obj/xake/<key>/<framework>[/<config>]`
-    /// under the build's project root (`generatedKey`).
+    /// under the build's project root (`ProjectPlan.generatedKey`).
     let generatedDirOf (root: string) (key: string) (framework: string) (config: string option) : string =
         normal (Path.Combine (Array.append [| root; "obj"; "xake" |] (Array.append (key.Split '/') (Array.append [| framework |] (Option.toArray config)))))
 
@@ -720,33 +594,25 @@ module Described =
         normal (Path.GetFullPath (if Path.IsPathRooted path then path else Path.Combine (root, path)))
 
     /// The description's plan for one framework, from the settings `project` follows.
-    let internal plan (language: Description.Language) (spec: Spec) (targetFramework: string) (out: File) (refs: Fileset) =
+    let internal plan (language: Description.Language) (path: string) (spec: Spec) (targetFramework: string) (out: File) (refs: Fileset) =
         recipe {
             let! options = getCtxOptions ()
             let root = options.ProjectRoot
-            let descriptionPath = fullOf root spec.Path
+            let descriptionPath = fullOf root path
             let! d = Description.load descriptionPath
             if d.Language <> language then
-                failwithf "'%s': the description '%s' is %s, not for this compiler" d.Name spec.Path
+                failwithf "'%s': the description '%s' is %s, not for this compiler" d.Name path
                     (match d.Language with Description.FSharp -> "F#" | Description.CSharp -> "C#")
             let projectDir = fullOf (Path.GetDirectoryName descriptionPath) d.Project |> Path.GetDirectoryName |> normal
             let inProject = fullOf projectDir
 
             // the framework: the block's `targetfwk`, else the description's only one, else NETFX-TARGET
             let! netfxTarget = getVar "NETFX-TARGET"
-            let framework =
-                let pick (f: string) =
-                    match d.Frameworks |> List.tryFind (same f) with
-                    | Some f -> f
-                    | None -> failwithf "'%s': framework '%s' is not one of the description's (%s)" d.Name f (String.concat ", " d.Frameworks)
-                match targetFramework, d.Frameworks, netfxTarget with
-                | f, _, _ when not (System.String.IsNullOrEmpty f) -> pick f
-                | _, [ only ], _ -> only
-                | _, _, Some f when f.Trim () <> "" -> pick (f.Trim ())
-                | _ ->
-                    failwithf "'%s': the description targets %s; choose one with targetfwk before project" d.Name (String.concat ", " d.Frameworks)
+            let framework = ProjectPlan.pickFramework d targetFramework netfxTarget
+            let frameworkDefines = ProjectPlan.frameworkDefines framework
 
-            let packages, defines, references, extraArgs = itemsFor d framework
+            let items = ProjectPlan.itemsFor d framework
+            let packages, defines, references, extraArgs = items.Packages, items.Defines, items.References, items.Args
             let packageRefs =
                 // the restore may hold more than the description declares (the packages its
                 // project references bring, `restoreWith`): all of it is referenced
@@ -761,14 +627,22 @@ module Described =
             // the packages' .NET Framework assemblies (`frameworkAssemblies`), as msbuild references them
             let packageFrameworkRefs =
                 match spec.Restored with
-                | Some r when same r.Framework framework && List.contains "NETFRAMEWORK" (frameworkDefines framework) -> r.FrameworkReferences
+                | Some r when same r.Framework framework && List.contains "NETFRAMEWORK" frameworkDefines -> r.FrameworkReferences
                 | _ -> []
 
             // a projectRef is passed as a reference by the script (its output path is the script's layout)
             let (Filelist given) = toFileList root refs
             for name in d.ProjectRefs do
                 if not (given |> List.exists (fun f -> same (Path.GetFileNameWithoutExtension f.FullName) name)) then
-                    do! trace Warning "'%s': projectRef '%s' is not among the references; pass its output with `ref` before `project`" d.Name name
+                    do! trace Warning "'%s': projectRef '%s' is not among the references; pass its output with `ref`" d.Name name
+
+            // the shared frameworks (`frameworkReferences`) from the SDK's targeting packs, as the
+            // core composes them (`DotNetFwk.sharedFrameworkReferences`); Microsoft.NETCore.App
+            // is the target framework's own, referenced anyway
+            let shared = ResizeArray<string> ()
+            for f in items.FrameworkReferences |> List.filter (same "Microsoft.NETCore.App" >> not) |> List.distinctBy (fun f -> f.ToLowerInvariant ()) do
+                let! dlls = DotNetFwk.sharedFrameworkReferences f framework
+                shared.AddRange dlls
 
             let! out =
                 if out <> File.undefined then recipe { return out } else
@@ -794,7 +668,7 @@ module Described =
             let switch (name: string) value = if fs then sprintf "--%s:%s" name value else sprintf "/%s:%s" name value
             let assemblyName = Path.GetFileNameWithoutExtension out.Name
             // embedded resources: the manifest name as given, else msbuild's default
-            // (`manifestName`); a `.resx` is embedded as the `.resources` it compiles to, under
+            // (`ProjectPlan.manifestName`); a `.resx` is embedded as the `.resources` it compiles to, under
             // obj/xake/<assembly>/<framework>[/<config>]/ (a build product, compiled by the runner)
             let resxDir =
                 normal (Path.Combine (Array.append [| root; "obj"; "xake"; assemblyName; framework |] (Option.toArray spec.Config)))
@@ -804,12 +678,12 @@ module Described =
                 |> Option.defaultValue []
             let resources =
                 d.Resources @ frameworkResources |> List.map (fun r ->
-                    let name = r.Name |> Option.defaultValue (manifestName (rootNamespace d) r.File)
+                    let name = r.Name |> Option.defaultValue (ProjectPlan.manifestName (ProjectPlan.rootNamespace d) r.File)
                     if r.File.EndsWith (".resx", System.StringComparison.OrdinalIgnoreCase) then
                         let compiled = resxDir + "/" + name
                         Some (inProject r.File, compiled), switch "resource" (compiled + "," + name)
                     else None, switch "resource" (inProject r.File + "," + name))
-            let nowarn = sdkNoWarn language @ o.NoWarn |> List.distinct
+            let nowarn = ProjectPlan.sdkNoWarn language @ o.NoWarn |> List.distinct
             let pathmap = (root |> normal |> fun r -> r.TrimEnd '/') + "/=/_/"
             let args =
                 configArgs
@@ -854,17 +728,17 @@ module Described =
                 { Project = d
                   Framework = framework
                   ProjectDir = projectDir
-                  Defines = (traceDefine @ defines @ configName @ frameworkDefines framework) |> List.distinct
+                  Defines = (traceDefine @ defines @ configName @ frameworkDefines) |> List.distinct
                   Args = args
                   GlobalRefs =
-                    (if List.contains "NETFRAMEWORK" (frameworkDefines framework) then implicitFrameworkReferences
+                    (if List.contains "NETFRAMEWORK" frameworkDefines then ProjectPlan.implicitFrameworkReferences
                      // composed csc references only mscorlib for netstandard (fsc adds netstandard.dll itself)
-                     elif not fs && List.contains "NETSTANDARD" (frameworkDefines framework) then [ "netstandard" ]
+                     elif not fs && List.contains "NETSTANDARD" frameworkDefines then [ "netstandard" ]
                      else []) @ references @ packageFrameworkRefs
                     |> List.map (fun r -> if r.EndsWith ".dll" then r else r + ".dll")
                     // an assembly name is case-insensitive (`WindowsBase`, `windowsbase`): the first spelling
                     |> List.distinctBy (fun r -> r.ToLowerInvariant ())
-                  PackageRefs = packageRefs
+                  PackageRefs = packageRefs @ List.ofSeq shared |> List.distinct
                   Sources =
                     d.Sources |> List.map (fun s -> if s.StartsWith "!" then "!" + inProject (s.Substring 1) else inProject s)
                   Out = out
@@ -878,13 +752,23 @@ module Described =
     let private filesOf (paths: string list) =
         paths |> List.fold (fun fs p -> fs + (!! p)) Fileset.Empty
 
-    /// The resolved `Fsc` of `fsc { ...; project path; ... }`: the settings with the plan
-    /// applied, `Fsc.ofSettings`, and the generated `InternalsVisibleTo` source first.
+    /// The description a block names (`project`), or a failure saying which operation needs it.
+    let private projectOf (settings: string option) =
+        match settings with
+        | Some path -> path
+        | None -> failwith "config, packages and a lock on a described compilation need `project \"path\"` in the block (Xake.Hermetic.Dotnet adds them to the core's `project`)"
+
+    /// The resolved `Fsc` of `fsc { ...; project path; config c; packages p }`: the settings
+    /// with this package's plan applied (`config`, the restored packages, `--pathmap`), then
+    /// `Fsc.ofSettings` of the result (without `Project`, so the core does not compose the
+    /// description a second time), and the generated attribute source first.
     let fsc (settings: FscSettingsType) (spec: Spec) : Recipe<ExecContext, Fsc> =
         recipe {
-            let! p = plan Description.FSharp spec settings.TargetFramework settings.Out settings.Ref
+            let path = projectOf settings.Project
+            let! p = plan Description.FSharp path spec settings.TargetFramework settings.Out settings.Ref
             let s =
                 { settings with
+                    Project = None
                     TargetFramework = p.Framework
                     Out = p.Out
                     Target = p.Target
@@ -905,16 +789,18 @@ module Described =
                 return { f with Fsc.Sources = path :: f.Sources; Fsc.Generated = (path, content) :: f.Generated }
         }
 
-    /// The resolved `Csc` of `csc { ...; project path; ... }`, its `Sources` the description's
+    /// The resolved `Csc` of `csc { ...; project path; config c; ... }`, its `Sources` the description's
     /// masks (absolute), as a lock records them; the files they name are expanded (`expand`,
     /// a `getFiles` dependency) for the composition and by `run`. The generated
     /// `InternalsVisibleTo` source comes first.
     let csc (settings: CscSettingsType) (spec: Spec) : Recipe<ExecContext, Csc> =
         recipe {
-            let! p = plan Description.CSharp spec settings.TargetFramework settings.Out settings.Ref
+            let path = projectOf settings.Project
+            let! p = plan Description.CSharp path spec settings.TargetFramework settings.Out settings.Ref
             let! files = expand p.Sources
             let s =
                 { settings with
+                    Project = None
                     TargetFramework = p.Framework
                     Out = p.Out
                     Target = p.Target
@@ -975,23 +861,68 @@ module Described =
             do! Lock.compileWith options { recorded with Compilation = Lock.Compilation.Csc expanded }
         }
 
-/// The state of an `fsc {}` block after `project "path"`: the settings so far, the
-/// description and what `config`, `packages` and `lock` added. Only those, `nofetch` and
-/// `resolve` may follow `project`.
+
+/// The state of an `fsc {}` block after `config` or `packages`: the settings (with the core's
+/// `project`), what `config` and `packages` added, and the lock (`lock`, `nofetch`).
 type FscDescribed = { FscSettings: FscSettingsType; FscSpec: Described.Spec; FscLock: (string * bool) option }
 
-/// `fsc { ...; project "path"; ...; resolve }`: the resolved `Fsc`.
+/// `fsc { ...; project "path"; config c; ...; resolve }`: the resolved `Fsc`.
 type FscDescribedRequest = FscDescribedRequest of FscDescribed
 
 /// The C# twin of `FscDescribed`.
 type CscDescribed = { CscSettings: CscSettingsType; CscSpec: Described.Spec; CscLock: (string * bool) option }
 
-/// `csc { ...; project "path"; ...; resolve }`: the resolved `Csc`, sources as masks.
+/// `csc { ...; project "path"; config c; ...; resolve }`: the resolved `Csc`, sources as masks.
 type CscDescribedRequest = CscDescribedRequest of CscDescribed
 
-/// `fsc { project "path" }`, `config`, `packages`: an F# compilation from a project
-/// description (`Described.fsc`). The operations before `project` (`targetfwk`, `out`, `ref`
-/// for project references, ...) are the settings it builds on:
+/// The state of a `csc {}` block after `lock "path"`: the lock path, the settings, and
+/// whether a package the lock names may be fetched (`nofetch` turns it off).
+type CscLocked = CscLocked of path: string * settings: CscSettingsType * fetch: bool
+
+/// The state of an `fsc {}` block after `lock "path"`: the lock path, the settings, and
+/// whether a package the lock names may be fetched (`nofetch` turns it off).
+type FscLocked = FscLocked of path: string * settings: FscSettingsType * fetch: bool
+
+/// What the builders below run: a described compilation (`project` with `config`, `packages`
+/// or `lock`) composed by `Described.fsc`/`Described.csc`, a plain one by the core.
+module internal DescribedRun =
+
+    let fsc (d: FscDescribed) =
+        recipe {
+            let! f = Described.fsc d.FscSettings d.FscSpec
+            Described.refreshResources f.Resources
+            let! run = Fsc.runOptions { d.FscSettings with TargetFramework = f.Framework; Project = None }
+            match d.FscLock with
+            | None -> do! Fsc.run run f
+            | Some (path, fetch) ->
+                do! Lock.buildWith
+                        { Lock.Options.Default with FscRun = run; Restore = { Restore.Options.Default with Enabled = fetch } }
+                        path (Lock.Compilation.Fsc f)
+        }
+
+    let csc (d: CscDescribed) =
+        recipe {
+            let! masked = Described.csc d.CscSettings d.CscSpec
+            Described.refreshResources masked.Resources
+            let! run = Csc.runOptions { d.CscSettings with TargetFramework = masked.Framework; Project = None }
+            match d.CscLock with
+            | None ->
+                let! c = Described.expandCsc masked
+                do! Csc.run run c
+            | Some (path, fetch) ->
+                do! Described.buildCsc
+                        { Lock.Options.Default with Run = run; Restore = { Restore.Options.Default with Enabled = fetch } }
+                        path masked
+        }
+
+/// <summary>
+/// `fsc { project "path"; config "Release"; packages p; lock "path" }`: what this package adds
+/// to the core's `project` (the description, `Xake.Dotnet.Description`). The core composes a
+/// description by itself (`fsc { project "path" }`: no packages, no lock); `config` (the SDK's
+/// preset), `packages` (what `Described.restore` resolved) and `lock` make it this package's
+/// composition (`Described.fsc`: the description's packages, `--pathmap` of the project root)
+/// and, with `lock`, gate it by the lock. `config`/`packages` come after `project`; `lock` and
+/// `nofetch` after them, or right after `project`:
 /// <code>
 /// "out/Release/netstandard2.0/Xake.dll" ..> recipe {
 ///     let! d = Description.load "src/core/xake.project.json"
@@ -999,24 +930,25 @@ type CscDescribedRequest = CscDescribedRequest of CscDescribed
 ///     do! fsc { targetfwk "netstandard2.0"; project "src/core/xake.project.json"; config "Release"; packages pkgs }
 /// }
 /// </code>
+/// </summary>
 [<AutoOpen>]
 module FscDescribedBuilder =
     type FscSettingsBuilder with
-        /// <summary>Compiles the project the description at `path` (relative to the project root)
-        /// describes: its sources in order, defines, framework references, the packages given
-        /// with `packages`, options, friends, `--deterministic+` and `--pathmap` of the project
-        /// root. The framework is `targetfwk`, else the description's only one, else
-        /// `NETFX-TARGET`.</summary>
-        [<CustomOperation("project")>]
-        member _.Project(s: FscSettingsType, path: string) =
-            { FscSettings = s; FscSpec = { Path = path; Config = None; Restored = None }; FscLock = None }
-
-        /// <summary>The SDK's configuration preset, `Debug` or `Release` (`Described.preset`).</summary>
+        /// <summary>The SDK's configuration preset, `Debug` or `Release` (`Described.preset`), for
+        /// the description `project` names.</summary>
         [<CustomOperation("config")>]
-        member _.Config(d: FscDescribed, config: string) = { d with FscSpec = { d.FscSpec with Config = Some config } }
+        member _.Config(s: FscSettingsType, config: string) =
+            { FscSettings = s; FscSpec = { Described.Spec.None with Config = Some config }; FscLock = None }
 
         /// <summary>The description's packages as `Described.restore` resolved them; required
         /// when it has any.</summary>
+        [<CustomOperation("packages")>]
+        member _.Packages(s: FscSettingsType, restored: Described.Restored) =
+            { FscSettings = s; FscSpec = { Described.Spec.None with Restored = Some restored }; FscLock = None }
+
+        [<CustomOperation("config")>]
+        member _.Config(d: FscDescribed, config: string) = { d with FscSpec = { d.FscSpec with Config = Some config } }
+
         [<CustomOperation("packages")>]
         member _.Packages(d: FscDescribed, restored: Described.Restored) = { d with FscSpec = { d.FscSpec with Restored = Some restored } }
 
@@ -1034,35 +966,29 @@ module FscDescribedBuilder =
 
         member _.Run(FscDescribedRequest d) = Described.fsc d.FscSettings d.FscSpec
 
-        member _.Run(d: FscDescribed) =
-            recipe {
-                let! f = Described.fsc d.FscSettings d.FscSpec
-                Described.refreshResources f.Resources
-                let! run = Fsc.runOptions { d.FscSettings with TargetFramework = f.Framework }
-                match d.FscLock with
-                | None -> do! Fsc.run run f
-                | Some (path, fetch) ->
-                    do! Lock.buildWith
-                            { Lock.Options.Default with FscRun = run; Restore = { Restore.Options.Default with Enabled = fetch } }
-                            path (Lock.Compilation.Fsc f)
-            }
+        member _.Run(d: FscDescribed) = DescribedRun.fsc d
 
-/// `csc { project "path" }`, `config`, `packages`: the C# twin of `fsc { project }`. The
-/// description's sources are masks; they stay masks in the resolved `Csc` and in its lock, and
-/// are expanded when compiling (`Described.expand`, a `getFiles` dependency).
+/// `csc { project "path" }` with `config`, `packages` and `lock`: the C# twin of
+/// `FscDescribedBuilder`. The description's sources are masks; they stay masks in the
+/// resolved `Csc` and in its lock, and are expanded when compiling (`Described.expand`, a
+/// `getFiles` dependency).
 [<AutoOpen>]
 module CscDescribedBuilder =
     type CscSettingsBuilder with
-        /// <summary>Compiles the project the description at `path` describes; see `fsc { project }`.</summary>
-        [<CustomOperation("project")>]
-        member _.Project(s: CscSettingsType, path: string) =
-            { CscSettings = s; CscSpec = { Path = path; Config = None; Restored = None }; CscLock = None }
+        /// <summary>The SDK's configuration preset, `Debug` or `Release` (`Described.preset`), for
+        /// the description `project` names.</summary>
+        [<CustomOperation("config")>]
+        member _.Config(s: CscSettingsType, config: string) =
+            { CscSettings = s; CscSpec = { Described.Spec.None with Config = Some config }; CscLock = None }
 
-        /// <summary>The SDK's configuration preset, `Debug` or `Release` (`Described.preset`).</summary>
+        /// <summary>The description's packages as `Described.restore` resolved them.</summary>
+        [<CustomOperation("packages")>]
+        member _.Packages(s: CscSettingsType, restored: Described.Restored) =
+            { CscSettings = s; CscSpec = { Described.Spec.None with Restored = Some restored }; CscLock = None }
+
         [<CustomOperation("config")>]
         member _.Config(d: CscDescribed, config: string) = { d with CscSpec = { d.CscSpec with Config = Some config } }
 
-        /// <summary>The description's packages as `Described.restore` resolved them.</summary>
         [<CustomOperation("packages")>]
         member _.Packages(d: CscDescribed, restored: Described.Restored) = { d with CscSpec = { d.CscSpec with Restored = Some restored } }
 
@@ -1081,17 +1007,93 @@ module CscDescribedBuilder =
 
         member _.Run(CscDescribedRequest d) = Described.csc d.CscSettings d.CscSpec
 
-        member _.Run(d: CscDescribed) =
-            recipe {
-                let! masked = Described.csc d.CscSettings d.CscSpec
-                Described.refreshResources masked.Resources
-                let! run = Csc.runOptions { d.CscSettings with TargetFramework = masked.Framework }
-                match d.CscLock with
-                | None ->
-                    let! c = Described.expandCsc masked
-                    do! Csc.run run c
-                | Some (path, fetch) ->
-                    do! Described.buildCsc
-                            { Lock.Options.Default with Run = run; Restore = { Restore.Options.Default with Enabled = fetch } }
-                            path masked
-            }
+        member _.Run(d: CscDescribed) = DescribedRun.csc d
+
+/// `csc { ...; lock "path" }`: the settings resolved, then built gated by that lock
+/// (`Lock.buildWith`, so under CI a missing lock fails) with the run options the settings
+/// imply (`Csc.runOptions`). With the core's `project` in the block, the compilation is this
+/// package's composition of the description (`Described.csc`: masks kept in the lock), as
+/// after `config`/`packages`. `nofetch` comes *after* `lock` -- an operation on the locked
+/// state, not on the settings:
+/// <code>
+/// csc { src !!"*.cs"; out (File.make "app.dll"); lock "locks/app.json"; nofetch }
+/// </code>
+/// The packages are read from and restored into the build's package folder (the script
+/// variable `NUGET_PACKAGES`, else the environment variable, else `~/.nuget/packages`), and
+/// fetched unless `NUGET_FETCH` (or `nofetch`) turns fetching off; there is no per-target
+/// folder (`packageroot` was removed in 0.2). A script that reads a lock against another
+/// folder uses `Lock.loadWith (Roots.packageRootOverride dir)` and `Restore.into dir`.
+[<AutoOpen>]
+module CscLockBuilder =
+    type CscSettingsBuilder with
+        /// <summary>Records this compilation in the lock file at the given path (relative to the
+        /// project root, or absolute) and, once it exists, refuses to compile anything else:
+        /// the resolved settings must match the lock, or the build fails with the differences.
+        /// A matching lock is what gets compiled, so its recorded hashes are verified against
+        /// disk. To update it, delete the file or call `Lock.record` from a target of the
+        /// script's own. A missing lock is recorded, except under CI (`Lock.underCi`), where
+        /// it fails the build. Only `nofetch` may follow it.</summary>
+        [<CustomOperation("lock")>]
+        member _.Lock(s: CscSettingsType, path: string) = CscLocked (path, s, true)
+
+        /// <summary>After `lock`: never fetch a package the lock names but the package folder
+        /// does not have (`Restore.Options.Enabled = false`, the per-target form of
+        /// `NUGET_FETCH=off`); the missing files are reported by the hash check before
+        /// anything is compiled.</summary>
+        [<CustomOperation("nofetch")>]
+        member _.NoFetch(CscLocked (path, s, _)) = CscLocked (path, s, false)
+
+        member _.Run(CscLocked (path, s, fetch)) =
+            match s.Project with
+            | Some _ -> DescribedRun.csc { CscSettings = s; CscSpec = Described.Spec.None; CscLock = Some (path, fetch) }
+            | None ->
+                recipe {
+                    let! c = Csc.ofSettings s
+                    let! run = Csc.runOptions s
+                    do! Lock.buildWith
+                            { Run = run; FscRun = FscRunOptions.Default; Restore = { Restore.Options.Default with Enabled = fetch } }
+                            path (Lock.Compilation.Csc c)
+                }
+
+/// `fsc { ...; lock "path" }`: the twin of `csc { lock }`. The settings resolved
+/// (`Fsc.ofSettings`; with `project`, `Described.fsc`), then built gated by that lock
+/// (`Lock.buildWith`, so under CI a missing lock fails) with the run options the settings
+/// imply (`Fsc.runOptions`); `nofetch` may come *after* `lock`:
+/// <code>
+/// fsc { targetfwk "net8.0"; src !!"*.fs"; out (File.make "lib.dll"); lock "locks/lib.json" }
+/// </code>
+/// The F# compiler is the SDK's own `fsc.dll`: pin the SDK (`global.json`, `rollForward:
+/// disable`) and the lock records it as a `dotnet-sdk` prerequisite (`Lock.Prerequisite`),
+/// checked before every replay; without the pin the recording warns, and the lock only
+/// builds where that SDK is installed.
+[<AutoOpen>]
+module FscLockBuilder =
+    type FscSettingsBuilder with
+        /// <summary>Records this compilation in the lock file at the given path (relative to the
+        /// project root, or absolute) and, once it exists, refuses to compile anything else:
+        /// the resolved settings must match the lock, or the build fails with the differences.
+        /// A matching lock is what gets compiled, so its recorded hashes are verified against
+        /// disk. To update it, delete the file or call `Lock.record` from a target of the
+        /// script's own. A missing lock is recorded, except under CI (`Lock.underCi`), where
+        /// it fails the build. Only `nofetch` may follow it.</summary>
+        [<CustomOperation("lock")>]
+        member _.Lock(s: FscSettingsType, path: string) = FscLocked (path, s, true)
+
+        /// <summary>After `lock`: never fetch a package the lock names but the package folder
+        /// does not have (`Restore.Options.Enabled = false`, the per-target form of
+        /// `NUGET_FETCH=off`); the missing files are reported by the hash check before
+        /// anything is compiled.</summary>
+        [<CustomOperation("nofetch")>]
+        member _.NoFetch(FscLocked (path, s, _)) = FscLocked (path, s, false)
+
+        member _.Run(FscLocked (path, s, fetch)) =
+            match s.Project with
+            | Some _ -> DescribedRun.fsc { FscSettings = s; FscSpec = Described.Spec.None; FscLock = Some (path, fetch) }
+            | None ->
+                recipe {
+                    let! f = Fsc.ofSettings s
+                    let! run = Fsc.runOptions s
+                    do! Lock.buildWith
+                            { Run = RunOptions.Default; FscRun = run; Restore = { Restore.Options.Default with Enabled = fetch } }
+                            path (Lock.Compilation.Fsc f)
+                }

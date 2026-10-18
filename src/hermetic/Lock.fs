@@ -741,7 +741,7 @@ module Lock =
     [<Literal>]
     let LegacyMarker = "Project.import"
 
-    open Json
+    open ToolJson
 
     /// The context `Identity` names a recorded entry's files with, under `roots`.
     let private identityContext roots (entry: Entry) : Identity.Context =
@@ -1048,7 +1048,7 @@ module Lock =
     /// distributed into every entry that does not carry its own. Only the new shape is ever
     /// written. Pure; `load` is the recipe that takes the roots from the build.
     let parse roots (text: string) =
-        let root = Json.parse text
+        let root = ToolJson.parse text
         let str name = field name root |> Option.bind asString |> Option.defaultValue ""
         if (field "Projects" root).IsSome && (field "Entries" root).IsNone then
             failwith "lock written by an older Xake (flat format with 'Projects'/'Args'); re-import"
@@ -1800,92 +1800,3 @@ module Lock =
             let! server = CompilerServer.resolve None
             do! buildWith { Options.Default with Run = { Options.Default.Run with Server = server } } path c
         }
-
-/// The state of a `csc {}` block after `lock "path"`: the lock path, the settings, and
-/// whether a package the lock names may be fetched (`nofetch` turns it off).
-type CscLocked = CscLocked of path: string * settings: CscSettingsType * fetch: bool
-
-/// `csc { ...; lock "path" }`: the settings resolved, then built gated by that lock
-/// (`Lock.buildWith`, so under CI a missing lock fails) with the run options the settings
-/// imply (`Csc.runOptions`). `nofetch` comes *after* `lock` -- an operation on the locked
-/// state, not on the settings:
-/// <code>
-/// csc { src !!"*.cs"; out (File.make "app.dll"); lock "locks/app.json"; nofetch }
-/// </code>
-/// The packages are read from and restored into the build's package folder (the script
-/// variable `NUGET_PACKAGES`, else the environment variable, else `~/.nuget/packages`), and
-/// fetched unless `NUGET_FETCH` (or `nofetch`) turns fetching off; there is no per-target
-/// folder (`packageroot` was removed in 0.2). A script that reads a lock against another
-/// folder uses `Lock.loadWith (Roots.packageRootOverride dir)` and `Restore.into dir`.
-[<AutoOpen>]
-module CscLockBuilder =
-    type CscSettingsBuilder with
-        /// <summary>Records this compilation in the lock file at the given path (relative to the
-        /// project root, or absolute) and, once it exists, refuses to compile anything else:
-        /// the resolved settings must match the lock, or the build fails with the differences.
-        /// A matching lock is what gets compiled, so its recorded hashes are verified against
-        /// disk. To update it, delete the file or call `Lock.record` from a target of the
-        /// script's own. A missing lock is recorded, except under CI (`Lock.underCi`), where
-        /// it fails the build. Only `nofetch` may follow it.</summary>
-        [<CustomOperation("lock")>]
-        member _.Lock(s: CscSettingsType, path: string) = CscLocked (path, s, true)
-
-        /// <summary>After `lock`: never fetch a package the lock names but the package folder
-        /// does not have (`Restore.Options.Enabled = false`, the per-target form of
-        /// `NUGET_FETCH=off`); the missing files are reported by the hash check before
-        /// anything is compiled.</summary>
-        [<CustomOperation("nofetch")>]
-        member _.NoFetch(CscLocked (path, s, _)) = CscLocked (path, s, false)
-
-        member _.Run(CscLocked (path, s, fetch)) =
-            recipe {
-                let! c = Csc.ofSettings s
-                let! run = Csc.runOptions s
-                do! Lock.buildWith
-                        { Run = run; FscRun = FscRunOptions.Default; Restore = { Restore.Options.Default with Enabled = fetch } }
-                        path (Lock.Compilation.Csc c)
-            }
-
-/// The state of an `fsc {}` block after `lock "path"`: the lock path, the settings, and
-/// whether a package the lock names may be fetched (`nofetch` turns it off).
-type FscLocked = FscLocked of path: string * settings: FscSettingsType * fetch: bool
-
-/// `fsc { ...; lock "path" }`: the twin of `csc { lock }`. The settings resolved
-/// (`Fsc.ofSettings`), then built gated by that lock (`Lock.buildWith`, so under CI a missing
-/// lock fails) with the run options the settings imply (`Fsc.runOptions`); `nofetch` may come
-/// *after* `lock`:
-/// <code>
-/// fsc { targetfwk "net8.0"; src !!"*.fs"; out (File.make "lib.dll"); lock "locks/lib.json" }
-/// </code>
-/// The F# compiler is the SDK's own `fsc.dll`: pin the SDK (`global.json`, `rollForward:
-/// disable`) and the lock records it as a `dotnet-sdk` prerequisite (`Lock.Prerequisite`),
-/// checked before every replay; without the pin the recording warns, and the lock only
-/// builds where that SDK is installed.
-[<AutoOpen>]
-module FscLockBuilder =
-    type FscSettingsBuilder with
-        /// <summary>Records this compilation in the lock file at the given path (relative to the
-        /// project root, or absolute) and, once it exists, refuses to compile anything else:
-        /// the resolved settings must match the lock, or the build fails with the differences.
-        /// A matching lock is what gets compiled, so its recorded hashes are verified against
-        /// disk. To update it, delete the file or call `Lock.record` from a target of the
-        /// script's own. A missing lock is recorded, except under CI (`Lock.underCi`), where
-        /// it fails the build. Only `nofetch` may follow it.</summary>
-        [<CustomOperation("lock")>]
-        member _.Lock(s: FscSettingsType, path: string) = FscLocked (path, s, true)
-
-        /// <summary>After `lock`: never fetch a package the lock names but the package folder
-        /// does not have (`Restore.Options.Enabled = false`, the per-target form of
-        /// `NUGET_FETCH=off`); the missing files are reported by the hash check before
-        /// anything is compiled.</summary>
-        [<CustomOperation("nofetch")>]
-        member _.NoFetch(FscLocked (path, s, _)) = FscLocked (path, s, false)
-
-        member _.Run(FscLocked (path, s, fetch)) =
-            recipe {
-                let! f = Fsc.ofSettings s
-                let! run = Fsc.runOptions s
-                do! Lock.buildWith
-                        { Run = RunOptions.Default; FscRun = run; Restore = { Restore.Options.Default with Enabled = fetch } }
-                        path (Lock.Compilation.Fsc f)
-            }

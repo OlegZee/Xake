@@ -4,6 +4,7 @@ open System.IO
 open NUnit.Framework
 
 open Xake
+open Xake.Dotnet
 open Xake.Hermetic.Dotnet
 
 /// `Description`: the project description (`xake.project.json`) -- parse and validation, the
@@ -126,21 +127,13 @@ type ``Project description``() =
         Assert.That(Description.names ds, Is.EqualTo ["A"; "B"])
 
     [<Test>]
-    member x.``the committed schema lists the fields the reader knows, in the writer's order``() =
-        // this package's own copy of the schema (docs/hermetic/), the one its Description reads;
-        // docs/schemas/ is the core's (Xake.Dotnet.Description, Xake 3.9), a superset.
-        // TODO: drop both with this package's Description when it moves to Xake [3.9, 4.0)
-        let schema = Json.parse (File.ReadAllText (__SOURCE_DIRECTORY__ </> ".." </> ".." </> "docs" </> "hermetic" </> "xake.project.schema.json"))
-        let rec get (path: string list) value =
-            match path with
-            | [] -> value
-            | p :: rest ->
-                match System.Int32.TryParse p, value with
-                | (true, i), Json.JArray items -> get rest items.[i]
-                | _ -> get rest (Json.field p value |> Option.get)
-        let names path = match get path schema with Json.JObject ms -> List.map fst ms | _ -> []
-        let check kind path = Assert.That(names path, Is.EqualTo (Description.fields.[kind]), kind)
-        check "project" ["properties"]
-        for kind in ["package"; "items"; "resource"; "options"; "attribute"; "metadata"; "repository"] do
-            check kind ["$defs"; kind; "properties"]
-        check "friend" ["$defs"; "friend"; "oneOf"; "1"; "properties"]
+    member x.``the description the import writes uses the core schema's fields, in its order``() =
+        // the schema is the core's (docs/schemas/, Xake.Dotnet.Description since Xake 3.9); its
+        // own test checks it against the reader. Here: what this package writes stays inside it
+        let schema = ToolJson.parse (File.ReadAllText (__SOURCE_DIRECTORY__ </> ".." </> ".." </> "docs" </> "schemas" </> "xake.project.schema.json"))
+        let keys value = match value with ToolJson.JObject ms -> List.map fst ms | _ -> []
+        let properties = ToolJson.field "properties" schema |> Option.get |> keys
+        let written = Description.read fixture |> Description.format |> ToolJson.parse |> keys
+        Assert.That(written, Is.Not.Empty)
+        Assert.That(properties, Is.SupersetOf written)
+        Assert.That(properties |> List.filter (fun p -> List.contains p written), Is.EqualTo written)

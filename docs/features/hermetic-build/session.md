@@ -1258,3 +1258,38 @@ PR 5 content:
   (`-d LOCK_REFRESH=Xake`, a temporary `#r` on the built dll, as docs/session.md allows): Xake
   3.8.0.29 and its new dependencies (System.Resources.Extensions 8.0.0, System.Memory 4.5.5),
   `"Format": 2` written; the published 0.3 bootstrap reads them (`build check` green).
+
+## 2026-10-18 — PR 6: hermetic on core Xake 3.9 (`pr/hermetic-39`)
+
+Xake 3.9.0 is on nuget.org as **3.9.0.30** (#59: the project description in core). PR 6 moves
+the hermetic package onto it; `dev` (#55, #59, #60) merged into the branch first (conflicts:
+`Resx.fs` taken from dev, `xake.fingerprints` regenerated).
+
+- `src/hermetic` on `Xake [3.9.0.30, 4.0)` (owner's upper bound; the record risk is noted in the
+  fsproj and the release note), `<Version>` 0.4.0.
+- Deleted: `src/hermetic/Description.fs`, `docs/hermetic/xake.project.schema.json`; `Json.fs`
+  renamed `ToolJson.fs` (internal; the core's `Json` is internal to Xake.Dotnet, the package
+  still parses msbuild output, assets and metadata). Scripts and tests `open Xake.Dotnet` for
+  `Description`/`ProjectPlan`.
+- `Described.fs` shrank to what only a lock/restore needs: the duplicated helpers
+  (`frameworkDefines`, `baseFramework`, `implicitFrameworkReferences`, `sdkNoWarn`,
+  `manifestName`, `rootNamespace`, `generatedKey`, `itemsFor`, framework pick) are
+  `ProjectPlan`'s. The plan honours `frameworkReferences` (shared framework packs).
+- Builder: the core's intrinsic `project` is the setting; this package adds `config`,
+  `packages` (on the settings and on `CscDescribed`/`FscDescribed`), `lock`/`nofetch`/`resolve`.
+  `lock` right after `project` routes to the package's composition (the `CscLocked`/`FscLocked`
+  builder modules moved from `Lock.fs` to `Described.fs`). `csc { project p }` alone is the
+  core's composition. `Spec` lost `Path` (it is `settings.Project`).
+- Import writes `frameworkReferences` (msbuild `FrameworkReference` items, implicit ones
+  included, `Microsoft.NETCore.App` left out, WindowsDesktop profiles folded).
+- `Described.refreshResources` stays: 3.9's `CompilerRunner` still compiles a `.resources` only
+  when missing (core follow-up).
+- Self-build: `build.fsc.fsx` on `Xake 3.9.0.30` + hermetic `0.3.0.28`: `import`, `build`,
+  `check` work; `update-locks` does not (0.3 calls the 3.8 `FscSettingsType` constructor).
+  Locks regenerated with this branch's hermetic through a temporary `#r` (`-d
+  LOCK_REFRESH=Xake`): the hermetic lock now names Xake 3.9.0.30.
+- Tests: `build.fsx build test` green, tests 368 passed 1 skipped, hermetic.tests 286 passed;
+  `build.fsc.fsx build check` green.
+
+**Next**: merge PR 6 into the feature branch; feature → dev; tag `hermetic-v0.4.0`; then bump
+`build.fsc.fsx` to `Xake.Hermetic.Dotnet 0.4.0.<run>`.

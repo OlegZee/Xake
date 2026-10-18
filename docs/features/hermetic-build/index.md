@@ -18,7 +18,7 @@ Kickoff for that session: [next-session.md](next-session.md).
 | [session.md](session.md) | session log, mixed order: 09-29 and 09-23 at top, then branch notes on the fsc build (line ~610), then B2..E7 and dated entries to 2026-10-11 at the end | where things stand, next step | **yes: last two sections only** (2026-10-04, 2026-10-11); "Branch notes: the fsc-based build script" (~610-715) only if the old `Fsproj` design comes up | ~1060 | 2026-10-11 | current at the end, history above |
 | [tracker.md](tracker.md) | one-line work items by slice, status headers per day | checking whether an item was done or dropped | no | ~170 | 2026-10-02 | stale since 2026-10-02; session.md is ahead |
 | [README.md](README.md) | older folder map: working state, design notes, scripts | (replaced by this index) | no | ~50 | 2026-09-30 | superseded by index.md |
-| [brief.md](brief.md) | product brief: positioning, the trial product facts, library design (§11), day-zero results | product or customer questions; decisions live here | no; only if the the trial product experiment needs customer facts (brands, repos) | ~955 | 2026-09-30 | historical draft, decisions binding |
+| [brief.md](brief.md) | product brief stub: positioning (the customer-specific brief is kept privately) | product or customer questions; decisions live here | no; only if the the trial product experiment needs customer facts (brands, repos) | ~955 | 2026-09-30 | historical draft, decisions binding |
 
 ## Design notes
 
@@ -40,15 +40,10 @@ Kickoff for that session: [next-session.md](next-session.md).
 | [workflows-ru.md](workflows-ru.md) | **RU.** owner's guide: why, hermetic mode (§2), what is in the repo (§3), scenarios A-F, what is not done | explaining flows in Russian | **yes: §2-4** | ~610 | 2026-10-09 | current as of 3.5 / 0.2 previews |
 | [overview-ru.md](overview-ru.md) | **RU.** branch overview and odds of release, 2026-09-23 | history | no | ~265 | 2026-09-30 | historical |
 | [the repo-a verification notes](the repo-a verification notes) | self-verification on repo-a: 2 brands x 2 TFMs, byte identity, timings | proof on a real customer repo | no; only as a reference for the the trial product experiment | ~395 | 2026-10-02 | historical measurements, 3.4 / 0.1 |
-| [e3-restore-stability.md](e3-restore-stability.md) | day-zero E3: restore reproducibility of CoreLib and Page | restore stability questions | no | ~120 | 2026-09-23 | historical |
-| [e5-shipped-vs-local.md](e5-shipped-vs-local.md) | day-zero E5: shipped CoreLib 5.4.0 vs local tag build | shipped-vs-local verification | no | ~185 | 2026-09-23 | historical |
 
 ## Proving scripts (fsx / sh)
 
 | File | What it is | Read when | fsc task | Lines | Date | Status |
 |---|---|---|---|---|---|---|
-| [import.fsx](import.fsx) | imports repo-a's C# projects into one lock per brand; `locks`, `show`, `build` | example of an import-based script | only if comparing script shapes for the trial product (remark 6) | ~130 | 2026-10-02 | on 3.4 / 0.1 API |
-| [import-page.fsx](import-page.fsx) | page + repo-a as sibling repos, 15 projects per lock, extra root `$(RepoARoot)` | cross-repo import | only if the two-repo the trial product experiment comes up | ~235 | 2026-10-02 | on 3.4 / 0.1 API |
 | [the repo-a verification script](the repo-a verification script) | repo-a across both TFMs and brands: `locks`, `build`, `sbom`, `restore`, `show` | the widest existing import script | only as a size/shape reference for remark 6 | ~215 | 2026-10-02 | on 3.4 / 0.1 API |
 | [the repo-a verification runner](the repo-a verification runner) | end-to-end scenario of the repo-a verification notes with timings | rerunning the proof | no | ~190 | 2026-10-02 | on 3.4 / 0.1 |
-| [verify-shipped.fsx](verify-shipped.fsx) | `Verify` of two assemblies from the command line | comparing two dlls | no | ~30 | 2026-10-02 | on 3.4 / 0.1 |

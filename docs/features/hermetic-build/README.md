@@ -8,7 +8,7 @@ Read `session.md` first (where things stand, the next step), then `tracker.md` (
 |---|---|
 | `session.md` | state and next step; traps; "What landed" per day |
 | `tracker.md` | one-line work items with status, by slice |
-| `brief.md` | the product brief: positioning, the trial product facts, design of the library (§11), day-zero results (§8j) |
+| `brief.md` | the product brief stub: positioning (the customer-specific brief is kept privately) |
 
 Product documentation (the lock, restore, SBOM, verify, pack, strong name, signing) moved to
 [`docs/hermetic/`](../../hermetic/README.md) (E5); `csc-syntax.md` and `csc-server.md` are base
@@ -33,18 +33,13 @@ docs in `docs/`. Links to the moved files below point there; a bare `restore.md`
 | [`strongname.md`](../../hermetic/strongname.md) | `StrongName`: PE stamp, checksum, strong-name re-sign reproducing csc |
 | [`pack.md`](../../hermetic/pack.md) | `Pack`: deterministic zip and nupkg |
 | [`signing.md`](../../hermetic/signing.md) | `Sign`: Authenticode/nupkg signing as a delegated rule, identity key, the fake-signer skeleton |
-| `e3-restore-stability.md` | day-zero E3: is restore reproducible from the repository alone |
-| `e5-shipped-vs-local.md` | day-zero E5: the shipped CoreLib 5.4.0 against the tag built here |
 | `overview-ru.md` | the branch in Russian, with a staged-release recommendation |
 
 ## Scripts (run against `.bootstrap/`, see `build.fsc.fsx` for the staging)
 | File | What |
 |---|---|
-| `import.fsx` | repo-a: locks per brand, `build` from the locks, `show` |
-| `import-page.fsx` | page + repo-a as siblings: 15 projects per lock, `build`, `sbom` |
-| `verify-shipped.fsx` | `Verify` of two assemblies from the command line |
 | `the repo-a verification script` | repo-a across both TFMs and both brands: `locks`, `build`, `sbom`, `show` |
 | `the repo-a verification runner` | the whole scenario of `the repo-a verification notes` end to end, with timings |
 
-Inspection artifacts (locks, comparisons, SBOMs) live in `samples/hermetic/{repo-a,page}/`;
+Inspection artifacts of the trial project (locks, comparisons, SBOMs) are kept privately;
 `samples/hermetic/toolset/` is the fixture pinning the compiler via a package.

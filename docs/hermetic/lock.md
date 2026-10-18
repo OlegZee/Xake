@@ -867,8 +867,7 @@ item per line; `Alias` only on a reference that has one; each package one inline
 (Lists are written one item per line; they are folded to `[ ... ]` above for space. `Generated`
 and `Resources` are JSON objects keyed by path, `Properties` too.) A lock in the old flat format (`"Projects"` with `"Args"`) is refused
 by `Lock.parse` with "lock written by an older Xake; re-import" -- nothing released used it, so
-there is no reader for it. `samples/hermetic/repo-a/locks/` shows the shape on the real
-fixture: 889 lines per brand, 27 `Options` (`@Defines`, `@References`, `@Analyzers`, `@Sources`
+there is no reader for it. On the real fixture (a three-project library repository, kept privately) the locks have 889 lines per brand, 27 `Options` (`@Defines`, `@References`, `@Analyzers`, `@Sources`
 in msbuild's positions), 12 `Defines`, 113-115 `References`, 4 `Packages`.
 
 `Lock.diff a b` covers every section: `Framework`, `Options` and `Sources` as ordered lists, `Defines`,

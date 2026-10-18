@@ -40,7 +40,7 @@ Benchmark `benchmark: '**/*.cs' with dot-folder, bin and obj excludes` (Explicit
 | `+ !bin/**/* !obj/**/*` | 1340 | 13.6 ms | 9.4 ms |
 | all four | 1320 | 1250.3 ms | 12.6 ms |
 
-the trial project Layout (read-only `dotnet fsi` snippet in `/tmp/c1-bench/ar-rendering.fsx`, referencing the
+the trial project Layout (read-only `dotnet fsi` snippet in `/tmp/c1-bench/trial-layout.fsx`, referencing the
 worktree's `Xake.dll`, based at `repo-b/src/Layout`, `**/*.cs !bin/**/* !obj/**/*`):
 
 | | files | before | after |

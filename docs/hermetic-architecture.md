@@ -906,7 +906,7 @@ What it does not affect:
   recorded with and without the server are identical.
 - **The bytes.** The request carries the full argument list, the working directory and the temp
   directory. Measured: identical output with and without the server (one library in
-  `CscServerTests`, 36/36 files on the dataengine fixture).
+  `CscServerTests`, 36/36 files on the repo-a fixture).
 - **Which compiler compiles.** The client finds the server in its own directory, and the default
   pipe name is derived from that directory, so another SDK or toolset version gets its own server.
   The request carries the client's commit hash; a mismatching server makes the client compile
@@ -938,10 +938,10 @@ about 3x per small compile. Verified on macOS only. Details: [csc-server.md](csc
 
 ## 7. Evidence
 
-### The dataengine verification
+### The repo-a verification
 
 The working notes record an end-to-end run on a commercial C# library repository (called
-*dataengine* in the notes: three shipped libraries, two brands selected by an msbuild property,
+*repo-a* in the notes: three shipped libraries, two brands selected by an msbuild property,
 `netstandard2.0;net472`, central package management, strong-name keys, twelve assemblies in
 total). The fixture is a `git archive` copy; the real checkout is never touched. The script
 imports one lock per brand (both frameworks inside), builds all twelve assemblies from the
@@ -955,7 +955,7 @@ and `-t:Rebuild`, and compares.
 | built against a freshly restored package folder | 36/36 identical to the build against the machine cache |
 | with the compiler server on (SDK 8.0.425) | 36/36 in each byte check above; `/shared` in all 12 traced command lines |
 | after the `Csc` record split (B2) and after the extraction (E1 to E4) | 36/36 in each byte check above |
-| the dataengine locks, old writer vs new writer | identical (`cmp`) |
+| the repo-a locks, old writer vs new writer | identical (`cmp`) |
 
 Behaviour observed on the same fixture:
 
@@ -976,7 +976,7 @@ A second, larger fixture (12 libraries plus a cross-repository reference into th
 90/90 byte-identical on 2026-09-24. (The notes disagree on whether the 90/90 run used the split lock format.) Its byte comparison cannot currently be re-run in a tree Xake has built in
 (section 8).
 
-A shipped, signed release of one dataengine library was also compared with a local build of the
+A shipped, signed release of one repo-a library was also compared with a local build of the
 same tag: the Authenticode hashes differ (140 small `Content` ranges), and with the certificate
 table accounted for the images are the same size. That run showed the comparator works on real
 signed binaries; it did not show reproducibility of that release.
@@ -1002,7 +1002,7 @@ run: base 258 passed and 1 skipped, hermetic 118 passed, 0 warnings in both libr
 
 | Claim | Status |
 |---|---|
-| dataengine 36/36 and the larger fixture 90/90 | macOS, SDK 8.0.423 and 8.0.425 |
+| repo-a 36/36 and the larger fixture 90/90 | macOS, SDK 8.0.423 and 8.0.425 |
 | compiler server behaviour and gains | macOS; the `ps` assertion in `CscServerTests` is Unix-only |
 | the `resx` `.resources` byte identity | the netstandard2.0 code path only (tests run on net8.0) |
 | the net462 build of the library itself | compiles; its `Impl.compileResx` path (`ResXResourceReader`) is not exercised |
@@ -1022,7 +1022,7 @@ run: base 258 passed and 1 skipped, hermetic 118 passed, 0 warnings in both libr
 | New source files and the gate | a composed `csc {}` expands its filesets without recording them as a dependency, so a new file matching the glob does not rerun the target; the lock gate only fires when something else changes (observed; base behaviour) |
 | `Lock.build` and `Lock.verify` look up by name | they use `Lock.entry c.Name`, which fails when a lock holds the name for several frameworks. Composed locks hold one entry, so this only matters for a hand-merged lock |
 | The one-call build of an imported lock | the extraction plan sketched `Lock.build lockFile framework name` and a `Lock.buildWith { RunOptions; ExtraRoots; OutputOf }` that would also map project references. Not built. `Lock.build` takes a composed compilation: it compares the compilation with the lock and compiles the lock entry only when the two are equal. A lock from `Project.import` is built with `Lock.load`, `Lock.entryFor`, `Lock.mapPaths`, `need`, `Lock.compile`. A lock from `Locks.generate` is built with `Locks.compileAs`, one entry per call (section 5) |
-| Project-reference remap heuristic | keying the remap on "recorded hash is empty" breaks when a stale `bin/Release` output existed at import time (it gets hashed). `verify-dataengine.fsx` keys on the name matching another entry of the same framework; `import.fsx` still uses the empty-hash key |
+| Project-reference remap heuristic | keying the remap on "recorded hash is empty" breaks when a stale `bin/Release` output existed at import time (it gets hashed). `the repo-a verification script` keys on the name matching another entry of the same framework; `import.fsx` still uses the empty-hash key |
 | MSB3577 interop | on a project with two same-named `.resx`, the msbuild baseline fails in a tree where Xake wrote `.resources` into msbuild's `obj/xake/...` paths. Likely fix: write imported `.resources` under a path Xake owns; the manifest name, not the path, is embedded |
 | `Generated` / `.resources` are not engine targets | the runner writes them inline; a rule factory would make them first-class targets (review item, waits for a second consumer) |
 | Restore scope | only what the compilation reads is restored (compiler, references, analyzers), not the whole package graph; `csc { toolset }` and `CSC_TOOLSET` restore the compiler package into the build's package folder (`DotNetFwk.packageRoot`) |

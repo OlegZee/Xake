@@ -294,7 +294,7 @@ module Import =
 
     /// Imports `project` (a csproj or fsproj, relative to the project root or absolute) into
     /// the description at `descriptionOf project`, msbuild evaluating it under `globals` (e.g.
-    /// `["Configuration", "Release"; "Brand", "MESCIUS"]`). The file is written only when its
+    /// `["Configuration", "Release"; "Brand", "Acme"]`). The file is written only when its
     /// content changes; an existing file's `$schema` is kept. Records no input: an explicit
     /// command, not a rule (`Imported.Inputs` is the list of files msbuild read, for a
     /// fingerprint).

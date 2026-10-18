@@ -64,7 +64,7 @@ let loadLock path = recipe {
 
 command "restore" {                                    // populate it once, then cache it
     let! options = restoreOptions
-    let! lock = loadLock "locks/MESCIUS.json"
+    let! lock = loadLock "locks/Acme.json"
     do! Lock.restore options lock
 }
 
@@ -103,7 +103,7 @@ against the ~700 SHA-256 the hash check computes immediately afterwards: noise.
 
 **The synthesized project lives under the build's project root** (`obj/xake/restore/`), not
 in a temp directory. NuGet discovers `nuget.config` from the project's own directory, so a
-lock whose packages come from a company feed is otherwise simply unrestorable — the dataengine
+lock whose packages come from a company feed is otherwise simply unrestorable — the repo-a
 fixture has exactly that shape. The repository's msbuild customizations, which are written for
 real projects and not for a download shim, are switched off on the command line instead:
 `ImportDirectoryBuildProps`, `ImportDirectoryBuildTargets`, `ImportDirectoryPackagesProps`,
@@ -184,7 +184,7 @@ package out of, and the base cannot depend on `Restore`, so it restores through
 
 ## Measured
 
-Fixture: `git archive origin/develop` of `ar-net-core-dataengine` into a temp dir, three
+Fixture: `git archive origin/develop` of `repo-a` into a temp dir, three
 projects × two brands, netstandard2.0, imported with `-t 1`, built with the package folder
 pointed at `.packages/` inside the copy (macOS, 8 cores, SDK 8.0.x, `-p:NuGetAudit=false`).
 The lock entries name 113–115 references each, essentially all of them from
@@ -199,9 +199,9 @@ The lock entries name 113–115 references each, essentially all of them from
 | `build`, nothing changed | **0.089 s**, 0 restores — unchanged |
 | `build`, empty `.packages`, restore off | fails before any compiler runs: **339** `got missing` lines + 1 warning; the folder is never created |
 
-**Byte-identity holds through the restored folder**: MESCIUS's three projects built from
+**Byte-identity holds through the restored folder**: Acme's three projects built from
 `.packages/` compared with `dotnet build -c Release -t:Rebuild -p:TargetFramework=netstandard2.0
--p:Brand=MESCIUS -p:NuGetAudit=false -p:IntermediateOutputPath=obj/xake/netstandard2.0/MESCIUS/`
+-p:Brand=Acme -p:NuGetAudit=false -p:IntermediateOutputPath=obj/xake/netstandard2.0/Acme/`
 — **9/9 identical** (dll, pdb, xml).
 
 Tests: `src/hermetic.tests/RestoreTests.fs` -- missing-set grouping and casing, the restore

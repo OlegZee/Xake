@@ -290,9 +290,8 @@ any of them shows in `check-locks` as `~ Import <path>`.
 `build` above compiles entries in lock order. With `ProjectReference`s, a reference in the lock
 has no hash and points at the path msbuild would have built it at. Use one file rule per
 output and map the reference to the other entry's `/out:`: the rule in
-[../hermetic-guide.md](../hermetic-guide.md#6-building-from-an-imported-lock) (from
-`docs/features/hermetic-build/import.fsx`, run by the maintainers on dataengine, 36/36
-byte-identical).
+[../hermetic-guide.md](../hermetic-guide.md#6-building-from-an-imported-lock) (run by the maintainers on a
+three-project library repository, 36/36 byte-identical).
 
 ### `$(SourceRevisionId)`
 
@@ -322,7 +321,7 @@ command "import" {
 
 A variant msbuild evaluates differently is a separate description: import it with that
 variant's properties into a folder of its own, e.g.
-`Import.descriptions projects (fun p -> $"mescius/{Path.GetFileNameWithoutExtension p}.json") [ "Brand", "MESCIUS" ]`.
+`Import.descriptions projects (fun p -> $"acme/{Path.GetFileNameWithoutExtension p}.json") [ "Brand", "Acme" ]`.
 Each result carries `Inputs`, the msbuild files the evaluation read (repository files only,
 relative to the project root, sorted), and `Dropped`, what msbuild knows that the description
 has no field for; the latter is also logged. **(untested as a script; the tests run it)**
@@ -426,7 +425,7 @@ before 0.2); `-d NUGET_FETCH=off` does the same for the whole build. The per-tar
 `NUGET_PACKAGES` and `NUGET_FETCH` *script variables* reach this side too (`Restore.resolve`:
 `DotNetFwk.packageRoot`, `fetchEnabled`).
 
-The `Restore.into` form, from [restore.md](restore.md) (run by the maintainers on dataengine,
+The `Restore.into` form, from [restore.md](restore.md) (run by the maintainers on repo-a,
 not for this page):
 
 ```fsharp
@@ -767,7 +766,7 @@ What the product does not do yet, with the smallest change that would close each
 8. *(done in PR #30)* Drift messages are printed with tokenized paths (`$(ProjectRoot)/...`).
 9. *(done in PR #30)* `Lock.verify` on a missing lock fails naming the path and `Lock.record`.
 10. **SBOM package-scope defaults are product-specific.** `Sbom.PackageScopeOptions.Default`
-    treats `DS.`, `MESCIUS.` and `GrapeCity.` as internal ids. Override `IsInternal` with
+    treats `DS.`, `Acme.` and `Initech.` as internal ids. Override `IsInternal` with
     `Sbom.PackageScope.idPrefixes [ ... ]`. Smallest fix: an empty default.
 11. **Only `Sign.fakeSigner` ships.** A real signer (Azure Trusted Signing, a certificate
     store) is the user's to provide ([signing.md](signing.md#4-out-of-scope-now-what-the-user-must-provide)).

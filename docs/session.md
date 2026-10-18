@@ -33,7 +33,7 @@ touched, so it is not re-litigated:
   Developing against unreleased libraries: a temporary `#r` on dlls (or a `#i` local feed);
   see docs/devprocess.md, "Bootstrapping note". `samples/gettingstarted.fsx` references the
   published package (`#r "nuget: Xake"`) and is checked against it after each release.
-- `src/hermetic` builds on the *published* `Xake` (PackageReference `[3.9.0.30, 4.0)`), not on
+- `src/hermetic` builds on the *published* `Xake` (PackageReference `[3.9.0.30, 3.10)`), not on
   `src/core`/`src/dotnet`. The floor is the exact published version: `[3.4.0, 4.0)` warns NU1603
   because no plain `3.4.0` exists. A local feed (`-d NUGET_SOURCE=<folder>`) is only for working
   against an unreleased base; a packed `3.4.0.99` in `~/.nuget/packages/xake/` shadows the

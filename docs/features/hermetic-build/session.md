@@ -1265,7 +1265,7 @@ Xake 3.9.0 is on nuget.org as **3.9.0.30** (#59: the project description in core
 the hermetic package onto it; `dev` (#55, #59, #60) merged into the branch first (conflicts:
 `Resx.fs` taken from dev, `xake.fingerprints` regenerated).
 
-- `src/hermetic` on `Xake [3.9.0.30, 4.0)` (owner's upper bound; the record risk is noted in the
+- `src/hermetic` on `Xake [3.9.0.30, 3.10)` (owner's upper bound; the record risk is noted in the
   fsproj and the release note), `<Version>` 0.4.0.
 - Deleted: `src/hermetic/Description.fs`, `docs/hermetic/xake.project.schema.json`; `Json.fs`
   renamed `ToolJson.fs` (internal; the core's `Json` is internal to Xake.Dotnet, the package

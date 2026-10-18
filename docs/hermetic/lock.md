@@ -13,9 +13,9 @@ Everything here is in the package `Xake.Hermetic.Dotnet` (`src/hermetic/`: `Lock
 `Project.fs`, `Roots.fs`, `Git.fs`, `ToolJson.fs`); the compilations a lock entry wraps, `Csc` and
 `Fsc`, and their runners `Csc.run` and `Fsc.run` belong to `Xake.Dotnet` (inside the `Xake`
 package) and are described in [../csc-syntax.md](../csc-syntax.md). Xake.Hermetic.Dotnet 0.4 needs
-Xake 3.9 (`[3.9.0.30, 4.0)`): the project description (`Xake.Dotnet.Description`) and
+Xake 3.9 (`[3.9.0.30, 3.10)`): the project description (`Xake.Dotnet.Description`) and
 `csc { project }` / `fsc { project }` are the core's, this package adds `config`, `packages` and
-`lock` to them; the run folder rule relies on `ArtifactDep2` (Xake 3.8). Scripts open both:
+`lock` to them; the upper bound is the next core minor because core minors may add fields to the F# records this package constructs, so the package is re-released per core minor; the run folder rule relies on `ArtifactDep2` (Xake 3.8). Scripts open both:
 
 ```fsharp
 #r "nuget: Xake, 3.9.0.30"

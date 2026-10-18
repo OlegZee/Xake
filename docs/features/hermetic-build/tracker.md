@@ -220,7 +220,7 @@ to that rule rather than the deliverable. Items are ordered by what they unblock
 - [ ] exp-repo on 0.4.2-night: format-2 locks, flat out + run folders, minimal pack
 - [x] PR 5 `pr/hermetic-38` (#61): hermetic on Xake 3.8
 - [x] Xake 3.9 released (#59 description in core) as 3.9.0.30
-- [x] PR 6 `pr/hermetic-39`: hermetic on Xake `[3.9.0.30, 4.0)`, description/schema/Json copies deleted, `config`/`packages`/`lock` over the core's `project`, import writes `frameworkReferences`, 0.4.0
+- [x] PR 6 `pr/hermetic-39`: hermetic on Xake `[3.9.0.30, 3.10)`, description/schema/Json copies deleted, `config`/`packages`/`lock` over the core's `project`, import writes `frameworkReferences`, 0.4.0
 - [ ] core follow-up: the runner recompiles a `.resources` when its resx changed (then drop `Described.refreshResources`)
 - [ ] feature/hermetic-build -> dev, tag `hermetic-v0.4.0`
 - [ ] `build.fsc.fsx` on `Xake.Hermetic.Dotnet 0.4.0.<run>` (0.3 cannot `update-locks` on Xake 3.9)

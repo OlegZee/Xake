@@ -2,9 +2,10 @@
 
 ## 0.4 (next release)
 
-Built on **Xake 3.9** (`[3.9.0.30, 4.0)`, nuget.org 3.9.0.30). Everything under "Next" below,
+Built on **Xake 3.9** (`[3.9.0.30, 3.10)`, nuget.org 3.9.0.30). Everything under "Next" below,
 and:
 
+- **Range policy.** The dependency is `Xake [3.9.0.30, 3.10)`, not the next major: a core minor may add fields to the F# records this package constructs (3.9 broke 0.3 that way), so Xake.Hermetic.Dotnet is re-released on each core minor.
 - **Xake 3.9 floor; the project description is the core's.** `xake.project.json` is
   `Xake.Dotnet.Description` (the module, the schema `docs/schemas/xake.project.schema.json`) and
   `Xake.Dotnet.ProjectPlan`; this package's copies (`Description.fs`, `Json.fs` as a description
@@ -185,7 +186,7 @@ explained and checked: a **lock** file records exactly what the compiler was han
 of everything it read, the build compiles from the lock and fails when anything differs, and the
 result can be turned into a deterministic package with an SBOM and a signing step. It is a
 separate NuGet package that depends on `Xake` (the engine and the `csc`/`fsc`/`msbuild`/`resgen`
-tasks of `Xake.Dotnet`, Xake 3.9.0.30 or later, below 4.0); nothing in `Xake` knows about it.
+tasks of `Xake.Dotnet`, Xake 3.9.0.30 or later, below 3.10); nothing in `Xake` knows about it.
 
 ```fsharp
 #r "nuget: Xake.Hermetic.Dotnet, 0.4.0"

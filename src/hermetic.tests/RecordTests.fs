@@ -395,7 +395,7 @@ module internal RecordKit =
             File.WriteAllText (path, text)
 
     let run (options: ExecOptions) (label: string) (rules': Rule<ExecContext> list) (targets: string list) =
-        xake {options with FileLog = label + ".log"; ThrowOnError = true; Vars = [ "CI", "off"; "CSC_SERVER", "off" ] @ options.Vars; FileLogLevel = Loud} {
+        xake {options with FileLog = label + ".log"; ThrowOnError = true; Vars = options.Vars @ [ "CI", "off"; "CSC_SERVER", "off" ]; FileLogLevel = Loud} {
             wantOverride targets
             rules rules'
         }
@@ -832,3 +832,53 @@ type ``Restore rounds``() =
         let rounds = Restore.rounds [ "Azure.Core", "1.47.1"; "Castle.Core", "4.4.0"; "azure.core", "1.51.1"; "Azure.Core", "1.47.1"; "Azure.Core", "2.0.0" ]
         Assert.That(rounds, Is.EqualTo [ [ "Azure.Core", "1.47.1"; "Castle.Core", "4.4.0" ]; [ "azure.core", "1.51.1" ]; [ "Azure.Core", "2.0.0" ] ])
         Assert.That(Restore.rounds [], Is.Empty)
+
+
+/// A compile under the compiler server whose analyzer crashes (AD0001, S72) is reported with
+/// the analyzer and compiled once more in a fresh compiler process.
+[<TestFixture>]
+type ``Compile under the compiler server``() =
+    inherit XakeTestBase("compile-server")
+
+    /// throws in a compilation action when it runs inside VBCSCompiler, never in a csc process
+    let crash =
+        "using System;\nusing System.Collections.Immutable;\nusing Microsoft.CodeAnalysis;\nusing Microsoft.CodeAnalysis.Diagnostics;\n"
+        + "namespace Crash {\n  [DiagnosticAnalyzer(LanguageNames.CSharp)]\n  public class UnderServer : DiagnosticAnalyzer {\n"
+        + "    static readonly DiagnosticDescriptor D = new DiagnosticDescriptor(\"CR1\", \"t\", \"m\", \"c\", DiagnosticSeverity.Warning, true);\n"
+        + "    public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics => ImmutableArray.Create(D);\n"
+        + "    public override void Initialize(AnalysisContext c) {\n      c.EnableConcurrentExecution();\n      c.ConfigureGeneratedCodeAnalysis(GeneratedCodeAnalysisFlags.None);\n"
+        + "      c.RegisterCompilationAction(_ => { if (string.Join(\" \", Environment.GetCommandLineArgs()).Contains(\"VBCSCompiler\")) throw new InvalidOperationException(\"under the server\"); });\n"
+        + "    }\n  }\n}\n"
+
+    [<Test>]
+    member x.``an analyzer crash under the server is retried once without it``() =
+        RecordKit.write [ "analyzer"; "app"; "out"; "locks"; "obj" ]
+            [ "analyzer/analyzer.csproj",
+                RecordKit.sdkProject "<TargetFramework>netstandard2.0</TargetFramework><EnforceExtendedAnalyzerRules>true</EnforceExtendedAnalyzerRules><NoWarn>RS1036;RS2008</NoWarn>"
+                    "<PackageReference Include=\"Microsoft.CodeAnalysis.Common\" Version=\"4.5.0\" PrivateAssets=\"all\" />"
+              "analyzer/Crash.cs", crash
+              "app/app.csproj",
+                RecordKit.sdkProject "<TargetFramework>net8.0</TargetFramework><TreatWarningsAsErrors>true</TreatWarningsAsErrors>"
+                    "<Analyzer Include=\"../analyzer/bin/Release/netstandard2.0/analyzer.dll\" />"
+              "app/C.cs", "namespace App { public class C { } }\n" ]
+        RecordKit.runDotnet "analyzer" [ "build"; "-c"; "Release" ]
+        RecordKit.import x.TestOptions "import-crash" RecordKit.recordDefault [ "app/app.csproj" ] |> ignore
+        Assert.That(File.ReadAllText (RecordKit.lockOf "app" "Release"), Does.Contain "analyzer.dll")
+        RecordKit.build { x.TestOptions with Vars = [ "CSC_SERVER", "on" ] } "build-crash" "Release"
+        let log = File.ReadAllText "build-crash.log"
+        Assert.That(log, Does.Contain "an analyzer crashed under the compiler server (AD0001): Crash.UnderServer (System.InvalidOperationException); compiling once more without the server")
+        Assert.That(File.Exists "out/Release/net8.0/app/app.dll", Is.True)
+        // without the server, the analyzer does not crash: no retry, nothing said
+        Directory.Delete ("out", true)
+        RecordKit.build x.TestOptions "build-crash-2" "Release"
+        Assert.That(File.ReadAllText "build-crash-2.log", Does.Not.Contain "AD0001")
+
+    [<Test>]
+    member x.``the crashed analyzers are read from a SARIF error log``() =
+        let sarif =
+            "{ \"version\": \"2.1.0\", \"runs\": [ { \"results\": [ { \"ruleId\": \"AD0001\", \"level\": \"error\", \"message\": { \"text\": "
+            + "\"Analyzer 'A.B' threw an exception of type 'System.NullReferenceException' with message 'x'.\" } }, "
+            + "{ \"ruleId\": \"CS0168\", \"message\": { \"text\": \"unused\" } } ] } ] }"
+        Assert.That(Lock.analyzerCrashes sarif, Is.EqualTo [ "A.B (System.NullReferenceException)" ])
+        Assert.That(Lock.analyzerCrashes "{ \"runs\": [ { \"results\": [ { \"ruleId\": \"CS0168\" } ] } ] }", Is.Empty)
+

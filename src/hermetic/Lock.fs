@@ -1428,6 +1428,56 @@ module Lock =
         }
 
     /// <summary>
+    /// The analyzers a csc error log (SARIF, `/errorlog:`) reports as crashed (`AD0001`:
+    /// "Analyzer 'X' threw an exception of type 'Y'"), as `X (Y)`; empty when there is none.
+    /// </summary>
+    let internal analyzerCrashes (sarif: string) : string list =
+        if not (System.Text.RegularExpressions.Regex.IsMatch (sarif, "\"(ruleId|id)\"\\s*:\\s*\"AD0001\"")) then []
+        else
+            System.Text.RegularExpressions.Regex.Matches (sarif, "Analyzer '([^']+)' threw an exception of type '([^']+)'")
+            |> Seq.cast<System.Text.RegularExpressions.Match>
+            |> Seq.map (fun m -> sprintf "%s (%s)" m.Groups.[1].Value m.Groups.[2].Value)
+            |> Seq.distinct
+            |> List.ofSeq
+
+    /// <summary>
+    /// `Csc.run` under the compiler server, retried once without it when the compile fails
+    /// with an analyzer crash (`AD0001`, S72: seen once in a large solution's clean build, an
+    /// analyzer's NullReferenceException in a shared `VBCSCompiler`; the next build of the
+    /// same project passed). The compile writes an error log (its own `/errorlog:`, or a
+    /// temporary one beside nothing else); a failure whose log names a crashed analyzer is
+    /// reported with the analyzer and compiled again in a fresh compiler process. Any other
+    /// failure fails as before, and so does a crash without the server.
+    /// </summary>
+    let private runCsc (run: RunOptions) (c: Csc) : Recipe<ExecContext, unit> =
+        recipe {
+            match run.Server with
+            | InProcess -> do! Csc.run run c
+            | Shared _ when not run.FailOnError -> do! Csc.run run c
+            | Shared _ ->
+                let isErrorLog (o: string) =
+                    o.StartsWith "/errorlog:" || o.StartsWith "-errorlog:"
+                let own =
+                    c.Options |> List.tryFind isErrorLog
+                    |> Option.map (fun o -> let v = o.Substring 10 in (match v.IndexOf ',' with -1 -> v | i -> v.Substring (0, i)).Trim '"')
+                let log = own |> Option.defaultWith (fun () -> Path.Combine (Path.GetTempPath (), sprintf "xake-%s-%s.sarif" c.Name (System.Guid.NewGuid().ToString "N")))
+                let c' = match own with Some _ -> c | None -> { c with Options = c.Options @ [ "/errorlog:" + log ] }
+                let crashed = ref []
+                try
+                    try
+                        do! Csc.run run c'
+                    with e ->
+                        crashed.Value <- (if File.Exists log then analyzerCrashes (File.ReadAllText log) else [])
+                        if List.isEmpty crashed.Value then raise e
+                finally
+                    if own.IsNone then try File.Delete log with _ -> ()
+                if not (List.isEmpty crashed.Value) then
+                    do! trace Warning "('%s') an analyzer crashed under the compiler server (AD0001): %s; compiling once more without the server"
+                            c.Name (String.concat ", " crashed.Value)
+                    do! Csc.run { run with Server = InProcess } c
+        }
+
+    /// <summary>
     /// Replays a lock entry -- one imported by `Project.import`, read back from a lock, or
     /// recorded from composed settings -- exactly as recorded, with the runner and restore
     /// options given:
@@ -1517,7 +1567,7 @@ module Lock =
                         }
 
             match c with
-            | Compilation.Csc c -> do! Csc.run options.Run c
+            | Compilation.Csc c -> do! runCsc options.Run c
             | Compilation.Fsc f -> do! Fsc.run options.FscRun f
         }
 

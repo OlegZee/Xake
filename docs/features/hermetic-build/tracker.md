@@ -230,3 +230,4 @@ to that rule rather than the deliverable. Items are ordered by what they unblock
 - [x] `binding-redirects.md`: design note for recording msbuild's binding redirects at import (S55), branch `pr/binding-redirects`
 - [ ] S55 implementation: app run over every project with redirects, clean scratch config, record final file, guard on stub version, tests; 0.4.3
 - [ ] owner: Q1-Q6 of `binding-redirects.md`; whether csc analyzers may be dropped for a non-validating build (the only lever toward <= 60 s)
+- [ ] core trap (found 2026-10-19 by a consumer `clean` target): `rm { dir a; dir b }` keeps only the last `dir` (`RmArgs.dir` is one string; `files` > `file` > `dir`, the others are silently ignored) — document in `docs/`, or make `dir` accumulate / fail on a second one

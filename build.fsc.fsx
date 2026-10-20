@@ -83,10 +83,12 @@ do xake { ExecOptions.Default with DbFileName = ".xake.fsc" } {
             let! slice = getRuleMatch "slice"
             let job = testJob project slice
             do! need [ $"test-build::{project}" ]
+            do! need (testJobNeeds job)   // the compiler server's users, one after another
             let! filter = vars.TestFilter
             resetTestJobDir job
             do! sh $"dotnet test {testProjectDir project} -c Release --no-build" {
                 args (testArgs job filter)
+                env (testJobEnv job)
                 logprefix $"[{testJobName job}]"
                 stdoutlevel (fun l -> if isTestSummary l then Level.Message else Level.Info)
                 captureOutput (ToFile (Both, testJobDir job + "/console.log"))

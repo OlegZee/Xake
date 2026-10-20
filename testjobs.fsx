@@ -7,6 +7,12 @@
 // slice of a project (`Rest`) is every fixture not named by the project's other slices: each
 // test is in exactly one job. Slices are cut to roughly even durations (seconds measured on
 // 18 logical CPUs, 2026-10); a new fixture lands in `rest` until it is worth a slice of its own.
+//
+// Fixtures that use the compiler server are serial: the server (VBCSCompiler) is one per
+// machine, and a neighbour starting it, loading it or letting its keepalive expire makes a
+// client fall back to a plain csc, which fails a test that asserts the server. They sit in the
+// `Server = true` jobs, run one after another in list order; every other job runs with
+// XAKE_CSC_SERVER=off (csc in-process), so it never touches the server.
 
 type Slice =
     /// these fixture classes (full names, namespace included)
@@ -14,32 +20,42 @@ type Slice =
     /// every fixture of the project not named by its other slices
     | Rest
 
-type TestJob = { Project: string; Name: string; Slice: Slice }
+type TestJob = { Project: string; Name: string; Slice: Slice; Server: bool }
 
 /// Test project key (`test::<key>/<slice>`) -> project folder.
 let testProjects = [ "tests", "src/tests"; "hermetic", "src/hermetic.tests" ]
 
+let private job project name slice = { Project = project; Name = name; Slice = slice; Server = false }
+
 let testJobs = [
-    { Project = "tests"; Name = "jobs"                      // ~38 s
-      Slice = Fixtures [ "Tests.Compiler jobs"; "Tests.Delegated and resource tests" ] }
-    { Project = "tests"; Name = "rest"; Slice = Rest }      // ~31 s
-    { Project = "hermetic"; Name = "build"                  // ~34 s
-      Slice = Fixtures [ "Tests.Building from Xake-generated locks"; "Tests.Fsc lock"; "Tests.Csc fromlock"; "Tests.Csc lock" ] }
-    { Project = "hermetic"; Name = "record"                 // ~38 s
-      Slice = Fixtures [ "Tests.Import record"; "Tests.Import record project chain"; "Tests.Import record configurations"
-                         "Tests.Import record refusals and descriptions"; "Tests.Import record switch files"
-                         "Tests.Import record concurrent brands"; "Tests.Compile under the compiler server" ] }
-    { Project = "hermetic"; Name = "run"                    // ~36 s
-      Slice = Fixtures [ "Tests.Run folders"; "Tests.Import record applications"; "Tests.Description import" ] }
-    { Project = "hermetic"; Name = "lock"                   // ~26 s
-      Slice = Fixtures [ "Tests.Lock generation"; "Tests.Described compilation" ] }
-    { Project = "hermetic"; Name = "rest"; Slice = Rest }   // ~18 s
+    // the compiler server's users, serial: tests/server, then hermetic/server
+    { job "tests" "server" (Fixtures [ "Tests.Csc compiler server" ]) with Server = true }                 // ~2 s
+    { job "hermetic" "server" (Fixtures [ "Tests.Building from Xake-generated locks"                       // ~32 s
+                                          "Tests.Compile under the compiler server" ]) with Server = true }
+    job "tests" "jobs" (Fixtures [ "Tests.Compiler jobs"; "Tests.Delegated and resource tests" ])            // ~38 s
+    job "tests" "rest" Rest                                                                                   // ~29 s
+    job "hermetic" "record" (Fixtures [ "Tests.Import record"; "Tests.Import record project chain"           // ~34 s
+                                        "Tests.Import record configurations"; "Tests.Import record refusals and descriptions"
+                                        "Tests.Import record switch files"; "Tests.Import record concurrent brands" ])
+    job "hermetic" "run" (Fixtures [ "Tests.Run folders"; "Tests.Import record applications"; "Tests.Description import" ])  // ~36 s
+    job "hermetic" "lock" (Fixtures [ "Tests.Lock generation"; "Tests.Described compilation"                 // ~32 s
+                                      "Tests.Fsc lock"; "Tests.Csc fromlock"; "Tests.Csc lock" ])
+    job "hermetic" "rest" Rest                                                                                // ~18 s
 ]
 
 let testJobName job = $"{job.Project}/{job.Name}"
 let testJob project name = testJobs |> List.find (fun j -> j.Project = project && j.Name = name)
 let testProjectDir project = testProjects |> List.find (fst >> (=) project) |> snd
 
+/// The jobs a job waits for: a server job, for the server job before it.
+let testJobNeeds job =
+    if not job.Server then [] else
+    testJobs |> List.filter (fun j -> j.Server) |> List.takeWhile ((<>) job) |> List.rev |> List.truncate 1
+    |> List.map (fun j -> $"test::{testJobName j}")
+
+/// The compiler server switch of a job's `dotnet test`: on for the server jobs (their tests
+/// need it), off for every other job (it never touches the server).
+let testJobEnv job = "XAKE_CSC_SERVER", (if job.Server then "on" else "off")
 /// Where a job writes its trx, console log and blame files: a folder of its own.
 let testJobDir job = $"out/test/{job.Project}/{job.Name}"
 

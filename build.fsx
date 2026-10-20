@@ -119,6 +119,7 @@ do xakeScript {
             let! slice = getRuleMatch "slice"
             let job = testJob project slice
             do! need [ $"test-build::{project}" ]
+            do! need (testJobNeeds job)   // the compiler server's users, one after another
             let! testFilter = vars.TestFilter
 
             // a test running longer than 10 minutes is a hang: the run is stopped and the
@@ -127,6 +128,7 @@ do xakeScript {
             resetTestJobDir job
             do! sh $"dotnet test {testProjectDir project} -c Release --no-build" {
                 args (hang @ testArgs job testFilter)
+                env (testJobEnv job)
                 logprefix $"[{testJobName job}]"
                 stdoutlevel (fun l -> if isTestSummary l then Level.Message else Level.Info)
                 captureOutput (ToFile (Both, testJobDir job + "/console.log"))

@@ -96,6 +96,8 @@ let newTaskContext targets matches ctx =
         Ordinal = ordinal; Logger = PrefixLogger prefix ctx.Engine.RootLogger
         Targets = targets
         RuleMatches = matches
+        // a task started by a `need` holds nothing, whatever the needing task holds
+        HeldResources = []
     }
 
 /// Executes a single target: locates the matching rule, submits the work to the
@@ -201,6 +203,30 @@ and execParallel ctx = List.map (execOne ctx) >> Seq.ofList >> Async.Parallel
 /// along with the list of recorded dependencies.
 and execNeed (ctx: ExecContext) targets : Async<ExecStatus * Dependency list> =
     async {
+        // hold-and-wait: a dependency built while this recipe holds a resource may itself wait
+        // for that resource, and every unit can end up held by recipes waiting for their
+        // dependencies (an acyclic graph, a silent hang). A plain file without a rule never
+        // schedules anything, so it is allowed; a rule target is refused even when it is
+        // already built, so the error does not depend on timing (docs/resources.md).
+        match ctx.HeldResources with
+        | [] -> ()
+        | held ->
+            let ruleTarget =
+                targets |> List.tryFind (fun t -> t |> locateRule ctx.Options.Rules ctx.Options.ProjectRoot |> Option.isSome)
+            match ruleTarget with
+            | None -> ()
+            | Some needed ->
+                let needing =
+                    match ctx.Targets with
+                    | t :: _ -> sprintf "target '%s'" t.FullName
+                    | [] -> "the script"
+                let resources = held |> List.map (sprintf "'%s'") |> String.concat ", "
+                let errorText =
+                    sprintf "need inside withResource: %s needs '%s' while it holds the resource %s. A dependency built under a held resource can deadlock the build. Move the need before withResource (or acquire the resource around the command only), or wrap it in allowNeed if the dependency never takes the resource."
+                        needing needed.FullName resources
+                do ctx.Logger.Log Error "%s" errorText
+                raise (XakeException errorText)
+
         let primaryTarget = ctx.Targets |> List.head
         primaryTarget |> (Progress.TaskSuspend >> ctx.Progress.Post)
 
@@ -325,6 +351,7 @@ let createContextCore (options: EngineOptions) (db: Agent<Storage.DatabaseApi>) 
         RuleMatches = Map.empty
         Vars = vars
         ShowProgress = showProgress
+        HeldResources = []
         }
     ctx, finalize
 

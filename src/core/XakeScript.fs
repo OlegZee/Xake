@@ -106,7 +106,7 @@ module XakeScript =
         Recipe (fun (s, ctx: ExecContext) -> async {
             do! Scheduler.withYieldedSlot ctx.Engine.Scheduler (Resource.acquire resource 1)
             try
-                return! A.runAction body (s, ctx)
+                return! A.runAction body (s, { ctx with HeldResources = resource.ResourceName :: ctx.HeldResources })
             finally
                 Resource.release resource 1
         })
@@ -119,6 +119,8 @@ module XakeScript =
         | DelegatedRule (inner, exec) -> DelegatedRule (mapRecipe f inner, exec)
 
     /// Wraps a rule so its recipe runs under a resource lock (1 unit, CPU-slot yielding).
+    /// The whole recipe holds the unit, so, as inside `withResource`, a `need` of a target
+    /// that has a rule fails (it could deadlock); plain files are allowed, `allowNeed` lifts it.
     /// Compose with the existing rule operators, e.g.
     /// `"restore:*" => recipe { ... } |> requiring restoreLock`.
     let requiring (resource: Resource) (rule: ExecContext Rule) : ExecContext Rule =

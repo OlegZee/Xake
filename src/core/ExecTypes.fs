@@ -42,6 +42,10 @@ and ExecContext = {
     RuleMatches: Map<string,string>
     Ordinal: int
     Logger: ILogger
+    /// Names of the resources the running recipe holds (innermost first), set by
+    /// `withResource` and `requiring` for their body. A `need` of a target that has a rule
+    /// fails while it is not empty (hold-and-wait deadlock); `allowNeed` clears it.
+    HeldResources: string list
 } with
     /// Shortcut to engine options.
     member ctx.Options = ctx.Engine.Options

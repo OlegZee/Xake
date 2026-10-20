@@ -1,6 +1,18 @@
 # Xake.Hermetic.Dotnet
 
-## 0.4 (next release)
+## 0.5 (next release)
+
+Built on Xake 3.10 (`[3.10.0.35, 3.11)`): the core added `HeldResources` to `ExecContext`, and a
+hermetic build on 3.9 cannot run on it, hence a new minor. What it brings over 0.4.2:
+
+- `Locks.compile settings lockPath fwk` with `Locks.Settings = { Roots; Versions; Lock: Lock.Options }`
+  (lock.md); `compileAsWith`/`compileAs` stay as wrappers.
+- The script's own compiler throttle: `Settings.Lock.Run.Throttle = Some (resource, units)`
+  (`FscRun.Throttle` for fsc), taken by the core's runner around the process launch only; or the
+  core's `CSC_JOBS`/`FSC_JOBS` variables with no code. The core now fails fast on a `need` of a rule
+  target inside `withResource` (resources.md).
+
+## 0.4 (released as 0.4.0-0.4.2)
 
 Built on **Xake 3.9** (`[3.9.0.30, 3.10)`, nuget.org 3.9.0.30). Everything under "Next" below,
 and:

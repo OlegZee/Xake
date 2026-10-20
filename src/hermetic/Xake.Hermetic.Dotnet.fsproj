@@ -8,7 +8,7 @@
          break. Same mechanism as src/dotnet: the build script and CI override it with
          /p:Version=...; this is the value a plain `dotnet pack` produces. -->
     <PackageId>Xake.Hermetic.Dotnet</PackageId>
-    <Version>0.4.0</Version>
+    <Version>0.5.0</Version>
     <OutputType>Library</OutputType>
     <!-- The SDK would otherwise reference its own FSharp.Core, see the pin below. -->
     <DisableImplicitFSharpCoreReference>true</DisableImplicitFSharpCoreReference>
@@ -77,7 +77,7 @@
          expression compiles to the full constructor), so a 3.x minor that adds a field to a
          record this package builds (`CscSettingsType`, `FscSettingsType`, `Csc`, `Fsc`, the
          run options) needs a release of this package with it. -->
-    <PackageReference Include="Xake" Version="[3.9.0.30, 3.10)" />
+    <PackageReference Include="Xake" Version="[3.10.0.35, 3.11)" />
   </ItemGroup>
 
   <!-- Test assemblies only; no other package sees these internals. hermetic.tests tests the

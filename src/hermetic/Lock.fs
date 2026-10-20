@@ -235,7 +235,7 @@ module Lock =
         | PackHost of rid: string * template: Hashed
 
     /// A file msbuild writes for an application (`runtimeconfig.json`, `deps.json`, the
-    /// `<exe>.config`), recorded beside the lock (`Path`, `<lock>.files/<framework>/app/`,
+    /// `<exe>.config` or a test library's `<name>.dll.config`, binding redirects included), recorded beside the lock (`Path`, `<lock>.files/<framework>/app/`,
     /// with its sha256) -- or the project's own config file msbuild copies as it is (a .NET
     /// application's `App.config`), named where it is -- and written into the output as `Name`.
     type AppFile = { Name: string; Path: string; Sha256: string }
@@ -249,17 +249,19 @@ module Lock =
     /// <summary>
     /// What msbuild makes of a project besides the compile, as `Import.record` records it --
     /// for a project with runtime output (`HasRuntimeOutput`: an exe, a winexe, a .NET test
-    /// project) always, for a library when msbuild copies something into its output
-    /// (`OutputType` `Library`, no `Host`, no `Files`: a .NET Framework test library's
-    /// copy-local packages, a library's content items). The compile writes `Files` and the
+    /// project) always, for a library when msbuild copies something into its output or
+    /// generates binding redirects for it (`OutputType` `Library`, no `Host`, `Files` the config
+    /// file only: a .NET Framework test library's copy-local packages and `.dll.config`, a
+    /// library's content items). The compile writes `Files` and the
     /// apphost beside the assembly; a run folder (`Locks.runFolderWith`) places the rest,
     /// deriving nothing:
     /// <list type="bullet">
     /// <item>`Host`: the apphost (`UseAppHost`), `None` without one;</item>
     /// <item>`Files`: the `runtimeconfig.json` and `deps.json` msbuild generated
     /// (`GenerateBuildRuntimeConfigurationFiles`, `GenerateBuildDependencyFile`) and the config
-    /// file `AppConfigWithTargetPath` names before binding redirects (for .NET Framework the
-    /// SDK's `supportedRuntime` added); a referenced project's versions in `deps.json` are the
+    /// file: msbuild's finished one with its binding redirects (against the referenced projects'
+    /// stand-ins), else the one before redirects (for .NET Framework the SDK's `supportedRuntime`
+    /// added), else the project's own `App.config`; a referenced project's versions in `deps.json` are the
     /// tokens `$(AssemblyVersion:&lt;file&gt;)`/`$(FileVersion:&lt;file&gt;)`, read from the built file
     /// at build time, as msbuild reads them;</item>
     /// <item>`Copy`: msbuild's copy-local files, packages and referenced projects;</item>
@@ -273,8 +275,8 @@ module Lock =
     /// output when they exist (`AllowedReferenceRelatedFileExtensions`: `.pdb`, `.xml`, ...);</item>
     /// <item>`BindingRedirects`: msbuild adds binding redirects to the config
     /// (`AutoGenerateBindingRedirects` and `GenerateBindingRedirectsOutputType`, .NET Framework
-    /// and .NET alike); the recorded
-    /// config has none (they depend on what is built when the import runs; S55).</item>
+    /// and .NET alike); the recorded config is msbuild's finished one, redirects included (since
+    /// 0.5.1; an older lock has the config before redirects).</item>
     /// </list>
     /// </summary>
     type App = {

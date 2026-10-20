@@ -462,6 +462,7 @@ let strings = resourceset {
 | `NETFX-TARGET` | Default `targetfwk` for all compiler tasks; unset, they target the SDK's own .NET framework |
 | `FSCVER` | F# compiler version `fsc` asks for (Windows registry provider only) |
 | `CSC_SERVER` | `csc` compiler server: `on`, `off` or keepalive seconds; overridden by a target's `noserver`/`keepalive`, overrides env `XAKE_CSC_SERVER` |
+| `CSC_JOBS` / `FSC_JOBS` | At most this many `csc` / `fsc` processes at once (`0` or unset: unlimited); then env `XAKE_CSC_JOBS` / `XAKE_FSC_JOBS`; not a dependency, changing it rebuilds nothing (see [csc-server.md](csc-server.md#limiting-concurrent-compiles-csc_jobs-fsc_jobs)) |
 | `CSC_TOOLSET` | `csc` compiler package version (`Microsoft.Net.Compilers.Toolset`) for targets with no `toolset`; empty or unset means the SDK's compiler |
 | `NUGET_PACKAGES` | The build's package folder, relative to the project root or absolute; overrides the environment variable of the same name for everything Xake restores or reads there (see below) |
 | `NUGET_FETCH` | `off` turns off every download into the package folder (a missing package fails the build); default `on` |

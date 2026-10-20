@@ -29,6 +29,32 @@ the whole process -- the CI switch. `Server = InProcess` on `RunOptions` is the 
 direct `Csc.run`. The precedence is `CompilerServer.resolve`'s; see
 [csc-syntax.md](csc-syntax.md).
 
+## Limiting concurrent compiles: `CSC_JOBS`, `FSC_JOBS`
+
+`-t` caps every executing recipe; `CSC_JOBS` caps the csc processes below it (memory, a shared
+server), so restores, copies and hash checks still use every slot. `FSC_JOBS` is fsc's own
+budget (fsc has no server and runs the whole compiler per process). Lookup, first match wins:
+
+| Where | Value |
+|---|---|
+| script variable `CSC_JOBS` / `FSC_JOBS` (`-d`, or `var` in `xakeScript`) | a positive integer; `0` or empty is unlimited |
+| environment variable `XAKE_CSC_JOBS` / `XAKE_FSC_JOBS` | the same |
+| default | unlimited |
+
+A value that is not a non-negative integer is traced as a warning and taken as unlimited.
+The budget is taken inside the launcher that `Csc.run` and `Fsc.run` share, around the compiler
+process only: after every `needFiles` and the hash check, so it is never held across a `need`
+(wrapping a compile recipe in `withResource` is what deadlocks, [resources.md](resources.md)).
+One budget per tool for the whole process. Unlike `CSC_SERVER`, the value is **not** a
+dependency: concurrency changes no output, so changing it rebuilds nothing. With the server on,
+the throttled processes are the thin clients; the server compiles one request per client, so
+the cap still bounds concurrent compilations.
+
+```bash
+dotnet fsi build.fsx -- -- build -d CSC_JOBS:6
+XAKE_FSC_JOBS=2 dotnet fsi build.fsx -- -- build
+```
+
 ## The switches are parameters of the run, not of the compilation
 
 `/shared` and `/keepalive` never enter a lock. `CommandLineParser.TryParseClientArgs` strips

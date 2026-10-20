@@ -14,6 +14,23 @@ open Xake.Dotnet
 /// script's layout, unhashed.
 module Locks =
 
+    /// <summary>
+    /// What `compile` is given besides the lock and the framework: the script's extra roots
+    /// (`Roots`, as for `Lock.loadWith`; `compileAsWith`'s `extraRoots`), the `$(Version)`
+    /// masks (`Versions`, `compileAs`'s `versions`), and the runner options handed to
+    /// `Lock.compileFromWith` (`Lock`: `Run` for csc, `FscRun` for fsc, `Restore`). The
+    /// library still fills `Lock.Run.Server` from `CSC_SERVER` when the script leaves it at
+    /// the default. `Default` is what `compileAs` does.
+    /// </summary>
+    type Settings = {
+        /// The script's extra roots (`Roots.make`), e.g. `[ "$(Sibling)", "../sibling-repo" ]`.
+        Roots: (string * string) list
+        /// The `$(Version)` token's variable per project mask, the first matching wins (`versionFor`).
+        Versions: (string * RequiredVar<string>) list
+        /// The options of the compile (`Lock.compileFromWith`).
+        Lock: Lock.Options
+    } with static member Default = { Roots = []; Versions = []; Lock = Lock.Options.Default }
+
     let private same (a: string) (b: string) = System.String.Equals (a, b, System.StringComparison.OrdinalIgnoreCase)
     let private normal (path: string) = path.Replace ('\\', '/')
 
@@ -487,7 +504,8 @@ module Locks =
         }
 
     /// `compileAs` for a `.dll` target.
-    let private compileDll (extraRoots: (string * string) list) (lockPath: string) (fwk: string) (versions: (string * RequiredVar<string>) list) : Recipe<ExecContext, unit> =
+    let private compileDll (settings: Settings) (lockPath: string) (fwk: string) : Recipe<ExecContext, unit> =
+        let extraRoots, versions = settings.Roots, settings.Versions
         recipe {
             let! options = getCtxOptions ()
             let root = normal (Path.GetFullPath options.ProjectRoot)
@@ -576,8 +594,10 @@ module Locks =
 
             // a `.resx` edited since its `.resources` was compiled (Xake 3.8's runner still compiles a missing one only)
             Described.refreshResources c.Resources
-            let! server = CompilerServer.resolve None
-            let lockOptions = { Lock.Options.Default with Run = { Lock.Options.Default.Run with Server = server } }
+            // the script's server when it set one, else `CSC_SERVER` (then `XAKE_CSC_SERVER`)
+            let run = settings.Lock.Run
+            let! server = CompilerServer.resolve (if run.Server = Lock.Options.Default.Run.Server then None else Some run.Server)
+            let lockOptions = { settings.Lock with Run = { run with Server = server } }
             do! Lock.compileFromWith extraRoots lockPath lockOptions { entry with Compilation = outputAt target c }
 
             // an application: what msbuild writes beside the assembly, from the lock (`Apps.write`)
@@ -621,7 +641,7 @@ module Locks =
     ///     let! cfg = getRuleMatch "cfg"
     ///     let! fwk = getRuleMatch "fwk"
     ///     let! name = getRuleMatch "name"
-    ///     do! Locks.compileAs (lockOf name cfg) fwk versions }
+    ///     do! Locks.compile settings (lockOf name cfg) fwk }
     /// </code>
     /// <list type="bullet">
     /// <item>reads the lock (a dependency on it, `Lock.load`); the target's file name must be
@@ -643,22 +663,32 @@ module Locks =
     /// <item>a `.resx` resource is compiled by the runner into the `.resources` the lock names
     /// (under `obj/xake/`); the resx is an input;</item>
     /// <item>a `$(Version)` token in `Generated` is replaced by the version of the first
-    /// `versions` mask matching the project (its folder, where its first source lies, as
+    /// `Versions` mask matching the project (its folder, where its first source lies, as
     /// `&lt;folder&gt;/xake.project.json` relative to the project root); the variable is read
     /// (a dependency) only when the token is there;</item>
     /// <item>then `Lock.compileFrom`: prerequisites, the `HERMETIC=on` gate (message 10),
     /// restore of what the lock names, the compiler (csc's server per `CSC_SERVER`) in the
-    /// project's folder (the lock's `Directory`).</item>
+    /// project's folder (the lock's `Directory`);</item>
+    /// <item>`settings` (`Settings`): the extra roots, the version masks and the runner
+    /// options (`Lock.Options`: failing on error, compiler paths, the server, the restore);
+    /// `Lock.Run.Server` left at its default is resolved from `CSC_SERVER`, then
+    /// `XAKE_CSC_SERVER`. Partially applied it is the script's own compile:
+    /// `let compileTarget = Locks.compile settings`.</item>
     /// </list>
     /// </summary>
-    let compileAsWith (extraRoots: (string * string) list) (lockPath: string) (fwk: string) (versions: (string * RequiredVar<string>) list) : Recipe<ExecContext, unit> =
+    let compile (settings: Settings) (lockPath: string) (fwk: string) : Recipe<ExecContext, unit> =
         recipe {
             let! target = getTargetFile ()
             if target.FullName.EndsWith (".xml", System.StringComparison.OrdinalIgnoreCase) then
-                do! docOf extraRoots lockPath fwk (normal target.FullName)
+                do! docOf settings.Roots lockPath fwk (normal target.FullName)
             else
-                do! compileDll extraRoots lockPath fwk versions
+                do! compileDll settings lockPath fwk
         }
+
+    /// `compile` with the extra roots `extraRoots`, the version masks `versions` and the
+    /// default options.
+    let compileAsWith (extraRoots: (string * string) list) (lockPath: string) (fwk: string) (versions: (string * RequiredVar<string>) list) : Recipe<ExecContext, unit> =
+        compile { Settings.Default with Roots = extraRoots; Versions = versions } lockPath fwk
 
     /// `compileAsWith` without extra roots.
     let compileAs (lockPath: string) (fwk: string) (versions: (string * RequiredVar<string>) list) : Recipe<ExecContext, unit> =

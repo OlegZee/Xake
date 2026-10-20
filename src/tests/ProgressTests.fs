@@ -81,3 +81,37 @@ let TestPara2(threads) =
         ]
 
     estimate threads [] tasks1 ["main"]       
+
+module ``Progress dots`` =
+
+    open Xake.Logging
+
+    let private cap = ProgressDots.DefaultCap
+    let private cells (s: string) = s.TrimEnd('+').Length
+
+    [<TestCase(0, ExpectedResult = "")>]
+    [<TestCase(1, ExpectedResult = "⠁")>]
+    [<TestCase(8, ExpectedResult = "⣿")>]
+    [<TestCase(9, ExpectedResult = "⣿⠁")>]
+    [<TestCase(30, ExpectedResult = "⣿⣿⣿⡟")>]
+    [<TestCase(31, ExpectedResult = "⣿⣿⣿⣿+")>]
+    [<TestCase(100, ExpectedResult = "⣿⣿⣿⣿+")>]
+    [<TestCase(-1, ExpectedResult = "")>]
+    let ``encodes the running count`` running = ProgressDots.dots running cap
+
+    [<Test>]
+    let ``a partial cell fills column-wise, left column first`` () =
+        let partials = [ for n in 1..8 -> ProgressDots.dots n cap ]
+        Assert.That(partials, Is.EqualTo [ "⠁"; "⠃"; "⠇"; "⡇"; "⡏"; "⡟"; "⡿"; "⣿" ])
+
+    [<Test>]
+    let ``never more than four cells`` () =
+        for c in [1; 8; 30; 32; 100] do
+            for n in 0..200 do
+                Assert.That(cells (ProgressDots.dots n c), Is.LessThanOrEqualTo ProgressDots.MaxCells)
+
+    [<Test>]
+    let ``colour grows from green to red`` () =
+        Assert.That(ProgressDots.color 1 cap, Is.EqualTo System.ConsoleColor.Green)
+        Assert.That(ProgressDots.color 20 cap, Is.EqualTo System.ConsoleColor.Yellow)
+        Assert.That(ProgressDots.color 31 cap, Is.EqualTo System.ConsoleColor.Red)

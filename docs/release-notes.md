@@ -5,6 +5,9 @@ The `Xake` package (engine and `Xake.Dotnet`). Xake.Hermetic.Dotnet has its own 
 
 ## 3.10.0 (unreleased)
 
+- **Progress line: running tasks as coloured Braille dots** (one dot per task, cells filled
+  column-wise `⠁⠃⠇⡇⡏⡟⡿⣿`, at most 4 cells for 30 tasks, `⣿⣿⣿⣿+` above; green, yellow past
+  half, red above the cap). Redirected output keeps the `N tasks` text.
 - **Breaking: `need` of a rule target while a resource is held fails.** Inside `withResource`,
   and anywhere in a `requiring` rule, a `need`/`needFiles`/`dependsOn` of a target that has a rule
   raises an error naming the resource, the needing and the needed target. It could deadlock the

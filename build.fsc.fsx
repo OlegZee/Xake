@@ -4,16 +4,18 @@
 // Bootstrap: the published packages (exact X.Y.Z.<run>, bumped only after a release lands on nuget.org).
 #r "nuget: Xake, 3.10.0.35"
 #r "nuget: Xake.Hermetic.Dotnet, 0.5.0.36"
+#load "testjobs.fsx"   // the test jobs, shared with build.fsx
 
 open Xake
 open Xake.Tasks
 open Xake.Dotnet
 open Xake.Hermetic.Dotnet
+open Testjobs
 
 let vars = {|
     Version         = Var.create<string>(description = "Xake package version") |> withDefault "0.0.1"
     HermeticVersion = Var.create<string>(description = "Xake.Hermetic.Dotnet package version") |> withDefault "0.3.0"
-    TestFilter      = Var.string(envVar = "FILTER", description = "Test filter, e.g. 'Lock*'")
+    TestFilter      = Var.string(cliArg = "FILTER", envVar = "FILTER", description = "Runs only the tests whose name matches this regex, e.g. 'Lock'")
 |}
 
 let projects = [ "Xake", "src/core"; "Xake.Dotnet", "src/dotnet"; "Xake.Hermetic.Dotnet", "src/hermetic" ]
@@ -66,11 +68,29 @@ do xake { ExecOptions.Default with DbFileName = ".xake.fsc" } {
             do! Locks.compileAs (lockOf name cfg) fwk versions
         }
 
-        command "test" {   // as build.fsx: dotnet test (msbuild builds the test projects)
+        // as build.fsx: the jobs of testjobs.fsx in parallel, the test projects built once by
+        // msbuild (`dotnet build`); no --blame-hang here
+        "test" <== [ for j in testJobs -> $"test::{testJobName j}" ]
+        "test-build::(project:*)" => recipe {
+            let! project = getRuleMatch "project"
+            do! sh $"dotnet build {testProjectDir project} -c Release" {
+                logprefix $"[test-build {project}]"
+                stdoutlevel (fun l -> if l.Contains ": error " then Level.Error else Level.Info)
+                failonerror }
+        }
+        "test::(project:*)/(slice:*)" => recipe {
+            let! project = getRuleMatch "project"
+            let! slice = getRuleMatch "slice"
+            let job = testJob project slice
+            do! need [ $"test-build::{project}" ]
             let! filter = vars.TestFilter
-            let where = [ for f in Option.toList filter -> $"--filter Name~\"{f}\"" ]
-            do! sh "dotnet test src/tests -c Release" { args where; failonerror }
-            do! sh "dotnet test src/hermetic.tests -c Release" { args where; failonerror }
+            resetTestJobDir job
+            do! sh $"dotnet test {testProjectDir project} -c Release --no-build" {
+                args (testArgs job filter)
+                logprefix $"[{testJobName job}]"
+                stdoutlevel (fun l -> if isTestSummary l then Level.Message else Level.Info)
+                captureOutput (ToFile (Both, testJobDir job + "/console.log"))
+                failonerror }
         }
         // pack (nupkg from out/Release, no second msbuild run) comes with Package.nupkg (fsc-rework PR 8)
     ]

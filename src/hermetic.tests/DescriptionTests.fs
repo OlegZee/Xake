@@ -11,7 +11,7 @@ open Xake.Hermetic.Dotnet
 /// writer's exact format, write-on-change, and the recipe helpers.
 [<TestFixture>]
 type ``Project description``() =
-    inherit XakeTestBase("description")
+    inherit XakeTestBase("hermetic-description")   // not "description": src/tests' fixture of that name shares ~testout~
 
     let fixture = __SOURCE_DIRECTORY__ </> "fixtures" </> "xake.project.json"
 

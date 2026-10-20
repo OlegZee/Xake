@@ -49,6 +49,14 @@ dotnet test src/tests -c Release
 dotnet test src/hermetic.tests -c Release
 ```
 
+The build scripts' `test` (build.fsx and build.fsc.fsx alike) splits the two projects into
+the parallel jobs listed in `testjobs.fsx` (slices of whole fixture classes, the last one per
+project taking the rest): `test-build::<project>` builds each test project once, then every
+`test::<project>/<slice>` runs `dotnet test --no-build` on its slice, writing the trx and its
+full output (`console.log`) into `out/test/<project>/<slice>/`; the console shows one summary
+line per job. One job runs alone by naming it: `dotnet fsi build.fsx -- -- test::hermetic/run`.
+A new fixture lands in the `rest` slice of its project; move it into a slice when it gets slow.
+
 Run filtered tests:
 
 ```bash
@@ -60,6 +68,8 @@ Run filtered tests through Xake variable:
 ```bash
 dotnet fsi build.fsx -- -- test -d FILTER=Rm
 ```
+
+(or `$FILTER`; every job keeps its tests whose name matches the regex, NUnit's `name =~ 'Rm'`.)
 
 ## Command line style
 

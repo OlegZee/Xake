@@ -8,6 +8,10 @@ The `Xake` package (engine and `Xake.Dotnet`). Xake.Hermetic.Dotnet has its own 
 - **Progress line: running tasks as coloured Braille dots** (one dot per task, cells filled
   column-wise `⠁⠃⠇⡇⡏⡟⡿⣿`, at most 4 cells for 30 tasks, `⣿⣿⣿⣿+` above; green, yellow past
   half, red above the cap). Redirected output keeps the `N tasks` text.
+- Build scripts (not the package): `test` runs 7 parallel jobs (`testjobs.fsx`, shared by
+  build.fsx and build.fsc.fsx) on test projects built once; each job logs to
+  `out/test/<project>/<slice>/`. `test` takes about 55 s instead of 3 min 40 s.
+  `-d FILTER=...` now reaches the scripts' variable (only `$FILTER` did).
 
 ## 3.10.0 (released as 3.10.0.35)
 

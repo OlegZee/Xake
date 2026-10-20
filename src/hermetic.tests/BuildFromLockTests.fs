@@ -318,7 +318,13 @@ type ``Building from Xake-generated locks``() =
         let defaults = Lock.Options.Default
         let explicitServer = if defaults.Run.Server = CompilerServer.InProcess then CompilerServer.Shared (Some 5) else CompilerServer.InProcess
         let settings = { Locks.Settings.Default with Lock = { defaults with Run = { defaults.Run with FailOnError = false; Server = explicitServer } } }
-        x.BuildWith (Locks.compile settings) "options-custom" vars out
+        try x.BuildWith (Locks.compile settings) "options-custom" vars out
+        finally
+            // a server started here with a 5 s keepalive would be dying when the next fixture
+            // connects; stopped now, it is not left behind
+            if explicitServer <> CompilerServer.InProcess then
+                use p = System.Diagnostics.Process.Start ("dotnet", "build-server shutdown --vbcscompiler")
+                p.WaitForExit ()
         Assert.That(File.Exists out, Is.False, "nothing compiled, nothing failed")
         Assert.That(File.ReadAllText "options-custom.log", Does.Not.Contain warning, "an explicit server is not resolved")
 

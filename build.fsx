@@ -1,8 +1,17 @@
 #r "nuget: Xake, 3.7.0.26"
 // #r "out/netstandard2.0/Xake.dll"
+#load "testjobs.fsx"
+
+// `test` runs the test jobs of testjobs.fsx in parallel (`test::tests/jobs`, `test::hermetic/run`,
+// ...; one runs alone by naming it). The test projects are built once (`test-build::<project>`),
+// each job runs `dotnet test --no-build` on its slice and writes into out/test/<project>/<slice>/
+// (the trx, the blame sequence file and console.log, its whole output); the console gets the
+// summary lines. FILTER (-d FILTER=Rm) narrows every job to its tests whose name matches Rm
+// (NUnit's `name =~ 'Rm'`, a regex; no quote in it); a job left with no test passes.
 
 open Xake
 open Xake.Tasks
+open Testjobs
 
 /// The literal `<Version>` a project file declares, if any.
 let projectVersion (path: string) =
@@ -15,7 +24,7 @@ let vars = {|
     // $HERMETIC_VERSION. The default is the <Version> its project file carries.
     HermeticVersion = Var.create<string>(description = "Version number for the Xake.Hermetic.Dotnet package, e.g. 0.1.0") |> withDefault (projectVersion "src/hermetic/Xake.Hermetic.Dotnet.fsproj")
     NUGET_KEY  = Var.env<string>(description = "API key for NuGet.org, required for pushing packages") |> withDefault ""
-    TestFilter = Var.string(envVar = "FILTER", description = "Optional filter clause for test selection, e.g. 'MyNamespace.*Tests'")
+    TestFilter = Var.string(cliArg = "FILTER", envVar = "FILTER", description = "Runs only the tests whose name matches this regex, e.g. 'Rm'")
     // Xake.Hermetic.Dotnet builds on the *published* Xake package, restored from nuget.org.
     // Only to develop it against an unreleased base: pack src/dotnet into a folder at a version
     // inside the range and name that folder here (-d NUGET_SOURCE=/tmp/xake-feed or
@@ -94,16 +103,36 @@ do xakeScript {
         "build" <== List.collect (fun lib -> binaries lib.Name) libraries
         "clean" => rm {dir "out"}
 
-        command "test" {
+        "test" <== [ for j in testJobs -> $"test::{testJobName j}" ]
+
+        // a test project, built once for all its jobs
+        "test-build::(project:*)" => recipe {
+            let! project = getRuleMatch "project"
+            do! sh $"dotnet build {testProjectDir project} -c Release" {
+                logprefix $"[test-build {project}]"
+                stdoutlevel (fun l -> if l.Contains ": error " then Level.Error else Level.Info)
+                failonerror }
+        }
+
+        "test::(project:*)/(slice:*)" => recipe {
+            let! project = getRuleMatch "project"
+            let! slice = getRuleMatch "slice"
+            let job = testJob project slice
+            do! need [ $"test-build::{project}" ]
+            do! need (testJobNeeds job)   // the compiler server's users, one after another
             let! testFilter = vars.TestFilter
-            let where = [ for f in Option.toList testFilter do yield $"--filter Name~\"{f}\"" ]
 
             // a test running longer than 10 minutes is a hang: the run is stopped and the
-            // test named (the sequence file under TestResults) instead of waiting forever
+            // test named (the sequence file in the job's folder) instead of waiting forever
             let hang = [ "--blame-hang"; "--blame-hang-timeout"; "10m"; "--blame-hang-dump-type"; "none" ]
-            // one after the other, so the two logs do not interleave
-            do! sh "dotnet test src/tests -c Release" { args (hang @ where); failonerror }
-            do! sh "dotnet test src/hermetic.tests -c Release" { args (hang @ where); failonerror }
+            resetTestJobDir job
+            do! sh $"dotnet test {testProjectDir project} -c Release --no-build" {
+                args (hang @ testArgs job testFilter)
+                env (testJobEnv job)
+                logprefix $"[{testJobName job}]"
+                stdoutlevel (fun l -> if isTestSummary l then Level.Message else Level.Info)
+                captureOutput (ToFile (Both, testJobDir job + "/console.log"))
+                failonerror }
         }
 
         // one rule compiles them all: which library and which framework is asked for

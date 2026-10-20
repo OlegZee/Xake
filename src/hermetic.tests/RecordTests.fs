@@ -868,6 +868,10 @@ type ``Compile under the compiler server``() =
         RecordKit.runDotnet "analyzer" [ "build"; "-c"; "Release" ]
         RecordKit.import x.TestOptions "import-crash" RecordKit.recordDefault [ "app/app.csproj" ] |> ignore
         Assert.That(File.ReadAllText (RecordKit.lockOf "app" "Release"), Does.Contain "analyzer.dll")
+        // a fresh server: one left running (an earlier run's, holding the previous analyzer.dll of
+        // this path, or another fixture's dying on its keepalive) rejects the compile, and the
+        // client falls back to a csc process silently, where the analyzer does not crash
+        RecordKit.runDotnet "." [ "build-server"; "shutdown"; "--vbcscompiler" ]
         RecordKit.build { x.TestOptions with Vars = [ "CSC_SERVER", "on" ] } "build-crash" "Release"
         let log = File.ReadAllText "build-crash.log"
         Assert.That(log, Does.Contain "an analyzer crashed under the compiler server (AD0001): Crash.UnderServer (System.InvalidOperationException); compiling once more without the server")

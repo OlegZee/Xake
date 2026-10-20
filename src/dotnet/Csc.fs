@@ -106,6 +106,10 @@ module CscTypes =
         /// resources, defines, options, attributes and references fill what the settings leave
         /// unset; the settings given explicitly win. `None`: the settings alone.
         Project: string option
+        /// A resource of the script and the units one compile takes: the launch of the
+        /// compiler acquires it (`RunOptions.Throttle`) in place of the `CSC_JOBS` limit.
+        /// `None` (the default): `CSC_JOBS`.
+        Throttle: (Resource * int) option
     } with static member Default = {
             Platform = AnyCpu
             Target = Auto    // try to resolve the type from name etc
@@ -123,6 +127,7 @@ module CscTypes =
             Toolset = None
             Server = None
             Project = None
+            Throttle = None
         }
 
     /// Default settings for the CSC task, so that you could only override required settings.
@@ -147,11 +152,20 @@ module CscTypes =
         /// legacy full-framework paths. `Csc.compile` fills it; a caller that runs the result
         /// of `csc { ...; resolve }` on those paths passes it itself (`Csc.runOptions`).
         Environment: (string * string) list
+        /// A resource the script supplies and the units one compile takes. When set, the
+        /// compiler's launch -- and nothing before it: every input is built and verified by
+        /// then -- runs under `withResource resource units`, and `CSC_JOBS`/`XAKE_CSC_JOBS` are
+        /// not read. Data rather than a hook: the resource is the script's own, so it can be
+        /// shared with other rules (one cap on everything heavy) or sized to the machine. A
+        /// script must still not `need` while holding the same resource elsewhere
+        /// (docs/resources.md). `None` (the default): the `CSC_JOBS` limit.
+        Throttle: (Resource * int) option
     } with static member Default = {
             FailOnError = true
             CscPath = None
             Server = CompilerServer.fromEnvironment ()
             Environment = []
+            Throttle = None
         }
 
     /// The client-side switches `options.Server` asks for, given the compiler file about to
@@ -540,7 +554,8 @@ module Csc =
             return { FailOnError = settings.FailOnError
                      CscPath = settings.CscPath
                      Server = server
-                     Environment = fwkInfo.EnvVars }
+                     Environment = fwkInfo.EnvVars
+                     Throttle = settings.Throttle }
         }
 
     /// <summary>
@@ -840,7 +855,9 @@ module Csc =
                   Environment = options.Environment
                   Directory = c.Directory
                   FailOnError = options.FailOnError
-                  Diagnostics = Tool.diagnosticLevel Level.Verbose }
+                  Diagnostics = Tool.diagnosticLevel Level.Verbose
+                  Jobs = "CSC_JOBS", "XAKE_CSC_JOBS"
+                  Throttle = options.Throttle }
             do! CompilerRunner.run plan
         }
 

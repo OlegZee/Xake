@@ -29,6 +29,48 @@ the whole process -- the CI switch. `Server = InProcess` on `RunOptions` is the 
 direct `Csc.run`. The precedence is `CompilerServer.resolve`'s; see
 [csc-syntax.md](csc-syntax.md).
 
+## Limiting concurrent compiles: `CSC_JOBS`, `FSC_JOBS`
+
+`-t` caps every executing recipe; `CSC_JOBS` caps the csc processes below it (memory, a shared
+server), so restores, copies and hash checks still use every slot. `FSC_JOBS` is fsc's own
+budget (fsc has no server and runs the whole compiler per process). Lookup, first match wins:
+
+| Where | Value |
+|---|---|
+| script variable `CSC_JOBS` / `FSC_JOBS` (`-d`, or `var` in `xakeScript`) | a positive integer; `0` or empty is unlimited |
+| environment variable `XAKE_CSC_JOBS` / `XAKE_FSC_JOBS` | the same |
+| default | unlimited |
+
+A value that is not a non-negative integer is traced as a warning and taken as unlimited.
+The budget is taken inside the launcher that `Csc.run` and `Fsc.run` share, around the compiler
+process only: after every `needFiles` and the hash check, so it is never held across a `need`
+(wrapping a compile recipe in `withResource` is what deadlocks, [resources.md](resources.md)).
+One budget per tool for the whole process. Unlike `CSC_SERVER`, the value is **not** a
+dependency: concurrency changes no output, so changing it rebuilds nothing. With the server on,
+the throttled processes are the thin clients; the server compiles one request per client, so
+the cap still bounds concurrent compilations.
+
+```bash
+dotnet fsi build.fsx -- -- build -d CSC_JOBS:6
+XAKE_FSC_JOBS=2 dotnet fsi build.fsx -- -- build
+```
+
+A script that wants its own budget -- one resource shared by csc, fsc and its other heavy
+commands, or sized from the machine -- names it per compilation instead: `throttle (resource,
+units)` in `csc { }` / `fsc { }`, or `Throttle = Some (resource, units)` in `RunOptions` /
+`FscRunOptions`. The launch then acquires that resource, at the same place (after every
+`needFiles`), and `CSC_JOBS`/`FSC_JOBS` are not read for that compilation. The launcher never
+`need`s while holding it; a script that also takes the same resource elsewhere must still not
+`need` inside that `withResource` ([resources.md](resources.md)).
+
+```fsharp
+let heavy = Resource.newResource "heavy" 4
+"(n:*).dll" ..> recipe {
+    let! n = getRuleMatch "n"
+    do! csc { src !!(n + ".cs"); throttle (heavy, 1) }
+}
+```
+
 ## The switches are parameters of the run, not of the compilation
 
 `/shared` and `/keepalive` never enter a lock. `CommandLineParser.TryParseClientArgs` strips

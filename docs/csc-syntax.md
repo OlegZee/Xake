@@ -57,6 +57,7 @@ no file target.) Every custom operation of
 | `nofailonerror` | (none) | do not fail the build on a compile error | `FailOnError = true` |
 | `noserver` | (none) | compile in a fresh csc process instead of through the Roslyn compiler server (`VBCSCompiler`); see [csc-server.md](csc-server.md) | `Server = Shared None` (env `XAKE_CSC_SERVER=0` turns it off) |
 | `keepalive` | `int` (seconds) | idle time after which a compiler server this build starts exits (`/keepalive`) | Roslyn's own default, 600 |
+| `throttle` | `Resource * int` | the compiler launch acquires this resource of the script, that many units, in place of the `CSC_JOBS` limit; see [csc-server.md](csc-server.md#limiting-concurrent-compiles-csc_jobs-fsc_jobs) | `None` (`CSC_JOBS`) |
 
 `out`, `platform`, `unsafe`, `nostdlib` (from `targetfwk`) and `define` are composition
 settings; replaying a lock entry (`Lock.compile`, [hermetic/lock.md](hermetic/lock.md)) does not go through them at all. The

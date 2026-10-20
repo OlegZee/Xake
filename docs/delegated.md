@@ -47,12 +47,36 @@ let downloads = Resource.newResource "downloads" 4
 - A **bounded** resource is backed by a small FIFO agent that grants units in arrival
   order, so waiters never starve. A **bounded resource caps concurrency**; an **unbounded
   resource imposes no limit** (acquire/release are no-ops).
-- **Divergence from Shake worth noting:** while a recipe is *blocked* waiting to acquire
-  units, `withResource` **yields its CPU slot** (via `Scheduler.withYieldedSlot`). A blocked
-  resource holder therefore never pins a worker thread, which avoids deadlock when the
-  number of would-be holders exceeds the CPU-slot count. Once the units are granted, the CPU
-  slot is reacquired and the body runs holding both. The resource is released in a `finally`,
-  even on exception.
+- While a recipe is *blocked* waiting to acquire units, `withResource` **yields its CPU
+  slot** (via `Scheduler.withYieldedSlot`), so a blocked would-be holder never pins a worker
+  (Shake's waiters do not pin threads either). Once the units are granted, the CPU slot is
+  reacquired and the body runs holding both. The resource is released in a `finally`, even on
+  exception.
+- **No `need` of a rule target while a resource is held** (Shake's rule). A dependency built
+  while the units are held may itself wait for the same resource; with every unit held by a
+  recipe that waits for its dependencies, the build hangs at zero CPU with nothing to report,
+  although the dependency graph is acyclic. So `need` (and `needFiles`, `dependsOn`) inside
+  `withResource` fails at once when a needed target **has a rule**, naming the resource(s), the
+  needing and the needed target. A plain file without a rule never schedules anything and is
+  allowed (the one divergence from Shake, which refuses both). A rule target is refused even
+  when it is already built, so the error never depends on timing. Need first, then acquire:
+
+  ```fsharp
+  "out/*.dll" ..> recipe {
+      do! needFiles refs                         // dependencies first
+      do! withResource compilers 1 (recipe {     // then only the command under the resource
+          do! runCompiler ()
+      })
+  }
+  ```
+
+  `allowNeed body` lifts the guard for `body` (Shake's `unsafeAllowApply`): only when the
+  closure of what it needs never takes the held resource. A task started by a `need` starts
+  with nothing held. For compilers, do not wrap the compile recipe at all: `CSC_JOBS` /
+  `FSC_JOBS` throttle the launch at the right place ([csc-server.md](csc-server.md#limiting-concurrent-compiles-csc_jobs-fsc_jobs)).
+  The design record: [resources.md](resources.md).
+- **`requiring resource rule`** (`XakeScript.fs`) runs a rule's whole recipe under 1 unit, so
+  the same rule applies to everything that recipe needs.
 
 API (`Resource.fs`, `ScriptFuncs.fs`):
 
@@ -60,6 +84,8 @@ API (`Resource.fs`, `ScriptFuncs.fs`):
 Resource.newResource  : string -> int -> Resource     // bounded, quantity >= 1
 Resource.newUnbounded : string -> Resource
 withResource          : Resource -> int -> Recipe<ExecContext,'b> -> Recipe<ExecContext,'b>
+allowNeed             : Recipe<ExecContext,'b> -> Recipe<ExecContext,'b>   // lifts the need guard
+requiring             : Resource -> ExecContext Rule -> ExecContext Rule   // whole recipe, 1 unit
 
 // async-level bracket and low-level acquire/release for non-recipe code (e.g. an executor):
 Resource.withAcquired    : Resource -> int -> Async<'a> -> Async<'a>  // bracket: acquire, run body, release

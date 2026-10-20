@@ -32,17 +32,27 @@ module ScriptFuncs =
     /// never pins a worker), then held together with the resource while the body runs; the
     /// resource is released even if the body throws. The scheduler honors the resource limit
     /// when running recipes concurrently. Unbounded resources impose no limit.
+    ///
+    /// The body must not `need` a target that has a rule (a plain file is fine): a dependency
+    /// built while the units are held may wait for the same resource, which can deadlock the
+    /// build, so such a `need` fails at once. Need first, then acquire; see `allowNeed`.
     /// </summary>
     let withResource (resource: Resource) (units: int) (body: Recipe<ExecContext,'b>) : Recipe<ExecContext,'b> =
-        recipe {
-            let! ctx = getCtx()
+        Recipe (fun (r, ctx: ExecContext) -> async {
             do! Scheduler.withYieldedSlot ctx.Engine.Scheduler (Resource.acquire resource units)
             try
-                let! b = body
-                return b
+                return! A.runAction body (r, { ctx with HeldResources = resource.ResourceName :: ctx.HeldResources })
             finally
                 Resource.release resource units
-        }
+        })
+
+    /// <summary>
+    /// Lifts the "no `need` while a resource is held" guard of `withResource` and `requiring`
+    /// for `body` (Shake's `unsafeAllowApply`). Use with caution: only when the closure of
+    /// what `body` needs never takes the held resource, or the build can deadlock.
+    /// </summary>
+    let allowNeed (body: Recipe<ExecContext,'b>) : Recipe<ExecContext,'b> =
+        Recipe (fun (r, ctx: ExecContext) -> A.runAction body (r, { ctx with HeldResources = [] }))
 
 
     /// <summary>

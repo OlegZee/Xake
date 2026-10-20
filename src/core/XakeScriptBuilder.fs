@@ -161,6 +161,7 @@ module XakeScriptBuilder =
             RuleMatches = Map.empty
             Ordinal = 0
             Logger = engine.RootLogger
+            HeldResources = []
         }
 
         /// Starts a XakeEngine from a fully assembled XakeScript.

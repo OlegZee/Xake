@@ -3,6 +3,27 @@
 The `Xake` package (engine and `Xake.Dotnet`). Xake.Hermetic.Dotnet has its own notes
 ([hermetic/README.md](hermetic/README.md)).
 
+## 3.10.0 (unreleased)
+
+- **Breaking: `need` of a rule target while a resource is held fails.** Inside `withResource`,
+  and anywhere in a `requiring` rule, a `need`/`needFiles`/`dependsOn` of a target that has a rule
+  raises an error naming the resource, the needing and the needed target. It could deadlock the
+  build (every unit held by a recipe waiting for dependencies that wait for a unit; a hang at zero
+  CPU). Plain files without a rule are still allowed. Need first, then acquire; `allowNeed body`
+  lifts the check when the dependency never takes the resource. See [resources.md](resources.md)
+  and [delegated.md](delegated.md#1-resource).
+- **`CSC_JOBS` / `FSC_JOBS`** cap the concurrent compiler processes of `Csc.run` / `Fsc.run`
+  (script variable, then env `XAKE_CSC_JOBS` / `XAKE_FSC_JOBS`; unset or `0` unlimited). Taken
+  around the process launch only, after every input is built, so it replaces a `withResource`
+  around the compile rule. Not a dependency: changing it rebuilds nothing. See
+  [csc-server.md](csc-server.md#limiting-concurrent-compiles-csc_jobs-fsc_jobs).
+- **`throttle (resource, units)`** in `csc { }` / `fsc { }` (`Throttle` in `CscSettingsType`,
+  `RunOptions`, `FscSettingsType`, `FscRunOptions`; default `None`): the compiler launch takes
+  the script's own resource, at the same place, in place of `CSC_JOBS` / `FSC_JOBS`.
+- **Breaking for record construction:** `ExecContext` gains `HeldResources`. Code built on 3.9
+  that copies an `ExecContext` (`{ ctx with ... }`) has to be rebuilt; Xake.Hermetic.Dotnet
+  0.4 (`[3.9.0.30, 3.10)`) does, and needs a release on 3.10.
+
 ## 3.9.0 (unreleased)
 
 - **Project description in the core.** `xake.project.json` (the format Xake.Hermetic.Dotnet

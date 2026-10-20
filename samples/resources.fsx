@@ -49,7 +49,9 @@ do xakeScript {
         "downloads" <== [ for pkg in packages -> sprintf "download:%s" pkg ]
         "restores" <== [ for proj in projects -> sprintf "restore:%s" proj ]
 
-        // dotnet restore: mutual exclusion
+        // dotnet restore: mutual exclusion. `requiring` holds the unit for the whole recipe, so
+        // the recipe must not `need` another rule's target (that fails: it could deadlock);
+        // plain files are fine, and `allowNeed` lifts the check (docs/delegated.md)
         "restore:(project:*)" => recipe {
             let! proj = getRuleMatch "project"
             do! simulateWork (sprintf "dotnet restore %s" proj) 300

@@ -65,6 +65,13 @@ module internal CompilerRunner =
         FailOnError: bool
         /// Classifies a line of compiler output by log level
         Diagnostics: string -> Level
+        /// (script variable, environment variable) holding the limit on concurrent launches of
+        /// this compiler: `CSC_JOBS`/`XAKE_CSC_JOBS`, `FSC_JOBS`/`XAKE_FSC_JOBS`
+        Jobs: string * string
+        /// A resource the script supplies and the units one launch takes (`RunOptions.Throttle`,
+        /// `FscRunOptions.Throttle`): when set, the launch acquires it instead of the budget of
+        /// `Jobs`, which is then not read
+        Throttle: (Resource * int) option
     }
 
     /// The launch for a compiler file: a `.dll` through `dotnet`, anything else directly.
@@ -77,6 +84,132 @@ module internal CompilerRunner =
         | None -> failwithf "'%s': a runtimeconfig is declared, but %s applications do not use one" name (if Impl.isEmpty framework then "this framework's" else framework)
 
     let private sha256 (path: string) = if File.Exists path then Hash.sha256 path else ""
+
+    /// Parses a jobs value: a positive integer is the limit; empty or `0` is unlimited
+    /// (`Ok None`); anything else is `Error`.
+    let parseJobs (value: string) : Result<int option, string> =
+        match value.Trim() with
+        | "" | "0" -> Ok None
+        | v ->
+            match System.Int32.TryParse v with
+            | true, n when n > 0 -> Ok (Some n)
+            | _ -> Result.Error value
+
+    /// The limit on concurrent launches in effect: the script variable, then the environment
+    /// variable, then unlimited (`None`), with the name and the value when it is not a
+    /// non-negative integer. Read from the variables directly, not with `getVar`: the
+    /// concurrency changes no output, so it is not a dependency of the target.
+    let jobsLimit (vars: (string * string) list) (variable: string, envVariable: string) =
+        let source =
+            match vars |> List.tryPick (fun (name, value) -> if name = variable then Some value else None) with
+            | Some value -> Some (variable, value)
+            | None ->
+                match System.Environment.GetEnvironmentVariable envVariable with
+                | null -> None
+                | value -> Some (envVariable, value)
+        match source with
+        | None -> None, None
+        | Some (name, value) ->
+            match parseJobs value with
+            | Ok limit -> limit, None
+            | Result.Error bad -> None, Some (name, bad)
+
+    type private Budget = { Resource: Resource; mutable Limit: int }
+
+    /// Process-wide, one per jobs variable: every build in the process (tests, a long-running
+    /// host) shares it; a different limit resizes it.
+    let private budgets = System.Collections.Concurrent.ConcurrentDictionary<string, Budget> ()
+
+    let private budgetFor (name: string) (limit: int) =
+        let budget = budgets.GetOrAdd (name, fun _ -> { Resource = Resource.newResource name limit; Limit = limit })
+        lock budget (fun () ->
+            if budget.Limit <> limit then
+                Resource.resize budget.Resource limit
+                budget.Limit <- limit)
+        budget.Resource
+
+    /// Writes the response file, starts the compiler and checks its outcome. Every input is
+    /// built and verified by now: this is what the jobs limit throttles, and nothing in it may
+    /// `need` (it runs under `withResource`).
+    let private launch (plan: RunPlan) : Recipe<ExecContext, unit> =
+        recipe {
+            let rspFile = Path.GetTempFileName()
+            File.WriteAllLines (rspFile, plan.ResponseArgs |> List.map Impl.escapeArgument)
+            let commandLineArgs =
+                seq {
+                    yield! plan.Leading
+                    yield "@" + rspFile
+                }
+
+            // the response file has to go regardless of how the compilation ends -- unless the
+            // compiler died without a word, then it is kept for a rerun by hand
+            let keepRsp = ref false
+            let deleteTempFiles () =
+                if not keepRsp.Value then
+                    try System.IO.File.Delete rspFile with _ -> ()
+
+            let tool, extraArgs =
+                match plan.Launch with
+                | Dotnet dll -> "dotnet", [dll]
+                | Native exe -> exe, []
+
+            match plan.ClientSwitchesNote with
+            | Some note -> do! trace Debug "%s" note
+            | None -> ()
+            let commandLineArgs = Seq.append plan.ClientSwitches commandLineArgs
+
+            do! trace Debug "Command line: '%s %s'" tool
+                    ((extraArgs @ List.ofSeq commandLineArgs) |> String.concat " ")
+
+            // what the compiler printed, kept (bounded) for a failure without a diagnostic: a
+            // crash (exit 134, `Environment.FailFast`) logs nothing at the default verbosity
+            let output = System.Collections.Generic.Queue<string> ()
+            let sawError = ref false
+            let keep (stream: string) (line: string) =
+                lock output (fun () ->
+                    output.Enqueue (stream + line)
+                    if output.Count > 200 then output.Dequeue () |> ignore)
+            let classify (stream: string) (line: string) =
+                keep stream line
+                let level = plan.Diagnostics line
+                if level = Level.Error then sawError.Value <- true
+                level
+
+            try
+                let! exitCode =
+                    shell {
+                        cmd tool
+                        args (Seq.append extraArgs commandLineArgs)
+                        envs plan.Environment
+                        // `dotnet build` runs the compiler with cwd = the project's directory;
+                        // some inputs are resolved against it rather than against an argument
+                        // (an XML-doc `<include file='../..'>` path, CS1589)
+                        workdir plan.Directory
+                        logprefix plan.LogPrefix
+                        stdoutlevel (classify "")
+                        erroutlevel (classify "stderr: ")
+                    }
+
+                if exitCode <> 0 && not sawError.Value then
+                    keepRsp.Value <- true
+                    let printed = lock output (fun () -> List.ofSeq output)
+                    do! trace Error "('%s') %s exited with code %d and reported no error%s; response file kept: %s\n%s"
+                            plan.Name plan.Tool exitCode
+                            (if exitCode = 134 || exitCode = -6 then " (an abort: Environment.FailFast or a runtime crash)" else "")
+                            rspFile
+                            (match printed with [] -> "(it printed nothing)" | lines -> lines |> String.concat "\n")
+                do! Tool.failOnExitCode plan.FailOnError plan.Name exitCode
+
+                // an output next to the compiler's, declared by the rule; rewritten only when it
+                // differs, so an up-to-date one keeps its timestamp
+                match plan.RuntimeConfig with
+                | Some (path, content) when exitCode = 0 ->
+                    if not (File.Exists path && File.ReadAllText path = content) then
+                        File.WriteAllText (path, content)
+                | _ -> ()
+            finally
+                deleteTempFiles ()
+        }
 
     /// Runs the plan: the steps `Csc.run` always took, in its order.
     let run (plan: RunPlan) : Recipe<ExecContext, unit> =
@@ -155,80 +288,18 @@ module internal CompilerRunner =
 
             do! verify hashedFiles
 
-            let rspFile = Path.GetTempFileName()
-            File.WriteAllLines (rspFile, plan.ResponseArgs |> List.map Impl.escapeArgument)
-            let commandLineArgs =
-                seq {
-                    yield! plan.Leading
-                    yield "@" + rspFile
-                }
-
-            // the response file has to go regardless of how the compilation ends -- unless the
-            // compiler died without a word, then it is kept for a rerun by hand
-            let keepRsp = ref false
-            let deleteTempFiles () =
-                if not keepRsp.Value then
-                    try System.IO.File.Delete rspFile with _ -> ()
-
-            let tool, extraArgs =
-                match plan.Launch with
-                | Dotnet dll -> "dotnet", [dll]
-                | Native exe -> exe, []
-
-            match plan.ClientSwitchesNote with
-            | Some note -> do! trace Debug "%s" note
-            | None -> ()
-            let commandLineArgs = Seq.append plan.ClientSwitches commandLineArgs
-
-            do! trace Debug "Command line: '%s %s'" tool
-                    ((extraArgs @ List.ofSeq commandLineArgs) |> String.concat " ")
-
-            // what the compiler printed, kept (bounded) for a failure without a diagnostic: a
-            // crash (exit 134, `Environment.FailFast`) logs nothing at the default verbosity
-            let output = System.Collections.Generic.Queue<string> ()
-            let sawError = ref false
-            let keep (stream: string) (line: string) =
-                lock output (fun () ->
-                    output.Enqueue (stream + line)
-                    if output.Count > 200 then output.Dequeue () |> ignore)
-            let classify (stream: string) (line: string) =
-                keep stream line
-                let level = plan.Diagnostics line
-                if level = Level.Error then sawError.Value <- true
-                level
-
-            try
-                let! exitCode =
-                    shell {
-                        cmd tool
-                        args (Seq.append extraArgs commandLineArgs)
-                        envs plan.Environment
-                        // `dotnet build` runs the compiler with cwd = the project's directory;
-                        // some inputs are resolved against it rather than against an argument
-                        // (an XML-doc `<include file='../..'>` path, CS1589)
-                        workdir plan.Directory
-                        logprefix plan.LogPrefix
-                        stdoutlevel (classify "")
-                        erroutlevel (classify "stderr: ")
-                    }
-
-                if exitCode <> 0 && not sawError.Value then
-                    keepRsp.Value <- true
-                    let printed = lock output (fun () -> List.ofSeq output)
-                    do! trace Error "('%s') %s exited with code %d and reported no error%s; response file kept: %s\n%s"
-                            plan.Name plan.Tool exitCode
-                            (if exitCode = 134 || exitCode = -6 then " (an abort: Environment.FailFast or a runtime crash)" else "")
-                            rspFile
-                            (match printed with [] -> "(it printed nothing)" | lines -> lines |> String.concat "\n")
-                do! Tool.failOnExitCode plan.FailOnError plan.Name exitCode
-
-                // an output next to the compiler's, declared by the rule; rewritten only when it
-                // differs, so an up-to-date one keeps its timestamp
-                match plan.RuntimeConfig with
-                | Some (path, content) when exitCode = 0 ->
-                    if not (File.Exists path && File.ReadAllText path = content) then
-                        File.WriteAllText (path, content)
-                | _ -> ()
-            finally
-                deleteTempFiles ()
+            // the throttle is taken here, after every `needFiles`: holding it across a `need`
+            // can deadlock the build (docs/resources.md). The script's own resource, when the
+            // compilation names one, replaces the jobs limit.
+            match plan.Throttle with
+            | Some (resource, units) -> do! withResource resource units (launch plan)
+            | None ->
+                let! ctx = getCtx()
+                let limit, invalid = jobsLimit ctx.Vars plan.Jobs
+                match invalid with
+                | Some (name, value) -> do! trace Warning "%s='%s' is not a non-negative integer; compiler launches are not limited" name value
+                | None -> ()
+                match limit with
+                | Some n -> do! withResource (budgetFor (fst plan.Jobs) n) 1 (launch plan)
+                | None -> do! launch plan
         }

@@ -56,7 +56,7 @@ commit touching the file; lengths are approximate line counts. Index written 202
 |---|---|---|---|---|---|
 | [dotnet-build.md](dotnet-build.md) | toolchain discovery, host vs target runtime, `NETFX`/`NETFX-TARGET`, providers | touching `DotNetFwk.fs` or targeting net4x / netN.0 | ~465 | 2026-10-11 | current |
 | [csc-syntax.md](csc-syntax.md) | `csc {}` in detail: composed mode, `Csc` record, `resolve`, `Csc.run` | working on csc/fsc settings or the runner | ~280 | 2026-10-10 | current |
-| [csc-server.md](csc-server.md) | `csc` through the Roslyn compiler server: `/shared`, `CSC_SERVER`, `XAKE_CSC_SERVER` | compile speed or CI server switch | ~155 | 2026-09-30 | current |
+| [csc-server.md](csc-server.md) | `csc` through the Roslyn compiler server: `/shared`, `CSC_SERVER`, `XAKE_CSC_SERVER`; `CSC_JOBS`/`FSC_JOBS` | compile speed or CI server switch | ~155 | 2026-09-30 | current |
 
 ### Engine
 
@@ -64,6 +64,7 @@ commit touching the file; lengths are approximate line counts. Index written 202
 |---|---|---|---|---|---|
 | [implnotes.md](implnotes.md) | high-level internals: rebuild conditions, dependency storage, scheduling | first change to the engine | ~80 | 2026-09-05 | current |
 | [delegated.md](delegated.md) | Resources, detached execution, the delegated-rule hook | distributed or concurrency-limited rules, signing as delegated rule | ~205 | 2026-06-02 | current |
+| [resources.md](resources.md) | design record: the hold-and-wait deadlock of `need` under a resource; the guard, `allowNeed`, `CSC_JOBS`/`FSC_JOBS` | `withResource`/`requiring` changes, a hang at zero CPU | ~390 | 2026-10-20 | current |
 | [ideas.md](ideas.md) | rule combinators via `mapRecipe`, full-framework targeting notes | looking for engine ideas | ~50 | 2026-09-05 | partly superseded by roadmap.md |
 
 ### Process, state, plans

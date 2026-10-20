@@ -30,6 +30,7 @@
     <Compile Include="VarsTests.fs" />
     <Compile Include="FingerprintsTests.fs" />
     <Compile Include="DelegatedTests.fs" />
+    <Compile Include="ResourceGuardTests.fs" />
     <Compile Include="FlatScriptTests.fs" />
     <Compile Include="DotnetTasksTests.fs" />
     <Compile Include="ToolsetTests.fs" />
@@ -38,6 +39,7 @@
     <Compile Include="CscServerTests.fs" />
     <Compile Include="ResxTests.fs" />
     <Compile Include="CompilerCrashTests.fs" />
+    <Compile Include="CompilerJobsTests.fs" />
     <Compile Include="FscTests.fs" />
     <Compile Include="HermeticModeTests.fs" />
     <Compile Include="DescriptionTests.fs" />

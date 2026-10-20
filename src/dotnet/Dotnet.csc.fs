@@ -56,6 +56,10 @@ module CscBuilder =
         /// docs/description.md.</summary>
         [<CustomOperation("project")>]    member __.Project(s:CscSettingsType, path: string) = {s with Project = Some path}
         /// <summary>Does not fail the build on a compile error</summary>
+        /// <summary>Launches the compiler under the script's own resource, `units` of it per
+        /// compile (`withResource`), in place of the `CSC_JOBS` limit. Taken only around the
+        /// launch, after every input is built.</summary>
+        [<CustomOperation("throttle")>]   member __.Throttle(s:CscSettingsType, (resource: Resource, units: int)) = {s with Throttle = Some (resource, units)}
         [<CustomOperation("nofailonerror")>] member __.NoFailOnError(s:CscSettingsType) = {s with FailOnError = false}
 
         member __.Bind(x, f) = f x

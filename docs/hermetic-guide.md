@@ -633,6 +633,10 @@ XAKE_CSC_SERVER=0 dotnet fsi build.fsx -- -- build
 A leftover server after the build is normal; `dotnet build-server shutdown` stops the SDK's.
 Details: [csc-server.md](csc-server.md).
 
+To cap concurrent compilers, pass `-d CSC_JOBS:6` (`FSC_JOBS` for fsc; env `XAKE_CSC_JOBS`)
+rather than wrapping the compile rule in `withResource`: the rule `need`s the referenced
+projects, and a `need` of a rule target while a resource is held fails (it could deadlock).
+
 ## 11. Troubleshooting
 
 ### The compiler is missing

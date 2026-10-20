@@ -572,7 +572,8 @@ module Fsc =
                   Environment = options.Environment
                   Directory = f.Directory
                   FailOnError = options.FailOnError
-                  Diagnostics = Tool.diagnosticLevel Level.Verbose }
+                  Diagnostics = Tool.diagnosticLevel Level.Verbose
+                  Jobs = "FSC_JOBS", "XAKE_FSC_JOBS" }
             do! CompilerRunner.run plan
         }
 

@@ -39,6 +39,7 @@
     <Compile Include="CscServerTests.fs" />
     <Compile Include="ResxTests.fs" />
     <Compile Include="CompilerCrashTests.fs" />
+    <Compile Include="CompilerJobsTests.fs" />
     <Compile Include="FscTests.fs" />
     <Compile Include="HermeticModeTests.fs" />
     <Compile Include="DescriptionTests.fs" />

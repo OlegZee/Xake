@@ -840,7 +840,8 @@ module Csc =
                   Environment = options.Environment
                   Directory = c.Directory
                   FailOnError = options.FailOnError
-                  Diagnostics = Tool.diagnosticLevel Level.Verbose }
+                  Diagnostics = Tool.diagnosticLevel Level.Verbose
+                  Jobs = "CSC_JOBS", "XAKE_CSC_JOBS" }
             do! CompilerRunner.run plan
         }
 

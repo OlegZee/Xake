@@ -56,6 +56,10 @@ module FscBuilder =
         /// in the listed order.</summary>
         [<CustomOperation("project")>]   member __.Project(s:FscSettingsType, path: string) = {s with Project = Some path}
         /// <summary>Does not fail the build on a compile error</summary>
+        /// <summary>Launches the compiler under the script's own resource, `units` of it per
+        /// compile (`withResource`), in place of the `FSC_JOBS` limit. Taken only around the
+        /// launch, after every input is built.</summary>
+        [<CustomOperation("throttle")>]   member __.Throttle(s:FscSettingsType, (resource: Resource, units: int)) = {s with Throttle = Some (resource, units)}
         [<CustomOperation("nofailonerror")>] member __.NoFailOnError(s:FscSettingsType) = {s with FailOnError = false}
 
         member __.Bind(x, f) = f x

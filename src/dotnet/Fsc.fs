@@ -51,6 +51,10 @@ module FscTypes =
         /// compilation is composed from (`fsc { project "path" }`, `ProjectPlan`); the settings
         /// given explicitly win. `None`: the settings alone.
         Project: string option
+        /// A resource of the script and the units one compile takes: the launch of the
+        /// compiler acquires it (`FscRunOptions.Throttle`) in place of the `FSC_JOBS` limit.
+        /// `None` (the default): `FSC_JOBS`.
+        Throttle: (Resource * int) option
     } with static member Default = {
             Platform = AnyCpu
             Target = Auto
@@ -68,6 +72,7 @@ module FscTypes =
             NoFramework = false
             Tailcalls = true
             Project = None
+            Throttle = None
         }
 
     /// <summary>
@@ -90,10 +95,16 @@ module FscTypes =
         /// (`DotNetFwk.FrameworkInfo.EnvVars`), empty on the SDK path. `Fsc.runOptions`
         /// fills it for composed settings.
         Environment: (string * string) list
+        /// A resource the script supplies and the units one compile takes; when set, the
+        /// compiler's launch runs under `withResource resource units` in place of the
+        /// `FSC_JOBS`/`XAKE_FSC_JOBS` limit, which is then not read (see `RunOptions.Throttle`).
+        /// `None` (the default): the `FSC_JOBS` limit.
+        Throttle: (Resource * int) option
     } with static member Default = {
             FscRunOptions.FailOnError = true
             FscRunOptions.FscPath = None
             FscRunOptions.Environment = []
+            FscRunOptions.Throttle = None
         }
 
 /// The section markers of `Fsc.Options` and the way back to the flat command line.
@@ -529,7 +540,8 @@ module Fsc =
             let! _, fwkInfo = Csc.frameworkFor settings.TargetFramework
             return { FscRunOptions.FailOnError = settings.FailOnError
                      FscRunOptions.FscPath = None
-                     FscRunOptions.Environment = fwkInfo.EnvVars }
+                     FscRunOptions.Environment = fwkInfo.EnvVars
+                     FscRunOptions.Throttle = settings.Throttle }
         }
 
     /// <summary>
@@ -573,7 +585,8 @@ module Fsc =
                   Directory = f.Directory
                   FailOnError = options.FailOnError
                   Diagnostics = Tool.diagnosticLevel Level.Verbose
-                  Jobs = "FSC_JOBS", "XAKE_FSC_JOBS" }
+                  Jobs = "FSC_JOBS", "XAKE_FSC_JOBS"
+                  Throttle = options.Throttle }
             do! CompilerRunner.run plan
         }
 

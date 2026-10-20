@@ -68,6 +68,10 @@ module internal CompilerRunner =
         /// (script variable, environment variable) holding the limit on concurrent launches of
         /// this compiler: `CSC_JOBS`/`XAKE_CSC_JOBS`, `FSC_JOBS`/`XAKE_FSC_JOBS`
         Jobs: string * string
+        /// A resource the script supplies and the units one launch takes (`RunOptions.Throttle`,
+        /// `FscRunOptions.Throttle`): when set, the launch acquires it instead of the budget of
+        /// `Jobs`, which is then not read
+        Throttle: (Resource * int) option
     }
 
     /// The launch for a compiler file: a `.dll` through `dotnet`, anything else directly.
@@ -284,14 +288,18 @@ module internal CompilerRunner =
 
             do! verify hashedFiles
 
-            // the jobs limit is taken here, after every `needFiles`: holding it across a `need`
-            // can deadlock the build (docs/resources.md)
-            let! ctx = getCtx()
-            let limit, invalid = jobsLimit ctx.Vars plan.Jobs
-            match invalid with
-            | Some (name, value) -> do! trace Warning "%s='%s' is not a non-negative integer; compiler launches are not limited" name value
-            | None -> ()
-            match limit with
-            | Some n -> do! withResource (budgetFor (fst plan.Jobs) n) 1 (launch plan)
-            | None -> do! launch plan
+            // the throttle is taken here, after every `needFiles`: holding it across a `need`
+            // can deadlock the build (docs/resources.md). The script's own resource, when the
+            // compilation names one, replaces the jobs limit.
+            match plan.Throttle with
+            | Some (resource, units) -> do! withResource resource units (launch plan)
+            | None ->
+                let! ctx = getCtx()
+                let limit, invalid = jobsLimit ctx.Vars plan.Jobs
+                match invalid with
+                | Some (name, value) -> do! trace Warning "%s='%s' is not a non-negative integer; compiler launches are not limited" name value
+                | None -> ()
+                match limit with
+                | Some n -> do! withResource (budgetFor (fst plan.Jobs) n) 1 (launch plan)
+                | None -> do! launch plan
         }

@@ -917,3 +917,120 @@ type ``Compile under the compiler server``() =
                     Is.EqualTo [ "A.B (System.NullReferenceException)" ])
         Assert.That(Lock.analyzerCrashes "C.cs(1,1): error CS0168: Analyzer 'A.B' threw an exception of type 'X'", Is.Empty)
 
+
+
+/// Binding redirects recorded from msbuild's app run (`Import.record`, referenced projects as
+/// stand-ins): a .NET Framework WinExe whose binary resources need `System.Resources.Extensions`
+/// (its resources name 4.0.0.0, the package brings 8.0.0.0: without the redirect it fails to
+/// start), a .NET Framework test library (`.dll.config`, Test.Sdk), a .NET application asking
+/// for redirects -- each against `dotnet build`, in the compile output and the run folder.
+[<TestFixture>]
+type ``Import record binding redirects``() =
+    inherit XakeTestBase("import-record-redirects")
+
+    let projects = [ "lib/lib.csproj"; "resapp/resapp.csproj"; "nfxtests/nfxtests.csproj"; "winapp/winapp.csproj" ]
+    let msbuilt = [ "resapp"; "nfxtests"; "winapp" ]
+
+    let fixture () =
+        RecordKit.write [ "lib"; "resapp"; "nfxtests"; "winapp"; "out"; "run"; "locks"; "obj" ]
+            [ "lib/lib.csproj", RecordKit.sdkProject "<TargetFramework>netstandard2.0</TargetFramework>" ""
+              "lib/C.cs", "namespace Lib { public class C { public static string S() => \"lib\"; } }\n"
+              "resapp/resapp.csproj",
+                RecordKit.sdkProject
+                    "<TargetFramework>net472</TargetFramework><OutputType>WinExe</OutputType><GenerateResourceUsePreserializedResources>true</GenerateResourceUsePreserializedResources>"
+                    "<ProjectReference Include=\"../lib/lib.csproj\" /><PackageReference Include=\"System.Resources.Extensions\" Version=\"8.0.0\" />"
+              "resapp/P.cs", "class P { static void Main() { System.Console.WriteLine(Lib.C.S() + new System.Resources.ResourceManager(\"resapp.R\", typeof(P).Assembly).GetObject(\"B\")); } }\n"
+              // a binary resource: the compiled .resources name System.Resources.Extensions' reader
+              "resapp/R.resx",
+                "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<root>\n"
+                + "  <resheader name=\"resmimetype\"><value>text/microsoft-resx</value></resheader>\n"
+                + "  <resheader name=\"version\"><value>2.0</value></resheader>\n"
+                + "  <data name=\"B\" type=\"System.Byte[], mscorlib\"><value>AQID</value></data>\n"
+                + "</root>\n"
+              "nfxtests/nfxtests.csproj",
+                RecordKit.sdkProject "<TargetFramework>net472</TargetFramework><IsPackable>false</IsPackable>"
+                    ("<ProjectReference Include=\"../lib/lib.csproj\" />"
+                     + "<PackageReference Include=\"Microsoft.NET.Test.Sdk\" Version=\"17.6.0\" /><PackageReference Include=\"NUnit\" Version=\"3.13.3\" />"
+                     + "<PackageReference Include=\"NUnit3TestAdapter\" Version=\"4.2.1\" />"
+                     // a package conflict: System.Memory 4.5.5 references an older Unsafe
+                     + "<PackageReference Include=\"System.Memory\" Version=\"4.5.5\" /><PackageReference Include=\"System.Runtime.CompilerServices.Unsafe\" Version=\"6.0.0\" />")
+              "nfxtests/T.cs", "namespace T { [NUnit.Framework.TestFixture] public class A { [NUnit.Framework.Test] public void B() => NUnit.Framework.Assert.AreEqual(\"lib\", Lib.C.S()); } }\n"
+              "winapp/winapp.csproj",
+                RecordKit.sdkProject
+                    "<TargetFramework>net8.0-windows</TargetFramework><EnableWindowsTargeting>true</EnableWindowsTargeting><OutputType>Exe</OutputType><AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>"
+                    "<ProjectReference Include=\"../lib/lib.csproj\" /><PackageReference Include=\"System.Memory\" Version=\"4.5.5\" />"
+              "winapp/P.cs", "class P { static void Main() { System.Console.WriteLine(Lib.C.S() + new System.Memory<int>(new int[1]).Length); } }\n" ]
+
+    /// The lock texts and the files beside them, by path.
+    let recorded () =
+        [ for f in Directory.GetFiles ("locks", "*", SearchOption.AllDirectories) |> Array.sort -> f.Replace ('\\', '/'), File.ReadAllText f ]
+
+    /// The `<dependentAssembly>` blocks of a config text, in order.
+    let redirectsOf (text: string) =
+        [ for m in Text.RegularExpressions.Regex.Matches (text, "<dependentAssembly>[\\s\\S]*?</dependentAssembly>") -> m.Value ]
+
+    let mutable prepared = false
+    let mutable firstImport : (string * string) list = []
+
+    member private x.Prepare () =
+        if not prepared then
+            fixture ()
+            RecordKit.import x.TestOptions "import-1" RecordKit.recordDefault projects |> ignore
+            firstImport <- recorded ()
+            RecordKit.build x.TestOptions "build-1" "Release"
+            RecordKit.deploy x.TestOptions "deploy-1" "Release" RunFolder.Link
+            for a in msbuilt do RecordKit.runDotnet (Path.GetFullPath a) [ "build"; a + ".csproj"; "-c"; "Release"; "-p:NuGetAudit=false" ]
+            prepared <- true
+
+    /// (the recorded config, the compile output's, the run folder's, msbuild's) of a project.
+    member private x.Configs (name: string) (fwk: string) (file: string) =
+        x.Prepare ()
+        sprintf "locks/%s/Release.files/%s/app/%s" name fwk file, sprintf "out/Release/%s/%s/%s" fwk name file,
+        sprintf "run/Release/%s/%s/%s" fwk name file, sprintf "%s/bin/Release/%s/%s" name fwk file
+
+    [<Test>]
+    member x.``a .NET Framework app with binary resources: its exe.config has msbuild's redirects, byte for byte``() =
+        let lockFile, out, run, theirs = x.Configs "resapp" "net472" "resapp.exe.config"
+        let lock = File.ReadAllText (RecordKit.lockOf "resapp" "Release")
+        Assert.That(lock, Does.Contain "{ \"Name\": \"resapp.exe.config\", \"Path\": \"$(ProjectRoot)/locks/resapp/Release.files/net472/app/resapp.exe.config\"")
+        Assert.That(lock, Does.Contain "\"BindingRedirects\": true")
+        let text = File.ReadAllText lockFile
+        Assert.That(text, Does.Contain "<assemblyIdentity name=\"System.Resources.Extensions\" publicKeyToken=\"cc7b13ffcd2ddd51\" culture=\"neutral\" />")
+        Assert.That(text, Does.Contain "<bindingRedirect oldVersion=\"0.0.0.0-8.0.0.0\" newVersion=\"8.0.0.0\" />")
+        Assert.That(text, Does.Contain "<supportedRuntime version=\"v4.0\" sku=\".NETFramework,Version=v4.7.2\" />")
+        for f in [ lockFile; out; run ] do
+            Assert.That(File.ReadAllBytes f, Is.EqualTo (File.ReadAllBytes theirs), f)
+
+    [<Test>]
+    member x.``a .NET Framework test library: its dll.config with redirects recorded, beside it and in its run folder``() =
+        let lockFile, out, run, theirs = x.Configs "nfxtests" "net472" "nfxtests.dll.config"
+        let lock = File.ReadAllText (RecordKit.lockOf "nfxtests" "Release")
+        Assert.That(lock, Does.Contain "\"OutputType\": \"Library\"")
+        Assert.That(lock, Does.Contain "{ \"Name\": \"nfxtests.dll.config\", \"Path\": \"$(ProjectRoot)/locks/nfxtests/Release.files/net472/app/nfxtests.dll.config\"")
+        Assert.That(File.ReadAllText lockFile, Does.Contain "<bindingRedirect oldVersion=\"0.0.0.0-6.0.0.0\" newVersion=\"6.0.0.0\" />")
+        for f in [ lockFile; out; run ] do
+            Assert.That(File.ReadAllBytes f, Is.EqualTo (File.ReadAllBytes theirs), f)
+
+    [<Test>]
+    member x.``a .NET app asking for redirects: its dll.config recorded with msbuild's redirects over the packages``() =
+        let lockFile, out, run, theirs = x.Configs "winapp" "net8.0-windows" "winapp.dll.config"
+        Assert.That(File.ReadAllText (RecordKit.lockOf "winapp" "Release"),
+                    Does.Contain "{ \"Name\": \"winapp.dll.config\", \"Path\": \"$(ProjectRoot)/locks/winapp/Release.files/net8.0-windows/app/winapp.dll.config\"")
+        let ours, msbuild = redirectsOf (File.ReadAllText lockFile), redirectsOf (File.ReadAllText theirs)
+        Assert.That(ours, Is.Not.Empty)
+        // msbuild may have more: a conflict seen only through a referenced project's built
+        // assembly (the stand-in has no references); never fewer, in the same order
+        let rec subsequence (a: string list) (b: string list) =
+            match a, b with
+            | [], _ -> true
+            | _, [] -> false
+            | x :: a', y :: b' -> if x = y then subsequence a' b' else subsequence a b'
+        Assert.That(subsequence ours msbuild, sprintf "%d of ours, %d of msbuild's" ours.Length msbuild.Length)
+        for f in [ out; run ] do
+            Assert.That(File.ReadAllBytes f, Is.EqualTo (File.ReadAllBytes lockFile), f)
+
+    [<Test>]
+    member x.``an import after both builds records the same configs: the redirects do not depend on what is built``() =
+        x.Prepare ()
+        RecordKit.import x.TestOptions "import-2" RecordKit.recordDefault projects |> ignore
+        Assert.That(recorded (), Is.EqualTo firstImport)

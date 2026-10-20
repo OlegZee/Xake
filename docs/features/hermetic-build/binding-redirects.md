@@ -1,7 +1,9 @@
 # Binding redirects at import — design note (2026-10-18)
 
-Status: proposal. Reading only: no code changed, nothing built or run. Gap S55 ("binding redirects
-are not generated").
+Status: implemented (Xake.Hermetic.Dotnet 0.5.1, branch `pr/binding-redirects`), as recommended in
+2.2. Owner's decisions on section 5: Q1 accept and document, Q2 no build-time warning, Q3 run 1
+unchanged, Q4 LF as today, Q5 version 0.5.1, Q6 name kept, comment reworded. Gap S55 ("binding
+redirects are not generated").
 
 Sources: `src/hermetic/Import.fs` (`record`, `dumpTargets`, `appOf`, `stubAssembly`),
 `Lock.fs` (`App`), `Apps.fs` (`write`), `Locks.fs` (`compileAsWith`, `runFolderWith`),

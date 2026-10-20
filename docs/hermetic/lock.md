@@ -142,10 +142,13 @@ condition the masks do not know, the two can drift; the import checks them only 
 
    The same targets file also writes, for an application (`HasRuntimeOutput`), msbuild's
    copy-local files (`ReferenceCopyLocalPaths`), the apphost template (`ResolvedAppHostPack`),
-   the config file before binding redirects and the related extensions
-   (`AllowedReferenceRelatedFileExtensions`). A second msbuild run over the applications only
-   writes their `runtimeconfig.json` and `deps.json` (`GenerateBuildRuntimeConfigurationFiles`,
-   `GenerateBuildDependencyFile`), see [Applications](#applications-the-app-section).
+   the config file before binding redirects, the project's own config file and the related
+   extensions (`AllowedReferenceRelatedFileExtensions`). A second msbuild run over the
+   applications and every project msbuild generates binding redirects for (a .NET Framework
+   test library) writes their `runtimeconfig.json` and `deps.json`
+   (`GenerateBuildRuntimeConfigurationFiles`, `GenerateBuildDependencyFile`) and the config
+   file with its binding redirects (`GenerateBindingRedirects`), see
+   [Applications](#applications-the-app-section).
 
    Each design-time build writes what it generates (assembly info, compiled resources) into an
    intermediate folder of its own, `<BaseIntermediateOutputPath>/xake-record/<key>/<tfm>/`, where
@@ -282,8 +285,9 @@ An entry whose project has runtime output (`HasRuntimeOutput`: an exe, a winexe,
 project) has an `App` section: what msbuild makes of the project besides the compile, recorded
 from msbuild, nothing derived. A library has one too when msbuild copies something into its
 output: copy-local files (a referenced project's output; a .NET Framework test library's
-packages) or its own copy-to-output items. Then `OutputType` is `Library` and there is no
-`Host` and no `Files`.
+packages) or its own copy-to-output items, or when msbuild generates binding redirects for it
+(a .NET Framework test library). Then `OutputType` is `Library`, there is no `Host`, and
+`Files` holds the config file only (`<name>.dll.config`, with its redirects), if any.
 
 The compile writes the files named after the assembly beside it (`Apps.write`, called by
 `Locks.compileAs`; side outputs of the assembly's rule, like the `.xml`): `Files` and the
@@ -339,8 +343,18 @@ copy-to-output items go into a run folder (`Locks.runFolderWith`, [Run folders](
     `HostWriter` does), signed on macOS; a warning names the reason and says it has no version
     resource and no icon. Named `<assembly name>` (`.exe` for a Windows template).
 - **`Files`**: the `runtimeconfig.json` and `deps.json` msbuild generated, and the config file
-  `AppConfigWithTargetPath` names before `GenerateBindingRedirects` (for .NET Framework the
-  SDK's `supportedRuntime` added). Recorded beside the lock in
+  msbuild puts into the output (`<TargetFileName>.config`: `app.exe.config` for a .NET
+  Framework application, `name.dll.config` for a test library or a .NET application), the
+  first that exists of:
+  1. msbuild's finished file, binding redirects included: what `GenerateBindingRedirects`
+     wrote in the second run, against the stand-ins (see `deps.json` below). The import deletes
+     the file before that run, so nothing from the first run or an earlier import is left in it;
+  2. the file before redirects, when msbuild suggests none (for .NET Framework the SDK's
+     `supportedRuntime` added, `_XakeAppConfigBeforeRedirects`);
+  3. the project's own `App.config` (`AppConfig`, found by `PrepareForBuild`).
+
+  A recorded config that names the stand-in version fails the import, naming the project and
+  the config (a redirect to a stand-in). Recorded beside the lock in
   `<lock without .json>.files/<tfm>/app/` as text (LF), each with its hash; the project's own
   config that msbuild copies as it is (a .NET application's `App.config`) is named where it is,
   by its hash, and copied byte for byte. A changed file beside the lock fails the build (*does
@@ -384,12 +398,20 @@ copy-to-output items go into a run folder (`Locks.runFolderWith`, [Run folders](
   `GetCopyToOutputDirectoryItems` does transitively.
 - **`BindingRedirects`**: `true` when msbuild adds binding redirects to the config
   (`AutoGenerateBindingRedirects` and `GenerateBindingRedirectsOutputType`). The recorded config
-  has none: the redirects depend on what RAR finds in the referenced projects' built outputs
-  (S55, open).
+  is msbuild's finished one, redirects included. They come from the packages (identities and
+  hashes in the lock), the reference order and the project's `App.config`, never from the
+  referenced projects' built outputs (stand-ins): the same whether anything was built when the
+  import ran. Limit: a conflict RAR sees only through a referenced project's compiled assembly
+  (its reference to an older version of an assembly the application resolves newer) is not
+  seen. On .NET (`net8.0-windows` with redirects on) msbuild's `.dll.config` can then have 1 to
+  3 more redirects (framework assemblies such as `Microsoft.CSharp`); the .NET runtime ignores
+  `<assemblyBinding>`. A lock written before Xake.Hermetic.Dotnet 0.5.1 has the config before
+  redirects and no `.dll.config` for a .NET Framework test library: it builds as before;
+  import again to record the redirects.
 
 Not recorded: satellite assemblies (the project's own and a referenced project's; their
-entries in `deps.json`), binding redirects (a .NET Framework config, a test library's generated
-`.dll.config`), a library's `deps.json`, files a package's own build target copies (a `Copy` task
+entries in `deps.json`), the binding redirects RAR finds only through a referenced project's
+built assembly (see `BindingRedirects`), a library's `deps.json`, files a package's own build target copies (a `Copy` task
 after the build, not an item: `Microsoft.Data.SqlClient.SNI`'s `CopySNIFiles`), files a build
 target generates into the output (`.msCoverageSourceRootsMapping_*`,
 `CoverletSourceRootsMapping_*`).
@@ -565,8 +587,9 @@ rules [
 each framework of its lock.
 
 Known differences from `dotnet build`'s `bin/` (checked on the trial product, 77 run folders):
-satellite assemblies; binding redirects (a .NET Framework config differs by its
-`<assemblyBinding>` lines; a .NET Framework test library's generated `.dll.config` is missing);
+satellite assemblies; binding redirects seen only through a referenced project's built assembly
+(a .NET `.dll.config` with redirects on has 1 to 3 fewer than msbuild's; before 0.5.1 every
+.NET Framework config differed by its `<assemblyBinding>` lines);
 files a package's build target copies with a `Copy` task; coverage mapping files a build target
 writes into the output.
 
@@ -580,8 +603,8 @@ writes into the output.
   methods, manifest resources, assembly references and version. Bytes are not a goal: msbuild
   writes some generated sources with CRLF on every OS, the lock records LF.
 - An application or a test project: its run folder holds the same files as `dotnet build`'s
-  `bin/`, but what is listed as not recorded above; `runtimeconfig.json` and `deps.json` equal
-  to msbuild's; it runs from its run folder (`dotnet app.dll`, the apphost on this OS,
+  `bin/`, but what is listed as not recorded above; `runtimeconfig.json`, `deps.json` and a
+  .NET Framework `.exe.config`/`.dll.config` (binding redirects included) equal to msbuild's; it runs from its run folder (`dotnet app.dll`, the apphost on this OS,
   `dotnet test tests.dll`).
 
 ## F# entries

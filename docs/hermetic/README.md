@@ -1,6 +1,23 @@
 # Xake.Hermetic.Dotnet
 
-## 0.5 (next release)
+## 0.5.1 (next release)
+
+Binding redirects recorded at import (S55): **re-import to record the redirects.** No API and no
+lock format change (format 2); a lock written by 0.5.0 builds as before, without redirects.
+
+- `Import.record` records msbuild's finished config file, redirects included, in the lock's
+  `App.Files` (`<lock>.files/<framework>/app/`): a .NET Framework application's `<app>.exe.config`
+  (until now the file before `GenerateBindingRedirects`: an application whose resources name
+  `System.Resources.Extensions` 4.0.0.0 failed to start with the package's 8.0.0.0) and, new, a
+  .NET Framework test library's `<name>.dll.config`. The second msbuild run (referenced projects
+  as stand-ins) now covers every project msbuild generates redirects for, so the redirects come
+  from the packages and never from what is built. A re-import changes these config files and
+  their hashes only. The compile and the run folders place them as before.
+- Known difference: a .NET (`net8.0-windows`) `.dll.config` with redirects on can lack the 1 to
+  3 redirects RAR finds only through a referenced project's built assembly; the .NET runtime
+  ignores binding redirects ([lock.md](lock.md#applications-the-app-section)).
+
+## 0.5 (released as 0.5.0)
 
 Built on Xake 3.10 (`[3.10.0.35, 3.11)`): the core added `HeldResources` to `ExecContext`, and a
 hermetic build on 3.9 cannot run on it, hence a new minor. What it brings over 0.4.2:
@@ -97,7 +114,7 @@ and:
   config file beside the lock (`<lock>.files/<framework>/app/`), msbuild's copy-local files.
   `Locks.compileAs` writes them beside the assembly; a lock of an application changes on the
   next import ([lock.md](lock.md#applications-the-app-section)). The import runs a second
-  msbuild pass over the applications. Not yet: binding redirects, satellites.
+  msbuild pass over the applications. Not yet: binding redirects (0.5.1), satellites.
 - **Run folders (PR 4)**: `Locks.runFolderWith` builds the folder an application or a test
   project runs from, from its own lock closure only, by hard links (fallbacks: clone, copy), with
   the manifest `.xake-run.txt` as the rule's target, a conflicts report, stale files removed and

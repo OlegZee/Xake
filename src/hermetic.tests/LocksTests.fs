@@ -106,7 +106,9 @@ type ``Lock generation``() =
         let script = [ lockRule (fun n -> described.[n]) id ran; updateLocks names ]
         x.Run "generate-1" [] [ "update-locks" ] script
         Assert.That(List.ofSeq ran |> List.sort, Is.EqualTo (names |> List.map (fun n -> n + "::Release") |> List.sort), "each lock once")
-        Assert.That(ran.[0], Is.EqualTo "Xake::Release", "the referenced project first")
+        let ranList = List.ofSeq ran
+        Assert.That(List.findIndex ((=) "Xake::Release") ranList, Is.LessThan (List.findIndex ((=) "Xake.Dotnet::Release") ranList),
+                    "the referenced project first (Xake.Hermetic.Dotnet has no project reference, so its place is the scheduler's)")
 
         let locks = names |> List.map (fun n -> lockOf n "Release")
         let texts = locks |> List.map File.ReadAllText

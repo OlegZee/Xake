@@ -263,7 +263,10 @@ resource and bring the hazard back. It lives in the run options, not in the `Csc
 record is what is compiled (what a lock entry holds and replays), while a resource is a
 parameter of this process's run, like `Server`. The runner cannot deadlock through it; a
 script that also holds the same resource elsewhere still must not `need` inside that
-`withResource` (the guard (a) refuses it).
+`withResource` (the guard (a) refuses it). A script building from Xake-generated locks passes
+its resource through the settings of the hermetic compile, `Locks.compile { Locks.Settings.Default
+with Lock = { opts with Run = { opts.Run with Throttle = Some (res, 1) } } }` (`opts` being
+`Lock.Options.Default`; `FscRun` likewise), once Xake.Hermetic.Dotnet is released on Xake 3.10.
 
 - Pros: removes the hazard where it was introduced; the knob lives with `CSC_SERVER`;
   covers every caller of `Csc.run`/`Fsc.run`, hermetic or not; no API change.

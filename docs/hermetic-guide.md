@@ -138,7 +138,7 @@ it needs an explicit `out`.[^out] `Lock.build` compares the compilation with the
 [^out]: In a file rule, `out` is optional. Without `out`, `Csc.ofSettings` (and `Fsc.ofSettings`)
     takes the output from the rule's file target. A phony rule has no file target, so there `out`
     is required. In the example above `out` repeats the target and can be left out. A lock from
-    `Locks.generate` has no output switch. `Locks.compileAs` takes the output from the rule's
+    `Locks.generate` has no output switch. `Locks.compile` (and `Locks.compileAs`) takes the output from the rule's
     target in the same way ([hermetic/lock.md](hermetic/lock.md#building-from-xake-generated-locks)).
 
 ### An F# library
@@ -636,6 +636,27 @@ Details: [csc-server.md](csc-server.md).
 To cap concurrent compilers, pass `-d CSC_JOBS:6` (`FSC_JOBS` for fsc; env `XAKE_CSC_JOBS`)
 rather than wrapping the compile rule in `withResource`: the rule `need`s the referenced
 projects, and a `need` of a rule target while a resource is held fails (it could deadlock).
+
+A script that builds from Xake-generated locks sets the runner options once, in the settings it
+hands `Locks.compile`, and partially applies it:
+
+```fsharp
+let settings = { Locks.Settings.Default with Roots = roots; Versions = versions }
+let compileTarget = Locks.compile settings
+target "out/(cfg:*)/(fwk:*)/(name:*).dll" {
+    let! cfg = getRuleMatch "cfg"
+    let! fwk = getRuleMatch "fwk"
+    let! name = getRuleMatch "name"
+    do! compileTarget (lockOf name cfg) fwk }
+```
+
+`Locks.Settings` is `{ Roots; Versions; Lock: Lock.Options }`: the extra roots and version masks
+`compileAsWith roots lockPath fwk versions` takes (it is now `compile` with those two set), and
+`Lock.Options` (`Run` for csc, `FscRun` for fsc, `Restore`). `Lock.Run.Server` set there wins over
+`CSC_SERVER`; left at the default, `CSC_SERVER` is read as in the table. With a hermetic release
+built on Xake 3.10, `Lock.Run.Throttle` (and `Lock.FscRun.Throttle`) is where a script passes its
+own resource in place of `CSC_JOBS`/`FSC_JOBS`. Details:
+[hermetic/lock.md](hermetic/lock.md#building-from-xake-generated-locks).
 
 ## 11. Troubleshooting
 

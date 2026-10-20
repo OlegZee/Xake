@@ -254,6 +254,74 @@ type ``Building from Xake-generated locks``() =
         Assert.That(text (), Does.Contain "2.0.1", "another version rebuilds")
         Assert.That(File.ReadAllText path, Does.Contain "$(Version)", "the lock keeps the token")
 
+    /// The dll rule's body given as `compile lockPath fwk`, wanting `goal`.
+    member private x.BuildWith (compile: string -> string -> Recipe<ExecContext, unit>) (label: string) (vars: (string * string) list) (goal: string) =
+        xake {x.TestOptions with FileLog = label + ".log"; ThrowOnError = true; Vars = ("CI", "off") :: vars; FileLogLevel = Loud} {
+            wantOverride [ goal ]
+            rules [
+                target "out/(cfg:*)/(fwk:*)/(name:*).dll" {
+                    let! cfg = getRuleMatch "cfg"
+                    let! fwk = getRuleMatch "fwk"
+                    let! name = getRuleMatch "name"
+                    do! compile (lockOf name cfg) fwk } ]
+        }
+
+    /// `Locks.compile` with `Versions` builds what `compileAsWith [] _ _ versions` builds, and
+    /// `Settings.Default` fails as `compileAsWith [] _ _ []` does: the Cs lock with a
+    /// `$(Version)` token in `Generated`.
+    [<Test; Category("Integration")>]
+    member x.``compile with Settings is compileAsWith``() =
+        fixture ()
+        x.Generate "generate-settings" fixtureOf [ "Cs" ] [ "Release" ] |> ignore
+        let roots = Roots.builtin (Directory.GetCurrentDirectory ())
+        let path = lockOf "Cs" "Release"
+        let doc = Lock.read roots path
+        let source = Path.GetFullPath "obj/xake/Cs/netstandard2.0/Cs.Version.cs" |> fun p -> p.Replace ('\\', '/')
+        let content = "[assembly: System.Reflection.AssemblyInformationalVersion(\"$(Version)\")]\n"
+        let withVersion (e: Lock.Entry) =
+            match e.Compilation with
+            | Lock.Compilation.Csc c ->
+                { e with Compilation = Lock.Compilation.Csc { c with Sources = source :: c.Sources; Generated = (source, content) :: c.Generated } }
+            | _ -> e
+        File.WriteAllText (path, Lock.format roots { doc with Entries = doc.Entries |> List.map withVersion })
+        let out = dll "Release" "Cs"
+        let text () = System.Text.Encoding.UTF8.GetString (File.ReadAllBytes out)
+
+        x.BuildWith (fun l f -> Locks.compileAsWith [] l f versions) "settings-old" [] out
+        Assert.That(text (), Does.Contain "9.9.9")
+        let bytes = File.ReadAllBytes out
+        Directory.Delete ("out", true)
+        x.BuildWith (Locks.compile { Locks.Settings.Default with Versions = versions }) "settings-new" [] out
+        Assert.That(File.ReadAllBytes out, Is.EqualTo bytes, "the same assembly")
+
+        Directory.Delete ("out", true)
+        let old = Assert.Throws<XakeException>(fun () -> x.BuildWith (fun l f -> Locks.compileAsWith [] l f []) "settings-old-none" [] out)
+        let none = Assert.Throws<XakeException>(fun () -> x.BuildWith (Locks.compile Locks.Settings.Default) "settings-default" [] out)
+        Assert.That(old.Data0, Does.Contain "needs a version")
+        Assert.That(none.Data0, Is.EqualTo old.Data0)
+
+    /// `Settings.Lock` reaches the runner: `Run.FailOnError = false` lets a broken source
+    /// pass, and a `Run.Server` the script set is used as is, without reading `CSC_SERVER`
+    /// (an unrecognized value warns only when it is read).
+    [<Test; Category("Integration")>]
+    member x.``compile hands Settings.Lock to the runner``() =
+        fixture ()
+        x.Generate "generate-options" fixtureOf [ "Cs" ] [ "Release" ] |> ignore
+        File.WriteAllText ("p/Cs/Bad.cs", "this is not C#\n")
+        let out = dll "Release" "Cs"
+        let vars = [ "CSC_SERVER", "bogus" ]
+        let warning = "CSC_SERVER='bogus'"
+
+        Assert.Throws<XakeException>(fun () -> x.BuildWith (Locks.compile Locks.Settings.Default) "options-default" vars out) |> ignore
+        Assert.That(File.ReadAllText "options-default.log", Does.Contain warning, "the default server reads CSC_SERVER")
+
+        let defaults = Lock.Options.Default
+        let explicitServer = if defaults.Run.Server = CompilerServer.InProcess then CompilerServer.Shared (Some 5) else CompilerServer.InProcess
+        let settings = { Locks.Settings.Default with Lock = { defaults with Run = { defaults.Run with FailOnError = false; Server = explicitServer } } }
+        x.BuildWith (Locks.compile settings) "options-custom" vars out
+        Assert.That(File.Exists out, Is.False, "nothing compiled, nothing failed")
+        Assert.That(File.ReadAllText "options-custom.log", Does.Not.Contain warning, "an explicit server is not resolved")
+
     /// Xake's three projects from the locks `update-locks` writes, into out/Release/<fwk>/.
     [<Test; Category("Integration")>]
     member x.``Xake's three projects build from their generated locks``() =
@@ -414,7 +482,15 @@ type ``Building from Xake-generated locks``() =
                 let name = Path.GetFileName sub
                 if name <> "out" && name <> "obj" then copy sub (dst </> name)
         copy a b
-        run (b </> "root") "build-b" "build" buildRules
+        // the same roots through `Locks.compile`'s settings: the same bytes
+        let settingsRules = [
+            command "build" { do! Locks.needAllWith roots (!! ("desc/P/" + Description.FileName)) "Release" lockOf outOf }
+            target "out/(cfg:*)/(fwk:*)/(name:*).dll" {
+                let! cfg = getRuleMatch "cfg"
+                let! fwk = getRuleMatch "fwk"
+                let! name = getRuleMatch "name"
+                do! Locks.compile { Locks.Settings.Default with Roots = roots; Versions = versions } (lockOf name cfg) fwk } ]
+        run (b </> "root") "build-b" "build" settingsRules
         let other = b </> "root" </> dll "Release" "P"
         Assert.That(File.Exists other, Is.True)
         Assert.That(File.ReadAllBytes other, Is.EqualTo bytes, "the other checkout built different bytes")

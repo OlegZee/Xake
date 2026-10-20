@@ -23,6 +23,12 @@ The `Xake` package (engine and `Xake.Dotnet`). Xake.Hermetic.Dotnet has its own 
 - **Breaking for record construction:** `ExecContext` gains `HeldResources`. Code built on 3.9
   that copies an `ExecContext` (`{ ctx with ... }`) has to be rebuilt; Xake.Hermetic.Dotnet
   0.4 (`[3.9.0.30, 3.10)`) does, and needs a release on 3.10.
+- **Xake.Hermetic.Dotnet: `Locks.compile settings lockPath fwk`**, with `Locks.Settings = { Roots;
+  Versions; Lock: Lock.Options }` (`Settings.Default`: no roots, no versions, default options).
+  `compileAsWith`/`compileAs` are thin wrappers over it, unchanged. The script's `Lock.Options`
+  reach the runner (an explicit `Run.Server` wins over `CSC_SERVER`); on a release built on 3.10
+  that is where `Run.Throttle`/`FscRun.Throttle` go. See
+  [hermetic/lock.md](hermetic/lock.md#building-from-xake-generated-locks).
 
 ## 3.9.0 (unreleased)
 

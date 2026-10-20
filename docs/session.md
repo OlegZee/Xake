@@ -21,8 +21,8 @@ touched, so it is not re-litigated:
   tighter than `</>`, and `;` is not the Unix separator. Fixed, but the mono path has no test
   coverage.
 - `build.fsx` bootstraps from nuget.org (`#r "nuget: Xake, 3.7.0.26"`, the 3.7.0 release as
-  nuget.org carries it); `build.fsc.fsx` from `Xake 3.9.1.33` and
-  `Xake.Hermetic.Dotnet 0.4.2.34` (all commands work, `update-locks` included).
+  nuget.org carries it); `build.fsc.fsx` from `Xake 3.10.0.35` and
+  `Xake.Hermetic.Dotnet 0.5.0.36` (all commands work, `update-locks` included).
   The base script stays on the base package only. The nuget references stay behind the release being made; bump
   them only after a release lands on nuget.org, to the exact published `X.Y.Z.<run>`.
   Developing against unreleased libraries: a temporary `#r` on dlls (or a `#i` local feed);
@@ -177,7 +177,7 @@ data, no msbuild for them. `build.fsx` stays the build of record (packages, rele
 - `build` = `Fingerprints.warn` + `Locks.needAll`, the rule `out/(cfg:*)/(fwk:*)/(name:*).dll` =
   `Locks.compileAs`; `check` = `Fingerprints.check`. `test` is `dotnet test` as in `build.fsx`.
   Release only; `pack` waits for `Package.nupkg` (PR 8).
-- Bootstrap: `#r "nuget: Xake, 3.9.1.33"` and `#r "nuget: Xake.Hermetic.Dotnet, 0.4.2.34"`, no
+- Bootstrap: `#r "nuget: Xake, 3.10.0.35"` and `#r "nuget: Xake.Hermetic.Dotnet, 0.5.0.36"`, no
   `build.fsx` run first. Its `clean` removes `out/Release` only (`out/netstandard2.0` is
   `build.fsx`'s).
 - Own database `.xake.fsc` (`xake { ExecOptions.Default with DbFileName = ... }`): the scripts no

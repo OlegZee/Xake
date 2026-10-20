@@ -95,6 +95,37 @@ let FileLogger name maxLevel =
                   | false -> ignore
               Printf.kprintf write format }
 
+/// The running-task count of the console progress line as Braille dots.
+module ProgressDots =
+
+    /// Cells drawn at most; one cell holds 8 dots.
+    let MaxCells = 4
+
+    /// The default cap: about 30 tasks (3 full cells and a partial one).
+    let DefaultCap = 30
+
+    // A cell fills column-wise: the left column top to bottom, then the right one
+    // (dots 1,2,3,7 then 4,5,6,8), so a row of cells reads as a bar growing left to right.
+    let private cellFill = [| '\u2800'; '⠁'; '⠃'; '⠇'; '⡇'; '⡏'; '⡟'; '⡿'; '⣿' |]
+
+    /// Encodes the running-task count: one dot per task, at most min(cap, 32) dots in at most
+    /// 4 cells; a count above the cap draws 4 full cells and "+". 0 gives an empty string.
+    let dots (running: int) (cap: int) : string =
+        let cap = cap |> max 1 |> min (MaxCells * 8)
+        if running > cap then
+            String.replicate MaxCells (string cellFill.[8]) + "+"
+        else
+            let n = max 0 running
+            let full, partial = n / 8, n % 8
+            String.replicate full (string cellFill.[8])
+            + (if partial > 0 then string cellFill.[partial] else "")
+
+    /// The colour of the dots: green up to half the cap, yellow up to the cap, red above it.
+    let color (running: int) (cap: int) : System.ConsoleColor =
+        if running > cap then System.ConsoleColor.Red
+        elif running * 2 > cap then System.ConsoleColor.Yellow
+        else System.ConsoleColor.Green
+
 module private ConsoleSink =
 
     open System
@@ -105,12 +136,13 @@ module private ConsoleSink =
 
     type RenderCommand =
         | WriteLine of Level * string
-        | SetStatus of string option
+        | SetStatus of (ConsoleColor * string) list option
         | Flush of AsyncReplyChannel<unit>
 
     type RenderState = {
         StatusBarText: string option  // raw bar text without spinner, for dedup
         StatusText: string option     // full rendered text with spinner, for display/clear
+        StatusSegments: (ConsoleColor * string) list  // the same text in coloured pieces, for display
         StatusVisible: bool
         Interactive: bool
         SpinnerTick: int
@@ -146,8 +178,18 @@ module private ConsoleSink =
             let partial = filledSubunits % 8
             let emptyLen = ProgressBarLen - fullBlocks - (if partial > 0 then 1 else 0)
             let bar = sprintf "%s%s%s" (String.replicate fullBlocks "█") partialChars.[partial] (String.replicate emptyLen " ") // '░'
-            let taskStr = if activeTasks = 1 then "1 task" else sprintf "%d tasks" activeTasks
-            Some <| sprintf "%3d%% [%s]  %s · %s left" pct bar taskStr (fmtTs timeLeft)
+            let head = sprintf "%3d%% [%s]  " pct bar
+            let tail = sprintf " · %s left" (fmtTs timeLeft)
+            match isInteractiveConsole with
+            | true ->
+                // a fixed width (blank Braille cells, a space for the "+") keeps the line steady
+                let cap = ProgressDots.DefaultCap
+                let d = ProgressDots.dots activeTasks cap
+                let d = d.PadRight(ProgressDots.MaxCells, '\u2800').PadRight(ProgressDots.MaxCells + 1)
+                Some [ ConsoleColor.White, head; ProgressDots.color activeTasks cap, d; ConsoleColor.White, tail ]
+            | false ->
+                let taskStr = if activeTasks = 1 then "1 task" else sprintf "%d tasks" activeTasks
+                Some [ ConsoleColor.White, head + taskStr + tail ]
 
     let po = MailboxProcessor.Start(fun mbox ->
 
@@ -157,11 +199,13 @@ module private ConsoleSink =
                 let len = state.StatusText |> Option.fold (fun _ -> String.length) 0
                 Console.Write ("\r" + String.replicate len " " + "\r")
 
-            let drawStatus statusText =
-                match state.Interactive, statusText with
-                | true, Some outputString ->
-                    Console.ForegroundColor <- ConsoleColor.White
-                    Console.Write (outputString: string)  // caller already at col 0 after eraseStatus
+            let drawStatus (segments: (ConsoleColor * string) list) =
+                match state.Interactive with
+                | true ->
+                    // caller already at col 0 after eraseStatus
+                    for color, text in segments do
+                        Console.ForegroundColor <- color
+                        Console.Write text
                     Console.ResetColor()
                 | _ -> ()
 
@@ -196,20 +240,25 @@ module private ConsoleSink =
                 | WriteLine(level, text) ->
                     if state.StatusVisible then eraseStatus()
                     writeLines level text
-                    if state.StatusVisible then drawStatus state.StatusText
+                    if state.StatusVisible then drawStatus state.StatusSegments
                     return! loop state
 
-                | SetStatus barText ->
+                | SetStatus barSegments ->
+                    let barText = barSegments |> Option.map (List.map snd >> String.concat "")
                     let nextState =
                         match state.Interactive with
-                        | false -> { state with StatusBarText = barText; StatusText = barText; StatusVisible = false }
+                        | false -> { state with StatusBarText = barText; StatusText = barText; StatusSegments = []; StatusVisible = false }
                         | true ->
                             if state.StatusVisible then eraseStatus()
                             let newTick = (state.SpinnerTick + 1) % spinnerFrames.Length
+                            let segments =
+                                barSegments
+                                |> Option.map (fun segs -> (ConsoleColor.White, spinnerFrames.[newTick] + " ") :: segs)
+                                |> Option.defaultValue []
                             let fullText = barText |> Option.map (fun bt -> sprintf "%s %s" spinnerFrames.[newTick] bt)
                             let visible = fullText.IsSome
-                            if visible then drawStatus fullText
-                            { state with StatusBarText = barText; StatusText = fullText; StatusVisible = visible; SpinnerTick = newTick }
+                            if visible then drawStatus segments
+                            { state with StatusBarText = barText; StatusText = fullText; StatusSegments = segments; StatusVisible = visible; SpinnerTick = newTick }
                     return! loop nextState
 
                 | Flush ch ->
@@ -219,7 +268,7 @@ module private ConsoleSink =
                     return! loop { state with StatusVisible = false }
             }
 
-        loop { StatusBarText = None; StatusText = None; StatusVisible = false; Interactive = isInteractiveConsole; SpinnerTick = 0 })
+        loop { StatusBarText = None; StatusText = None; StatusSegments = []; StatusVisible = false; Interactive = isInteractiveConsole; SpinnerTick = 0 })
 
 
 /// <summary>

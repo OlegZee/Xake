@@ -248,6 +248,23 @@ connection, so the cap still bounds concurrent compilations. The analyzer-crash 
 **Consumer migration.** Drop the `withResource` wrapper; pass `-d CSC_JOBS=6` (or set it
 with `var` in `xakeScript`).
 
+**The typed override.** A script that already has a resource of its own (one budget for
+csc, fsc and its other heavy commands, or sized from the machine) names it per compilation:
+`Throttle: (Resource * int) option` -- the resource and the units one compile takes -- in
+`RunOptions` and `FscRunOptions`, and in `CscSettingsType` / `FscSettingsType` with the
+`throttle (resource, units)` operation of `csc { }` / `fsc { }` (`runOptions` carries it over).
+`RunPlan` gets it next to `Jobs`; when it is `Some`, `CompilerRunner.run` acquires that
+resource with those units, at the same seam (after every `needFiles` and the hash check), and
+does not read the jobs variables at all; `None` (the default) is the `CSC_JOBS`/`FSC_JOBS`
+path, unchanged. It is **data, not a hook**: the decision of no callback on `Csc.run` stands.
+A value is inspectable and can only be acquired around the launch, where nothing `need`s; a
+callback wrapping the launch (or the run) could put a `need` or anything else under the
+resource and bring the hazard back. It lives in the run options, not in the `Csc` record: the
+record is what is compiled (what a lock entry holds and replays), while a resource is a
+parameter of this process's run, like `Server`. The runner cannot deadlock through it; a
+script that also holds the same resource elsewhere still must not `need` inside that
+`withResource` (the guard (a) refuses it).
+
 - Pros: removes the hazard where it was introduced; the knob lives with `CSC_SERVER`;
   covers every caller of `Csc.run`/`Fsc.run`, hermetic or not; no API change.
 - Cons: ships in the `Xake` package (`src/dotnet`), not in `Xake.Hermetic.Dotnet`; the
@@ -372,6 +389,8 @@ The owner took the recommended default on every question:
    record's full constructor, so a build of it on 3.9 does not run on 3.10. It needs a release
    built on 3.10 (the range policy: one release per core minor).
 6. No engine-level detection (d) in this change.
+7. A script's own budget is a typed override as data (`Throttle`, see (c)), not a callback
+   on `Csc.run`.
 
 The questions as they were put:
 

@@ -100,7 +100,7 @@ open Xake.Dotnet
 "res"        => resgen { resources (resourceset { prefix "App"; files !!"**/*.resx" }) }
 ```
 
-Script variables: `NETFX` (tool framework), `NETFX-TARGET` (default target framework), `FSCVER`, `CSC_SERVER`, `CSC_JOBS`/`FSC_JOBS` (max concurrent compilers).
+Script variables: `NETFX` (tool framework), `NETFX-TARGET` (default target framework), `FSCVER`, `CSC_SERVER`, `CSC_JOBS`/`FSC_JOBS` (max concurrent compilers; `throttle (resource, units)` in `csc { }`/`fsc { }` uses the script's own resource instead).
 
 Locks of project descriptions (`Xake.Hermetic.Dotnet`, [hermetic/lock.md](hermetic/lock.md#xake-generated-locks)):
 a phony rule per project x configuration in the script, run only by `xake update-locks`:

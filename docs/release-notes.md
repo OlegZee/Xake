@@ -17,6 +17,9 @@ The `Xake` package (engine and `Xake.Dotnet`). Xake.Hermetic.Dotnet has its own 
   around the process launch only, after every input is built, so it replaces a `withResource`
   around the compile rule. Not a dependency: changing it rebuilds nothing. See
   [csc-server.md](csc-server.md#limiting-concurrent-compiles-csc_jobs-fsc_jobs).
+- **`throttle (resource, units)`** in `csc { }` / `fsc { }` (`Throttle` in `CscSettingsType`,
+  `RunOptions`, `FscSettingsType`, `FscRunOptions`; default `None`): the compiler launch takes
+  the script's own resource, at the same place, in place of `CSC_JOBS` / `FSC_JOBS`.
 - **Breaking for record construction:** `ExecContext` gains `HeldResources`. Code built on 3.9
   that copies an `ExecContext` (`{ ctx with ... }`) has to be rebuilt; Xake.Hermetic.Dotnet
   0.4 (`[3.9.0.30, 3.10)`) does, and needs a release on 3.10.

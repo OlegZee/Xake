@@ -55,6 +55,22 @@ dotnet fsi build.fsx -- -- build -d CSC_JOBS:6
 XAKE_FSC_JOBS=2 dotnet fsi build.fsx -- -- build
 ```
 
+A script that wants its own budget -- one resource shared by csc, fsc and its other heavy
+commands, or sized from the machine -- names it per compilation instead: `throttle (resource,
+units)` in `csc { }` / `fsc { }`, or `Throttle = Some (resource, units)` in `RunOptions` /
+`FscRunOptions`. The launch then acquires that resource, at the same place (after every
+`needFiles`), and `CSC_JOBS`/`FSC_JOBS` are not read for that compilation. The launcher never
+`need`s while holding it; a script that also takes the same resource elsewhere must still not
+`need` inside that `withResource` ([resources.md](resources.md)).
+
+```fsharp
+let heavy = Resource.newResource "heavy" 4
+"(n:*).dll" ..> recipe {
+    let! n = getRuleMatch "n"
+    do! csc { src !!(n + ".cs"); throttle (heavy, 1) }
+}
+```
+
 ## The switches are parameters of the run, not of the compilation
 
 `/shared` and `/keepalive` never enter a lock. `CommandLineParser.TryParseClientArgs` strips

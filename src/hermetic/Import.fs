@@ -779,11 +779,11 @@ module Import =
           "EmbeddedResource", [ "OutputResource"; "WithCulture"; "Culture"; "LogicalName"; "ManifestResourceName"; "Link"; "DependentUpon"; "Type" ]
           "EditorConfigFiles", []
           // an application's (`App`): msbuild's copy-local files, its apphost template, its
-          // config file before binding redirects (else the final one), the related extensions
+          // config file before binding redirects and the project's own, the related extensions
           "ReferenceCopyLocalPaths", [ "DestinationSubDirectory"; "ReferenceSourceTarget"; "MSBuildSourceProjectFile"; "NuGetPackageId" ]
           "ResolvedAppHostPack", [ "Path"; "RuntimeIdentifier" ]
           "_XakeAppConfig", [ "TargetPath" ]
-          "AppConfigWithTargetPath", [ "TargetPath" ]
+          "_XakeOwnAppConfig", [ "TargetPath" ]
           "_XakeRelatedExtension", []
           // the project's own items msbuild copies to the output (`Content`)
           "_XakeCopyItem", [ "TargetPath"; "CopyToOutputDirectory" ] ]
@@ -796,7 +796,7 @@ module Import =
           "TargetFileName"; "Configuration"
           "HasRuntimeOutput"; "UseAppHost"; "RuntimeIdentifier"; "SelfContained"; "ProjectDepsFileName"; "ProjectRuntimeConfigFileName"
           "ProjectDepsFilePath"; "ProjectRuntimeConfigFilePath"; "AutoGenerateBindingRedirects"; "GenerateBindingRedirectsOutputType"
-          "IsTestProject"; "OutDir"
+          "_GenerateBindingRedirectsIntermediateAppConfig"; "IsTestProject"; "OutDir"
           // the sources of an application's recorded files: its `App.config`, `runtimeconfig.template.json`
           "AppConfig"; "UserRuntimeConfig" ]
 
@@ -827,9 +827,13 @@ module Import =
               // traversal points `ProjectDepsFilePath`/`ProjectRuntimeConfigFilePath` there)
               "  <Target Name=\"XakeAppFiles\" Condition=\"'$(HasRuntimeOutput)' == 'true'\" DependsOnTargets=\"GenerateBuildDependencyFile;GenerateBuildRuntimeConfigurationFiles\" />"
               // the config file as the SDK has it (`supportedRuntime` added) before
-              // `GenerateBindingRedirects`, whose redirects depend on what is built (S55)
+              // `GenerateBindingRedirects`: the fallback when msbuild suggests no redirect
               "  <Target Name=\"_XakeAppConfigBeforeRedirects\" AfterTargets=\"GenerateSupportedRuntime\">"
               "    <ItemGroup><_XakeAppConfig Include=\"@(AppConfigWithTargetPath)\" /></ItemGroup>"
+              "  </Target>"
+              // the project's own config file (`App.config`, `AppConfig`), as `PrepareForBuild` finds it
+              "  <Target Name=\"_XakeOwnAppConfigFound\" AfterTargets=\"PrepareForBuild\">"
+              "    <ItemGroup><_XakeOwnAppConfig Include=\"@(AppConfigWithTargetPath)\" /></ItemGroup>"
               "  </Target>"
               // the project's own copy-to-output items (`None`, `Content`, `EmbeddedResource`,
               // `Compile` with `CopyToOutputDirectory`), each with its `TargetPath`
@@ -1096,18 +1100,49 @@ module Import =
         |> String.concat "\n"
         |> fun result -> if result.Contains stubVersion then unknown "the stand-in version is left after its versions became tokens" else result
 
+    /// msbuild generates binding redirects for the project of `d` (`AutoGenerateBindingRedirects`
+    /// and `GenerateBindingRedirectsOutputType`: a .NET Framework application or test library, a
+    /// .NET one that asks for them).
+    let internal generatesRedirects (d: Dump) =
+        isTrue (prop d "AutoGenerateBindingRedirects") && isTrue (prop d "GenerateBindingRedirectsOutputType")
+
+    /// The projects of the app run (`record`): with runtime output, or with binding redirects.
+    let internal inAppRun (d: Dump) = isTrue (prop d "HasRuntimeOutput") || generatesRedirects d
+
+    /// The config file `GenerateBindingRedirects` writes for the project of `d` (in `projectDir`):
+    /// `<intermediate>/<TargetFileName>.config`.
+    let internal finishedConfig (projectDir: string) (d: Dump) =
+        match prop d "_GenerateBindingRedirectsIntermediateAppConfig" with
+        | "" -> (absoluteIn projectDir (prop d "IntermediateOutputPath")).TrimEnd '/' + "/" + prop d "TargetFileName" + ".config"
+        | path -> absoluteIn projectDir path
+
+    /// The text of a config file msbuild wrote for `project` (`framework`), recorded as `name`:
+    /// LF; one naming the stand-in version (a binding redirect to a referenced project's
+    /// stand-in, `stubAssembly`) fails the import, naming the project and the config.
+    let internal configText (project: string) (framework: string) (name: string) (path: string) =
+        let text = lf (File.ReadAllText path)
+        if text.Contains stubVersion then
+            failwithf "'%s' (%s): its config '%s' (%s) names the stand-in version %s of a referenced project (a binding redirect to a stand-in); the import stops"
+                project framework name path stubVersion
+        text
+
     /// <summary>
     /// The `App` of a design-time build, and the files it records beside the lock
     /// (`binaryDir/app/&lt;name&gt;`, with their bytes): for a project with runtime output
     /// (`HasRuntimeOutput`) always, for a library only when msbuild copies something into its
-    /// output (copy-local files, its own copy-to-output items), then without host and files:
+    /// output (copy-local files, its own copy-to-output items) or generates binding redirects for
+    /// it (a .NET Framework test library's `.dll.config`), then without host and with that
+    /// config file only:
     /// <list type="bullet">
     /// <item>the apphost (`UseAppHost`): the SDK's own without a `RuntimeIdentifier`, else the
     /// template msbuild resolved (`ResolvedAppHostPack`), hashed;</item>
     /// <item>the `runtimeconfig.json` and `deps.json` msbuild wrote into the intermediate folder
-    /// (`scratch`; LF, a project's versions as tokens, `depsTokens`) and the config file
-    /// before binding redirects (`_XakeAppConfig`, else `AppConfigWithTargetPath`), named as
-    /// msbuild names them in the output;</item>
+    /// (`scratch`; LF, a project's versions as tokens, `depsTokens`) and the config file: msbuild's
+    /// finished one with its binding redirects (`GenerateBindingRedirects` in the app run, against
+    /// the stand-ins), else the one before redirects (`_XakeAppConfig`: the SDK's
+    /// `supportedRuntime` added), else the project's own (`_XakeOwnAppConfig`, named where it
+    /// is); named as msbuild names them in the output. A config naming the stand-in version fails
+    /// the import;</item>
     /// <item>msbuild's copy-local files (`ReferenceCopyLocalPaths`, in its order): a referenced
     /// project's output as that project's output in the build's layout, unhashed; a file
     /// beside or below a referenced project's msbuild output (its pdb, a dependency, a
@@ -1162,7 +1197,24 @@ module Import =
             // msbuild copies in this order: a later item of one target path is the one left there
             |> List.rev |> List.distinctBy (fun c -> c.To.ToLowerInvariant ()) |> List.rev
         let runtime = isTrue (p "HasRuntimeOutput")
-        if not runtime && List.isEmpty copy && List.isEmpty content then None, [] else
+        let redirects = generatesRedirects d
+        // the config file: msbuild's finished one (the app run's `GenerateBindingRedirects`,
+        // whose output `record` deleted before that run), else the one before redirects (the
+        // SDK's `supportedRuntime` added), else the project's own -- one msbuild wrote is
+        // recorded, the project's own (copied as it is) is named where it is, by its hash
+        let config, ownConfig =
+            let finished = finishedConfig ctx.ProjectDir d
+            let candidates =
+                [ if runtime || redirects then yield finished, p "TargetFileName" + ".config"
+                  for id, m in items d "_XakeAppConfig" @ items d "_XakeOwnAppConfig" do
+                    yield absoluteIn ctx.ProjectDir id, (match meta "TargetPath" m with "" -> p "TargetFileName" + ".config" | t -> Path.GetFileName t) ]
+            match candidates |> List.tryFind (fst >> File.Exists) with
+            | None -> None, None
+            | Some _ when not (runtime || redirects) -> None, None
+            | Some (path, name) when path.StartsWith (scratch, comparison) ->
+                Some (name, Text.Encoding.UTF8.GetBytes (configText ctx.ProjectFile (p "TargetFramework") name path)), None
+            | Some (path, name) -> None, Some ({ Name = name; Path = path; Sha256 = FileHash.sha256 path } : Lock.AppFile)
+        if not runtime && List.isEmpty copy && List.isEmpty content && Option.isNone config && Option.isNone ownConfig then None, [] else
         let host =
             if not runtime || not (isTrue (p "UseAppHost")) then None
             elif p "RuntimeIdentifier" = "" then Some Lock.SdkHost
@@ -1181,22 +1233,10 @@ module Import =
                 Some (name, Text.Encoding.UTF8.GetBytes text)
             else None
         let named (property: string) (fallback: string) = match p property with "" -> fallback | n -> n
-        // the config file: one msbuild wrote (the SDK's `supportedRuntime` added) is recorded; the
-        // project's own (copied as it is for .NET) is named where it is, by its hash
-        let config, ownConfig =
-            match items d "_XakeAppConfig", items d "AppConfigWithTargetPath" with
-            | (id, m) :: _, _ | [], (id, m) :: _ ->
-                let path = absoluteIn ctx.ProjectDir id
-                let name = match meta "TargetPath" m with "" -> p "TargetFileName" + ".config" | t -> Path.GetFileName t
-                if not (File.Exists path) then None, None
-                elif path.StartsWith (scratch, comparison) then Some (name, Text.Encoding.UTF8.GetBytes (lf (File.ReadAllText path))), None
-                else None, Some ({ Name = name; Path = path; Sha256 = FileHash.sha256 path } : Lock.AppFile)
-            | [], [] -> None, None
-        let config, ownConfig = if runtime then config, ownConfig else None, None
         let files =
-            if not runtime then [] else
-            [ generated appRuntimeConfig (named "ProjectRuntimeConfigFileName" (assemblyName + ".runtimeconfig.json")) id
-              generated appDeps (named "ProjectDepsFileName" (assemblyName + ".deps.json")) (depsTokens (scratch + appDeps))
+            [ if runtime then
+                  generated appRuntimeConfig (named "ProjectRuntimeConfigFileName" (assemblyName + ".runtimeconfig.json")) id
+                  generated appDeps (named "ProjectDepsFileName" (assemblyName + ".deps.json")) (depsTokens (scratch + appDeps))
               config ]
             |> List.choose id
         let recorded = [ for name, bytes in files -> binaryDir + "app/" + name, bytes ]
@@ -1700,23 +1740,28 @@ module Import =
                                         | _ -> d
                                     (slash (prop d "MSBuildProjectFullPath"), prop d "TargetFramework"), d)
                                 |> Map.ofArray
-                            // the applications' runtimeconfig.json and deps.json: a second run over them,
-                            // every output in a folder of its own (`OutDir`) where each referenced
-                            // project's output is a stand-in (`stubAssembly`), whose versions the
-                            // recorded deps.json names as tokens (`depsTokens`)
+                            // the applications' runtimeconfig.json and deps.json and the config files
+                            // with binding redirects (applications and .NET Framework test libraries):
+                            // a second run over them, every output in a folder of its own (`OutDir`)
+                            // where each referenced project's output is a stand-in (`stubAssembly`),
+                            // whose versions the recorded deps.json names as tokens (`depsTokens`);
+                            // the redirects are then msbuild's over the packages, independent of
+                            // what is built
                             let appRuns =
                                 [ for pf, ev, f in runs do
                                     match byRun |> Map.tryFind (slash pf, f) with
-                                    | Some d when isTrue (prop d "HasRuntimeOutput") -> yield pf, ev, f, d
+                                    | Some d when inAppRun d -> yield pf, ev, f, d
                                     | _ -> () ]
                             if not (List.isEmpty appRuns) then
                                 let phase = DateTime.UtcNow
                                 let outDir = slash (temp </> ("app-out-" + cfg)) + "/"
                                 Directory.CreateDirectory outDir |> ignore
                                 for pf, _, _, d in appRuns do
-                                    let scratch = absoluteIn (slash (Path.GetDirectoryName pf)) (prop d "IntermediateOutputPath")
-                                    for f in [ appDeps; appRuntimeConfig ] do
-                                        let path = scratch.TrimEnd '/' + "/" + f
+                                    let projectDir = slash (Path.GetDirectoryName pf)
+                                    let scratch = absoluteIn projectDir (prop d "IntermediateOutputPath")
+                                    // what the first run or an earlier import left: afterwards each
+                                    // exists only when the app run wrote it
+                                    for path in [ scratch.TrimEnd '/' + "/" + appDeps; scratch.TrimEnd '/' + "/" + appRuntimeConfig; finishedConfig projectDir d ] do
                                         if File.Exists path then File.Delete path
                                     for id, m in items d "ReferencePath" do
                                         if meta "ReferenceSourceTarget" m = "ProjectReference" || meta "MSBuildSourceProjectFile" m <> "" then
@@ -1736,7 +1781,7 @@ module Import =
                                 do! msbuild environment
                                         ([ appTraversal; "-nologo"; "-verbosity:quiet"; "-m"; "-nodeReuse:false"; "-p:OutDir=" + outDir ]
                                          @ recordSwitches cfg) appTraversal
-                                do! trace Info "import: the runtime files of %d application build(s) for %s in %.1f s" appRuns.Length cfg (elapsed phase)
+                                do! trace Info "import: the runtime and config files of %d application build(s) for %s in %.1f s" appRuns.Length cfg (elapsed phase)
                             return
                                 [ for pf, _, f in runs ->
                                     match byRun |> Map.tryFind (slash pf, f) with

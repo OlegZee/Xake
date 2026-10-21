@@ -102,6 +102,21 @@ type ``App recording``() =
         Assert.That(Import.depsTokens "x.deps.json" "{ \"a\": \"1.2.3\" }", Is.EqualTo "{ \"a\": \"1.2.3\" }")
 
     [<Test>]
+    member _.``a stand-in version in a recorded config fails the import, naming the project and the config``() =
+        let dir = scratch ()
+        try
+            let path = Path.Combine (dir, "app.exe.config")
+            File.WriteAllText (path, "<configuration>\r\n  <bindingRedirect oldVersion=\"0.0.0.0-1.0.0.0\" newVersion=\"1.0.0.0\" />\r\n</configuration>")
+            Assert.That(Import.configText "/r/app/app.csproj" "net472" "app.exe.config" path,
+                        Is.EqualTo "<configuration>\n  <bindingRedirect oldVersion=\"0.0.0.0-1.0.0.0\" newVersion=\"1.0.0.0\" />\n</configuration>")
+            File.WriteAllText (path, sprintf "<configuration><bindingRedirect oldVersion=\"0.0.0.0-%s\" newVersion=\"%s\" /></configuration>" marker marker)
+            let e = Assert.Catch(fun () -> Import.configText "/r/app/app.csproj" "net472" "app.exe.config" path |> ignore)
+            Assert.That(e.Message, Does.Contain "'/r/app/app.csproj' (net472)")
+            Assert.That(e.Message, Does.Contain "'app.exe.config'")
+            Assert.That(e.Message, Does.Contain marker)
+        finally Directory.Delete (dir, true)
+
+    [<Test>]
     member _.``the apphost written without the HostModel has the GUI subsystem of a WinExe on every host``() =
         let dir = scratch ()
         try

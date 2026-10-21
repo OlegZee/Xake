@@ -97,6 +97,16 @@ do! rm {
 }
 ```
 
+`dir`, `file` and `files` may repeat and combine in one `rm`; targets apply in order:
+
+```fsharp
+do! rm {
+  dir "out"
+  dir "obj"
+  file "*.tmp"
+}
+```
+
 ## .NET tasks
 
 The `csc`, `fsc`, `msbuild`, `resgen` and `resourceset` builders live in `Xake.Dotnet`, which

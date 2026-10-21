@@ -64,6 +64,18 @@ do! cp {
 }
 ```
 
+`dir`, `file` and `files` may repeat and combine in one `cp`; sources copy in order (a `file`
+source is always flattened):
+
+```fsharp
+do! cp {
+  dir "bin"
+  dir "content"
+  file "README.md"
+  todir "deploy"
+}
+```
+
 Other copy helpers:
 
 ```fsharp
@@ -94,6 +106,16 @@ do! rm {
     includes "**/*.cache"
   })
   verbose
+}
+```
+
+`dir`, `file` and `files` may repeat and combine in one `rm`; targets apply in order:
+
+```fsharp
+do! rm {
+  dir "out"
+  dir "obj"
+  file "*.tmp"
 }
 ```
 

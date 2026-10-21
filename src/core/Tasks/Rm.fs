@@ -6,26 +6,28 @@ open System.IO
 [<AutoOpen>]
 module RmImpl =
 
+    /// One thing to delete: a directory mask, a file mask or a fileset.
+    type RmTarget =
+        | Dir of string
+        | File of string
+        | Files of Fileset
+
     /// Configuration for the Rm task: specifies files or directories to delete.
+    /// Targets are applied in declaration order.
     type RmArgs = {
-        dir: string
-        file: string
-        files: Fileset
+        targets: RmTarget list
         verbose: bool
     } with static member Default = {
-            dir = null
-            file = null
-            files = Fileset.Empty
+            targets = []
             verbose = false
         }
 
-    /// Deletes files or directories matching the patterns specified in RmArgs.
+    /// Deletes files or directories matching the targets specified in RmArgs, in order.
     let Rm (args: RmArgs) =
 
         recipe {
             do! trace Level.Debug "Rm: args=%A" args
 
-            // match args
             let! ctx = getCtx()
             let projectRoot = ctx.Options.ProjectRoot
 
@@ -34,35 +36,42 @@ module RmImpl =
                     ctx.Logger.Log Level.Message "[rm] deleting '%A'" file
                 ctx.Logger.Log Level.Debug "deleting '%A'" file
 
-            match args with
-            | { files = f } when f <> Fileset.Empty ->
-                ctx.Logger.Log Level.Message "[rm] %A" f
-                let (Filelist files) = toFileList projectRoot f
-                files |> List.map (fun f -> f.FullName)
-                |> List.iter (fun file ->
-                    do reportDeleting file
-                    do File.Delete file
-                )
-            
-            | { file = fileMask } when fileMask <> null ->
-                ctx.Logger.Log Level.Message "[rm] %A" fileMask
-                fileMask |> Path.parse |> Fileset.listByMask projectRoot
-                |> Seq.filter File.Exists
-                // TODO !!fileMask |> (toFileList projectRoot)
-                |> Seq.iter (fun file ->
-                    do reportDeleting file
-                    do File.Delete file
-                )
+            // full paths already handled by an earlier target
+            let seen = System.Collections.Generic.HashSet<string>()
+            let firstTime (path: string) = seen.Add (Path.GetFullPath path)
 
-            | { dir = dirMask } when dirMask <> null ->
-                dirMask |> Path.parseDir |> Fileset.listByMask projectRoot
-                |> Seq.filter Directory.Exists
-                |> Seq.iter (fun dir ->
+            // an earlier target may have removed the path already: check right before deleting
+            let deleteFile file =
+                if firstTime file && System.IO.File.Exists file then
+                    do reportDeleting file
+                    do System.IO.File.Delete file
+
+            let deleteDir dir =
+                if firstTime dir && Directory.Exists dir then
                     do reportDeleting dir
                     do Directory.Delete (dir, true)
-                )
 
-            | _ -> ()
+            let apply target =
+                match target with
+                | Files f ->
+                    ctx.Logger.Log Level.Message "[rm] %A" f
+                    let (Filelist files) = toFileList projectRoot f
+                    files |> List.iter (fun f -> deleteFile f.FullName)
+
+                | File fileMask ->
+                    ctx.Logger.Log Level.Message "[rm] %A" fileMask
+                    fileMask |> Path.parse |> Fileset.listByMask projectRoot
+                    |> List.ofSeq
+                    // TODO !!fileMask |> (toFileList projectRoot)
+                    |> List.iter deleteFile
+
+                | Dir dirMask ->
+                    ctx.Logger.Log Level.Message "[rm] %A" dirMask
+                    dirMask |> Path.parseDir |> Fileset.listByMask projectRoot
+                    |> List.ofSeq
+                    |> List.iter deleteDir
+
+            do args.targets |> List.iter apply
 
             do! trace Level.Info "[rm] Completed"
 
@@ -70,12 +79,15 @@ module RmImpl =
         }
 
     /// Computation expression builder for the rm/del task.
+    /// `file`, `dir` and `files` may repeat and combine; each adds a target.
     type RmArgsBuilder() =
 
-        [<CustomOperation("file")>]    member __.File(a :RmArgs, value) =   {a with file = value }
-        [<CustomOperation("dir")>]     member __.Dir(a :RmArgs, value) =    {a with dir = value}
-        [<CustomOperation("files")>]   member __.Fileset(a :RmArgs, value) =  {a with files = value}
-        [<CustomOperation("verbose")>] member __.Verbose(a:RmArgs) =        {a with verbose = true}
+        let add (a: RmArgs) target = { a with targets = a.targets @ [target] }
+
+        [<CustomOperation("file")>]    member __.File(a :RmArgs, value) =    add a (File value)
+        [<CustomOperation("dir")>]     member __.Dir(a :RmArgs, value) =     add a (Dir value)
+        [<CustomOperation("files")>]   member __.Fileset(a :RmArgs, value) = add a (Files value)
+        [<CustomOperation("verbose")>] member __.Verbose(a:RmArgs) =         {a with verbose = true}
 
         member __.Yield(()) = RmArgs.Default
         member __.Zero() = RmArgs.Default

@@ -520,7 +520,9 @@ type ``Import record concurrent brands``() =
                                  let! _ = Import.record (options brand) [ "b/b.csproj" ]
                                  () }
         let brands = [ "Acme"; "Globex"; "Third" ]
-        RecordKit.run { x.TestOptions with Threads = 4 } "import-brands" (brands |> List.map importOf) (brands |> List.map (sprintf "import-%s"))
+        // one `need` of all: the targets of a command line run one after the other
+        let all = "import-all" => recipe { do! need (brands |> List.map (sprintf "import-%s")) }
+        RecordKit.run { x.TestOptions with Threads = 4 } "import-brands" (all :: (brands |> List.map importOf)) [ "import-all" ]
         // nothing in msbuild's own intermediate folder, which an IDE or `dotnet build` writes too
         Assert.That(File.Exists "b/obj/Release/net8.0/b.AssemblyInfo.cs", Is.False)
         Assert.That(Directory.GetDirectories ("b/obj/xake-record"), Has.Length.EqualTo brands.Length)
@@ -529,6 +531,46 @@ type ``Import record concurrent brands``() =
             Assert.That(text, Does.Contain (sprintf "AssemblyTitleAttribute(\\\"Brand-%s\\\")" brand), brand)
             for other in brands do
                 if other <> brand then Assert.That(text, Does.Not.Contain ("Brand-" + other), brand)
+
+    /// The restore output too (`project.assets.json`, `nuget.g.props`/`.targets`): each import
+    /// restores into its own `obj/xake-record/<key>/` (`MSBuildProjectExtensionsPath`), so a
+    /// brand's lock never holds the packages of a brand restored at the same time.
+    [<Test>]
+    member x.``two brands imported at once record their own packages``() =
+        let packages =
+            "<PackageReference Include=\"Newtonsoft.Json\" Version=\"13.0.3\" Condition=\"'$(Brand)' == 'Acme'\" />"
+            + "<PackageReference Include=\"NUnit\" Version=\"3.13.3\" Condition=\"'$(Brand)' == 'Globex'\" />"
+        RecordKit.write [ "lib"; "app"; "out"; "locks"; "obj"; "desc" ]
+            [ "lib/lib.csproj", RecordKit.sdkProject "<TargetFramework>net8.0</TargetFramework>" packages
+              "lib/L.cs", "namespace L { public class C { } }\n"
+              "app/app.csproj", RecordKit.sdkProject "<TargetFramework>net8.0</TargetFramework>" "<ProjectReference Include=\"../lib/lib.csproj\" />"
+              "app/A.cs", "namespace A { public class C { } }\n" ]
+        let options brand =
+            { RecordKit.recordDefault with
+                Properties = [ "Brand", brand ]
+                DescriptionOf = (fun pf -> sprintf "desc/%s/%s/xake.project.json" brand (Path.GetFileNameWithoutExtension pf))
+                LockOf = (fun name cfg -> sprintf "locks/%s/%s/%s.json" brand name cfg) }
+        let importOf brand = sprintf "import-%s" brand => recipe {
+                                 do! alwaysRerun ()
+                                 let! _ = Import.record (options brand) [ "app/app.csproj"; "lib/lib.csproj" ]
+                                 () }
+        let brands = [ "Acme"; "Globex" ]
+        // its own (NUnit brings NETStandard.Library for net8.0) and the other brand's packages
+        let own = dict [ "Acme", [ "\"Newtonsoft.Json\"" ]; "Globex", [ "\"NUnit\""; "\"NETStandard.Library\"" ] ]
+        let all = "import-all" => recipe { do! need (brands |> List.map (sprintf "import-%s")) }
+        for round in 1 .. 3 do
+            RecordKit.run { x.TestOptions with Threads = 4 } (sprintf "import-packages-%d" round) (all :: (brands |> List.map importOf)) [ "import-all" ]
+            for brand in brands do
+                for name in [ "lib"; "app" ] do
+                    let text = File.ReadAllText (sprintf "locks/%s/%s/Release.json" brand name)
+                    let what = sprintf "round %d, %s, %s" round brand name
+                    for p in own.[brand] do Assert.That(text, Does.Contain p, what)
+                    for other in brands do
+                        if other <> brand then
+                            for p in own.[other] do Assert.That(text, Does.Not.Contain p, what)
+        // msbuild's own restore output is not written: an IDE or `dotnet build` keeps its own
+        Assert.That(File.Exists "lib/obj/project.assets.json", Is.False)
+        Assert.That(Directory.GetFiles ("lib/obj/xake-record", "project.assets.json", SearchOption.AllDirectories), Has.Length.EqualTo brands.Length)
 
 
 /// `Import.record` against what a repository sets for itself: its own

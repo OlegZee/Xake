@@ -33,6 +33,7 @@
     <Compile Include="BuildFromLockTests.fs" />
     <Compile Include="ImportFidelityTests.fs" />
     <Compile Include="RecordTests.fs" />
+    <Compile Include="SdkFreeImportTests.fs" />
     <Compile Include="AppTests.fs" />
     <Compile Include="RunFolderTests.fs" />
   </ItemGroup>

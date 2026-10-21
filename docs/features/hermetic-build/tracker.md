@@ -231,3 +231,6 @@ to that rule rather than the deliverable. Items are ordered by what they unblock
 - [x] S55 implementation: app run over every project with redirects, clean scratch config, record final file, guard on stub version, tests; 0.5.1 (re-import to record the redirects)
 - [ ] owner: Q1-Q6 of `binding-redirects.md`; whether csc analyzers may be dropped for a non-validating build (the only lever toward <= 60 s)
 - [ ] core trap (found 2026-10-19 by a consumer `clean` target): `rm { dir a; dir b }` keeps only the last `dir` (`RmArgs.dir` is one string; `files` > `file` > `dir`, the others are silently ignored) — document in `docs/`, or make `dir` accumulate / fail on a second one
+
+## After #81 (obj/xake-record/<key>/ holds the restore output)
+- [x] owner 2026-10-21, decided the same day: stale `obj/xake-record/<key>/` folders are not worth handling — a consumer that cares cleans the whole `obj/` (msbuild's own leftovers live there too); no import-side cleanup, no `Import.clean`

@@ -850,6 +850,35 @@ module Import =
               "</Project>"
               "" ]
 
+    /// <summary>
+    /// The props file `record` hands every project for its restore, its evaluations and its
+    /// design-time builds (`CustomAfterDirectoryBuildProps`, imported by `Microsoft.Common.props`
+    /// after `Directory.Build.props` and before `MSBuildProjectExtensionsPath` is used): the
+    /// restore output -- `project.assets.json`, `nuget.g.props`/`.targets`,
+    /// `project.nuget.cache` -- goes to `&lt;MSBuildProjectExtensionsPath&gt;xake-record/&lt;key&gt;/`
+    /// (`$(XakeRecordKey)`; `obj/xake-record/&lt;key&gt;/` by default), so two imports with
+    /// different properties at once (two brands) never read each other's restore, nor an IDE's or
+    /// `dotnet build`'s. A global `MSBuildProjectExtensionsPath` would not do: msbuild does not
+    /// make a global property absolute, and a relative import path is the importing file's. What
+    /// the global property hides is imported from here: the script's own value
+    /// (`XakeChainedAfterDirectoryBuildProps`) and the .NET SDK's (`UseArtifactsOutputPath.props`,
+    /// which places `BaseIntermediateOutputPath` for `UseArtifactsOutput`).
+    /// </summary>
+    let internal restoreProps () =
+        String.concat "\n"
+            [ "<Project>"
+              "  <!-- written by Xake.Hermetic.Dotnet's Import.record for one import; deleted after it -->"
+              "  <Import Project=\"$(XakeChainedAfterDirectoryBuildProps)\" Condition=\"'$(XakeChainedAfterDirectoryBuildProps)' != ''\" />"
+              "  <Import Project=\"$(MSBuildSDKsPath)/Microsoft.NET.Sdk/Sdk/UseArtifactsOutputPath.props\" Condition=\"'$(UsingMicrosoftNETSdk)' == 'true' and Exists('$(MSBuildSDKsPath)/Microsoft.NET.Sdk/Sdk/UseArtifactsOutputPath.props')\" />"
+              "  <PropertyGroup>"
+              "    <_XakeProjectExtensionsBase>$(MSBuildProjectExtensionsPath)</_XakeProjectExtensionsBase>"
+              "    <_XakeProjectExtensionsBase Condition=\"'$(_XakeProjectExtensionsBase)' == ''\">$(BaseIntermediateOutputPath)</_XakeProjectExtensionsBase>"
+              "    <_XakeProjectExtensionsBase Condition=\"'$(_XakeProjectExtensionsBase)' == ''\">obj/</_XakeProjectExtensionsBase>"
+              "    <MSBuildProjectExtensionsPath>$([MSBuild]::EnsureTrailingSlash('$(_XakeProjectExtensionsBase)'))xake-record/$(XakeRecordKey)/</MSBuildProjectExtensionsPath>"
+              "  </PropertyGroup>"
+              "</Project>"
+              "" ]
+
     /// A file `XakeRecordDump` wrote, as a `Dump`.
     let internal readRecordDump (file: string) : Dump =
         let metadataOf = Map.ofList designTimeItems
@@ -1571,7 +1600,9 @@ module Import =
     /// one per framework -- record msbuild's resolved compile inputs:
     /// <list type="number">
     /// <item>a restore of all projects under the first configuration (a generated solution
-    /// declaring every configuration on the script's `Platform`, `-t:Restore`), then the
+    /// declaring every configuration on the script's `Platform`, `-t:Restore`) into a folder of
+    /// its own per project (`obj/xake-record/&lt;key&gt;/`, `restoreProps`: the assets file and
+    /// `nuget.g.props`/`.targets`, which every later msbuild run of the import reads), then the
     /// evaluations for the descriptions, concurrently;</item>
     /// <item>per configuration, one after the other: its restore (but the first's), then one
     /// msbuild process running every design-time build of that configuration (a traversal over
@@ -1607,23 +1638,38 @@ module Import =
             let environment = if packageSource = DotNetFwk.ScriptVariable then [ "NUGET_PACKAGES", packageRoot ] else []
             let! roots = Roots.currentWith options.Roots
             let globals = [ "NuGetAudit", "false" ] @ options.Properties
-            let switches cfg = [ for k, v in ("Configuration", cfg) :: globals -> sprintf "-p:%s=%s" k v ]
             let primary = List.head options.Configurations
             let started = DateTime.UtcNow
             let temp = root </> "obj" </> "xake" </> "import" </> Guid.NewGuid().ToString "N"
             Directory.CreateDirectory temp |> ignore
             try
                 let projectFiles = projects |> List.map full |> List.distinct
-                // the design-time builds write what they generate (AssemblyInfo, the compiled
-                // resources) into an intermediate folder of their own, keyed by the configuration
-                // and the properties: two imports with different properties at once (two brands)
-                // never read each other's files, nor an IDE's or `dotnet build`'s
+                // the restore and the design-time builds write what they generate (the assets
+                // file and nuget.g.props/.targets; AssemblyInfo, the compiled resources) into
+                // folders of their own, keyed by the configuration and the properties: two
+                // imports with different properties at once (two brands) never read each other's
+                // files, nor an IDE's or `dotnet build`'s
                 let key cfg =
                     use sha = Security.Cryptography.SHA256.Create ()
                     let text =
                         ("Configuration", cfg) :: globals |> List.map (fun (k, v) -> k.ToLowerInvariant () + "=" + v)
                         |> List.sort |> String.concat "\n"
                     sha.ComputeHash (Text.Encoding.UTF8.GetBytes text) |> Array.take 6 |> Array.map (sprintf "%02x") |> String.concat ""
+                // the restore output under `obj/xake-record/<key>/` (`restoreProps`), for every
+                // msbuild run of the import; the script's own `CustomAfterDirectoryBuildProps`
+                // is imported from it
+                let propsFile = temp </> "xake-record.props"
+                File.WriteAllText (propsFile, restoreProps ())
+                let isOwn (names: string list) (k: string) = names |> List.exists (fun n -> k.Equals (n, StringComparison.OrdinalIgnoreCase))
+                let extensions cfg =
+                    [ yield "-p:XakeRecordKey=" + key cfg
+                      yield "-p:CustomAfterDirectoryBuildProps=" + slash propsFile
+                      for k, v in globals do
+                          if isOwn [ "CustomAfterDirectoryBuildProps" ] k && v <> "" then yield "-p:XakeChainedAfterDirectoryBuildProps=" + v ]
+                let switches cfg =
+                    [ for k, v in ("Configuration", cfg) :: globals do
+                        if not (isOwn [ "CustomAfterDirectoryBuildProps" ] k) then yield sprintf "-p:%s=%s" k v ]
+                    @ extensions cfg
                 let runProperties (key: string) (ev: Evaluated) (framework: string) =
                     let escape (v: string) = v.Replace("%", "%25").Replace(";", "%3B")
                     let projectDir = slash (prop ev.Outer "MSBuildProjectDirectory")
@@ -1670,7 +1716,9 @@ module Import =
                             let projectTemp = temp </> string index
                             Directory.CreateDirectory projectTemp |> ignore
                             let! ev = evaluate environment pf (switches primary) projectTemp
-                            return ev
+                            // the import's own props file is no input of the project
+                            let own = (slash temp).TrimEnd '/' + "/"
+                            return { ev with Imports = ev.Imports |> List.filter (fun i -> not ((slash i).StartsWith (own, comparison))) }
                         })
                     |> concurrently
                 do! trace Info "import: %d project evaluation(s) in %.1f s" projectFiles.Length (elapsed phase)
@@ -1693,8 +1741,9 @@ module Import =
                 File.WriteAllText (targetsFile, dumpTargets ())
                 let recordSwitches cfg =
                     [ for k, v in ("Configuration", cfg) :: globals do
-                        if not (k.Equals ("CustomAfterMicrosoftCommonTargets", StringComparison.OrdinalIgnoreCase)) then
+                        if not (isOwn [ "CustomAfterMicrosoftCommonTargets"; "CustomAfterDirectoryBuildProps" ] k) then
                             yield sprintf "-p:%s=%s" k v ]
+                    @ extensions cfg
                     @ [ "-p:CustomAfterMicrosoftCommonTargets=" + slash targetsFile
                         "-p:ProvideCommandLineArgs=true"; "-p:SkipCompilerExecution=true"; "-p:BuildProjectReferences=false"
                         // CoreCompile lists this among its outputs: a file that never exists keeps it
@@ -1702,9 +1751,9 @@ module Import =
                         "-p:NonExistentFile=__NonExistentSubDir__/__NonExistentFile__" ]
                 let runs = [ for pf, ev in List.zip projectFiles evaluations do for f, _ in ev.Inner -> pf, ev, f ]
                 let phase = DateTime.UtcNow
-                // one configuration after the other: its restore (the assets file is the project's,
-                // not the configuration's, and a package may depend on the configuration), its
-                // design-time builds, and a copy of each assets file they read
+                // one configuration after the other: its restore (a package may depend on the
+                // configuration; each restores into its own key's folder), its design-time builds,
+                // and a copy of each assets file they read
                 let! dumps =
                     options.Configurations |> List.map (fun cfg ->
                         recipe {
@@ -1730,7 +1779,8 @@ module Import =
                             let byRun =
                                 Directory.GetFiles (dumpRoot, "*.txt") |> Array.map readRecordDump
                                 |> Array.mapi (fun i d ->
-                                    // the restore of the next configuration rewrites the assets file
+                                    // a copy, read later: another import with the same properties
+                                    // restores into the same folder
                                     let d =
                                         match prop d "ProjectAssetsFile" with
                                         | assets when assets <> "" && File.Exists assets ->

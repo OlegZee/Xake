@@ -1,6 +1,23 @@
 # Xake.Hermetic.Dotnet
 
-## 0.5.1 (next release)
+## 0.5.2 (next release)
+
+Concurrent imports of one project tree with different properties (two brands) no longer mix
+their restores. No API and no lock format change; a re-import writes the same locks.
+
+- `Import.record` restores into a folder of its own per project and key, as it already did for
+  the design-time builds: `MSBuildProjectExtensionsPath` is `<obj>/xake-record/<key>/` (the key
+  hashes the configuration and the properties) for the restore, the evaluations and the
+  design-time builds, so `project.assets.json`, `nuget.g.props`/`.targets` and
+  `project.nuget.cache` are the import's own. Until now the restore wrote the project's shared
+  `obj/`: with `import::a` and `import::b` in one run, a brand's lock could hold the other brand's
+  packages (and its build fail with CS0012), which `check` cannot see. The project's own
+  `obj/project.assets.json` (an IDE's, `dotnet build`'s) is no longer written by the import.
+- The property is set by a props file the import hands every project
+  (`CustomAfterDirectoryBuildProps`), which imports the script's own value of that property and
+  the .NET SDK's (`UseArtifactsOutput`) in turn ([lock.md](lock.md#what-the-import-does)).
+
+## 0.5.1
 
 Binding redirects recorded at import (S55): **re-import to record the redirects.** No API and no
 lock format change (format 2); a lock written by 0.5.0 builds as before, without redirects.

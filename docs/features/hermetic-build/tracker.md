@@ -230,7 +230,7 @@ to that rule rather than the deliverable. Items are ordered by what they unblock
 - [x] `binding-redirects.md`: design note for recording msbuild's binding redirects at import (S55), branch `pr/binding-redirects`
 - [x] S55 implementation: app run over every project with redirects, clean scratch config, record final file, guard on stub version, tests; 0.5.1 (re-import to record the redirects)
 - [ ] owner: Q1-Q6 of `binding-redirects.md`; whether csc analyzers may be dropped for a non-validating build (the only lever toward <= 60 s)
-- [x] core trap (found 2026-10-19 by a consumer `clean` target): `rm { dir a; dir b }` kept only the last `dir`; `rm`/`cp` now take many `dir`/`file`/`files` targets, applied in order — `pr/rm-multi-targets`, PR #35
+- [x] core trap (found 2026-10-19 by a consumer `clean` target): `rm { dir a; dir b }` kept only the last `dir`; `rm`/`cp` now take many `dir`/`file`/`files` targets, applied in order — `pr/rm-multi-targets`, PR #82
 
 ## SDK-free locks (agenda 2026-10-21, `sdk-free-locks.md`)
 - [ ] 1 recorded entries get the `dotnet-sdk` prerequisite only when they name a path under `sdk/<v>/` (as composed entries do)

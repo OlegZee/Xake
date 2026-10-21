@@ -98,7 +98,7 @@
         }
       },
       "Dependencies": {
-        "Compiler": { "Tool": "fsc", "Path": "$(DotnetRoot)/sdk/10.0.401/FSharp/fsc.dll", "Sha256": "", "Version": "15.2.401-servicing.26423.113" },
+        "Compiler": { "Tool": "fsc", "Path": "$(DotnetRoot)/sdk/10.0.402/FSharp/fsc.dll", "Sha256": "", "Version": "15.2.402-servicing.26505.111" },
         "References": [
           { "Path": "$(NuGetPackageRoot)/fsharp.core/8.0.100/lib/netstandard2.0/FSharp.Core.dll", "Sha256": "81695584595285ec8f5614a0f0a864f2c559e0b69f64a555a23a7a3b2b6faa08" },
           { "Path": "$(NuGetPackageRoot)/system.valuetuple/4.6.2/lib/net462/System.ValueTuple.dll", "Sha256": "400e432af60a6a2b3eedec5908be7e7ae0d063ecf0052595f7cd6cffb7e4e98e" },
@@ -215,7 +215,7 @@
         }
       },
       "Dependencies": {
-        "Compiler": { "Tool": "fsc", "Path": "$(DotnetRoot)/sdk/10.0.401/FSharp/fsc.dll", "Sha256": "", "Version": "15.2.401-servicing.26423.113" },
+        "Compiler": { "Tool": "fsc", "Path": "$(DotnetRoot)/sdk/10.0.402/FSharp/fsc.dll", "Sha256": "", "Version": "15.2.402-servicing.26505.111" },
         "References": [
           { "Path": "$(NuGetPackageRoot)/fsharp.core/8.0.100/lib/netstandard2.0/FSharp.Core.dll", "Sha256": "81695584595285ec8f5614a0f0a864f2c559e0b69f64a555a23a7a3b2b6faa08" },
           { "Path": "$(NuGetPackageRoot)/netstandard.library/2.0.3/build/netstandard2.0/ref/netstandard.dll", "Sha256": "1799854d01a89d141fecc4c4548b01e51fa57118c9b18eac66a752f3bbe98c02" }

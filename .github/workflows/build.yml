@@ -57,7 +57,7 @@ jobs:
     - name: Setup .NET
       uses: actions/setup-dotnet@v6
       with:
-        dotnet-version: '10.0.401'
+        dotnet-version: '10.0.402'
     - name: Build from the committed locks
       run: dotnet fsi build.fsc.fsx -- -- build check -d NUGET_FETCH=on
     - name: Upload build log

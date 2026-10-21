@@ -1,6 +1,22 @@
 # SDK-free locks: the compiler and the analyzers as packages (agenda, 2026-10-21)
 
-Status: planned, not started. Owner's decision of 2026-10-21: the way out of the SDK drift is to pin
+Status: Xake side implemented in PR 83 (Xake.Hermetic.Dotnet 0.6.0). Per step:
+1. done: `Lock.withRecordedPrerequisites` / `recordedSdkVersions`, applied in `Import.record`
+   (`entryOf`) and `Lock.rehash`; the replay's probe checks the `$(DotnetRoot)` the lock is read
+   against (`Lock.unmetPrerequisitesAt`). Tests: `RecordTests.fs` (pure), `SdkFreeImportTests.fs`.
+2. no code needed (`Identity.toPath` already falls back to the package, `Restore.ensure` fetches
+   it); tested with a net6.0 project. Finding: an installed pack is not byte-identical to the
+   nuget.org package (signed; facades and source generators are other builds: 8.0.32, 65 of 234
+   files differ beyond the signatures), so a lock recorded from `packs/` still needs that pack
+   installed. Open: record the package's copy at import (owner's decision).
+3. done: a net472 + netstandard2.0 fixture on the toolset compiler and package analyzers, no
+   `sdk:`, no prerequisite, byte-equal to `dotnet build` (DebugType none). Caveats: a project
+   setting `EnableNETAnalyzers=true` in its body gets the SDK's analyzers too; the toolset
+   package 5.9.0 is another build than SDK 10.0.402's Roslyn (5.9.0-1.26357.3 vs
+   5.9.0-1.26505.111).
+4. a note in lock.md (Prerequisites).
+
+Owner's decision of 2026-10-21: the way out of the SDK drift is to pin
 the compiler and the analyzers (the "rules") as packages, so a lock names nothing under
 `$(DotnetRoot)/sdk/<v>/` and carries no `dotnet-sdk` prerequisite. A lower bound on the SDK
 version was considered and set aside as unlikely to hold.

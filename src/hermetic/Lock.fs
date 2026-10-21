@@ -474,8 +474,9 @@ module Lock =
     /// The SDK versions a recorded entry (`Entry.Recorded`) depends on, read off its content:
     /// the version of every path under <c>&lt;dotnetRoot&gt;/sdk/&lt;v&gt;/</c> it names -- the
     /// compiler, a reference, an analyzer, any other file of the command line, a file an
-    /// application copies -- and the entry's own SDK (`Evaluation.Sdk`) when the apphost is the
-    /// SDK's (`SdkHost`, which a build takes from that SDK). A project on the toolset compiler
+    /// application copies -- and the entry's own SDK (`Evaluation.Sdk`) when it has an apphost:
+    /// the SDK's template (`SdkHost`) or a pack's (`PackHost`), both written through the SDK's
+    /// `HostModel` (without it the apphost lacks the version resource and the icon). A project on the toolset compiler
     /// (`Microsoft.Net.Compilers.Toolset`) and package analyzers
     /// (`Microsoft.CodeAnalysis.NetAnalyzers`) names nothing there: no version. Distinct, in
     /// order of first appearance. Pure.
@@ -497,9 +498,11 @@ module Lock =
                     | Some (PackHost (_, t)) -> yield t.Path
                     | _ -> ()
                 | None -> () ]
+        // an apphost, the SDK's template or a pack's, is written through the SDK's HostModel
+        // (`Apps.createAppHost`: the version resource, the icon): the entry depends on that SDK
         let host =
             match app with
-            | Some { Host = Some SdkHost } when entry.Evaluation.Sdk <> "" -> [ entry.Evaluation.Sdk ]
+            | Some { Host = Some _ } when entry.Evaluation.Sdk <> "" -> [ entry.Evaluation.Sdk ]
             | _ -> []
         (paths |> List.filter ((<>) "") |> List.choose (DotNetFwk.sdkVersionOf dotnetRoot)) @ host |> List.distinct
 

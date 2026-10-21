@@ -124,6 +124,13 @@ type ``Recorded lock identities``() =
         let app : Lock.App = { OutputType = "Exe"; Host = Some Lock.SdkHost; Files = []; Copy = []; Content = []; Related = []; BindingRedirects = false }
         let withHost = { onPackages with Recorded = onPackages.Recorded |> Option.map (fun r -> { r with App = Some app }) }
         Assert.That(derive withHost, Is.EqualTo [ sdk ])
+        // a pack's apphost (an explicit runtime identifier) is written through the SDK's HostModel too
+        let packHost = { app with Host = Some (Lock.PackHost ("win-x64", { Path = "/r/pkgs/microsoft.netcore.app.host.win-x64/8.0.11/runtimes/win-x64/native/apphost.exe"; Sha256 = "aa" })) }
+        let withPackHost = { onPackages with Recorded = onPackages.Recorded |> Option.map (fun r -> { r with App = Some packHost }) }
+        Assert.That(derive withPackHost, Is.EqualTo [ sdk ])
+        // an application without an apphost does not
+        let noHost = { onPackages with Recorded = onPackages.Recorded |> Option.map (fun r -> { r with App = Some { app with Host = None } }) }
+        Assert.That(derive noHost, Is.Empty)
         // a composed entry (not recorded) is left as it is
         let composed = { onPackages with Recorded = None; Prerequisites = [ sdk ] }
         Assert.That(derive composed, Is.EqualTo [ sdk ])

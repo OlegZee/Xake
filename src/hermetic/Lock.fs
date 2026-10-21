@@ -119,9 +119,10 @@ module Lock =
     /// under <c>$(DotnetRoot)/sdk/&lt;Version&gt;/</c> (the SDK's fsc, an imported project's
     /// compiler and analyzers, and every file of a recorded entry under it). A composed or
     /// `Project.import` entry gets it only when `global.json` pins that version exactly
-    /// (`rollForward: "disable"`); an entry recorded from msbuild (`Import.record`) always has
-    /// it -- the SDK that recorded it, which may be stricter than `global.json` (the import
-    /// warns). `Pin` names that `global.json` ("" when there is none).
+    /// (`rollForward: "disable"`); an entry recorded from msbuild (`Import.record`) has it when
+    /// it names a file under the SDK that recorded it (`withRecordedPrerequisites`: its
+    /// compiler, analyzers, shims, the SDK's apphost), which may be stricter than `global.json`
+    /// (the import warns). `Pin` names that `global.json` ("" when there is none).
     /// </summary>
     /// <remarks>
     /// `Pin` is kept tokenized (<c>$(ProjectRoot)/global.json</c>) in memory as well as on
@@ -469,17 +470,79 @@ module Lock =
                 |> mapCompilation (fun c -> { c with Dependencies = clear c.Dependencies })
                                   (fun f -> { f with Fsc.Dependencies = clear f.Dependencies }) }
 
+    /// <summary>
+    /// The SDK versions a recorded entry (`Entry.Recorded`) depends on, read off its content:
+    /// the version of every path under <c>&lt;dotnetRoot&gt;/sdk/&lt;v&gt;/</c> it names -- the
+    /// compiler, a reference, an analyzer, any other file of the command line, a file an
+    /// application copies -- and the entry's own SDK (`Evaluation.Sdk`) when the apphost is the
+    /// SDK's (`SdkHost`, which a build takes from that SDK). A project on the toolset compiler
+    /// (`Microsoft.Net.Compilers.Toolset`) and package analyzers
+    /// (`Microsoft.CodeAnalysis.NetAnalyzers`) names nothing there: no version. Distinct, in
+    /// order of first appearance. Pure.
+    /// </summary>
+    let recordedSdkVersions (dotnetRoot: string) (entry: Entry) : string list =
+        let inputs =
+            match entry.Compilation with
+            | Compilation.Csc c -> Csc.hermeticInputs c
+            | Compilation.Fsc f -> Fsc.hermeticInputs f
+        let app = entry.Recorded |> Option.bind (fun r -> r.App)
+        let paths =
+            (inputs |> List.map (fun i -> i.Path))
+            @ [ match app with
+                | Some a ->
+                    for c in a.Copy do yield c.Path
+                    for c in a.Content do yield c.Path
+                    for f in a.Files do yield f.Path
+                    match a.Host with
+                    | Some (PackHost (_, t)) -> yield t.Path
+                    | _ -> ()
+                | None -> () ]
+        let host =
+            match app with
+            | Some { Host = Some SdkHost } when entry.Evaluation.Sdk <> "" -> [ entry.Evaluation.Sdk ]
+            | _ -> []
+        (paths |> List.filter ((<>) "") |> List.choose (DotNetFwk.sdkVersionOf dotnetRoot)) @ host |> List.distinct
+
+    /// <summary>
+    /// A recorded entry (`Entry.Recorded`) with its `dotnet-sdk` prerequisites derived from its
+    /// content (`recordedSdkVersions` under `dotnetRoot`): one per SDK version it names, none
+    /// when it names nothing under <c>sdk/</c>. A prerequisite the entry already has keeps its
+    /// `Pin`; a new one gets `pin` (the tokenized `global.json`, "" when there is none).
+    /// Other kinds of prerequisite are kept; an entry that is not recorded is returned as it
+    /// is (a composed entry's prerequisite follows the `global.json` pin, `withPrerequisites`).
+    /// Pure.
+    /// </summary>
+    let withRecordedPrerequisites (dotnetRoot: string) (pin: string) (entry: Entry) : Entry =
+        match entry.Recorded with
+        | None -> entry
+        | Some _ ->
+            let pinOf v =
+                entry.Prerequisites
+                |> List.tryFind (fun p -> p.Kind = DotnetSdk && p.Version = v)
+                |> Option.map (fun p -> p.Pin)
+                |> Option.defaultValue pin
+            { entry with
+                Prerequisites =
+                    (entry.Prerequisites |> List.filter (fun p -> p.Kind <> DotnetSdk))
+                    @ [ for v in recordedSdkVersions dotnetRoot entry -> { Kind = DotnetSdk; Version = v; Pin = pinOf v } ] }
+
     /// Fills `Sha256` for every hashed item (`References`, `Analyzers`, the compiler via
     /// `Csc.rehash`/`Fsc.rehash`, and `Imports`) from what is on disk right now; leaves `""` where the file
     /// does not exist, and for a compiler of the .NET SDK (`isSdkCompiler`, identified by the SDK
     /// version instead). For a composed entry, which leaves every hash empty, this is the
     /// "record time" step `lock-from-settings.md` recommendation 5 asks for -- run once by the
-    /// lock-recording rule, not on every compile.
+    /// lock-recording rule, not on every compile. A recorded entry's `dotnet-sdk` prerequisites
+    /// are derived again from its paths (`withRecordedPrerequisites`, under this machine's .NET
+    /// root): the prerequisite follows the content.
     let rehash (entry: Entry) : Entry =
         { entry with
             Compilation = entry.Compilation |> mapCompilation Csc.rehash Fsc.rehash
             Evaluation = { entry.Evaluation with Imports = entry.Evaluation.Imports |> List.map (fun h -> { h with Sha256 = Csc.sha256 h.Path }) } }
         |> withoutSdkCompilerHash
+        |> fun e ->
+            match e.Recorded, Roots.dotnetRoot () with
+            | Some _, Some root -> withRecordedPrerequisites root "" e
+            | _ -> e
 
     /// Rewrites every path the entry's compilation carries, through `f` (`Csc.mapPaths`,
     /// `Fsc.mapPaths`). A
@@ -1315,11 +1378,11 @@ module Lock =
                                 (sprintf "'%s': the compiler %s named by the lock does not exist" c.Name compiler.Path)
         }
 
-    /// The prerequisites of `entry` this machine does not meet, as messages: a `dotnet-sdk`
-    /// one whose <c>&lt;DotnetRoot&gt;/sdk/&lt;Version&gt;</c> folder is missing. Reads the
-    /// disk, nothing else.
-    let internal unmetPrerequisites (entry: Entry) : string list =
-        let root = Roots.dotnetRoot ()
+    /// The prerequisites of `entry` the .NET installation at `root` does not meet, as
+    /// messages: a `dotnet-sdk` one whose <c>&lt;root&gt;/sdk/&lt;Version&gt;</c> folder is
+    /// missing. `root` is the `$(DotnetRoot)` the lock is read against (a script's extra root
+    /// of that name, else `Roots.dotnetRoot ()`). Reads the disk, nothing else.
+    let internal unmetPrerequisitesAt (root: string option) (entry: Entry) : string list =
         [ for p in entry.Prerequisites do
             if p.Kind = DotnetSdk then
                 let installed = root |> Option.exists (fun r -> Directory.Exists (Path.Combine (r, "sdk", p.Version)))
@@ -1512,8 +1575,15 @@ module Lock =
             let! restore = Restore.resolve options.Restore
             let options = { options with Restore = restore }
 
-            // the prerequisites first: nothing a restore fetches can stand in for a missing SDK
-            match unmetPrerequisites entry with
+            // the prerequisites first: nothing a restore fetches can stand in for a missing SDK;
+            // the .NET installation is the one the lock is read against (an extra root
+            // `$(DotnetRoot)` of the script, else this machine's)
+            let! readRoots = Roots.currentWith (extraRoots |> List.filter (fst >> (=) "$(DotnetRoot)"))
+            let dotnetRoot =
+                match extraRoots |> List.exists (fst >> (=) "$(DotnetRoot)"), readRoots |> List.tryFind (fst >> (=) "$(DotnetRoot)") with
+                | true, Some (_, root) -> Some root
+                | _ -> Roots.dotnetRoot ()
+            match unmetPrerequisitesAt dotnetRoot entry with
             | [] -> ()
             | unmet -> do! failStep options c (unmet |> String.concat "\n")
 

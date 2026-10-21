@@ -152,10 +152,35 @@ condition the masks do not know, the two can drift; the import checks them only 
 
    Each design-time build writes what it generates (assembly info, compiled resources) into an
    intermediate folder of its own, `<BaseIntermediateOutputPath>/xake-record/<key>/<tfm>/`, where
-   the key is a hash of the configuration and the properties. Two imports with different
-   properties at the same time (two brands), an IDE and `dotnet build` do not share these files.
-   The restore still writes the project's own `obj/project.assets.json`, as `dotnet build` does,
-   and `PrepareForBuild` creates the `bin/` folders.
+   the key is a hash of the configuration and the properties. The restore output goes beside
+   them, to `<MSBuildProjectExtensionsPath>/xake-record/<key>/` (`obj/xake-record/<key>/` by
+   default): `project.assets.json`, `<project>.nuget.g.props`/`.targets`, `project.nuget.cache`.
+   Every msbuild run of the import -- the restores, the evaluations, the design-time builds --
+   reads that folder. The layout of one project:
+
+   ```
+   obj/xake-record/<key>/project.assets.json      the restore of that key
+   obj/xake-record/<key>/<project>.nuget.g.props  (and .targets, project.nuget.cache)
+   obj/xake-record/<key>/<tfm>/                   the design-time build's intermediate folder
+   ```
+
+   Two imports with different properties at the same time (two brands: `need [ "import::a";
+   "import::b" ]` with packages that differ between them), an IDE and `dotnet build` do not share
+   these files; the project's own `obj/project.assets.json` is not written by the import.
+   `PrepareForBuild` still creates the `bin/` folders.
+
+   The folder is set by a props file the import hands every project as the global property
+   `CustomAfterDirectoryBuildProps` (imported by `Microsoft.Common.props` after
+   `Directory.Build.props`, before the restore output is imported; `Import.restoreProps`), with
+   the key as `XakeRecordKey`. It sets `MSBuildProjectExtensionsPath` from the project's own value
+   (or `BaseIntermediateOutputPath`, or `obj/`) plus `xake-record/<key>/`. A global
+   `MSBuildProjectExtensionsPath` would not do: msbuild does not make a global property absolute,
+   and the restore output's relative import would resolve against the SDK's file. The global
+   property hides two values, which the props file imports in their place: the script's own
+   `CustomAfterDirectoryBuildProps` (in `Properties`) and the .NET SDK's
+   (`UseArtifactsOutputPath.props`, for `UseArtifactsOutput`). A repository that sets
+   `CustomAfterDirectoryBuildProps` in a file of its own loses that value in the import (it is an
+   msbuild hook for the command line; `CustomAfterMicrosoftCommonTargets` is chained).
 4. Each entry is the recorded command line, changed only as follows:
    - `/out:` and `/refout:` are removed (the output is the build's). `/sourcelink:` and `/embed`
      are removed: SourceLink is parked.

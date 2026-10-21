@@ -13,6 +13,10 @@ The `Xake` package (engine and `Xake.Dotnet`). Xake.Hermetic.Dotnet has its own 
   kind ran). `rm` skips paths removed by an earlier target; `cp` keeps each source's relative
   path rule (`file` always flattened). `RmArgs` is now `{ targets: RmTarget list; verbose }`,
   `CpArgs` has `sources: CpSource list` instead of `dir`/`file`/`files`.
+- **Xake.Hermetic.Dotnet 0.6.0** (own notes in [hermetic/README.md](hermetic/README.md)): a
+  recorded lock carries the `dotnet-sdk` prerequisite only when it names a file under
+  `$(DotnetRoot)/sdk/<v>/`; a C# project on the toolset compiler and package analyzers records
+  none and builds without that SDK. No change in this package.
 - Build scripts (not the package): `test` runs 8 parallel jobs (`testjobs.fsx`, shared by
   build.fsx and build.fsc.fsx) on test projects built once; each job logs to
   `out/test/<project>/<slice>/`. `test` takes about 55 s instead of 3 min 40 s.

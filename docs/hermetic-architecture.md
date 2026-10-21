@@ -44,7 +44,7 @@ strong-name re-signer and a PE comparator. SBOM and signing: to be redone (0.4).
 | Packages missing on this machine | fetched by exact id and version, the nupkg SHA-512 compared with the lock |
 | The commit | kept out of the lock as the token `$(SourceRevisionId)`, resolved from `.git` at compile time |
 | The SDK choice | recorded (`Evaluation.Sdk`, `Evaluation.SdkPin`); the import warns when `global.json` does not pin it exactly |
-| The SDK an entry depends on | an exactly pinned SDK under `$(DotnetRoot)/sdk/<v>/` (fsc, an import's compiler and analyzers) is a `dotnet-sdk` prerequisite (`Entry.Prerequisites`), checked before a replay; without the exact pin the recording warns. Since 0.3 a compiler of the SDK has no hash in the lock: the SDK version identifies it (`Lock.isSdkCompiler`) |
+| The SDK an entry depends on | an exactly pinned SDK under `$(DotnetRoot)/sdk/<v>/` (fsc, an import's compiler and analyzers) is a `dotnet-sdk` prerequisite (`Entry.Prerequisites`), checked before a replay; without the exact pin the recording warns. A recorded entry (`Import.record`) has it when it names a file under `sdk/<v>/` (since 0.6, `Lock.withRecordedPrerequisites`): on the toolset compiler and package analyzers it has none. Since 0.3 a compiler of the SDK has no hash in the lock: the SDK version identifies it (`Lock.isSdkCompiler`) |
 
 ### What is not controlled
 
@@ -74,7 +74,20 @@ The brief calls the result "mostly hermetic", and that is the honest word.
   unless the project references the compiler package. A composed C# lock names the SDK's csc
   when no toolset is set. Under an exact `global.json` pin the lock records the SDK as a
   `dotnet-sdk` prerequisite. A replay checks the prerequisite first. Without the exact pin the
-  recording warns, and a replay fails only when the compiler file is missing.
+  recording warns, and a replay fails only when the compiler file is missing. A recorded
+  (imported) entry carries the prerequisite of the SDK that recorded it exactly when it names a
+  file under `sdk/<v>/` (since 0.6): a C# project on `Microsoft.Net.Compilers.Toolset`
+  (`RoslynCompilerType=Toolset`) and `Microsoft.CodeAnalysis.NetAnalyzers` records none and
+  replays with no SDK installed (`SdkFreeImportTests.fs`). fsc stays the remaining case.
+- **A targeting pack is the installation's or the package's.** A `pack:` identity resolves to
+  `$(DotnetRoot)/packs/` when this .NET has that version, else to the package of the same id
+  and version in the package folder, which the lock's restore fetches. The two are not
+  byte-identical: the nuget.org package signs its assemblies (Authenticode, strong name) and
+  ships other builds of the facades and source generators, so a lock whose `pack:` hashes are
+  the installed pack's fails the hash check against the package's copy (measured on
+  `microsoft.netcore.app.ref` 8.0.32: 65 of 234 files differ beyond the signatures). A lock
+  whose hashes are the package's (msbuild took the pack from the package folder) builds with an
+  empty `packs/`.
 - **The bytes of an SDK compiler are not checked.** Since 0.3 the lock records no hash for a
   compiler under `$(DotnetRoot)/sdk/<v>/` (`Lock.isSdkCompiler`). These files are ReadyToRun
   images for one OS and architecture, so a hash would tie the lock to one platform. The SDK
@@ -157,7 +170,7 @@ Lock.buildWith options path c
 
 Lock.compileWith options entry
      an SDK compiler's hash is cleared              (withoutSdkCompilerHash; the SDK version identifies it)
-  0. Entry.Prerequisites                            (a dotnet-sdk <v> not installed fails here)
+  0. Entry.Prerequisites                            (a dotnet-sdk <v> not installed under the lock's $(DotnetRoot) fails here)
      HERMETIC=on: a path outside the roots fails     (message 10)
   1. Restore.ensure options.Restore (Lock.restoreRequest [entry])
   2. ensureCompilerAvailable                       (explain a compiler still missing)
@@ -490,7 +503,8 @@ plus `toolset`, `noserver`, `keepalive` and `resolve`, the marker `CscRequest`, 
 | `Entry`, `Document` | records | `{ Compilation; Evaluation; Packages; Prerequisites }` (members `Name`, `Framework`, `Dependencies`, `Args`, `Output`, and `Csc`/`Fsc`, which fail for the other case); `{ Configuration; Properties; Entries }` |
 | `packagesOf cacheRoot assets` | reads disk | the entry's package graph from `Nuget.Assets` and the cache's SHA-512 |
 | `ofCompilation c`, `ofCsc c`, `ofFsc f` | pure | a composed compilation as an entry |
-| `rehash entry` | reads disk | `Csc.rehash`/`Fsc.rehash` plus the `Imports` hashes |
+| `rehash entry` | reads disk | `Csc.rehash`/`Fsc.rehash` plus the `Imports` hashes; a recorded entry's `dotnet-sdk` prerequisites derived again (`withRecordedPrerequisites` under `Roots.dotnetRoot ()`) |
+| `recordedSdkVersions dotnetRoot entry`, `withRecordedPrerequisites dotnetRoot pin entry` | pure | the SDK versions a recorded entry names (paths under `<dotnetRoot>/sdk/<v>/` of its command line and application files, its own SDK for an `SdkHost` apphost); the entry with one `dotnet-sdk` prerequisite per such version (an existing one keeps its `Pin`), none when it names nothing there. `Import.entryOf` and `rehash` apply it |
 | `mapPaths`, `mapText` | pure | `Csc.mapPaths`/`Fsc.mapPaths`; `mapText` of the case plus the evaluation's property values and the prerequisites' `Pin` |
 | `diffList`, `diff a b` | pure | the ordered diff; the full entry diff (section 4) |
 | `format roots doc`, `parse roots text`, `read roots path` | pure | the file format |
@@ -502,7 +516,7 @@ plus `toolset`, `noserver`, `keepalive` and `resolve`, the marker `CscRequest`, 
 | `restore options doc` | recipe | `Restore.ensure` over a whole lock; fails on a problem |
 | `isSdkCompiler path`, `withoutSdkCompilerHash entry` | reads the SDK root | whether a compiler lies under `$(DotnetRoot)/sdk/<v>/`; the entry with that compiler's hash cleared (`rehash` and every replay apply it) |
 | `underCi` | recipe | whether the build runs under CI: the script variable `CI`, else the environment variable `CI` (section 2) |
-| `compileWith options entry`, `compile entry`, `compileFrom lockPath options entry` | recipes | the replay (section 2): prerequisites, the `HERMETIC=on` gate (message 10), restore with `Restore.resolve`d options; `compile` resolves the server first; `compileFrom` names the lock in message 10 (`Locks.compileAs`) |
+| `compileWith options entry`, `compile entry`, `compileFrom lockPath options entry` | recipes | the replay (section 2): prerequisites (`unmetPrerequisitesAt`: under the `$(DotnetRoot)` the lock is read against, a script's extra root of that name or this machine's), the `HERMETIC=on` gate (message 10), restore with `Restore.resolve`d options; `compile` resolves the server first; `compileFrom` names the lock in message 10 (`Locks.compileAs`) |
 | `recorded path unhashed entry` | recipe | the record step without the write: `needFiles`, prerequisites, the `HERMETIC=on` gate, `rehash`; the references in `unhashed` (project-reference outputs) stay without a hash (`Locks.generate`) |
 | `record path c` | recipe | `c: Compilation`; `needFiles` what it hashes, derive the prerequisites (warn without an exact pin), the `HERMETIC=on` gate (messages 2, 9), rehash, overwrite a one-entry lock; compiles nothing |
 | `verify path c` | recipe | `diff (entry c.Name doc) (ofCompilation c with its prerequisites)`; writes and compiles nothing |

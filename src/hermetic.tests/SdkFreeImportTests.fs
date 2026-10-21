@@ -41,9 +41,10 @@ type ``Import record on package compiler and analyzers``() =
         plain (Path.Combine (sdk, "Roslyn", "bincore", "Microsoft.CodeAnalysis.dll")),
         plain (Path.Combine (sdk, "Sdks", "Microsoft.NET.Sdk", "analyzers", "Microsoft.CodeAnalysis.NetAnalyzers.dll"))
 
-    /// A library on the package compiler and analyzers (`DebugType` none: a pdb's path is the
-    /// output's, which differs between `bin/` and the build's layout, and would be the only
-    /// difference in the bytes).
+    /// A library on the package compiler and analyzers (`DebugType` none: with a pdb the dll
+    /// names the pdb's path -- msbuild's `obj/`, the build's `out/` -- and the pdb's id, which
+    /// hashes the paths of the generated sources; 93 bytes of the net472 dll differ then, the
+    /// IL and metadata do not).
     let project (frameworks: string) =
         let toolset, analyzers = bundledVersions ()
         RecordKit.sdkProject

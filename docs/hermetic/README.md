@@ -1,6 +1,30 @@
 # Xake.Hermetic.Dotnet
 
-## 0.5.2 (next release)
+## 0.6.0 (next release)
+
+The `dotnet-sdk` prerequisite of a recorded lock follows its content
+([sdk-free-locks agenda](../features/hermetic-build/sdk-free-locks.md), steps 1-3). **A
+re-import drops the prerequisite** from the locks of a project that names nothing under
+`$(DotnetRoot)/sdk/<v>/`; every other lock is written as before. No API removed, no lock format
+change. Includes the 0.5.2 changes below (not released on their own).
+
+- `Import.record` and `Lock.rehash` give a recorded entry `dotnet-sdk <v>` only when it names a
+  file under `sdk/<v>/` (the SDK's compiler or analyzers, an SDK analyzer config, shims, the SDK's
+  apphost): `Lock.withRecordedPrerequisites`, `Lock.recordedSdkVersions`. A C# project on
+  `Microsoft.Net.Compilers.Toolset` (`RoslynCompilerType=Toolset`) and
+  `Microsoft.CodeAnalysis.NetAnalyzers` records none and replays with no SDK of that version
+  installed. The import's "stricter than global.json" warning follows. Before, every recorded
+  entry carried the SDK that recorded it.
+- The replay checks a prerequisite under the `$(DotnetRoot)` the lock is read against (a
+  script's extra root of that name, else this machine's).
+- A `pack:` file this .NET lacks under `packs/` is the nuget.org package of the same id and
+  version, fetched by the lock's restore (as before), and accepted by the recorded hash: that
+  holds when msbuild took the pack from the package folder at import. An installed pack is not
+  byte-identical to the package (the package is signed, its facades and source generators are
+  other builds), so a lock recorded from `packs/` still needs that pack installed
+  ([lock.md](lock.md#identities)).
+
+## 0.5.2 (folded into 0.6.0)
 
 Concurrent imports of one project tree with different properties (two brands) no longer mix
 their restores. No API and no lock format change; a re-import writes the same locks.

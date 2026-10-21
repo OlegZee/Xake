@@ -94,6 +94,17 @@ type ``Import record on package compiler and analyzers``() =
             Assert.That(File.Exists theirs, theirs)
             Assert.That(File.ReadAllBytes ours, Is.EqualTo (File.ReadAllBytes theirs), sprintf "%s and %s differ" ours theirs)
 
+    [<Test; Category("Integration")>]
+    member x.``a net472 and netstandard2.0 library records no SDK and builds without one, as dotnet build does``() =
+        let text, toolset, analyzers = project "net472;netstandard2.0"
+        RecordKit.write [ "lib"; "out"; "locks"; "obj" ]
+            [ "lib/lib.csproj", text
+              "lib/C.cs", "namespace Lib { public class C { public static string S(object o) => o.ToString(); public int this[int i] => i * 2; } }\n" ]
+        let lock = x.Import "lib"
+        x.BuildCompare "lib" [ "net472"; "netstandard2.0" ]
+        Assert.That(lock, Does.Contain (sprintf "\"Id\": \"pkg:microsoft.net.compilers.toolset/%s/" toolset))
+        Assert.That(lock, Does.Contain (sprintf "\"Id\": \"pkg:microsoft.codeanalysis.netanalyzers/%s/analyzers/dotnet/cs/Microsoft.CodeAnalysis.CSharp.NetAnalyzers.dll\"" analyzers))
+
     /// The targeting pack of net6.0, which no .NET 8 or 10 installation has under `packs/`:
     /// msbuild takes it from the package folder, the lock names it `pack:` with the package's
     /// hashes, and the build against a .NET root with an empty `packs/` reads the same files.

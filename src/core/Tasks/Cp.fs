@@ -7,20 +7,23 @@ open Xake.FileTasksImpl
 [<AutoOpen>]
 module CpImpl =
 
+    /// One copy source: a directory, a file mask or a fileset.
+    type CpSource =
+        | Dir of string
+        | File of string
+        | Files of Fileset
+
     /// Configuration for the Cp task: specifies source and destination files.
+    /// Sources are copied in declaration order.
     type CpArgs = {
-        dir: string
-        file: string
-        files: Fileset
+        sources: CpSource list
         todir: string
         flatten: bool
         verbose: bool
         overwrite: bool
         dryrun: bool
     } with static member Default = {
-            dir = null
-            file = null
-            files = Fileset.Empty
+            sources = []
             todir = null
             flatten = false
             verbose = false
@@ -58,7 +61,7 @@ module CpImpl =
         let! ctx = getCtx()
 
         let copyFile target getRelativePath file =
-            let fullname = file |> File.getFullName
+            let fullname = file |> Xake.File.getFullName
             let tofile = target </> (getRelativePath file)
 
             ctx.Logger.Log
@@ -68,42 +71,46 @@ module CpImpl =
             if not args.dryrun then
                 ensureDirCreated tofile
 
-                if args.overwrite || not (File.Exists tofile) then
-                    File.Copy(fullname, tofile, true)
+                if args.overwrite || not (System.IO.File.Exists tofile) then
+                    System.IO.File.Copy(fullname, tofile, true)
                 else
                     ctx.Logger.Log Level.Info "[copy] skipped ('%s' already exists while overwrite option is off)" tofile
 
         let projectRoot = ctx.Options.ProjectRoot
         let targetDir = args.todir |> function | null -> projectRoot | s -> System.IO.Path.Combine(projectRoot, s)
 
-        let fileset =
-            args
-            |> function
-            | { files = f } when f <> Fileset.Empty ->
-                ctx.Logger.Log Level.Message "[copy] fileset"
-                f
-            | { file = fileMask } when fileMask <> null ->
-                ctx.Logger.Log Level.Message "[copy] %A" fileMask
-                !!fileMask
-            | { dir = dirMask } when dirMask <> null ->
-                !!(dirMask </> "**/*.*")
-            | _ -> Fileset.Empty
+        // each source: its files and how a file maps to a path under todir
+        let materialize source =
+            let fileset, flatten =
+                match source with
+                | Files f ->
+                    ctx.Logger.Log Level.Message "[copy] fileset"
+                    f, args.flatten
+                | File fileMask ->
+                    ctx.Logger.Log Level.Message "[copy] %A" fileMask
+                    // in single file mode always flatten
+                    !!fileMask, true
+                | Dir dirMask ->
+                    ctx.Logger.Log Level.Message "[copy] %A" dirMask
+                    !!(dirMask </> "**/*.*"), args.flatten
 
-        // in single file mode always flatten
-        let flatten = args.flatten || args.file <> null
-        let getRelativePath = flatten |> function
-            |true -> File.getFileName
-            | _ ->
-                let baseFullPath = impl.getBasedirFullPath projectRoot fileset
-                File.getFullName >> (impl.makeRelPath baseFullPath)
+            let getRelativePath =
+                if flatten then Xake.File.getFileName
+                else
+                    let baseFullPath = impl.getBasedirFullPath projectRoot fileset
+                    Xake.File.getFullName >> (impl.makeRelPath baseFullPath)
 
-        do! trace Level.Debug "[copy] materializing fileset %A at folder %s" fileset projectRoot
-        let (Filelist files) = fileset |> (toFileList projectRoot)
-        
-        do! needFiles (Filelist files)
+            ctx.Logger.Log Level.Debug "[copy] materializing fileset %A at folder %s" fileset projectRoot
+            let (Filelist files) = fileset |> (toFileList projectRoot)
+            files, getRelativePath
 
-        for file in files do
-            copyFile targetDir getRelativePath file
+        let sources = args.sources |> List.map materialize
+
+        do! needFiles (Filelist (sources |> List.collect fst))
+
+        for files, getRelativePath in sources do
+            for file in files do
+                copyFile targetDir getRelativePath file
 
         do! trace Level.Info "[copy] Completed"    
         return ()
@@ -120,7 +127,7 @@ module CpImpl =
 
         do ensureDirCreated tgt
 
-        File.Copy(src, tgt, true)
+        System.IO.File.Copy(src, tgt, true)
     }
 
     /// <summary>
@@ -132,11 +139,14 @@ module CpImpl =
     }
 
     /// Computation expression builder for the copy task.
+    /// `file`, `dir` and `files` may repeat and combine; each adds a source.
     type CopyBuilder() =
 
-        [<CustomOperation("file")>]    member this.File(a :CpArgs, value) =   {a with file = value }
-        [<CustomOperation("dir")>]     member this.Dir(a :CpArgs, value) =    {a with dir = value}
-        [<CustomOperation("files")>]   member this.Fileset(a :CpArgs, value)= {a with files = value}
+        let add (a: CpArgs) source = { a with sources = a.sources @ [source] }
+
+        [<CustomOperation("file")>]    member this.File(a :CpArgs, value) =   add a (File value)
+        [<CustomOperation("dir")>]     member this.Dir(a :CpArgs, value) =    add a (Dir value)
+        [<CustomOperation("files")>]   member this.Fileset(a :CpArgs, value)= add a (Files value)
         [<CustomOperation("todir")>]   member this.ToDir(a :CpArgs, value)=   {a with todir = value}
         [<CustomOperation("verbose")>] member this.Verbose(a :CpArgs) =        {a with verbose = true}
         [<CustomOperation("overwrite")>] member this.Overwrite(a :CpArgs) =    {a with overwrite = true}

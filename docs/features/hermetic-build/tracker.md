@@ -233,4 +233,4 @@ to that rule rather than the deliverable. Items are ordered by what they unblock
 - [ ] core trap (found 2026-10-19 by a consumer `clean` target): `rm { dir a; dir b }` keeps only the last `dir` (`RmArgs.dir` is one string; `files` > `file` > `dir`, the others are silently ignored) — document in `docs/`, or make `dir` accumulate / fail on a second one
 
 ## After #81 (obj/xake-record/<key>/ holds the restore output)
-- [ ] owner 2026-10-21: stale `obj/xake-record/<key>/` folders (a changed property set makes a new key; they sit under the product's project folders, out of a consumer `clean`'s reach): the import drops sibling keys it did not produce in this run (mind a parallel import of another key), or an `Import.clean` the script's `clean` calls; note in lock.md
+- [x] owner 2026-10-21, decided the same day: stale `obj/xake-record/<key>/` folders are not worth handling — a consumer that cares cleans the whole `obj/` (msbuild's own leftovers live there too); no import-side cleanup, no `Import.clean`

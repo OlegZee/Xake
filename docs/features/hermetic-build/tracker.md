@@ -231,3 +231,10 @@ to that rule rather than the deliverable. Items are ordered by what they unblock
 - [x] S55 implementation: app run over every project with redirects, clean scratch config, record final file, guard on stub version, tests; 0.5.1 (re-import to record the redirects)
 - [ ] owner: Q1-Q6 of `binding-redirects.md`; whether csc analyzers may be dropped for a non-validating build (the only lever toward <= 60 s)
 - [ ] core trap (found 2026-10-19 by a consumer `clean` target): `rm { dir a; dir b }` keeps only the last `dir` (`RmArgs.dir` is one string; `files` > `file` > `dir`, the others are silently ignored) — document in `docs/`, or make `dir` accumulate / fail on a second one
+
+## SDK-free locks (agenda 2026-10-21, `sdk-free-locks.md`)
+- [ ] 1 recorded entries get the `dotnet-sdk` prerequisite only when they name a path under `sdk/<v>/` (as composed entries do)
+- [ ] 2 `pack:` files fetched as packages (`Microsoft.NETCore.App.Ref` etc.) when `packs/` lacks them; replay accepts them by hash
+- [ ] 3 fixture: import on `Microsoft.Net.Compilers.Toolset` + `Microsoft.CodeAnalysis.NetAnalyzers` records no `sdk:` identity, no prerequisite, byte-equal output
+- [ ] 4 fsc stays SDK-bound (no toolset package); documented
+- [ ] 5 consumer: toolset + NetAnalyzers references at the SDK's current versions, re-import, byte-equal check

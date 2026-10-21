@@ -6,7 +6,7 @@ The `dotnet-sdk` prerequisite of a recorded lock follows its content
 ([sdk-free-locks agenda](../features/hermetic-build/sdk-free-locks.md), steps 1-3). **A
 re-import drops the prerequisite** from the locks of a project that names nothing under
 `$(DotnetRoot)/sdk/<v>/`; every other lock is written as before. No API removed, no lock format
-change. Includes the 0.5.2 changes below (not released on their own).
+change.
 
 - `Import.record` and `Lock.rehash` give a recorded entry `dotnet-sdk <v>` only when it names a
   file under `sdk/<v>/` (the SDK's compiler or analyzers, an SDK analyzer config, shims, the SDK's
@@ -24,7 +24,7 @@ change. Includes the 0.5.2 changes below (not released on their own).
   other builds), so a lock recorded from `packs/` still needs that pack installed
   ([lock.md](lock.md#identities)).
 
-## 0.5.2 (folded into 0.6.0)
+## 0.5.2 (unreleased)
 
 Concurrent imports of one project tree with different properties (two brands) no longer mix
 their restores. No API and no lock format change; a re-import writes the same locks.

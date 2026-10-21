@@ -177,6 +177,11 @@ data, no msbuild for them. `build.fsx` stays the build of record (packages, rele
 - `build` = `Fingerprints.warn` + `Locks.needAll`, the rule `out/(cfg:*)/(fwk:*)/(name:*).dll` =
   `Locks.compileAs`; `check` = `Fingerprints.check`. `test` is `dotnet test` as in `build.fsx`.
   Release only; `pack` waits for `Package.nupkg` (PR 8).
+- Trap: any change to `src/hermetic/Xake.Hermetic.Dotnet.fsproj` (a version bump included) makes
+  `src/hermetic/xake.project.json` stale for the self-build; run `dotnet fsi build.fsc.fsx -- -- import`
+  (and `update-locks -d LOCK_REFRESH=Xake` when the core range moved) in the same PR, or CI's
+  `build-fsc` fails on the fingerprint check (#72, #79). The locks name the SDK compiler by
+  version: a removed SDK patch needs `update-locks` and the matching pin in `build.yml`.
 - Bootstrap: `#r "nuget: Xake, 3.10.0.35"` and `#r "nuget: Xake.Hermetic.Dotnet, 0.5.0.36"`, no
   `build.fsx` run first. Its `clean` removes `out/Release` only (`out/netstandard2.0` is
   `build.fsx`'s).

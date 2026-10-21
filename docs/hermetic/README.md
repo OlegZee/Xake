@@ -17,12 +17,18 @@ change.
   entry carried the SDK that recorded it.
 - The replay checks a prerequisite under the `$(DotnetRoot)` the lock is read against (a
   script's extra root of that name, else this machine's).
-- A `pack:` file this .NET lacks under `packs/` is the nuget.org package of the same id and
-  version, fetched by the lock's restore (as before), and accepted by the recorded hash: that
-  holds when msbuild took the pack from the package folder at import. An installed pack is not
-  byte-identical to the package (the package is signed, its facades and source generators are
-  other builds), so a lock recorded from `packs/` still needs that pack installed
-  ([lock.md](lock.md#identities)).
+- A `pack:` identity resolves to the copy whose hash the lock recorded
+  (`Lock.Identity.toPathHashed`): the installed pack under `packs/` when its file has that hash,
+  else the nuget.org package of the same id and version, fetched by the lock's restore. An
+  installed pack is not byte-identical to the package (the package is signed, its facades and
+  source generators are other builds): until now a lock recorded from the package folder failed
+  the hash check on a machine with the pack installed. A package copy matching neither fails
+  the replay naming both (`Lock.packMismatches`); a lock recorded from `packs/` still needs that
+  pack installed ([lock.md](lock.md#identities)).
+- A recorded application with an apphost (also for an explicit `RuntimeIdentifier`) has the
+  `dotnet-sdk` prerequisite: the apphost is written through the SDK's HostModel (version
+  resource, icon). Before, without that SDK it was written by a fallback and the build only
+  warned.
 
 ## 0.5.2 (unreleased)
 

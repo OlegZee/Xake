@@ -80,14 +80,17 @@ The brief calls the result "mostly hermetic", and that is the honest word.
   (`RoslynCompilerType=Toolset`) and `Microsoft.CodeAnalysis.NetAnalyzers` records none and
   replays with no SDK installed (`SdkFreeImportTests.fs`). fsc stays the remaining case.
 - **A targeting pack is the installation's or the package's.** A `pack:` identity resolves to
-  `$(DotnetRoot)/packs/` when this .NET has that version, else to the package of the same id
-  and version in the package folder, which the lock's restore fetches. The two are not
-  byte-identical: the nuget.org package signs its assemblies (Authenticode, strong name) and
-  ships other builds of the facades and source generators, so a lock whose `pack:` hashes are
-  the installed pack's fails the hash check against the package's copy (measured on
-  `microsoft.netcore.app.ref` 8.0.32: 65 of 234 files differ beyond the signatures). A lock
-  whose hashes are the package's (msbuild took the pack from the package folder) builds with an
-  empty `packs/`.
+  the copy whose hash the lock recorded (`Lock.Identity.toPathHashed`): `$(DotnetRoot)/packs/`
+  when this .NET has the file with that hash, else the package of the same id and version in
+  the package folder, which the lock's restore fetches. The two are not byte-identical: the
+  nuget.org package signs its assemblies (Authenticode, strong name) and ships other builds of
+  the facades and source generators (measured on `microsoft.netcore.app.ref` 8.0.32: 65 of 234
+  files differ beyond the signatures). A lock recorded from the package folder builds with or
+  without the pack installed; one recorded from `packs/` needs it, and a package copy matching
+  neither fails naming both (`Lock.packMismatches`).
+- **An apphost needs the SDK.** Every apphost (the SDK's template or a pack's) is written
+  through the SDK's `HostModel` (version resource, icon), so a recorded application with an
+  apphost carries the `dotnet-sdk` prerequisite even on the package compiler.
 - **The bytes of an SDK compiler are not checked.** Since 0.3 the lock records no hash for a
   compiler under `$(DotnetRoot)/sdk/<v>/` (`Lock.isSdkCompiler`). These files are ReadyToRun
   images for one OS and architecture, so a hash would tie the lock to one platform. The SDK

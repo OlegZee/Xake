@@ -40,7 +40,7 @@ open Xake.Hermetic.Dotnet
 | `Lock.Prerequisite = { Kind; Version; Pin }` | type | an input no restore fetches, checked before a replay; `Kind` is `Lock.DotnetSdk` (`"dotnet-sdk"`) today ([Prerequisites](#prerequisites)) |
 | `Lock.sdkPinAt dir` | pure (reads disk) | the `global.json` found from `dir` upwards and the `SdkPin` it states (`Project.sdkPin` is its second half) |
 | `Lock.sdkVersionsOf roots paths` / `prerequisitesFor roots pinFile pin versions` | pure | the SDK versions paths depend on (`$(DotnetRoot)/sdk/<v>/...`); the prerequisites under a pin, and the versions left without one |
-| `Lock.recordedSdkVersions dotnetRoot entry` / `withRecordedPrerequisites dotnetRoot pin entry` | pure | the SDK versions a recorded entry names (its command line's and application's paths under `<dotnetRoot>/sdk/<v>/`, its own SDK for the SDK's apphost); the entry with a `dotnet-sdk` prerequisite per version, none when it names nothing there ([Prerequisites](#prerequisites)) |
+| `Lock.recordedSdkVersions dotnetRoot entry` / `withRecordedPrerequisites dotnetRoot pin entry` | pure | the SDK versions a recorded entry names (its command line's and application's paths under `<dotnetRoot>/sdk/<v>/`, its own SDK when it has an apphost, which the SDK's HostModel writes); the entry with a `dotnet-sdk` prerequisite per version, none when it names nothing there ([Prerequisites](#prerequisites)) |
 | `Project.import ImportOptions` | recipe | msbuild design-time build per project and framework, writes the lock ([below](#where-a-lockentry-comes-from)) |
 | `Lock.load` / `loadWith extraRoots` | recipe | read a lock, `needFiles` it, expand paths for this machine |
 | `Lock.save` / `saveWith extraRoots` | recipe | write a lock, tokenizing paths |
@@ -207,7 +207,7 @@ condition the masks do not know, the two can drift; the import checks them only 
    - Every reference and analyzer is hashed, except a project's output (unhashed, as in every
      lock) and a file of the SDK (identified by the SDK version).
    - `Prerequisites` has `dotnet-sdk <NETCoreSdkVersion>` when the entry names a file of that
-     SDK (an `sdk:` identity, any file under `$(DotnetRoot)/sdk/<v>/`, the SDK's apphost):
+     SDK (an `sdk:` identity, any file under `$(DotnetRoot)/sdk/<v>/`, an apphost):
      the lock pins the SDK, and another SDK means a new import. On the toolset compiler and
      package analyzers it names none and has no prerequisite (since 0.6,
      [Prerequisites](#prerequisites)).
@@ -258,11 +258,24 @@ of the same version. The package signs its assemblies (Authenticode certificate 
 strong-name signature where the installed copy has zeros, the PE checksum) and carries other
 builds of the type-forwarding facades and of the source generators under `analyzers/`
 (measured on `microsoft.netcore.app.ref` 8.0.32: all 234 files differ, 65 of them beyond the
-signatures). So a `pack:` file is accepted from the package folder only when the lock recorded
-the package's copy -- msbuild took the pack from the package folder because the importing .NET
-had not that version -- and a lock recorded from `$(DotnetRoot)/packs/` replays only where that
-pack is installed (`SdkFreeImportTests.fs`: a net6.0 project builds against an empty
-`packs/`).
+signatures). One identity, two possible contents: **a `pack:` resolves to the copy whose hash
+the lock recorded** (`Lock.Identity.toPathHashed`, when the lock is read). The installed file
+under `$(DotnetRoot)/packs/` when this .NET has it and its SHA-256 is the recorded one, else the
+package folder's copy, which the lock's restore fetches. So a lock recorded from the package
+folder (the importing .NET had not that pack, or `NetCoreTargetingPackRoot` pointed elsewhere)
+builds on a machine with the pack installed and on one without it (`SdkFreeImportTests.fs`: a
+net6.0 project against an empty `packs/`). A lock recorded from `packs/` builds only where that
+pack is installed: after the restore, a package copy that matches neither fails the replay
+naming both candidates (`Lock.packMismatches`):
+
+```
+'<name>': pack:microsoft.netcore.app.ref/8.0.32/ref/net8.0/System.Runtime.dll matches neither copy
+the lock may name (recorded <sha>): the installed pack '<dotnet>/packs/...' (<sha>), the package
+'<packages>/microsoft.netcore.app.ref/8.0.32/...' (<sha>)
+```
+
+The installed file is hashed through `FileHash` (memoised by path, length and write time), so
+a build of many locks naming one pack hashes each of its files once.
 
 ### Format 2
 
@@ -727,7 +740,10 @@ identity and its hash.
 recorded it, **when it names a file of that SDK** (since 0.6; before, always): an `sdk:`
 identity or any other path under `$(DotnetRoot)/sdk/<v>/` of its command line (the compiler,
 the SDK's analyzers, an `/analyzerconfig:` of the SDK, shims) or of its application (an
-`SdkHost` apphost, which a build takes from that SDK). The prerequisite follows the content:
+apphost: the SDK's template, `SdkHost`, or a pack's, `PackHost` for an explicit
+`RuntimeIdentifier`, both written through the SDK's `HostModel`, which adds the version
+resource and the icon; without it Xake's fallback writes a smaller file, 119 296 bytes against
+msbuild's 194 048 in a probe). The prerequisite follows the content:
 `Lock.withRecordedPrerequisites` derives it from the paths, in `Import.record` and again in
 `Lock.rehash`. This can be stricter than `global.json` (the trial project: `8.0.100
 rollForward:latestFeature` with the prerequisite `8.0.425`); the import warns then. Another SDK
@@ -807,7 +823,7 @@ is not installed under '<root>'; install it (dotnet-install --version <v> --inst
 `$(NuGetPackageRoot)` that a prerequisite does not cover ([Hermetic mode](#hermetic-mode)).
 
 Tests: `RecordTests.fs` (`a recorded entry's SDK prerequisite follows its content`: the SDK
-compiler, the package compiler and analyzers, an SDK analyzer config, the SDK's apphost, the
+compiler, the package compiler and analyzers, an SDK analyzer config, an apphost of the SDK or a pack, the
 probe under an empty .NET root), `SdkFreeImportTests.fs` (a net472 + netstandard2.0 library on
 the toolset compiler and package analyzers records no prerequisite and builds against a .NET
 root with empty `sdk/` and `packs/` into `dotnet build`'s bytes), `LockDiffTests.fs` (`Lock prerequisites`: the key written only when not empty and the

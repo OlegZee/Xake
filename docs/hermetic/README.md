@@ -1,5 +1,26 @@
 # Xake.Hermetic.Dotnet
 
+## 0.7.0 (next release)
+
+`Locks.compile` builds the assembly and checks its target
+([design note](../features/hermetic-build/locks-compile-targets.md)). **Breaking: `compile`
+over an `.xml` target fails**; the `.xml` rule is the new `Locks.doc settings lockPath fwk`
+(`"out/(cfg:*)/(fwk:*)/(asm:*).xml" ..> doc`, `doc` a recipe calling it). No lock format change.
+
+- `Locks.doc settings lockPath fwk`: the `.xml` rule's function (before: `compile` on an `.xml`
+  target). Needs the assembly beside it, fails when the lock asks for no doc.
+- `compile` fails when the target is not the entry's output: the recorded `TargetFileName`
+  (`app.exe` for a .NET Framework application, so `app.dll` is refused), else `<Name>.dll` or
+  `<Name>.exe` for a lock without one (Xake-generated); a `.pdb` or any other target is refused.
+  Before, only the name without the extension was compared.
+- The `$(Version)` mask is matched against the project's folder from the lock (`Directory` of
+  the compilation) when it names one other than the project root, else where the first source
+  lies, as before: a project whose first source is a shared file outside its folder gets its own
+  mask's version. A project at the project root matches `xake.project.json` (was an absolute
+  path). A mask may start with a script root, `$(Sibling)/**`, expanded through the script's
+  roots before matching.
+- Internal: `compileDll` is `compileAssembly` (C# and F#).
+
 ## 0.6.0 (next release)
 
 The `dotnet-sdk` prerequisite of a recorded lock follows its content

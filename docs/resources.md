@@ -26,7 +26,7 @@ let cscJobs = Resource.newResource "csc" 6
 "out/(cfg:*)/(fwk:*)/(name:*).dll" ..> withResource cscJobs 1 (Locks.compileAsWith roots lockOf fwk versions)
 ```
 
-`Locks.compileAsWith` → `compileDll` (`src/hermetic/Locks.fs` ~490–590) calls, in order:
+`Locks.compileAsWith` → `compileAssembly` (`src/hermetic/Locks.fs` ~490–590) calls, in order:
 `Lock.loadWith` (a `needFiles` of the lock), `staleImports` (a `needFiles` of the msbuild
 imports), then `needFiles` of the **project-reference outputs** (line ~518, other `.dll`
 targets of the same rule), then `Lock.compileFromWith` → `runCsc` → `Csc.run` →
@@ -274,7 +274,7 @@ with Lock = { opts with Run = { opts.Run with Throttle = Some (res, 1) } } }` (`
   hermetic package's dependency range on Xake must include the release.
 - Size: ~50 lines in `CompilerRunner.fs`/`Csc.fs`/`Fsc.fs`, ~100 lines tests.
 
-*Interim, hermetic-only (not recommended):* acquire in `Locks.compileDll` around
+*Interim, hermetic-only (not recommended):* acquire in `Locks.compileAssembly` around
 `Lock.compileFromWith`, after its own reference `needFiles`. The runner's later `needFiles`
 then meet only finished targets and plain files, so it would not hang in practice, but it is
 still a `need` under a resource (option (a) would reject it) and it misses `Lock.compile`,
@@ -315,7 +315,7 @@ let withResourceAfter (deps: Filelist) r n body = recipe { do! needFiles deps; r
 ```
 
 Pure sugar: it helps only when the dependencies are known before the body starts. In the
-incident they are computed inside the body (`compileDll` reads the lock to learn the
+incident they are computed inside the body (`compileAssembly` reads the lock to learn the
 references), so the helper would not have been usable without restructuring the recipe, and
 it does nothing to stop the misuse. It is a fine thing to name in (a)'s error message ("need
 first, then withResource"), not a fix on its own. Optional.

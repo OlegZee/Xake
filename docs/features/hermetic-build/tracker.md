@@ -242,3 +242,10 @@ to that rule rather than the deliverable. Items are ordered by what they unblock
 - [x] owner 2026-10-21, decided the same day: stale `obj/xake-record/<key>/` folders are not worth handling — a consumer that cares cleans the whole `obj/` (msbuild's own leftovers live there too); no import-side cleanup, no `Import.clean`
 ## SDK path with a space (`pr/sdk-path-spaces`, `sdk-path-spaces.md`)
 - [x] compiler dll and `@rsp` quoted, full `dotnet(.exe)` host; fsc rsp lines verbatim, csc quoted; restore/msbuild args quoted (Xake.Dotnet and hermetic); symlinked-SDK integration tests
+## `Locks.compile` per target kind (`pr/locks-compile-targets`, `locks-compile-targets.md`)
+- [x] public `Locks.doc settings lockPath fwk`; `compile` on an `.xml` target fails (breaking, 0.7.0); tests' `.xml` rules switched
+- [x] `compile` checks the target is the entry's output (`TargetFileName`, else `<Name>.dll`/`.exe`)
+- [x] `compileDll` renamed `compileAssembly`
+- [x] `$(Version)` project folder from the lock's `Directory`; root-relative `""`; masks expanded through the script roots
+- [ ] review and merge the draft PR, tag `hermetic-v0.7.0`
+- [ ] consumer: xake-ar `build.fsx` `.xml` rule on `Locks.doc` after the release

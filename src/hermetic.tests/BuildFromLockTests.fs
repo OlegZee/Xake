@@ -92,6 +92,9 @@ type ``Building from Xake-generated locks``() =
         Assert.That(Locks.versionFor versions "src/hermetic/xake.project.json", Is.EqualTo (Some "0.2"))
         Assert.That(Locks.versionFor versions "src/core/xake.project.json", Is.EqualTo (Some "3.6"))
         Assert.That(Locks.versionFor [ "src/core/**", "1" ] "src/hermetic/xake.project.json", Is.EqualTo None)
+        // a project at the project root
+        Assert.That(Locks.versionFor versions "xake.project.json", Is.EqualTo (Some "3.6"))
+        Assert.That(Locks.versionFor [ "src/core/**", "1" ] "xake.project.json", Is.EqualTo None)
 
     /// The acceptance: A -> B built from the locks into the layout, the .xml beside B's dll;
     /// a second build does nothing (also in Debug, where nothing asks for the .xml twice); a
@@ -407,12 +410,17 @@ type ``Building from Xake-generated locks``() =
             let! fwk = getRuleMatch "fwk"
             let! name = getRuleMatch "name"
             do! Locks.compileAs (lockOf name cfg) fwk versions }
+        let doc = recipe {
+            let! cfg = getRuleMatch "cfg"
+            let! fwk = getRuleMatch "fwk"
+            let! name = getRuleMatch "name"
+            do! Locks.doc Locks.Settings.Default (lockOf name cfg) fwk }
         let build label (goal: string) =
             xake {x.TestOptions with FileLog = label + ".log"; ThrowOnError = true; Vars = [ "CI", "off" ]; FileLogLevel = Loud} {
                 wantOverride [ goal ]
                 rules [
                     target "out/(cfg:*)/(fwk:*)/(name:*).dll" { do! compile }
-                    target "out/(cfg:*)/(fwk:*)/(name:*).xml" { do! compile }
+                    target "out/(cfg:*)/(fwk:*)/(name:*).xml" { do! doc }
                 ]
             }
         let xml = "out/Release/netstandard2.0/B.xml"
@@ -424,6 +432,99 @@ type ``Building from Xake-generated locks``() =
         Assert.That(x.Stamps [ xml; dll "Release" "B" ], Is.EqualTo stamps, "nothing changed, nothing rebuilt")
         let e = Assert.Throws<XakeException>(fun () -> build "xml-none" "out/Release/netstandard2.0/A.xml")
         Assert.That(e.Data0, Does.Contain "asks for no XML doc")
+
+    /// `Locks.compile` over a target that is not the entry's output fails: an `.xml` (that is
+    /// `Locks.doc`'s), a `.pdb`; a generated lock does not say whether it is an exe, so a
+    /// `.exe` target compiles as a `.dll` does.
+    [<Test; Category("Integration")>]
+    member x.``compile fails for a target that is not the output of the entry``() =
+        fixture ()
+        x.Generate "generate-output" fixtureOf [ "B" ] [ "Release" ] |> ignore
+        let build label (goal: string) =
+            xake {x.TestOptions with FileLog = label + ".log"; ThrowOnError = true; Vars = [ "CI", "off" ]; FileLogLevel = Loud} {
+                wantOverride [ goal ]
+                rules [
+                    target "out/(cfg:*)/(fwk:*)/(name:*).(ext:*)" {
+                        let! cfg = getRuleMatch "cfg"
+                        let! fwk = getRuleMatch "fwk"
+                        let! name = getRuleMatch "name"
+                        do! Locks.compile Locks.Settings.Default (lockOf name cfg) fwk } ]
+            }
+        let xml = Assert.Throws<XakeException>(fun () -> build "output-xml" "out/Release/netstandard2.0/B.xml")
+        Assert.That(xml.Data0, Does.Contain "Locks.compile builds the assembly; the .xml rule is Locks.doc")
+        let pdb = Assert.Throws<XakeException>(fun () -> build "output-pdb" "out/Release/netstandard2.0/B.pdb")
+        Assert.That(pdb.Data0, Does.Contain "is not the output of the lock")
+        Assert.That(pdb.Data0, Does.Contain "B.dll or B.exe")
+        Assert.That(File.Exists "out/Release/netstandard2.0/B.pdb", Is.False)
+        build "output-exe" "out/Release/netstandard2.0/B.exe"
+        Assert.That(File.Exists "out/Release/netstandard2.0/B.exe", Is.True)
+
+    /// Adds the generated source `source` with the `$(Version)` token to the lock at `path`.
+    member private x.AddVersionSource (roots: (string * string) list) (source: string) (path: string) =
+        let doc = Lock.read roots path
+        let content = "[assembly: System.Reflection.AssemblyInformationalVersion(\"$(Version)\")]\n"
+        let withVersion (e: Lock.Entry) =
+            match e.Compilation with
+            | Lock.Compilation.Csc c ->
+                { e with Compilation = Lock.Compilation.Csc { c with Sources = source :: c.Sources; Generated = (source, content) :: c.Generated } }
+            | _ -> e
+        File.WriteAllText (path, Lock.format roots { doc with Entries = doc.Entries |> List.map withVersion })
+
+    /// The version mask matches the project's folder from the lock (`Directory`), not where the
+    /// first source lies: `p/Cv` compiles `p/shared/*.cs`, and `p/Cv/**` is its mask.
+    [<Test; Category("Integration")>]
+    member x.``the version is looked up by the project folder of the lock``() =
+        fixture ()
+        Directory.CreateDirectory "p/shared" |> ignore
+        Directory.CreateDirectory "p/Cv" |> ignore
+        File.WriteAllText ("p/shared/S.cs", "namespace Cv { public class S {} }\n")
+        describe "Cv" Description.CSharp [ "../shared/*.cs" ] [] false
+        x.Generate "generate-folder" fixtureOf [ "Cv" ] [ "Release" ] |> ignore
+        let path = lockOf "Cv" "Release"
+        Assert.That(File.ReadAllText path, Does.Contain "\"Directory\": \"$(ProjectRoot)/p/Cv\"")
+        x.AddVersionSource (Roots.builtin (Directory.GetCurrentDirectory ())) (Path.GetFullPath "obj/xake/Cv/netstandard2.0/Cv.Version.cs" |> fun p -> p.Replace ('\\', '/')) path
+        let out = dll "Release" "Cv"
+        x.BuildWith (Locks.compile { Locks.Settings.Default with Versions = [ "p/Cv/**", defaultVersion; "**", otherVersion ] }) "folder" [] out
+        let text = System.Text.Encoding.UTF8.GetString (File.ReadAllBytes out)
+        Assert.That(text, Does.Contain "1.2.3")
+        Assert.That(text, Does.Not.Contain "9.9.9")
+
+    /// A project outside the project root, its mask starting with the script's root:
+    /// `$(SiblingRoot)/P/**`.
+    [<Test; Category("Integration")>]
+    member x.``a version mask may start with a script root``() =
+        let roots = [ "$(SiblingRoot)", "../Sibling" ]
+        let root = Path.GetFullPath ("sibmask" </> "root")
+        if Directory.Exists "sibmask" then Directory.Delete ("sibmask", true)
+        for dir in [ root </> "desc" </> "P"; "sibmask" </> "Sibling" </> "P" ] do Directory.CreateDirectory dir |> ignore
+        File.WriteAllText ("sibmask/Sibling/P/A.cs", "namespace P { public class A {} }\n")
+        let d : Description.Project =
+            { Schema = None; Name = "P"; Project = "../../../Sibling/P/P.csproj"; AssemblyName = None; RootNamespace = None
+              Language = Description.CSharp; Kind = Description.Library; Frameworks = [ "netstandard2.0" ]
+              Sources = [ "**/*.cs"; "!obj/**/*"; "!bin/**/*" ]; Resources = []; Defines = []; References = []; FrameworkReferences = []; ProjectRefs = []; Packages = []
+              Options = Description.Options.Default; InternalsVisibleTo = []; AssemblyAttributes = []; ByFramework = []; Package = None }
+        Description.write (root </> "desc/P" </> Description.FileName) d |> ignore
+        let run (label: string) (goal: string) (rs: Rule<ExecContext> list) =
+            xake {x.TestOptions with ProjectRoot = root; DbFileName = root </> ".xake"; FileLog = root </> (label + ".log"); ThrowOnError = true; Vars = [ "CI", "off" ]; FileLogLevel = Loud} {
+                wantOverride [ goal ]
+                rules rs
+            }
+        run "generate" "update-locks"
+            [ LockRule.lockRuleWith roots lockOf outOf (fun _ -> "desc/P/" + Description.FileName) id (ResizeArray ()); LockRule.updateLocks [ "Release" ] [ "P" ] ]
+        let path = root </> lockOf "P" "Release"
+        Assert.That(File.ReadAllText path, Does.Contain "\"Directory\": \"$(SiblingRoot)/P\"")
+        let lockRoots = Roots.make root roots
+        x.AddVersionSource lockRoots ((root </> "obj/xake/P/netstandard2.0/P.Version.cs").Replace ('\\', '/')) path
+        let settings = { Locks.Settings.Default with Roots = roots; Versions = [ "$(SiblingRoot)/P/**", defaultVersion; "**", otherVersion ] }
+        run "build" (dll "Release" "P")
+            [ target "out/(cfg:*)/(fwk:*)/(name:*).dll" {
+                let! cfg = getRuleMatch "cfg"
+                let! fwk = getRuleMatch "fwk"
+                let! name = getRuleMatch "name"
+                do! Locks.compile settings (lockOf name cfg) fwk } ]
+        let text = System.Text.Encoding.UTF8.GetString (File.ReadAllBytes (root </> dll "Release" "P"))
+        Assert.That(text, Does.Contain "1.2.3")
+        Assert.That(text, Does.Not.Contain "9.9.9")
 
     /// G10: a project whose sources and key file live in a sibling checkout, registered as the
     /// extra root `$(SiblingRoot)`: the generated lock names no absolute path (masks, keyfile,

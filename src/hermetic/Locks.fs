@@ -503,8 +503,8 @@ module Locks =
                 | Some other -> failwithf "LOCK_STALE='%s': expected fail or warn" other
         }
 
-    /// `compileAs` for a `.dll` target.
-    let private compileDll (settings: Settings) (lockPath: string) (fwk: string) : Recipe<ExecContext, unit> =
+    /// `compile` for the assembly target (`.dll`, `.exe`): C# and F# alike.
+    let private compileAssembly (settings: Settings) (lockPath: string) (fwk: string) : Recipe<ExecContext, unit> =
         let extraRoots, versions = settings.Roots, settings.Versions
         recipe {
             let! options = getCtxOptions ()
@@ -521,9 +521,14 @@ module Locks =
                 | many ->
                     failwithf "the lock '%s' has %d entries for %s (%s); one per framework is expected" lockPath many.Length fwk
                         (many |> List.map (fun e -> e.Name) |> String.concat ", ")
-            let asm = Path.GetFileNameWithoutExtension target
-            if entry.Name <> asm then
-                failwithf "'%s': the target '%s' is not the assembly of the lock '%s' (%s)" entry.Name target lockPath (outputName entry)
+            // the entry's output: what msbuild named it when recorded, else either extension (a
+            // generated lock does not say whether it is an exe)
+            let outputs =
+                match entry.Evaluation.Properties |> Map.tryFind "TargetFileName" with
+                | Some name when name <> "" -> [ name ]
+                | _ -> [ entry.Name + ".dll"; entry.Name + ".exe" ]
+            if not (List.contains (Path.GetFileName target) outputs) then
+                failwithf "'%s': the target '%s' is not the output of the lock '%s' (%s)" entry.Name target lockPath (String.concat " or " outputs)
 
             // a recorded entry is msbuild's resolution of the files its import read: one changed
             // since (a PackageReference added to the csproj) makes the lock stale
@@ -571,16 +576,26 @@ module Locks =
             let! c =
                 if not (c.Generated |> List.exists (fun (_, text) -> text.Contains VersionToken)) then recipe { return c } else
                 recipe {
-                    let projectDir =
+                    let guessed () =
                         c.Sources |> List.tryFind (fun s -> not (c.Generated |> List.exists (fst >> (=) s)) && not (s.StartsWith "!"))
                         |> Option.map (fun s ->
                             let parts = (normal s).Split '/' |> List.ofArray
                             let fixedParts = parts |> List.takeWhile (fun p -> not (p.Contains "*" || p.Contains "?"))
                             String.concat "/" (if fixedParts.Length = parts.Length then List.truncate (parts.Length - 1) parts else fixedParts))
                         |> Option.defaultValue root
-                    let relative = if projectDir.StartsWith (root + "/") then projectDir.Substring (root.Length + 1) else projectDir
-                    let projectPath = relative + "/" + Description.FileName
-                    match versionFor versions projectPath with
+                    // the project's folder from the lock; the project root is what a lock written with no project says
+                    let projectDir =
+                        match (if c.Directory = "" then "" else (normal (Path.GetFullPath c.Directory)).TrimEnd '/') with
+                        | dir when dir <> "" && dir <> root -> dir
+                        | _ -> guessed ()
+                    let relative =
+                        if projectDir = root then ""
+                        elif projectDir.StartsWith (root + "/") then projectDir.Substring (root.Length + 1)
+                        else projectDir
+                    let projectPath = if relative = "" then Description.FileName else relative + "/" + Description.FileName
+                    // the masks may start with a script root (`$(Sibling)/**`)
+                    let! roots = Roots.currentWith extraRoots
+                    match versionFor (versions |> List.map (fun (mask, var) -> Roots.expand roots mask, var)) projectPath with
                     | None ->
                         return failwithf "'%s': the lock '%s' needs a version (%s) and no mask of `versions` matches '%s' (%s)"
                                     entry.Name lockPath VersionToken projectPath (versions |> List.map fst |> String.concat ", ")
@@ -617,8 +632,8 @@ module Locks =
         | Lock.Compilation.Fsc f -> f.Options |> List.exists (fun o -> match FscArgs.parse o with FscArgs.Switch (_, n, _) -> FscArgs.canonical n = "doc" | _ -> false)
         | Lock.Compilation.Csc c -> c.Options |> List.exists (fun o -> not (o.StartsWith "@") && (match CscArgs.parse o with CscArgs.Switch (n, _) -> CscArgs.canonical n = "doc" | _ -> false))
 
-    /// The `.xml` beside a `.dll` target: the dll rule writes it (the side output of the
-    /// compile); this needs the dll and checks the file is there.
+    /// The `.xml` beside an assembly: the assembly's rule writes it (the side output of the
+    /// compile); this needs the assembly and checks the file is there.
     let private docOf (extraRoots: (string * string) list) (lockPath: string) (fwk: string) (xml: string) : Recipe<ExecContext, unit> =
         recipe {
             let! doc = Lock.loadWith extraRoots lockPath
@@ -645,15 +660,11 @@ module Locks =
     /// </code>
     /// <list type="bullet">
     /// <item>reads the lock (a dependency on it, `Lock.load`); the target's file name must be
-    /// the entry's assembly name;</item>
+    /// the entry's output: `TargetFileName` when the lock records one (`X.exe` for a .NET
+    /// Framework application), else `<Name>.dll` or `<Name>.exe`;</item>
     /// <item>the output: `-o`/`/out:` at the target (a Xake-generated lock has none); a
     /// `--doc:`/`/doc:` the lock carries is re-targeted beside it -- the `.xml` is a side
-    /// output of the dll's rule;</item>
-    /// <item>a target `.xml` (a rule over the `.xml` with the same body, for a script that
-    /// needs the doc file before or without the dll, e.g. to pack it) needs the `.dll` beside
-    /// it, whose rule writes it; it fails when the lock asks for no doc. A rule declaring both
-    /// (`targets [dll; xml]`) is not the form: a lock without doc never writes the `.xml`, so
-    /// such a rule would run on every build;</item>
+    /// output of the dll's rule; a target `.xml` fails: its rule is `doc`;</item>
     /// <item>depends on the unhashed outputs of project references before compiling, so a
     /// referenced project's `.dll` is built first by its own rule and a change to it rebuilds
     /// this one; the hashed references (packages) are fetched by the restore below when
@@ -663,9 +674,11 @@ module Locks =
     /// <item>a `.resx` resource is compiled by the runner into the `.resources` the lock names
     /// (under `obj/xake/`); the resx is an input;</item>
     /// <item>a `$(Version)` token in `Generated` is replaced by the version of the first
-    /// `Versions` mask matching the project (its folder, where its first source lies, as
-    /// `&lt;folder&gt;/xake.project.json` relative to the project root); the variable is read
-    /// (a dependency) only when the token is there;</item>
+    /// `Versions` mask matching the project (its folder, `Directory` of the lock's compilation,
+    /// else where its first source lies, as `&lt;folder&gt;/xake.project.json` relative to the
+    /// project root -- a path in the project tree, not where the description lives); a mask may
+    /// start with a script root (`$(Sibling)/**`); the variable is read (a dependency) only
+    /// when the token is there;</item>
     /// <item>then `Lock.compileFrom`: prerequisites, the `HERMETIC=on` gate (message 10),
     /// restore of what the lock names, the compiler (csc's server per `CSC_SERVER`) in the
     /// project's folder (the lock's `Directory`);</item>
@@ -680,9 +693,25 @@ module Locks =
         recipe {
             let! target = getTargetFile ()
             if target.FullName.EndsWith (".xml", System.StringComparison.OrdinalIgnoreCase) then
-                do! docOf settings.Roots lockPath fwk (normal target.FullName)
-            else
-                do! compileDll settings lockPath fwk
+                failwithf "'%s': Locks.compile builds the assembly; the .xml rule is Locks.doc settings lockPath fwk" (normal target.FullName)
+            do! compileAssembly settings lockPath fwk
+        }
+
+    /// <summary>
+    /// The rule over the `.xml` beside an assembly, for a script that needs the doc file before
+    /// or without the assembly (e.g. to pack it): needs the assembly beside it, whose `compile`
+    /// rule writes the doc as a side output, and fails when the lock asks for no doc (`options.doc`).
+    /// The parameters are `compile`'s (only `Roots` is used):
+    /// <code>
+    /// "out/(cfg:*)/(fwk:*)/(name:*).xml" ..> Locks.doc settings (lockOf name cfg) fwk
+    /// </code>
+    /// A rule declaring both (`targets [dll; xml]`) is not the form: a lock without doc never
+    /// writes the `.xml`, so such a rule would run on every build.
+    /// </summary>
+    let doc (settings: Settings) (lockPath: string) (fwk: string) : Recipe<ExecContext, unit> =
+        recipe {
+            let! target = getTargetFile ()
+            do! docOf settings.Roots lockPath fwk (normal target.FullName)
         }
 
     /// `compile` with the extra roots `extraRoots`, the version masks `versions` and the

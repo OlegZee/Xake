@@ -1,5 +1,9 @@
 # Session state: hermetic-build
 
+## 2026-10-22 — `Locks.compile` per target kind on `pr/locks-compile-targets` (from `dev` 0d65475)
+
+[locks-compile-targets.md](locks-compile-targets.md) (reviewed, approved by the owner) implemented, hermetic 0.7.0: public `Locks.doc settings lockPath fwk` is the `.xml` rule, and **`compile` on an `.xml` target is a hard error** (xake-ar's `build.fsx` has the one consumer rule: `"out/(b:*)/(cfg:*)/(fwk:*)/(asm:*).xml" ..> doc`, `doc` calling `Locks.doc`, to switch after the release). `compile` checks its target against the entry's output (`TargetFileName`, else `<Name>.dll`/`.exe`); `compileDll` is `compileAssembly`; the `$(Version)` folder comes from the lock's `Directory` (root-relative `""` fixed), and version masks expand through the script's roots (`$(Sibling)/**`). The release notes entry is in `docs/hermetic/README.md` (where hermetic's notes live). **Exact next step**: review and merge the draft PR, release `hermetic-v0.7.0`, then switch xake-ar's `.xml` rule.
+
 ## 2026-10-22 — SDK path with a space fixed on `pr/sdk-path-spaces` (from `dev`)
 
 Hermetic compiles failed with the SDK under `C:\Program Files\dotnet` (`sdk-path-spaces.md`
@@ -8,14 +12,14 @@ full `dotnet(.exe)` path; fsc's response file is written verbatim (it rejects qu
 lines), csc's stays argv-quoted; the restores, `runMsbuild` and the `msbuild` task quote their
 arguments. The quoter is public `Xake.Dotnet.Tool.quoteArgument`; the hermetic package keeps a
 copy (`ToolArgs.quote`) until its `Xake` floor carries it, so the compile fix reaches hermetic
-users with the next `Xake` release. **Exact next step**: review and merge draft #84; a Windows
-run with the default SDK location confirms it.
+users with the next `Xake` release. **Merged** (#84); a Windows
+run with the default SDK location still confirms it.
 
 PR, branch, worktree:
 
 | PR | Branch | Worktree | Base | Status |
 |---|---|---|---|---|
-| #84 SDK and rsp paths quoted | `pr/sdk-path-spaces` | `.claude/worktrees/pr+sdk-path-spaces` | `dev` 62d9b1a | draft; tests 405/1 skipped, hermetic 295; `build.fsc.fsx check` + `build` pass |
+| #84 SDK and rsp paths quoted | `pr/sdk-path-spaces` | `.claude/worktrees/pr+sdk-path-spaces` | `dev` 62d9b1a | merged; tests 405/1 skipped, hermetic 295; `build.fsc.fsx check` + `build` pass |
 
 
 ## 2026-10-21 — SDK-free locks implemented (#83, draft)

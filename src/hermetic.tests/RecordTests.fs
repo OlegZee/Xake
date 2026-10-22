@@ -360,11 +360,16 @@ type ``Import record``() =
             let! fwk = getRuleMatch "fwk"
             let! name = getRuleMatch "name"
             do! Locks.compileAs (lockOf name cfg) fwk [] }
+        let doc = recipe {
+            let! cfg = getRuleMatch "cfg"
+            let! fwk = getRuleMatch "fwk"
+            let! name = getRuleMatch "name"
+            do! Locks.doc Locks.Settings.Default (lockOf name cfg) fwk }
         x.Run label
             [ command "build" { do! Locks.needAll (!! "*/xake.project.json") "Release" lockOf outOf }
               "out/(cfg:*)/(fwk:*)/(name:*)/*.dll" ..> compile
               "out/(cfg:*)/(fwk:*)/(name:*)/*.exe" ..> compile
-              "out/(cfg:*)/(fwk:*)/(name:*)/*.xml" ..> compile ]
+              "out/(cfg:*)/(fwk:*)/(name:*)/*.xml" ..> doc ]
             [ "build" ]
 
     member private x.Locks () = [ for p in [ "lib"; "app" ] -> File.ReadAllText (lockOf p "Release") ]
@@ -405,6 +410,18 @@ type ``Import record``() =
               "out/Release/net472/app/app.exe"; "out/Release/net8.0/app/app.dll" ]
         for f in produced do Assert.That(File.Exists f, f)
         Assert.That(File.Exists "out/Release/net8.0/lib/lib.xml")
+
+        // the application's output is `app.exe` (msbuild's `TargetFileName`): asked as `app.dll` is not it
+        let compile = recipe {
+            let! cfg = getRuleMatch "cfg"
+            let! fwk = getRuleMatch "fwk"
+            let! name = getRuleMatch "name"
+            do! Locks.compileAs (lockOf name cfg) fwk [] }
+        let asDll = Assert.Throws<XakeException>(fun () ->
+            x.Run "build-asdll" [ "out/(cfg:*)/(fwk:*)/(name:*)/*.dll" ..> compile ] [ "out/Release/net472/app/app.dll" ])
+        Assert.That(asDll.Data0, Does.Contain "is not the output of the lock")
+        Assert.That(asDll.Data0, Does.Contain "(app.exe)")
+        Assert.That(File.Exists "out/Release/net472/app/app.dll", Is.False)
 
         // the same again: after Xake's build nothing changes
         let again = x.Import "import-2"
@@ -516,11 +533,16 @@ module internal RecordKit =
             let! fwk = getRuleMatch "fwk"
             let! name = getRuleMatch "name"
             do! Locks.compileAs (lockOf name cfg) fwk [] }
+        let doc = recipe {
+            let! cfg = getRuleMatch "cfg"
+            let! fwk = getRuleMatch "fwk"
+            let! name = getRuleMatch "name"
+            do! Locks.doc Locks.Settings.Default (lockOf name cfg) fwk }
         run options label
             [ command "build" { do! Locks.needAll (!! "*/xake.project.json") cfg lockOf outOf }
               "out/(cfg:*)/(fwk:*)/(name:*)/*.dll" ..> compile
               "out/(cfg:*)/(fwk:*)/(name:*)/*.exe" ..> compile
-              "out/(cfg:*)/(fwk:*)/(name:*)/*.xml" ..> compile ]
+              "out/(cfg:*)/(fwk:*)/(name:*)/*.xml" ..> doc ]
             [ "build" ]
 
     /// The run folders (`run/<cfg>/<fwk>/<name>/`, `Locks.runFolderWith` by `mode`) of every
@@ -532,6 +554,11 @@ module internal RecordKit =
             let! fwk = getRuleMatch "fwk"
             let! name = getRuleMatch "name"
             do! Locks.compileAs (lockOf name cfg) fwk [] }
+        let doc = recipe {
+            let! cfg = getRuleMatch "cfg"
+            let! fwk = getRuleMatch "fwk"
+            let! name = getRuleMatch "name"
+            do! Locks.doc Locks.Settings.Default (lockOf name cfg) fwk }
         run options label
             [ command "deploy" {
                 let! folders = Locks.runFoldersWith [] (!! "*/xake.project.json") cfg lockOf Locks.runOf
@@ -543,7 +570,7 @@ module internal RecordKit =
                 do! Locks.runFolderWith [] mode lockOf outOf cfg fwk name }
               "out/(cfg:*)/(fwk:*)/(name:*)/*.dll" ..> compile
               "out/(cfg:*)/(fwk:*)/(name:*)/*.exe" ..> compile
-              "out/(cfg:*)/(fwk:*)/(name:*)/*.xml" ..> compile ]
+              "out/(cfg:*)/(fwk:*)/(name:*)/*.xml" ..> doc ]
             [ "deploy" ]
 
     let sdkProject (properties: string) (items: string) =

@@ -68,7 +68,8 @@ open Xake.Hermetic.Dotnet
 | `Described.closure descriptionOf d` | recipe | the transitive project references of `d`, a project after the ones it references, each once; a cycle fails: the direct route's `ref` list |
 | `Locks.restoreAll descriptions cfg lockOf descriptionOf` | recipe | the sets the lock rules' `generate` will restore, in ONE `dotnet restore`, before `need`ing them ([one restore per build](#one-restore-per-build)) |
 | `Locks.generate lockOf outOf config descriptionPath` | recipe | the lock of one described project in one configuration, nothing compiled, written only on change; the referenced projects' locks must exist ([Xake-generated locks](#xake-generated-locks)) |
-| `Locks.compile settings lockPath fwk` | recipe | inside the layout's `.dll` rule: the lock's entry for `fwk` compiled into the rule's target; inside an `.xml` rule with the same body: needs the `.dll`, whose rule writes the doc. `settings` (`Locks.Settings`): extra roots, version masks, `Lock.Options` ([Building from Xake-generated locks](#building-from-xake-generated-locks)) |
+| `Locks.compile settings lockPath fwk` | recipe | the layout's assembly rule (`.dll`, `.exe`): the lock's entry for `fwk` compiled into the rule's target, which must be the entry's output (`TargetFileName`, else `<Name>.dll`/`.exe`); an `.xml` target fails, that is `Locks.doc`. `settings` (`Locks.Settings`): extra roots, version masks, `Lock.Options` ([Building from Xake-generated locks](#building-from-xake-generated-locks)) |
+| `Locks.doc settings lockPath fwk` | recipe | the layout's `.xml` rule: needs the assembly beside it, whose `compile` rule writes the doc, and fails when the lock asks for no doc; takes `compile`'s parameters, only `Roots` is used |
 | `Locks.compileAs lockPath fwk versions` | recipe | `compile { Settings.Default with Versions = versions }`; `compileAsWith roots` adds `Roots = roots` |
 | `Locks.needAll descriptions cfg lockOf outOf` | recipe | needs the layout `.dll` of every framework of every described project; a project without a lock fails naming `update-locks`; the packages all locks name and the folder lacks are fetched first in one restore |
 | `Lock.compileFrom lockPath options entry` | recipe | `compileWith` of an entry read from the lock at `lockPath` (named by the HERMETIC refusal) |
@@ -1776,17 +1777,19 @@ target "out/(cfg:*)/(fwk:*)/(name:*).dll" {
   regenerates a lock on its own. The packages all the locks name that the folder lacks are
   fetched first in one restore; if that fails (a bad feed, one wrong version) it is a warning, the
   compiles go on and each restores, and fails, alone.
-- **`compileAs lockPath fwk versions`** runs inside the rule whose target is the `.dll`. It reads
+- **`compileAs lockPath fwk versions`** runs inside the rule whose target is the assembly. It reads
   the lock (a dependency), takes its one entry for `fwk` (the target's file name must be the
-  entry's assembly name) and compiles it into the target: `--out:`/`/out:` is the rule's target
+  entry's output: the recorded `TargetFileName`, `app.exe` for a .NET Framework application,
+  else `<Name>.dll` or `<Name>.exe`; any other target, a `.pdb` say, fails) and compiles it into the target: `--out:`/`/out:` is the rule's target
   (the lock has none); a `--doc:`/`/doc:` the lock carries is re-targeted beside it. The `.xml` is
   a side output of the `.dll` rule, so a lock without doc (a Debug lock, say) expects no `.xml` and
   is up to date on the next run; `needAll` needs the `.dll`s only.
 - **The `.xml` first**: a script that needs the doc file before the dll (a pack rule) adds a rule
-  over the `.xml` with the same body; `compileAs` there needs the `.dll` beside it (whose rule
-  writes the `.xml`) and fails when the lock asks for no doc:
+  over the `.xml` calling `Locks.doc`; it needs the assembly beside it (whose rule writes the
+  `.xml`) and fails when the lock asks for no doc. `compile` over an `.xml` target is an error
+  (it used to do this; 0.7.0):
   ```fsharp
-  target "out/(cfg:*)/(fwk:*)/(name:*).xml" { ... do! Locks.compileAs (lockOf name cfg) fwk versions }
+  target "out/(cfg:*)/(fwk:*)/(name:*).xml" { ... do! Locks.doc settings (lockOf name cfg) fwk }
   ```
   One rule declaring both (`targets [dll; xml]`) is not the form: the engine reruns a rule while
   one of its targets is missing, and a lock without doc never writes the `.xml`.
@@ -1798,8 +1801,11 @@ target "out/(cfg:*)/(fwk:*)/(name:*).dll" {
   lock. The runner's own `needFiles` covers the sources and the compiler.
 - **`$(Version)`**: a `$(Version)` token in `Generated` is replaced by the value of the variable
   of the first `versions` mask matching the project, taken as `<folder>/xake.project.json`
-  relative to the project root, the folder being where its first source lies. The variable is
-  read (and so a dependency) only when the token is there; the lock keeps the token. The locks
+  relative to the project root (`xake.project.json` for a project at the root). The folder is the
+  project's: `Directory` of the lock's compilation, else (a lock written with no project) where
+  its first source lies; it is a path in the project tree, not where the description lives. A mask
+  may start with a script root, `$(Sibling)/**`, expanded through the script's roots before
+  matching. The variable is read (and so a dependency) only when the token is there; the lock keeps the token. The locks
   `Locks.generate` writes today carry none (assembly versioning is an open topic).
 - **Extra roots**: a script whose locks were generated with `generateWith roots` builds with
   `needAllWith roots` and `compileAsWith roots` ([above](#extra-roots-for-generated-locks)).
@@ -1825,7 +1831,7 @@ target "out/(cfg:*)/(fwk:*)/(name:*).dll" {
   `Lock.compileFromWith` as given (`Run.FailOnError`, `Run.CscPath`, `FscRun`, `Restore`, ...),
   with one thing filled in: `Lock.Run.Server` left at its default is resolved from `CSC_SERVER`,
   then `XAKE_CSC_SERVER`, as before; one the script set is used as is and the variable is not
-  read. The `.xml` rule takes `Roots` only. With a hermetic release built on Xake 3.10, a script
+  read. `Locks.doc` takes `Roots` only. With a hermetic release built on Xake 3.10, a script
   caps its compiles with its own resource through `Lock.Run.Throttle` (and `Lock.FscRun.Throttle`)
   here, in place of `CSC_JOBS`/`FSC_JOBS` ([../resources.md](../resources.md)); the current
   release builds on `[3.9.0.30, 3.10)`, whose runner options have no `Throttle`.
@@ -1845,8 +1851,10 @@ without a lock change; a description without a lock fails pointing at `update-lo
 with `.xake` deleted, `build` over the committed locks of A -> B runs no lock rule; Xake's three
 projects from the locks `update-locks` writes into `out/Release/<fwk>/`; A3 -> B3 -> C with A3
 naming only B3 compiles (C's output in A3's lock after B3's); a C# doc `<include file='../docs/..'>`
-resolves (lock `Directory` the project folder); B's `.xml` needed first through its own rule, a
-no-doc lock's `.xml` refused; `compile` with `Versions` builds the bytes `compileAsWith [] _ _
+resolves (lock `Directory` the project folder); B's `.xml` needed first through its own `Locks.doc` rule, a
+no-doc lock's `.xml` refused; `compile` over an `.xml`, a `.pdb`, or a recorded application's
+`.dll` (`app.exe`) fails, a generated lock's `.exe` compiles; the version mask matched against
+the lock's project folder and a `$(SiblingRoot)/P/**` mask; `compile` with `Versions` builds the bytes `compileAsWith [] _ _
 versions` builds and `compile Settings.Default` fails as `compileAsWith [] _ _ []` does (a C#
 lock with a `$(Version)` token); `Settings.Lock` reaches the runner (`Run.FailOnError = false`
 passes a broken source, an explicit `Run.Server` does not read `CSC_SERVER`); the sibling-root

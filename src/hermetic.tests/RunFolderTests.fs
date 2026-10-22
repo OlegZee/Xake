@@ -257,6 +257,11 @@ type ``Run folders``() =
         let! fwk = getRuleMatch "fwk"
         let! asm = getRuleMatch "asm"
         do! Locks.compileAs (lockOf projectOfAsm.[asm] cfg) fwk [] }
+    let doc = recipe {
+        let! cfg = getRuleMatch "cfg"
+        let! fwk = getRuleMatch "fwk"
+        let! asm = getRuleMatch "asm"
+        do! Locks.doc Locks.Settings.Default (lockOf projectOfAsm.[asm] cfg) fwk }
 
     /// A run of the fixture's script: the compile rules over the flat output, the run folders by
     /// links (`run/`) and by copies (`runc/`).
@@ -275,7 +280,7 @@ type ``Run folders``() =
               "runc/(cfg:*)/(fwk:*)/(name:*)/.xake-run.txt" ..> runFolder RunFolder.Copy
               "out/(cfg:*)/(fwk:*)/(asm:*).dll" ..> compile
               "out/(cfg:*)/(fwk:*)/(asm:*).exe" ..> compile
-              "out/(cfg:*)/(fwk:*)/(asm:*).xml" ..> compile ]
+              "out/(cfg:*)/(fwk:*)/(asm:*).xml" ..> doc ]
             targets
 
     let runProcess (exe: string) (args: string list) (dir: string) =

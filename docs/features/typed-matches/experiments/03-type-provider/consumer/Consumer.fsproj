@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- The provider from a compiled project (net8.0), as a test project or a build tool would use it. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <DisableImplicitFSharpCoreReference>true</DisableImplicitFSharpCoreReference>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="FSharp.Core" Version="8.0.100" />
+    <Reference Include="Xake"><HintPath>../../../../../../src/core/bin/Release/netstandard2.0/Xake.dll</HintPath></Reference>
+    <Reference Include="Xake.Patterns"><HintPath>../Xake.Patterns/bin/Release/netstandard2.0/Xake.Patterns.dll</HintPath></Reference>
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="Program.fs" />
+  </ItemGroup>
+</Project>

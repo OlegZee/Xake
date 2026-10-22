@@ -1,0 +1,11 @@
+(1) typo: fwk="" lib="Lib" -> would run: dotnet build --framework 
+(1) the whole map: [("0",
+  "/var/folders/dd/0rj9tr1d4jzg32250z27r2lw0000gn/T/xake-typed-matches-01/out/net8.0/Lib.dll");
+ ("1", "net8.0"); ("2", "Lib"); ("fwk", "net8.0"); ("lib", "Lib")]
+(2) mismatched groups -> targets: ["/out/a/Lib.dll"; "/out/a/.xml"]
+(3) asked for the .xml -> targets: ["/out/a/Lib.dll"; "/out/a/Lib.xml"], groups: [("0",
+  "/var/folders/dd/0rj9tr1d4jzg32250z27r2lw0000gn/T/xake-typed-matches-01/out/a/Lib.xml");
+ ("1", "a"); ("2", "Lib"); ("fwk", "a"); ("lib", "Lib")]
+(4) wildcards -> targets: ["/out/x/y.dll"; "/out/x/y.pdb"], groups: [("0",
+  "/var/folders/dd/0rj9tr1d4jzg32250z27r2lw0000gn/T/xake-typed-matches-01/out/x/y.pdb");
+ ("1", "x"); ("2", "y"); ("name", "y")]

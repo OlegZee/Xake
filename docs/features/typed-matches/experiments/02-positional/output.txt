@@ -1,0 +1,18 @@
+A: fwk=net8.0 lib=Core
+A swapped: lib=net8.0 fwk=Core  (wrong, silently)
+A arity -> ERROR: pattern 'out/(fwk:*)/(lib:*).dll' has 2 groups ["fwk"; "lib"], the lambda takes 1
+A multi: net8.0 Core -> Core.dll, Core.xml
+B: parameter names seen = ["fwk"; "lib"]
+B swapped order: lib=Core fwk=net8.0  (right, by name)
+B typo -> ERROR: pattern 'out/(fwk:*)/(lib:*).dll' has no group(s) ["fkw"] (it has ["fwk"; "lib"])
+B named function -> ERROR: pattern 'out/(fwk:*)/(lib:*).dll' has no group(s) ["framework"; "library"] (it has ["fwk"; "lib"])
+C: Dll.Path = out/net8.0/Core.dll ; Lib.All = ["out/net462/Xake.dll"; "out/net462/Xake.xml"; "out/net8.0/Xake.dll";
+ "out/net8.0/Xake.xml"] ; Lib.Glob(b=Xake) = ["out/*/Xake.dll"; "out/*/Xake.xml"]
+C: fwk=net8.0 lib=Core
+C wrong arity -> ERROR: Pattern2: 'out/(fwk:*)/(cfg:*)/(lib:*).dll' has 3 groups ["fwk"; "cfg"; "lib"]
+C mismatched multi -> ERROR: pattern 'out/(fwk:*)/(name:*).xml' has groups ["fwk"; "name"], the first has ["fwk"; "lib"]
+D: Paths = ["out/net8.0/Core.dll"; "out/net8.0/Core.xml"]
+D: need list = ["out/net462/Xake.dll"; "out/net462/Xake.xml"; "out/net8.0/Xake.dll";
+ "out/net8.0/Xake.xml"]
+D: fwk=net8.0 lib=Core
+D record/pattern mismatch -> ERROR: Pattern<BadM>: 'out/(fwk:*)/(lib:*).dll' has groups ["fwk"; "lib"], the record has fields ["fwk"; "library"]

@@ -1,0 +1,17 @@
+Dll.Text            = out/(fwk:*)/(lib:*).dll
+Dll.Path(...)       = out/net8.0/Xake.dll
+Lib.Make(...).dll   = out/netstandard2.0/Xake.dll ; .xml = out/netstandard2.0/Xake.xml ; fwk = netstandard2.0
+Src.Path ok         = src/a.cs
+Src.Path constraint = Pattern '(dir:*)/(file:*).(ext:c*)': the values [("dir", "src"); ("ext", "fs"); ("file", "a")] do not produce a path the pattern matches (got 'src/a.fs')
+comprehension       = ["out/net462/Xake.dll"; "out/netstandard2.0/Xake.dll"]
+Lib.All (cross)     = ["out/net462/Xake.dll"; "out/net462/Xake.xml"; "out/net462/Xake.Dotnet.dll";
+ "out/net462/Xake.Dotnet.xml"; "out/netstandard2.0/Xake.dll";
+ "out/netstandard2.0/Xake.xml"; "out/netstandard2.0/Xake.Dotnet.dll";
+ "out/netstandard2.0/Xake.Dotnet.xml"]
+Lib.Glob(lib=Xake)  = ["out/*/Xake.dll"; "out/*/Xake.xml"]
+Dll.Glob()          = ["out/*/*.dll"]
+first-class         = out/net8.0/Core.dll
+curried wrapper     = out/net8.0/Core.dll
+rule: fwk=net8.0 lib=Core
+multi: fwk=net8.0 lib=Core dll=out/net8.0/Core.dll xml=out/net8.0/Core.xml
+get: fwk=net9.0 lib=Other

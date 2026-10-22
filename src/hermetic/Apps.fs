@@ -130,7 +130,7 @@ module Apps =
     let private appBinaryPlaceholder = System.Text.Encoding.UTF8.GetBytes "c3ab8ff13720e8ad9047dd39466b3c8974e592c2fa383d4a3960714caef0c4f2"
 
     let private runTool (tool: string) (args: string list) (dir: string) =
-        let psi = System.Diagnostics.ProcessStartInfo (tool, args |> List.map ToolArgs.quote |> String.concat " ")
+        let psi = System.Diagnostics.ProcessStartInfo (tool, args |> List.map Tool.quoteArgument |> String.concat " ")
         psi.WorkingDirectory <- dir
         psi.UseShellExecute <- false
         psi.RedirectStandardOutput <- true

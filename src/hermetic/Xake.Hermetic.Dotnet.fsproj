@@ -65,19 +65,21 @@
   <ItemGroup>
     <!-- Built on the published package, not on src/dotnet and src/core: the `Xake` package
          carries both Xake.dll and Xake.Dotnet.dll, and the range is what the nuspec
-         dependency says. 3.9.0 is the release this package builds on: it owns the project
-         description (`Xake.Dotnet.Description`, `ProjectPlan`) and the `Project` field of
-         `CscSettingsType`/`FscSettingsType` (3.8.0 brought `ArtifactDep2`, the run folder rule
-         relies on it, and `ResxFormat`). nuget.org carries 3.9.0 as 3.9.0.30 (publish.yml
-         appends the run number); the lower bound is that exact published version, or NuGet
-         warns NU1603 on every restore.
+         dependency says. 3.11.0 is the release this package builds on: its compiler runner
+         quotes the compiler and the response file, so a compile runs from an SDK under a path
+         with a space, and it carries `Tool.quoteArgument` for the restores and msbuild calls
+         here (3.9.0 brought the project description, `Xake.Dotnet.Description`, `ProjectPlan`,
+         and the `Project` field of `CscSettingsType`/`FscSettingsType`; 3.8.0 `ArtifactDep2`,
+         the run folder rule relies on it, and `ResxFormat`). nuget.org carries 3.11.0 as
+         3.11.0.40 (publish.yml appends the run number); the lower bound is that exact
+         published version, or NuGet warns NU1603 on every restore.
 
-         The upper bound is the next major (the owner's decision for 0.4). The price: F#
-         records are not binary-compatible across releases that add a field (a copy-and-update
-         expression compiles to the full constructor), so a 3.x minor that adds a field to a
-         record this package builds (`CscSettingsType`, `FscSettingsType`, `Csc`, `Fsc`, the
-         run options) needs a release of this package with it. -->
-    <PackageReference Include="Xake" Version="[3.10.0.35, 3.11)" />
+         The upper bound is the next minor. F# records are not binary-compatible across
+         releases that add a field (a copy-and-update expression compiles to the full
+         constructor), so a 3.x minor that adds a field to a record this package builds
+         (`CscSettingsType`, `FscSettingsType`, `Csc`, `Fsc`, the run options) needs a release
+         of this package with it. -->
+    <PackageReference Include="Xake" Version="[3.11.0.40, 3.12)" />
   </ItemGroup>
 
   <!-- Test assemblies only; no other package sees these internals. hermetic.tests tests the

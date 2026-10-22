@@ -3,55 +3,50 @@
 Status: `[ ]` todo · `[~]` in progress · `[x]` done · `[-]` dropped. Keep entries one line;
 details live in brief.md (section refs) or session.md.
 
-**Status 2026-09-23 (R1–R4 run):** four requested items done by subagents and merged: conceptual-review audit, SBOM package scope + `PackageScopeOptions`, `csc` through the Roslyn compiler server, `overview-ru.md`. Suite **358 passed, 1 skipped**, 0 warnings. Waiting on the user: six SBOM questions (`nuget-sbom.md`), the release staging proposed in `overview-ru.md`.
+**Status 2026-10-23:** Xake 3.11.0 and Xake.Hermetic.Dotnet 0.7.0 are released (`v3.11.0`, `hermetic-v0.7.0`; #86 is the last merge on `dev`). The consumer's build script is on both: import with `Import.record`, `Locks.needAllWith`/`compile`/`doc`/`runFolderWith`, `Locks.checkWith`, `Pack.fromNuspec`, binding redirects recorded, concurrent compiles throttled. Everything below marked done is in `dev`; older status history is in git and `session.md`.
 
-**Status 2026-09-24 (late night):** slice 1–2 closed · slice 3 = StrongName + Pack + Sign
-skeleton done, Babel waits for the user · decisions made today: lock split (done), the
-structured lock API (done), the lock update mechanism (done), Babel deferred, release deferred.
-Suite 331 passed, 1 skipped.
-
-**Status 2026-09-24 (night):** Stage C landed — `csc { lock "path" }` with strict semantics,
-`CscLock.record`/`verify`; the lock-update decision is closed. Suite 324 passed, 1 skipped.
-
-**Status 2026-09-24 (evening):** day zero closed · slice 1 (import, lock, `fromlock` (replaced by `CscLock.compile` in stage A2), one runner,
-page and repo-a byte-identical) closed · slice 2 (Nuget, Sbom, Verify) closed · slice 3 half
-done (StrongName, Pack; Babel and delegated signing wait for the user) · **lock split done
-(Stage B)**: `Lock.Entry` in three sections, structured `Options`, round-trip check, package
-graph in the lock, repo-a re-proven 18/18 · open decisions for the user: lock update
-mechanism, release. Details: session.md, README.md.
-
-**Status 2026-10-13 (night run):** fixes plan rounds A1, B1, B2.1, D1 (hermetic stack `pr/import-fidelity` -> `pr/lock-fidelity` -> `pr/batch-restore` -> `pr/lock-roots`) and C1, C2a (core `pr/fileset-perf` -> `pr/rule-match-cache`) implemented, critic-reviewed, local only (nothing pushed or merged); the trial project rerun on local packages: 33 -> 7 s clean, 224 -> 20 s four configs, script without workarounds; report `fsc-rework/night-report-2026-10-13.html`.
-
-**Status 2026-10-16 (PR sequence 0-4):** PR 0 (dev merged), PR 1 (#55 draft), PR 2 (+critic fixes), PR 3, PR 4 done; chain `feature/hermetic-build` <- `pr/resolved-inputs` <- `pr/apps` <- `pr/deploy` pushed except the feature branch; hermetic tests 267, the trial project 177/177. Next: merge #54/#55, release Xake 3.8. Details: session.md.
+## Open (by priority)
+- [ ] Windows run with the SDK under `C:\Program Files\dotnet` — #84 fixes quoting (`sdk-path-spaces.md`), unverified on Windows
+- [ ] consumer: toolset + NetAnalyzers references at the SDK's current versions, re-import, byte-equal check (`sdk-free-locks.md` step 5)
+- [ ] `HERMETIC=on` for `build.fsc.fsx` and CI: needs an exact SDK pin (`build.yml` keeps it off, `global.json` floats); HERMETIC on generated C# locks (SDK csc prerequisite)
+- [ ] whether csc analyzers may be dropped for a non-validating build — the only lever toward a <= 60 s consumer build (`binding-redirects.md`, cycle 3)
+- [ ] `Generated`/`.resources` as engine targets (the MSB3577 interop case, `conceptual-review.md`); the page byte-comparison cannot re-run in a tree Xake built in
+- [ ] only what a compilation reads is restored (References, Analyzers, compiler), not the whole `Dependencies.Packages` graph; composed `csc { toolset }` has no package folder of its own
+- [ ] B2.2 direct HTTP download for locks — not started (batch restore, B2.1, is cheap enough)
+- [ ] PR 10 / `cached` rule decorator + fingerprints file
+- [~] Babel recipe with seed — the re-sign half is done (`StrongName.fs`); Babel and delegated signing (a real `Signer`, certificate, key agent) wait for the user
+- [ ] SBOM: the six questions in `docs/hermetic/nuget-sbom.md`; vendored/merged code as tier-1 subcomponents (needs a component registry, RFC section 6); answers to the RFC's open questions (section 8)
+- [ ] `Sign`/`Verify` leftovers: unlabelled alignment padding before an appended certificate table (`signing.md` section 3); `StrongName.signFile` does not recompute the PE CheckSum
+- [ ] `sign {}` shadows FSharp.Core `sign` when `Xake.Hermetic.Dotnet` is open: rename the builder while 0.x? (`Sign.fs`, `let sign = SignRuleBuilder ()`)
+- [ ] test-order fragility: `DotNetFwk.locateFramework` memoizes while `FromLockTests` mutates `NUGET_PACKAGES`
+- [ ] the `import.fsx`/`import-page.fsx` scripts still key the project-reference remap on "recorded hash is empty" (the verification script was fixed)
+- [ ] core: the runner recompiles a `.resources` when its resx changed (then drop `Described.refreshResources`)
 
 ## Fixes plan (fsc-rework/fixes-plan.md, 2026-10-13)
 - [x] A1 import/project fidelity G1-G4, G13 — `pr/import-fidelity`
 - [x] B1 transitive refs, framework assemblies, directory, xml rule, G14 — `pr/lock-fidelity`
 - [x] B2.1 batch restore G15, closure helper — `pr/batch-restore`
-- [ ] B2.2 direct HTTP download for locks — not started (B2.1 made restore cheap enough for now)
 - [x] C0 stats from `.xake` — `exp-repo/tools/xakestats.fsx`, `trial-stats.md`
 - [x] C1 fileset regex cache G8 — `pr/fileset-perf`
 - [x] C2a rule-match cache, observable agent errors (G9/G17 cause) — `pr/rule-match-cache`
 - [-] C2 profiling — not needed: C0 + C1/C2a explained G9/G17
 - [x] D1 roots/pathmap G10, prerequisite G11 (test only), A1/B critic fixes, self-build locks regenerated — `pr/lock-roots`
 - [x] E the trial project rerun — `trial-rerun.md`
-- [ ] F pack (PR 8) — waits for answers
-- [ ] G16 hang — not reproduced (`pr/pool-hang` holds repro tests only); agent-failure guards in C2a
-- [ ] open: HERMETIC on generated C# locks (SDK csc prerequisite), 3.7.1/0.3.1 release, `build.fsc.fsx` on the new API
-
-**Status 2026-10-11 (fsc-rework implementation):** plan of `fsc-rework/brief.md` §5 confirmed by the user; PRs 1-6 (minus PR 6 wiring) implemented by subagents and open as #44-#49; questions in `fsc-rework/questions.md`; PR 7 waits for the merges.
+- [x] F pack (PR 8) — `Pack.fromNuspec`/`expand`/`tokensOf`/`libOf` (0.4.0, #65), in use in the consumer's `pack::` target
+- [-] G16 hang — never reproduced (`pr/pool-hang` holds repro tests only; agent-failure guards in C2a, resource guard #70); no hang in the consumer's parallel runs
+- [x] `build.fsc.fsx` on the new API — #50, then on the published packages #67, #69, #74
+- [-] 3.7.1/0.3.1 release — superseded by Xake 3.8-3.11 and hermetic 0.4-0.7
 
 ## fsc-rework PR plan (brief §5, 2026-10-11)
 - [x] PR 1 Hermetic: description model — `pr/description-model`, PR #44 merged 2026-10-11
-- [~] PR 2 Hermetic: `fsc/csc { project d }` + `config` + packages via msbuild restore — `pr/csc-project`, PR #46 merged 2026-10-11
-- [~] PR 3 Hermetic: `Lock.generateAll` — `pr/lock-generate`, PR #48 merged 2026-10-11 (phony rule in the script + `Locks.generate`)
+- [x] PR 2 Hermetic: `fsc/csc { project d }` + `config` + packages via msbuild restore — `pr/csc-project`, PR #46 merged 2026-10-11
+- [x] PR 3 Hermetic: `Lock.generateAll` — `pr/lock-generate`, PR #48 merged 2026-10-11 (phony rule in the script + `Locks.generate`)
 - [x] PR 4 Hermetic: build from a lock into a layout (`Locks.compileAs`, `Locks.needAll`) — `pr/build-from-lock`, PR #49 merged 2026-10-11
-- [~] PR 5 Hermetic: import project file -> description — `pr/project-import`, PR #45 merged 2026-10-11
+- [x] PR 5 Hermetic: import project file -> description — `pr/project-import`, PR #45 merged 2026-10-11
 - [x] PR 6 Core: fingerprints library + wiring — #47 merged 2026-10-11, fixes #51, wiring in #50
 - [x] PR 7 Self-build: `build.fsc.fsx` per the draft — PR #50 merged 2026-10-12 (includes the fingerprints wiring of PR 6); Xake 3.7.0.26 and hermetic 0.3.0.28 released on the way
-- [ ] PR 8 Hermetic: pack
+- [x] PR 8 Hermetic: pack — see F above
 - [x] PR 9 the trial product experiment (report, no PR) — done 2026-10-13, report `fsc-rework/trial-experiment.md`, gaps G1-G13 to triage
-- [ ] PR 10 later: `cached` rule decorator
 
 ## Day zero (brief §8h/§8i/§8j)
 - [x] E1 reproducibility of repo-a with stock `dotnet build` — green on origin/develop
@@ -108,7 +103,6 @@ mechanism, release. Details: session.md, README.md.
 - [x] `Verify.verdict` reports total differing bytes and the largest range, not only the range count — the count hid a 145 KB block behind "143 ranges"; `Verify.compare` labels a signed copy's appended certificate table from its own (the longer file's) layout instead of `a`'s, so a signed-vs-unsigned pair reads `identical except: CheckSum, CertificateTable` rather than "content differs" — `Verify.fs`, `verify.md`, `VerifyTests.fs`
 
 ## Slice 3 — ring 2/3 (brief §8f, §8g)
-- [~] Babel recipe with seed; PE timestamp normalisation + strong-name re-sign, or vendor option — **the re-sign half is done**: `StrongName.fs` (`stamp`, `checksum`, `sign`/`verify`, `normalise`; reproduces csc's own signature byte for byte — the hashed content is the PE header without its alignment padding with CheckSum and the certificate-table entry zeroed, then all sections with the signature blob excluded, as in `System.Reflection.Metadata.PEBuilder.GetContentToSign`), `StrongNameTests.fs` (5), `strongname.md`. The Babel recipe itself needs the tool from the private feed and a licence — waits for the user
 - [x] deterministic pack — `Pack.fs` (hand-rolled zip writer: sorted entries, fixed DOS time or `SOURCE_DATE_EPOCH`, no extra fields; `Pack.nupkg` with OPC parts and a content-derived psmdcp GUID, no creation date; `Pack.entries` reader with CRC-32 — `ZipArchive` exposes no `Crc32` on netstandard2.0), `PackTests.fs` (4), `pack.md`
 - [x] **sign as delegated rule — skeleton landed** (2026-09-23): `Sign` module
   (`src/dotnet/Sign.fs`) after `Pack.fs`; `Sign.rule`/`Sign.executor`/`Sign.fakeSigner`,
@@ -117,10 +111,6 @@ mechanism, release. Details: session.md, README.md.
   the executor never runs the rule body. `SignTests.fs` (6, one per acceptance criterion);
   `signing.md`. What remains is not design work — a real `Signer` (signtool / Trusted Signing /
   HSM), a certificate, and the agent that holds the key — and waits for the user
-  - [ ] open sub-item (signing.md §3): the 8-byte alignment padding a signer inserts before an
-    appended certificate table shows as a short, unlabelled `"Content"` range in
-    `Verify.compare` when the input's length is not already a multiple of 8 — PE files are
-    512-byte file-aligned in practice, so this does not bite the real pipeline; folds into the
     `Verify.verdict`/`Verify.compare` labelling above
 
 ## Conceptual review (requested 2026-09-23, after the page run)
@@ -136,13 +126,6 @@ mechanism, release. Details: session.md, README.md.
 - [x] **a project gets entries only for the frameworks it declares** (2026-09-23): `Frameworks` is the matrix asked for, not a claim that every project has every leg — the restore run also reports the project's own `TargetFrameworks` and the import takes the intersection (`Project.frameworksToImport`, pure, unit-tested), tracing what it skips. Without it, a repository that multi-targets its projects differently hits the very `NETSDK1005` this design removes
 - [x] **two API cleanups** (2026-09-23) — `Lock.load`/`loadWith` `needFiles` the lock themselves (the explicit `need` in every script goes away; `save` deliberately does not — a rule writing the lock as its own target would depend on itself), and rule bodies take one `getRuleMatches ()` map instead of a stack of `getRuleMatch`. No new engine API: `let! m = getRuleMatches()` then `let a, b = m.["a"], m.["b"]` is already the one-liner
 
-- [ ] **only what a compilation reads is restored** — References, Analyzers and the compiler, not the whole `Dependencies.Packages` graph. `Restore.download` already takes an arbitrary list if a publish-from-folder use case appears
-- [ ] **composed `csc { toolset }` has no package folder of its own** — composed settings carry none, so only lock replay honours `RunOptions.Restore`
-- [ ] **test-order fragility**: `DotNetFwk.locateFramework` memoizes while `FromLockTests` points `NUGET_PACKAGES` at a scratch folder, so whichever fixture warms the memo first decides where `netstandard.dll` is said to live. `RestoreTests` works around it; the real fix is a non-global memo or a test that does not mutate the environment
-- [ ] **the scripts' project-reference remap** was keyed on "the recorded hash is empty" — a leftover `bin/Release` from an earlier msbuild run makes the import hash that path, and the build then silently compiles against the stale artifact (found 2026-09-23; cost an hour of chasing a phantom regression). Fixed in `the repo-a verification script` by keying on the name matching another entry of the same framework; `import.fsx` and `import-page.fsx` still use the old heuristic
-
-- [ ] **the page byte-comparison cannot be re-run in a tree Xake has built in** (found 2026-09-23, not fully diagnosed): the recorded baseline recipe fails for 12 of 15 projects with `MSB3577: two output file names resolved to the same output path` naming a `.resources`. What is established: a pristine page copy runs the recipe fine (5/5 probed projects); after `import-page.fsx build` the same command fails for `Layout.csproj`; deleting just the two `.resources` Xake wrote into `obj/xake/<fwk>/<brand>/` makes that single build pass again — but deleting them before a full 30-build sequence does not, so something else contributes. Affects only projects with more than one same-named `.resx` (page has them, repo-a has none), which is why repo-a is unaffected and was re-proven 36/36. **Consequence beyond the comparison**: a user who alternates Xake and `dotnet build` in one `obj` tree may hit it, so this is interop, not just test hygiene. Likely fix regardless: `run` should write an imported project's `.resources` under a path Xake owns (`obj/xake/resources/<variant>/`) instead of msbuild's `OutputResource` — csc's `/resource:<path>,<manifest>` embeds the manifest name, not the path, so the output stays byte-identical. Page's last byte-identity proof remains the 90/90 of 2026-09-24, on the pre-split lock
-
 ## SBOM package scope (SDP RFC, read 2026-09-23 — `nuget-sbom.md` "Package scope")
 
 The RFC (`SDP/.memory-bank/framework/docs/6-release/sbom-package-scope-nuget.md`, PDR-0010
@@ -156,9 +139,7 @@ to that rule rather than the deliverable. Items are ordered by what they unblock
 - [x] (R2) **tier 3: nothing transitive, at any depth** — and `dependencies[]` must never carry an entry whose `ref` is a tier-2 component (an empty `dependsOn` would assert a closure we do not know). Entries for the root and for our own assemblies are allowed and true
 - [x] (R2) **declare the boundary**: `compositions` = `complete` over `assemblies` + `incomplete` over `dependencies`, plus an `annotations[]` entry on the root stating that transitive resolution is the consuming product's responsibility. We emit neither today
 - [x] (R2, path helper + doc; JSF signing and the repack step not scripted) **one SBOM per (package × TFM)** at `sbom/{tfm}/bom.cdx.json` inside the nupkg, JSF-signed. `forPackage` merges per-assembly BOMs into one per nupkg; the unit has to become (package, TFM), which the split lock now makes natural since `Lock.Entry` carries its `Framework`
-- [ ] **vendored/merged code as tier-1 subcomponents** with `pedigree`, nested under the assembly they were compiled into — the RFC forbids deriving this from the restore graph and expects a verified component registry whose schema and owner are undefined (RFC §6). **Our angle**: the lock records what the compiler was handed, with hashes, so an ILMerge'd or shared-source library is a *reference we already know about*. Worth proposing the lock as the registry's mechanical input rather than waiting for the registry
 - [x] (R2, `Verify.sbomPackageScope`) **acceptance checks 3.1-3.4 as a verifier**: every component traces to a shipped file / registry subcomponent / nuspec dependency; every shipped assembly and native has a component with a hash; tier-2 names and ranges match the nuspec textually; compositions and the annotation present and consistent. These are mechanical diffs (nupkg <-> SBOM <-> nuspec) and belong next to `Verify`
-- [ ] **answer the RFC's open questions from our side** (§8), where we have evidence rather than opinion: `ref/`-only assemblies tier 1 or excluded (we already classify them `excluded` by evidence); RID natives repeated per TFM or one package-level SBOM; whether the CLI table in §5 matches what we observe (we have measured CycloneDX.MSBuild 1.3.1 against ours on page -- `samples/hermetic/page/sbom-compare.txt`); nesting vs flat. Comments close **2026-10-07**
 
 ## Requested 2026-09-23 (four items, run by subagents)
 - [x] **R1 conceptual-review audit** (2026-09-23): `conceptual-review.md` §0 status table + 12 inline notes. Core files touched are four, not two (`Path.fs`, `Database.fs` added, both bug fixes). Still open from the review: `Generated`/`.resources` as engine targets (now with a real trigger — the MSB3577 interop item), `resolve`'s duplicate `needFiles` (`Dotnet.csc.fs:404`), `fsc` has no lock runner (§2.6), `run` keeps accreting steps
@@ -168,7 +149,7 @@ to that rule rather than the deliverable. Items are ordered by what they unblock
 - [x] **R4 branch overview (Russian)** (2026-09-23): `overview-ru.md` — recommends a staged release (engine fixes + csc refactor + Resx/Json/Roots/Toolset into `dev` now; Project/Lock/CscLock/Restore/Nuget after a public CI fixture and a versioned lock format; Sbom/Verify/Pack/StrongName/Sign as a separate package after the RFC closes). Flags doc inconsistencies: 338 vs 331 tests, restore 5.2 s vs 2.0 s, stale "Interpretation" in `e5-shipped-vs-local.md`
 
 ## Housekeeping
-- [ ] release of `feature/hermetic-build` — deferred by the user; `#r` on `.bootstrap/` for now
+- [-] release of `feature/hermetic-build` — superseded: the branch merged (#65) and shipped as hermetic 0.4.0-0.7.0
 - [x] move brief/tracker into the commit — done by the user 2026-09-22 (commit 992975e, with the repo-a inspection artifacts)
 - [x] **B1** (2026-09-29): `Project.fs` split into `CscArgs.fs`, `Git.fs`, `Lock.fs`, `Project.fs`, bodies untouched; 358 passed, 1 skipped, 0 warnings
 - [x] **B2** (2026-09-29): `Csc` record + module (`ofSettings`, `run`, `compile`, `runOptions`), `csc { ...; resolve }`, hermetic steps out of `run` into `Lock.build`/`compileWith`, `csc { lock }` as an extension in Lock.fs, `CSC_SERVER`; `Csc settings` retired for `Csc.compile` (decision a). `Lock.Entry = { Csc; Evaluation; Packages }`, lock JSON byte-identical (golden test against 99faffc's writer + repo-a locks `cmp`-identical). 362 passed, 1 skipped (+4 tests), 35 integration, 0 warnings
@@ -193,21 +174,13 @@ to that rule rather than the deliverable. Items are ordered by what they unblock
 
 - [x] `publish.yml` `hermetic-v*` branch exports `VERSION=3.4.0` so the packed hermetic dll references Xake 3.4.0.0 (was 0.0.1.0).
 - [x] **Review stack merged** (2026-10-01): #17–#25 into `dev` (merge commits); `v3.4.0` → `Xake 3.4.0.21`, `hermetic-v0.1.0` → `Xake.Hermetic.Dotnet 0.1.0.22` on nuget.org
-- [ ] **E8**: `build.fsc.fsx` and the feature fsx scripts on the published packages, `.bootstrap/` retired (PR in flight; feature scripts on this branch)
-- [ ] **B6**: `Fsc` record through the shared runner core; then retire `Fsproj` into `Project.import`
-- [ ] **SBOM**: the six questions in `docs/hermetic/nuget-sbom.md` (user); default prefixes `DS.`/`Acme.`/`Initech.` out of the source into `PackageScopeOptions`
-- [ ] **`sign {}` shadows FSharp.Core `sign`** when `Xake.Hermetic.Dotnet` is open: rename the builder while 0.x?
-- [ ] **`csc` without `targetfwk`**: the error now suggests netstandard2.0; a .NET (net8.0) target in composed mode is still unsupported (only through `Project.import`)
-- [ ] **`Lock.build` one-call for imported locks** (plan §3 "fsx wiring as one call") not built; scripts use `Lock.load` + `Lock.compile`
-- [ ] **`StrongName.signFile` does not recompute the PE CheckSum**
-
-
-**Status 2026-10-11:** `build.fsc.fsx` rework interviewed; decisions in `fsc-rework/interview.md`, plan in `fsc-rework/brief.md`. PR #42 parked on its branch.
+- [x] **E8**: `build.fsc.fsx` on the published packages, `.bootstrap/` retired — #67, #69, #74
+- [x] **B6**: `Fsc` through the shared runner, `fsc { lock }`, `Fsproj` retired into project import — #33, #46 (3.5 / hermetic 0.2)
+- [x] **SBOM** default internal prefixes are empty (`PackageScope.internalIds = idPrefixes []`); the six questions stay open below
 
 - [x] **fsc-rework interview** (2026-10-11): digest, interview, drafts, Fable review, brief
-- [ ] **fsc-rework implementation**: the PR plan in `fsc-rework/brief.md` (one tracker line per PR once started)
-- [ ] **`cached` rule decorator** + fingerprints file (after the explicit-command form lands)
-- [ ] **the trial product experiment** on the new system (repo-a + page, `develop`, two brands)
+- [x] **fsc-rework implementation**: PRs 1-9 of `fsc-rework/brief.md` — #44-#50, #54, #55, #59, #65
+- [x] **the trial product experiment** — `fsc-rework/trial-experiment.md`, rerun `trial-rerun.md` (2026-10-13)
 
 ## PR sequence (2026-10-16)
 - [x] PR 0 merge dev into the feature branch (e6acb95, incl. #54 ArtifactDep2)
@@ -217,27 +190,25 @@ to that rule rather than the deliverable. Items are ordered by what they unblock
 - [x] PR 4 `pr/deploy`
 - [x] merge #54/#55, release Xake 3.8 (3.8.0.29)
 - [x] push feature/hermetic-build, open stack PRs (#56-#58, #61 merged)
-- [ ] exp-repo on 0.4.2-night: format-2 locks, flat out + run folders, minimal pack
+- [-] exp-repo on 0.4.2-night — superseded by the consumer on hermetic 0.7.0
 - [x] PR 5 `pr/hermetic-38` (#61): hermetic on Xake 3.8
 - [x] Xake 3.9 released (#59 description in core) as 3.9.0.30
 - [x] PR 6 `pr/hermetic-39`: hermetic on Xake `[3.9.0.30, 3.10)`, description/schema/Json copies deleted, `config`/`packages`/`lock` over the core's `project`, import writes `frameworkReferences`, 0.4.0
-- [ ] core follow-up: the runner recompiles a `.resources` when its resx changed (then drop `Described.refreshResources`)
-- [ ] feature/hermetic-build -> dev, tag `hermetic-v0.4.0`
-- [ ] `build.fsc.fsx` on `Xake.Hermetic.Dotnet 0.4.0.<run>` (0.3 cannot `update-locks` on Xake 3.9)
+- [x] feature/hermetic-build -> dev, tag `hermetic-v0.4.0` — #65
+- [x] `build.fsc.fsx` on `Xake.Hermetic.Dotnet 0.4.0.<run>` — #67 (and later #69, #74)
 
 ## Cycle 3 (2026-10-18)
 - [x] consumer four-cell "92 s" explained: cold compiler server; warm runs 70 s, CPU = 4 x one cell (no engine change)
 - [x] `binding-redirects.md`: design note for recording msbuild's binding redirects at import (S55), branch `pr/binding-redirects`
 - [x] S55 implementation: app run over every project with redirects, clean scratch config, record final file, guard on stub version, tests; 0.5.1 (re-import to record the redirects)
-- [ ] owner: Q1-Q6 of `binding-redirects.md`; whether csc analyzers may be dropped for a non-validating build (the only lever toward <= 60 s)
+- [x] owner Q1-Q6 of `binding-redirects.md` decided (accept/document, no warning, 0.5.1); the csc-analyzers lever stays open (see Open)
 - [x] core trap (found 2026-10-19 by a consumer `clean` target): `rm { dir a; dir b }` kept only the last `dir`; `rm`/`cp` now take many `dir`/`file`/`files` targets, applied in order — `pr/rm-multi-targets`, PR #82
 
 ## SDK-free locks (agenda 2026-10-21, `sdk-free-locks.md`)
-- [ ] 1 recorded entries get the `dotnet-sdk` prerequisite only when they name a path under `sdk/<v>/` (as composed entries do)
-- [ ] 2 `pack:` files fetched as packages (`Microsoft.NETCore.App.Ref` etc.) when `packs/` lacks them; replay accepts them by hash
-- [ ] 3 fixture: import on `Microsoft.Net.Compilers.Toolset` + `Microsoft.CodeAnalysis.NetAnalyzers` records no `sdk:` identity, no prerequisite, byte-equal output
-- [ ] 4 fsc stays SDK-bound (no toolset package); documented
-- [ ] 5 consumer: toolset + NetAnalyzers references at the SDK's current versions, re-import, byte-equal check
+- [x] 1 recorded entries get the `dotnet-sdk` prerequisite only when they name a path under `sdk/<v>/` (as composed entries do) — #83, hermetic 0.6.0
+- [x] 2 `pack:` files fetched as packages (`Microsoft.NETCore.App.Ref` etc.) when `packs/` lacks them; replay accepts them by hash — #83, hermetic 0.6.0
+- [x] 3 fixture: import on `Microsoft.Net.Compilers.Toolset` + `Microsoft.CodeAnalysis.NetAnalyzers` records no `sdk:` identity, no prerequisite, byte-equal output — #83, hermetic 0.6.0
+- [x] 4 fsc stays SDK-bound (no toolset package); documented
 ## After #81 (obj/xake-record/<key>/ holds the restore output)
 - [x] owner 2026-10-21, decided the same day: stale `obj/xake-record/<key>/` folders are not worth handling — a consumer that cares cleans the whole `obj/` (msbuild's own leftovers live there too); no import-side cleanup, no `Import.clean`
 ## SDK path with a space (`pr/sdk-path-spaces`, `sdk-path-spaces.md`)
@@ -249,5 +220,5 @@ to that rule rather than the deliverable. Items are ordered by what they unblock
 - [x] `$(Version)` project folder from the lock's `Directory`; root-relative `""`; masks expanded through the script roots
 - [x] review and merge the draft PR (#85, 29d0d14; its CI: fingerprints after the version bump, one `build` job on SDK 10.0.x)
 - [x] `Xake` floor `[3.11.0.40, 3.12)` (the 3.11 compiler runner quotes an SDK path with a space), `ToolArgs.quote` copy replaced by `Tool.quoteArgument`, hermetic lock refreshed (`pr/hermetic-xake-3.11`)
-- [ ] merge `pr/hermetic-xake-3.11`, tag `hermetic-v0.7.0` (0.6.0 is not released on its own)
-- [ ] consumer: xake-ar `build.fsx` `.xml` rule on `Locks.doc` after the release
+- [x] merge `pr/hermetic-xake-3.11` (#86), tag `hermetic-v0.7.0`
+- [x] consumer: `.xml` rule on `Locks.doc` — in its build script, on Xake 3.11.0 / hermetic 0.7.0

@@ -3,6 +3,15 @@
 Ideas and larger items that are agreed in direction but not scheduled. Working state of a
 feature lives in `docs/features/<name>/`; this page is the cross-feature list.
 
+## Delivered
+
+- Xake 3.11.0 and Xake.Hermetic.Dotnet 0.7.0 (2026-10): compile from an SDK path with a space,
+  `Locks.doc` for the `.xml` rule, `Locks.compile` checks its target, SDK-free recorded locks
+  (0.6.0, shipped in 0.7.0), `Tool.quoteArgument`. Earlier: project descriptions in the core
+  (3.9), recorded import, applications and run folders (0.4), binding redirects (0.5.1), the
+  fsc path (3.5 / 0.2), `rm`/`cp` with many targets. The consumer's build script runs on 3.11.0
+  / 0.7.0. The working list is `docs/features/hermetic-build/tracker.md`.
+
 ## Principles
 
 - **Hosts: the .NET SDK only; targets: every platform.** No backports of the engine or the
@@ -30,14 +39,14 @@ parameters of a lambda, and the target file(s) after them:
 The pattern parser knows the number of groups, so an arity mismatch fails when the script is
 loaded, not inside the recipe. Tuple overloads for 1–4 groups and 1–4 target files via static
 members; the operator is sugar over them. Group names stay as documentation and keep working
-through `getRuleMatch` for existing scripts. `build.fsc.fsx` is the first customer.
+through `getRuleMatch` for existing scripts. `build.fsc.fsx` is the first customer. Not started.
 
-### Project descriptions in the core (planned, 2026-10-12)
+### Project descriptions in the core (description done in 3.9, `Import` open)
 
-Move project descriptions (`xake.project.json`, `Description`, `Import`) from
-Xake.Hermetic.Dotnet into the core / Xake package. Why: the description is language-neutral
-data, so the core should own it, as it already owns `Fingerprints`. The lock and the hermetic
-build stay in Xake.Hermetic.Dotnet.
+Done (3.9, #59): `xake.project.json` and `Description` live in the core, next to
+`Fingerprints`; `csc/fsc { project }` reads them. Still in Xake.Hermetic.Dotnet: `Import`
+(project file -> description), the lock and the hermetic build. Moving `Import` to the core is
+open and not scheduled.
 
 ### A CLI command that writes descriptions (idea, 2026-10-12)
 
@@ -77,7 +86,7 @@ SDK as restorable as a package.
 thin host over it. A small host shipped with Xake.Dotnet would give `fsc` a restorable
 `toolset` like csc's `Microsoft.Net.Compilers.Toolset`.
 
-### Small base fixes found while writing workflows-ru (2026-10-04)
+### Small base fixes found while writing workflows-ru (2026-10-04, not re-checked in October)
 
 - Composed `csc {}` does not pass `/deterministic` (fsc `--deterministic+`): lock-built outputs
   are not byte-reproducible unless the script adds it. Make it the default in composed mode.
@@ -93,16 +102,21 @@ thin host over it. A small host shipped with Xake.Dotnet would give `fsc` a rest
   `CSC_TOOLSET` alone does not make a lock portable; `global.json` is still required. Document
   loudly; the "SDK restore" idea above is the real fix.
 
-### Binary compatibility between the packages (found 2026-10-07)
+### Binary compatibility between the packages (found 2026-10-07, practised since 0.5)
 
 Adding a field to the `Csc`/`Fsc` records (`RuntimeConfig`, PR #35) makes the released
 `Xake.Hermetic.Dotnet 0.1.0.22` fail at run time against the new base (`Method not found:
 Csc..ctor`), although its nuspec range `[3.4.0.21, 4.0)` says it is compatible. F# records are not
-binary-compatible across field changes. Proposed rule: the hermetic package depends on the base
-**within one minor** (`[3.5.0.23, 3.6)`), and every base release that touches `Csc`/`Fsc`/
-`RunOptions`/`FscRunOptions` is followed by a hermetic release. To be decided by the user.
+binary-compatible across field changes. Rule in use: the hermetic package depends on the base
+**within one minor** (0.7.0: `[3.11.0.40, 3.12)`), and every base release that touches `Csc`/
+`Fsc`/`RunOptions`/`FscRunOptions` is followed by a hermetic release.
 
 ## Xake.Hermetic.Dotnet
+
+Next, in the order of the tracker's Open list: a Windows run with the SDK under `Program Files`;
+the consumer on `Microsoft.Net.Compilers.Toolset` + NetAnalyzers (SDK-free replay); `HERMETIC=on`
+for the self-build (needs an exact SDK pin); `Generated`/`.resources` as engine targets; a
+`cached` rule decorator; Babel and a real signer (wait for the owner).
 
 ### Small: in-lock project references must stay unhashed (found 2026-10-11)
 
@@ -119,6 +133,7 @@ From `docs/hermetic/workflows.md` ("Gaps"), in priority order:
 3. Reference assemblies of a composed block are downloaded outside the restore mechanism.
 4. The sha512 of a package already present in the package folder is not verified.
 5. Import as a file rule re-imports on every fresh clone; `update-locks` is the pattern.
+   (The consumer commits descriptions and locks and runs `import` only on demand.)
 6. No document-level `Lock.diff`; no one-call build of a whole imported lock; drift messages
    print absolute paths; `Lock.verify` on a missing lock says only "Neither rule nor file".
 7. SBOM default internal prefixes are a customer's; the default should be empty.

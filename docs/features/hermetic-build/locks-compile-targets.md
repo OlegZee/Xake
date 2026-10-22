@@ -1,7 +1,7 @@
 # Locks.compile: one action per target kind
 
 Design note for branch `pr/locks-compile-targets` (from `dev` 0d65475), 2026-10-22. Raised by
-the ActiveReports consumer (`xake-ar/build.fsx`), which declares three rules over one recipe:
+the external consumer (its `build.fsx`), which declares three rules over one recipe:
 
 ```fsharp
 "out/(b:*)/(cfg:*)/(fwk:*)/(asm:*).dll" ..> compile
@@ -30,11 +30,11 @@ to `compileDll`. Documented as a trick in `compile`'s summary (`Locks.fs:652-656
   `"out/(cfg:*)/(fwk:*)/(asm:*).xml" ..> Locks.doc settings (lockOf ...) fwk`.
 - `compile` on an `.xml` target is a **hard error**:
   `"'%s': Locks.compile builds the assembly; the .xml rule is Locks.doc settings lockPath fwk"`.
-  The package is 0.x ("may break", fsproj), its one external consumer (xake-ar) pins an exact
-  version and is updated together; a warning on every `.xml` (xake-ar's `pack` needs ~45) would
+  The package is 0.x ("may break", fsproj), its one external consumer pins an exact
+  version and is updated together; a warning on every `.xml` (the consumer's `pack` needs ~45) would
   be noise for one release.
 - Callers to switch: `BuildFromLockTests.fs:415`, `RecordTests.fs:367/523/546`,
-  `RunFolderTests.fs:278`; xake-ar `build.fsx:229` after the release. Xake's own `build.fsc.fsx`
+  `RunFolderTests.fs:278`; the consumer's `.xml` rule after the release. Xake's own `build.fsc.fsx`
   has only a `.dll` rule, `build.fsx` uses core `Lock.compileWith` with `targets [dll; xml]`:
   neither changes.
 - Docs: `compile`'s summary loses the `.xml` item and points to `doc`; `lock.md:71` gets a
@@ -84,15 +84,15 @@ a linked file, a sibling root).
   (nothing marks a generated lock anyway).
 - `relative` when `projectDir = root` is `""` (today it returns the absolute root), so the path is
   `xake.project.json`.
-- Masks over paths outside the project root (xake-ar: `$(ArRoot)/...`) are possible today only
+- Masks over paths outside the project root (the consumer: `$(SiblingRoot)/...`) are possible today only
   as absolute paths. `versionFor` is matched after expanding the script's roots in each mask
-  (`$(ArRoot)/ar-net-win/**` → the absolute path, via `Roots.make settings.Roots`). Expanding the
+  (`$(SiblingRoot)/acme-lib/**` → the absolute path, via `Roots.make settings.Roots`). Expanding the
   mask, not tokenising the path: `(` in a Xake mask starts a capture group, so a `$(Name)` token
   cannot be matched literally.
 - Doc comment of `compile` and `lock.md`: "the project's folder (`Directory` of the lock's
   compilation, else where its first source lies) — a path in the project tree, not where the
   description lives; a mask may start with a script root `$(Name)`".
-- Consumers: xake-ar sets no `Versions` (`build.fsx:143-146`): unaffected. Xake's own scripts:
+- Consumers: the external consumer sets no `Versions`: unaffected. Xake's own scripts:
   check `build.fsc.fsx`'s masks still pick the same versions (its descriptions sit beside their
   projects, so `Directory` equals the guess).
 
@@ -105,7 +105,7 @@ resolves a `$(Sibling)/**` mask; `versionFor`'s unit test gains the root-relativ
 Xake.Hermetic.Dotnet **0.7.0** (fsproj is at 0.6.0 with #83 and #84 in `dev`): new public
 `Locks.doc`, a breaking change in 1, behaviour changes in 2 and 4. `docs/release-notes.md`, the
 feature `session.md` (its head still lists #84 as draft) and `tracker.md` get the entry.
-Consumer change after release: xake-ar's `.xml` rule uses `Locks.doc`.
+Consumer change after release: the consumer's `.xml` rule uses `Locks.doc`.
 
 ## Plan
 

@@ -1,5 +1,9 @@
 # Session state: hermetic-build
 
+## 2026-10-23 — tracker and roadmap reconciled
+
+`tracker.md` has one status paragraph and an Open list; delivered items are marked with their PRs (Xake 3.11.0, hermetic 0.7.0, the consumer on both); `docs/roadmap.md` got a Delivered section. Exact next step: pick from the tracker's Open list.
+
 ## 2026-10-22 — release prep for hermetic 0.7.0 on `pr/hermetic-xake-3.11` (from `dev` 29d0d14)
 
 #85 merged (29d0d14). Its CI needed two fixes: `xake.fingerprints` after the 0.7.0 version bump
@@ -26,7 +30,7 @@ PR, branch, worktree:
 
 ## 2026-10-22 — `Locks.compile` per target kind on `pr/locks-compile-targets` (from `dev` 0d65475)
 
-[locks-compile-targets.md](locks-compile-targets.md) (reviewed, approved by the owner) implemented, hermetic 0.7.0: public `Locks.doc settings lockPath fwk` is the `.xml` rule, and **`compile` on an `.xml` target is a hard error** (xake-ar's `build.fsx` has the one consumer rule: `"out/(b:*)/(cfg:*)/(fwk:*)/(asm:*).xml" ..> doc`, `doc` calling `Locks.doc`, to switch after the release). `compile` checks its target against the entry's output (`TargetFileName`, else `<Name>.dll`/`.exe`); `compileDll` is `compileAssembly`; the `$(Version)` folder comes from the lock's `Directory` (root-relative `""` fixed), and version masks expand through the script's roots (`$(Sibling)/**`). The release notes entry is in `docs/hermetic/README.md` (where hermetic's notes live). **Exact next step**: review and merge the draft PR, release `hermetic-v0.7.0`, then switch xake-ar's `.xml` rule.
+[locks-compile-targets.md](locks-compile-targets.md) (reviewed, approved by the owner) implemented, hermetic 0.7.0: public `Locks.doc settings lockPath fwk` is the `.xml` rule, and **`compile` on an `.xml` target is a hard error** (the consumer's `build.fsx` has the one consumer rule: `"out/(b:*)/(cfg:*)/(fwk:*)/(asm:*).xml" ..> doc`, `doc` calling `Locks.doc`, to switch after the release). `compile` checks its target against the entry's output (`TargetFileName`, else `<Name>.dll`/`.exe`); `compileDll` is `compileAssembly`; the `$(Version)` folder comes from the lock's `Directory` (root-relative `""` fixed), and version masks expand through the script's roots (`$(Sibling)/**`). The release notes entry is in `docs/hermetic/README.md` (where hermetic's notes live). **Exact next step**: review and merge the draft PR, release `hermetic-v0.7.0`, then switch the consumer's `.xml` rule.
 
 ## 2026-10-22 — SDK path with a space fixed on `pr/sdk-path-spaces` (from `dev`)
 

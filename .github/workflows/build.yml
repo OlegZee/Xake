@@ -17,19 +17,14 @@ jobs:
     # (the tests themselves are killed after 10 minutes each, build.fsx `test`)
     timeout-minutes: 40
 
-    strategy:
-      fail-fast: false
-      matrix:
-        # 8.0.x is the supported floor, and the only way to keep it honest is to build with it;
-        # global.json rolls forward, so the newest installed SDK is what actually gets used.
-        dotnet: [ '8.0.x', '10.0.x' ]
-
     steps:
     - uses: actions/checkout@v7
     - name: Setup .NET
       uses: actions/setup-dotnet@v6
       with:
-        dotnet-version: ${{ matrix.dotnet }}
+        # one SDK: global.json rolls forward (latestMajor) to the newest installed SDK, so an
+        # 8.0.x leg built with the image's SDK 10 as well and only duplicated this job
+        dotnet-version: '10.0.x'
     # `test` runs both test projects, src/tests and src/hermetic.tests; `pack` builds both
     # packages and fails if the Xake.Hermetic.Dotnet nuspec has no dependency on package `Xake`
     - name: Build, test & pack
@@ -38,7 +33,7 @@ jobs:
       uses: actions/upload-artifact@v7
       if: always()
       with:
-        name: build-log-${{ github.run_number }}-${{ matrix.dotnet }}
+        name: build-log-${{ github.run_number }}
         path: build.log
         retention-days: 5
 

@@ -93,7 +93,7 @@ module Project =
             let! exitCode =
                 shell {
                     cmd "dotnet"
-                    args ("msbuild" :: arguments)
+                    args ("msbuild" :: arguments |> List.map ToolArgs.quote)
                     // no msbuild worker node left holding this process's stdout after msbuild
                     // exits (`Described.runRestore`)
                     envs (("MSBUILDDISABLENODEREUSE", "1") :: environment)

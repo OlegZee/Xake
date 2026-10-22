@@ -376,7 +376,7 @@ module DotNetFwk =
             Directory.CreateDirectory dir |> ignore
             let project = dir </> "restore.csproj"
             File.WriteAllText (project, restoreProjectText [ packageId, version ])
-            let args = restoreArgs project |> List.map (fun a -> "\"" + a + "\"") |> String.concat " "
+            let args = restoreArgs project |> List.map Tool.quoteArgument |> String.concat " "
             let exitCode =
                 try pexecSync ignore ignore "dotnet" args [ "NUGET_PACKAGES", root ] (Some dir)
                 with _ -> -1
@@ -946,7 +946,7 @@ module DotNetFwk =
                     let! exitCode =
                         shell {
                             cmd "dotnet"
-                            args (restoreArgs project)
+                            args (restoreArgs project |> List.map Tool.quoteArgument)
                             env ("NUGET_PACKAGES", root)
                             workdir dir
                             logprefix "[restore]"

@@ -1,5 +1,16 @@
 # Session state: hermetic-build
 
+## 2026-10-22 — SDK path with a space fixed on `pr/sdk-path-spaces` (from `dev`)
+
+Hermetic compiles failed with the SDK under `C:\Program Files\dotnet` (`sdk-path-spaces.md`
+has the digest and the plan). `CompilerRunner` quotes the compiler dll and `@rsp` and starts the
+full `dotnet(.exe)` path; fsc's response file is written verbatim (it rejects quoted switch
+lines), csc's stays argv-quoted; the restores, `runMsbuild` and the `msbuild` task quote their
+arguments. The quoter is public `Xake.Dotnet.Tool.quoteArgument`; the hermetic package keeps a
+copy (`ToolArgs.quote`) until its `Xake` floor carries it, so the compile fix reaches hermetic
+users with the next `Xake` release. **Exact next step**: PR to `dev`; a Windows run with the
+default SDK location confirms it.
+
 ## 2026-10-18 — cycle 3 opened on `pr/binding-redirects` (from `dev`)
 
 The consumer-side "four cells 92 s against 69 s" was a cold compiler server, not an engine regression: warm runs are 69.6–71.8 s, CPU 725–750 s = 4 × a single cell, server 621–644 s; `build-par` 76 s (CPU-bound). `binding-redirects.md` is the S55 design: the import already runs `GenerateBindingRedirects`, the gap is recording the finished `.exe.config` (apps) and `.dll.config` (test libraries) instead of the pre-redirect file; no build-side change. **Exact next step**: the owner answers Q1–Q6 in that note, then implement on this branch (~150–250 lines incl. tests), PR to `dev`, 0.4.3.

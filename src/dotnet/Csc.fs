@@ -838,6 +838,7 @@ module Csc =
                   // file, so it stays on the command line and everything else goes into the rsp
                   Leading = if args |> List.contains "/noconfig" then ["/noconfig"] else []
                   ResponseArgs = args |> List.filter ((<>) "/noconfig")
+                  ResponseQuoting = CompilerRunner.Argv
                   ClientSwitches = serverSwitches
                   ClientSwitchesNote =
                     match options.Server, serverSwitches with

@@ -41,6 +41,7 @@
     <Compile Include="CompilerCrashTests.fs" />
     <Compile Include="CompilerJobsTests.fs" />
     <Compile Include="FscTests.fs" />
+    <Compile Include="PathSpacesTests.fs" />
     <Compile Include="HermeticModeTests.fs" />
     <Compile Include="DescriptionTests.fs" />
     <Compile Include="ProjectPlanTests.fs" />

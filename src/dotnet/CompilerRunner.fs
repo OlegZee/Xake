@@ -20,6 +20,16 @@ module internal CompilerRunner =
         /// the file itself: a native launcher, a .NET Framework `csc.exe`/`fsc.exe`, an override
         | Native of exe: string
 
+    /// How a line of the response file is written; the two compilers read it differently.
+    type ResponseQuoting =
+        /// Windows argv quoting of the whole line (`Tool.quoteArgument`): csc unquotes it, and a
+        /// path with a space has to be quoted or csc splits it (CS2001)
+        | Argv
+        /// The argument as is: fsc takes each line as one argument and does not unquote a
+        /// switch (`"--reference:a b/l.dll"` is read as a file, FS2020; `--reference:"a b/l.dll"`
+        /// keeps the quotes, FS0084)
+        | Verbatim
+
     type RunPlan = {
         /// The compilation's name, for the log and the failure messages
         Name: string
@@ -40,6 +50,8 @@ module internal CompilerRunner =
         Leading: string list
         /// Everything else, written to the response file one argument per line
         ResponseArgs: string list
+        /// How each of `ResponseArgs` is written
+        ResponseQuoting: ResponseQuoting
         /// Client-side switches ahead of everything (csc's `/shared`, `/keepalive`); never in
         /// the response file; `[]` for fsc, which has no server
         ClientSwitches: string list
@@ -82,6 +94,30 @@ module internal CompilerRunner =
         match Impl.runtimeConfigContent framework with
         | Some content -> content
         | None -> failwithf "'%s': a runtimeconfig is declared, but %s applications do not use one" name (if Impl.isEmpty framework then "this framework's" else framework)
+
+    /// A response file line for `arg`.
+    let responseLine (quoting: ResponseQuoting) (arg: string) =
+        match quoting with
+        | Argv -> Tool.quoteArgument arg
+        | Verbatim -> arg
+
+    /// The `dotnet` host that runs a managed compiler: the full path under
+    /// `DotNetFwk.dotnetRoot ()` when it is there, so that on Windows `shell` starts it directly
+    /// (a command without `.exe` goes through `cmd.exe /c`), else `dotnet` from the PATH.
+    let dotnetHost () =
+        match DotNetFwk.dotnetRoot () with
+        | Some root ->
+            let host = Path.Combine (root, if Env.isWindows then "dotnet.exe" else "dotnet")
+            if File.Exists host then host else "dotnet"
+        | None -> "dotnet"
+
+    /// The program and its arguments (each one argument, quoted here) that start a compiler:
+    /// `shell` joins its arguments with a space and quotes nothing, and the SDK's compilers
+    /// live under `C:\Program Files\dotnet` by default.
+    let commandLine (launch: Launch) (args: string list) =
+        match launch with
+        | Dotnet dll -> dotnetHost (), (dll :: args) |> List.map Tool.quoteArgument
+        | Native exe -> exe, args |> List.map Tool.quoteArgument
 
     let private sha256 (path: string) = if File.Exists path then Hash.sha256 path else ""
 
@@ -134,12 +170,7 @@ module internal CompilerRunner =
     let private launch (plan: RunPlan) : Recipe<ExecContext, unit> =
         recipe {
             let rspFile = Path.GetTempFileName()
-            File.WriteAllLines (rspFile, plan.ResponseArgs |> List.map Impl.escapeArgument)
-            let commandLineArgs =
-                seq {
-                    yield! plan.Leading
-                    yield "@" + rspFile
-                }
+            File.WriteAllLines (rspFile, plan.ResponseArgs |> List.map (responseLine plan.ResponseQuoting))
 
             // the response file has to go regardless of how the compilation ends -- unless the
             // compiler died without a word, then it is kept for a rerun by hand
@@ -148,18 +179,13 @@ module internal CompilerRunner =
                 if not keepRsp.Value then
                     try System.IO.File.Delete rspFile with _ -> ()
 
-            let tool, extraArgs =
-                match plan.Launch with
-                | Dotnet dll -> "dotnet", [dll]
-                | Native exe -> exe, []
-
             match plan.ClientSwitchesNote with
             | Some note -> do! trace Debug "%s" note
             | None -> ()
-            let commandLineArgs = Seq.append plan.ClientSwitches commandLineArgs
+            let tool, commandLineArgs =
+                commandLine plan.Launch (plan.ClientSwitches @ plan.Leading @ [ "@" + rspFile ])
 
-            do! trace Debug "Command line: '%s %s'" tool
-                    ((extraArgs @ List.ofSeq commandLineArgs) |> String.concat " ")
+            do! trace Debug "Command line: '%s %s'" tool (commandLineArgs |> String.concat " ")
 
             // what the compiler printed, kept (bounded) for a failure without a diagnostic: a
             // crash (exit 134, `Environment.FailFast`) logs nothing at the default verbosity
@@ -179,7 +205,7 @@ module internal CompilerRunner =
                 let! exitCode =
                     shell {
                         cmd tool
-                        args (Seq.append extraArgs commandLineArgs)
+                        args commandLineArgs
                         envs plan.Environment
                         // `dotnet build` runs the compiler with cwd = the project's directory;
                         // some inputs are resolved against it rather than against an argument

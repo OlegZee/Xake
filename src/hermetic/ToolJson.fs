@@ -112,3 +112,30 @@ module internal ToolJson =
     let asString = function | JString s -> Some s | _ -> None
     let asArray = function | JArray items -> items | _ -> []
     let asBool = function | JOther "true" -> Some true | JOther "false" -> Some false | _ -> None
+
+/// The command-line side of the tools this package drives (`dotnet restore`, `dotnet msbuild`,
+/// `codesign`): `shell` joins its arguments with a space and quotes nothing, so a path with a
+/// space (a repository or user profile under one) is quoted here.
+module internal ToolArgs =
+
+    /// One argument quoted by the Windows argv rules, which .NET applies to
+    /// `ProcessStartInfo.Arguments` on every OS: quoted only when it has a space or a `"`, an
+    /// inner `"` escaped, a run of backslashes before a quote doubled. The same rules as
+    /// `Xake.Dotnet.Tool.quoteArgument`, which the `Xake` package this one builds on does not
+    /// carry yet; replace this copy with it once the `Xake` floor does.
+    let quote (arg: string) =
+        if arg |> String.exists (fun c -> c = '"' || c = ' ') then
+            let sb = System.Text.StringBuilder "\""
+            let mutable backslashes = 0
+            for c in arg do
+                match c with
+                | '\\' -> backslashes <- backslashes + 1
+                | '"' ->
+                    sb.Append('\\', 2 * backslashes + 1).Append('"') |> ignore
+                    backslashes <- 0
+                | c ->
+                    sb.Append('\\', backslashes).Append(c) |> ignore
+                    backslashes <- 0
+            sb.Append('\\', 2 * backslashes).Append('"').ToString()
+        else
+            arg

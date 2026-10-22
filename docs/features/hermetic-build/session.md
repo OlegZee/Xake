@@ -22,7 +22,7 @@ PR, branch, worktree:
 |---|---|---|---|---|
 | #84 SDK and rsp paths quoted | `pr/sdk-path-spaces` | `.claude/worktrees/pr+sdk-path-spaces` | `dev` 62d9b1a | merged (0d65475); worktree to remove |
 | #85 Locks.doc, compile checks its target | `pr/locks-compile-targets` | `.claude/worktrees/pr/locks-compile-targets` | `dev` 0d65475 | merged (29d0d14); worktree to remove |
-| Xake floor 3.11 for hermetic 0.7.0 | `pr/hermetic-xake-3.11` | `.claude/worktrees/pr/hermetic-xake-3.11` | `dev` 29d0d14 | draft |
+| #86 Xake floor 3.11 for hermetic 0.7.0 | `pr/hermetic-xake-3.11` | `.claude/worktrees/pr/hermetic-xake-3.11` | `dev` 29d0d14 | draft |
 
 ## 2026-10-22 — `Locks.compile` per target kind on `pr/locks-compile-targets` (from `dev` 0d65475)
 

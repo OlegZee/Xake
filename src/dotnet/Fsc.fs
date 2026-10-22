@@ -571,6 +571,7 @@ module Fsc =
                     | None -> CompilerRunner.launchOf compiler.Path
                   Leading = []
                   ResponseArgs = args
+                  ResponseQuoting = CompilerRunner.Verbatim
                   ClientSwitches = []
                   ClientSwitchesNote = None
                   Inputs = FscArgs.inputs args

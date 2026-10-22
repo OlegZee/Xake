@@ -144,6 +144,18 @@ file opens now retry an `IOException` up to five times with a 20 ms backoff; rea
 goes to the recreate path. The `EndOfStreamException` warning in test runs is deliberate: the
 `handles broken database` and storage tests write garbage on purpose.
 
+## Trap: fsc does not unquote its response file, and `shell` quotes nothing
+
+Compiles failed with the SDK under `C:\Program Files\dotnet`. Two layers: `shell` joins
+`args` with a space (the compiler dll and `@rsp` split at the space), and fsc reads each rsp
+line verbatim -- `"--reference:a b/l.dll"` is a file name to it (FS2020), `--reference:"a b/l.dll"`
+keeps the quotes (FS0084); only the bare line works. csc is the opposite (a bare line with a
+space is split, CS2001). `CompilerRunner.RunPlan.ResponseQuoting` (`Argv` for csc, `Verbatim`
+for fsc); every argument handed to `shell` by Xake.Dotnet and the hermetic package is quoted
+with `Tool.quoteArgument` (Windows argv rules, which .NET applies on every OS too, so a
+symlinked SDK directory with a space reproduces it on macOS/Linux: `PathSpacesTests.fs`).
+Scripts' own `shell { args }` stay raw.
+
 ## How to verify changes here
 
 ```bash

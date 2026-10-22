@@ -20,20 +20,7 @@ module DotNetTaskTypes =
 
 module internal Impl =
     /// Escapes argument according to CSC.exe rules (see http://msdn.microsoft.com/en-us/library/78f4aasd.aspx)
-    let escapeArgument (str:string) =
-        let escape c s =
-            match c,s with
-            | '"',  (b,    str) -> (true,  '\\' :: '\"' ::    str)
-            | '\\', (true, str) -> (true,  '\\' :: '\\' :: str)
-            | '\\', (false,str) -> (false, '\\' :: str)
-            | c,    (b,    str) -> (false, c :: str)
-
-        if str |> String.exists (fun c -> c = '"' || c = ' ') then
-            let ca = str.ToCharArray()
-            let res = Array.foldBack escape ca (true,['"'])
-            "\"" + System.String(res |> snd |> List.toArray)
-        else
-            str
+    let escapeArgument (str:string) = Tool.quoteArgument str
 
     let isEmpty str = System.String.IsNullOrWhiteSpace(str)
 

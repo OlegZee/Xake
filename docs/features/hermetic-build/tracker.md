@@ -240,3 +240,5 @@ to that rule rather than the deliverable. Items are ordered by what they unblock
 - [ ] 5 consumer: toolset + NetAnalyzers references at the SDK's current versions, re-import, byte-equal check
 ## After #81 (obj/xake-record/<key>/ holds the restore output)
 - [x] owner 2026-10-21, decided the same day: stale `obj/xake-record/<key>/` folders are not worth handling — a consumer that cares cleans the whole `obj/` (msbuild's own leftovers live there too); no import-side cleanup, no `Import.clean`
+## SDK path with a space (`pr/sdk-path-spaces`, `sdk-path-spaces.md`)
+- [x] compiler dll and `@rsp` quoted, full `dotnet(.exe)` host; fsc rsp lines verbatim, csc quoted; restore/msbuild args quoted (Xake.Dotnet and hermetic); symlinked-SDK integration tests

@@ -60,7 +60,10 @@ module MsbuildImpl =
             let commandLineArgs =
                 seq {
                     yield "/nologo"
-                    yield settings.BuildFile
+                    // `shell` quotes nothing: a path or a value with a space is quoted here, unless
+                    // the script quoted it itself (then it is passed as it was)
+                    let quoteUnlessQuoted (arg: string) = if arg.Contains "\"" then arg else Tool.quoteArgument arg
+                    yield quoteUnlessQuoted settings.BuildFile
 
                     match settings.Target with
                         | [] -> ()
@@ -68,7 +71,9 @@ module MsbuildImpl =
 
                     match settings.Property with
                         | [] -> ()
-                        | lst -> yield "/property:" + (lst |> List.map (fun (k,v) -> sprintf "%s=%s" k v) |> String.concat ";")
+                        | lst ->
+                            let switch = "/property:" + (lst |> List.map (fun (k,v) -> sprintf "%s=%s" k v) |> String.concat ";")
+                            yield quoteUnlessQuoted switch
 
                     match settings.MaxCpuCount with
                         | None -> ()
@@ -76,7 +81,7 @@ module MsbuildImpl =
                         | Some n -> yield sprintf "/m:%i" n
 
                     if Option.isSome settings.ToolsVersion then yield sprintf "/toolsversion:%s" (Option.get settings.ToolsVersion)
-                    if Option.isSome settings.RspFile then yield sprintf "@%s" (Option.get settings.RspFile)
+                    if Option.isSome settings.RspFile then yield quoteUnlessQuoted ("@" + Option.get settings.RspFile)
 
                     match settings.Verbosity with
                         | Normal -> ()

@@ -1,5 +1,23 @@
 # Session state: hermetic-build
 
+## 2026-10-22 — SDK path with a space fixed on `pr/sdk-path-spaces` (from `dev`)
+
+Hermetic compiles failed with the SDK under `C:\Program Files\dotnet` (`sdk-path-spaces.md`
+has the digest and the plan). `CompilerRunner` quotes the compiler dll and `@rsp` and starts the
+full `dotnet(.exe)` path; fsc's response file is written verbatim (it rejects quoted switch
+lines), csc's stays argv-quoted; the restores, `runMsbuild` and the `msbuild` task quote their
+arguments. The quoter is public `Xake.Dotnet.Tool.quoteArgument`; the hermetic package keeps a
+copy (`ToolArgs.quote`) until its `Xake` floor carries it, so the compile fix reaches hermetic
+users with the next `Xake` release. **Exact next step**: review and merge draft #84; a Windows
+run with the default SDK location confirms it.
+
+PR, branch, worktree:
+
+| PR | Branch | Worktree | Base | Status |
+|---|---|---|---|---|
+| #84 SDK and rsp paths quoted | `pr/sdk-path-spaces` | `.claude/worktrees/pr+sdk-path-spaces` | `dev` 62d9b1a | draft; tests 405/1 skipped, hermetic 295; `build.fsc.fsx check` + `build` pass |
+
+
 ## 2026-10-21 — SDK-free locks implemented (#83, draft)
 
 Xake side of [sdk-free-locks.md](sdk-free-locks.md) steps 1-3 on `pr/sdk-free-locks`: a recorded entry's `dotnet-sdk` prerequisite follows its content; hermetic 0.6.0. Findings in that note's status: an installed targeting pack is not byte-identical to the nuget.org package (signed; facades and source generators are other builds), so a lock recorded from `packs/` still needs that pack; the toolset package 5.9.0 is another Roslyn build than SDK 10.0.402's. **Exact next step**: the owner decides where a `pack:` hash comes from, then review and merge #83.

@@ -450,6 +450,12 @@ let greet name = sprintf "Hello, %s" name
         Assert.AreEqual("\"with space\"", Impl.escapeArgument "with space")
         Assert.AreEqual("\"say \\\"hi\\\"\"", Impl.escapeArgument "say \"hi\"")
 
+        // a trailing backslash is doubled before the closing quote, an inner one is kept
+        Assert.AreEqual("\"C:\\Program Files\\dotnet\\\\\"", Tool.quoteArgument "C:\\Program Files\\dotnet\\")
+        Assert.AreEqual("C:\\dotnet\\", Tool.quoteArgument "C:\\dotnet\\")
+        // an empty argument stays empty (it vanishes from a joined command line)
+        Assert.AreEqual("", Tool.quoteArgument "")
+
     [<Test>]
     member __.``resolves the output target type``() =
 

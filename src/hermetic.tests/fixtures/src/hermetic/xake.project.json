@@ -25,7 +25,7 @@
     "Sign.fs"
   ],
   "packages": [
-    { "id": "Xake", "version": "[3.9.0.30, 3.10)" },
+    { "id": "Xake", "version": "[3.11.0.40, 3.12)" },
     { "id": "FSharp.Core", "version": "8.0.100" }
   ],
   "options": { "doc": true },

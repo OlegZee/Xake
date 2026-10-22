@@ -247,5 +247,7 @@ to that rule rather than the deliverable. Items are ordered by what they unblock
 - [x] `compile` checks the target is the entry's output (`TargetFileName`, else `<Name>.dll`/`.exe`)
 - [x] `compileDll` renamed `compileAssembly`
 - [x] `$(Version)` project folder from the lock's `Directory`; root-relative `""`; masks expanded through the script roots
-- [ ] review and merge the draft PR, tag `hermetic-v0.7.0`
+- [x] review and merge the draft PR (#85, 29d0d14; its CI: fingerprints after the version bump, one `build` job on SDK 10.0.x)
+- [x] `Xake` floor `[3.11.0.40, 3.12)` (the 3.11 compiler runner quotes an SDK path with a space), `ToolArgs.quote` copy replaced by `Tool.quoteArgument`, hermetic lock refreshed (`pr/hermetic-xake-3.11`)
+- [ ] merge `pr/hermetic-xake-3.11`, tag `hermetic-v0.7.0` (0.6.0 is not released on its own)
 - [ ] consumer: xake-ar `build.fsx` `.xml` rule on `Locks.doc` after the release

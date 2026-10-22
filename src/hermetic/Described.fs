@@ -223,7 +223,7 @@ module Described =
                     args ([ "restore"; project; "-v:quiet"; "-nologo"; "-p:NuGetAudit=false"
                             "-p:ImportDirectoryBuildProps=false"; "-p:ImportDirectoryBuildTargets=false"
                             "-p:ImportDirectoryPackagesProps=false"; "-p:ManagePackageVersionsCentrally=false" ]
-                         |> List.map ToolArgs.quote)
+                         |> List.map Tool.quoteArgument)
                     env ("NUGET_PACKAGES", root)
                     // no msbuild worker nodes left behind: a batch restore starts nodes, and a
                     // reused node inherits this process's stdout and keeps the pipe open after

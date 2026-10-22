@@ -1,5 +1,29 @@
 # Session state: hermetic-build
 
+## 2026-10-22 — release prep for hermetic 0.7.0 on `pr/hermetic-xake-3.11` (from `dev` 29d0d14)
+
+#85 merged (29d0d14). Its CI needed two fixes: `xake.fingerprints` after the 0.7.0 version bump
+(the fsproj is an input of the description), and `build.yml` runs one `build` job on SDK 10.0.x:
+the 8.0.x leg rolled forward (`global.json` `latestMajor`) to the image's SDK 10.0.401 and only
+duplicated it. 0.6.0 was never released; 0.7.0 carries it. Before the tag, the `Xake` range is
+`[3.11.0.40, 3.12)` (was `[3.10.0.35, 3.11)`): Xake 3.11.0 (tag on #84) has the compiler runner
+that quotes an SDK path with a space, and `Tool.quoteArgument`, which replaces hermetic's copy
+`ToolArgs.quote`. 3.11 adds a field only to the runner's internal plan record, none to a record
+hermetic builds. The hermetic lock is refreshed with `-d LOCK_REFRESH=Xake` (a plain
+`update-locks` keeps 3.10.0.35, and the fsc self-build would then miss `quoteArgument`); the
+test fixture description of src/hermetic moves from `[3.9.0.30, 3.10)` to the new range for the
+same reason. hermetic tests 302 passed; `build.fsc.fsx build check` pass; nuspec depends on
+`Xake [3.11.0.40, 3.12.0)`. **Exact next step**: merge this PR, tag `hermetic-v0.7.0` on `dev`,
+then switch the consumer's `.xml` rule to `Locks.doc`.
+
+PR, branch, worktree:
+
+| PR | Branch | Worktree | Base | Status |
+|---|---|---|---|---|
+| #84 SDK and rsp paths quoted | `pr/sdk-path-spaces` | `.claude/worktrees/pr+sdk-path-spaces` | `dev` 62d9b1a | merged (0d65475); worktree to remove |
+| #85 Locks.doc, compile checks its target | `pr/locks-compile-targets` | `.claude/worktrees/pr/locks-compile-targets` | `dev` 0d65475 | merged (29d0d14); worktree to remove |
+| #86 Xake floor 3.11 for hermetic 0.7.0 | `pr/hermetic-xake-3.11` | `.claude/worktrees/pr/hermetic-xake-3.11` | `dev` 29d0d14 | draft |
+
 ## 2026-10-22 — `Locks.compile` per target kind on `pr/locks-compile-targets` (from `dev` 0d65475)
 
 [locks-compile-targets.md](locks-compile-targets.md) (reviewed, approved by the owner) implemented, hermetic 0.7.0: public `Locks.doc settings lockPath fwk` is the `.xml` rule, and **`compile` on an `.xml` target is a hard error** (xake-ar's `build.fsx` has the one consumer rule: `"out/(b:*)/(cfg:*)/(fwk:*)/(asm:*).xml" ..> doc`, `doc` calling `Locks.doc`, to switch after the release). `compile` checks its target against the entry's output (`TargetFileName`, else `<Name>.dll`/`.exe`); `compileDll` is `compileAssembly`; the `$(Version)` folder comes from the lock's `Directory` (root-relative `""` fixed), and version masks expand through the script's roots (`$(Sibling)/**`). The release notes entry is in `docs/hermetic/README.md` (where hermetic's notes live). **Exact next step**: review and merge the draft PR, release `hermetic-v0.7.0`, then switch xake-ar's `.xml` rule.

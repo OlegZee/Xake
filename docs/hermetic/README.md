@@ -20,8 +20,13 @@ over an `.xml` target fails**; the `.xml` rule is the new `Locks.doc settings lo
   path). A mask may start with a script root, `$(Sibling)/**`, expanded through the script's
   roots before matching.
 - Internal: `compileDll` is `compileAssembly` (C# and F#).
+- Depends on `Xake [3.11.0.40, 3.12)` (was `[3.10.0.35, 3.11)`): the compiler runner of Xake
+  3.11 quotes the compiler and the response file, so a compile from an SDK under a path with a
+  space (`C:\Program Files\dotnet`) works; the restore and msbuild arguments are quoted by
+  Xake's `Tool.quoteArgument` (the package's own copy is gone).
+- Carries 0.6.0, which was not released on its own.
 
-## 0.6.0 (next release)
+## 0.6.0 (not released on its own, shipped in 0.7.0)
 
 The `dotnet-sdk` prerequisite of a recorded lock follows its content
 ([sdk-free-locks agenda](../features/hermetic-build/sdk-free-locks.md), steps 1-3). **A
@@ -51,7 +56,7 @@ change.
   resource, icon). Before, without that SDK it was written by a fallback and the build only
   warned.
 
-## 0.5.2 (unreleased)
+## 0.5.2
 
 Concurrent imports of one project tree with different properties (two brands) no longer mix
 their restores. No API and no lock format change; a re-import writes the same locks.

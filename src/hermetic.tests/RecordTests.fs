@@ -91,6 +91,99 @@ type ``Recorded lock identities``() =
         Assert.That(Lock.format roots back, Is.EqualTo text)
 
     [<Test>]
+    member x.``a recorded entry's SDK prerequisite follows its content``() =
+        let sdk : Lock.Prerequisite = { Kind = Lock.DotnetSdk; Version = "8.0.425"; Pin = "$(ProjectRoot)/global.json" }
+        let derive (e: Lock.Entry) = (Lock.withRecordedPrerequisites "/r/dotnet" "$(ProjectRoot)/global.json" e).Prerequisites
+        // the SDK's compiler: the SDK that recorded it, the pin kept
+        let onSdk = x.Recorded [ "/r/pkgs/system.memory/4.5.5/lib/net461/System.Memory.dll" ]
+        Assert.That(derive { onSdk with Prerequisites = [] }, Is.EqualTo [ sdk ])
+        Assert.That((Lock.withRecordedPrerequisites "/r/dotnet" "other" onSdk).Prerequisites, Is.EqualTo [ sdk ])
+        // the toolset compiler and package analyzers: nothing under sdk/, no prerequisite
+        let onPackages =
+            { onSdk with
+                Compilation =
+                    match onSdk.Compilation with
+                    | Lock.Compilation.Csc c ->
+                        Lock.Compilation.Csc
+                            { c with
+                                Dependencies =
+                                    { c.Dependencies with
+                                        Compiler = { c.Dependencies.Compiler with Path = "/r/pkgs/microsoft.net.compilers.toolset/4.11.0/tasks/netcore/bincore/csc.dll"; Sha256 = "ef" }
+                                        Analyzers = [ { Path = "/r/pkgs/microsoft.codeanalysis.netanalyzers/8.0.0/analyzers/dotnet/cs/Microsoft.CodeAnalysis.NetAnalyzers.dll"; Sha256 = "01" } ] } }
+                    | other -> other }
+        Assert.That(derive onPackages, Is.Empty)
+        // a file of the SDK anywhere on the command line (an analyzer config) brings it back
+        let withConfig =
+            { onPackages with
+                Compilation =
+                    match onPackages.Compilation with
+                    | Lock.Compilation.Csc c -> Lock.Compilation.Csc { c with Options = c.Options @ [ "/analyzerconfig:/r/dotnet/sdk/8.0.425/Sdks/Microsoft.NET.Sdk/analyzers/build/config/analysislevel_8_default.globalconfig" ] }
+                    | other -> other }
+        Assert.That(derive withConfig, Is.EqualTo [ sdk ])
+        // the SDK's apphost (no runtime identifier): a build takes it from that SDK
+        let app : Lock.App = { OutputType = "Exe"; Host = Some Lock.SdkHost; Files = []; Copy = []; Content = []; Related = []; BindingRedirects = false }
+        let withHost = { onPackages with Recorded = onPackages.Recorded |> Option.map (fun r -> { r with App = Some app }) }
+        Assert.That(derive withHost, Is.EqualTo [ sdk ])
+        // a pack's apphost (an explicit runtime identifier) is written through the SDK's HostModel too
+        let packHost = { app with Host = Some (Lock.PackHost ("win-x64", { Path = "/r/pkgs/microsoft.netcore.app.host.win-x64/8.0.11/runtimes/win-x64/native/apphost.exe"; Sha256 = "aa" })) }
+        let withPackHost = { onPackages with Recorded = onPackages.Recorded |> Option.map (fun r -> { r with App = Some packHost }) }
+        Assert.That(derive withPackHost, Is.EqualTo [ sdk ])
+        // an application without an apphost does not
+        let noHost = { onPackages with Recorded = onPackages.Recorded |> Option.map (fun r -> { r with App = Some { app with Host = None } }) }
+        Assert.That(derive noHost, Is.Empty)
+        // a composed entry (not recorded) is left as it is
+        let composed = { onPackages with Recorded = None; Prerequisites = [ sdk ] }
+        Assert.That(derive composed, Is.EqualTo [ sdk ])
+        // the probe: a .NET root without that SDK fails the replay, one without a prerequisite passes
+        let empty = Path.Combine (Path.GetTempPath (), "xake-empty-dotnet-" + string (Guid.NewGuid ()))
+        Directory.CreateDirectory (Path.Combine (empty, "sdk")) |> ignore
+        try
+            Assert.That(Lock.unmetPrerequisitesAt (Some empty) onSdk, Has.Length.EqualTo 1)
+            Assert.That((Lock.unmetPrerequisitesAt (Some empty) onSdk).Head, Does.Contain "the lock needs the .NET SDK 8.0.425")
+            Assert.That(Lock.unmetPrerequisitesAt (Some empty) { onPackages with Prerequisites = derive onPackages }, Is.Empty)
+        finally
+            Directory.Delete (empty, true)
+
+    [<Test>]
+    member x.``a pack identity is the copy whose hash the lock recorded, installed or the package's``() =
+        let dir = Path.Combine (Path.GetTempPath (), "xake-pack-candidates-" + string (Guid.NewGuid ()))
+        let write (path: string) (text: string) =
+            Directory.CreateDirectory (Path.GetDirectoryName path) |> ignore
+            File.WriteAllText (path, text)
+            path.Replace ('\\', '/')
+        try
+            let dotnet, pkgs = (Path.Combine (dir, "dotnet")).Replace ('\\', '/'), (Path.Combine (dir, "pkgs")).Replace ('\\', '/')
+            let installed = write (Path.Combine (dotnet, "packs", "Microsoft.NETCore.App.Ref", "8.0.11", "ref", "net8.0", "X.dll")) "installed, unsigned"
+            let package = write (Path.Combine (pkgs, "microsoft.netcore.app.ref", "8.0.11", "ref", "net8.0", "X.dll")) "the package's, signed"
+            let context : Lock.Identity.Context = { Roots = [ "$(DotnetRoot)", dotnet; "$(NuGetPackageRoot)", pkgs ]; Sdk = ""; Projects = [] }
+            let identity = "pack:microsoft.netcore.app.ref/8.0.11/ref/net8.0/X.dll"
+            let resolve = Lock.Identity.toPathHashed context identity
+            let shaOf = Xake.Dotnet.Hash.sha256
+            // the lock recorded the package's copy while packs/ holds another file of that name
+            Assert.That(resolve (shaOf package), Is.EqualTo package)
+            // and the reverse: the installed pack's
+            Assert.That(resolve (shaOf installed), Is.EqualTo installed)
+            // no hash: the installed pack, as toPath
+            Assert.That(resolve "", Is.EqualTo installed)
+            Assert.That(Lock.Identity.toPath context identity, Is.EqualTo installed)
+            // neither: the package's copy (the restore fetches it), and the replay names both
+            Assert.That(resolve "00", Is.EqualTo package)
+            let c = { Csc.ofArgs [ "/noconfig"; "/reference:" + package; "/r/proj/A.cs" ] with Name = "App"; Framework = "net8.0"; Directory = "/r/proj" }
+            let c = { c with Dependencies = { c.Dependencies with References = c.Dependencies.References |> List.map (fun r -> { r with Sha256 = "00" }) } }
+            let entry = { Lock.ofCsc c with Recorded = Some { Projects = []; Masks = []; Placed = None; App = None } }
+            match Lock.packMismatches (Some dotnet) pkgs entry with
+            | [ message ] ->
+                Assert.That(message, Does.Contain identity)
+                Assert.That(message, Does.Contain (sprintf "'%s' (%s)" installed (shaOf installed)))
+                Assert.That(message, Does.Contain (sprintf "'%s' (%s)" package (shaOf package)))
+            | other -> Assert.Fail (sprintf "expected one message, got %A" other)
+            // the recorded copy: nothing to say
+            let matching = { entry with Compilation = Lock.Compilation.Csc { c with Dependencies = { c.Dependencies with References = c.Dependencies.References |> List.map (fun r -> { r with Sha256 = shaOf package }) } } }
+            Assert.That(Lock.packMismatches (Some dotnet) pkgs matching, Is.Empty)
+        finally
+            Directory.Delete (dir, true)
+
+    [<Test>]
     member x.``with masks, a lock writes only the sources the masks do not put in place, and a build puts them back``() =
         let masks = [ "/r/proj/**/*.cs"; "/r/shared/Link.cs"; "!/r/proj/obj/**/*" ]
         let gen = "/r/proj/obj/xake/App.AssemblyInfo.cs"

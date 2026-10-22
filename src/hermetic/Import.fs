@@ -1297,7 +1297,8 @@ module Import =
     /// files msbuild compiles (else msbuild's files, with a warning);</item>
     /// <item>a project reference as the referenced project's output in the build's layout
     /// (`Recorded.Projects`), unhashed; every other reference and analyzer hashed, but the
-    /// SDK's own files, which the SDK version identifies (`Prerequisites`).</item>
+    /// SDK's own files, which the SDK version identifies (a `dotnet-sdk` prerequisite, derived
+    /// from the paths: `Lock.withRecordedPrerequisites`).</item>
     /// </list>
     /// Pure but for reading the generated files and hashing.
     /// </summary>
@@ -1502,11 +1503,14 @@ module Import =
                   SdkPin = Some ctx.Pin
                   Properties = d.Props |> Map.filter (fun k v -> List.contains k keptProperties && v <> "") }
               Packages = packages
-              // the SDK the entry was recorded with: its compiler, analyzers and shims
-              Prerequisites =
-                if sdk = "" then []
-                else [ { Kind = Lock.DotnetSdk; Version = sdk; Pin = ctx.Pin' } ]
+              Prerequisites = []
               Recorded = Some { Projects = projects |> List.map fst; Masks = masks; Placed = None; App = app } }
+        // the SDK the entry was recorded with, when it names a file of that SDK (its compiler,
+        // analyzers, shims, its apphost): the prerequisite follows the content
+        let entry =
+            match p "NetCoreRoot" with
+            | "" -> entry
+            | root -> entry |> Lock.withRecordedPrerequisites ((slash root).TrimEnd '/') ctx.Pin'
         // the commit a SourceLink-free AssemblyInfo still names (`InformationalVersion`): a token
         let entry = match p "SourceRevisionId" with "" -> entry | sha -> entry |> Lock.mapText (Git.tokenize sha)
 
@@ -1617,7 +1621,8 @@ module Import =
     /// text files msbuild generated as recorded texts and any other generated file copied beside
     /// the lock (`&lt;lock&gt;.files/&lt;framework&gt;/`), the references and analyzers by
     /// identity (`Lock.Identity`: `pkg:`, `pack:`, `sdk:`, `project:`), the SDK version as a
-    /// prerequisite.</item>
+    /// prerequisite when the entry names a file of that SDK (`Lock.withRecordedPrerequisites`;
+    /// none on the toolset compiler and package analyzers).</item>
     /// </list>
     /// Nothing about the compilation is derived by Xake. The import fails on a file that cannot
     /// be named portably (outside the package folder, the packs, the SDK and the roots), also
@@ -1870,15 +1875,16 @@ module Import =
                             | Some t when t.StartsWith "$(" -> t
                             | Some t -> Path.GetFileName t
                             | None -> "" }
-                    // the lock pins the SDK that recorded it (a prerequisite): say so where
-                    // global.json lets another one build
+                    // a lock that pins the SDK that recorded it (a prerequisite, when it names a
+                    // file of that SDK): say so where global.json lets another one build
                     // (once per SDK and pin for the whole import, after the projects)
-                    match [ for _, _, _, d in runs -> prop d "NETCoreSdkVersion" ] |> List.filter ((<>) "") |> List.tryHead with
-                    | Some sdk when pin <> Lock.Pinned sdk ->
-                        let key = sdk, pin, pinFile
-                        if not (pinWarnings.ContainsKey key) then pinWarnings.[key] <- ResizeArray ()
-                        pinWarnings.[key].Add description.Name
-                    | _ -> ()
+                    let warnPin (entries: Lock.Entry list) =
+                        for e in entries do
+                            for pr in e.Prerequisites do
+                                if pr.Kind = Lock.DotnetSdk && pin <> Lock.Pinned pr.Version then
+                                    let key = pr.Version, pin, pinFile
+                                    if not (pinWarnings.ContainsKey key) then pinWarnings.[key] <- ResizeArray ()
+                                    if not (pinWarnings.[key].Contains description.Name) then pinWarnings.[key].Add description.Name
                     let locks = ResizeArray<string> ()
                     for cfg in options.Configurations do
                         let lockPath = options.LockOf description.Name cfg
@@ -1889,6 +1895,7 @@ module Import =
                         for _, (_, warnings, _) in built do
                             for w in warnings do do! trace Warning "%s" w
                         let entries = built |> List.map (fun (_, (e, _, _)) -> e)
+                        warnPin entries
                         match entries |> List.collect (unportablePaths roots) |> List.distinct with
                         | [] -> ()
                         | problems -> failwith (String.concat "\n" problems)

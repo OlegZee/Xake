@@ -1,5 +1,9 @@
 # Session state: hermetic-build
 
+## 2026-10-21 — SDK-free locks implemented (#83, draft)
+
+Xake side of [sdk-free-locks.md](sdk-free-locks.md) steps 1-3 on `pr/sdk-free-locks`: a recorded entry's `dotnet-sdk` prerequisite follows its content; hermetic 0.6.0. Findings in that note's status: an installed targeting pack is not byte-identical to the nuget.org package (signed; facades and source generators are other builds), so a lock recorded from `packs/` still needs that pack; the toolset package 5.9.0 is another Roslyn build than SDK 10.0.402's. **Exact next step**: the owner decides where a `pack:` hash comes from, then review and merge #83.
+
 ## 2026-10-18 — cycle 3 opened on `pr/binding-redirects` (from `dev`)
 
 The consumer-side "four cells 92 s against 69 s" was a cold compiler server, not an engine regression: warm runs are 69.6–71.8 s, CPU 725–750 s = 4 × a single cell, server 621–644 s; `build-par` 76 s (CPU-bound). `binding-redirects.md` is the S55 design: the import already runs `GenerateBindingRedirects`, the gap is recording the finished `.exe.config` (apps) and `.dll.config` (test libraries) instead of the pre-redirect file; no build-side change. **Exact next step**: the owner answers Q1–Q6 in that note, then implement on this branch (~150–250 lines incl. tests), PR to `dev`, 0.4.3.
@@ -1118,6 +1122,8 @@ PR 1's branch), then PR 2-4. Subagent reports land in `fsc-rework/pr<N>-report.m
 | 6c library PR before the release (fsc identity by SDK, `compileAs` restore-order fix, net462 reference, 59-byte note) | `pr/fsc-identity` | `.claude/worktrees/pr/fsc-identity` | `origin/dev` 8b1a76a | **merged** (#52, 35cfe56); removed 2026-10-12 |
 | 6d hermetic 0.3.0 on Xake 3.7.0.26 | `pr/hermetic-0.3` | `.claude/worktrees/pr/hermetic-0.3` | `origin/dev` 35cfe56 | **merged** (#53, 7e5e29f); removed 2026-10-12 |
 | 7 self-build `build.fsc.fsx` | `pr/build-fsc` | `.claude/worktrees/pr/build-fsc` | `origin/dev` 8b1a76a | **merged** (#50); bootstraps from Xake 3.7.0.26 + hermetic 0.3.0.28, own `.xake.fsc`, locks regenerated, CI job `build-fsc` on ubuntu; report `fsc-rework/pr7-report.md`; six new questions in `questions.md` (bootstrap via build.fsx dlls, macOS-only locks, HERMETIC off, 59-byte cross-folder diff) |
+| #82 rm/cp many targets | `pr/rm-multi-targets` | `.claude/worktrees/pr/rm-multi-targets` | `origin/dev` 5e08a38 | **merged** 2026-10-21 (62d9b1a) |
+| #83 SDK-free locks (hermetic 0.6.0) | `pr/sdk-free-locks` | `.claude/worktrees/pr/sdk-free-locks` | `origin/dev` 62d9b1a | open, draft; findings in `sdk-free-locks.md` |
 
 Merged: #44-#49 (all of PRs 1-6 minus the fingerprints wiring, which PR 7 does in the script). After every squash merge the
 remaining stacked branches need `git merge origin/dev` (the squash commit conflicts with the

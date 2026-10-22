@@ -40,6 +40,7 @@ open Xake.Hermetic.Dotnet
 | `Lock.Prerequisite = { Kind; Version; Pin }` | type | an input no restore fetches, checked before a replay; `Kind` is `Lock.DotnetSdk` (`"dotnet-sdk"`) today ([Prerequisites](#prerequisites)) |
 | `Lock.sdkPinAt dir` | pure (reads disk) | the `global.json` found from `dir` upwards and the `SdkPin` it states (`Project.sdkPin` is its second half) |
 | `Lock.sdkVersionsOf roots paths` / `prerequisitesFor roots pinFile pin versions` | pure | the SDK versions paths depend on (`$(DotnetRoot)/sdk/<v>/...`); the prerequisites under a pin, and the versions left without one |
+| `Lock.recordedSdkVersions dotnetRoot entry` / `withRecordedPrerequisites dotnetRoot pin entry` | pure | the SDK versions a recorded entry names (its command line's and application's paths under `<dotnetRoot>/sdk/<v>/`, its own SDK when it has an apphost, which the SDK's HostModel writes); the entry with a `dotnet-sdk` prerequisite per version, none when it names nothing there ([Prerequisites](#prerequisites)) |
 | `Project.import ImportOptions` | recipe | msbuild design-time build per project and framework, writes the lock ([below](#where-a-lockentry-comes-from)) |
 | `Lock.load` / `loadWith extraRoots` | recipe | read a lock, `needFiles` it, expand paths for this machine |
 | `Lock.save` / `saveWith extraRoots` | recipe | write a lock, tokenizing paths |
@@ -205,8 +206,11 @@ condition the masks do not know, the two can drift; the import checks them only 
      (`OutOf cfg <NearestTargetFramework> <name>`), in `Recorded.Projects`.
    - Every reference and analyzer is hashed, except a project's output (unhashed, as in every
      lock) and a file of the SDK (identified by the SDK version).
-   - `Prerequisites` always has `dotnet-sdk <NETCoreSdkVersion>`: the lock pins the SDK.
-     Another SDK means a new import.
+   - `Prerequisites` has `dotnet-sdk <NETCoreSdkVersion>` when the entry names a file of that
+     SDK (an `sdk:` identity, any file under `$(DotnetRoot)/sdk/<v>/`, an apphost):
+     the lock pins the SDK, and another SDK means a new import. On the toolset compiler and
+     package analyzers it names none and has no prerequisite (since 0.6,
+     [Prerequisites](#prerequisites)).
 5. The lock is written only when its text changes. Before that, these checks stop the import
    and name the file or line:
    - every reference, analyzer and compiler must have a portable name (below), and so must every
@@ -239,7 +243,7 @@ paths (`Lock.Identity`):
 | Identity | The file | On another machine |
 |---|---|---|
 | `pkg:<id>/<version>/<path>` | a package file in the package folder | `$(NuGetPackageRoot)/<id>/<version>/<path>`; a missing package is fetched (`NUGET_FETCH`) |
-| `pack:<pack>/<version>/<path>` | a file of a targeting pack (`Microsoft.<X>.App.Ref`), an apphost pack (`Microsoft.NETCore.App.Host.<rid>`) or a runtime pack (`Microsoft.<X>.App.Runtime.<rid>`), under `$(DotnetRoot)/packs` or downloaded into the package folder | the pack under this .NET's `packs/` when it has that version, else the package of that name (fetched like any package) |
+| `pack:<pack>/<version>/<path>` | a file of a targeting pack (`Microsoft.<X>.App.Ref`), an apphost pack (`Microsoft.NETCore.App.Host.<rid>`) or a runtime pack (`Microsoft.<X>.App.Runtime.<rid>`), under `$(DotnetRoot)/packs` or downloaded into the package folder | the pack under this .NET's `packs/` when it has that version, else the nuget.org package of that id and version (`Microsoft.NETCore.App.Ref`, `Microsoft.WindowsDesktop.App.Ref`, `Microsoft.AspNetCore.App.Ref`, `Microsoft.NETCore.App.Host.<rid>`) in the package folder, fetched by the lock's restore like any package; accepted by the recorded hash (see below) |
 | `sdk:<path>` | a file of the SDK the entry was recorded with (the compiler, the SDK's analyzers and shims) | `$(DotnetRoot)/sdk/<Evaluation.Sdk>/<path>`; the `dotnet-sdk` prerequisite fails first when that SDK is not installed |
 | `project:<name>` | a referenced project's output | `Recorded.Projects[name].Path` (tokenized, the build's layout) |
 | `$(ProjectRoot)/...`, `$(Sibling)/...` | a file under a root | the root on this machine |
@@ -247,7 +251,31 @@ paths (`Lock.Identity`):
 Anything else (an absolute path outside the package folder, the packs, the SDK and the roots)
 fails the import: declare its folder as a root (`RecordOptions.Roots`) or fix the project. The
 same pack has the same identity whether this .NET has it or msbuild downloaded it, so two
-machines record the same lock.
+machines record the same lock *text*.
+
+The hashes are another matter: an installed pack is not byte-identical to the nuget.org package
+of the same version. The package signs its assemblies (Authenticode certificate data, a
+strong-name signature where the installed copy has zeros, the PE checksum) and carries other
+builds of the type-forwarding facades and of the source generators under `analyzers/`
+(measured on `microsoft.netcore.app.ref` 8.0.32: all 234 files differ, 65 of them beyond the
+signatures). One identity, two possible contents: **a `pack:` resolves to the copy whose hash
+the lock recorded** (`Lock.Identity.toPathHashed`, when the lock is read). The installed file
+under `$(DotnetRoot)/packs/` when this .NET has it and its SHA-256 is the recorded one, else the
+package folder's copy, which the lock's restore fetches. So a lock recorded from the package
+folder (the importing .NET had not that pack, or `NetCoreTargetingPackRoot` pointed elsewhere)
+builds on a machine with the pack installed and on one without it (`SdkFreeImportTests.fs`: a
+net6.0 project against an empty `packs/`). A lock recorded from `packs/` builds only where that
+pack is installed: after the restore, a package copy that matches neither fails the replay
+naming both candidates (`Lock.packMismatches`):
+
+```
+'<name>': pack:microsoft.netcore.app.ref/8.0.32/ref/net8.0/System.Runtime.dll matches neither copy
+the lock may name (recorded <sha>): the installed pack '<dotnet>/packs/...' (<sha>), the package
+'<packages>/microsoft.netcore.app.ref/8.0.32/...' (<sha>)
+```
+
+The installed file is hashed through `FileHash` (memoised by path, length and write time), so
+a build of many locks naming one pack hashes each of its files once.
 
 ### Format 2
 
@@ -708,12 +736,42 @@ project (and every file of a recorded one under that folder). A file under
 `$(DotnetRoot)/packs/` is not covered by it; a recorded entry names such a file by a `pack:`
 identity and its hash.
 
-**A recorded entry** (`Import.record`) always has `dotnet-sdk <NETCoreSdkVersion>`: the SDK
-that recorded it. This can be stricter than `global.json` (the trial project: `8.0.100 rollForward:latestFeature`
-with the prerequisite `8.0.425`); the import warns then. Another SDK means a new import. For a
-recorded entry the prerequisite covers every file under `$(DotnetRoot)/sdk/<v>/`, references
-included, and a file under `$(DotnetRoot)/packs/` is accepted by its hash (a `pack:` identity).
-With no `global.json`, `Pin` is `""` and a message names "the import" as the source.
+**A recorded entry** (`Import.record`) has `dotnet-sdk <NETCoreSdkVersion>`, the SDK that
+recorded it, **when it names a file of that SDK** (since 0.6; before, always): an `sdk:`
+identity or any other path under `$(DotnetRoot)/sdk/<v>/` of its command line (the compiler,
+the SDK's analyzers, an `/analyzerconfig:` of the SDK, shims) or of its application (an
+apphost: the SDK's template, `SdkHost`, or a pack's, `PackHost` for an explicit
+`RuntimeIdentifier`, both written through the SDK's `HostModel`, which adds the version
+resource and the icon; without it Xake's fallback writes a smaller file, 119 296 bytes against
+msbuild's 194 048 in a probe). The prerequisite follows the content:
+`Lock.withRecordedPrerequisites` derives it from the paths, in `Import.record` and again in
+`Lock.rehash`. This can be stricter than `global.json` (the trial project: `8.0.100
+rollForward:latestFeature` with the prerequisite `8.0.425`); the import warns then. Another SDK
+means a new import. For a recorded entry the prerequisite covers every file under
+`$(DotnetRoot)/sdk/<v>/`, references included, and a file under `$(DotnetRoot)/packs/` is
+accepted by its hash (a `pack:` identity). With no `global.json`, `Pin` is `""` and a message
+names "the import" as the source.
+
+A C# project that takes its compiler and analyzers from packages names nothing under `sdk/`, so
+its lock has no prerequisite and replays on a machine with any SDK version (the replay starts
+no msbuild; the `dotnet` host on the `PATH` runs the toolset's `csc.dll`):
+
+```xml
+<PropertyGroup><RoslynCompilerType>Toolset</RoslynCompilerType></PropertyGroup>
+<ItemGroup>
+  <PackageReference Include="Microsoft.Net.Compilers.Toolset" Version="<v>" PrivateAssets="all" />
+  <PackageReference Include="Microsoft.CodeAnalysis.NetAnalyzers" Version="<v>" PrivateAssets="all" />
+</ItemGroup>
+```
+
+Without `RoslynCompilerType=Toolset` the SDK reverts to its own compiler. The analyzers package
+turns the SDK's copy off by setting `EnableNETAnalyzers=false` in its props: a project that sets
+`EnableNETAnalyzers` to `true` in its body (or in a `.targets`) gets both copies, and the SDK's
+analyzers bring the prerequisite back. The toolset package of a Roslyn version is not the
+SDK's own build of it (SDK 10.0.402 bundles `5.9.0-1.26505.111`, the package 5.9.0 is
+`5.9.0-1.26357.3`), so moving a project onto the packages is a compiler change: compare the
+output once. F# has no compiler package: an F# entry keeps the prerequisite (fsc is under
+`sdk/<v>/FSharp/`), and a lock mixing C# and F# keeps it for the F# entries.
 
 For the other entries, **written at record time**, when the entry depends on the SDK:
 `Lock.record`, the first `Lock.build` / `csc { lock }` / `fsc { lock }` (the recording branch of
@@ -764,7 +822,11 @@ is not installed under '<root>'; install it (dotnet-install --version <v> --inst
 `HERMETIC=on` builds on this: under it a lock may name nothing outside `$(ProjectRoot)` and
 `$(NuGetPackageRoot)` that a prerequisite does not cover ([Hermetic mode](#hermetic-mode)).
 
-Tests: `LockDiffTests.fs` (`Lock prerequisites`: the key written only when not empty and the
+Tests: `RecordTests.fs` (`a recorded entry's SDK prerequisite follows its content`: the SDK
+compiler, the package compiler and analyzers, an SDK analyzer config, an apphost of the SDK or a pack, the
+probe under an empty .NET root), `SdkFreeImportTests.fs` (a net472 + netstandard2.0 library on
+the toolset compiler and package analyzers records no prerequisite and builds against a .NET
+root with empty `sdk/` and `packs/` into `dotnet build`'s bytes), `LockDiffTests.fs` (`Lock prerequisites`: the key written only when not empty and the
 golden lock unchanged, the round trip, `diff`, `mapText`/`mapPaths`/`rehash`, the derivation)
 and `FscLockTests.fs` (an exact pin records the prerequisite, the replay compiles, a loosened
 pin is a difference; no pin, no prerequisite and the warning; a missing SDK fails the replay
@@ -910,7 +972,8 @@ record `Csc`); the 3.3 function `Csc settings` no longer exists, `Csc.compile se
 `Lock.compileWith` does, before handing the entry to `Csc.run` or `Fsc.run` (`Lock.fs`):
 
 0. **Checks the prerequisites** ([Prerequisites](#prerequisites)): a `dotnet-sdk <v>` whose SDK
-   is not installed under the .NET root fails here, naming the version, the pin and the
+   is not installed under the .NET root the lock is read against (a script's extra root
+   `$(DotnetRoot)`, else this machine's) fails here, naming the version, the pin and the
    `dotnet-install` command, before any restore. Under `HERMETIC=on` a lock that names a path
    outside the roots then fails with message 10 ([Hermetic mode](#hermetic-mode)). The restore
    options are applied as the build says (`Restore.resolve`: the build's package folder,

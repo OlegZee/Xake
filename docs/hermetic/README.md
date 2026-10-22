@@ -1,6 +1,36 @@
 # Xake.Hermetic.Dotnet
 
-## 0.5.2 (next release)
+## 0.6.0 (next release)
+
+The `dotnet-sdk` prerequisite of a recorded lock follows its content
+([sdk-free-locks agenda](../features/hermetic-build/sdk-free-locks.md), steps 1-3). **A
+re-import drops the prerequisite** from the locks of a project that names nothing under
+`$(DotnetRoot)/sdk/<v>/`; every other lock is written as before. No API removed, no lock format
+change.
+
+- `Import.record` and `Lock.rehash` give a recorded entry `dotnet-sdk <v>` only when it names a
+  file under `sdk/<v>/` (the SDK's compiler or analyzers, an SDK analyzer config, shims, the SDK's
+  apphost): `Lock.withRecordedPrerequisites`, `Lock.recordedSdkVersions`. A C# project on
+  `Microsoft.Net.Compilers.Toolset` (`RoslynCompilerType=Toolset`) and
+  `Microsoft.CodeAnalysis.NetAnalyzers` records none and replays with no SDK of that version
+  installed. The import's "stricter than global.json" warning follows. Before, every recorded
+  entry carried the SDK that recorded it.
+- The replay checks a prerequisite under the `$(DotnetRoot)` the lock is read against (a
+  script's extra root of that name, else this machine's).
+- A `pack:` identity resolves to the copy whose hash the lock recorded
+  (`Lock.Identity.toPathHashed`): the installed pack under `packs/` when its file has that hash,
+  else the nuget.org package of the same id and version, fetched by the lock's restore. An
+  installed pack is not byte-identical to the package (the package is signed, its facades and
+  source generators are other builds): until now a lock recorded from the package folder failed
+  the hash check on a machine with the pack installed. A package copy matching neither fails
+  the replay naming both (`Lock.packMismatches`); a lock recorded from `packs/` still needs that
+  pack installed ([lock.md](lock.md#identities)).
+- A recorded application with an apphost (also for an explicit `RuntimeIdentifier`) has the
+  `dotnet-sdk` prerequisite: the apphost is written through the SDK's HostModel (version
+  resource, icon). Before, without that SDK it was written by a fallback and the build only
+  warned.
+
+## 0.5.2 (unreleased)
 
 Concurrent imports of one project tree with different properties (two brands) no longer mix
 their restores. No API and no lock format change; a re-import writes the same locks.

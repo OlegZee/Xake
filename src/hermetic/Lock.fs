@@ -119,9 +119,10 @@ module Lock =
     /// under <c>$(DotnetRoot)/sdk/&lt;Version&gt;/</c> (the SDK's fsc, an imported project's
     /// compiler and analyzers, and every file of a recorded entry under it). A composed or
     /// `Project.import` entry gets it only when `global.json` pins that version exactly
-    /// (`rollForward: "disable"`); an entry recorded from msbuild (`Import.record`) always has
-    /// it -- the SDK that recorded it, which may be stricter than `global.json` (the import
-    /// warns). `Pin` names that `global.json` ("" when there is none).
+    /// (`rollForward: "disable"`); an entry recorded from msbuild (`Import.record`) has it when
+    /// it names a file under the SDK that recorded it (`withRecordedPrerequisites`: its
+    /// compiler, analyzers, shims, the SDK's apphost), which may be stricter than `global.json`
+    /// (the import warns). `Pin` names that `global.json` ("" when there is none).
     /// </summary>
     /// <remarks>
     /// `Pin` is kept tokenized (<c>$(ProjectRoot)/global.json</c>) in memory as well as on
@@ -469,17 +470,82 @@ module Lock =
                 |> mapCompilation (fun c -> { c with Dependencies = clear c.Dependencies })
                                   (fun f -> { f with Fsc.Dependencies = clear f.Dependencies }) }
 
+    /// <summary>
+    /// The SDK versions a recorded entry (`Entry.Recorded`) depends on, read off its content:
+    /// the version of every path under <c>&lt;dotnetRoot&gt;/sdk/&lt;v&gt;/</c> it names -- the
+    /// compiler, a reference, an analyzer, any other file of the command line, a file an
+    /// application copies -- and the entry's own SDK (`Evaluation.Sdk`) when it has an apphost:
+    /// the SDK's template (`SdkHost`) or a pack's (`PackHost`), both written through the SDK's
+    /// `HostModel` (without it the apphost lacks the version resource and the icon). A project on the toolset compiler
+    /// (`Microsoft.Net.Compilers.Toolset`) and package analyzers
+    /// (`Microsoft.CodeAnalysis.NetAnalyzers`) names nothing there: no version. Distinct, in
+    /// order of first appearance. Pure.
+    /// </summary>
+    let recordedSdkVersions (dotnetRoot: string) (entry: Entry) : string list =
+        let inputs =
+            match entry.Compilation with
+            | Compilation.Csc c -> Csc.hermeticInputs c
+            | Compilation.Fsc f -> Fsc.hermeticInputs f
+        let app = entry.Recorded |> Option.bind (fun r -> r.App)
+        let paths =
+            (inputs |> List.map (fun i -> i.Path))
+            @ [ match app with
+                | Some a ->
+                    for c in a.Copy do yield c.Path
+                    for c in a.Content do yield c.Path
+                    for f in a.Files do yield f.Path
+                    match a.Host with
+                    | Some (PackHost (_, t)) -> yield t.Path
+                    | _ -> ()
+                | None -> () ]
+        // an apphost, the SDK's template or a pack's, is written through the SDK's HostModel
+        // (`Apps.createAppHost`: the version resource, the icon): the entry depends on that SDK
+        let host =
+            match app with
+            | Some { Host = Some _ } when entry.Evaluation.Sdk <> "" -> [ entry.Evaluation.Sdk ]
+            | _ -> []
+        (paths |> List.filter ((<>) "") |> List.choose (DotNetFwk.sdkVersionOf dotnetRoot)) @ host |> List.distinct
+
+    /// <summary>
+    /// A recorded entry (`Entry.Recorded`) with its `dotnet-sdk` prerequisites derived from its
+    /// content (`recordedSdkVersions` under `dotnetRoot`): one per SDK version it names, none
+    /// when it names nothing under <c>sdk/</c>. A prerequisite the entry already has keeps its
+    /// `Pin`; a new one gets `pin` (the tokenized `global.json`, "" when there is none).
+    /// Other kinds of prerequisite are kept; an entry that is not recorded is returned as it
+    /// is (a composed entry's prerequisite follows the `global.json` pin, `withPrerequisites`).
+    /// Pure.
+    /// </summary>
+    let withRecordedPrerequisites (dotnetRoot: string) (pin: string) (entry: Entry) : Entry =
+        match entry.Recorded with
+        | None -> entry
+        | Some _ ->
+            let pinOf v =
+                entry.Prerequisites
+                |> List.tryFind (fun p -> p.Kind = DotnetSdk && p.Version = v)
+                |> Option.map (fun p -> p.Pin)
+                |> Option.defaultValue pin
+            { entry with
+                Prerequisites =
+                    (entry.Prerequisites |> List.filter (fun p -> p.Kind <> DotnetSdk))
+                    @ [ for v in recordedSdkVersions dotnetRoot entry -> { Kind = DotnetSdk; Version = v; Pin = pinOf v } ] }
+
     /// Fills `Sha256` for every hashed item (`References`, `Analyzers`, the compiler via
     /// `Csc.rehash`/`Fsc.rehash`, and `Imports`) from what is on disk right now; leaves `""` where the file
     /// does not exist, and for a compiler of the .NET SDK (`isSdkCompiler`, identified by the SDK
     /// version instead). For a composed entry, which leaves every hash empty, this is the
     /// "record time" step `lock-from-settings.md` recommendation 5 asks for -- run once by the
-    /// lock-recording rule, not on every compile.
+    /// lock-recording rule, not on every compile. A recorded entry's `dotnet-sdk` prerequisites
+    /// are derived again from its paths (`withRecordedPrerequisites`, under this machine's .NET
+    /// root): the prerequisite follows the content.
     let rehash (entry: Entry) : Entry =
         { entry with
             Compilation = entry.Compilation |> mapCompilation Csc.rehash Fsc.rehash
             Evaluation = { entry.Evaluation with Imports = entry.Evaluation.Imports |> List.map (fun h -> { h with Sha256 = Csc.sha256 h.Path }) } }
         |> withoutSdkCompilerHash
+        |> fun e ->
+            match e.Recorded, Roots.dotnetRoot () with
+            | Some _, Some root -> withRecordedPrerequisites root "" e
+            | _ -> e
 
     /// Rewrites every path the entry's compilation carries, through `f` (`Csc.mapPaths`,
     /// `Fsc.mapPaths`). A
@@ -652,6 +718,19 @@ module Lock =
             | [| a; b; rest |] when a <> "" && b <> "" && rest <> "" -> Some (a, b, rest)
             | _ -> None
 
+        /// <summary>
+        /// Whether a package id names a pack of the .NET installation: a targeting pack
+        /// (`Microsoft.<X>.App.Ref`), an apphost pack (`Microsoft.NETCore.App.Host.<rid>`) or a
+        /// runtime pack (`Microsoft.<X>.App.Runtime.<rid>`), which an explicit runtime
+        /// identifier brings. Its files get the same `pack:` identity whether this .NET has the
+        /// pack under `packs/` or msbuild downloaded it into the package folder (the id in lower
+        /// case, as the package folder spells it); the two copies need not have the same bytes
+        /// (`toPathHashed`). Pure.
+        /// </summary>
+        let isPack (id: string) =
+            let id = id.ToLowerInvariant ()
+            id.EndsWith ".app.ref" || id.Contains ".app.host." || id.Contains ".app.runtime."
+
         /// The portable name of `path`: `project:`, `pack:` (a targeting pack under the .NET root
         /// or in the package folder), `pkg:`, `sdk:` (in that order),
         /// else the tokenized path when it lies under a root other than `$(DotnetRoot)`, else
@@ -668,14 +747,6 @@ module Lock =
                     match rel.Split ([| '/' |], 2) with
                     | [| v; rest |] when v = ctx.Sdk && rest <> "" -> Some rest
                     | _ -> None)
-            // a targeting pack (`Microsoft.<X>.App.Ref`) is the same `pack:` whether this .NET has
-            // it or msbuild downloaded it into the package folder: the id in lower case, as the
-            // package folder spells it
-            // the same for an apphost pack and a runtime pack (`Microsoft.NETCore.App.Host.<rid>`,
-            // `Microsoft.<X>.App.Runtime.<rid>`), which an explicit runtime identifier brings
-            let isPack (id: string) =
-                let id = id.ToLowerInvariant ()
-                id.EndsWith ".app.ref" || id.Contains ".app.host." || id.Contains ".app.runtime."
             match project, inPacks, inPackages, inSdk with
             | Some p, _, _, _ -> Some ("project:" + p.Name)
             | _, Some (pack, version, rest), _, _ -> Some (sprintf "pack:%s/%s/%s" (pack.ToLowerInvariant ()) version rest)
@@ -696,6 +767,27 @@ module Lock =
         let isIdentity (text: string) =
             text.StartsWith "pkg:" || text.StartsWith "pack:" || text.StartsWith "sdk:" || text.StartsWith "project:"
 
+        /// <summary>
+        /// The two files a `pack:` identity can name on this machine: the file of the pack under
+        /// `$(DotnetRoot)/packs` (`Some` when this .NET has it, whatever the folder's case) and
+        /// the file of the package of that id and version in the package folder (which a restore
+        /// fetches; it may not exist yet). Pure but for listing `packs/` and one `File.Exists`.
+        /// </summary>
+        let packCandidates (ctx: Context) (identity: string) : string option * string =
+            let root token = match rootOf ctx token with Some r -> r | None -> failwithf "'%s': no %s on this machine" identity token
+            match threeParts (identity.Substring "pack:".Length) with
+            | Some (pack, version, file) ->
+                let packs = root "$(DotnetRoot)" + "/packs"
+                let installed =
+                    if not (Directory.Exists packs) then None
+                    else
+                        packFolders packs
+                        |> Array.tryFind (fun d -> System.String.Equals (Path.GetFileName d, pack, System.StringComparison.OrdinalIgnoreCase))
+                        |> Option.map (fun d -> slash d + "/" + version + "/" + file)
+                        |> Option.filter File.Exists
+                installed, root Roots.nugetPackageRootToken + "/" + pack.ToLowerInvariant () + "/" + version.ToLowerInvariant () + "/" + file
+            | None -> failwithf "'%s' is not pack:<pack>/<version>/<path>" identity
+
         /// The file `identity` names on this machine; a tokenized path is expanded. A `pack:`
         /// is the targeting pack under `$(DotnetRoot)/packs` when this .NET has that version,
         /// else the package of that name in the package folder (a restore fetches it). Pure but
@@ -706,21 +798,9 @@ module Lock =
             if identity.StartsWith "pkg:" then
                 root Roots.nugetPackageRootToken + "/" + rest "pkg:"
             elif identity.StartsWith "pack:" then
-                match threeParts (rest "pack:") with
-                | Some (pack, version, file) ->
-                    // the pack folder of this .NET, whatever its case (`Microsoft.NETCore.App.Ref`)
-                    let packs = root "$(DotnetRoot)" + "/packs"
-                    let installed =
-                        if not (Directory.Exists packs) then None
-                        else
-                            packFolders packs
-                            |> Array.tryFind (fun d -> System.String.Equals (Path.GetFileName d, pack, System.StringComparison.OrdinalIgnoreCase))
-                            |> Option.map (fun d -> slash d + "/" + version + "/" + file)
-                            |> Option.filter File.Exists
-                    match installed with
-                    | Some path -> path
-                    | None -> root Roots.nugetPackageRootToken + "/" + pack.ToLowerInvariant () + "/" + version.ToLowerInvariant () + "/" + file
-                | None -> failwithf "'%s' is not pack:<pack>/<version>/<path>" identity
+                match packCandidates ctx identity with
+                | Some installed, _ -> installed
+                | None, package -> package
             elif identity.StartsWith "sdk:" then
                 if ctx.Sdk = "" then failwithf "'%s': the entry records no SDK version (Evaluation.Sdk)" identity
                 root "$(DotnetRoot)" + "/sdk/" + ctx.Sdk + "/" + rest "sdk:"
@@ -730,6 +810,25 @@ module Lock =
                 | Some p -> p.Path
                 | None -> failwithf "'%s': the entry's Recorded.Projects has no '%s'" identity name
             else Roots.expand ctx.Roots identity
+
+        /// <summary>
+        /// `toPath` of an identity the lock records with the SHA-256 `sha`. A `pack:` is the
+        /// candidate (`packCandidates`) whose content the lock recorded: the installed pack's
+        /// file when this .NET has it and its hash is `sha` (or `sha` is ""), else the package
+        /// folder's copy -- the installed pack and the nuget.org package of the same version are
+        /// not byte-identical (the package signs its assemblies; facades and source generators
+        /// are other builds), so a lock recorded from the package folder names the package's
+        /// copy, which the lock's restore fetches when it is missing. When that copy does not
+        /// match either, the replay names both (`packMismatches`). Hashes through `FileHash`
+        /// (memoised by path, length and write time), so a set of locks naming one pack hashes
+        /// each file once. Any other identity is `toPath`.
+        /// </summary>
+        let toPathHashed (ctx: Context) (identity: string) (sha: string) : string =
+            if identity.StartsWith "pack:" then
+                match packCandidates ctx identity with
+                | Some installed, _ when sha = "" || FileHash.sha256 installed = sha -> installed
+                | _, package -> package
+            else toPath ctx identity
 
     /// The version of the lock format `format` writes. 2: an entry recorded from msbuild
     /// (`Recorded`) names its references, analyzers and compiler by identity (`Identity`).
@@ -956,7 +1055,7 @@ module Lock =
         // `Id` (an identity) or `Path` (tokenized), whichever the item carries
         let fileOf item =
             match field "Id" item |> Option.bind asString with
-            | Some id when id <> "" -> Identity.toPath context id
+            | Some id when id <> "" -> Identity.toPathHashed context id (str "Sha256" item)
             | _ -> str "Path" item |> expand
         let recorded =
             match recorded, field "App" value with
@@ -1315,11 +1414,11 @@ module Lock =
                                 (sprintf "'%s': the compiler %s named by the lock does not exist" c.Name compiler.Path)
         }
 
-    /// The prerequisites of `entry` this machine does not meet, as messages: a `dotnet-sdk`
-    /// one whose <c>&lt;DotnetRoot&gt;/sdk/&lt;Version&gt;</c> folder is missing. Reads the
-    /// disk, nothing else.
-    let internal unmetPrerequisites (entry: Entry) : string list =
-        let root = Roots.dotnetRoot ()
+    /// The prerequisites of `entry` the .NET installation at `root` does not meet, as
+    /// messages: a `dotnet-sdk` one whose <c>&lt;root&gt;/sdk/&lt;Version&gt;</c> folder is
+    /// missing. `root` is the `$(DotnetRoot)` the lock is read against (a script's extra root
+    /// of that name, else `Roots.dotnetRoot ()`). Reads the disk, nothing else.
+    let internal unmetPrerequisitesAt (root: string option) (entry: Entry) : string list =
         [ for p in entry.Prerequisites do
             if p.Kind = DotnetSdk then
                 let installed = root |> Option.exists (fun r -> Directory.Exists (Path.Combine (r, "sdk", p.Version)))
@@ -1482,6 +1581,39 @@ module Lock =
         }
 
     /// <summary>
+    /// The pack files (`Identity.isPack`) of a recorded entry's references and analyzers that
+    /// the replay takes from the package folder `packageRoot` and whose SHA-256 is not the
+    /// recorded one, as messages naming both candidates of the `pack:` identity and their hashes:
+    /// the installed pack under `dotnetRoot` (when this .NET has the file) and the package's
+    /// copy. Run after the restore, so the package's copy is there. Reads the disk.
+    /// </summary>
+    let internal packMismatches (dotnetRoot: string option) (packageRoot: string) (entry: Entry) : string list =
+        if entry.Recorded.IsNone then [] else
+        let packageRoot = packageRoot.Replace('\\', '/').TrimEnd '/'
+        let context : Identity.Context =
+            { Roots = [ yield Roots.nugetPackageRootToken, packageRoot
+                        match dotnetRoot with Some r -> yield "$(DotnetRoot)", r.Replace('\\', '/').TrimEnd '/' | None -> () ]
+              Sdk = ""; Projects = [] }
+        let d = entry.Dependencies
+        [ for path, sha in [ for r in d.References -> r.Path, r.Sha256 ] @ [ for a in d.Analyzers -> a.Path, a.Sha256 ] do
+            if sha <> "" && File.Exists path then
+                match Nuget.packageOf packageRoot path with
+                | Some (id, _) when Identity.isPack id ->
+                    let actual = FileHash.sha256 path
+                    if actual <> sha then
+                        let identity = "pack:" + (path.Replace('\\', '/').Substring (packageRoot.Length + 1))
+                        let installed =
+                            match dotnetRoot with
+                            | Some _ ->
+                                match Identity.packCandidates context identity with
+                                | Some i, _ -> sprintf "'%s' (%s)" i (FileHash.sha256 i)
+                                | None, _ -> "not installed under packs/"
+                            | None -> "no .NET installation"
+                        yield sprintf "'%s': %s matches neither copy the lock may name (recorded %s): the installed pack %s, the package '%s' (%s)"
+                                entry.Name identity sha installed path actual
+                | _ -> () ]
+
+    /// <summary>
     /// Replays a lock entry -- one imported by `Project.import`, read back from a lock, or
     /// recorded from composed settings -- exactly as recorded, with the runner and restore
     /// options given:
@@ -1512,8 +1644,15 @@ module Lock =
             let! restore = Restore.resolve options.Restore
             let options = { options with Restore = restore }
 
-            // the prerequisites first: nothing a restore fetches can stand in for a missing SDK
-            match unmetPrerequisites entry with
+            // the prerequisites first: nothing a restore fetches can stand in for a missing SDK;
+            // the .NET installation is the one the lock is read against (an extra root
+            // `$(DotnetRoot)` of the script, else this machine's)
+            let! readRoots = Roots.currentWith (extraRoots |> List.filter (fst >> (=) "$(DotnetRoot)"))
+            let dotnetRoot =
+                match extraRoots |> List.exists (fst >> (=) "$(DotnetRoot)"), readRoots |> List.tryFind (fst >> (=) "$(DotnetRoot)") with
+                | true, Some (_, root) -> Some root
+                | _ -> Roots.dotnetRoot ()
+            match unmetPrerequisitesAt dotnetRoot entry with
             | [] -> ()
             | unmet -> do! failStep options c (unmet |> String.concat "\n")
 
@@ -1537,6 +1676,12 @@ module Lock =
                 do! failStep options c
                         (sprintf "('%s') restoring the packages the lock names failed:\n%s"
                             c.Name (restoreProblems |> String.concat "\n"))
+
+            // a pack file whose copy in the package folder (fetched now if it was missing) is not
+            // the recorded one either: both candidates named
+            match packMismatches dotnetRoot (Restore.packageRoot options.Restore) entry with
+            | [] -> ()
+            | mismatches -> do! failStep options c (mismatches |> String.concat "\n")
 
             // whatever the restore could not provide, the compiler's own absence is worth an
             // explanation of its own (an SDK that is not installed is not a package)

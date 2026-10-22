@@ -1,9 +1,55 @@
 # SDK-free locks: the compiler and the analyzers as packages (agenda, 2026-10-21)
 
-Status: planned, not started. Owner's decision of 2026-10-21: the way out of the SDK drift is to pin
+Status: Xake side implemented in PR 83 (Xake.Hermetic.Dotnet 0.6.0). Per step:
+1. done: `Lock.withRecordedPrerequisites` / `recordedSdkVersions`, applied in `Import.record`
+   (`entryOf`) and `Lock.rehash`; the replay's probe checks the `$(DotnetRoot)` the lock is read
+   against (`Lock.unmetPrerequisitesAt`). Tests: `RecordTests.fs` (pure), `SdkFreeImportTests.fs`.
+2. done: a `pack:` resolves to the copy with the recorded hash (S78, `Identity.toPathHashed`,
+   `Lock.packMismatches`), `Restore.ensure` fetches the package; tested with a net6.0 project
+   and in `RecordTests.fs`. Finding: an installed pack is not byte-identical to the
+   nuget.org package (signed; facades and source generators are other builds: 8.0.32, 65 of 234
+   files differ beyond the signatures), so a lock recorded from `packs/` still needs that pack
+   installed. Since S78 (below) a `pack:` resolves to whichever copy has the recorded hash.
+3. done: a net472 + netstandard2.0 fixture on the toolset compiler and package analyzers, no
+   `sdk:`, no prerequisite, byte-equal to `dotnet build` (DebugType none). Caveats: a project
+   setting `EnableNETAnalyzers=true` in its body gets the SDK's analyzers too; the toolset
+   package 5.9.0 is another build than SDK 10.0.402's Roslyn (5.9.0-1.26357.3 vs
+   5.9.0-1.26505.111).
+4. a note in lock.md (Prerequisites).
+
+Owner's decision of 2026-10-21: the way out of the SDK drift is to pin
 the compiler and the analyzers (the "rules") as packages, so a lock names nothing under
 `$(DotnetRoot)/sdk/<v>/` and carries no `dotnet-sdk` prerequisite. A lower bound on the SDK
 version was considered and set aside as unlikely to hold.
+
+## Probe on a consumer solution (2026-10-21)
+
+A consumer solution (one brand, one configuration, 180 locks) re-imported with the product
+declaring `Microsoft.Net.Compilers.Toolset` + `RoslynCompilerType=Toolset`,
+`Microsoft.CodeAnalysis.NetAnalyzers` and `NetCoreTargetingPackRoot` pointing at a missing
+folder (so msbuild takes the targeting packs from the package folder): `sdk:` identities 540 -> 0,
+prerequisites 180 -> 1, output byte-identical to msbuild (561/561 files).
+
+Two gaps, fixed on the same PR:
+
+- **S78 (blocker):** the import named a pack file msbuild took from the package folder by the
+  same `pack:` identity as the installed pack, with the package's hash; the replay resolved
+  `pack:` to `<dotnet>/packs` first, so on a machine with that pack installed the hash check
+  failed (24 errors; it built only against a .NET root without `packs/`). Now a `pack:`
+  resolves to the candidate whose SHA-256 is the recorded one (`Lock.Identity.toPathHashed`),
+  and a package copy matching neither fails naming both (`Lock.packMismatches`).
+- **S79:** with no SDK, an apphost for an explicit `RuntimeIdentifier` was written by Xake's
+  fallback without the SDK's HostModel: no version resource, no icon (119 296 against 194 048
+  bytes); the build only warned and the lock had no prerequisite. Owner's decision: an entry with an apphost gets the
+  `dotnet-sdk <v>` prerequisite, derived like the compiler's (`Lock.recordedSdkVersions`).
+
+What the consumer had to declare: the three properties above (the two package references and
+`RoslynCompilerType`, plus `NetCoreTargetingPackRoot`); an `Import` of the root props in the 23
+projects that did not import it; `PackageVersion` items in the one repository on central package
+management; `NoWarn` NU1605 where a transitive dependency brought a newer toolset. `deps.json`
+lists the two packages despite `PrivateAssets=all`. The msbuild output on the packages differs
+from the earlier `packs/` and SDK-compiler build only through the compiler build the pdb
+records; IL and metadata are equal.
 
 ## The problem
 

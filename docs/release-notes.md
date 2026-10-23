@@ -5,6 +5,15 @@ The `Xake` package (engine and `Xake.Dotnet`). Xake.Hermetic.Dotnet has its own 
 
 ## 3.10.1 (unreleased)
 
+- **Rule selection: the most specific matching rule wins.** When several rules match a target,
+  Xake now picks the one with the most literal characters, then the fewest `**`, then the
+  fewest/tightest wildcards (`?` tighter than `*`; a named group scores like its bare wildcard),
+  instead of simply the last declared. Two *different* patterns that tie fall back to last-declared
+  and log a warning; two rules with the *same* pattern string keep the silent last-wins override.
+  This only changes builds that relied on declaration order against specificity. `-d RULE_MATCH=last`
+  (or `ExecOptions.RuleMatch = LastDeclared`) restores the old order — a **deprecated** one-release
+  migration aid. `-d EXPLAIN_RULE=<target>` prints the candidate rules and the winner. See
+  [overview.md](overview.md#rule-selection--the-most-specific-rule-wins).
 - **Progress line: running tasks as coloured Braille dots** (one dot per task, cells filled
   column-wise `⠁⠃⠇⡇⡏⡟⡿⣿`, at most 4 cells for 30 tasks, `⣿⣿⣿⣿+` above; green, yellow past
   half, red above the cap). Redirected output keeps the `N tasks` text.

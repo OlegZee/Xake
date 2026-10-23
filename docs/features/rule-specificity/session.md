@@ -4,16 +4,25 @@ Branch `feature/rule-specificity`, worktree `.claude/worktrees/feature+rule-spec
 
 ## Where things stand
 
-Spec is settled and locked in `brief.md` (all §9 decisions + the §10 explain-conflicts scope
-resolved with the user, 2026-10-23). No engine code written yet — this session produced the
-design only. Plan is in `tracker.md`.
+Implemented end to end (2026-10-23). Spec locked in `brief.md`; all tracker core/switch/
+diagnostics/tests/docs items `done`. Full unit suite green: **416 passed, 1 skipped**; core builds
+both TFMs with 0 warnings. Committed on this branch.
+
+What landed:
+- `Path.specificity` / `Path.Specificity` (tokenizer + cache) — `src/core/Path.fs`.
+- `explainMatch` + `RuleMatchInfo` + `conditionSpecificity`, `locateRule` rewritten, selection +
+  ambiguity `Warning` + `-d EXPLAIN_RULE` + `-d RULE_MATCH=last` in `execOne` — `src/core/ExecCore.fs`.
+- `RuleMatchMode` in `Types.fs`; `RuleMatch` on `ExecOptions` (XakeScript.fs) and `EngineOptions`
+  (ExecTypes.fs), wired in `ScriptRunner.toEngineOptions`.
+- `src/tests/RuleSpecificityTests.fs` (registered in `tests.fsproj`).
+- Docs: `overview.md` "Rule selection" section; `release-notes.md` unreleased bullet.
 
 ## Exact next step
 
-Start the core item in `tracker.md`: add the specificity tokenizer and `SpecKey` to
-`src/core/Path.fs`, cached per pattern string beside `regexCache` (`Path.fs:191`), using the
-matcher's own token grammar (`Path.fs:182`). Then `explainMatch` in `ExecCore.fs`, then rewrite
-`locateRule` (`ExecCore.fs:85`) to pick the head-most strictly-max candidate.
+Open the PR to `dev`. In the PR (not here, to avoid the user's uncommitted `roadmap.md` edit):
+flip the roadmap item from "Not started" and add the engine fact to `docs/session.md`. Before
+release, run the `Explicit` `locateRule` benchmarks (`RuleMatchTests.fs:37-73`) to confirm the
+all-matches scan has no regression, and add the follow-up roadmap item for a CLI verb `explain`.
 
 ## Settled decisions (do not reopen)
 

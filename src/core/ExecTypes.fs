@@ -12,6 +12,8 @@ type EngineOptions = {
     Logger: ILogger
     Teardown: string list
     Rules: Rules<ExecContext>
+    /// How to select among the rules that match a target.
+    RuleMatch: RuleMatchMode
 } with
     static member Default = {
         ProjectRoot = System.IO.Directory.GetCurrentDirectory()
@@ -19,6 +21,7 @@ type EngineOptions = {
         Logger = CustomLogger (fun _ -> false) ignore
         Teardown = []
         Rules = Rules []
+        RuleMatch = MostSpecific
     }
 
 /// Engine-level immutable state shared across all tasks.

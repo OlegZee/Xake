@@ -11,7 +11,7 @@ let toEngineOptions (opts: ExecOptions) (rules: Rules<ExecContext>) : EngineOpti
         | _, Silent -> logger
         | logFileName,level -> CombineLogger logger (FileLogger logFileName level)
     { ProjectRoot = opts.ProjectRoot; Threads = opts.Threads
-      Logger = logger; Teardown = opts.Teardown; Rules = rules }
+      Logger = logger; Teardown = opts.Teardown; Rules = rules; RuleMatch = opts.RuleMatch }
 
 /// Active pattern that classifies ExecOptions into Dump, Dryrun, or Run execution mode.
 let (|Dump|Dryrun|Run|) (opts:ExecOptions) =

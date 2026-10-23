@@ -98,6 +98,10 @@ module XakeScriptBuilder =
             let loglevel = defaultArg loglevel Verbosity.Chatty in
             XakeScript ({options with ConLogLevel =loglevel}, rules)
 
+        [<CustomOperation("ruleMatch")>]
+        member __.RuleMatch(XakeScript (options, rules), mode: RuleMatchMode) =
+            XakeScript ({options with RuleMatch = mode}, rules)
+
         [<CustomOperation("rule")>]
         member __.Rule(script, rule) =
 

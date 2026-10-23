@@ -61,6 +61,9 @@ module XakeScript =
 
         /// Variable schema collected by the `vars` operation, used for --help output.
         VarSchema: (string * VarHelp) list
+
+        /// Rule selection strategy among the rules that match a target.
+        RuleMatch: RuleMatchMode
     } with
         static member Default = {
             ProjectRoot = System.IO.Directory.GetCurrentDirectory()
@@ -84,6 +87,7 @@ module XakeScript =
             Teardown = []
             ShowHelp = false
             VarSchema = []
+            RuleMatch = MostSpecific
         }
     end
 

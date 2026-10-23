@@ -290,3 +290,33 @@ let matchGroups (pattern:string) rootPath =
         else
             None
 
+/// How specific a rule pattern is, higher = more specific. Compared as a tuple, lexicographically:
+///   1. literal character count  (chars that are neither a wildcard nor named-group structure)
+///   2. fewer `**` spans         (`**` crosses '/', so it is the least specific wildcard)
+///   3. lighter wildcard weight  (`?` = 1, `*`/named-group `*` = 2; fewer/tighter slots wins)
+/// The tokenizer mirrors the matcher's own grammar: a named group `(name:*)` strips its `(name:`
+/// opener and closing `)` (structure, not literals) while the `*`/`**`/`?` inside it count like
+/// any other wildcard, so `(cfg:*)` scores exactly like a bare `*`. Literal '/' and text inside a
+/// group (e.g. `(root:*/*-a)`) do count as literals.
+type Specificity = int * int * int
+
+module private SpecImpl =
+    // Order matters: `**` before `*`, and the group opener before a bare `(` would be a literal.
+    let tokenRegex =
+        Regex(@"(?<dstar>\*\*)|(?<group>\(\w+?\:)|(?<star>\*)|(?<q>\?)|(?<close>\))", RegexOptions.Compiled)
+    let specCache = System.Collections.Concurrent.ConcurrentDictionary<string, Specificity> ()
+    let compute (pattern: string) : Specificity =
+        let mutable dstar, star, q, structural = 0, 0, 0, 0
+        for m in tokenRegex.Matches pattern do
+            if   m.Groups.["dstar"].Success then dstar <- dstar + 1
+            elif m.Groups.["star"].Success  then star <- star + 1
+            elif m.Groups.["q"].Success     then q <- q + 1
+            else (* group opener or closing ')' *) structural <- structural + m.Length
+        let literals = pattern.Length - structural - 2*dstar - star - q
+        let wildcardWeight = 2*star + q
+        literals, -dstar, -wildcardWeight
+
+/// Specificity of a rule pattern (see the `Specificity` type), memoized per pattern string.
+let specificity (pattern: string) : Specificity =
+    SpecImpl.specCache.GetOrAdd(pattern, System.Func<_,_> SpecImpl.compute)
+

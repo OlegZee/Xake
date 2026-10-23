@@ -93,6 +93,14 @@ module DomainTypes =
     /// A list of build rules.
     type 'ctx Rules = Rules of 'ctx Rule list
 
+    /// How to pick among the rules that match a target.
+    type RuleMatchMode =
+        /// The most specific matching rule wins; ties fall back to last declared (default).
+        | MostSpecific
+        /// Legacy order: the last declared matching rule wins, specificity ignored.
+        /// Restored by `-d RULE_MATCH=last`; deprecated, removed after one minor.
+        | LastDeclared
+
     /// Defines common exception type
     exception XakeException of string
 

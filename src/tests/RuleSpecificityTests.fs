@@ -83,9 +83,10 @@ type RuleSpecificityTests() =
         Assert.AreEqual("specific", !ran)
 
     [<Test>]
-    member x.``RULE_MATCH=last restores the legacy last-declared order``() =
+    member x.``ruleMatch LastDeclared restores the legacy last-declared order``() =
         let ran = ref ""
-        do xake {x.TestOptions with Targets = ["build::special"]; Vars = ["RULE_MATCH", "last"]} {
+        do xake {x.TestOptions with Targets = ["build::special"]} {
+            ruleMatch LastDeclared
             "build::special" => recipe { ran := "specific" }
             "build::(x:*)"   => recipe { ran := "general" }
         }

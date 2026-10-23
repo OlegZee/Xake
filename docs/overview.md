@@ -118,14 +118,20 @@ do xakeScript {
 Worked examples: `out/(b:*)/obf/...` beats `out/(b:*)/(cfg:*)/...` (more literals, fewer groups);
 `a/*/x.dll` beats `a/**/x.dll` (no `**`); `a/?.dll` beats `a/*.dll` (`?` tighter than `*`).
 
-Diagnostics and the legacy switch (both via `-d`):
+The legacy switch and diagnostics:
 
+- `ruleMatch LastDeclared` in the script restores the old behavior (last declared matching rule
+  wins, specificity ignored). It is a one-release migration aid and is **deprecated**: remove the
+  reliance on declaration order instead. Default is `ruleMatch MostSpecific`.
+
+  ```fsharp
+  do xakeScript {
+      ruleMatch LastDeclared
+      // ... rules ...
+  }
+  ```
 - `-d EXPLAIN_RULE=<target>` prints every rule that matches that target, with its specificity
   `{lit, **, wc}` and the winner marked — useful when a rule fires unexpectedly.
-- `-d RULE_MATCH=last` restores the old behavior (last declared matching rule wins, specificity
-  ignored). It is a one-release migration aid and is **deprecated**: remove the reliance on
-  declaration order instead. The same choice is available in code as
-  `{ ExecOptions.Default with RuleMatch = LastDeclared }`.
 
 ## Useful links
 

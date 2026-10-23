@@ -202,15 +202,8 @@ let rec execOne (ctx: ExecContext) target =
     // result expression is...
     let candidates = explainMatch ctx.Options.Rules ctx.Options.ProjectRoot target
 
-    // `-d RULE_MATCH=last` overrides the option at runtime to the legacy last-declared order.
-    let ruleMatchMode =
-        ctx.Vars
-        |> List.tryPick (fun (k, v) -> if System.String.Equals(k, "RULE_MATCH", System.StringComparison.OrdinalIgnoreCase) then Some v else None)
-        |> function
-           | Some v when System.String.Equals(v, "last", System.StringComparison.OrdinalIgnoreCase)
-                      || System.String.Equals(v, "lastdeclared", System.StringComparison.OrdinalIgnoreCase) -> LastDeclared
-           | Some _ -> MostSpecific
-           | None -> ctx.Options.RuleMatch
+    // The rule selection strategy, set in the script by the `ruleMatch` operation.
+    let ruleMatchMode = ctx.Options.RuleMatch
 
     // -d EXPLAIN_RULE=<target>: dump the matching rules and the winner for a matching target.
     ctx.Vars

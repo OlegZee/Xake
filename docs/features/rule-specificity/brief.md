@@ -93,9 +93,10 @@ Deferred to a follow-up roadmap item: a dedicated CLI verb `explain <target>` al
 
 ## Rollout (settled)
 
-- Default = **new** (`MostSpecific`). Legacy switch — `ExecOptions` flag, e.g.
-  `RuleMatch : MostSpecific | LastDeclared`, fed by `-d RULE_MATCH=last` — restores old order,
-  deprecated after one minor, removed thereafter.
+- Default = **new** (`MostSpecific`). Legacy switch — the `ruleMatch LastDeclared` script operation
+  (backed by `ExecOptions.RuleMatch : MostSpecific | LastDeclared`) restores old order, deprecated
+  after one minor, removed thereafter. (Was a `-d RULE_MATCH` var; changed to a builder operation
+  per PR review — a script setting belongs in the script, not an env/CLI var.)
 - Release note: behavior change + legacy switch + deprecation window.
 - `docs/session.md` gets the engine fact; roadmap item flipped from "Not started".
 

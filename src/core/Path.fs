@@ -223,27 +223,21 @@ module internal PatternAst =
     let private starRx  = """([^/\\]*)"""
     let private anyRx   = """([^/\\])"""
     let private dstarRx = "(.*)"
-    // The former substitution escaped only these metacharacters; '[' and ']' passed through
-    // unescaped, so they still do (reproduced exactly to avoid any behavior change).
-    let private escapeLiteral (s: string) =
-        let sb = System.Text.StringBuilder(s.Length)
-        for c in s do
-            match c with
-            | '.' | '$' | '^' | '+' | '!' | '=' | '{' | '}' -> sb.Append('\\').Append(c) |> ignore
-            | _ -> sb.Append c |> ignore
-        sb.ToString()
+    // The former substitution escaped only these metacharacters; '[' and ']' are deliberately
+    // absent, so they pass through unescaped exactly as before (no behavior change).
+    let private metachars = Regex(@"[.$^+!={}]", RegexOptions.Compiled)
+    let private escapeLiteral (s: string) = metachars.Replace(s, @"\$0")
 
     /// The inner (unanchored) regex for a token list.
     let rec toRegex (tokens: Token list) : string =
-        let sb = System.Text.StringBuilder()
-        for t in tokens do
-            match t with
-            | Lit s -> sb.Append(escapeLiteral s) |> ignore
-            | Star -> sb.Append starRx |> ignore
-            | DoubleStar -> sb.Append dstarRx |> ignore
-            | AnyChar -> sb.Append anyRx |> ignore
-            | Group (name, inner) -> sb.Append("(?<").Append(name).Append('>').Append(toRegex inner).Append(')') |> ignore
-        sb.ToString()
+        tokens
+        |> List.map (function
+            | Lit s -> escapeLiteral s
+            | Star -> starRx
+            | DoubleStar -> dstarRx
+            | AnyChar -> anyRx
+            | Group (name, inner) -> "(?<" + name + ">" + toRegex inner + ")")
+        |> String.concat ""
 
     /// Specificity read straight off the tokens (see the `Specificity` type).
     let specificity (tokens: Token list) : Specificity =

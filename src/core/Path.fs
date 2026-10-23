@@ -23,6 +23,15 @@ type MatchResult =
     | Matches of (string*string) list
     | Nope
 
+/// How specific a rule pattern is, higher = more specific. Compared as a tuple, lexicographically:
+///   1. literal character count  (chars that are neither a wildcard nor named-group structure)
+///   2. fewer `**` spans         (`**` crosses '/', so it is the least specific wildcard)
+///   3. lighter wildcard weight  (`?` = 1, `*`/named-group `*` = 2; fewer/tighter slots wins)
+/// A named group `(name:*)` contributes no literals for its `(name:`/`)` structure, while the
+/// `*`/`**`/`?` inside it count like any other wildcard, so `(cfg:*)` scores exactly like a bare
+/// `*`. Literal text, including '/' and text inside a group (e.g. `(root:*/*-a)`), does count.
+type Specificity = int * int * int
+
 module private impl =
 
     let notNullOrEmpty = System.String.IsNullOrEmpty >> not
@@ -155,32 +164,103 @@ module private PicklerImpl =
 
     let pattern = wrap(PathMask, fun(PathMask pp) -> pp) (list patternpart)
 
+/// A pattern parsed once into tokens. Both the matching regex and the specificity are derived from
+/// this single representation, so the Ant-glob grammar lives in exactly one place (the parser).
+/// A named group spans to its closing ')'; groups do not usually nest, but a nested opener parses
+/// as a nested `Group` (which generates the same regex the flat substitution used to).
+module internal PatternAst =
+
+    type Token =
+        | Lit of string
+        | Star            // `*`  — a run of non-separator characters
+        | DoubleStar      // `**` — anything, including '/'
+        | AnyChar         // `?`  — a single non-separator character
+        | Group of string * Token list   // `(name:...)` — a named capture around its body
+
+    let private isWord c = System.Char.IsLetterOrDigit c || c = '_'
+
+    // Parses tokens from s starting at i. When inGroup, a top-level ')' ends the run and is left
+    // for the caller to consume; otherwise ')' is an ordinary literal (as the old regex treated it).
+    let rec private parseAt (s: string) (inGroup: bool) (i0: int) : Token list * int =
+        let sb = System.Text.StringBuilder()
+        let tokens = System.Collections.Generic.List<Token>()
+        let flush () = if sb.Length > 0 then tokens.Add(Lit (sb.ToString())); sb.Clear() |> ignore
+        let mutable i = i0
+        let mutable stop = false
+        while not stop && i < s.Length do
+            let c = s.[i]
+            if inGroup && c = ')' then
+                stop <- true                                    // caller consumes the ')'
+            elif c = '*' && i + 1 < s.Length && s.[i + 1] = '*' then
+                flush (); tokens.Add DoubleStar; i <- i + 2
+            elif c = '*' then
+                flush (); tokens.Add Star; i <- i + 1
+            elif c = '?' then
+                flush (); tokens.Add AnyChar; i <- i + 1
+            elif c = '(' then
+                // a group opener is `(` <word+> `:` ; anything else is a literal '('
+                let mutable j = i + 1
+                while j < s.Length && isWord s.[j] do j <- j + 1
+                if j > i + 1 && j < s.Length && s.[j] = ':' then
+                    flush ()
+                    let name = s.Substring(i + 1, j - (i + 1))
+                    let inner, next = parseAt s true (j + 1)
+                    tokens.Add(Group(name, inner))
+                    i <- if next < s.Length && s.[next] = ')' then next + 1 else next
+                else
+                    sb.Append c |> ignore; i <- i + 1
+            else
+                sb.Append c |> ignore; i <- i + 1
+        flush ()
+        List.ofSeq tokens, i
+
+    /// Parses an Ant-style pattern into tokens (slashes normalized to '/').
+    let parse (pattern: string) : Token list =
+        parseAt (pattern.Replace('\\', '/')) false 0 |> fst
+
+    // Regex fragments, byte-identical to the former string-substitution map. Triple-quoted so the
+    // `\\` reaches the regex as a literal backslash inside the character class.
+    let private starRx  = """([^/\\]*)"""
+    let private anyRx   = """([^/\\])"""
+    let private dstarRx = "(.*)"
+    // The former substitution escaped only these metacharacters; '[' and ']' are deliberately
+    // absent, so they pass through unescaped exactly as before (no behavior change).
+    let private metachars = Regex(@"[.$^+!={}]", RegexOptions.Compiled)
+    let private escapeLiteral (s: string) = metachars.Replace(s, @"\$0")
+
+    /// The inner (unanchored) regex for a token list.
+    let rec toRegex (tokens: Token list) : string =
+        tokens
+        |> List.map (function
+            | Lit s -> escapeLiteral s
+            | Star -> starRx
+            | DoubleStar -> dstarRx
+            | AnyChar -> anyRx
+            | Group (name, inner) -> "(?<" + name + ">" + toRegex inner + ")")
+        |> String.concat ""
+
+    /// Specificity read straight off the tokens (see the `Specificity` type).
+    let specificity (tokens: Token list) : Specificity =
+        let rec go (lit, dstar, wild) toks =
+            toks |> List.fold (fun (lit, dstar, wild) t ->
+                match t with
+                | Lit s -> lit + s.Length, dstar, wild
+                | Star -> lit, dstar, wild + 2
+                | AnyChar -> lit, dstar, wild + 1
+                | DoubleStar -> lit, dstar + 1, wild
+                | Group (_, inner) -> go (lit, dstar, wild) inner) (lit, dstar, wild)
+        let lit, dstar, wild = go (0, 0, 0) tokens
+        lit, -dstar, -wild
+
 module internal matchImpl =
 
     let eq s1 s2 = System.StringComparer.OrdinalIgnoreCase.Equals(s1, s2)
-
-    let wildcard2regexMap =
-       ["**", "(.*)"
-        "*", """([^/\\]*)"""
-        "?", "([^/\\\\])"
-        ".", "\\."; "$", "\\$"; "^", "\\^"; "[", "\\["; "]", "\\]"
-        "+", "\\+"; "!", "\\!"; "=", "\\="; "{", "\\{"; "}", "\\}"
-       ] |> dict
-       
-    let wildcardToRegex (m:Match) =
-        match m.Groups.Item("tag") with
-        | t when not t.Success ->
-            match wildcard2regexMap.TryGetValue(m.Value) with
-            | true, v -> v
-            | _ -> m.Value
-        | t -> "(?<" + t.Value + ">"
 
     let normalizeSlashes (pat: string) =
         pat.Replace('\\', '/')
 
     let private buildRegex (pattern:string) =
-        let pat = Regex.Replace(pattern |> normalizeSlashes, @"\((?'tag'\w+?)\:|\*\*|([*.?$^+!={}])", wildcardToRegex)
-        // TODO mask with sq brackets
+        let pat = pattern |> PatternAst.parse |> PatternAst.toRegex
         let ignoreCase = if Env.isUnix then RegexOptions.None else RegexOptions.IgnoreCase
         in
         Regex(@"^" + pat + "$", RegexOptions.Compiled + ignoreCase)
@@ -290,33 +370,11 @@ let matchGroups (pattern:string) rootPath =
         else
             None
 
-/// How specific a rule pattern is, higher = more specific. Compared as a tuple, lexicographically:
-///   1. literal character count  (chars that are neither a wildcard nor named-group structure)
-///   2. fewer `**` spans         (`**` crosses '/', so it is the least specific wildcard)
-///   3. lighter wildcard weight  (`?` = 1, `*`/named-group `*` = 2; fewer/tighter slots wins)
-/// The tokenizer mirrors the matcher's own grammar: a named group `(name:*)` strips its `(name:`
-/// opener and closing `)` (structure, not literals) while the `*`/`**`/`?` inside it count like
-/// any other wildcard, so `(cfg:*)` scores exactly like a bare `*`. Literal '/' and text inside a
-/// group (e.g. `(root:*/*-a)`) do count as literals.
-type Specificity = int * int * int
-
 module private SpecImpl =
-    // Order matters: `**` before `*`, and the group opener before a bare `(` would be a literal.
-    let tokenRegex =
-        Regex(@"(?<dstar>\*\*)|(?<group>\(\w+?\:)|(?<star>\*)|(?<q>\?)|(?<close>\))", RegexOptions.Compiled)
-    let specCache = System.Collections.Concurrent.ConcurrentDictionary<string, Specificity> ()
-    let compute (pattern: string) : Specificity =
-        let mutable dstar, star, q, structural = 0, 0, 0, 0
-        for m in tokenRegex.Matches pattern do
-            if   m.Groups.["dstar"].Success then dstar <- dstar + 1
-            elif m.Groups.["star"].Success  then star <- star + 1
-            elif m.Groups.["q"].Success     then q <- q + 1
-            else (* group opener or closing ')' *) structural <- structural + m.Length
-        let literals = pattern.Length - structural - 2*dstar - star - q
-        let wildcardWeight = 2*star + q
-        literals, -dstar, -wildcardWeight
+    let cache = System.Collections.Concurrent.ConcurrentDictionary<string, Specificity> ()
+    let compute (pattern: string) : Specificity = pattern |> PatternAst.parse |> PatternAst.specificity
 
 /// Specificity of a rule pattern (see the `Specificity` type), memoized per pattern string.
 let specificity (pattern: string) : Specificity =
-    SpecImpl.specCache.GetOrAdd(pattern, System.Func<_,_> SpecImpl.compute)
+    SpecImpl.cache.GetOrAdd(pattern, System.Func<_,_> SpecImpl.compute)
 

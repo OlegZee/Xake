@@ -30,7 +30,12 @@ implementation. Nothing under `src/` changes on this branch until a decision is 
   FSharp.Core 8.0.100, works in fsi SDK 8/10 and `#r "nuget:"`); IDEs and packaging into the
   Xake nupkg not yet tested. Pattern must be a compile-time literal.
 
+- 2026-10-25: the user answered the 11 questions → `brief.md` (type provider in the same
+  package, separate static params per output, labelled outputs, positional bare wildcards,
+  `Glob` → `Fileset`, `getRuleMatch` untouched). `dev` merged in (pattern AST, #89, which the
+  provider should build on).
+
 ## Next step
 
-Discuss with the user the 11 open questions at the end of `research.md` (one at a time),
-record answers in `brief.md`. No implementation before decisions.
+Open items in `tracker.md`: cost of phony pattern types, the hermetic sketch, how the provider
+reuses `PatternAst`. Then an implementation plan — only on the user's go-ahead.

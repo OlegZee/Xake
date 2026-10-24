@@ -38,22 +38,39 @@ let applyWildcards = function
             |> replace wildcardsRegex evaluator
             |> replace patternTagRegex evaluatorTag
 
-/// Finds the first rule whose pattern matches the given target.
-/// Returns the matched rule, captured groups, and the full list of targets it produces.
-let locateRule (Rules rules) projectRoot target =
-    let rec matchRule rule =
+/// A rule that matches a target, with what is needed to rank and explain the choice.
+/// `Pattern` is None for a condition rule (no textual pattern). `Index` is the position in the
+/// stored rule list, which is in reverse declaration order, so 0 is the last declared rule.
+type RuleMatchInfo<'ctx> = {
+    Rule: 'ctx Rule
+    Groups: (string * string) list
+    Targets: Target list
+    Pattern: string option
+    Specificity: Path.Specificity
+    Index: int
+}
+
+/// A condition rule has no pattern to measure, so it ranks below every pattern rule (whose
+/// literal count is >= 0). When two of them match, declaration order alone breaks the tie.
+let conditionSpecificity : Path.Specificity = (System.Int32.MinValue, 0, 0)
+
+/// All rules that match the target, each with its captured groups, produced targets, pattern and
+/// specificity, sorted most-specific first and, within equal specificity, last-declared first
+/// (the stored list is reverse-declared, so lower Index = declared later). This is the single
+/// source of truth for rule selection (`locateRule`), the ambiguity warning and `EXPLAIN_RULE`.
+let explainMatch (Rules rules) projectRoot target : RuleMatchInfo<_> list =
+    let rec matchRule index rule =
         match rule, target with
 
         |FileConditionRule (meetCondition,_), FileTarget file when file |> File.getFullName |> meetCondition ->
-            //writeLog Level.Debug "Found conditional pattern '%s'" name
             // TODO let condition rule extracting named groups
-            Some (rule,[],[target])
+            Some { Rule = rule; Groups = []; Targets = [target]; Pattern = None; Specificity = conditionSpecificity; Index = index }
 
         |FileRule (pattern,_), FileTarget file ->
             file
             |> File.getFullName
             |> Path.matchGroups pattern projectRoot
-            |> Option.map (fun groups -> rule,groups,[target])
+            |> Option.map (fun groups -> { Rule = rule; Groups = groups; Targets = [target]; Pattern = Some pattern; Specificity = Path.specificity pattern; Index = index })
 
         |MultiFileRule (patterns, _), FileTarget file ->
             let fname = file |> File.getFullName
@@ -62,27 +79,40 @@ let locateRule (Rules rules) projectRoot target =
                 Path.matchGroups pattern projectRoot fname
                 |> Option.map(fun groups -> groups, pattern)
                 )
-            |> Option.map (fun (groups, _) ->
+            |> Option.map (fun (groups, pattern) ->
                 let generateName = applyWildcards (Map.ofList groups |> Some)
 
                 let targets = patterns |> List.map (generateName >> (</>) projectRoot >> File.make >> FileTarget)
-                rule, groups, targets)
+                { Rule = rule; Groups = groups; Targets = targets; Pattern = Some pattern; Specificity = Path.specificity pattern; Index = index })
 
         |PhonyRule (pattern,_), PhonyAction phony ->
-            // printfn $"Phony rule {phony}, pattern {pattern}"
-            // Some (rule, [], [target])
             phony
             |> Path.matchGroups pattern ""
-            |> Option.map (fun groups -> rule,groups,[target])
+            |> Option.map (fun groups -> { Rule = rule; Groups = groups; Targets = [target]; Pattern = Some pattern; Specificity = Path.specificity pattern; Index = index })
 
         |DelegatedRule (inner, _), _ ->
             // Match using the inner rule's pattern logic, but surface the outer
             // DelegatedRule so the dispatcher knows execution is delegated.
-            matchRule inner |> Option.map (fun (_, groups, targets) -> rule, groups, targets)
+            matchRule index inner |> Option.map (fun m -> { m with Rule = rule })
 
         | _ -> None
 
-    rules |> List.tryPick matchRule
+    rules
+    |> List.mapi matchRule
+    |> List.choose id
+    |> List.sortWith (fun a b ->
+        // most specific first, then (lower Index = declared later) first
+        match compare b.Specificity a.Specificity with
+        | 0 -> compare a.Index b.Index
+        | c -> c)
+
+/// Finds the rule that should build the given target: the most specific match, ties broken by
+/// last declared. Returns the matched rule, captured groups, and the full list of targets it
+/// produces. (The legacy last-declared-wins order is applied by the caller via `RuleMatch`.)
+let locateRule rules projectRoot target =
+    explainMatch rules projectRoot target
+    |> List.tryHead
+    |> Option.map (fun m -> m.Rule, m.Groups, m.Targets)
 
 /// Global counter for assigning ordinals to tasks submitted to the worker pool.
 let refTaskOrdinal = ref 0
@@ -170,8 +200,51 @@ let rec execOne (ctx: ExecContext) target =
         | DelegatedRule (inner, _) -> getAction inner
 
     // result expression is...
-    match target |> locateRule ctx.Options.Rules ctx.Options.ProjectRoot with
-    | Some(rule,groups,targets) ->
+    let candidates = explainMatch ctx.Options.Rules ctx.Options.ProjectRoot target
+
+    // The rule selection strategy, set in the script by the `ruleMatch` operation.
+    let ruleMatchMode = ctx.Options.RuleMatch
+
+    // -d EXPLAIN_RULE=<target>: dump the matching rules and the winner for a matching target.
+    ctx.Vars
+    |> List.tryPick (fun (k, v) -> if System.String.Equals(k, "EXPLAIN_RULE", System.StringComparison.OrdinalIgnoreCase) then Some v else None)
+    |> Option.iter (fun wanted ->
+        if target.ShortName = wanted || target.FullName = wanted || target.FullName.EndsWith wanted then
+            ctx.Logger.Log Message "Rule candidates for '%s' (%s):" target.FullName
+                (match ruleMatchMode with MostSpecific -> "most specific wins" | LastDeclared -> "last declared wins")
+            candidates |> List.iteri (fun i m ->
+                let (l, d, w) = m.Specificity
+                ctx.Logger.Log Message "  %s %-48s {lit=%d, **=%d, wc=%d}"
+                    (if i = 0 then "->" else "  ") (m.Pattern |> Option.defaultValue "<condition>") l (-d) (-w)))
+
+    let selected =
+        match ruleMatchMode with
+        | MostSpecific -> candidates |> List.tryHead
+        | LastDeclared -> candidates |> List.sortBy (fun m -> m.Index) |> List.tryHead
+
+    // Warn when the winner ties on specificity with a different pattern (MostSpecific only): the
+    // choice then rests on declaration order, which is the trap this feature exists to surface.
+    match ruleMatchMode, selected with
+    | MostSpecific, Some best ->
+        match best.Pattern with
+        | Some bestPat ->
+            let ties =
+                candidates |> List.choose (fun m ->
+                    match m.Pattern with
+                    | Some p when p <> bestPat && m.Specificity = best.Specificity -> Some p
+                    | _ -> None)
+            match ties with
+            | [] -> ()
+            | _ ->
+                let (l, d, w) = best.Specificity
+                ctx.Logger.Log Warning
+                    "Ambiguous rules for '%s': '%s' and '%s' have equal specificity {lit=%d, **=%d, wc=%d}; last-declared '%s' chosen. Make one more specific or reorder."
+                    target.FullName bestPat (String.concat "', '" ties) l (-d) (-w) bestPat
+        | None -> ()
+    | _ -> ()
+
+    match selected with
+    | Some {Rule = rule; Groups = groups; Targets = targets} ->
         let groupsMap = groups |> Map.ofSeq
         let (Recipe action) = rule |> getAction
         let taskAction =

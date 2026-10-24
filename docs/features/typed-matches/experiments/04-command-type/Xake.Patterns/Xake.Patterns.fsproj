@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Experiment only: a same-assembly (runtime + design-time in one dll) erased type provider. -->
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <DisableImplicitFSharpCoreReference>true</DisableImplicitFSharpCoreReference>
+    <NoWarn>$(NoWarn);FS0026;NU1603</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="FSharp.Core" Version="8.0.100" />
+    <!-- the SDK's sources are compiled in (the usual way); its own dll is not referenced -->
+    <PackageReference Include="FSharp.TypeProviders.SDK" Version="8.11.0" GeneratePathProperty="true" ExcludeAssets="all" PrivateAssets="all" />
+    <Reference Include="Xake">
+      <HintPath>../../../../../../src/core/bin/Release/netstandard2.0/Xake.dll</HintPath>
+    </Reference>
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="$(PkgFSharp_TypeProviders_SDK)/src/ProvidedTypes.fsi" />
+    <Compile Include="$(PkgFSharp_TypeProviders_SDK)/src/ProvidedTypes.fs" />
+    <Compile Include="Runtime.fs" />
+    <Compile Include="Provider.fs" />
+  </ItemGroup>
+</Project>

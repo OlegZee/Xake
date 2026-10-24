@@ -72,3 +72,58 @@ outputs), `Glob (?g1, ...) : string list` (unbound groups -> their sub-masks); i
 
 Not tested here (no GUI): Ionide / Rider / Visual Studio. FSharp.Data and
 FSharp.Text.RegexProvider are erased TPs of the same shape and work in all three, in `.fsx` too.
+
+## 04-command-type — a second provided type for phony rules, `Xake.Command<"...">`
+
+For [`../phony-types.md`](../phony-types.md) (brief decision 5, the cost question). A copy of
+03's `Xake.Patterns` (03 is untouched), with `Provider.fs` split into shared helpers (erased type,
+group properties, `Text`, `Get`, `Make`, cross product) and two roots: `Pattern<>` (unchanged
+members) and `Command<"name pattern">` — one static parameter; `Rule` (a `PhonyRule`, `=>`
+semantics), instance `Name` (the matched name, the engine's `"0"` group) and group properties,
+`Make`, `Target(g..) : string`, `For(g: list..) : string list`, `Need(g..) : Recipe<unit>`; no
+`Texts`, no output properties, no `Glob`. Size: `Provider.fs` 119 -> 145 lines (shared 40,
+Pattern-only 53, Command-only 29), `Runtime.fs` 63 -> 83. No engine change.
+
+Build: `dotnet build -c Release` in `04-command-type/Xake.Patterns/` (6 s, 0 errors).
+
+| run (in `04-command-type/consumer/`) | result |
+|---|---|
+| `dotnet fsi use.fsx` (output: `consumer/output.txt`) | `Lock.Target(name = "Xake", cfg = "Release")` = `lock::Xake::Release`; `Lock.For` cross product; `Make(..).Name`; `Test.Target(project = "a/b", ..)` fails at run time (`*` does not cross `/`); `Lock.Target` as a first-class `string * string -> string`. Engine run: `Lock.Rule` with `Lock.Need` on its references (`Core` before `App`, both configs), `"update-locks" <== Lock.For(..)`, `Test.Rule` needing `TestBuild.Need` and a `Pattern<>` file in the same recipe — generated names resolved as phony, the file as a file; `Command<"testsuite-*">.Rule` matches `testsuite-007`, `m.Name` = `testsuite-007` |
+| `neg-glob.fsx` (`Lock.Glob(..)`) | `error FS0039: The type 'Command<lock::(name:*)::(cfg:*)>' does not define a field, constructor, or member named 'Glob'.` |
+| `neg-out.fsx` (`m.Out0`) | `error FS0039: ... does not define a field, constructor, or member named 'Out0'.` |
+| `neg-typo.fsx` (`m.cgf`) | `error FS0039: ... named 'cgf'. Maybe you want one of the following:` (`cfg`) |
+| `neg-target.fsx` (`Lock.Target(name = "Xake")`) | `error FS0496: ... The required signature is 'Command<...>.Target(name: string, cfg: string) : string'.` |
+| `neg-wild.fsx` (`Command<"testsuite-*">.Target()`) | `error FS0039: ... does not define ... 'Target'` — as 03, no generation with a bare wildcard (positional `_n` is decision 6, not prototyped) |
+
+## 05-ast-reuse — the provider on the engine's `PatternAst`, split into runtime + design-time dlls
+
+For [`../ast-reuse.md`](../ast-reuse.md). Experiment 03's provider with its own regexes replaced
+by `PatternAst` cut out of the real `src/core/Path.fs` (`sh slice-ast.sh` writes
+`generated/PatternAst.fs`: the merged module verbatim, dedented, with a top-level header) plus the
+proposed generation functions (`PatternAstGen.fs`: `unparse`, `groupNames`, `wildcards`, `format`,
+`glob`). Three projects, all netstandard2.0, FSharp.Core 8.0.100:
+
+- `Runtime/` — stand-in for the runtime half that would live in Xake.dll (`PatternRuntime`:
+  `group`, `format`, `make`, `all`, `globMasks`, `glob : Fileset`, `get`, `rule`); carries
+  `TypeProviderAssembly("Xake.Patterns.DesignTime")`.
+- `DesignTime/` — the provider (`Pattern<"p1", "p2", ...>`, separate static parameters, bare
+  wildcards as `_1`, `_2`, ...), referencing Xake.dll and the runtime dll. `-p:AstVia=ivt`
+  (default): the AST comes from the runtime dll through `InternalsVisibleTo`; `-p:AstVia=link`: the
+  same two files compiled into the design-time dll too. After build it copies itself to
+  `Runtime/bin/typeproviders/fsharp41/netstandard2.0/`. Clean build 6 s, dll 1.2 MB.
+- `Pkg/` — stand-in for `src/dotnet`: packs the runtime into `lib/` and the design-time project
+  (`IsFSharpDesignTimeProvider="true"`, `FSharpToolsDirectory=typeproviders`) into
+  `typeproviders/fsharp41/netstandard2.0/`.
+
+| run (in `05-ast-reuse/`) | result |
+|---|---|
+| `sh slice-ast.sh; cd DesignTime; dotnet build -c Release`, then `dotnet fsi use.fsx` in `consumer/` (output: `consumer/output.txt`) | everything works: `Format`/`Make` (constraint `(ext:c*)` and a `/` in a `*` value rejected by re-matching with `Path.matchGroups`), positional `Pos.Format(name = "core", _1 = "a", _2 = "7")` = `gen/a/core-7.txt`, `**` as `_1`, nested groups, `All`, `GlobMasks` (`Nest.GlobMasks()` = `*/*-a.ss`), `Glob() : Fileset`, `Rule`/multi-file/positional match (`_2` read under regex number `"3"`), `Get` |
+| same with `dotnet build -c Release -p:AstVia=link --no-incremental` | output identical (`diff` empty) |
+| the SDK 8 fsi (`dotnet .../sdk/8.0.426/FSharp/fsi.dll use.fsx`) | identical |
+| first try, provided types declared in the design-time assembly without `assemblyReplacementMap` | `error FS1108: The type 'Pattern,pattern="..."' is required here and is unavailable. You must add a reference to assembly 'Xake.Patterns.DesignTime, ...'` — fixed by the map |
+| `consumer/neg.fsx` (one line at a time) | multi-file group mismatch: `FS3033 ... groups ["fwk"; "name"] differ from the first pattern's ["fwk"; "lib"] (missing ["lib"], extra ["name"])`; `out/[(lib:*).dll`: `FS3033 ... does not compile to a regex: Invalid pattern '^out/[(?<lib>([^/\\]*))\.dll$' at offset 22. Too many )'s.`; bare wildcards in a multi-file pattern: `FS3033 ... may not use unnamed wildcards` |
+| `consumer/edge.fsx` (`Pattern<"lit(x)/*.txt">`, target `litx/a.txt`) | matches: the literal `(x)` is a regex group; matches `[("1","x"); ("2","a")]`, `_1 = a` (the `wildcards` count accounts for it) |
+| `dotnet pack` in `Pkg/` **before** the copy step existed | `error FS3031: ... refers to a designer assembly 'Xake.Patterns.DesignTime' which cannot be loaded from path '.../Runtime/bin/Release/netstandard2.0/Xake.Patterns.DesignTime.dll'` — any compilation against the runtime dll fails without the design-time dll beside it |
+| `dotnet pack -c Release -o /tmp/xake-tp-feed-05` in `Pkg/` | nupkg: `lib/{net462,netstandard2.0}/` (runtime, Xake.dll, Pkg dll), `typeproviders/fsharp41/netstandard2.0/` (DesignTime dll, runtime dll, Xake.dll, Xake.xml); warnings `NU5100`, `NU5118` (suppressed in the fsproj) |
+| `dotnet fsi use-nuget.fsx` (`#r "nuget: Xake.PatternsExp, 0.0.1-exp"`), also under the SDK 8 fsi | works: the compiler finds the design-time dll in `typeproviders/fsharp41/netstandard2.0` |
+| `consumer/probe.fsx` (runtime `#r` from `Runtime/bin/Release/netstandard2.0`, design-time only in `Runtime/bin/typeproviders/fsharp41/netstandard2.0`) | works (output identical); with that folder moved away: `FS3031` — the compiler probes `<runtime dir>/../../typeproviders/fsharp41/netstandard2.0/` |

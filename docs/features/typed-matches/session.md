@@ -35,7 +35,16 @@ implementation. Nothing under `src/` changes on this branch until a decision is 
   `Glob` → `Fileset`, `getRuleMatch` untouched). `dev` merged in (pattern AST, #89, which the
   provider should build on).
 
+- 2026-10-25: three follow-ups done. `phony-types.md`: separate phony type ≈1–1.5 days
+  (+0.5–1 over a `.Phony` member), no engine change, prototype 04 works. `ast-reuse.md`:
+  extract `PatternAst` into `src/core/PatternAst.fs` (+ generation: format/glob/wildcards),
+  design-time dll `Xake.DesignTime` reaches it via InternalsVisibleTo; nupkg with
+  `typeproviders/fsharp41/netstandard2.0` loads via `#r "nuget:"` (prototype 05). Risk: FS3031
+  is an error — once Xake.dll carries `TypeProviderAssembly`, every build path must ship the
+  design-time dll. `hermetic-sketch.md`: keep hermetic's function API, feed it from patterns
+  first.
+
 ## Next step
 
-Open items in `tracker.md`: cost of phony pattern types, the hermetic sketch, how the provider
-reuses `PatternAst`. Then an implementation plan — only on the user's go-ahead.
+Ask the user the open questions of `phony-types.md` (5) and `ast-reuse.md` (5), record in
+`brief.md`. Then an implementation plan — only on the user's go-ahead.

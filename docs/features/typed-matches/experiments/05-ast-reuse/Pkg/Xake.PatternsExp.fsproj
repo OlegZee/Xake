@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Experiment 05: stand-in for src/dotnet, the project that packs the `Xake` nupkg. Shows the
+       msbuild needed to put the design-time dll under typeproviders/fsharp41/netstandard2.0 of
+       the same package (brief decision 1). The runtime stand-in goes to lib/ like Xake.dll does
+       through src/dotnet's IncludeCoreOutput; Xake.dll itself is added by hand here only because
+       in this experiment the runtime half is not inside it. -->
+  <PropertyGroup>
+    <TargetFrameworks>net462;netstandard2.0</TargetFrameworks>
+    <DisableImplicitFSharpCoreReference>true</DisableImplicitFSharpCoreReference>
+    <PackageId>Xake.PatternsExp</PackageId>
+    <Version>0.0.1-exp</Version>
+    <TargetsForTfmSpecificBuildOutput>$(TargetsForTfmSpecificBuildOutput);IncludeCoreOutput</TargetsForTfmSpecificBuildOutput>
+    <!-- the F# SDK's PackageFSharpDesignTimeTools target: 'tools' by default, 'typeproviders' wanted -->
+    <FSharpToolsDirectory>typeproviders</FSharpToolsDirectory>
+    <NoWarn>$(NoWarn);NU5100;NU5118;FS3005</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="Lib.fs" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="FSharp.Core" Version="8.0.100" />
+    <Reference Include="Xake"><HintPath>../../../../../../src/core/bin/Release/netstandard2.0/Xake.dll</HintPath></Reference>
+    <ProjectReference Include="../Runtime/Xake.Patterns.Runtime.fsproj" PrivateAssets="all" />
+    <!-- not referenced for compilation; its whole output folder is packed as the design-time tools -->
+    <ProjectReference Include="../DesignTime/Xake.Patterns.DesignTime.fsproj" IsFSharpDesignTimeProvider="true" PrivateAssets="all" ReferenceOutputAssembly="false" />
+    <None Include="../../../../../../src/core/bin/Release/netstandard2.0/Xake.dll" Pack="true" PackagePath="lib/netstandard2.0;lib/net462" Visible="false" />
+  </ItemGroup>
+  <Target Name="IncludeCoreOutput">
+    <ItemGroup>
+      <BuildOutputInPackage Include="@(ReferenceCopyLocalPaths->WithMetadataValue('ReferenceSourceTarget','ProjectReference'))" Condition="'%(Filename)' == 'Xake.Patterns.Runtime'" />
+    </ItemGroup>
+  </Target>
+</Project>

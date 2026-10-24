@@ -8,8 +8,10 @@
 - [x] Prototypes — experiments/
 - [x] Discussion with the user, decisions — brief.md (2026-10-25)
 - [x] Merge `dev` (pattern AST #89) into the branch
-- [ ] Estimate the cost of separate pattern types for phony rules (brief, decision 5)
-- [ ] Sketch: hermetic lockOf/outOf/runOf fed from patterns, doc only (brief, decision 9)
-- [ ] How the provider reuses `PatternAst` (design-time dll vs `src/core/Path.fs`)
-- [ ] Check IDE support (Ionide/Rider) and packing the design-time dll into the Xake nupkg
+- [x] Estimate the cost of separate pattern types for phony rules — phony-types.md, experiments/04
+- [x] Sketch: hermetic lockOf/outOf/runOf fed from patterns, doc only — hermetic-sketch.md
+- [x] How the provider reuses `PatternAst` — ast-reuse.md, experiments/05 (nupkg layout proven)
+- [ ] Decide: phony type name/semantics (5 questions, phony-types.md) and AST-reuse questions (ast-reuse.md)
+- [ ] Check IDE support (Ionide/Rider), a net462 consumer, a compiled project consuming the nupkg
+- [ ] Separate, found by reading: `ExecCore.applyWildcards` edge bugs (empty group value, `)` in a value); literal `(` in patterns/project root
 - [ ] Separate task, not this branch: explicit outputs (roadmap "Rules with arguments")

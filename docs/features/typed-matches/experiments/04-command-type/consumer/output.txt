@@ -1,0 +1,17 @@
+Lock.Text             = lock::(name:*)::(cfg:*)
+Lock.Target(...)      = lock::Xake::Release
+Lock.For (cross)      = ["lock::Xake::Release"; "lock::Xake::Debug"; "lock::Xake.Dotnet::Release";
+ "lock::Xake.Dotnet::Debug"]
+Lock.Make(...).Name   = lock::Xake::Debug ; .cfg = Debug
+Test.Target(...)      = test::tests/rest
+Test.Target '/' value = Pattern 'test::(project:*)/(slice:*)': the values [("project", "a/b"); ("slice", "x")] do not produce a path the pattern matches (got 'test::a/b/x')
+first-class           = lock::Core::Release
+ran: lock::Core::Release (name=Core cfg=Release)
+ran: lock::Core::Debug (name=Core cfg=Debug)
+ran: lock::App::Release (name=App cfg=Release)
+ran: lock::App::Debug (name=App cfg=Debug)
+ran: test-build::core
+ran: file out/Release/net8.0/core.dll
+ran: test::core/slow (project=core slice=slow)
+ran: test::core/fast (project=core slice=fast)
+ran: testsuite-007

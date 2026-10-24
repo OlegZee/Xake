@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Experiment 05: stand-in for the runtime half that would live in Xake.dll. It compiles the
+       PatternAst sliced from the real src/core/Path.fs (run ../slice-ast.sh first).
+       AstVia=ivt (default): the design-time dll sees this assembly's PatternAst via
+       InternalsVisibleTo. AstVia=link: the design-time dll compiles its own copy. -->
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <DisableImplicitFSharpCoreReference>true</DisableImplicitFSharpCoreReference>
+    <AstVia Condition="'$(AstVia)' == ''">ivt</AstVia>
+    <DefineConstants Condition="'$(AstVia)' == 'ivt'">$(DefineConstants);AST_VIA_IVT</DefineConstants>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="FSharp.Core" Version="8.0.100" />
+    <Reference Include="Xake">
+      <HintPath>../../../../../../src/core/bin/Release/netstandard2.0/Xake.dll</HintPath>
+    </Reference>
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="../generated/PatternAst.fs" Link="PatternAst.fs" />
+    <Compile Include="../PatternAstGen.fs" Link="PatternAstGen.fs" />
+    <Compile Include="Runtime.fs" />
+    <Compile Include="AssemblyInfo.fs" />
+  </ItemGroup>
+</Project>

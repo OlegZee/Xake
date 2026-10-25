@@ -179,3 +179,145 @@ Build: `sh slice-ast.sh; cd DesignTime; dotnet build -c Release` (7 s, 0 errors)
 | the SDK 8 fsi on `forms.fsx` | same lines (one pair of independent targets in another order) |
 | `dotnet fsi form-c.fsx` | form C: `rule Dll.rule { .. }` in `xakeScript`: `FS3099 'rule' is used with an incorrect number of arguments ... Expected 1 argument(s), but given 2`; `rule (Dll.rule { .. })` and `rule (Test.Rule <\| fun m -> ..)` work |
 | `sh neg/run-neg.sh` (14 cases from `neg/cases.fsx`, output: `neg/output.txt`) | `m.fkw` in A, B, D: `FS0039 ... does not define ... 'fkw'. Maybe you want one of the following: fwk`; `m.pdb` on the multi-file type in A, B: FS0039; `m.slcie` in `Test.rule`: FS0039 with `slice`; `Lib.Pattern ..>`: FS0039 `Maybe you want ... Patterns`; `Test.Pattern ..> recipe {..}` (phony name, file operator): compiles to `FileRule "test::..."`; `matched` in a plain `recipe`: `FS0072 The type of this expression could not be inferred`, in a nested `recipe` inside `Dll.rule`: `FS0041 No overloads match for method 'Bind'. Known types of arguments: Matched * ...`; `let! m = Lib.Get` inside a `Dll` rule (A and B): run time `XakeException "[\|...\|].Get: the rule being run has no groups [\|"lib"\|] (it has [..; "cfg"; "fwk"; "name"]); a Get of another pattern than the rule's?"`; `Dll.rule { }` without `matched` and a one-line `Dll.rule { let! m = matched in .. }`: run |
+
+## 08-consolidated — the decided design end to end (template for `src/`)
+
+### Names first: provided `Target<...>` next to the engine's DU `Xake.Target`
+
+Asked mid-experiment (the user's rename `Pattern<>` -> `Target<>`, `Command<>.Target` ->
+`Command<>.Pattern`); the prototype is built with the new names. The DU is
+`Xake.DomainTypes.Target` (an `[<AutoOpen>]` module, so `open Xake` brings `Target`, `FileTarget`,
+`PhonyAction`). Checked in `ns-check/cases.fsx` (`sh ns-check/run.sh`: every case with the SDK 10 and
+the SDK 8 fsi, identical results, `ns-check/output.txt`), in a compiled net8.0 project against the
+build output (`ns-check/compiled`, `sh run.sh`, `compiled/output.txt`) and through the package
+(`app/run.sh`, `-p:NsCase=A`, `app/build-output.txt`) — all three agree:
+
+| opens | `type Bin = Target<"...">` | DU as a type (`t: Target`, `Target list`) | union cases `FileTarget f`, `PhonyAction a` |
+|---|---|---|---|
+| `open Xake` then `open Xake.Patterns` | provided type, works | **fails**: `error FS3081: The static parameter 'pattern' of the provided type or method 'Target' requires a value. Static parameters to type providers may be optionally specified using named arguments, e.g. 'Target<pattern=...>'.` | work |
+| `open Xake.Patterns` then `open Xake` | **fails**: `error FS0033: The non-generic type 'Xake.DomainTypes.Target' does not expect any type arguments, but here is given 1 type argument(s)` (the compiled project adds `FS0039: The type 'Object' does not define a field, constructor, or member named 'Format'.`) | works | work |
+| only `open Xake.Patterns` | provided type, works | `Xake.Target` fails: `FS0039: The type 'Target' is not defined in 'Xake'.` — **not new**: `Xake.Target` never resolves, even with no provider referenced; the full name is `Xake.DomainTypes.Target` | `Xake.FileTarget` fails likewise (`Xake.DomainTypes.FileTarget` works) |
+| only `open Xake` | `FS0033` as above; `Patterns.Target<"...">` works | works | work |
+
+The last `open` takes the name `Target` outright; F# does not tell the two apart by "takes static
+arguments or not". Workarounds that work (both SDKs and compiled): with `open Xake; open Xake.Patterns`,
+write the DU as `DomainTypes.Target` (case w1); or abbreviate it before the second open,
+`type BuildTarget = Target` (w3); or open `Xake.Patterns` first and qualify the provided type,
+`Patterns.Target<"...">` / `Xake.Patterns.Target<"...">` (w2). Code that only matches
+`FileTarget`/`PhonyAction` without annotating the type is unaffected (w4). Scripts that annotate the
+DU today: `samples/delegated.fsx:38`, `samples/delegated-tests.fsx:43` (`targets: Target list`);
+`src/dotnet/DotnetTasks.fs:77` too, but it never opens `Xake.Patterns`.
+**Verdict: the rename works if the documented order is `open Xake` then `open Xake.Patterns` and the
+rare DU annotation is written `DomainTypes.Target`.** Any other combination fails with one of the two
+errors above, neither of which names the cause (FS3081 talks about a missing static argument).
+The prototype's consumer (`consumer/Rules.fs`, `app/Program.fs`) uses that order.
+
+`Command<>.Pattern(...)` (renamed from `Target`) returns the **concrete action name**
+(`TestBuild.Pattern(project = "Xake")` = `"test-build::Xake"`, what `need` takes). It reads as if it
+returned the pattern text, which it does not. `Target<>`'s string generator is `Format`; suggest
+`Format` on both types (`Target<>.Format` = the first output's path, `Command<>.Format` = the
+name), or keep `Command<>.Target`.
+
+### Layout (mirrors `src/`)
+
+| folder | would be | what |
+|---|---|---|
+| `engine.patch` (`sh make-engine.sh` -> `engine/src/core/`, git-ignored) | `src/core` | **the proposed engine change as a patch** against today's `src/core` (`patch -p1 < engine.patch` at the repo root); `make-engine.sh` copies `src/core` and applies it. New `PatternAst.fs` (public `module Xake.PatternAst`, compiled before `Path.fs`, also listed in `xake.project.json`): the parser moved out of `Path.fs` unchanged, `Specificity` moved with it (`Path.Specificity` is now an alias), literal `( ) [ ]` escaped (decision 15), generation `unparse`/`groupNames`/`wildcards`/`format`/`glob` and `formatMatches` (rule-match map -> path). `ExecCore.applyWildcards` and its two regexes deleted; a multi-file rule names its other targets with `PatternAst.formatMatches` (14) |
+| `tests.patch` | `src/tests` | `PatternAstTests` (the golden test skips the two bracket/paren patterns; new tests: escaping, a literal-only pattern formats to itself, positional format, the empty-value and `)`-in-value cases `applyWildcards` got wrong, `glob`); the `XakeScriptTests`/`PathTests` cases that used `[(]` as a regex class to match a literal `(` |
+| `patterns/` (`Xake.Patterns.dll`, net462 + netstandard2.0) | `src/patterns` | `PatternRuntime` (what erased members call; `EditorBrowsable(Never)`), `Matched`/`matched`/`TypedRuleBuilder<'M>` (form B), `PatternBuilders`, and `TypeProviderAssembly("Xake.Patterns.DesignTime")`; all in namespace `Xake.Patterns` |
+| `designtime/` (`Xake.Patterns.DesignTime.dll`, netstandard2.0, FSharp.Core 8.0.100) | `src/patterns.designtime` | the provider; `ProvidedTypes.fs(i)` compiled from the package (below); after build it copies its whole output to `patterns/bin/typeproviders/fsharp41/netstandard2.0/`, so an in-repo `#r` of the bin dll works |
+| `pkg/` (package `Xake.Exp08 0.0.8-exp08`) | `src/dotnet` | packs everything into one nupkg; the lines that would be new in `Xake.Dotnet.fsproj` are marked `NEW` |
+| `consumer/` | — | `Rules.fs` (the rules in both forms, plus the incremental scenario), `build.fsx` (via the package), `build-local.fsx` (bin dlls), `engine-only.fsx`, `without-designtime.fsx` |
+| `app/`, `app462/` | — | compiled consumers: net8.0 runs the scenario; net462 only builds |
+| `ns-check/`, `neg/` | — | name resolution; negative cases (both use the runner `ns-check/run.sh`) |
+
+**TP SDK sources (decision 16).** The `FSharp.TypeProviders.SDK` 8.11.0 package carries
+`src/ProvidedTypes.fsi` and `src/ProvidedTypes.fs` (16,986 lines) as plain files — no
+`contentFiles`, no build props — beside a compiled `lib/` dll. `<PackageReference ...
+GeneratePathProperty="true" ExcludeAssets="all" PrivateAssets="all" />` restores it without using
+any asset, and `<Compile Include="$(PkgFSharp_TypeProviders_SDK)/src/ProvidedTypes.fs" Link=... />`
+compiles the files (as 03–07 already did). No fallback needed, nothing vendored. For `build.fsc.fsx`
+(the open part of decision 16) the same files sit in `~/.nuget/packages/fsharp.typeproviders.sdk/8.11.0/src/`
+after any restore; not tried here.
+
+### Types and members as built
+
+`Target<"p1", ?"p2", ?"p3", ?"p4">`: one static parameter per output; `"label=pattern"` names an
+output (`^\w+\s*=`), unlabelled outputs are `Out1`, `Out2`, ... (by position, 1-based). Instance:
+group properties, `_1`, `_2`, ... for top-level bare wildcards, one property per output. Static:
+`Make(g..) : T`, `Format(g..) : string` (the first output), `For(g: string list ..) : string list`
+(cross product, every output), `Glob(?g..) : Fileset`, `Rule(T -> Recipe)` (form D), `rule` (form B).
+`Command<"name pattern">`: instance groups, `_n`, `Name`; static `Make`, `Pattern(g..) : string`,
+`For`, `Rule`, `rule`. With no groups, `Rule : (unit -> Recipe) -> Rule` and `rule` is today's
+`command "name" { }` builder itself. There are no `Need`, `TryMatch`, `Get`, `Matched` or `Text`
+members. `Command<>.Rule` and `.rule` run `(command name).Run body`, i.e. today's `command` code with
+AlwaysRerun. A group or label that collides with a member name, or a label equal to a group name, is
+rejected with FS3033.
+
+### Results
+
+| check | result |
+|---|---|
+| `sh make-engine.sh; cd designtime; dotnet build -c Release` (`build-output.txt`) | engine, runtime, design-time: 0 warnings, **clean build 6.4 s**; design-time dll 1.2 MB, runtime dll 23 KB |
+| the real `src/tests` with `engine.patch` + `tests.patch`, on a copy of the repo (`engine-tests-output.txt`) | 426 passed, 1 failed (the copy lacks `docs/schemas`, unrelated). Without the test updates: `MaskTests("c:\\[(]*[)].c", ...)` and `MaskTests("c:\\[(]*.c", ...)` fail, and `XakeScript tests.Escaped brackets` (`(name:[(]*).ss`) **crashes the test host**. Decision 15 also changes `Fileset` masks (they share `maskToRegex`), and `[(]` was the documented way to match a literal `(` |
+| `dotnet pack -c Release -o $CLAUDE_JOB_DIR/tmp/feed-08` in `pkg/` (`nupkg-layout.txt`) | `lib/{net462,netstandard2.0}/`: Xake.dll, Xake.Patterns.dll (+ xml), Xake.Exp08.dll; `typeproviders/fsharp41/netstandard2.0/`: Xake.Patterns.DesignTime.dll, Xake.Patterns.dll, Xake.dll (+ xml). Dependencies: FSharp.Core 8.0.100 (+ System.ValueTuple for net462, as today). 1.4 MB, no warnings |
+| `consumer/build.fsx` (`#r "nuget: Xake.Exp08, 0.0.8-exp08"`), SDK 10 (`output.txt`) and SDK 8 fsi (`output-sdk8.txt`) | the same lines (sorted) on both SDKs, and the same as `build-local.fsx` against the bin dlls (`local-output.txt`). Forms D and B give the same lines (one pair of independent rules runs in another order) |
+| incremental scenario (both forms) | 1: everything builds. 2 (nothing changed): **only the `Command<>` rules rerun** — `test-build::*` although its input `out/Release/netstandard2.0/*.dll` is unchanged, and `test::*`; the compile rules and the string-API `docs::Xake` (`=>`, needs an xml) do not. 3 (`src/core/sub/Engine.fs` changed, picked up through `Sources.Glob(dir = "core")`): `Xake` for both frameworks, `docs::Xake`, then `Xake.Dotnet` (its `Lib.Make(..).dll` dependency changed), both `compileAs`, the commands. 4: `build` does nothing. 5 and 6: `Clean.Rule <| fun () ->` and `"clean-string" =>` both run every time: a phony rule with **no** dependency reruns anyway, so AlwaysRerun only shows on a command that has dependencies (step 2) |
+| `app/` net8.0, `PackageReference` (`app/output.txt`) | the same lines as fsi |
+| `app/run.sh`: clean build, build again, touch + build, `--no-incremental` (`app/build-output.txt`) | all succeed in 0–2 s; `lsof` finds no process holding the design-time dll after any build (macOS has no F# compiler server). Windows file locking and IDE locking cannot be tested here |
+| `app462/` net462, `dotnet build -c Release` (`app462/build-output.txt`) | builds against `lib/net462/` (reference assemblies from the SDK's package); not run (no Mono) |
+| `consumer/engine-only.fsx`: only the engine's Xake.dll, copied alone into a folder (`engine-only-output.txt`) | compiles and runs, no FS3031. The public `PatternAst` is usable; the multi-file rule `out/(lit)/(n:*).dll` + `.xml`, asked for `out/(lit)/x.xml`, names `out/(lit)/x.dll`; `out/lit/x.xml` does not match (before decision 15, `(lit)` was a regex group) |
+| `consumer/without-designtime.fsx`: Xake.dll + Xake.Patterns.dll, no design-time dll (`without-designtime-output.txt`) | `error FS3031: ... refers to a designer assembly 'Xake.Patterns.DesignTime' which cannot be loaded from path '.../Xake.Patterns.DesignTime.dll'` at the `#r` of `Xake.Patterns.dll`, as in 06 |
+
+Negative cases (`sh ns-check/run.sh neg/cases.fsx`, `neg/output.txt`; SDK 10 text shown, the SDK 8 text differs only in the wording of FS0039/FS0072):
+
+| case | message |
+|---|---|
+| misspelt group, form D and form B (`m.fkw`) | `FS0039: The type 'Target<out/(cfg:*)/(fwk:*)/(name:*).dll>' does not define a field, constructor, or member named 'fkw'. Maybe you want one of the following: fwk` (the same in both forms) |
+| misspelt output label (`m.pdb`) | `FS0039: The type 'Target<dll=out/(fwk:*)/(lib:*).dll,xml=out/(fwk:*)/(lib:*).xml>' does not define ... 'pdb'.` |
+| unlabelled outputs read by extension (`m.dll`) | `FS0039: ... does not define ... 'dll'.` (they are `Out1`/`Out2`) |
+| missing Make argument | `FS0496: The member or object constructor 'Make' requires 1 argument(s). The required signature is 'Target<...>.Make(fwk: string, lib: string) : Target<...>'.` (the odd count is the compiler's, as in 03) |
+| `Glob` on `Command<>` | `FS0039: The type 'Command<test::(project:*)/(slice:*)>' does not define ... 'Glob'.` |
+| `matched` outside a rule (`recipe { let! m = matched ... m.fwk }`) | `FS0072: The type of this expression could not be inferred before accessing its members...` |
+| `matched` in a nested `recipe` inside `Asm.rule`, or in a no-group `Clean.rule` | `FS0041: No overloads match for method 'Bind'. Known types of arguments: Matched * ('a -> Recipe<'b,unit>)` followed by the overload list |
+| group named like a member (`(Make:*)`) | `FS3033: ... reported an error: Target: the name 'Make' is taken by a member of the type (Make, Format, For, Glob, Rule, rule); rename the group or label` |
+| label equal to a group (`lib=out/(lib:*).dll`) | `FS3033: ... Target: the names ["lib"] are used twice (groups and output labels share one namespace)` |
+| `Command<"run::(Name:*)">` | `FS3033: ... Command: the name 'Name' is taken by a member of the type (Make, Pattern, For, Rule, rule, Name); ...` |
+| multi-output group mismatch | `FS3033: ... Target 'out/(fwk:*)/(name:*).xml': groups ["fwk"; "name"] differ from the first pattern's ["fwk"; "lib"] (missing ["lib"], extra ["name"])` |
+| `Asm.Pattern(..)` / `Test.Format(..)` | FS0039 (for `Test.Format`: `Maybe you want ... For`) |
+| `Clean.Rule <\| fun m -> ...` (a no-group command given a named parameter) | **compiles**, with `m : unit` |
+| `Test.Pattern(project = "a/b", ...)` | at run time: `Pattern 'test::(project:*)/(slice:*)': [("project", "a/b"); ("slice", "1")] do not give a name the pattern matches back (got 'test::a/b/1')` |
+
+### Line counts
+
+| component | lines |
+|---|---|
+| engine (`engine.patch`: +181 / -119 in 5 files) | `PatternAst.fs` 176 = 102 moved from `Path.fs` (parser, regex, specificity, their docs) + 74 of generation; `Path.fs` -98; `ExecCore.fs` -24 (`applyWildcards` and its helpers gone, one call changed); `Xake.fsproj` and `xake.project.json` +1 each |
+| engine tests (`tests.patch`: +57 / -5) | `PatternAstTests` +48 / -1, `XakeScriptTests` +5 / -2, `PathTests` +5 / -2 |
+| runtime `Xake.Patterns.dll` | `Runtime.fs` 112, `AssemblyInfo.fs` 8, fsproj 22 |
+| design-time | `Provider.fs` 148 (plus the 16,986 lines of TP SDK sources, from the package), fsproj 39 |
+| packing (the `src/dotnet` delta) | about 12 lines: `FSharpToolsDirectory`, `NoWarn NU5100;NU5118`, two `ProjectReference`s, three lines in `IncludeCoreOutput` |
+
+### Deviations from the brief, and why
+
+- **Renames** `Pattern<>` -> `Target<>` and `Command<>.Target` -> `Command<>.Pattern`: the user's change during the run (see the top of this section).
+- **Namespace (decision 17)**: the provided types, `matched` and the builders all live in `Xake.Patterns`, so a script needs `open Xake.Patterns` after `open Xake` (the name resolution above requires that order anyway). The provided types could sit in namespace `Xake` (06 did that), but that would not avoid the clash.
+- **Decision 4**: `Format` only on `Target<>`, `Pattern` (formerly `Target`) only on `Command<>` — one string generator per type; `Make` and `For` on both, `Glob` only on `Target<>`.
+- **Decision 3**: the label syntax was chosen here: `"label=pattern"`. A pattern that really starts with `word=` (a file `a=b.txt`) would be read as a label; `./a=b.txt` should avoid it (not tried).
+- **Decision 6**: bare wildcards are positional, but rejected in multi-output patterns (their positions could differ between outputs), as in 05.
+- **Decision 23**: a no-group `Command<"clean">.rule` erases to today's `command "clean"` builder (exactly today's semantics). `Clean.Rule <| fun m -> ...` compiles, with `m : unit`.
+- `Command<>` keeps the instance `Name` (the matched name, group `"0"`), as in 04 and 07.
+
+### What should change in the brief
+
+1. Record the `Target<>` naming rule: `open Xake` before `open Xake.Patterns`, and the DU written `DomainTypes.Target` in annotations; otherwise FS3081/FS0033 with misleading text.
+2. Rename `Command<>.Pattern` to `Format` (or back to `Target`): it returns a name, not a pattern.
+3. Decision 15 reaches beyond rule patterns: `Fileset` masks change too, and `[(]`/`[)]` stop working as the way to match a literal parenthesis (two `PathTests` and two `XakeScriptTests` cases rewritten). `|` is still unescaped (a literal `|` in a path is regex alternation); add it to 15.
+4. Decision 21: AlwaysRerun only matters for a command that has dependencies; a phony rule with no dependency reruns every time already (`=>` too).
+5. Decision 16 is settled for msbuild: the package's `src/` files compile directly via `$(PkgFSharp_TypeProviders_SDK)`; `build.fsc.fsx` is still to be tried.
+6. Decision 13: the module is `Xake.PatternAst` (its own file, before `Path.fs`), and `Specificity` moves into it.
+
+Files outside the worktree: `$CLAUDE_JOB_DIR/tmp/feed-08/` (the nupkg; `consumer/build.fsx` and `app*/`
+restore from it, the path is hard-coded), `$CLAUDE_JOB_DIR/tmp/stage-08/` (`xake-only/`, `without/`),
+`$CLAUDE_JOB_DIR/tmp/xake-08-*` (the scenario's build roots), the test logs `$CLAUDE_JOB_DIR/tmp/test*.log`.
+`~/.nuget/packages/xake.exp08/` was deleted after the runs (a rerun restores it from the feed).

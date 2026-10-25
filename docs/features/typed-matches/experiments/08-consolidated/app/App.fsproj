@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Experiment 08: a compiled net8.0 consumer of the package (PackageReference), sharing the
+       consumer's Rules.fs. -p:NsCase=A switches Program.fs to the ambiguous `(t: Target)` annotation. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <RestoreSources>/Users/olegz/.claude/jobs/d57e8547/tmp/feed-08;https://api.nuget.org/v3/index.json</RestoreSources>
+    <DefineConstants Condition="'$(NsCase)' != ''">$(DefineConstants);NS_$(NsCase)</DefineConstants>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Xake.Exp08" Version="0.0.8-exp08" />
+    <Compile Include="../consumer/Rules.fs" Link="Rules.fs" />
+    <Compile Include="Program.fs" />
+  </ItemGroup>
+</Project>

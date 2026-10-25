@@ -1,0 +1,80 @@
+--- [D] 1 first build: main
+    compile Xake for netstandard2.0 -> out/netstandard2.0/Xake.dll + out/netstandard2.0/Xake.xml
+    compile Xake for net462 -> out/net462/Xake.dll + out/net462/Xake.xml
+    docs Xake (string API, =>)
+    compile Xake.Dotnet for netstandard2.0 -> out/netstandard2.0/Xake.Dotnet.dll + out/netstandard2.0/Xake.Dotnet.xml
+    compile Xake.Dotnet for net462 -> out/net462/Xake.Dotnet.dll + out/net462/Xake.Dotnet.xml
+    compileAs Xake Release netstandard2.0 -> out/Release/netstandard2.0/Xake.dll
+    compileAs Xake.Dotnet Release netstandard2.0 -> out/Release/netstandard2.0/Xake.Dotnet.dll
+    test-build Xake
+    test-build Xake.Dotnet
+    test Xake slice 1 (test::Xake/1)
+    test Xake slice 2 (test::Xake/2)
+    test Xake.Dotnet slice 1 (test::Xake.Dotnet/1)
+--- [D] 2 nothing changed: main
+    test-build Xake
+    test-build Xake.Dotnet
+    test Xake slice 2 (test::Xake/2)
+    test Xake.Dotnet slice 1 (test::Xake.Dotnet/1)
+    test Xake slice 1 (test::Xake/1)
+--- [D] 3 src/core/sub/Engine.fs changed: main
+    compile Xake for netstandard2.0 -> out/netstandard2.0/Xake.dll + out/netstandard2.0/Xake.xml
+    compile Xake for net462 -> out/net462/Xake.dll + out/net462/Xake.xml
+    docs Xake (string API, =>)
+    compile Xake.Dotnet for netstandard2.0 -> out/netstandard2.0/Xake.Dotnet.dll + out/netstandard2.0/Xake.Dotnet.xml
+    compile Xake.Dotnet for net462 -> out/net462/Xake.Dotnet.dll + out/net462/Xake.Dotnet.xml
+    compileAs Xake Release netstandard2.0 -> out/Release/netstandard2.0/Xake.dll
+    compileAs Xake.Dotnet Release netstandard2.0 -> out/Release/netstandard2.0/Xake.Dotnet.dll
+    test-build Xake
+    test-build Xake.Dotnet
+    test Xake slice 1 (test::Xake/1)
+    test Xake slice 2 (test::Xake/2)
+    test Xake.Dotnet slice 1 (test::Xake.Dotnet/1)
+--- [D] 4 nothing changed: build
+    out/netstandard2.0/Xake.Dotnet.dll = dotnet-a;Xake
+--- [D] 5 clean: clean clean-string
+    clean
+    clean-string (string API, =>)
+--- [D] 6 clean again: clean clean-string
+    clean
+    clean-string (string API, =>)
+--- [B] 1 first build: main
+    compile Xake for netstandard2.0 -> out/netstandard2.0/Xake.dll + out/netstandard2.0/Xake.xml
+    compile Xake for net462 -> out/net462/Xake.dll + out/net462/Xake.xml
+    compile Xake.Dotnet for netstandard2.0 -> out/netstandard2.0/Xake.Dotnet.dll + out/netstandard2.0/Xake.Dotnet.xml
+    docs Xake (string API, =>)
+    compile Xake.Dotnet for net462 -> out/net462/Xake.Dotnet.dll + out/net462/Xake.Dotnet.xml
+    compileAs Xake Release netstandard2.0 -> out/Release/netstandard2.0/Xake.dll
+    compileAs Xake.Dotnet Release netstandard2.0 -> out/Release/netstandard2.0/Xake.Dotnet.dll
+    test-build Xake
+    test-build Xake.Dotnet
+    test Xake slice 1 (test::Xake/1)
+    test Xake slice 2 (test::Xake/2)
+    test Xake.Dotnet slice 1 (test::Xake.Dotnet/1)
+--- [B] 2 nothing changed: main
+    test-build Xake
+    test-build Xake.Dotnet
+    test Xake slice 1 (test::Xake/1)
+    test Xake slice 2 (test::Xake/2)
+    test Xake.Dotnet slice 1 (test::Xake.Dotnet/1)
+--- [B] 3 src/core/sub/Engine.fs changed: main
+    compile Xake for netstandard2.0 -> out/netstandard2.0/Xake.dll + out/netstandard2.0/Xake.xml
+    compile Xake for net462 -> out/net462/Xake.dll + out/net462/Xake.xml
+    docs Xake (string API, =>)
+    compile Xake.Dotnet for netstandard2.0 -> out/netstandard2.0/Xake.Dotnet.dll + out/netstandard2.0/Xake.Dotnet.xml
+    compile Xake.Dotnet for net462 -> out/net462/Xake.Dotnet.dll + out/net462/Xake.Dotnet.xml
+    compileAs Xake Release netstandard2.0 -> out/Release/netstandard2.0/Xake.dll
+    compileAs Xake.Dotnet Release netstandard2.0 -> out/Release/netstandard2.0/Xake.Dotnet.dll
+    test-build Xake
+    test-build Xake.Dotnet
+    test Xake slice 1 (test::Xake/1)
+    test Xake slice 2 (test::Xake/2)
+    test Xake.Dotnet slice 1 (test::Xake.Dotnet/1)
+--- [B] 4 nothing changed: build
+    out/netstandard2.0/Xake.Dotnet.dll = dotnet-a;Xake
+--- [B] 5 clean: clean clean-string
+    clean
+    clean-string (string API, =>)
+--- [B] 6 clean again: clean clean-string
+    clean
+    clean-string (string API, =>)

@@ -1,0 +1,56 @@
+== a-xake-then-patterns (SDK 10)
+a-xake-then-patterns.fsx(11,18): error FS3081: The static parameter 'pattern' of the provided type or method 'Target' requires a value. Static parameters to type providers may be optionally specified using named arguments, e.g. 'Target<pattern=...>'.
+== a-xake-then-patterns (SDK 8)
+a-xake-then-patterns.fsx(11,18): error FS3081: The static parameter 'pattern' of the provided type or method 'Target' requires a value. Static parameters to type providers may be optionally specified using named arguments, e.g. 'Target<pattern=...>'.
+== b-patterns-then-xake (SDK 10)
+b-patterns-then-xake.fsx(10,12): error FS0033: The non-generic type 'Xake.DomainTypes.Target' does not expect any type arguments, but here is given 1 type argument(s)
+== b-patterns-then-xake (SDK 8)
+b-patterns-then-xake.fsx(10,12): error FS0033: The non-generic type 'Xake.DomainTypes.Target' does not expect any type arguments, but here is given 1 type argument(s)
+== c-patterns-only-plain-du (SDK 10)
+c-patterns-only-plain-du.fsx(10,18): error FS3081: The static parameter 'pattern' of the provided type or method 'Target' requires a value. Static parameters to type providers may be optionally specified using named arguments, e.g. 'Target<pattern=...>'.
+== c-patterns-only-plain-du (SDK 8)
+c-patterns-only-plain-du.fsx(10,18): error FS3081: The static parameter 'pattern' of the provided type or method 'Target' requires a value. Static parameters to type providers may be optionally specified using named arguments, e.g. 'Target<pattern=...>'.
+== c-patterns-only-qualified-du (SDK 10)
+c-patterns-only-qualified-du.fsx(10,23): error FS0039: The type 'Target' is not defined in 'Xake'.
+== c-patterns-only-qualified-du (SDK 8)
+c-patterns-only-qualified-du.fsx(10,23): error FS0039: The type 'Target' is not defined in 'Xake'.
+== d-xake-only-plain-provided (SDK 10)
+d-xake-only-plain-provided.fsx(9,12): error FS0033: The non-generic type 'Xake.DomainTypes.Target' does not expect any type arguments, but here is given 1 type argument(s)
+== d-xake-only-plain-provided (SDK 8)
+d-xake-only-plain-provided.fsx(9,12): error FS0033: The non-generic type 'Xake.DomainTypes.Target' does not expect any type arguments, but here is given 1 type argument(s)
+== d-xake-only-qualified-provided (SDK 10)
+out/core.dll | phony x
+== d-xake-only-qualified-provided (SDK 8)
+out/core.dll | phony x
+== e-du-annotation-after-patterns (SDK 10)
+e-du-annotation-after-patterns.fsx(11,15): error FS3081: The static parameter 'pattern' of the provided type or method 'Target' requires a value. Static parameters to type providers may be optionally specified using named arguments, e.g. 'Target<pattern=...>'.
+== e-du-annotation-after-patterns (SDK 8)
+e-du-annotation-after-patterns.fsx(11,15): error FS3081: The static parameter 'pattern' of the provided type or method 'Target' requires a value. Static parameters to type providers may be optionally specified using named arguments, e.g. 'Target<pattern=...>'.
+== f-du-annotation-patterns-last-with-provided (SDK 10)
+f-du-annotation-patterns-last-with-provided.fsx(11,20): error FS3081: The static parameter 'pattern' of the provided type or method 'Target' requires a value. Static parameters to type providers may be optionally specified using named arguments, e.g. 'Target<pattern=...>'.
+== f-du-annotation-patterns-last-with-provided (SDK 8)
+f-du-annotation-patterns-last-with-provided.fsx(11,20): error FS3081: The static parameter 'pattern' of the provided type or method 'Target' requires a value. Static parameters to type providers may be optionally specified using named arguments, e.g. 'Target<pattern=...>'.
+== w1-du-via-domaintypes (SDK 10)
+out/core.dll | phony x | [PhonyAction "y"]
+== w1-du-via-domaintypes (SDK 8)
+out/core.dll | phony x | [PhonyAction "y"]
+== w2-provided-qualified-patterns-first (SDK 10)
+out/core.dll out/core.xml | phony x
+== w2-provided-qualified-patterns-first (SDK 8)
+out/core.dll out/core.xml | phony x
+== w3-du-abbreviation (SDK 10)
+out/core.dll | phony x
+== w3-du-abbreviation (SDK 8)
+out/core.dll | phony x
+== w4-no-annotation-inferred (SDK 10)
+out/core.dll | phony x
+== w4-no-annotation-inferred (SDK 8)
+out/core.dll | phony x
+== w5-xake-qualified-du (SDK 10)
+w5-xake-qualified-du.fsx(10,63): error FS0039: The constructor, module or namespace 'FileTarget' is not defined. Maybe you want one of the following:
+   File
+   Fileset
+== w5-xake-qualified-du (SDK 8)
+w5-xake-qualified-du.fsx(10,63): error FS0039: The constructor, module or namespace 'FileTarget' is not defined. Maybe you want one of the following:
+   File
+   Fileset

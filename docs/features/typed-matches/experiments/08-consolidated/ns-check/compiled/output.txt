@@ -1,0 +1,8 @@
+== dotnet build -c Release -p:Case=A
+Program.fs(14,18): error FS3081: The static parameter 'pattern' of the provided type or method 'Target' requires a value. Static parameters to type providers may be optionally specified using named arguments, e.g. 'Target<pattern=...>'. [/Users/olegz/projects/Xake/.claude/worktrees/feature/typed-matches/docs/features/typed-matches/experiments/08-consolidated/ns-check/compiled/NsCheck.fsproj]
+== dotnet build -c Release -p:Case=B
+Program.fs(22,28): error FS0039: The type 'Object' does not define a field, constructor, or member named 'Format'. [/Users/olegz/projects/Xake/.claude/worktrees/feature/typed-matches/docs/features/typed-matches/experiments/08-consolidated/ns-check/compiled/NsCheck.fsproj]
+Program.fs(9,12): error FS0033: The non-generic type 'Xake.DomainTypes.Target' does not expect any type arguments, but here is given 1 type argument(s) [/Users/olegz/projects/Xake/.claude/worktrees/feature/typed-matches/docs/features/typed-matches/experiments/08-consolidated/ns-check/compiled/NsCheck.fsproj]
+== dotnet build -c Release -p:Case=W
+Build succeeded.
+-- run: out/core.dll | phony x

@@ -1,0 +1,17 @@
+Real src/tests run on a copy of the worktree (outside it, docs/ not copied) with engine.patch and tests.patch applied:
+  patch -p1 < engine.patch; patch -p1 < tests.patch; dotnet test src/tests
+
+== first run: engine.patch + PatternAstTests only (filtered run, 13 fixtures)
+The active test run was aborted. Reason: Test host process crashed
+The test running when the crash occurred: Tests.XakeScript tests.Escaped brackets      ("(name:[(]*).ss" -- `[(]` was a regex character class)
+
+== full run, XakeScriptTests updated, PathTests not yet
+  Failed MaskTests("c:\\[(]*[)].c","c:\\(a).c") [5 ms]
+  Failed MaskTests("c:\\[(]*.c","c:\\(a.c") [< 1 ms]
+  Failed the committed schema lists the fields the reader knows, in the writer's order [1 ms]
+Failed!  - Failed:     3, Passed:   422, Skipped:     1, Total:   426, Duration: 1 m 2 s - tests.dll (net8.0)
+
+== full run, with the whole tests.patch
+  Failed the committed schema lists the fields the reader knows, in the writer's order [1 ms]
+Failed!  - Failed:     1, Passed:   426, Skipped:     1, Total:   428, Duration: 1 m 6 s - tests.dll (net8.0)
+  (the one failure is the copy's: DirectoryNotFoundException '.../docs/schemas/xake.project.schema.json' -- docs/ was not copied)

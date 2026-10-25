@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Experiment 08: would be src/patterns/Xake.Patterns.fsproj. The runtime half of the typed
+       patterns (brief decision 17): what the erased provided members call, the form-B builder, and
+       the TypeProviderAssembly attribute naming the design-time dll. Same TFMs as the engine.
+       Nothing in the repo compiles against this dll except the design-time project: any
+       compilation that references it needs the design-time dll (FS3031), see ../README section 08. -->
+  <PropertyGroup>
+    <AssemblyName>Xake.Patterns</AssemblyName>
+    <TargetFrameworks>net462;netstandard2.0</TargetFrameworks>
+    <DisableImplicitFSharpCoreReference>true</DisableImplicitFSharpCoreReference>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="Runtime.fs" />
+    <Compile Include="AssemblyInfo.fs" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="FSharp.Core" Version="8.0.100" />
+    <ProjectReference Include="../engine/src/core/Xake.fsproj" PrivateAssets="all" />
+  </ItemGroup>
+</Project>

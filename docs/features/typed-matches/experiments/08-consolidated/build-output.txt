@@ -1,0 +1,5 @@
+  Xake -> engine/src/core/bin/Release/netstandard2.0/Xake.dll
+  Xake.Patterns -> patterns/bin/Release/netstandard2.0/Xake.Patterns.dll
+  Xake.Patterns.DesignTime -> designtime/bin/Release/netstandard2.0/Xake.Patterns.DesignTime.dll
+Build succeeded.
+Time Elapsed 00:00:06.43

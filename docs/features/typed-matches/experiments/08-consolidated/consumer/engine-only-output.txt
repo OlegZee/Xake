@@ -1,0 +1,7 @@
+wildcards      [(Star, 1); (AnyChar, 3)]
+format         gen/1/core-2.txt
+literal only   out/version(1)[x].txt
+regex          lit\(x\)/\[y\]([^/\\]*)\.txt
+out/(lit)/x.xml -> multi-file target out/(lit)/x.dll
+out/(lit)/x.xml -> multi-file target out/(lit)/x.xml
+out/lit/x.xml -> XakeException

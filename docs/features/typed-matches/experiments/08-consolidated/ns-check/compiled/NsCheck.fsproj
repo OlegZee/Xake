@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Experiment 08: the Target<> / Xake.Target name check in a compiled project (net8.0), against
+       the build output (the design-time dll is found under patterns/bin/typeproviders/...).
+       dotnet build -c Release -p:Case=A   (open Xake; open Xake.Patterns; DU annotated `Target`)
+       ... -p:Case=B  (open Xake.Patterns; open Xake; provided `Target<..>`)
+       ... -p:Case=W  (open Xake; open Xake.Patterns; DU as DomainTypes.Target) -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Case Condition="'$(Case)' == ''">W</Case>
+    <DefineConstants>$(DefineConstants);CASE_$(Case)</DefineConstants>
+    <BaseIntermediateOutputPath>obj/$(Case)/</BaseIntermediateOutputPath>
+    <OutputPath>bin/$(Case)/</OutputPath>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="Program.fs" />
+  </ItemGroup>
+  <ItemGroup>
+    <Reference Include="Xake"><HintPath>../../engine/src/core/bin/Release/netstandard2.0/Xake.dll</HintPath></Reference>
+    <Reference Include="Xake.Patterns"><HintPath>../../patterns/bin/Release/netstandard2.0/Xake.Patterns.dll</HintPath></Reference>
+  </ItemGroup>
+</Project>

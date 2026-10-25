@@ -53,8 +53,19 @@ implementation. Nothing under `src/` changes on this branch until a decision is 
   ... }`, agent's leaning) and D (`Dll.Rule <| fun m -> recipe {...}`) compile; no CE can bind
   `m` implicitly; a type is not a value (`Dll ..>` impossible).
 
-## Next step
+- 2026-10-25: brief rounds 3–4 + decision 25 recorded. Experiment 08 (`experiments/08-consolidated/`,
+  README section 08): the whole decided design end to end — `engine.patch` (+181/−119, public
+  `PatternAst`, `formatMatches` replaces `applyWildcards`, escaping), `tests.patch`, runtime
+  `Xake.Patterns.dll` 112 lines, provider 148 lines, TP SDK sources compiled from its package
+  folder, one nupkg works in fsi SDK 10/8, net8.0 and net462 builds. Type renamed
+  `Pattern<>` → `Target<>` on the user's idea (pending): it clashes with the DU
+  `Xake.DomainTypes.Target` — the namespace opened last wins (FS3081 / FS0033, misleading).
 
-Ask the user: confirm the separate dll; the CE form and its 5 questions (`ce-syntax.md`); the
+## Next step (superseded line below kept for history)
+
+Decide with the user: the `Target<>` rename given the clash; the name of the generation member
+(`Format` suggested); escaping `|`; label syntax `"label=pattern"`. Then the implementation plan.
+
+Old: ask the user: confirm the separate dll; the CE form and its 5 questions (`ce-syntax.md`); the
 remaining phony questions (`phony-types.md`: semantics, `Need`, `TryMatch`, no-group type).
 Record in `brief.md`. Then an implementation plan — only on the user's go-ahead.

@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Experiment 08: a net462 consumer of the package (lib/net462/), built on macOS through the
+       Microsoft.NETFramework.ReferenceAssemblies package; it cannot run here (no Mono). -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net462</TargetFramework>
+    <RestoreSources>/Users/olegz/.claude/jobs/d57e8547/tmp/feed-08;https://api.nuget.org/v3/index.json</RestoreSources>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Xake.Exp08" Version="0.0.8-exp08" />
+    <Compile Include="../consumer/Rules.fs" Link="Rules.fs" />
+    <Compile Include="../app/Program.fs" Link="Program.fs" />
+  </ItemGroup>
+</Project>

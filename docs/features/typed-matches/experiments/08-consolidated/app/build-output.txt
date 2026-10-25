@@ -1,0 +1,20 @@
+== 
+Build succeeded.
+   (1 s)
+   processes holding the design-time dll: 
+== 
+Build succeeded.
+   (0 s)
+   processes holding the design-time dll: 
+== 
+Build succeeded.
+   (2 s)
+   processes holding the design-time dll: 
+== --no-incremental
+Build succeeded.
+   (1 s)
+   processes holding the design-time dll: 
+== -p:NsCase=A
+Program.fs(7,18): error FS3081: The static parameter 'pattern' of the provided type or method 'Target' requires a value. Static parameters to type providers may be optionally specified using named arguments, e.g. 'Target<pattern=...>'. [/Users/olegz/projects/Xake/.claude/worktrees/feature/typed-matches/docs/features/typed-matches/experiments/08-consolidated/app/App.fsproj]
+   (1 s)
+   processes holding the design-time dll: 

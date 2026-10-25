@@ -1,0 +1,44 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Experiment 08: stand-in for src/dotnet, the project that packs the one package (decision 17).
+       Package Xake.Exp08 0.0.8-exp08 (not the real Xake id, so nothing collides in ~/.nuget/packages):
+         lib/{net462,netstandard2.0}/              Xake.dll, Xake.Patterns.dll, Xake.Exp08.dll (= Xake.Dotnet.dll)
+         typeproviders/fsharp41/netstandard2.0/    the whole design-time output folder
+       What would change in src/dotnet/Xake.Dotnet.fsproj is marked "NEW". -->
+  <PropertyGroup>
+    <AssemblyName>Xake.Exp08</AssemblyName>
+    <PackageId>Xake.Exp08</PackageId>
+    <Version>0.0.8-exp08</Version>
+    <TargetFrameworks>net462;netstandard2.0</TargetFrameworks>
+    <DisableImplicitFSharpCoreReference>true</DisableImplicitFSharpCoreReference>
+    <TargetsForTfmSpecificBuildOutput>$(TargetsForTfmSpecificBuildOutput);IncludeCoreOutput</TargetsForTfmSpecificBuildOutput>
+    <!-- NEW: where the F# SDK's PackageFSharpDesignTimeTools puts the design-time output (default "tools") -->
+    <FSharpToolsDirectory>typeproviders</FSharpToolsDirectory>
+    <!-- NEW: NU5100 dlls outside lib/ (the typeproviders folder), NU5118 the same design-time file from both TFMs -->
+    <NoWarn>$(NoWarn);NU5100;NU5118</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="Lib.fs" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="FSharp.Core" Version="8.0.100" />
+    <!-- as src/dotnet today: compiled against the engine, Xake.dll packed beside this dll -->
+    <ProjectReference Include="../engine/src/core/Xake.fsproj" PrivateAssets="all" />
+    <!-- NEW: build order only. Compiling against Xake.Patterns.dll would need the design-time dll
+         (FS3031), so it is not referenced for compilation; IncludeCoreOutput packs it. -->
+    <ProjectReference Include="../patterns/Xake.Patterns.fsproj" PrivateAssets="all" ReferenceOutputAssembly="false" />
+    <!-- NEW: the design-time project, packed whole under typeproviders/fsharp41/netstandard2.0/ -->
+    <ProjectReference Include="../designtime/Xake.Patterns.DesignTime.fsproj" IsFSharpDesignTimeProvider="true" PrivateAssets="all" ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+  <!-- Xake.dll (as today) and Xake.Patterns.dll (NEW) next to this dll in lib/{tfm} -->
+  <Target Name="IncludeCoreOutput">
+    <MSBuild Projects="../patterns/Xake.Patterns.fsproj" Targets="GetTargetPath" Properties="TargetFramework=$(TargetFramework);Configuration=$(Configuration)">
+      <Output TaskParameter="TargetOutputs" ItemName="_PatternsDll" />
+    </MSBuild>
+    <ItemGroup>
+      <BuildOutputInPackage Include="@(ReferenceCopyLocalPaths->WithMetadataValue('ReferenceSourceTarget','ProjectReference'))" />
+      <BuildOutputInPackage Include="@(_PatternsDll)" />
+      <BuildOutputInPackage Include="@(_PatternsDll->'%(RootDir)%(Directory)%(Filename).xml')" />
+    </ItemGroup>
+  </Target>
+</Project>

@@ -10,6 +10,7 @@
     "Logging.fs",
     "Pickler.fs",
     "Env.fs",
+    "PatternAst.fs",
     "Path.fs",
     "PathExt.fs",
     "File.fsi",

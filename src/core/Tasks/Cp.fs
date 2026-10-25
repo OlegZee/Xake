@@ -32,6 +32,10 @@ module CpImpl =
         }
 
     module internal impl =
+        /// Mask selecting all files under a directory mask. A pattern, so it is joined with '/'
+        /// on every OS (not with `</>`, which yields '\\' on Windows).
+        let dirContentsMask (dirMask: string) = dirMask.TrimEnd('/', '\\') + "/**/*.*"
+
         let makeRelPath (root: string) =
             let rootLen = root.Length
             if rootLen <= 0 then id
@@ -92,7 +96,7 @@ module CpImpl =
                     !!fileMask, true
                 | Dir dirMask ->
                     ctx.Logger.Log Level.Message "[copy] %A" dirMask
-                    !!(dirMask </> "**/*.*"), args.flatten
+                    !!(impl.dirContentsMask dirMask), args.flatten
 
             let getRelativePath =
                 if flatten then Xake.File.getFileName

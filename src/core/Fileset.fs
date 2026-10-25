@@ -86,9 +86,9 @@ module private Impl =
         | CurrentDir      -> paths
         | Parent          -> paths |> Seq.map fs.GetParent
         | Recurse         -> paths |> Seq.collect fs.AllDirs |> Seq.append paths
-        | DirectoryMask mask -> paths |> Seq.collect (fs.ScanDirs mask)
+        | DirectoryMask mask -> paths |> Seq.collect (fs.ScanDirs (Path.matchImpl.maskToGlob mask))
         | Directory d     -> paths |> Seq.map (fun dir -> Path.Combine(dir, d)) |> filterDir
-        | FileMask mask   -> paths |> Seq.collect (fs.ScanFiles mask)
+        | FileMask mask   -> paths |> Seq.collect (fs.ScanFiles (Path.matchImpl.maskToGlob mask))
         | FileName f      -> paths |> Seq.map (fun dir -> Path.Combine(dir, f)) |> filterFile
         in
         (startIn, pat) ||> List.fold applyPart
@@ -99,7 +99,7 @@ module private Impl =
     /// "Materializes" fileset to a filelist
     let scan fileSystem root (Fileset (options,filesetItems)) =
 
-        let startDirPat = options.BaseDir |> ifNone root |> Path.parseDir
+        let startDirPat = options.BaseDir |> ifNone root |> Path.parseDirPath
         let startDir = startDirPat |> cd fileSystem "."
 
         // TODO check performance, build function

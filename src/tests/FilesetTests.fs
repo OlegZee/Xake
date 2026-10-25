@@ -235,20 +235,20 @@ let ``excludes match the same after a mask was used many times``() =
             Assert.That (fs |> tree.list root, Is.EquivalentTo expected)
 
 [<Test>]
-let ``( ) [ ] and | in masks are literal characters``() =
+let ``escaped ( ) [ ] and | in masks are literal characters``() =
     // `|` cannot be in a Windows file name, so that part runs on Unix only
     let pipe = if Env.isUnix then [ "a|b/f.txt"; "a/f.txt"; "b/f.txt" ] else []
     tree.withTree ([ "lit(x)/f.txt"; "litx/f.txt"; "[y]/f.txt"; "y/f.txt" ] @ pipe) <| fun root ->
-        Assert.That (ls "lit(x)/*.txt" |> tree.list root, Is.EqualTo [ "lit(x)/f.txt" ])
-        Assert.That (!! "[y]*/*.txt" |> tree.list root, Is.EqualTo [ "[y]/f.txt" ])
-        // excludes go through the mask regex: "[y]*" used to be the class [y] followed by `*`,
-        // which took "y" and left "[y]"; "lit(x)*" used to be a group, which took "litx"
-        Assert.That ((!! "*/*.txt" -- "[y]*/*.txt" -- "lit(x)*/*.txt") |> tree.list root,
+        Assert.That (ls @"lit\(x\)/*.txt" |> tree.list root, Is.EqualTo [ "lit(x)/f.txt" ])
+        Assert.That (!! @"\[y\]*/*.txt" |> tree.list root, Is.EqualTo [ "[y]/f.txt" ])
+        // excludes with a wildcard go through the mask regex, where unescaped "[y]*" is the class
+        // [y] followed by `*` (it takes "y") and "lit(x)*" a group (it takes "litx")
+        Assert.That ((!! "*/*.txt" -- @"\[y\]*/*.txt" -- @"lit\(x\)*/*.txt") |> tree.list root,
                      Is.EquivalentTo ([ "litx/f.txt"; "y/f.txt" ] @ (if Env.isUnix then [ "a/f.txt"; "b/f.txt"; "a|b/f.txt" ] else [])))
         if Env.isUnix then
-            // "a|b*" used to be the alternation `^a` | `b...$`, which took "a" and "b" as well
-            Assert.That (!! "a|b/*.txt" |> tree.list root, Is.EqualTo [ "a|b/f.txt" ])
-            Assert.That ((!! "*/*.txt" -- "a|b*/*.txt") |> tree.list root,
+            // unescaped, "a|b*" is the alternation `^a` | `b...$`, which takes "a" and "b" as well
+            Assert.That (!! @"a\|b/*.txt" |> tree.list root, Is.EqualTo [ "a|b/f.txt" ])
+            Assert.That ((!! "*/*.txt" -- @"a\|b*/*.txt") |> tree.list root,
                          Is.EquivalentTo [ "lit(x)/f.txt"; "litx/f.txt"; "[y]/f.txt"; "y/f.txt"; "a/f.txt"; "b/f.txt" ])
 
 [<Test; Explicit("Benchmark: prints timings")>]

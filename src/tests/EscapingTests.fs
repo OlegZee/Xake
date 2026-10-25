@@ -272,17 +272,14 @@ let ``a backslash separator still works, with a warning to use a slash``() =
         Assert.AreEqual(1, warnings.Length)
 
 [<Test>]
-let ``paths read from disk and paths joined by Xake give no warning``() =
+let ``paths read from disk give no warning``() =
     let u = uniq ()
     let got = ResizeArray<string>()
     use _ = PatternAst.Warnings.attach (fun m -> lock got (fun () -> got.Add m))
     // the file side of a match and the project root are paths, not patterns
+    // (`</>` stays OS-dependent, decision 57: a mask built with it on Windows warns, by design)
     Assert.IsTrue((Path.matchGroups "*.c" (@"c:\" + u) (@"c:\" + u + @"\x.c")).IsSome)
     Assert.IsTrue(Path.matches "*.c" (@"c:\" + u) (@"c:\" + u + @"\x.c"))
-    // `</>` joins with '/' on every OS
-    let joined = u </> "src" </> "*.cs"
-    Assert.AreEqual(u + "/src/*.cs", joined)
-    Path.parse joined |> ignore
     Assert.IsEmpty(got |> Seq.filter (fun m -> m.Contains u))
 
 [<Test>]

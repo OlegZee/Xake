@@ -2,8 +2,8 @@
 // no Xake.Patterns.dll, no design-time dll anywhere near): compiles and runs, no FS3031. Also
 // shows the engine-side changes through public API: PatternAst (decision 13), format replacing
 // applyWildcards for a multi-file rule's other targets (14), literal ( ) [ ] (15).
-//   dotnet fsi engine-only.fsx     (after copying the engine's Xake.dll to $CLAUDE_JOB_DIR/tmp/stage-08/xake-only/)
-#r "/Users/olegz/.claude/jobs/d57e8547/tmp/stage-08/xake-only/Xake.dll"
+//   dotnet fsi engine-only.fsx     (after sh stage.sh)
+#r ".stage/xake-only/Xake.dll"
 open Xake
 
 let toks = PatternAst.parse "gen/*/(name:*)-?.txt"
@@ -12,7 +12,7 @@ printfn "format         %s" (PatternAst.format (fun n -> "core") (fun i -> strin
 printfn "literal only   %s" (PatternAst.formatMatches Map.empty "out/version(1)[x].txt")
 printfn "regex          %s" (PatternAst.toRegex (PatternAst.parse "lit(x)/[y]*.txt"))
 
-let root = System.IO.Path.Combine(System.Environment.GetEnvironmentVariable "CLAUDE_JOB_DIR", "tmp", "xake-08-engine-only")
+let root = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "xake-08-engine-only")
 if System.IO.Directory.Exists root then System.IO.Directory.Delete(root, true)
 let run target =
     try

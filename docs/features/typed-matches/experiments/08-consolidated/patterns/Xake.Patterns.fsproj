@@ -19,4 +19,12 @@
     <PackageReference Include="FSharp.Core" Version="8.0.100" />
     <ProjectReference Include="../engine/src/core/Xake.fsproj" PrivateAssets="all" />
   </ItemGroup>
+  <!-- In-repo convenience: `dotnet build patterns -c Release` also builds ../designtime, which copies
+       its output to bin/typeproviders/fsharp41/netstandard2.0/ (where the compiler and FsAutoComplete
+       look for the design-time dll of a directly #r'd Xake.Patterns.dll). InDesignTimeBuild stops
+       the recursion (designtime references this project; global properties flow to it). Not part
+       of the shipped design: in src/ the package layout does this. -->
+  <Target Name="BuildDesignTime" AfterTargets="Build" Condition="'$(TargetFramework)' == 'netstandard2.0' And '$(InDesignTimeBuild)' != 'true'">
+    <Exec Command="dotnet build &quot;$(MSBuildThisFileDirectory)../designtime/Xake.Patterns.DesignTime.fsproj&quot; -c $(Configuration) -p:InDesignTimeBuild=true -nologo -v:q" />
+  </Target>
 </Project>

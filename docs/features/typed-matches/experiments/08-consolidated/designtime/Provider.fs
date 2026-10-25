@@ -125,11 +125,11 @@ type PatternProvider(config: TypeProviderConfig) as this =
             if text = "" then failwith "Command: no name given"
             let patterns = [| text |]
             let slots = analyse "Command" patterns
-            checkNames "Command" [ "Make"; "Pattern"; "For"; "Rule"; "rule"; "Name" ] (List.map fst slots)
+            checkNames "Command" [ "Make"; "Format"; "For"; "Rule"; "rule"; "Name" ] (List.map fst slots)
             let t, keys = newType typeName patterns slots
             t.AddMember(ProvidedProperty("Name", typeof<string>, getterCode = fun a -> <@@ PatternRuntime.name text (%%a.[0] : Map<string, string>) @@>))
             t.AddMember(
-                ProvidedMethod("Pattern", ps slots, typeof<string>, isStatic = true,
+                ProvidedMethod("Format", ps slots, typeof<string>, isStatic = true,
                     invokeCode = fun a -> <@@ PatternRuntime.format text (PatternRuntime.make patterns keys (%%(arr a) : string[])) @@>))
             if slots.IsEmpty then
                 // no groups: the lambda takes unit, and the builder is today's `command "name" { }`

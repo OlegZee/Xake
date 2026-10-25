@@ -1,3 +1,6 @@
+// INTENTIONALLY RED in an editor: every case below is a deliberate compile error (and the cases
+// repeat `let r`, because `sh ../ns-check/run.sh cases.fsx` splits this file per case). For the
+// editor open a single case, neg/cases/NN-*.fsx, or ../consumer/showcase.fsx for the working API.
 // Experiment 08, negative cases. `sh ../ns-check/run.sh cases.fsx` splits this file at the `//#case`
 // lines (header + case -> cases/<name>.fsx), runs each with the SDK 10 and SDK 8 fsi, and writes
 // the errors (or the run-time output) to output.txt.
@@ -51,7 +54,7 @@ printfn "%s" (Bad.Format(lib = "x"))
 
 //#case 11-clash-command-group-Name
 type Bad = Command<"run::(Name:*)">
-printfn "%s" (Bad.Pattern(Name = "x"))
+printfn "%s" (Bad.Format(Name = "x"))
 
 //#case 12-multi-output-group-mismatch
 type Bad = Target<"out/(fwk:*)/(lib:*).dll", "out/(fwk:*)/(name:*).xml">
@@ -68,8 +71,8 @@ let r = Clean.rule {
 //#case 15-pattern-member-on-target
 printfn "%s" (Asm.Pattern(cfg = "Release", fwk = "net8.0", name = "x"))
 
-//#case 16-format-member-on-command
+//#case 16-format-member-on-command-now-valid
 printfn "%s" (Test.Format(project = "a", slice = "1"))
 
 //#case 17-run-time-value-not-matching-back
-printfn "%s" (Test.Pattern(project = "a/b", slice = "1"))
+printfn "%s" (Test.Format(project = "a/b", slice = "1"))

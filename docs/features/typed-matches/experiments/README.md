@@ -321,3 +321,32 @@ Files outside the worktree: `$CLAUDE_JOB_DIR/tmp/feed-08/` (the nupkg; `consumer
 restore from it, the path is hard-coded), `$CLAUDE_JOB_DIR/tmp/stage-08/` (`xake-only/`, `without/`),
 `$CLAUDE_JOB_DIR/tmp/xake-08-*` (the scenario's build roots), the test logs `$CLAUDE_JOB_DIR/tmp/test*.log`.
 `~/.nuget/packages/xake.exp08/` was deleted after the runs (a rerun restores it from the feed).
+
+### Opening in an IDE
+
+Why the editor showed errors (Ionide / FsAutoComplete): `neg/cases.fsx` `#r`s
+`patterns/bin/Release/netstandard2.0/Xake.Patterns.dll`, whose `TypeProviderAssembly` names the
+design-time dll, but nothing put that dll where the compiler looks (next to the `#r`'d dll, or
+`<its dir>/../../typeproviders/fsharp41/netstandard2.0/`, i.e. `patterns/bin/typeproviders/...`; the
+command-line checks had used staging folders). Without it every use of `Target<>` is FS3031 plus a
+cascade. Also `neg/cases.fsx` is red by design (repeated `let r`, deliberate errors).
+
+Now `dotnet build patterns -c Release` also builds `designtime/` (a post-build `Exec` in
+`patterns/Xake.Patterns.fsproj`, guarded by `InDesignTimeBuild` against recursion), which copies its
+output to `patterns/bin/typeproviders/fsharp41/netstandard2.0/`. Build order, from `08-consolidated/`:
+
+```
+sh make-engine.sh                                       # engine/ (git-ignored), once
+dotnet build engine/src/core -c Release -f netstandard2.0
+dotnet build patterns -c Release                        # runtime dll + design-time dll in place
+sh consumer/stage.sh feed                               # optional: .stage/ and .feed/ for build.fsx, engine-only.fsx, without-designtime.fsx
+```
+
+Then open `consumer/showcase.fsx` (zero errors: single and multi-output `Target<>`, `Command<>` with and
+without groups, forms D and B, `Format`/`Make`/`For`/`Glob`, `need` over a generated list), in VSCode
+open the `08-consolidated` folder and restart the F# language server after a rebuild (the design-time dll
+is locked and cached by FSAC). `neg/cases/*.fsx` are single negative cases; `neg/cases.fsx` stays red.
+`dotnet fsi --typecheck-only consumer/showcase.fsx` passes from the script folder and from the repo root.
+Scripts no longer use `$CLAUDE_JOB_DIR` (`consumer/nuget.config` points `build.fsx` at `consumer/.feed`).
+Rename applied to the prototype: `Command<>.Pattern(...)` is now `Command<>.Format(...)` (the generating
+member on both types; `neg/cases/16` now compiles, `15` still fails: there is no `Pattern` member).

@@ -1,37 +1,37 @@
 == 01-group-typo-form-d (SDK 10)
-01-group-typo-form-d.fsx(13,54): error FS0039: The type 'Target<out/(cfg:*)/(fwk:*)/(name:*).dll>' does not define a field, constructor, or member named 'fkw'. Maybe you want one of the following:
+01-group-typo-form-d.fsx(16,54): error FS0039: The type 'Target<out/(cfg:*)/(fwk:*)/(name:*).dll>' does not define a field, constructor, or member named 'fkw'. Maybe you want one of the following:
    fwk
 == 01-group-typo-form-d (SDK 8)
-01-group-typo-form-d.fsx(13,54): error FS0039: The type 'Target<out/(cfg:*)/(fwk:*)/(name:*).dll>' does not define the field, constructor or member 'fkw'. Maybe you want one of the following:
+01-group-typo-form-d.fsx(16,54): error FS0039: The type 'Target<out/(cfg:*)/(fwk:*)/(name:*).dll>' does not define the field, constructor or member 'fkw'. Maybe you want one of the following:
    fwk
 == 02-group-typo-form-b (SDK 10)
-02-group-typo-form-b.fsx(15,20): error FS0039: The type 'Target<out/(cfg:*)/(fwk:*)/(name:*).dll>' does not define a field, constructor, or member named 'fkw'. Maybe you want one of the following:
+02-group-typo-form-b.fsx(18,20): error FS0039: The type 'Target<out/(cfg:*)/(fwk:*)/(name:*).dll>' does not define a field, constructor, or member named 'fkw'. Maybe you want one of the following:
    fwk
 == 02-group-typo-form-b (SDK 8)
-02-group-typo-form-b.fsx(15,20): error FS0039: The type 'Target<out/(cfg:*)/(fwk:*)/(name:*).dll>' does not define the field, constructor or member 'fkw'. Maybe you want one of the following:
+02-group-typo-form-b.fsx(18,20): error FS0039: The type 'Target<out/(cfg:*)/(fwk:*)/(name:*).dll>' does not define the field, constructor or member 'fkw'. Maybe you want one of the following:
    fwk
 == 03-output-label-typo (SDK 10)
-03-output-label-typo.fsx(13,54): error FS0039: The type 'Target<dll=out/(fwk:*)/(lib:*).dll,xml=out/(fwk:*)/(lib:*).xml>' does not define a field, constructor, or member named 'pdb'.
+03-output-label-typo.fsx(16,54): error FS0039: The type 'Target<dll=out/(fwk:*)/(lib:*).dll,xml=out/(fwk:*)/(lib:*).xml>' does not define a field, constructor, or member named 'pdb'.
 == 03-output-label-typo (SDK 8)
-03-output-label-typo.fsx(13,54): error FS0039: The type 'Target<dll=out/(fwk:*)/(lib:*).dll,xml=out/(fwk:*)/(lib:*).xml>' does not define the field, constructor or member 'pdb'.
+03-output-label-typo.fsx(16,54): error FS0039: The type 'Target<dll=out/(fwk:*)/(lib:*).dll,xml=out/(fwk:*)/(lib:*).xml>' does not define the field, constructor or member 'pdb'.
 == 04-output-by-extension-not-label (SDK 10)
-04-output-by-extension-not-label.fsx(14,58): error FS0039: The type 'Target<out/(fwk:*)/(lib:*).dll,out/(fwk:*)/(lib:*).xml>' does not define a field, constructor, or member named 'dll'.
+04-output-by-extension-not-label.fsx(17,58): error FS0039: The type 'Target<out/(fwk:*)/(lib:*).dll,out/(fwk:*)/(lib:*).xml>' does not define a field, constructor, or member named 'dll'.
 == 04-output-by-extension-not-label (SDK 8)
-04-output-by-extension-not-label.fsx(14,58): error FS0039: The type 'Target<out/(fwk:*)/(lib:*).dll,out/(fwk:*)/(lib:*).xml>' does not define the field, constructor or member 'dll'.
+04-output-by-extension-not-label.fsx(17,58): error FS0039: The type 'Target<out/(fwk:*)/(lib:*).dll,out/(fwk:*)/(lib:*).xml>' does not define the field, constructor or member 'dll'.
 == 05-make-missing-argument (SDK 10)
-05-make-missing-argument.fsx(13,15): error FS0496: The member or object constructor 'Make' requires 1 argument(s). The required signature is 'Target<...>.Make(fwk: string, lib: string) : Target<...>'.
+05-make-missing-argument.fsx(16,15): error FS0496: The member or object constructor 'Make' requires 1 argument(s). The required signature is 'Target<...>.Make(fwk: string, lib: string) : Target<...>'.
 == 05-make-missing-argument (SDK 8)
-05-make-missing-argument.fsx(13,15): error FS0496: The member or object constructor 'Make' requires 1 argument(s). The required signature is 'Target<...>.Make(fwk: string, lib: string) : Target<...>'.
+05-make-missing-argument.fsx(16,15): error FS0496: The member or object constructor 'Make' requires 1 argument(s). The required signature is 'Target<...>.Make(fwk: string, lib: string) : Target<...>'.
 == 06-glob-on-command (SDK 10)
-06-glob-on-command.fsx(13,20): error FS0039: The type 'Command<test::(project:*)/(slice:*)>' does not define a field, constructor, or member named 'Glob'.
+06-glob-on-command.fsx(16,20): error FS0039: The type 'Command<test::(project:*)/(slice:*)>' does not define a field, constructor, or member named 'Glob'.
 == 06-glob-on-command (SDK 8)
-06-glob-on-command.fsx(13,20): error FS0039: The type 'Command<test::(project:*)/(slice:*)>' does not define the field, constructor or member 'Glob'.
+06-glob-on-command.fsx(16,20): error FS0039: The type 'Command<test::(project:*)/(slice:*)>' does not define the field, constructor or member 'Glob'.
 == 07-matched-outside-a-rule (SDK 10)
-07-matched-outside-a-rule.fsx(15,18): error FS0072: The type of this expression could not be inferred before accessing its members. Add a type annotation, e.g. (expr: SomeType), to constrain the type before this point.
+07-matched-outside-a-rule.fsx(18,18): error FS0072: The type of this expression could not be inferred before accessing its members. Add a type annotation, e.g. (expr: SomeType), to constrain the type before this point.
 == 07-matched-outside-a-rule (SDK 8)
-07-matched-outside-a-rule.fsx(15,18): error FS0072: Lookup on object of indeterminate type based on information prior to this program point. A type annotation may be needed prior to this program point to constrain the type of the object. This may allow the lookup to be resolved.
+07-matched-outside-a-rule.fsx(18,18): error FS0072: Lookup on object of indeterminate type based on information prior to this program point. A type annotation may be needed prior to this program point to constrain the type of the object. This may allow the lookup to be resolved.
 == 08-matched-in-plain-recipe-inside-rule (SDK 10)
-08-matched-in-plain-recipe-inside-rule.fsx(14,38): error FS0041: No overloads match for method 'Bind'.
+08-matched-in-plain-recipe-inside-rule.fsx(17,38): error FS0041: No overloads match for method 'Bind'.
 Known types of arguments: Matched * ('a -> Recipe<'b,unit>)
 Available overloads:
  - member RecipeBuilder.Bind: m: Async<'a> * f: ('a -> Recipe<'b,'c>) -> Recipe<'b,'c> // Argument 'm' doesn't match
@@ -40,7 +40,7 @@ Available overloads:
  - member RecipeBuilder.Bind: rv: RequiredVar<'t> * f: ('t -> Recipe<ExecContext,'r>) -> Recipe<ExecContext,'r> // Argument 'rv' doesn't match
  - member RecipeBuilder.Bind: unit * f: (unit -> Recipe<'a,'b>) -> Recipe<'a,'b> // Argument at index 1 doesn't match
 == 08-matched-in-plain-recipe-inside-rule (SDK 8)
-08-matched-in-plain-recipe-inside-rule.fsx(14,18): error FS0041: No overloads match for method 'Bind'.
+08-matched-in-plain-recipe-inside-rule.fsx(17,18): error FS0041: No overloads match for method 'Bind'.
 Known types of arguments: Matched * ('a -> Recipe<'b,unit>)
 Available overloads:
  - member RecipeBuilder.Bind: m: Async<'a> * f: ('a -> Recipe<'b,'c>) -> Recipe<'b,'c> // Argument 'm' doesn't match
@@ -49,25 +49,25 @@ Available overloads:
  - member RecipeBuilder.Bind: rv: RequiredVar<'t> * f: ('t -> Recipe<ExecContext,'r>) -> Recipe<ExecContext,'r> // Argument 'rv' doesn't match
  - member RecipeBuilder.Bind: unit * f: (unit -> Recipe<'a,'b>) -> Recipe<'a,'b> // Argument at index 1 doesn't match
 == 09-clash-group-named-like-member (SDK 10)
-09-clash-group-named-like-member.fsx(13,12): error FS3033: The type provider 'Xake.Patterns.DesignTime.PatternProvider' reported an error: Target: the name 'Make' is taken by a member of the type (Make, Format, For, Glob, Rule, rule); rename the group or label
+09-clash-group-named-like-member.fsx(16,12): error FS3033: The type provider 'Xake.Patterns.DesignTime.PatternProvider' reported an error: Target: the name 'Make' is taken by a member of the type (Make, Format, For, Glob, Rule, rule); rename the group or label
 == 09-clash-group-named-like-member (SDK 8)
-09-clash-group-named-like-member.fsx(13,12): error FS3033: The type provider 'Xake.Patterns.DesignTime.PatternProvider' reported an error: Target: the name 'Make' is taken by a member of the type (Make, Format, For, Glob, Rule, rule); rename the group or label
+09-clash-group-named-like-member.fsx(16,12): error FS3033: The type provider 'Xake.Patterns.DesignTime.PatternProvider' reported an error: Target: the name 'Make' is taken by a member of the type (Make, Format, For, Glob, Rule, rule); rename the group or label
 == 10-clash-label-and-group (SDK 10)
-10-clash-label-and-group.fsx(13,12): error FS3033: The type provider 'Xake.Patterns.DesignTime.PatternProvider' reported an error: Target: the names ["lib"] are used twice (groups and output labels share one namespace)
+10-clash-label-and-group.fsx(16,12): error FS3033: The type provider 'Xake.Patterns.DesignTime.PatternProvider' reported an error: Target: the names ["lib"] are used twice (groups and output labels share one namespace)
 == 10-clash-label-and-group (SDK 8)
-10-clash-label-and-group.fsx(13,12): error FS3033: The type provider 'Xake.Patterns.DesignTime.PatternProvider' reported an error: Target: the names ["lib"] are used twice (groups and output labels share one namespace)
+10-clash-label-and-group.fsx(16,12): error FS3033: The type provider 'Xake.Patterns.DesignTime.PatternProvider' reported an error: Target: the names ["lib"] are used twice (groups and output labels share one namespace)
 == 11-clash-command-group-Name (SDK 10)
-11-clash-command-group-Name.fsx(13,12): error FS3033: The type provider 'Xake.Patterns.DesignTime.PatternProvider' reported an error: Command: the name 'Name' is taken by a member of the type (Make, Pattern, For, Rule, rule, Name); rename the group or label
+11-clash-command-group-Name.fsx(16,12): error FS3033: The type provider 'Xake.Patterns.DesignTime.PatternProvider' reported an error: Command: the name 'Name' is taken by a member of the type (Make, Format, For, Rule, rule, Name); rename the group or label
 == 11-clash-command-group-Name (SDK 8)
-11-clash-command-group-Name.fsx(13,12): error FS3033: The type provider 'Xake.Patterns.DesignTime.PatternProvider' reported an error: Command: the name 'Name' is taken by a member of the type (Make, Pattern, For, Rule, rule, Name); rename the group or label
+11-clash-command-group-Name.fsx(16,12): error FS3033: The type provider 'Xake.Patterns.DesignTime.PatternProvider' reported an error: Command: the name 'Name' is taken by a member of the type (Make, Format, For, Rule, rule, Name); rename the group or label
 == 12-multi-output-group-mismatch (SDK 10)
-12-multi-output-group-mismatch.fsx(13,12): error FS3033: The type provider 'Xake.Patterns.DesignTime.PatternProvider' reported an error: Target 'out/(fwk:*)/(name:*).xml': groups ["fwk"; "name"] differ from the first pattern's ["fwk"; "lib"] (missing ["lib"], extra ["name"])
+12-multi-output-group-mismatch.fsx(16,12): error FS3033: The type provider 'Xake.Patterns.DesignTime.PatternProvider' reported an error: Target 'out/(fwk:*)/(name:*).xml': groups ["fwk"; "name"] differ from the first pattern's ["fwk"; "lib"] (missing ["lib"], extra ["name"])
 == 12-multi-output-group-mismatch (SDK 8)
-12-multi-output-group-mismatch.fsx(13,12): error FS3033: The type provider 'Xake.Patterns.DesignTime.PatternProvider' reported an error: Target 'out/(fwk:*)/(name:*).xml': groups ["fwk"; "name"] differ from the first pattern's ["fwk"; "lib"] (missing ["lib"], extra ["name"])
+12-multi-output-group-mismatch.fsx(16,12): error FS3033: The type provider 'Xake.Patterns.DesignTime.PatternProvider' reported an error: Target 'out/(fwk:*)/(name:*).xml': groups ["fwk"; "name"] differ from the first pattern's ["fwk"; "lib"] (missing ["lib"], extra ["name"])
 == 13-no-group-command-given-a-match (SDK 10)
 == 13-no-group-command-given-a-match (SDK 8)
 == 14-no-group-command-form-b-matched (SDK 10)
-14-no-group-command-form-b-matched.fsx(15,5): error FS0041: No overloads match for method 'Bind'.
+14-no-group-command-form-b-matched.fsx(18,5): error FS0041: No overloads match for method 'Bind'.
 Known types of arguments: Matched * ('a -> Recipe<'b,unit>)
 Available overloads:
  - member RecipeBuilder.Bind: m: Async<'a> * f: ('a -> Recipe<'b,'c>) -> Recipe<'b,'c> // Argument 'm' doesn't match
@@ -76,7 +76,7 @@ Available overloads:
  - member RecipeBuilder.Bind: rv: RequiredVar<'t> * f: ('t -> Recipe<ExecContext,'r>) -> Recipe<ExecContext,'r> // Argument 'rv' doesn't match
  - member RecipeBuilder.Bind: unit * f: (unit -> Recipe<'a,'b>) -> Recipe<'a,'b> // Argument at index 1 doesn't match
 == 14-no-group-command-form-b-matched (SDK 8)
-14-no-group-command-form-b-matched.fsx(14,5): error FS0041: No overloads match for method 'Bind'.
+14-no-group-command-form-b-matched.fsx(17,5): error FS0041: No overloads match for method 'Bind'.
 Known types of arguments: Matched * ('a -> Recipe<'b,unit>)
 Available overloads:
  - member RecipeBuilder.Bind: m: Async<'a> * f: ('a -> Recipe<'b,'c>) -> Recipe<'b,'c> // Argument 'm' doesn't match
@@ -85,20 +85,18 @@ Available overloads:
  - member RecipeBuilder.Bind: rv: RequiredVar<'t> * f: ('t -> Recipe<ExecContext,'r>) -> Recipe<ExecContext,'r> // Argument 'rv' doesn't match
  - member RecipeBuilder.Bind: unit * f: (unit -> Recipe<'a,'b>) -> Recipe<'a,'b> // Argument at index 1 doesn't match
 == 15-pattern-member-on-target (SDK 10)
-15-pattern-member-on-target.fsx(13,19): error FS0039: The type 'Target<out/(cfg:*)/(fwk:*)/(name:*).dll>' does not define a field, constructor, or member named 'Pattern'.
+15-pattern-member-on-target.fsx(16,19): error FS0039: The type 'Target<out/(cfg:*)/(fwk:*)/(name:*).dll>' does not define a field, constructor, or member named 'Pattern'.
 == 15-pattern-member-on-target (SDK 8)
-15-pattern-member-on-target.fsx(13,19): error FS0039: The type 'Target<out/(cfg:*)/(fwk:*)/(name:*).dll>' does not define the field, constructor or member 'Pattern'.
-== 16-format-member-on-command (SDK 10)
-16-format-member-on-command.fsx(13,20): error FS0039: The type 'Command<test::(project:*)/(slice:*)>' does not define a field, constructor, or member named 'Format'. Maybe you want one of the following:
-   For
-== 16-format-member-on-command (SDK 8)
-16-format-member-on-command.fsx(13,20): error FS0039: The type 'Command<test::(project:*)/(slice:*)>' does not define the field, constructor or member 'Format'. Maybe you want one of the following:
-   For
+15-pattern-member-on-target.fsx(16,19): error FS0039: The type 'Target<out/(cfg:*)/(fwk:*)/(name:*).dll>' does not define the field, constructor or member 'Pattern'.
+== 16-format-member-on-command-now-valid (SDK 10)
+test::a/1
+== 16-format-member-on-command-now-valid (SDK 8)
+test::a/1
 == 17-run-time-value-not-matching-back (SDK 10)
 System.Exception: Pattern 'test::(project:*)/(slice:*)': [("project", "a/b"); ("slice", "1")] do not give a name the pattern matches back (got 'test::a/b/1')
    at Microsoft.FSharp.Core.PrintfModule.PrintFormatToStringThenFail@1447.Invoke(String message)
    at Xake.Patterns.PatternRuntime.make(String[] patterns, String[] keys, String[] values)
-   at <StartupCode$FSI_0001>.$FSI_0001.main@() in 17-run-time-value-not-matching-back.fsx:line 13
+   at <StartupCode$FSI_0001>.$FSI_0001.main@() in 17-run-time-value-not-matching-back.fsx:line 16
    at System.Reflection.MethodBaseInvoker.InterpretedInvoke_Method(Object obj, IntPtr* args)
    at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)
 Stopped due to error
@@ -106,7 +104,7 @@ Stopped due to error
 System.Exception: Pattern 'test::(project:*)/(slice:*)': [("project", "a/b"); ("slice", "1")] do not give a name the pattern matches back (got 'test::a/b/1')
    at Microsoft.FSharp.Core.PrintfModule.PrintFormatToStringThenFail@1448.Invoke(String message)
    at Xake.Patterns.PatternRuntime.make(String[] patterns, String[] keys, String[] values)
-   at <StartupCode$FSI_0001>.$FSI_0001.main@() in 17-run-time-value-not-matching-back.fsx:line 13
+   at <StartupCode$FSI_0001>.$FSI_0001.main@() in 17-run-time-value-not-matching-back.fsx:line 16
    at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)
    at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)
 Stopped due to error

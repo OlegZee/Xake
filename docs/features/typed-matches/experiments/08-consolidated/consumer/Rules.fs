@@ -42,7 +42,7 @@ let common = [
     "main" <== [ "build"; "test"; "docs::Xake" ]
     // the `binaries` helper of build.fsx, from the pattern: every output for every framework
     "build" <== [ for lib in libraries do yield! Lib.For(fwk = frameworks, lib = [ lib.Name ]) ]
-    "test" <== [ for project, slice in testJobs -> Test.Pattern(project = project, slice = slice) ]
+    "test" <== [ for project, slice in testJobs -> Test.Format(project = project, slice = slice) ]
     // a phony rule WITH a dependency: `=>` reruns only when the dependency changes (a phony rule
     // with no dependency at all reruns every time anyway, `=>` or not -- see clean/clean-string)
     "docs::(project:*)" => recipe {
@@ -76,7 +76,7 @@ let rulesD (root: string) = common @ [
         say "test-build %s" m.project
     }
     Test.Rule <| fun m -> recipe {
-        do! need [ TestBuild.Pattern(project = m.project) ]
+        do! need [ TestBuild.Format(project = m.project) ]
         say "test %s slice %s (%s)" m.project m.slice m.Name
     }
     Clean.Rule <| fun () -> recipe {
@@ -114,7 +114,7 @@ let rulesB (root: string) = common @ [
     }
     Test.rule {
         let! m = matched
-        do! need [ TestBuild.Pattern(project = m.project) ]
+        do! need [ TestBuild.Format(project = m.project) ]
         say "test %s slice %s (%s)" m.project m.slice m.Name
     }
     Clean.rule {
@@ -134,9 +134,9 @@ let private opts root targets reset =
 /// twice each. Every rule says when it runs, so what the engine reruns is visible.
 let scenario (form: string) (rules: string -> ExecContext Rule list) =
     let baseDir =
-        match System.Environment.GetEnvironmentVariable "CLAUDE_JOB_DIR" with
+        match System.Environment.GetEnvironmentVariable "XAKE_EXP_DIR" with
         | null | "" -> Path.GetTempPath()
-        | d -> Path.Combine(d, "tmp")
+        | d -> d
     let root = Path.Combine(baseDir, "xake-08-" + form)
     if Directory.Exists root then Directory.Delete(root, true)
     write root "src/core/Path.fs" "core-a;"

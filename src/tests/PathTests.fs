@@ -15,8 +15,11 @@ open NUnit.Framework
 [<TestCase("c:\\a.c", "C:\\A.c",  ExpectedResult = true)>]
 [<TestCase("c:\\*.c", "d:\\a.c",  ExpectedResult = false)>]
 [<TestCase("c:\\*.c", "c:\\a.c",  ExpectedResult = true)>]
-[<TestCase("c:\\[(]*[)].c", "c:\\(a).c",  ExpectedResult = true, Description = "We are are not smart enough yet, so want brackets escated")>]
-[<TestCase("c:\\[(]*.c", "c:\\(a.c",  ExpectedResult = true)>]
+// literal ( ) [ ] match themselves (they used to be a regex group / character class)
+[<TestCase("c:\\(*).c", "c:\\(a).c",  ExpectedResult = true)>]
+[<TestCase("c:\\(*.c", "c:\\(a.c",  ExpectedResult = true)>]
+[<TestCase("c:\\[x]*.c", "c:\\[x]a.c",  ExpectedResult = true)>]
+[<TestCase("c:\\[x]*.c", "c:\\xa.c",  ExpectedResult = false)>]
 
 [<TestCase("c:\\abc\\*.c", "c:\\a.c",           ExpectedResult = false)>]
 [<TestCase("c:\\abc\\*.c", "c:\\def\\a.c",      ExpectedResult = false)>]

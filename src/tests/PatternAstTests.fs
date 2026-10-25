@@ -37,8 +37,9 @@ type PatternAstTests() =
         (pattern.Length - structural - 2*dstar - star - q), -dstar, -(2*star + q)
 
     // Patterns (all with balanced groups) exercising literals, each wildcard, named groups,
-    // metacharacters that are escaped, brackets that are deliberately *not* escaped, a literal
-    // '(' that is not a group opener, roots, drive letters, spaces and run-together wildcards.
+    // metacharacters that are escaped, brackets (escaped since literal `( ) [ ] |` match themselves,
+    // so excluded from the golden comparison), a literal '(' that is not a group opener, roots,
+    // drive letters, spaces and run-together wildcards.
     static let corpus =
         [ "out/(cfg:*)/(fwk:*)/(name:*).dll"
           "out/(b:*)/obf/(fwk:*)/(asm:*).dll"
@@ -46,7 +47,7 @@ type PatternAstTests() =
           "**/*.cs"; "src/**/bin/*.o"
           "(root:*/*-a).ss"
           "x.y+z!=w{1}$^"            // escaped metacharacters . + ! = { } $ ^
-          "lib[x].dll"               // brackets pass through unescaped
+          "lib[x].dll"               // brackets are literal (escaped)
           "fun(ction).o"             // '(' not followed by name ':' is a literal
           "C:/Program Files/a b/(n:*).dll"
           "clean::(b:*)::(cfg:*)"
@@ -54,7 +55,9 @@ type PatternAstTests() =
 
     [<Test>]
     member _.``AST regex matches the former substitution byte for byte``() =
-        for p in corpus do
+        // Literal ( ) [ ] are escaped now (they used to reach the regex as a group / a character
+        // class); every other pattern keeps its former regex byte for byte.
+        for p in corpus |> List.filter (fun p -> p <> "lib[x].dll" && p <> "fun(ction).o") do
             Assert.AreEqual(oldRegex p, (Path.matchImpl.maskToRegex p).ToString(), sprintf "regex for '%s'" p)
 
     [<Test>]
@@ -66,6 +69,28 @@ type PatternAstTests() =
         // is a harmless, more-correct divergence rather than a behavior change.
         for p in corpus |> List.filter ((<>) "fun(ction).o") do
             Assert.AreEqual(oldSpecificity p, Path.specificity p, sprintf "specificity for '%s'" p)
+
+    [<Test>]
+    member _.``literal parentheses and brackets are escaped``() =
+        Assert.AreEqual(@"^lib\[x\]\.dll$", (Path.matchImpl.maskToRegex "lib[x].dll").ToString())
+        Assert.AreEqual(@"^fun\(ction\)\.o$", (Path.matchImpl.maskToRegex "fun(ction).o").ToString())
+        // matched literally: "(x)" is no longer a group, so "litx/a.txt" does not match and the
+        // wildcard is "1" again
+        Assert.AreEqual(None, Path.matchGroups "lit(x)/*.txt" "" "litx/a.txt")
+        let groups = Path.matchGroups "lit(x)/*.txt" "" "lit(x)/a.txt" |> Option.map Map.ofList
+        Assert.AreEqual(Some "a", groups |> Option.bind (Map.tryFind "1"))
+        Assert.IsTrue((Path.matchGroups "lib[x].dll" "" "lib[x].dll").IsSome)
+        Assert.IsTrue((Path.matchGroups "lib[x].dll" "" "libx.dll").IsNone)
+
+    [<Test>]
+    member _.``a literal pipe is not an alternation``() =
+        Assert.AreEqual(@"^a\|b\.txt$", (Path.matchImpl.maskToRegex "a|b.txt").ToString())
+        // as an alternation, "^a|b\.txt$" took any name starting with "a" or ending in "b.txt"
+        for name, expected in [ "a|b.txt", true; "a.txt", false; "ab.txt", false; "xb.txt", false ] do
+            Assert.AreEqual(expected, (Path.matchGroups "a|b.txt" "" name).IsSome, name)
+        let groups = Path.matchGroups "out/(n:*)|(m:*).txt" "" "out/x|y.txt" |> Option.get |> Map.ofList
+        Assert.AreEqual(("x", "y"), (groups.["n"], groups.["m"]))
+        Assert.AreEqual("out/x|y.txt", PatternAst.formatMatches groups "out/(n:*)|(m:*).txt")
 
     [<Test>]
     member _.``a pattern made only of literals formats to itself``() =

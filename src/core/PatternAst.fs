@@ -17,7 +17,7 @@ type Specificity = int * int * int
 
 /// A pattern token. A named group spans to its closing ')'; a nested opener parses as a nested `Group`.
 type Token =
-    /// Literal text.
+    /// Literal text, matched as is (regex metacharacters included).
     | Lit of string
     /// `*`  — a run of non-separator characters.
     | Star
@@ -75,9 +75,11 @@ let parse (pattern: string) : Token list =
 let private starRx  = """([^/\\]*)"""
 let private anyRx   = """([^/\\])"""
 let private dstarRx = "(.*)"
-// The former substitution escaped only these metacharacters; '[' and ']' are deliberately
-// absent, so they pass through unescaped exactly as before (no behavior change).
-let private metachars = Regex(@"[.$^+!={}]", RegexOptions.Compiled)
+// Literal text is matched literally: every regex metacharacter a path can hold is escaped,
+// parentheses, brackets and '|' included, so a literal "(x)", "[x]" or "a|b" (in a pattern or in
+// the project root a pattern is joined to) is neither a capture group, a character class nor an
+// alternation.
+let private metachars = Regex(@"[.$^+!={}()\[\]|]", RegexOptions.Compiled)
 let private escapeLiteral (s: string) = metachars.Replace(s, @"\$0")
 
 /// The inner (unanchored) regex for a token list. Every wildcard is an unnamed capture group, so

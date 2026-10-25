@@ -285,7 +285,9 @@ type ``XakeScript tests``() =
     [<TestCase("subd1/x86-a.ss", "(dir:*)/(plat:*)-a.ss", "dir:subd1;plat:x86", TestName="groups in various parts")>]
     [<TestCase("subd1/x86-a.ss", "(root:*/*-a).ss", "root:subd1/x86-a", TestName="group across parts")>]
     [<TestCase("x86-a.ss", "(name:(plat:*)-a.ss)", "plat:x86;name:x86-a.ss", TestName="Nested groups")>]
-    [<TestCase("(abc.ss", @"(name:[(]*).ss", "name:(abc", TestName="Escaped brackets")>]
+    // literal ( ) [ ] | are matched literally now; `[(]` was a regex character class before
+    [<TestCase("(abc.ss", @"(name:(*).ss", "name:(abc", TestName="Escaped brackets")>]
+    [<TestCase("[x](abc).ss", @"[x]((name:*)).ss", "name:abc", TestName="Literal brackets and parens")>]
     member x.``matching groups in rule name``(tgt,mask,expect:string) =
 
         let mutable map = Map.empty
@@ -312,6 +314,7 @@ type ``XakeScript tests``() =
     [<TestCase("dd/a.dll", "(pat:**/*).dll;(pat:**/*)/main.xml", "dd/a.dll;dd/a/main.xml", TestName="Masks")>]
     [<TestCase("src/a/b/x1.pdb", "src/**/x?.dll;src/**/x?.pdb", "src/a/b/x1.dll;src/a/b/x1.pdb", TestName="Positional ** and ?")>]
     [<TestCase("version.json", "version.txt;version.json", "version.txt;version.json", TestName="Literal-only masks")>]
+    [<TestCase("out/(lit)/x.xml", "out/(lit)/(n:*).dll;out/(lit)/(n:*).xml", "out/(lit)/x.dll;out/(lit)/x.xml", TestName="Literal parens in masks")>]
     // the former applyWildcards left "(lib:)" for an empty value and cut a group at a ')' in a value
     [<TestCase("out/a/.xml", "out/(fwk:*)/(lib:*).dll;out/(fwk:*)/(lib:*).xml", "out/a/.dll;out/a/.xml", TestName="Empty group value")>]
     [<TestCase("out/a)b/c.xml", "out/(fwk:*)/(lib:*).dll;out/(fwk:*)/(lib:*).xml", "out/a)b/c.dll;out/a)b/c.xml", TestName="Paren in a group value")>]
@@ -342,7 +345,8 @@ type ``XakeScript tests``() =
 
     [<TestCase("x86-a.ss", "(plat:*)-a.ss", "plat", ExpectedResult = "x86", TestName="Simple case")>]
     [<TestCase("subd1/x86-a.ss", "*/(plat:*)-a.ss", "plat", ExpectedResult = "x86", TestName="groups in various parts")>]
-    [<TestCase("(abc.ss", @"[(]*.ss", "plat", ExpectedResult = "", TestName="Escaped brackets")>]
+    [<TestCase("(abc.ss", @"(*.ss", "plat", ExpectedResult = "", TestName="Escaped brackets")>]
+    [<TestCase("(abc.ss", @"(*.ss", "1", ExpectedResult = "abc", TestName="Literal paren before a wildcard")>]
     [<TestCase("filename.ss", "*.ss", "1", ExpectedResult = "filename", TestName="Match wildcards")>]
     member x.``getRuleMatch() matches part``(tgt,mask,tag) =
 

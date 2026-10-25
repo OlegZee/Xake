@@ -20,7 +20,9 @@ module RuleBuilder =
                 do! setResult { result with Depends = depends }
               })
             | "target"  -> FileRule (name, expr)
-            | "targets" -> MultiFileRule (patterns.Value, expr)
+            | "targets" ->
+                PatternAst.checkSameGroups ("targets " + PatternAst.showPatterns patterns.Value) patterns.Value
+                MultiFileRule (patterns.Value, expr)
             | _ -> failwith "Invalid rule type"
 
     let command name = RuleBuilder("command", name)

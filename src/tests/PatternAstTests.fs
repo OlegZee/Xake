@@ -156,3 +156,16 @@ type PatternAstTests() =
         let toks = PatternAst.parse @"\(x\)/\[y\]\|*/(n:*)-?.txt"
         Assert.AreEqual(@"\(x\)/\[y\]\|*/core-?.txt", PatternAst.glob (Map.ofList [ "n", "core" ]).TryFind (fun _ -> None) toks)
         Assert.AreEqual(@"\(x\)/\[y\]\|a/*-\{7\}.txt", PatternAst.glob (fun _ -> None) (function 1 -> Some "a" | _ -> Some "{7}") toks)
+
+    [<Test>]
+    member _.``an unclosed group is reported as an issue, not as a warning``() =
+        let _, issues = PatternAst.parseWithIssues "out/(cfg:*)/(fwk:*/(name:*).dll"
+        Assert.AreEqual([ PatternAst.UnclosedGroup "fwk" ], issues)
+        Assert.AreEqual(None, PatternAst.warningText "out/(fwk:*" issues)
+        Assert.AreEqual(([]: PatternAst.Issue list), PatternAst.parseWithIssues "out/(fwk:*)/(lib:*).dll" |> snd)
+
+    [<Test>]
+    member _.``a PatternException prints as its message``() =
+        let e = PatternAst.PatternException "Invalid pattern 'x'"
+        Assert.AreEqual("Invalid pattern 'x'", e.ToString())
+        Assert.AreEqual("Invalid pattern 'x'", e.Message)

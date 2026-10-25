@@ -343,6 +343,28 @@ type ``XakeScript tests``() =
 
         Assert.That(relFileNames, expect.Split(';') |> Is.EquivalentTo)
 
+    /// The message of the PatternException `f` raises.
+    member private _.PatternError(f: unit -> obj) =
+        try
+            f () |> ignore
+            Assert.Fail "expected a PatternException"; ""
+        with PatternAst.PatternException message -> message
+
+    [<Test>]
+    member x.``a string multi-file rule checks its groups when created``() =
+        let m = x.PatternError (fun () -> box ([ "out/(fwk:*)/(lib:*).dll"; "out/(fwk:*)/(name:*).xml" ] *..> recipe { () } : ExecContext Rule))
+        Assert.That(m, Does.StartWith "Multi-file rule \"out/(fwk:*)/(lib:*).dll\", \"out/(fwk:*)/(name:*).xml\": output \"out/(fwk:*)/(name:*).xml\" has groups [fwk; name], the first output [fwk; lib] (missing [lib], extra [name])")
+
+    [<Test>]
+    member x.``a string targets rule checks its groups when created``() =
+        let m = x.PatternError (fun () -> box (targets [ "out/(fwk:*)/(lib:*).dll"; "out/(fwk:*)/(lib:*)/(name:*).xml" ] { () }))
+        Assert.That(m, Does.StartWith "targets \"out/(fwk:*)/(lib:*).dll\", \"out/(fwk:*)/(lib:*)/(name:*).xml\": output \"out/(fwk:*)/(lib:*)/(name:*).xml\" has groups [fwk; lib; name], the first output [fwk; lib] (extra [name])")
+
+    [<Test>]
+    member _.``string multi-file rules with the same groups in any order are fine``() =
+        let r : ExecContext Rule = [ "out/(fwk:*)/(lib:*).dll"; "doc/(lib:*)/(fwk:*).xml" ] *..> recipe { () }
+        Assert.That(r, Is.Not.Null)
+
     [<TestCase("x86-a.ss", "(plat:*)-a.ss", "plat", ExpectedResult = "x86", TestName="Simple case")>]
     [<TestCase("subd1/x86-a.ss", "*/(plat:*)-a.ss", "plat", ExpectedResult = "x86", TestName="groups in various parts")>]
     [<TestCase("(abc.ss", @"[(]*.ss", "plat", ExpectedResult = "", TestName="Escaped brackets")>]

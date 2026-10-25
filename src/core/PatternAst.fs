@@ -49,6 +49,9 @@ type Issue =
     | BackslashSeparator
     /// Named groups (their names) in a fileset mask, where they are not groups (see `Warnings.checkMask`).
     | NamedGroupInMask of string list
+    /// A named group (its name) whose closing ')' is missing: it runs to the end of the pattern.
+    /// Not a warning for rule patterns; typed patterns (`Xake.Typed`) reject it.
+    | UnclosedGroup of string
 
 /// The characters reserved for future pattern elements.
 let reservedChars = "()[]{}|"
@@ -95,7 +98,10 @@ let rec private parseAt (s: string) (issues: ResizeArray<Issue>) (inGroup: bool)
                 let name = s.Substring(i + 1, j - (i + 1))
                 let inner, next = parseAt s issues true (j + 1)
                 tokens.Add(Group(name, inner))
-                i <- if next < s.Length && s.[next] = ')' then next + 1 else next
+                if next < s.Length && s.[next] = ')' then i <- next + 1
+                else
+                    issue (UnclosedGroup name)
+                    i <- next
             else
                 issue (ReservedChar c)
                 flush (); tokens.Add(Reserved c); i <- i + 1
@@ -152,9 +158,14 @@ let warningText (pattern: string) (issues: Issue list) : string option =
     | [] -> None
     | _ -> Some (sprintf "warning: pattern '%s': %s." pattern (String.concat "; " parts))
 
-/// An invalid pattern (an unbalanced reserved `(`, `)` or `[`): the message names the pattern.
+/// An invalid pattern (an unbalanced reserved `(`, `)` or `[`), a multi-file rule whose outputs
+/// disagree on their groups, or a typed pattern (`Xake.Typed`) that disagrees with its record. The
+/// message names the pattern; `ToString()` is the message alone, so a script that fails at start
+/// with it shows the message without a stack trace.
 exception PatternException of string
-    with override this.Message = match this :> exn with PatternException m -> m | _ -> "invalid pattern"
+    with
+        override this.Message = match this :> exn with PatternException m -> m | _ -> "invalid pattern"
+        override this.ToString() = this.Message
 
 // Regex fragments. Triple-quoted so the `\\` reaches the regex as a literal backslash inside the
 // character class.
@@ -226,6 +237,30 @@ let rec plainText (tokens: Token list) : string =
 let groupNames (tokens: Token list) : string list =
     let rec go toks = toks |> List.collect (function Group (n, inner) -> n :: go inner | _ -> [])
     go tokens |> List.distinct
+
+/// Names as a message shows them: `[cfg; fwk]`.
+let internal showNames (names: string list) = "[" + String.concat "; " names + "]"
+
+/// Patterns as a message shows them: `"a", "b"`.
+let internal showPatterns (patterns: string list) = patterns |> List.map (sprintf "\"%s\"") |> String.concat ", "
+
+/// Checks that every output of a multi-file rule has the same named groups as the first one: the
+/// other outputs are named from the groups of the one that matched (`formatMatches`), so a group
+/// missing from it would silently give "". Raises PatternException, prefixed with `owner`.
+let internal checkSameGroups (owner: string) (patterns: string list) =
+    match patterns with
+    | [] | [ _ ] -> ()
+    | first :: rest ->
+        let groups = groupNames (parse first)
+        for p in rest do
+            let g = groupNames (parse p)
+            if Set.ofList g <> Set.ofList groups then
+                let parts =
+                    [ match List.except g groups with [] -> () | m -> yield "missing " + showNames m
+                      match List.except groups g with [] -> () | e -> yield "extra " + showNames e ]
+                raise (PatternException (
+                        sprintf "%s: output \"%s\" has groups %s, the first output %s (%s); every output needs the same named groups, or the others cannot be named from a match"
+                            owner p (showNames g) (showNames groups) (String.concat ", " parts)))
 
 /// Top-level bare wildcards (a wildcard inside a named group belongs to the group), in order, each
 /// with the regex group number it is captured under -- the key `getRuleMatches` holds it under.

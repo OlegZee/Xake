@@ -20,5 +20,6 @@
 - [x] Decide: CE form and names (5 questions, ce-syntax.md); record separate dll in brief
 - [ ] Decide: phony type name/semantics (5 questions, phony-types.md) and AST-reuse questions (ast-reuse.md)
 - [ ] Check IDE support (Ionide/Rider), a net462 consumer, a compiled project consuming the nupkg
-- [ ] Separate, found by reading: `ExecCore.applyWildcards` edge bugs (empty group value, `)` in a value); literal `(` in patterns/project root
+- [x] PR1 `feature/pattern-ast-format`: public `PatternAst` (format/glob/positional wildcards), `formatMatches` replaces `applyWildcards`, literal `( ) [ ] |` escaped — committed locally, PR to `feature/typed-matches` pending
+- [x] Separate, found by reading: `ExecCore.applyWildcards` edge bugs (empty group value, `)` in a value); literal `(` in patterns/project root
 - [ ] Separate task, not this branch: explicit outputs (roadmap "Rules with arguments")

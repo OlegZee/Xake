@@ -169,10 +169,14 @@ After experiments 06 and 07 (`ce-syntax.md`).
 54. **Bugs fixed outright:** the project root is escaped in the matching regex (a root with
     `(`/`[`/`|` today mismatches or crashes); a lone `(`/`)`/`[` gives a clear error instead of
     `RegexParseException`.
-55. *(pending the user's confirmation)* **Escape syntax: `\` before a reserved character**
-    (`\(`, `\{`, `\|`, …); elsewhere `\` stays a path separator as today. F# string literals keep
-    `\(` etc. unchanged (checked in fsi). `[c]` stays accepted for compatibility with a warning
-    suggesting `\c`.
+55. **`\` is the escape character.** In this release `\` before a reserved character escapes
+    it (`\(`, `\{`, `\|`, …) — a Windows-style pattern like `src\(x)\*.cs` breaks on purpose.
+    F# string literals keep `\(` etc. unchanged (checked in fsi). `[c]` stays accepted for
+    compatibility with a warning suggesting `\c`.
+56. **`\` as a path separator in user-written patterns/masks is deprecated now:** it still works
+    in this release but warns (once per pattern) "use `/`"; a later major makes `\` an escape
+    only. Paths read from disk keep being normalized. Patterns built with `</>`/`Path.Combine`
+    on Windows must not trigger the warning (make Xake's own path joining produce `/` if needed).
 
 25. **No `Need` and no `TryMatch` members** on `Pattern<>` or `Command<>`
     (`need [ X.Make(...) ]` stays the way to require targets).

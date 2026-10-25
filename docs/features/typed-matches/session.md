@@ -75,7 +75,17 @@ implementation. Nothing under `src/` changes on this branch until a decision is 
 - `experiments/08-consolidated/consumer/showcase.fsx` has uncommitted edits by the user (form
   `Lib.Rule (fun m -> …)`, `Clean.rule {…}`) — leave them to the user.
 
+- 2026-10-25: brief round 7 (decisions 33–38); `plan.md` written: PR0 this branch (docs),
+  PR1 pattern-ast-format, PR2 script-surface-names (Level qualified, DU Target → BuildTarget),
+  PR3 typed-targets (Xake.Typed), PR4 docs → release 3.12.0, PR5 hermetic on 3.12, PR6 dogfood,
+  PR7 patterns-provider package.
+
 ## Next step
+
+Get the user's answers on the open items at the end of `plan.md`, record them in `brief.md`,
+then write the kickoff file for the implementation session and restart.
+
+## Older next step
 
 Discuss with the user `core-without-tp.md`'s open questions (shared short names vs distinct;
 `[<RequireQualifiedAccess>]` on `Level`; TP erasing onto Core's runtime; cross-product `For`;

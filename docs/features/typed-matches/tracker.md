@@ -13,7 +13,11 @@
 - [x] How the provider reuses `PatternAst` — ast-reuse.md, experiments/05 (nupkg layout proven)
 - [x] Separate runtime dll `Xake.Patterns.dll` carries the TP attribute — experiments/06, H1–H5 pass
 - [x] CE-based rule syntax: forms A/B/D compile, C dropped — ce-syntax.md, experiments/07
-- [ ] Decide: CE form and names (5 questions, ce-syntax.md); record separate dll in brief
+- [x] Experiments 08 (consolidated TP), 09 (destructuring), 10 (core without TP); brief rounds 5–7
+- [x] Implementation plan — plan.md (PR0–PR7)
+- [ ] User decisions on plan.md open items (BuildTarget, Level shim, 3.12 vs 4.0, phony → Command<>, typecheck tests, provider in build.fsc.fsx)
+- [ ] Kickoff file + restart for implementation
+- [x] Decide: CE form and names (5 questions, ce-syntax.md); record separate dll in brief
 - [ ] Decide: phony type name/semantics (5 questions, phony-types.md) and AST-reuse questions (ast-reuse.md)
 - [ ] Check IDE support (Ionide/Rider), a net462 consumer, a compiled project consuming the nupkg
 - [ ] Separate, found by reading: `ExecCore.applyWildcards` edge bugs (empty group value, `)` in a value); literal `(` in patterns/project root

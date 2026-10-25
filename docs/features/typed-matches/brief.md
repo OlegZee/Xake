@@ -176,7 +176,11 @@ After experiments 06 and 07 (`ce-syntax.md`).
 56. **`\` as a path separator in user-written patterns/masks is deprecated now:** it still works
     in this release but warns (once per pattern) "use `/`"; a later major makes `\` an escape
     only. Paths read from disk keep being normalized. Patterns built with `</>`/`Path.Combine`
-    on Windows must not trigger the warning (make Xake's own path joining produce `/` if needed).
+    on Windows must not trigger the warning (make Xake's own path joining produce `/` if needed). *The last sentence is superseded by 57.*
+57. **`</>` joins real system paths, not patterns; it stays OS-dependent and is not changed.** In
+    patterns (rule patterns, fileset masks) `/` is used always and unconditionally; `\` in a pattern
+    is the escape (55), and as a separator only warns (56). System paths are left as they are.
+    Supersedes the last sentence of decision 56 (making Xake's path joining produce `/`).
 
 25. **No `Need` and no `TryMatch` members** on `Pattern<>` or `Command<>`
     (`need [ X.Make(...) ]` stays the way to require targets).

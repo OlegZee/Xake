@@ -66,6 +66,12 @@ type ``Testing Copy task``() =
         assertTrue <| File.Exists ("cptgt" </> "cpin" </> "a" </> "samplefile")
 
     [<Test>]
+    member x.``directory contents mask is built with a forward slash``() =
+        Assert.That (Xake.Tasks.CpImpl.impl.dirContentsMask "cpin", Is.EqualTo "cpin/**/*.*")
+        Assert.That (Xake.Tasks.CpImpl.impl.dirContentsMask "cpin/sub/", Is.EqualTo "cpin/sub/**/*.*")
+        Assert.That (Xake.Tasks.CpImpl.impl.dirContentsMask "cpin\\", Is.EqualTo "cpin/**/*.*")
+
+    [<Test>]
     member x.``copies fileset NO flatten``() =
         ["cptgt"; "cpin"] |> List.iter (fun d -> if Directory.Exists d then Directory.Delete (d, true))
 

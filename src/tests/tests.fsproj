@@ -18,6 +18,7 @@
     <Compile Include="ScriptErrorTests.fs" />
     <Compile Include="TypedTargetsTests.fs" />
     <Compile Include="TypedRulesTests.fs" />
+    <Compile Include="TypedCompileTests.fs" />
     
     <Compile Include="XakeScriptTests.fs" />
     <Compile Include="StaleArtifactDepTests.fs" />

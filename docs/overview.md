@@ -133,6 +133,76 @@ The legacy switch and diagnostics:
 - `-d EXPLAIN_RULE=<target>` prints every rule that matches that target, with its specificity
   `{lit, **, wc}` and the winner marked — useful when a rule fires unexpectedly.
 
+## Patterns, masks and paths
+
+A script holds three kinds of path strings, parsed differently:
+
+| Kind | Where | Parsed as |
+|---|---|---|
+| rule pattern | `"out/(name:*).o" ..> ...`, `target "..."` | the whole target path is matched at once |
+| fileset mask | `!!`, `ls`, `fileset { includes; excludes }`, `++`, `--` | one path segment at a time |
+| local path | `BaseDir`, `@@`, `ProjectRoot`, file names read from disk, `</>` | a plain OS path |
+
+**Rule patterns** match the full target path. `*` is a run of characters within a segment, `?` one
+character, `**` anything including `/`. `(name:...)` captures what its body matches
+(`getRuleMatch "name"`); bare wildcards are captured by position (`"1"`, `"2"`, ... left to right).
+The project root is joined in front of a relative pattern as a literal: a root like
+`/work/x(1)` needs no escaping.
+
+**Fileset masks** are split at `/` and resolved segment by segment from the base directory. An
+include hands a wildcard segment to the OS directory listing, which knows only `*` and `?`; a
+segment without a wildcard is an explicit name (listed even if the file is absent). An exclude
+compares the segments of each found file with the mask. Masks have **no named groups**.
+
+**Local paths** are not patterns: no escapes, no warnings, either separator. `</>` is
+`Path.Combine`: it joins real paths with the OS separator, so do not build patterns or masks
+with it.
+
+**Always write `/`** in patterns and masks, on every OS.
+
+### Reserved characters and the `\` escape
+
+`( ) [ ] { } |` are reserved for future pattern elements (apart from `(name:...)` itself). To
+match one literally, put `\` before it. F# keeps `\[` as written in `"..."`, `@"..."` and
+`"""..."""` alike.
+
+```fsharp
+!! @"src/a\[test.c"                 // the file a[test.c (not atest.c)
+!! @"**/odd\{dir\}/*.c"             // .c files in any directory named odd{dir}
+!! "*.c" -- @"*\(*\).c"             // all .c files except names like d(2).c
+@"out/a\[(name:*).c" ..> recipe { ... }   // builds out/a[x.c with name = "x"
+```
+
+`[c]` (a one-character class) is still read as the literal `c` for compatibility, with a
+warning: `lib[x].dll` means `libx.dll`, and `sub[1]` means `sub1` -- write `sub\[1\]` for a
+directory named `sub[1]`.
+
+### Deprecations
+
+Each is reported once per pattern in the build log ("warning: pattern '...': ...") and will be
+an error in a future major release:
+
+- an unescaped reserved character. In this release it keeps its former meaning: in a rule
+  pattern `( ) [ ] |` are regex syntax (`{ }` are literal); in a mask they are literal, except
+  in an exclude segment with a wildcard, where `( ) [ ] |` are regex syntax as in rules;
+- `[c]` instead of `\c`;
+- `\` as a path separator (`src\*.cs`): use `/`. A `\` before a reserved character is an escape,
+  so `src\(x)\*.cs` now means the directory `src(x)`;
+- a named group in a mask: an include reads it as literal text (finds nothing), an exclude
+  segment with a wildcard matches the group's body. Write `\( \)` for literal parentheses.
+
+### From a rule pattern to a mask
+
+`PatternAst.glob` turns a rule pattern into a mask for the values you know: bound groups and
+wildcards become their (escaped) values, the rest stay wildcards.
+
+```fsharp
+let tokens = PatternAst.parse "src/(lib:*)/(name:*).cs"
+let mask = tokens |> PatternAst.glob (function "lib" -> Some "core" | _ -> None) (fun _ -> None)
+// "src/core/*.cs"
+let files = !! mask
+```
+
 ## Useful links
 
 - Wiki home: https://github.com/OlegZee/Xake/wiki

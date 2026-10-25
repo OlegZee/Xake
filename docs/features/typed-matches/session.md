@@ -17,7 +17,17 @@ implementation. Nothing under `src/` changes on this branch until a decision is 
 
 | PR | Branch | Worktree |
 |----|--------|----------|
-| — | `feature/typed-matches` | `.claude/worktrees/feature/typed-matches` |
+| — (integration → `dev` at the end) | `feature/typed-matches` (pushed) | `.claude/worktrees/feature/typed-matches` |
+| #90 PR1 → `feature/typed-matches` (review; escaping to be reworked, decision 48) | `feature/pattern-ast-format` (pushed) | `.claude/worktrees/feature/pattern-ast-format` |
+| PR2 deferred (decision 47) | `feature/script-surface-names` (empty, at 9e42f4c) | `.claude/worktrees/feature/script-surface-names` |
+
+Subagents can only write to the worktree the session is in: switch the session
+(`EnterWorktree path=…`) to the PR's worktree before delegating; PRs run one at a time.
+`pattern-ast-format` still has an untracked copy of `critique.md` — not part of PR1, delete it
+there before more PR1 work.
+
+Sub-PR branches use this feature folder (`docs/features/typed-matches/`); they branch from and
+merge (squash) into `feature/typed-matches` (decision 45).
 
 ## State
 

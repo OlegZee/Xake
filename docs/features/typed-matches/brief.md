@@ -139,6 +139,45 @@ After experiments 06 and 07 (`ce-syntax.md`).
     4.0.0. PR0 is not needed (this branch carries the docs). Hermetic and dogfooding follow the
     published 4.0.0.
 
+## Decisions, round 9 (2026-10-25), on `critique.md`
+
+46. **The TP package (PR7) is not part of 4.0**; it becomes a separate feature later.
+47. **PR2 is deferred** (no `Level` qualification, no `BuildTarget` rename for now; decisions
+    35, 39, 40 are on hold). Core's typed layer lives in its own namespace opened after `Xake`.
+48. **Escaping: soften the break and keep the syntax open for the future** (user's idea on
+    #90). Today `( ) [ ] |` reach the regex implicitly; the change should introduce an explicit
+    escape and safeguard the reserved characters so new pattern elements can be added later —
+    not simply make them literal. Exact design pending the measurement in `escaping-today.md`.
+    Supersedes the "literal" part of decisions 15 and 28.
+49. **Phony `=>` is to be phased out; `Command` replaces it** — the way to change the semantics
+    and retire "phony". Supersedes decision 42.
+50. **PR3 trimmed per critique §5:** records / anonymous records / `string` / `unit` carriers
+    only (no tuples); a `string list` constructor; the group-set check for multi-file string
+    rules (`*..>`/`targets`); output labels from the `'O` record rather than `"label=pattern"`;
+    settle `Rule`/`rule` casing and the `matched` name.
+51. **Version open again:** with PR2 deferred and the escaping break softened, the release may
+    not need 4.0.0 (decision 41) — to decide once the escaping design is fixed.
+
+## Decisions, round 10 (2026-10-25), escaping design (after `escaping-today.md`)
+
+52. **Reserved characters: `( ) [ ] { } |`** in rule patterns and fileset masks, except the named
+    group `(name:...)`. This release keeps today's behaviour for them (regex in rules, literal in
+    mask includes) and **warns once per pattern** through the Xake log (53); a later major turns
+    the warning into an error, freeing them for new pattern elements. `{ }` are reserved too
+    (glob alternation `*.{dll,pdb}` is a natural future element).
+53. **Warning: once per pattern, through the Xake log.**
+54. **Bugs fixed outright:** the project root is escaped in the matching regex (a root with
+    `(`/`[`/`|` today mismatches or crashes); a lone `(`/`)`/`[` gives a clear error instead of
+    `RegexParseException`.
+55. **`\` is the escape character.** In this release `\` before a reserved character escapes
+    it (`\(`, `\{`, `\|`, …) — a Windows-style pattern like `src\(x)\*.cs` breaks on purpose.
+    F# string literals keep `\(` etc. unchanged (checked in fsi). `[c]` stays accepted for
+    compatibility with a warning suggesting `\c`.
+56. **`\` as a path separator in user-written patterns/masks is deprecated now:** it still works
+    in this release but warns (once per pattern) "use `/`"; a later major makes `\` an escape
+    only. Paths read from disk keep being normalized. Patterns built with `</>`/`Path.Combine`
+    on Windows must not trigger the warning (make Xake's own path joining produce `/` if needed).
+
 25. **No `Need` and no `TryMatch` members** on `Pattern<>` or `Command<>`
     (`need [ X.Make(...) ]` stays the way to require targets).
 

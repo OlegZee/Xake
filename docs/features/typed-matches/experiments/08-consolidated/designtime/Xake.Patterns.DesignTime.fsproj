@@ -7,7 +7,10 @@
        below restores the package without using any of its assets and GeneratePathProperty gives
        $(PkgFSharp_TypeProviders_SDK), the package folder, to compile those files from. -->
   <PropertyGroup>
-    <AssemblyName>Xake.Patterns.DesignTime</AssemblyName>
+    <AssemblyName>Xake.Patterns.Exp08.DesignTime</AssemblyName>
+    <Version>0.8.0</Version>
+    <AssemblyVersion>0.8.0.0</AssemblyVersion>
+    <FileVersion>0.8.0.0</FileVersion>
     <TargetFramework>netstandard2.0</TargetFramework>
     <DisableImplicitFSharpCoreReference>true</DisableImplicitFSharpCoreReference>
     <IsPackable>false</IsPackable>

@@ -2,7 +2,7 @@
 // under patterns/bin/typeproviders/fsharp41/netstandard2.0/, copied there by the design-time build).
 //   dotnet fsi build-local.fsx [D|B]
 #r "../engine/src/core/bin/Release/netstandard2.0/Xake.dll"
-#r "../patterns/bin/Release/netstandard2.0/Xake.Patterns.dll"
+#r "../patterns/bin/Release/netstandard2.0/Xake.Patterns.Exp08.dll"
 #load "Rules.fs"
 
 let forms = match fsi.CommandLineArgs |> Array.tail with [||] -> [ "D"; "B" ] | a -> List.ofArray a

@@ -17,6 +17,6 @@
   </ItemGroup>
   <ItemGroup>
     <Reference Include="Xake"><HintPath>../../engine/src/core/bin/Release/netstandard2.0/Xake.dll</HintPath></Reference>
-    <Reference Include="Xake.Patterns"><HintPath>../../patterns/bin/Release/netstandard2.0/Xake.Patterns.dll</HintPath></Reference>
+    <Reference Include="Xake.Patterns.Exp08"><HintPath>../../patterns/bin/Release/netstandard2.0/Xake.Patterns.Exp08.dll</HintPath></Reference>
   </ItemGroup>
 </Project>

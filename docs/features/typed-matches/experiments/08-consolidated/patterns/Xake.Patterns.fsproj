@@ -5,7 +5,12 @@
        Nothing in the repo compiles against this dll except the design-time project: any
        compilation that references it needs the design-time dll (FS3031), see ../README section 08. -->
   <PropertyGroup>
-    <AssemblyName>Xake.Patterns</AssemblyName>
+    <AssemblyName>Xake.Patterns.Exp08</AssemblyName>
+    <!-- Not 1.0.0.0: experiments 03, 04, 09 build different dlls with that very identity, and an IDE
+         language server keeps the first one it loads (FS3033 "Could not load type PatternBuilders"). -->
+    <Version>0.8.0</Version>
+    <AssemblyVersion>0.8.0.0</AssemblyVersion>
+    <FileVersion>0.8.0.0</FileVersion>
     <TargetFrameworks>net462;netstandard2.0</TargetFrameworks>
     <DisableImplicitFSharpCoreReference>true</DisableImplicitFSharpCoreReference>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>

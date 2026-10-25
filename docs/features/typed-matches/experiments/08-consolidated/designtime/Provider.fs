@@ -16,7 +16,7 @@ open Xake.Patterns
 /// Everything is read off the engine's own parser (Xake.PatternAst, public in Xake.dll).
 [<TypeProvider>]
 type PatternProvider(config: TypeProviderConfig) as this =
-    inherit TypeProviderForNamespaces(config, assemblyReplacementMap = [ ("Xake.Patterns.DesignTime", "Xake.Patterns") ], addDefaultProbingLocation = true)
+    inherit TypeProviderForNamespaces(config, assemblyReplacementMap = [ ("Xake.Patterns.Exp08.DesignTime", "Xake.Patterns.Exp08") ], addDefaultProbingLocation = true)
 
     let ns = "Xake.Patterns"
     let asm = Assembly.GetExecutingAssembly()

@@ -3,7 +3,7 @@
 // have been run from the experiment folder (see ../../README.md, "Opening in an IDE").
 //   dotnet fsi showcase.fsx
 #r "../engine/src/core/bin/Release/netstandard2.0/Xake.dll"
-#r "../patterns/bin/Release/netstandard2.0/Xake.Patterns.dll"
+#r "../patterns/bin/Release/netstandard2.0/Xake.Patterns.Exp08.dll"
 open Xake
 open Xake.Patterns      // after `open Xake`: Target<...> is the provided type
 

@@ -3,7 +3,7 @@
 // `sh run.sh` splits this file at `//#case` lines (header + case) into cases/<name>.fsx and runs each
 // with the SDK 10 and the SDK 8 fsi; output.txt gets the errors or the output.
 #r "../../engine/src/core/bin/Release/netstandard2.0/Xake.dll"
-#r "../../patterns/bin/Release/netstandard2.0/Xake.Patterns.dll"
+#r "../../patterns/bin/Release/netstandard2.0/Xake.Patterns.Exp08.dll"
 
 //#case a-xake-then-patterns
 open Xake

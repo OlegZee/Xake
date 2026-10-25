@@ -1,5 +1,5 @@
 // Experiment 08: a script that references only the engine (Xake.dll copied alone into a folder,
-// no Xake.Patterns.dll, no design-time dll anywhere near): compiles and runs, no FS3031. Also
+// no Xake.Patterns.Exp08.dll, no design-time dll anywhere near): compiles and runs, no FS3031. Also
 // shows the engine-side changes through public API: PatternAst (decision 13), format replacing
 // applyWildcards for a multi-file rule's other targets (14), literal ( ) [ ] (15).
 //   dotnet fsi engine-only.fsx     (after sh stage.sh)

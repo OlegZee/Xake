@@ -5,7 +5,7 @@
 // lines (header + case -> cases/<name>.fsx), runs each with the SDK 10 and SDK 8 fsi, and writes
 // the errors (or the run-time output) to output.txt.
 #r "../../engine/src/core/bin/Release/netstandard2.0/Xake.dll"
-#r "../../patterns/bin/Release/netstandard2.0/Xake.Patterns.dll"
+#r "../../patterns/bin/Release/netstandard2.0/Xake.Patterns.Exp08.dll"
 open Xake
 open Xake.Patterns
 type Asm  = Target<"out/(cfg:*)/(fwk:*)/(name:*).dll">

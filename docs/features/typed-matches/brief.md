@@ -158,6 +158,22 @@ After experiments 06 and 07 (`ce-syntax.md`).
 51. **Version open again:** with PR2 deferred and the escaping break softened, the release may
     not need 4.0.0 (decision 41) — to decide once the escaping design is fixed.
 
+## Decisions, round 10 (2026-10-25), escaping design (after `escaping-today.md`)
+
+52. **Reserved characters: `( ) [ ] { } |`** in rule patterns and fileset masks, except the named
+    group `(name:...)`. This release keeps today's behaviour for them (regex in rules, literal in
+    mask includes) and **warns once per pattern** through the Xake log (53); a later major turns
+    the warning into an error, freeing them for new pattern elements. `{ }` are reserved too
+    (glob alternation `*.{dll,pdb}` is a natural future element).
+53. **Warning: once per pattern, through the Xake log.**
+54. **Bugs fixed outright:** the project root is escaped in the matching regex (a root with
+    `(`/`[`/`|` today mismatches or crashes); a lone `(`/`)`/`[` gives a clear error instead of
+    `RegexParseException`.
+55. *(pending the user's confirmation)* **Escape syntax: `\` before a reserved character**
+    (`\(`, `\{`, `\|`, …); elsewhere `\` stays a path separator as today. F# string literals keep
+    `\(` etc. unchanged (checked in fsi). `[c]` stays accepted for compatibility with a warning
+    suggesting `\c`.
+
 25. **No `Need` and no `TryMatch` members** on `Pattern<>` or `Command<>`
     (`need [ X.Make(...) ]` stays the way to require targets).
 

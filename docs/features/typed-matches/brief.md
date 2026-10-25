@@ -78,6 +78,22 @@ After experiments 06 and 07 (`ce-syntax.md`).
     needs no `matched` at all.
 24. **Future option kept open: move the provider into its own package.** For now it ships in
     the `Xake` package (decision 17); the separate `Xake.Patterns.dll` keeps that split cheap.
+## Decisions, round 5 (2026-10-25), after experiment 08
+
+26. **The provided type is named `Target<...>`** (was `Pattern<...>`); one type for single and
+    multi-output. The engine's DU `Xake.DomainTypes.Target` is internal by intent — scripts are
+    not meant to use it — so the clash (the namespace opened last wins) is accepted on the
+    condition that only the new `Target<>` stays visible to scripts: the DU is to be taken off
+    the script surface (rename/move/hide; how is an implementation question).
+27. **Member names:** `Format(...)` produces a concrete path/name from group values (both
+    types); `Pattern` is the pattern text itself. (Supersedes the `Target` member of decision 4.)
+28. **Escaping also covers `|`** (in addition to `( ) [ ]`, decision 15); it affects fileset
+    masks as well — tests using `[(]` get rewritten.
+29. **Output labels are written `"label=pattern"`**; unlabelled outputs are `Out1`, `Out2`, ….
+30. A no-group `Command<>` accepting `fun m ->` (`m : unit`) is fine — not a problem.
+31. **`Command<>` = runs unconditionally (AlwaysRerun), by intent.** Ordinary targets honestly
+    skip when nothing changed; a command always runs — that is what makes it a command.
+
 25. **No `Need` and no `TryMatch` members** on `Pattern<>` or `Command<>`
     (`need [ X.Make(...) ]` stays the way to require targets).
 

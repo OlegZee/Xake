@@ -160,6 +160,13 @@ with it.
 
 **Always write `/`** in patterns and masks, on every OS.
 
+Masks follow mainstream glob (as in `.gitignore`, Rust `globset`, npm `picomatch`): `*` within a
+segment, `?`, `**` across directories, `\` as the escape, `/` as the separator. Character
+classes (`[abc]`, `[!abc]`, `[a-z]`) and alternation (`{a,b}`) are reserved for a future release,
+where they will take their standard meaning. Differences from that standard: named groups
+`(name:...)` exist in rule patterns only (Xake's own extension), and unlike Ant, `\` is never a
+separator.
+
 ### Reserved characters and the `\` escape
 
 `( ) [ ] { } |` are reserved for future pattern elements (apart from `(name:...)` itself). To

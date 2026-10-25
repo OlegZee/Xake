@@ -182,6 +182,24 @@ After experiments 06 and 07 (`ce-syntax.md`).
     is the escape (55), and as a separator only warns (56). System paths are left as they are.
     Supersedes the last sentence of decision 56 (making Xake's path joining produce `/`).
 
+## Decisions, round 11 (2026-10-25), standard glob as the target grammar
+
+58. **Named groups are not needed in fileset masks.** A group in a mask warns when the mask is
+    constructed (`!!`, `ls`, `--`, …), and becomes an error in a future major. Groups stay a
+    rule-pattern feature only (Xake's own extension, closest common analogue: route templates).
+59. **Target grammar of fileset masks = mainstream glob** (as in gitignore / Rust globset / npm
+    picomatch): `*` (within a segment), `?`, `**`, character classes `[abc]` `[!abc]` `[a-z]`,
+    alternation `{a,b}`, escape `\`, separator always `/`. Rule patterns use the same lexis plus
+    named groups. We follow the standard rather than invent elements: the reserved set
+    `( ) [ ] { } |` and the `\` escape already match it, and `[c]` = literal `c` is the
+    one-character class of POSIX glob. Departure from Ant: `\` is an escape, not a separator.
+60. **Roadmap for the future major:** the reservation turns into these standard elements (classes,
+    `{a,b}`), not merely into errors; `( | )` (bash extglob) stay reserved. Includes and excludes
+    move onto one matcher built on the pattern AST (the OS directory listing knows only `*` and
+    `?`, so classes and braces cannot go through it), which also removes today's
+    include/exclude asymmetry. No third-party glob library in Core. #90 stays as is (warnings
+    lead there).
+
 25. **No `Need` and no `TryMatch` members** on `Pattern<>` or `Command<>`
     (`need [ X.Make(...) ]` stays the way to require targets).
 

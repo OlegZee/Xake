@@ -14,6 +14,7 @@
     <Compile Include="PatternAstTests.fs" />
     <Compile Include="FilesetTests.fs" />
     <Compile Include="EscapingTests.fs" />
+    <Compile Include="EscapingDiskTests.fs" />
     <Compile Include="ScriptErrorTests.fs" />
     
     <Compile Include="XakeScriptTests.fs" />

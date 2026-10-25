@@ -105,6 +105,24 @@ After experiments 06 and 07 (`ce-syntax.md`).
     a provider (to be found: research option 2 "record-declared groups" is a candidate).
     This changes the concept; choosing among the variants is harder, accepted.
 
+## Decisions, round 7 (2026-10-25), after experiment 10 (`core-without-tp.md`)
+
+33. **Core gets record-declared typed patterns** (`Target<'G>`, `Target<'G,'O>`, `Command<'G>`,
+    forms D/B, `matched`) in plain F#, in its own namespace (prototype: `Xake.Typed`).
+    Anonymous records work as the group carrier (access, `Format`, copy-and-update; a
+    mismatch with the pattern is caught at script start) but cannot be destructured — F# has no
+    anonymous-record patterns; named records can.
+34. **Same short names in Core and the TP package** (`Target`, `Command`, `matched`); a script
+    switches by opening one namespace. Using both via qualified names is expected to work —
+    to verify once the TP erases onto Core's runtime. The TP package reuses Core's `matched`.
+35. **`[<RequireQualifiedAccess>]` on the logging `Level`** to free the name `Command`.
+36. **The TP erases onto Core's runtime** (no runtime of its own).
+37. **Cross-product helper:** `All(field = [..], …)` in the TP package (cheap there); not in
+    Core (would need a second, list-typed record) — Core uses list comprehensions. (Proposed;
+    the user liked the helper, cost was the question.)
+38. **Script-start errors** are rendered without a stack trace, with readable type names
+    (`{| fwk; lbi |}`, not `<>f__AnonymousType…`) and the pattern text.
+
 25. **No `Need` and no `TryMatch` members** on `Pattern<>` or `Command<>`
     (`need [ X.Make(...) ]` stays the way to require targets).
 

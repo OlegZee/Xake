@@ -47,6 +47,7 @@
     <Compile Include="RuleBuilder.fs" />
     <Compile Include="ScriptFuncs.fs" />
     <Compile Include="Vars.fs" />
+    <Compile Include="TypedTargets.fs" />
     <Compile Include="Fingerprints.fs" />
     <Compile Include="ProcessExec.fs" />
     <Compile Include="FileTasksImpl.fs" />

@@ -1,0 +1,116 @@
+== p01-command-typed-opened-last (SDK 10)
+test-build::Xake clean
+== p01-command-typed-opened-last (SDK 8)
+test-build::Xake clean
+== p02-command-typed-opened-first (SDK 10)
+p02-command-typed-opened-first.fsx(8,24): error FS0717: Unexpected type arguments
+== p02-command-typed-opened-first (SDK 8)
+p02-command-typed-opened-first.fsx(8,24): error FS0717: Unexpected type arguments
+== p03-command-typed-opened-first-new (SDK 10)
+test-build::Xake
+== p03-command-typed-opened-first-new (SDK 8)
+test-build::Xake
+== p05-target-and-du-coexist (SDK 10)
+out/Release/net8.0/Core.dll | true | 1
+== p05-target-and-du-coexist (SDK 8)
+out/Release/net8.0/Core.dll | true | 1
+== p06-shared-labels-type-directed (SDK 10)
+out/Release/net8.0/Core.dll
+run/Release/net8.0/Core
+== p06-shared-labels-type-directed (SDK 8)
+out/Release/net8.0/Core.dll
+run/Release/net8.0/Core
+== p07-shared-labels-let-binding (SDK 10)
+p07-shared-labels-let-binding.fsx(11,26): error FS0001: This expression was expected to have type
+    'AsmG'    
+but here has type
+    'RunG'    
+== p07-shared-labels-let-binding (SDK 8)
+p07-shared-labels-let-binding.fsx(11,26): error FS0001: This expression was expected to have type
+    'AsmG'    
+but here has type
+    'RunG'    
+== p08-shared-record-two-patterns (SDK 10)
+out/Release/net8.0/Core.dll run/Release/net8.0/Core
+== p08-shared-record-two-patterns (SDK 8)
+out/Release/net8.0/Core.dll run/Release/net8.0/Core
+== p09-destructure-lambda-partial (SDK 10)
+"out/(cfg:*)/(fwk:*)/(name:*).dll"
+== p09-destructure-lambda-partial (SDK 8)
+"out/(cfg:*)/(fwk:*)/(name:*).dll"
+== p10-tuple-variant (SDK 10)
+out/Release/net8.0/Core.dll
+out/net8.0/Release/Core.dll (swapped, silently)
+== p10-tuple-variant (SDK 8)
+out/Release/net8.0/Core.dll
+out/net8.0/Release/Core.dll (swapped, silently)
+== p11-untyped-pattern (SDK 10)
+p11-untyped-pattern.fsx(10,22): info FS3886: This list expression contains a single tuple element. Did you mean to use ';' instead of ',' to separate list elements?
+["fwk"; "lib"] ["dll"; "xml"] ["out/net8.0/Xake.dll"; "out/net8.0/Xake.xml"]
+Fileset
+  ({ FailOnEmpty = false
+     BaseDir = None },
+   [Includes
+      (PathMask [Directory "out"; DirectoryMask "*"; FileName "Xake.dll"]);
+    Includes
+== p11-untyped-pattern (SDK 8)
+["fwk"; "lib"] ["dll"; "xml"] ["out/net8.0/Xake.dll"; "out/net8.0/Xake.xml"]
+Fileset
+  ({ FailOnEmpty = false
+     BaseDir = None },
+   [Includes
+      (PathMask [Directory "out"; DirectoryMask "*"; FileName "Xake.dll"]);
+    Includes
+      (PathMask [Directory "out"; DirectoryMask "*"; FileName "Xake.xml"])])
+== p12-glob-any (SDK 10)
+Fileset
+  ({ FailOnEmpty = false
+     BaseDir = None },
+   [Includes
+      (PathMask [Directory "src"; Directory "core"; Recurse; FileMask "*.fs"])])
+Fileset
+  ({ FailOnEmpty = false
+     BaseDir = None },
+== p12-glob-any (SDK 8)
+Fileset
+  ({ FailOnEmpty = false
+     BaseDir = None },
+   [Includes
+      (PathMask [Directory "src"; Directory "core"; Recurse; FileMask "*.fs"])])
+Fileset
+  ({ FailOnEmpty = false
+     BaseDir = None },
+== p13-format-literal-and-wildcards (SDK 10)
+out/readme.txt out/a.txt
+== p13-format-literal-and-wildcards (SDK 8)
+out/readme.txt out/a.txt
+== p14-perf (SDK 10)
+create x1000: 132 ms
+Format x100000: 492 ms
+untyped read x100000: 66 ms
+sprintf baseline x100000: 21 ms
+== p14-perf (SDK 8)
+create x1000: 140 ms
+Format x100000: 426 ms
+untyped read x100000: 75 ms
+sprintf baseline x100000: 29 ms
+== p16-private-record-type (SDK 10)
+out/Release/net8.0/Core.dll
+== p16-private-record-type (SDK 8)
+out/Release/net8.0/Core.dll
+== p17-private-representation (SDK 10)
+out/Release/net8.0/Core.dll
+== p17-private-representation (SDK 8)
+out/Release/net8.0/Core.dll
+== p18-form-b-full-destructure-and-for (SDK 10)
+["out/net462/A.dll"; "out/net462/B.dll"; "out/net8.0/A.dll"; "out/net8.0/B.dll"]
+== p18-form-b-full-destructure-and-for (SDK 8)
+["out/net462/A.dll"; "out/net462/B.dll"; "out/net8.0/A.dll"; "out/net8.0/B.dll"]
+== p19-pattern-from-runtime-data (SDK 10)
+out/pkg/Xake/Xake.1.2.3.nupkg
+== p19-pattern-from-runtime-data (SDK 8)
+out/pkg/Xake/Xake.1.2.3.nupkg
+== p20-pattern-as-a-library-parameter (SDK 10)
+compile -> out/Release/net8.0/Core.dll | compile -> flat/Release-net8.0-Core.dll
+== p20-pattern-as-a-library-parameter (SDK 8)
+compile -> out/Release/net8.0/Core.dll | compile -> flat/Release-net8.0-Core.dll

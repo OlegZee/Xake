@@ -351,6 +351,48 @@ Scripts no longer use `$CLAUDE_JOB_DIR` (`consumer/nuget.config` points `build.f
 Rename applied to the prototype: `Command<>.Pattern(...)` is now `Command<>.Format(...)` (the generating
 member on both types; `neg/cases/16` now compiles, `15` still fails: there is no `Pattern` member).
 
+### IDE error "Could not load type 'Xake.Patterns.PatternBuilders'" (FS3033): an assembly-identity clash
+
+Symptom: `showcase.fsx` red in VSCode with `The type provider 'Xake.Patterns.DesignTime.PatternProvider'
+reported an error: Could not load type 'Xake.Patterns.PatternBuilders' from assembly 'Xake.Patterns,
+Version=1.0.0.0'`, while `dotnet fsi --typecheck-only` passes.
+
+Cause (confirmed by reproduction): experiments 03, 04 and 09 each build a *different* `Xake.Patterns.dll` with the
+same identity (`Xake.Patterns, 1.0.0.0`, no strong name); 03 and 04 (and the `xake.patterns` package in
+`~/.nuget/packages`) have no `PatternBuilders`; 03/04 also ship their own `Xake.dll` (1.0.0.0) lacking the engine's
+`Token`. FsAutoComplete is one long-lived process: the first script it type-checks (any `03/04/09` script, or
+`03/consumer/use-nuget.fsx`) loads its dll, and a later script that `#r`s another file with the same identity
+silently gets the already-loaded one (first wins; a lower or different `AssemblyVersion` does not help, the
+provider's reference is resolved by simple name). `dotnet fsi` is a fresh process per run, so it never sees it.
+
+Reproduction without VSCode: `ide-repro/` (a 30-line FSharp.Compiler.Service console app that keeps one
+`FSharpChecker` and checks the scripts given on the command line in order, as FSAC does):
+
+```
+dotnet build ide-repro -c Release
+dotnet ide-repro/bin/Release/net9.0/fcs.dll consumer/showcase.fsx                                         # 0 errors
+dotnet ide-repro/bin/Release/net9.0/fcs.dll ../04-command-type/consumer/use.fsx consumer/showcase.fsx     # showcase: 33 x FS3033, same text
+dotnet ide-repro/bin/Release/net9.0/fcs.dll consumer/showcase.fsx ../04-command-type/consumer/use.fsx     # reversed: showcase fine, 04 breaks
+```
+
+(`03-type-provider/consumer/use.fsx` before showcase gives the identical failure; 09's scripts need 09 built.)
+
+Changed in 08: the runtime and design-time assemblies are now `Xake.Patterns.Exp08` / `Xake.Patterns.Exp08.DesignTime`
+(version 0.8.0.0; dll names updated in every script, `TypeProviderAssembly`, `assemblyReplacementMap`, `stage.sh`,
+`NsCheck.fsproj`), so they can no longer be shadowed. Namespaces and the provided type names are unchanged. This is
+not sufficient alone: `Xake.dll` (the engine, kept under its real name on purpose, it is the template for `src/`) still
+clashes with 03/04's `Xake.dll`: after `04/use.fsx` the harness reports `Could not load type 'Token' from assembly
+'Xake, Version=1.0.0.0'`. Hence the rule for the IDE: open **only** `08-consolidated` (File > Open Folder), never the
+`experiments` root, do not open scripts of 03/04/05/06/07/09 in that window, and restart the F# language server
+(Command Palette: "F#: Restart language server" or "Developer: Reload Window") after any rebuild or if one was opened.
+
+Stale package caches (the older experiments' packages are only used by their `use-nuget.fsx`; `xake.exp08` is needed by
+`consumer/build.fsx`, keep it):
+
+```
+rm -rf ~/.nuget/packages/xake.patterns ~/.nuget/packages/xake.patternsexp
+```
+
 ## 09-destructure — destructuring the typed match (`let! cfg, fwk, name = groups`, records, `RuleOf`)
 
 For [`../destructure.md`](../destructure.md): can form B's `let! m = matched` + `m.fwk` become
@@ -378,3 +420,31 @@ Verdict: name-checked destructuring is impossible on the provider (no punning; r
 need F#-source types). Reachable: the tuple marker `groups` (arity checked, order not), `RuleOf` for
 form D, a user record (checked against the pattern only at run time). No new overload on `matched`
 or `Rule`. Leaning in `destructure.md` section 6.
+
+## 10-core-no-tp — typed patterns in Core without a type provider (`Target<'G>` over a record)
+
+For [`../core-without-tp.md`](../core-without-tp.md) (brief decision 32: what Core gets with plain F#).
+`TypedPatterns.fs` is the proposed new Core file (namespace `Xake.Typed`): `Pattern` (a parsed,
+checked pattern value; stringly generation that fails loudly), `Target<'G>`, `Target<'G,'O>`,
+`Command<'G>` (groups carried by a user record by field name, a tuple of strings by position,
+`string` or `unit`; outputs by label in 'O), `matched` + `TypedRuleBuilder<'G>` (form B). All checks
+between the record and the pattern run when the value is created (script start).
+
+Build: `sh make-engine.sh` copies `src/core`, applies 08's `engine.patch`, adds `TypedPatterns.fs`
+after `ScriptFuncs.fs` and builds `engine/` (git-ignored, both TFMs). Runner for the case files:
+`sh run.sh <dir>/cases.fsx` (08's runner: every `//#case` on the SDK 10 and SDK 8 fsi ->
+`<dir>/output.txt`).
+
+| run | result |
+|---|---|
+| `sh make-engine.sh` | net462 + netstandard2.0, 0 warnings; `Xake.dll` 683 KB -> 740 KB; `TypedPatterns.fs` ~270 lines, no new dependency (FSharp.Reflection from the FSharp.Core 8.0.100 pin) |
+| `consumer/build.fsx` (08's rules and incremental scenario on Core types: labelled dll+xml `Target<LibG, LibOut>`, `Target<AsmG>`, `Sources.Glob { Sources.Any with dir = .. }`, `Command<string>`, `Command<TestG>`, `Command<LockG>` with a record-pattern lambda, `Command<unit>`, `need` lists from `X.For [ for .. -> { .. } ]`; forms D and B with `let! { name = name; fwk = fwk } as m = matched`) | `consumer/output.txt`; SDK 8 fsi `output-sdk8.txt` the same lines (sorted); **the same lines as 08's provider run** (sorted, minus the new `lock` rule) |
+| `app/` (net8.0 Release, `dotnet build -c Release` + `dotnet bin/Release/net8.0/App.dll`) | `app/output.txt`, the same lines as fsi |
+| `neg/cases.fsx` (29 cases, `neg/output.txt`) | compile time: `m.fkw` FS0039 (`Maybe ... fwk`), missing field in `Format { .. }` FS0764, misspelt field FS1129, misspelt label in `let! { fkw = f } = matched` FS1129, `(Lib.Make m).pdb` FS0039, another pattern's record FS0001, `matched` outside a rule FS0041, tuple arity FS0001. Script start (`XakeException`): record vs pattern fields (`not in the record: ["fwk"]; not in the pattern: ["fkw"]`), multi-output groups, outputs record vs labels, unclosed group, non-string field, tuple arity, `unit` with groups, bare wildcards in multi-output, wildcards missing from the record, duplicate label. At the call: `/` in a `*` value and a violated `(ext:c*)` (round-trip re-match), `null` value, untyped unknown/missing name. Rule run: untyped `m.["fkw"]` fails loudly (today's `getRuleMatch "fkw"` gives `''`) |
+| `probes/cases.fsx` (`probes/output.txt`) | `Command<string> "..."` works only with `open Xake.Typed` **after** `open Xake` (else `FS0717: Unexpected type arguments`: Logging's union case `Level.Command` wins in expressions, also over a type in a later AutoOpen module of `Xake` and over `Command<_>.Of`); `new Command<_>(..)` always works. DU `Target` and `Target<'G>` coexist. Same-label records: a literal in `X.Format { .. }` takes the expected type, a `let`-bound one the latest type (FS0001, not silent). Lambda record pattern, partial patterns, copy-and-update work. Tuple carrier: swaps silent. Private record types needed `allowAccessToPrivateRepresentation` (fixed). Pattern from run-time data (`$"out/pkg/%s{pkg}/..."`) and a pattern as a library parameter work. Perf: create 0.13 ms, `Format` 4–5 µs (sprintf 0.25 µs) |
+| `tp-probes/` (`sh tp-probes/stage.sh`, then `sh run.sh tp-probes/cases.fsx`; 08's provider staged next to 10's `Xake.dll`) | with `Xake.Typed` and `Xake.Patterns` both open, **in either order**, `Target<"...">`/`Command<"...">` resolve to Core's generic types: `FS0618: Invalid literal in type`; qualified `Xake.Patterns.Target<"...">` works. Two `matched` markers: the last open wins, the other builder gets FS0041. Side probe on 08 alone (`inline-command-08*.fsx`): the provider's inline `Command<"clean">.Rule` also hits FS0717 when `open Xake` comes after `open Xake.Patterns` |
+
+Verdict: record-declared patterns fit Core with no tooling risk and give typed access, typed and
+complete generation, typed outputs and real record destructuring; the record/pattern agreement is
+checked at script start. Names: Core's types need their own namespace opened after `open Xake`, and
+cannot share the short names with the provider in one script. Leaning in `core-without-tp.md` §7.

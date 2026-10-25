@@ -1,0 +1,5 @@
+== inline-command-08.fsx (open Xake; open Xake.Patterns)
+qualified: ok
+inline: ok
+== inline-command-08-reversed.fsx (open Xake.Patterns; open Xake)
+inline-command-08-reversed.fsx(7,22): error FS0717: Unexpected type arguments

@@ -1,0 +1,260 @@
+== c01-misspelt-group-form-d (SDK 10)
+c01-misspelt-group-form-d.fsx(18,54): error FS0039: The type 'AsmG' does not define a field, constructor, or member named 'fkw'. Maybe you want one of the following:
+   fwk
+== c01-misspelt-group-form-d (SDK 8)
+c01-misspelt-group-form-d.fsx(18,54): error FS0039: The type 'AsmG' does not define the field, constructor or member 'fkw'. Maybe you want one of the following:
+   fwk
+== c02-misspelt-group-form-b (SDK 10)
+c02-misspelt-group-form-b.fsx(18,55): error FS0039: The type 'AsmG' does not define a field, constructor, or member named 'fkw'. Maybe you want one of the following:
+   fwk
+== c02-misspelt-group-form-b (SDK 8)
+c02-misspelt-group-form-b.fsx(18,55): error FS0039: The type 'AsmG' does not define the field, constructor or member 'fkw'. Maybe you want one of the following:
+   fwk
+== c03-format-missing-field (SDK 10)
+c03-format-missing-field.fsx(18,26): error FS0764: No assignment given for field 'name' of type 'FSI_0001.AsmG'
+== c03-format-missing-field (SDK 8)
+c03-format-missing-field.fsx(18,26): error FS0764: No assignment given for field 'name' of type 'FSI_0001.AsmG'
+== c04-format-misspelt-field (SDK 10)
+c04-format-misspelt-field.fsx(18,45): error FS1129: The record type 'AsmG' does not contain a label 'fkw'. Maybe you want one of the following:
+   fwk
+== c04-format-misspelt-field (SDK 8)
+c04-format-misspelt-field.fsx(18,45): error FS1129: The record type 'AsmG' does not contain a label 'fkw'. Maybe you want one of the following:
+   fwk
+== c05-destructure-misspelt-label (SDK 10)
+c05-destructure-misspelt-label.fsx(18,27): error FS1129: The record type 'AsmG' does not contain a label 'fkw'. Maybe you want one of the following:
+   fwk
+== c05-destructure-misspelt-label (SDK 8)
+c05-destructure-misspelt-label.fsx(18,27): error FS1129: The record type 'AsmG' does not contain a label 'fkw'. Maybe you want one of the following:
+   fwk
+== c06-misspelt-output-label (SDK 10)
+c06-misspelt-output-label.fsx(18,65): error FS0039: The type 'LibOut' does not define a field, constructor, or member named 'pdb'.
+== c06-misspelt-output-label (SDK 8)
+c06-misspelt-output-label.fsx(18,65): error FS0039: The type 'LibOut' does not define the field, constructor or member 'pdb'.
+== c07-another-patterns-record (SDK 10)
+c07-another-patterns-record.fsx(18,26): error FS0001: This expression was expected to have type
+    'AsmG'    
+but here has type
+    'LibG'    
+== c07-another-patterns-record (SDK 8)
+c07-another-patterns-record.fsx(18,26): error FS0001: This expression was expected to have type
+    'AsmG'    
+but here has type
+    'LibG'    
+== c08-matched-outside-rule (SDK 10)
+c08-matched-outside-rule.fsx(18,38): error FS0041: No overloads match for method 'Bind'.
+Known types of arguments: Matched * ('a -> Recipe<'b,unit>)
+Available overloads:
+ - member RecipeBuilder.Bind: m: Async<'a> * f: ('a -> Recipe<'b,'c>) -> Recipe<'b,'c> // Argument 'm' doesn't match
+ - member RecipeBuilder.Bind: m: Recipe<'a,'b> * f: ('b -> Recipe<'a,'c>) -> Recipe<'a,'c> // Argument 'm' doesn't match
+ - member RecipeBuilder.Bind: m: System.Threading.Tasks.Task<'a> * f: ('a -> Recipe<'b,'c>) -> Recipe<'b,'c> // Argument 'm' doesn't match
+ - member RecipeBuilder.Bind: rv: RequiredVar<'t> * f: ('t -> Recipe<ExecContext,'r>) -> Recipe<ExecContext,'r> // Argument 'rv' doesn't match
+ - member RecipeBuilder.Bind: unit * f: (unit -> Recipe<'a,'b>) -> Recipe<'a,'b> // Argument at index 1 doesn't match
+== c08-matched-outside-rule (SDK 8)
+c08-matched-outside-rule.fsx(18,18): error FS0041: No overloads match for method 'Bind'.
+Known types of arguments: Matched * ('a -> Recipe<'b,unit>)
+Available overloads:
+ - member RecipeBuilder.Bind: m: Async<'a> * f: ('a -> Recipe<'b,'c>) -> Recipe<'b,'c> // Argument 'm' doesn't match
+ - member RecipeBuilder.Bind: m: Recipe<'a,'b> * f: ('b -> Recipe<'a,'c>) -> Recipe<'a,'c> // Argument 'm' doesn't match
+ - member RecipeBuilder.Bind: m: System.Threading.Tasks.Task<'a> * f: ('a -> Recipe<'b,'c>) -> Recipe<'b,'c> // Argument 'm' doesn't match
+ - member RecipeBuilder.Bind: rv: RequiredVar<'t> * f: ('t -> Recipe<ExecContext,'r>) -> Recipe<ExecContext,'r> // Argument 'rv' doesn't match
+ - member RecipeBuilder.Bind: unit * f: (unit -> Recipe<'a,'b>) -> Recipe<'a,'b> // Argument at index 1 doesn't match
+== c09-tuple-destructure-arity (SDK 10)
+c09-tuple-destructure-arity.fsx(19,23): error FS0001: Type mismatch. Expecting a tuple of length 3 of type
+    string * string * string    
+but given a tuple of length 2 of type
+    'a * 'b    
+== c09-tuple-destructure-arity (SDK 8)
+c09-tuple-destructure-arity.fsx(19,23): error FS0001: Type mismatch. Expecting a tuple of length 3 of type
+    string * string * string    
+but given a tuple of length 2 of type
+    'a * 'b    
+== g01-format-slash-in-star (SDK 10)
+(header evaluated: Asm, Lib created)
+Xake.DomainTypes+XakeException: XakeException
+  "Pattern "out/(cfg:*)/(fwk:*)/(name:*).dll": [("cfg", "Release"); ("fwk", "net8.0/x"); ("name", "Core")] do not give a path the pattern matches back (got "out/Release/net8.0/x/Core.dll")"
+Stopped due to error
+== g01-format-slash-in-star (SDK 8)
+(header evaluated: Asm, Lib created)
+Xake.DomainTypes+XakeException: XakeException
+  "Pattern "out/(cfg:*)/(fwk:*)/(name:*).dll": [("cfg", "Release"); ("fwk", "net8.0/x"); ("name", "Core")] do not give a path the pattern matches back (got "out/Release/net8.0/x/Core.dll")"
+Stopped due to error
+== g02-format-constraint (SDK 10)
+(header evaluated: Asm, Lib created)
+src/src/a.cs
+Xake.DomainTypes+XakeException: XakeException
+  "Pattern "src/(dir:*)/(file:*).(ext:c*)": [("dir", "src"); ("file", "a"); ("ext", "fs")] do not give a path the pattern matches back (got "src/src/a.fs")"
+Stopped due to error
+== g02-format-constraint (SDK 8)
+(header evaluated: Asm, Lib created)
+src/src/a.cs
+Xake.DomainTypes+XakeException: XakeException
+  "Pattern "src/(dir:*)/(file:*).(ext:c*)": [("dir", "src"); ("file", "a"); ("ext", "fs")] do not give a path the pattern matches back (got "src/src/a.fs")"
+Stopped due to error
+== g03-format-null (SDK 10)
+(header evaluated: Asm, Lib created)
+Xake.DomainTypes+XakeException: XakeException "Pattern "out/(cfg:*)/(fwk:*)/(name:*).dll": no value for ["fwk"]"
+Stopped due to error
+== g03-format-null (SDK 8)
+(header evaluated: Asm, Lib created)
+Xake.DomainTypes+XakeException: XakeException "Pattern "out/(cfg:*)/(fwk:*)/(name:*).dll": no value for ["fwk"]"
+Stopped due to error
+== g04-untyped-unknown-name (SDK 10)
+(header evaluated: Asm, Lib created)
+Xake.DomainTypes+XakeException: XakeException
+  "Pattern "out/(cfg:*)/(fwk:*)/(name:*).dll": no group ["fkw"] (it has ["cfg"; "fwk"; "name"])"
+Stopped due to error
+== g04-untyped-unknown-name (SDK 8)
+(header evaluated: Asm, Lib created)
+Xake.DomainTypes+XakeException: XakeException
+  "Pattern "out/(cfg:*)/(fwk:*)/(name:*).dll": no group ["fkw"] (it has ["cfg"; "fwk"; "name"])"
+Stopped due to error
+== g05-untyped-missing-name (SDK 10)
+(header evaluated: Asm, Lib created)
+Xake.DomainTypes+XakeException: XakeException "Pattern "out/(cfg:*)/(fwk:*)/(name:*).dll": no value for ["fwk"]"
+Stopped due to error
+== g05-untyped-missing-name (SDK 8)
+(header evaluated: Asm, Lib created)
+Xake.DomainTypes+XakeException: XakeException "Pattern "out/(cfg:*)/(fwk:*)/(name:*).dll": no value for ["fwk"]"
+Stopped due to error
+== r01-untyped-misspelt-group-in-rule (SDK 10)
+(header evaluated: Asm, Lib created)
+rule run: XakeException
+  "XakeException
+  "Pattern "out/(cfg:*)/(fwk:*)/(name:*).dll" has no group 'fkw' (it has ["cfg"; "fwk"; "name"])""
+== r01-untyped-misspelt-group-in-rule (SDK 8)
+(header evaluated: Asm, Lib created)
+rule run: XakeException
+  "XakeException
+  "Pattern "out/(cfg:*)/(fwk:*)/(name:*).dll" has no group 'fkw' (it has ["cfg"; "fwk"; "name"])""
+== r02-today-misspelt-group-in-rule (SDK 10)
+(header evaluated: Asm, Lib created)
+fwk = ''
+== r02-today-misspelt-group-in-rule (SDK 8)
+(header evaluated: Asm, Lib created)
+fwk = ''
+== r03-format-constraint-in-rule (SDK 10)
+(header evaluated: Asm, Lib created)
+rule run: XakeException
+  "XakeException
+  "Pattern "src/(dir:*)/(file:*).(ext:c*)": [("dir", "Release"); ("file", "Core"); ("ext", "fs")] do not give a path the pattern matches back (got "src/Release/Core.fs")""
+== r03-format-constraint-in-rule (SDK 8)
+(header evaluated: Asm, Lib created)
+rule run: XakeException
+  "XakeException
+  "Pattern "src/(dir:*)/(file:*).(ext:c*)": [("dir", "Release"); ("file", "Core"); ("ext", "fs")] do not give a path the pattern matches back (got "src/Release/Core.fs")""
+== r04-shared-record-ok (SDK 10)
+(header evaluated: Asm, Lib created)
+out/Release/net8.0/Core.dll -> run/Release/net8.0/Core
+== r04-shared-record-ok (SDK 8)
+(header evaluated: Asm, Lib created)
+out/Release/net8.0/Core.dll -> run/Release/net8.0/Core
+== s01-record-field-misspelt (SDK 10)
+(header evaluated: Asm, Lib created)
+Xake.DomainTypes+XakeException: XakeException
+  "Target<BadG> "out/(cfg:*)/(fwk:*)/(name:*).dll": the record BadG has fields ["cfg"; "fkw"; "name"], the pattern has ["cfg"; "fwk"; "name"] (not in the record: ["fwk"]; not in the pattern: ["fkw"])"
+Stopped due to error
+== s01-record-field-misspelt (SDK 8)
+(header evaluated: Asm, Lib created)
+Xake.DomainTypes+XakeException: XakeException
+  "Target<BadG> "out/(cfg:*)/(fwk:*)/(name:*).dll": the record BadG has fields ["cfg"; "fkw"; "name"], the pattern has ["cfg"; "fwk"; "name"] (not in the record: ["fwk"]; not in the pattern: ["fkw"])"
+Stopped due to error
+== s02-record-missing-field (SDK 10)
+(header evaluated: Asm, Lib created)
+Xake.DomainTypes+XakeException: XakeException
+  "Target<PartG> "out/(cfg:*)/(fwk:*)/(name:*).dll": the record PartG has fields ["fwk"; "name"], the pattern has ["cfg"; "fwk"; "name"] (not in the record: ["cfg"])"
+Stopped due to error
+== s02-record-missing-field (SDK 8)
+(header evaluated: Asm, Lib created)
+Xake.DomainTypes+XakeException: XakeException
+  "Target<PartG> "out/(cfg:*)/(fwk:*)/(name:*).dll": the record PartG has fields ["fwk"; "name"], the pattern has ["cfg"; "fwk"; "name"] (not in the record: ["cfg"])"
+Stopped due to error
+== s03-multi-output-groups-differ (SDK 10)
+(header evaluated: Asm, Lib created)
+Xake.DomainTypes+XakeException: XakeException
+  "Pattern "out/(fwk:*)/(lib:*).dll", "out/(fwk:*)/(name:*).xml": output "out/(fwk:*)/(name:*).xml" has groups ["fwk"; "name"], the first output ["fwk"; "lib"] (missing ["lib"], extra ["name"])"
+Stopped due to error
+== s03-multi-output-groups-differ (SDK 8)
+(header evaluated: Asm, Lib created)
+Xake.DomainTypes+XakeException: XakeException
+  "Pattern "out/(fwk:*)/(lib:*).dll", "out/(fwk:*)/(name:*).xml": output "out/(fwk:*)/(name:*).xml" has groups ["fwk"; "name"], the first output ["fwk"; "lib"] (missing ["lib"], extra ["name"])"
+Stopped due to error
+== s04-outputs-record-mismatch (SDK 10)
+(header evaluated: Asm, Lib created)
+Xake.DomainTypes+XakeException: XakeException
+  "Target<LibG, Outs> "dll=out/(fwk:*)/(lib:*).dll", "xml=out/(fwk:*)/(lib:*).xml": the record Outs has fields ["dll"; "pdb"], the outputs are ["dll"; "xml"] (not in the record: ["xml"]; not in the outputs: ["pdb"])"
+Stopped due to error
+== s04-outputs-record-mismatch (SDK 8)
+(header evaluated: Asm, Lib created)
+Xake.DomainTypes+XakeException: XakeException
+  "Target<LibG, Outs> "dll=out/(fwk:*)/(lib:*).dll", "xml=out/(fwk:*)/(lib:*).xml": the record Outs has fields ["dll"; "pdb"], the outputs are ["dll"; "xml"] (not in the record: ["xml"]; not in the outputs: ["pdb"])"
+Stopped due to error
+== s05-unclosed-group (SDK 10)
+(header evaluated: Asm, Lib created)
+Xake.DomainTypes+XakeException: XakeException
+  "Pattern "out/(cfg:*)/(fwk:*/(name:*).dll": a group '(name:...' is not closed (it parses as "out/(cfg:*)/(fwk:*/(name:*).dll)")"
+Stopped due to error
+== s05-unclosed-group (SDK 8)
+(header evaluated: Asm, Lib created)
+Xake.DomainTypes+XakeException: XakeException
+  "Pattern "out/(cfg:*)/(fwk:*/(name:*).dll": a group '(name:...' is not closed (it parses as "out/(cfg:*)/(fwk:*/(name:*).dll)")"
+Stopped due to error
+== s06-non-string-field (SDK 10)
+(header evaluated: Asm, Lib created)
+Xake.DomainTypes+XakeException: XakeException
+  "Target<IntG> "out/(cfg:*)/(fwk:*)/(name:*).dll": fields ["name"] of IntG are not string"
+Stopped due to error
+== s06-non-string-field (SDK 8)
+(header evaluated: Asm, Lib created)
+Xake.DomainTypes+XakeException: XakeException
+  "Target<IntG> "out/(cfg:*)/(fwk:*)/(name:*).dll": fields ["name"] of IntG are not string"
+Stopped due to error
+== s07-tuple-arity (SDK 10)
+(header evaluated: Asm, Lib created)
+Xake.DomainTypes+XakeException: XakeException
+  "Target<string * string> "out/(cfg:*)/(fwk:*)/(name:*).dll": the tuple has 2 elements, the pattern has 3: ["cfg"; "fwk"; "name"] (in this order)"
+Stopped due to error
+== s07-tuple-arity (SDK 8)
+(header evaluated: Asm, Lib created)
+Xake.DomainTypes+XakeException: XakeException
+  "Target<string * string> "out/(cfg:*)/(fwk:*)/(name:*).dll": the tuple has 2 elements, the pattern has 3: ["cfg"; "fwk"; "name"] (in this order)"
+Stopped due to error
+== s08-unit-with-groups (SDK 10)
+(header evaluated: Asm, Lib created)
+Xake.DomainTypes+XakeException: XakeException
+  "Command<unit> "lock::(name:*)::(cfg:*)": the pattern has ["name"; "cfg"]; unit fits none (use a record)"
+Stopped due to error
+== s08-unit-with-groups (SDK 8)
+(header evaluated: Asm, Lib created)
+Xake.DomainTypes+XakeException: XakeException
+  "Command<unit> "lock::(name:*)::(cfg:*)": the pattern has ["name"; "cfg"]; unit fits none (use a record)"
+Stopped due to error
+== s09-bare-wildcards-multi-output (SDK 10)
+(header evaluated: Asm, Lib created)
+Xake.DomainTypes+XakeException: XakeException
+  "Pattern "out/*/(name:*).dll", "out/*/(name:*).xml": bare wildcards (*, **, ?) cannot be paired across outputs; name them, e.g. (x:*)"
+Stopped due to error
+== s09-bare-wildcards-multi-output (SDK 8)
+(header evaluated: Asm, Lib created)
+Xake.DomainTypes+XakeException: XakeException
+  "Pattern "out/*/(name:*).dll", "out/*/(name:*).xml": bare wildcards (*, **, ?) cannot be paired across outputs; name them, e.g. (x:*)"
+Stopped due to error
+== s10-wildcard-not-in-record (SDK 10)
+(header evaluated: Asm, Lib created)
+Xake.DomainTypes+XakeException: XakeException
+  "Target<SrcG> "src/(dir:*)/**/*.fs": the record SrcG has fields ["dir"], the pattern has ["dir"; "_1"; "_2"] (not in the record: ["_1"; "_2"])"
+Stopped due to error
+== s10-wildcard-not-in-record (SDK 8)
+(header evaluated: Asm, Lib created)
+Xake.DomainTypes+XakeException: XakeException
+  "Target<SrcG> "src/(dir:*)/**/*.fs": the record SrcG has fields ["dir"], the pattern has ["dir"; "_1"; "_2"] (not in the record: ["_1"; "_2"])"
+Stopped due to error
+== s11-duplicate-label (SDK 10)
+(header evaluated: Asm, Lib created)
+Xake.DomainTypes+XakeException: XakeException
+  "Pattern "a=out/(fwk:*)/(lib:*).dll", "a=out/(fwk:*)/(lib:*).xml": output labels ["a"] are used twice"
+Stopped due to error
+== s11-duplicate-label (SDK 8)
+(header evaluated: Asm, Lib created)
+Xake.DomainTypes+XakeException: XakeException
+  "Pattern "a=out/(fwk:*)/(lib:*).dll", "a=out/(fwk:*)/(lib:*).xml": output labels ["a"] are used twice"
+Stopped due to error

@@ -61,7 +61,28 @@ implementation. Nothing under `src/` changes on this branch until a decision is 
   `Pattern<>` → `Target<>` on the user's idea (pending): it clashes with the DU
   `Xake.DomainTypes.Target` — the namespace opened last wins (FS3081 / FS0033, misleading).
 
-## Next step (superseded line below kept for history)
+- 2026-10-25: brief rounds 5–6 (Target<>, Format/Pattern, escape `|`, labels, Command = always
+  runs; **decision 32: the TP goes to a separate package, Core gets the non-TP parts**).
+  Exp 09 (`destructure.md`): no field punning in F#; provided types can't be record-patterned;
+  tuple `let! a, b = groups` works (arity checked, order not). IDE FS3033 explained: same
+  assembly identity `Xake.Patterns 1.0.0.0` built by experiments 03/04/09 — first loaded wins
+  in FsAutoComplete; 08 renamed to `Xake.Patterns.Exp08` 0.8.0.0, open only the 08 folder.
+  Exp 10 (`core-without-tp.md`): record-declared `Target<'G>`/`Target<'G,'O>`/`Command<'G>` in
+  plain F# (~270 lines, `namespace Xake.Typed`): typed `m.fwk`, `Format {…}` checked at
+  compile time, record destructuring works, record↔pattern checked at script start; same build
+  as 08's TP. Name clashes: `Command` vs `Level.Command` (FS0717), Core `Target<'G>` hides TP
+  `Target<"...">` (FS0618), two `matched` (FS0041).
+- `experiments/08-consolidated/consumer/showcase.fsx` has uncommitted edits by the user (form
+  `Lib.Rule (fun m -> …)`, `Clean.rule {…}`) — leave them to the user.
+
+## Next step
+
+Discuss with the user `core-without-tp.md`'s open questions (shared short names vs distinct;
+`[<RequireQualifiedAccess>]` on `Level`; TP erasing onto Core's runtime; cross-product `For`;
+`'O` outputs record; script-start error rendering), then the implementation plan: Core first
+(engine.patch + record-declared types), TP package later.
+
+## Older next step (superseded line below kept for history)
 
 Decide with the user: the `Target<>` rename given the clash; the name of the generation member
 (`Format` suggested); escaping `|`; label syntax `"label=pattern"`. Then the implementation plan.

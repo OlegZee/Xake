@@ -38,6 +38,27 @@ question).
 11. **Roadmap "Rules with arguments": not replaced by this.** Explicit outputs would be good to
     have, but that is a separate task.
 
+## Decisions, round 2 (2026-10-25)
+
+Answering the questions of `phony-types.md` and `ast-reuse.md`.
+
+12. **The phony type is named `Command<>`.**
+13. **`PatternAst` becomes public** (no `InternalsVisibleTo` needed to reach it).
+14. **`ExecCore.applyWildcards` moves onto the AST's `format`.** A pattern made only of literals
+    formats to itself (as today, to be covered by a test); bare wildcards substitute by position.
+15. **Literal `(` `)` `[` `]` in patterns are escaped** (a matching behaviour change).
+16. **The TP SDK is not vendored** into the repo: its sources come from the
+    `FSharp.TypeProviders.SDK` package. Open: whether `build.fsc.fsx` can compile `.fs` sources
+    taken from a package.
+
+Under discussion (not decided):
+- Put the `TypeProviderAssembly` attribute on a separate runtime dll (`Xake.Patterns.dll`,
+  namespace `Xake.Patterns`) in the same package instead of `Xake.dll`: removes the FS3031 risk
+  for everything that references only `Xake.dll`. To verify by an experiment.
+- The rule definition syntax has too many parentheses (`Dll.Rule(fun m -> recipe { ... })`);
+  candidates via computation expressions: `Dll.Pattern ..> recipe { let! m = Dll.Get ... }`, a
+  builder on the provided type (`Dll.rule { ... }`), a custom operation in `xakeScript`.
+
 ## Open
 
 - Cost of separate pattern types for phony rules (decision 5).

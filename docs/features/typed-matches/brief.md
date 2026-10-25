@@ -78,6 +78,8 @@ After experiments 06 and 07 (`ce-syntax.md`).
     needs no `matched` at all.
 24. **Future option kept open: move the provider into its own package.** For now it ships in
     the `Xake` package (decision 17); the separate `Xake.Patterns.dll` keeps that split cheap.
+25. **No `Need` and no `TryMatch` members** on `Pattern<>` or `Command<>`
+    (`need [ X.Make(...) ]` stays the way to require targets).
 
 ## Open
 

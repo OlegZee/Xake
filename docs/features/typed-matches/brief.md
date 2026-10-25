@@ -123,6 +123,22 @@ After experiments 06 and 07 (`ce-syntax.md`).
 38. **Script-start errors** are rendered without a stack trace, with readable type names
     (`{| fwk; lbi |}`, not `<>f__AnonymousType…`) and the pattern text.
 
+## Decisions, round 8 (2026-10-25), on `plan.md`'s open items
+
+39. **The DU `Target` is renamed `BuildTarget`, no alias.**
+40. **`Level` gets a shim**: unqualified level values except `Command` keep compiling
+    (`trace Info`).
+41. **The release is Xake 4.0.0** (not 3.12.0): changing the meaning of `( ) [ ] |` in masks
+    breaks silently. The user releases 3.12 separately from the changes already on `dev`.
+42. **The `=>` phony rules in the build scripts stay `=>`**; `Command<>` is for what must always
+    run.
+43. **Compile-time negative tests run through `fsi --typecheck-only`** as integration tests.
+44. **Building the provider package through `build.fsc.fsx` is deferred.**
+45. **Integration branch:** `feature/typed-matches` collects the PRs (PR1… branch from it and
+    merge into it, squash); at the end one PR `feature/typed-matches` → `dev`, then release
+    4.0.0. PR0 is not needed (this branch carries the docs). Hermetic and dogfooding follow the
+    published 4.0.0.
+
 25. **No `Need` and no `TryMatch` members** on `Pattern<>` or `Command<>`
     (`need [ X.Make(...) ]` stays the way to require targets).
 

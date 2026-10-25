@@ -1,0 +1,78 @@
+== p01-punning (SDK 10)
+p01-punning.fsx(9,10): error FS0010: Unexpected symbol ';' in pattern. Expected '.', '=' or other token.
+== p01-punning (SDK 8)
+p01-punning.fsx(9,10): error FS0010: Unexpected symbol ';' in pattern. Expected '.', '=' or other token.
+== p02-partial-record (SDK 10)
+fwk=net8.0 name=Core
+== p02-partial-record (SDK 8)
+fwk=net8.0 name=Core
+== p03-partial-record-in-ce (SDK 10)
+fwk=net8.0 name=Core
+== p03-partial-record-in-ce (SDK 8)
+fwk=net8.0 name=Core
+== p04-misspelt-label (SDK 10)
+p04-misspelt-label.fsx(8,7): error FS0039: The record label 'fkw' is not defined. Maybe you want one of the following:
+   fwk
+== p04-misspelt-label (SDK 8)
+p04-misspelt-label.fsx(8,7): error FS0039: The record label 'fkw' is not defined. Maybe you want one of the following:
+   fwk
+== p05-anonymous-record-pattern (SDK 10)
+p05-anonymous-record-pattern.fsx(9,5): error FS0010: Unexpected symbol '{|' in binding
+== p05-anonymous-record-pattern (SDK 8)
+p05-anonymous-record-pattern.fsx(9,5): error FS0010: Unexpected symbol '{|' in binding
+== p06-dotnet-class-record-pattern (SDK 10)
+p06-dotnet-class-record-pattern.fsx(9,7): error FS0039: The record label 'Major' is not defined.
+== p06-dotnet-class-record-pattern (SDK 8)
+p06-dotnet-class-record-pattern.fsx(9,7): error FS0039: The record label 'Major' is not defined.
+== p07-qualified-label-on-class (SDK 10)
+p07-qualified-label-on-class.fsx(8,22): error FS0039: The type 'Version' does not define a field, constructor, or member named 'Major'.
+== p07-qualified-label-on-class (SDK 8)
+p07-qualified-label-on-class.fsx(8,22): error FS0039: The type 'Version' does not define the field, constructor or member 'Major'.
+== p08-deconstruct (SDK 10)
+p08-deconstruct.fsx(11,17): error FS0193: Type constraint mismatch. The type 
+    'M'    
+is not compatible with type
+    ''a * 'b'    
+== p08-deconstruct (SDK 8)
+p08-deconstruct.fsx(11,17): error FS0193: Type constraint mismatch. The type 
+    'M'    
+is not compatible with type
+    ''a * 'b'    
+== p09-static-member-active-pattern (SDK 10)
+p09-static-member-active-pattern.fsx(10,20): error FS0827: '(|Groups|)' is not a valid method name. Use a 'let' binding instead.
+== p09-static-member-active-pattern (SDK 8)
+p09-static-member-active-pattern.fsx(10,19): error FS0827: This is not a valid name for an active pattern
+== p10-static-member-active-pattern-opened (SDK 10)
+p10-static-member-active-pattern-opened.fsx(9,20): error FS0827: '(|Groups|)' is not a valid method name. Use a 'let' binding instead.
+== p10-static-member-active-pattern-opened (SDK 8)
+p10-static-member-active-pattern-opened.fsx(9,19): error FS0827: This is not a valid name for an active pattern
+== p11-union-named-fields (SDK 10)
+net8.0 Core
+== p11-union-named-fields (SDK 8)
+net8.0 Core
+== p12-union-named-fields-misspelt (SDK 10)
+p12-union-named-fields-misspelt.fsx(9,16): error FS3174: The union case 'DllMatch' does not have a field named 'fkw'.
+== p12-union-named-fields-misspelt (SDK 8)
+p12-union-named-fields-misspelt.fsx(9,16): error FS3174: The union case 'DllMatch' does not have a field named 'fkw'.
+== p13-two-records-share-labels (SDK 10)
+net8.0 Core
+== p13-two-records-share-labels (SDK 8)
+net8.0 Core
+== p14-two-records-annotated (SDK 10)
+net8.0 Core
+== p14-two-records-annotated (SDK 8)
+net8.0 Core
+== p15-tuple (SDK 10)
+net8.0 Core net8.0 Core
+== p15-tuple (SDK 8)
+net8.0 Core net8.0 Core
+== p16-tuple-arity (SDK 10)
+p16-tuple-arity.fsx(8,16): error FS0001: Type mismatch. Expecting a tuple of length 2 of type
+    'a * 'b    
+but given a tuple of length 3 of type
+    string * string * string    
+== p16-tuple-arity (SDK 8)
+p16-tuple-arity.fsx(8,16): error FS0001: Type mismatch. Expecting a tuple of length 2 of type
+    'a * 'b    
+but given a tuple of length 3 of type
+    string * string * string    

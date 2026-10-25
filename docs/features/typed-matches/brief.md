@@ -94,6 +94,17 @@ After experiments 06 and 07 (`ce-syntax.md`).
 31. **`Command<>` = runs unconditionally (AlwaysRerun), by intent.** Ordinary targets honestly
     skip when nothing changed; a command always runs — that is what makes it a command.
 
+## Decisions, round 6 (2026-10-25)
+
+32. **Target design: a separate package, not just a namespace.** Concern: the provider is
+    heavyweight and its reliability across development environments (IDEs) is unproven. So the
+    type provider and all new declaration forms (`Target<>`, `Command<>`, forms D/B) go into
+    their own NuGet package (e.g. `Xake.Patterns`), opt-in. Supersedes decisions 1, 17 and 24
+    on packaging (the dll split of 17 stays). **Core (`Xake`) gets whatever improvements need no
+    TP SDK** — public `PatternAst`, `Format`, escaping, and any typed helpers that work without
+    a provider (to be found: research option 2 "record-declared groups" is a candidate).
+    This changes the concept; choosing among the variants is harder, accepted.
+
 25. **No `Need` and no `TryMatch` members** on `Pattern<>` or `Command<>`
     (`need [ X.Make(...) ]` stays the way to require targets).
 

@@ -1,0 +1,76 @@
+== c1-provided-active-pattern-in-match (SDK 10)
+c1-provided-active-pattern-in-match.fsx(43,13): error FS0041: A unique overload for method 'Rule' could not be determined based on type information prior to this program point. A type annotation may be needed.
+Known type of argument: 'a0
+Candidates:
+ - Target<...>.Rule(body: Target<...> -> Recipe<ExecContext,Unit>) : ExecContext Rule
+ - Target<...>.Rule(body: string * string * string -> Recipe<ExecContext,Unit>) : ExecContext Rule
+== c1-provided-active-pattern-in-match (SDK 8)
+c1-provided-active-pattern-in-match.fsx(43,9): error FS0041: A unique overload for method 'Rule' could not be determined based on type information prior to this program point. A type annotation may be needed.
+Known type of argument: 'a0
+Candidates:
+ - Target<...>.Rule(body: Target<...> -> Recipe<ExecContext,Unit>) : ExecContext Rule
+ - Target<...>.Rule(body: string * string * string -> Recipe<ExecContext,Unit>) : ExecContext Rule
+== c2-provided-active-pattern-in-lambda (SDK 10)
+c2-provided-active-pattern-in-lambda.fsx(43,13): error FS0041: A unique overload for method 'Rule' could not be determined based on type information prior to this program point. A type annotation may be needed.
+Known type of argument: 'a0
+Candidates:
+ - Target<...>.Rule(body: Target<...> -> Recipe<ExecContext,Unit>) : ExecContext Rule
+ - Target<...>.Rule(body: string * string * string -> Recipe<ExecContext,Unit>) : ExecContext Rule
+== c2-provided-active-pattern-in-lambda (SDK 8)
+c2-provided-active-pattern-in-lambda.fsx(43,9): error FS0041: A unique overload for method 'Rule' could not be determined based on type information prior to this program point. A type annotation may be needed.
+Known type of argument: 'a0
+Candidates:
+ - Target<...>.Rule(body: Target<...> -> Recipe<ExecContext,Unit>) : ExecContext Rule
+ - Target<...>.Rule(body: string * string * string -> Recipe<ExecContext,Unit>) : ExecContext Rule
+== c3-provided-active-pattern-opened (SDK 10)
+c3-provided-active-pattern-opened.fsx(44,13): error FS0041: A unique overload for method 'Rule' could not be determined based on type information prior to this program point. A type annotation may be needed.
+Known type of argument: 'a0
+Candidates:
+ - Target<...>.Rule(body: Target<...> -> Recipe<ExecContext,Unit>) : ExecContext Rule
+ - Target<...>.Rule(body: string * string * string -> Recipe<ExecContext,Unit>) : ExecContext Rule
+== c3-provided-active-pattern-opened (SDK 8)
+c3-provided-active-pattern-opened.fsx(44,9): error FS0041: A unique overload for method 'Rule' could not be determined based on type information prior to this program point. A type annotation may be needed.
+Known type of argument: 'a0
+Candidates:
+ - Target<...>.Rule(body: Target<...> -> Recipe<ExecContext,Unit>) : ExecContext Rule
+ - Target<...>.Rule(body: string * string * string -> Recipe<ExecContext,Unit>) : ExecContext Rule
+== c4-provided-method-exists (SDK 10)
+c4-provided-method-exists.fsx(44,13): error FS0041: A unique overload for method 'Rule' could not be determined based on type information prior to this program point. A type annotation may be needed.
+Known type of argument: 'a0
+Candidates:
+ - Target<...>.Rule(body: Target<...> -> Recipe<ExecContext,Unit>) : ExecContext Rule
+ - Target<...>.Rule(body: string * string * string -> Recipe<ExecContext,Unit>) : ExecContext Rule
+== c4-provided-method-exists (SDK 8)
+c4-provided-method-exists.fsx(44,9): error FS0041: A unique overload for method 'Rule' could not be determined based on type information prior to this program point. A type annotation may be needed.
+Known type of argument: 'a0
+Candidates:
+ - Target<...>.Rule(body: Target<...> -> Recipe<ExecContext,Unit>) : ExecContext Rule
+ - Target<...>.Rule(body: string * string * string -> Recipe<ExecContext,Unit>) : ExecContext Rule
+== e1-rule-overloaded-typed-lambda (SDK 10)
+e1-rule-overloaded-typed-lambda.fsx(45,9): error FS0041: A unique overload for method 'Rule' could not be determined based on type information prior to this program point. A type annotation may be needed.
+Known type of argument: 'a0
+Candidates:
+ - Target<...>.Rule(body: Target<...> -> Recipe<ExecContext,Unit>) : ExecContext Rule
+ - Target<...>.Rule(body: string * string * string -> Recipe<ExecContext,Unit>) : ExecContext Rule
+== e1-rule-overloaded-typed-lambda (SDK 8)
+e1-rule-overloaded-typed-lambda.fsx(45,5): error FS0041: A unique overload for method 'Rule' could not be determined based on type information prior to this program point. A type annotation may be needed.
+Known type of argument: 'a0
+Candidates:
+ - Target<...>.Rule(body: Target<...> -> Recipe<ExecContext,Unit>) : ExecContext Rule
+ - Target<...>.Rule(body: string * string * string -> Recipe<ExecContext,Unit>) : ExecContext Rule
+== e2-rule-overloaded-tuple-lambda (SDK 10)
+e2-rule-overloaded-tuple-lambda.fsx(44,9): error FS0041: A unique overload for method 'Rule' could not be determined based on type information prior to this program point. A type annotation may be needed.
+Known type of argument: 'a0
+Candidates:
+ - Target<...>.Rule(body: Target<...> -> Recipe<ExecContext,Unit>) : ExecContext Rule
+ - Target<...>.Rule(body: string * string * string -> Recipe<ExecContext,Unit>) : ExecContext Rule
+== e2-rule-overloaded-tuple-lambda (SDK 8)
+e2-rule-overloaded-tuple-lambda.fsx(44,5): error FS0041: A unique overload for method 'Rule' could not be determined based on type information prior to this program point. A type annotation may be needed.
+Known type of argument: 'a0
+Candidates:
+ - Target<...>.Rule(body: Target<...> -> Recipe<ExecContext,Unit>) : ExecContext Rule
+ - Target<...>.Rule(body: string * string * string -> Recipe<ExecContext,Unit>) : ExecContext Rule
+== e3-rule-overloaded-parenthesised (SDK 10)
+e3-rule-overloaded-parenthesised.fsx(47,37): error FS0072: The type of this expression could not be inferred before accessing its members. Add a type annotation, e.g. (expr: SomeType), to constrain the type before this point.
+== e3-rule-overloaded-parenthesised (SDK 8)
+e3-rule-overloaded-parenthesised.fsx(47,37): error FS0072: Lookup on object of indeterminate type based on information prior to this program point. A type annotation may be needed prior to this program point to constrain the type of the object. This may allow the lookup to be resolved.

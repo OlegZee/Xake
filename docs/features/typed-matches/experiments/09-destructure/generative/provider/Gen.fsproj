@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Experiment 09: a minimal generative type provider (design time and run time in one dll). -->
+  <PropertyGroup>
+    <AssemblyName>Exp09.Generative</AssemblyName>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <DisableImplicitFSharpCoreReference>true</DisableImplicitFSharpCoreReference>
+    <NoWarn>$(NoWarn);FS0026</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="FSharp.Core" Version="8.0.100" />
+    <PackageReference Include="FSharp.TypeProviders.SDK" Version="8.11.0" GeneratePathProperty="true" ExcludeAssets="all" PrivateAssets="all" />
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="$(PkgFSharp_TypeProviders_SDK)/src/ProvidedTypes.fsi" Link="ProvidedTypes.fsi" />
+    <Compile Include="$(PkgFSharp_TypeProviders_SDK)/src/ProvidedTypes.fs" Link="ProvidedTypes.fs" />
+    <Compile Include="Gen.fs" />
+  </ItemGroup>
+</Project>

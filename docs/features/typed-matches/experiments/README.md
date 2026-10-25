@@ -350,3 +350,31 @@ is locked and cached by FSAC). `neg/cases/*.fsx` are single negative cases; `neg
 Scripts no longer use `$CLAUDE_JOB_DIR` (`consumer/nuget.config` points `build.fsx` at `consumer/.feed`).
 Rename applied to the prototype: `Command<>.Pattern(...)` is now `Command<>.Format(...)` (the generating
 member on both types; `neg/cases/16` now compiles, `15` still fails: there is no `Pattern` member).
+
+## 09-destructure — destructuring the typed match (`let! cfg, fwk, name = groups`, records, `RuleOf`)
+
+For [`../destructure.md`](../destructure.md): can form B's `let! m = matched` + `m.fwk` become
+`let! { fwk; brand } = matched`, with groups still checked by name? A copy of 08's `patterns/Runtime.fs`
+and `designtime/Provider.fs` (08 untouched; the engine is 08's `engine.patch` applied by
+`make-engine.sh` into the git-ignored `engine/`) plus: markers `groups` (the groups as a tuple, in
+`Make`'s parameter order; `string` for one group) and `fields` (a user-declared F# record filled by
+field name), `For(groups)`, `TypedRuleBuilder<'M, 'G>`, a provided `RuleOf` taking a tuple lambda; opt-in
+modules `TupleOnMatched`/`RecordOnMatched` (a second `Bind` on `matched`); provider probes behind
+`XAKE09_RULE_OVERLOAD=1` (tuple lambda as a second `Rule` overload) and `XAKE09_AP=1` (a provided
+method named `|Parts|`). `generative/` is a minimal generative provider (`Gen<"cfg,fwk,name">`).
+Every case runs with the SDK 10 and SDK 8 fsi (`run.sh`, the 08 runner); `collect.sh` gathers all
+outputs, under their commands, into `output.txt`.
+
+| run | result |
+|---|---|
+| `plain/cases.fsx` (16 cases, also `--langversion:preview`) | punning `{ fwk; name }`: `FS0010: Unexpected symbol ';' in pattern`; partial record patterns work (F# records only); anonymous-record pattern: `FS0010: Unexpected symbol '{\|' in binding`; record pattern on a .NET class: `FS0039: The record label 'Major' is not defined.`; `Deconstruct` ignored (FS0193); `static member (\|Groups\|)`: `FS0827 ... not a valid method name`; union named fields work (F# unions only) |
+| `generative/cases.fsx` | the generated class works (`g.fwk`), but `let { fwk = fwk } = g` (also annotated): `FS0039: The record label 'fwk' is not defined.` — a provided type, erased or generative, never feeds a record pattern |
+| `plain/run-ce.sh` (toy builder) | custom operation `matched into (cfg, fwk, name)` works; `into { fwk = fwk }`: `FS3099 ... Expected 0 argument(s), but given 2`; CE machinery adds no name the user did not write |
+| `consumer/cases.fsx` (27 cases, build.fsc.fsx's `out/(cfg:*)/(fwk:*)/(name:*).dll`, `lock::(name:*)::(cfg:*)`, `test-build::(project:*)`, build.fsx's labelled dll+xml) | `let! cfg, fwk, name = groups`: works, one group gives a string; wrong arity: `FS0001 ... Expecting a tuple of length 3 ... given a tuple of length 2`; **swapped order compiles and runs with wrong values**; labelled outputs need `let! m = matched` too. `for cfg, fwk, name in groups do`: works (indents). `Asm.RuleOf <\| fun (cfg, fwk, name) -> ..`: works, same FS0001 on arity. Record via `fields`: works; misspelt label in the pattern: `FS0039 ... 'fkw' is not defined. Maybe ... fwk`; misspelt field in the record or another pattern's record: **run time** `XakeException "let! { ... }: AsmGroups: the rule's pattern has no groups [\|"fkw"\|] (it has ["cfg"; "fwk"; "name"])"`. A second `Bind` on `matched` (a1/f1): the tuple/record forms work but **`let! m = matched` + `m.name` breaks**: `FS0072: The type of this expression could not be inferred before accessing its members` |
+| `probes/run.sh` | `Rule` overloaded with the tuple lambda: every `Asm.Rule <\| fun ..` (typed or tuple) `FS0041: A unique overload for method 'Rule' could not be determined ... Known type of argument: 'a0`. Provided `\|Parts\|`: callable as ``Asm.``\|Parts\|`` m``, not as a pattern (`FS0039 ... does not define ... 'Parts'. Maybe you want ... (\|Parts\|)`; after `open type Asm`: `FS0039: The pattern discriminator 'Parts' is not defined.`) |
+| build (`build-output.txt`) | runtime 177 lines (08: 112), provider 183 (08: 148); 0 warnings |
+
+Verdict: name-checked destructuring is impossible on the provider (no punning; record/union patterns
+need F#-source types). Reachable: the tuple marker `groups` (arity checked, order not), `RuleOf` for
+form D, a user record (checked against the pattern only at run time). No new overload on `matched`
+or `Rule`. Leaning in `destructure.md` section 6.

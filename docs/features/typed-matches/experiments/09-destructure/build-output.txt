@@ -1,0 +1,13 @@
+  Xake -> engine/src/core/bin/Release/netstandard2.0/Xake.dll
+  Xake.Patterns -> patterns/bin/Release/netstandard2.0/Xake.Patterns.dll
+      0 Warning(s)
+      0 Error(s)
+  Time Elapsed 00:00:00.59
+  Xake.Patterns.DesignTime -> designtime/bin/Release/netstandard2.0/Xake.Patterns.DesignTime.dll
+    0 Warning(s)
+    0 Error(s)
+Time Elapsed 00:00:01.26
+  Gen -> generative/provider/bin/Release/netstandard2.0/Exp09.Generative.dll
+    0 Warning(s)
+    0 Error(s)
+Time Elapsed 00:00:05.86

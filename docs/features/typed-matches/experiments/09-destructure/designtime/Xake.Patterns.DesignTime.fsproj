@@ -1,0 +1,39 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Experiment 09 (a copy of 08; would be src/patterns.designtime/. The design-time half, loaded by the compiler
+       (netstandard2.0 only). References Xake.dll (Recipe, ExecContext, Rule in provided signatures;
+       the public PatternAst) and Xake.Patterns.dll (what the quotations call).
+       TP SDK sources (brief decision 16): the FSharp.TypeProviders.SDK package carries
+       src/ProvidedTypes.fsi/.fs as plain files (no contentFiles, no build props); the reference
+       below restores the package without using any of its assets and GeneratePathProperty gives
+       $(PkgFSharp_TypeProviders_SDK), the package folder, to compile those files from. -->
+  <PropertyGroup>
+    <AssemblyName>Xake.Patterns.DesignTime</AssemblyName>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <DisableImplicitFSharpCoreReference>true</DisableImplicitFSharpCoreReference>
+    <IsPackable>false</IsPackable>
+    <!-- FS3005: this project references Xake.Patterns.dll, whose TypeProviderAssembly names this
+         very assembly (no provider type in that dll); FS0026 comes from ProvidedTypes.fs. -->
+    <NoWarn>$(NoWarn);FS0026;FS3005</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="FSharp.Core" Version="8.0.100" />
+    <PackageReference Include="FSharp.TypeProviders.SDK" Version="8.11.0" GeneratePathProperty="true" ExcludeAssets="all" PrivateAssets="all" />
+    <ProjectReference Include="../engine/src/core/Xake.fsproj" SetTargetFramework="TargetFramework=netstandard2.0" />
+    <ProjectReference Include="../patterns/Xake.Patterns.fsproj" SetTargetFramework="TargetFramework=netstandard2.0" />
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="$(PkgFSharp_TypeProviders_SDK)/src/ProvidedTypes.fsi" Link="ProvidedTypes.fsi" />
+    <Compile Include="$(PkgFSharp_TypeProviders_SDK)/src/ProvidedTypes.fs" Link="ProvidedTypes.fs" />
+    <Compile Include="Provider.fs" />
+  </ItemGroup>
+  <!-- In-repo use (scripts and tests that #r the build output): the compiler looks for the
+       design-time dll next to Xake.Patterns.dll or in <its dir>/../../typeproviders/fsharp41/netstandard2.0/.
+       The whole output folder is copied there (the provider loads Xake.dll and Xake.Patterns.dll
+       from it), serving every configuration and TFM folder under patterns/bin/. -->
+  <Target Name="CopyToRuntimeBin" AfterTargets="Build">
+    <ItemGroup>
+      <_DesignTimeOut Include="$(OutDir)*.dll" Exclude="$(OutDir)FSharp.Core.dll" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_DesignTimeOut)" DestinationFolder="../patterns/bin/typeproviders/fsharp41/netstandard2.0/" SkipUnchangedFiles="true" />
+  </Target>
+</Project>

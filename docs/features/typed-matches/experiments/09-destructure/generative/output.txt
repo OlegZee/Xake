@@ -1,0 +1,20 @@
+== g01-generated-class-works (SDK 10)
+Release net8.0 Core (Exp09.Generative.DllG)
+== g01-generated-class-works (SDK 8)
+Release net8.0 Core (Exp09.Generative.DllG)
+== g02-record-pattern (SDK 10)
+g02-record-pattern.fsx(7,7): error FS0039: The record label 'fwk' is not defined.
+== g02-record-pattern (SDK 8)
+g02-record-pattern.fsx(7,7): error FS0039: The record label 'fwk' is not defined.
+== g03-record-pattern-qualified (SDK 10)
+g03-record-pattern-qualified.fsx(7,12): error FS0039: The type 'DllG' does not define a field, constructor, or member named 'fwk'.
+== g03-record-pattern-qualified (SDK 8)
+g03-record-pattern-qualified.fsx(7,12): error FS0039: The type 'DllG' does not define the field, constructor or member 'fwk'.
+== g04-record-pattern-annotated (SDK 10)
+g04-record-pattern-annotated.fsx(7,8): error FS0039: The record label 'fwk' is not defined.
+== g04-record-pattern-annotated (SDK 8)
+g04-record-pattern-annotated.fsx(7,8): error FS0039: The record label 'fwk' is not defined.
+== g05-record-construction (SDK 10)
+g05-record-construction.fsx(7,17): error FS0039: The record label 'cfg' is not defined.
+== g05-record-construction (SDK 8)
+g05-record-construction.fsx(7,17): error FS0039: The record label 'cfg' is not defined.

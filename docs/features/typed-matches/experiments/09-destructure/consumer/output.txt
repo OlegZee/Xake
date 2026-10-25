@@ -1,0 +1,224 @@
+== a1-mis-ordered (SDK 10)
+compileAs locks/Core.net8.0.lock Release
+== a1-mis-ordered (SDK 8)
+compileAs locks/Core.net8.0.lock Release
+== a1-one-group-annotated (SDK 10)
+sh: dotnet build src/tests/Core -c Release
+== a1-one-group-annotated (SDK 8)
+sh: dotnet build src/tests/Core -c Release
+== a1-one-group-unannotated (SDK 10)
+sh: dotnet build src/tests/Core -c Release
+== a1-one-group-unannotated (SDK 8)
+sh: dotnet build src/tests/Core -c Release
+== a1-status-quo-with-tuple-overload (SDK 10)
+a1-status-quo-with-tuple-overload.fsx(47,37): error FS0072: The type of this expression could not be inferred before accessing its members. Add a type annotation, e.g. (expr: SomeType), to constrain the type before this point.
+== a1-status-quo-with-tuple-overload (SDK 8)
+a1-status-quo-with-tuple-overload.fsx(47,37): error FS0072: Lookup on object of indeterminate type based on information prior to this program point. A type annotation may be needed prior to this program point to constrain the type of the object. This may allow the lookup to be resolved.
+== a1-tuple-same-marker (SDK 10)
+compileAs locks/Core.Release.lock net8.0
+generate projects/Core.json Release
+generate projects/Xake.Dotnet.json Release
+== a1-tuple-same-marker (SDK 8)
+compileAs locks/Core.Release.lock net8.0
+generate projects/Core.json Release
+generate projects/Xake.Dotnet.json Release
+== a1-wrong-arity (SDK 10)
+a1-wrong-arity.fsx(46,9): error FS0041: No overloads match for method 'Bind'.
+Known types of arguments: Matched * (string * string -> Recipe<'a,unit>)
+Available overloads:
+ - member RecipeBuilder.Bind: m: Async<'a> * f: ('a -> Recipe<'b,'c>) -> Recipe<'b,'c> // Argument 'm' doesn't match
+ - member RecipeBuilder.Bind: m: Recipe<'a,'b> * f: ('b -> Recipe<'a,'c>) -> Recipe<'a,'c> // Argument 'm' doesn't match
+ - member RecipeBuilder.Bind: m: System.Threading.Tasks.Task<'a> * f: ('a -> Recipe<'b,'c>) -> Recipe<'b,'c> // Argument 'm' doesn't match
+ - member RecipeBuilder.Bind: rv: RequiredVar<'t> * f: ('t -> Recipe<ExecContext,'r>) -> Recipe<ExecContext,'r> // Argument 'rv' doesn't match
+ - member RecipeBuilder.Bind: unit * f: (unit -> Recipe<'a,'b>) -> Recipe<'a,'b> // Argument at index 1 doesn't match
+ - member RecipeBuilder.Bind: v: OptionalVar<'t> * f: ('t option -> Recipe<ExecContext,'r>) -> Recipe<ExecContext,'r> // Argument 'v' doesn't match
+ - member TypedRuleBuilder.Bind: Fields * f: ('R -> Recipe<ExecContext,'b>) -> Recipe<ExecContext,'b> // Argument at index 1 doesn't match
+== a1-wrong-arity (SDK 8)
+a1-wrong-arity.fsx(45,9): error FS0041: No overloads match for method 'Bind'.
+Known types of arguments: Matched * (string * string -> Recipe<'a,unit>)
+Available overloads:
+ - member RecipeBuilder.Bind: m: Async<'a> * f: ('a -> Recipe<'b,'c>) -> Recipe<'b,'c> // Argument 'm' doesn't match
+ - member RecipeBuilder.Bind: m: Recipe<'a,'b> * f: ('b -> Recipe<'a,'c>) -> Recipe<'a,'c> // Argument 'm' doesn't match
+ - member RecipeBuilder.Bind: m: System.Threading.Tasks.Task<'a> * f: ('a -> Recipe<'b,'c>) -> Recipe<'b,'c> // Argument 'm' doesn't match
+ - member RecipeBuilder.Bind: rv: RequiredVar<'t> * f: ('t -> Recipe<ExecContext,'r>) -> Recipe<ExecContext,'r> // Argument 'rv' doesn't match
+ - member RecipeBuilder.Bind: unit * f: (unit -> Recipe<'a,'b>) -> Recipe<'a,'b> // Argument at index 1 doesn't match
+ - member RecipeBuilder.Bind: v: OptionalVar<'t> * f: ('t option -> Recipe<ExecContext,'r>) -> Recipe<ExecContext,'r> // Argument 'v' doesn't match
+ - member TypedRuleBuilder.Bind: Fields * f: ('R -> Recipe<ExecContext,'b>) -> Recipe<ExecContext,'b> // Argument at index 1 doesn't match
+== a2-labels-need-m-too (SDK 10)
+compile Core for net8.0 -> out/net8.0/Core.dll + out/net8.0/Core.xml
+== a2-labels-need-m-too (SDK 8)
+compile Core for net8.0 -> out/net8.0/Core.dll + out/net8.0/Core.xml
+== a2-mis-ordered (SDK 10)
+compileAs locks/Core.net8.0.lock Release
+== a2-mis-ordered (SDK 8)
+compileAs locks/Core.net8.0.lock Release
+== a2-one-group-annotated-wrongly (SDK 10)
+a2-one-group-annotated-wrongly.fsx(44,15): error FS0001: This expression was expected to have type
+    'string'    
+but here has type
+    'int'    
+== a2-one-group-annotated-wrongly (SDK 8)
+a2-one-group-annotated-wrongly.fsx(44,15): error FS0001: This expression was expected to have type
+    'string'    
+but here has type
+    'int'    
+== a2-tuple-own-marker (SDK 10)
+compileAs locks/Core.Release.lock net8.0
+generate projects/Core.json Release
+generate projects/Xake.Dotnet.json Release
+sh: dotnet build src/tests/Core -c Release
+== a2-tuple-own-marker (SDK 8)
+compileAs locks/Core.Release.lock net8.0
+generate projects/Core.json Release
+generate projects/Xake.Dotnet.json Release
+sh: dotnet build src/tests/Core -c Release
+== a2-wrong-arity (SDK 10)
+a2-wrong-arity.fsx(44,14): error FS0001: Type mismatch. Expecting a tuple of length 3 of type
+    string * string * string    
+but given a tuple of length 2 of type
+    'a * 'b    
+== a2-wrong-arity (SDK 8)
+a2-wrong-arity.fsx(44,14): error FS0001: Type mismatch. Expecting a tuple of length 3 of type
+    string * string * string    
+but given a tuple of length 2 of type
+    'a * 'b    
+== b-status-quo (SDK 10)
+compileAs locks/Core.Release.lock net8.0
+generate projects/Core.json Release
+generate projects/Xake.Dotnet.json Release
+== b-status-quo (SDK 8)
+compileAs locks/Core.Release.lock net8.0
+generate projects/Core.json Release
+generate projects/Xake.Dotnet.json Release
+== d-for-groups (SDK 10)
+compileAs locks/Core.Release.lock net8.0
+== d-for-groups (SDK 8)
+compileAs locks/Core.Release.lock net8.0
+== e-lambda-then-let (SDK 10)
+compileAs locks/Core.Release.lock net8.0
+== e-lambda-then-let (SDK 8)
+compileAs locks/Core.Release.lock net8.0
+== e-ruleof-tuple-lambda (SDK 10)
+compileAs locks/Core.Release.lock net8.0
+generate projects/Core.json Release
+generate projects/Xake.Dotnet.json Release
+sh: dotnet build src/tests/Core -c Release
+== e-ruleof-tuple-lambda (SDK 8)
+compileAs locks/Core.Release.lock net8.0
+generate projects/Core.json Release
+generate projects/Xake.Dotnet.json Release
+sh: dotnet build src/tests/Core -c Release
+== e-ruleof-wrong-arity (SDK 10)
+e-ruleof-wrong-arity.fsx(43,23): error FS0001: Type mismatch. Expecting a tuple of length 3 of type
+    string * string * string    
+but given a tuple of length 2 of type
+    'a * 'b    
+== e-ruleof-wrong-arity (SDK 8)
+e-ruleof-wrong-arity.fsx(43,23): error FS0001: Type mismatch. Expecting a tuple of length 3 of type
+    string * string * string    
+but given a tuple of length 2 of type
+    'a * 'b    
+== f1-record-for-another-pattern (SDK 10)
+Xake.DomainTypes+XakeException: XakeException
+  "let! { ... }: LibGroups: the rule's pattern has no groups [|"lib"|] (it has ["cfg"; "fwk"; "name"])"
+   at Xake.ScriptRunner.runScript(ExecOptions options, Rules`1 rules)
+   at Xake.XakeScriptBuilder.RulesBuilder.Run(XakeScript _arg4)
+   at <StartupCode$FSI_0001>.$FSI_0001.main@() in f1-record-for-another-pattern.fsx:line 45
+   at System.Reflection.MethodBaseInvoker.InterpretedInvoke_Method(Object obj, IntPtr* args)
+   at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)
+Stopped due to error
+== f1-record-for-another-pattern (SDK 8)
+Xake.DomainTypes+XakeException: XakeException
+  "let! { ... }: LibGroups: the rule's pattern has no groups [|"lib"|] (it has ["cfg"; "fwk"; "name"])"
+   at Xake.ScriptRunner.runScript(ExecOptions options, Rules`1 rules)
+   at Xake.XakeScriptBuilder.RulesBuilder.Run(XakeScript _arg4)
+   at <StartupCode$FSI_0001>.$FSI_0001.main@() in f1-record-for-another-pattern.fsx:line 45
+   at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)
+   at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)
+Stopped due to error
+== f1-status-quo-with-record-overload (SDK 10)
+f1-status-quo-with-record-overload.fsx(46,37): error FS0072: The type of this expression could not be inferred before accessing its members. Add a type annotation, e.g. (expr: SomeType), to constrain the type before this point.
+== f1-status-quo-with-record-overload (SDK 8)
+f1-status-quo-with-record-overload.fsx(46,37): error FS0072: Lookup on object of indeterminate type based on information prior to this program point. A type annotation may be needed prior to this program point to constrain the type of the object. This may allow the lookup to be resolved.
+== f1-user-record-field-misspelt (SDK 10)
+Xake.DomainTypes+XakeException: XakeException
+  "let! { ... }: AsmGroups: the rule's pattern has no groups [|"fkw"|] (it has ["cfg"; "fwk"; "name"])"
+   at Xake.ScriptRunner.runScript(ExecOptions options, Rules`1 rules)
+   at Xake.XakeScriptBuilder.RulesBuilder.Run(XakeScript _arg4)
+   at <StartupCode$FSI_0001>.$FSI_0001.main@() in f1-user-record-field-misspelt.fsx:line 45
+   at System.Reflection.MethodBaseInvoker.InterpretedInvoke_Method(Object obj, IntPtr* args)
+   at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)
+Stopped due to error
+== f1-user-record-field-misspelt (SDK 8)
+Xake.DomainTypes+XakeException: XakeException
+  "let! { ... }: AsmGroups: the rule's pattern has no groups [|"fkw"|] (it has ["cfg"; "fwk"; "name"])"
+   at Xake.ScriptRunner.runScript(ExecOptions options, Rules`1 rules)
+   at Xake.XakeScriptBuilder.RulesBuilder.Run(XakeScript _arg4)
+   at <StartupCode$FSI_0001>.$FSI_0001.main@() in f1-user-record-field-misspelt.fsx:line 45
+   at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)
+   at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)
+Stopped due to error
+== f1-user-record-partial (SDK 10)
+fwk = net8.0
+== f1-user-record-partial (SDK 8)
+fwk = net8.0
+== f1-user-record-pattern-misspelt (SDK 10)
+f1-user-record-pattern-misspelt.fsx(46,27): error FS0039: The record label 'fkw' is not defined. Maybe you want one of the following:
+   fwk
+== f1-user-record-pattern-misspelt (SDK 8)
+f1-user-record-pattern-misspelt.fsx(46,27): error FS0039: The record label 'fkw' is not defined. Maybe you want one of the following:
+   fwk
+== f1-user-record (SDK 10)
+compileAs locks/Core.Release.lock net8.0
+== f1-user-record (SDK 8)
+compileAs locks/Core.Release.lock net8.0
+== f2-record-for-another-pattern (SDK 10)
+Xake.DomainTypes+XakeException: XakeException
+  "let! { ... }: LibGroups: the rule's pattern has no groups [|"lib"|] (it has ["cfg"; "fwk"; "name"])"
+   at Xake.ScriptRunner.runScript(ExecOptions options, Rules`1 rules)
+   at Xake.XakeScriptBuilder.RulesBuilder.Run(XakeScript _arg4)
+   at <StartupCode$FSI_0001>.$FSI_0001.main@() in f2-record-for-another-pattern.fsx:line 44
+   at System.Reflection.MethodBaseInvoker.InterpretedInvoke_Method(Object obj, IntPtr* args)
+   at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)
+Stopped due to error
+== f2-record-for-another-pattern (SDK 8)
+Xake.DomainTypes+XakeException: XakeException
+  "let! { ... }: LibGroups: the rule's pattern has no groups [|"lib"|] (it has ["cfg"; "fwk"; "name"])"
+   at Xake.ScriptRunner.runScript(ExecOptions options, Rules`1 rules)
+   at Xake.XakeScriptBuilder.RulesBuilder.Run(XakeScript _arg4)
+   at <StartupCode$FSI_0001>.$FSI_0001.main@() in f2-record-for-another-pattern.fsx:line 44
+   at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)
+   at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)
+Stopped due to error
+== f2-user-record-field-misspelt (SDK 10)
+Xake.DomainTypes+XakeException: XakeException
+  "let! { ... }: AsmGroups: the rule's pattern has no groups [|"fkw"|] (it has ["cfg"; "fwk"; "name"])"
+   at Xake.ScriptRunner.runScript(ExecOptions options, Rules`1 rules)
+   at Xake.XakeScriptBuilder.RulesBuilder.Run(XakeScript _arg4)
+   at <StartupCode$FSI_0001>.$FSI_0001.main@() in f2-user-record-field-misspelt.fsx:line 44
+   at System.Reflection.MethodBaseInvoker.InterpretedInvoke_Method(Object obj, IntPtr* args)
+   at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)
+Stopped due to error
+== f2-user-record-field-misspelt (SDK 8)
+Xake.DomainTypes+XakeException: XakeException
+  "let! { ... }: AsmGroups: the rule's pattern has no groups [|"fkw"|] (it has ["cfg"; "fwk"; "name"])"
+   at Xake.ScriptRunner.runScript(ExecOptions options, Rules`1 rules)
+   at Xake.XakeScriptBuilder.RulesBuilder.Run(XakeScript _arg4)
+   at <StartupCode$FSI_0001>.$FSI_0001.main@() in f2-user-record-field-misspelt.fsx:line 44
+   at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)
+   at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)
+Stopped due to error
+== f2-user-record-partial (SDK 10)
+fwk = net8.0
+== f2-user-record-partial (SDK 8)
+fwk = net8.0
+== f2-user-record-pattern-misspelt (SDK 10)
+f2-user-record-pattern-misspelt.fsx(45,27): error FS0039: The record label 'fkw' is not defined. Maybe you want one of the following:
+   fwk
+== f2-user-record-pattern-misspelt (SDK 8)
+f2-user-record-pattern-misspelt.fsx(45,27): error FS0039: The record label 'fkw' is not defined. Maybe you want one of the following:
+   fwk
+== f2-user-record (SDK 10)
+compileAs locks/Core.Release.lock net8.0
+== f2-user-record (SDK 8)
+compileAs locks/Core.Release.lock net8.0

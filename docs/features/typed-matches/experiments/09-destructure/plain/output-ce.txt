@@ -1,0 +1,10 @@
+== ce.fsx (SDK 10)
+into tuple: Release net8.0 Core
+into tuple, then let!: net8.0 42
+== ce.fsx (SDK 8)
+into tuple: Release net8.0 Core
+into tuple, then let!: net8.0 42
+== ce-record.fsx (SDK 10)
+ce-record.fsx(18,5): error FS3099: 'matched' is used with an incorrect number of arguments. This is a custom operation in this query or computation expression. Expected 0 argument(s), but given 2.
+== ce-record.fsx (SDK 8)
+ce-record.fsx(18,5): error FS3099: 'matched' is used with an incorrect number of arguments. This is a custom operation in this query or computation expression. Expected 0 argument(s), but given 2.

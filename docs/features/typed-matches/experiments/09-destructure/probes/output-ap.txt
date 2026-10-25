@@ -1,0 +1,44 @@
+== c1-provided-active-pattern-in-match (SDK 10)
+c1-provided-active-pattern-in-match.fsx(45,11): error FS0039: The type 'Target<out/(cfg:*)/(fwk:*)/(name:*).dll>' does not define a field, constructor, or member named 'Parts'. Maybe you want one of the following:
+   (|Parts|)
+== c1-provided-active-pattern-in-match (SDK 8)
+c1-provided-active-pattern-in-match.fsx(45,11): error FS0039: The type 'Target<out/(cfg:*)/(fwk:*)/(name:*).dll>' does not define the field, constructor or member 'Parts'. Maybe you want one of the following:
+   (|Parts|)
+== c2-provided-active-pattern-in-lambda (SDK 10)
+c2-provided-active-pattern-in-lambda.fsx(43,30): error FS0039: The type 'Target<out/(cfg:*)/(fwk:*)/(name:*).dll>' does not define a field, constructor, or member named 'Parts'. Maybe you want one of the following:
+   (|Parts|)
+== c2-provided-active-pattern-in-lambda (SDK 8)
+c2-provided-active-pattern-in-lambda.fsx(43,30): error FS0039: The type 'Target<out/(cfg:*)/(fwk:*)/(name:*).dll>' does not define the field, constructor or member 'Parts'. Maybe you want one of the following:
+   (|Parts|)
+== c3-provided-active-pattern-opened (SDK 10)
+c3-provided-active-pattern-opened.fsx(44,26): error FS0039: The pattern discriminator 'Parts' is not defined.
+== c3-provided-active-pattern-opened (SDK 8)
+c3-provided-active-pattern-opened.fsx(44,26): error FS0039: The pattern discriminator 'Parts' is not defined.
+== c4-provided-method-exists (SDK 10)
+compileAs locks/Core.Release.lock net8.0
+== c4-provided-method-exists (SDK 8)
+compileAs locks/Core.Release.lock net8.0
+== e1-rule-overloaded-typed-lambda (SDK 10)
+compileAs locks/Core.Release.lock net8.0
+== e1-rule-overloaded-typed-lambda (SDK 8)
+compileAs locks/Core.Release.lock net8.0
+== e2-rule-overloaded-tuple-lambda (SDK 10)
+e2-rule-overloaded-tuple-lambda.fsx(44,21): error FS0001: This expression was expected to have type
+    'Target<...>'    
+but is a tuple of type
+    ''a * 'b * 'c'    
+== e2-rule-overloaded-tuple-lambda (SDK 8)
+e2-rule-overloaded-tuple-lambda.fsx(44,21): error FS0001: This expression was expected to have type
+    'Target<...>'    
+but here has type
+    ''a * 'b * 'c'    
+== e3-rule-overloaded-parenthesised (SDK 10)
+e3-rule-overloaded-parenthesised.fsx(44,18): error FS0001: This expression was expected to have type
+    'Target<...>'    
+but is a tuple of type
+    ''a * 'b * 'c'    
+== e3-rule-overloaded-parenthesised (SDK 8)
+e3-rule-overloaded-parenthesised.fsx(44,18): error FS0001: This expression was expected to have type
+    'Target<...>'    
+but here has type
+    ''a * 'b * 'c'    

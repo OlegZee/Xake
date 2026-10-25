@@ -1,0 +1,211 @@
+
+
+/Users/olegz/projects/Xake/.claude/worktrees/feature/typed-matches/docs/features/typed-matches/experiments/11-escaping-today/probe.fsx(72,101): info FS3886: This list expression contains a single tuple element. Did you mean to use ';' instead of ',' to separate list elements?
+
+=== A. rule patterns: Path.matchGroups pattern root file  (root = /proj) ===
+a(b.txt                    vs a(b.txt                -> EXN RegexParseException: Invalid pattern '^/proj/a(b\.txt$' at offset 16. Not enough )'s.
+a(b.txt                    vs aXb.txt                -> EXN RegexParseException: Invalid pattern '^/proj/a(b\.txt$' at offset 16. Not enough )'s.
+a)b.txt                    vs a)b.txt                -> EXN RegexParseException: Invalid pattern '^/proj/a)b\.txt$' at offset 9. Too many )'s.
+a)b.txt                    vs aXb.txt                -> EXN RegexParseException: Invalid pattern '^/proj/a)b\.txt$' at offset 9. Too many )'s.
+a[b.txt                    vs a[b.txt                -> EXN RegexParseException: Invalid pattern '^/proj/a[b\.txt$' at offset 16. Unterminated [] set.
+a[b.txt                    vs aXb.txt                -> EXN RegexParseException: Invalid pattern '^/proj/a[b\.txt$' at offset 16. Unterminated [] set.
+a]b.txt                    vs a]b.txt                -> MATCH 
+a]b.txt                    vs aXb.txt                -> NO MATCH
+a|b.txt                    vs a|b.txt                -> MATCH 
+a|b.txt                    vs aXb.txt                -> MATCH 
+a{b.txt                    vs a{b.txt                -> MATCH 
+a{b.txt                    vs aXb.txt                -> NO MATCH
+a}b.txt                    vs a}b.txt                -> MATCH 
+a}b.txt                    vs aXb.txt                -> NO MATCH
+a+b.txt                    vs a+b.txt                -> MATCH 
+a+b.txt                    vs aXb.txt                -> NO MATCH
+a.b.txt                    vs a.b.txt                -> MATCH 
+a.b.txt                    vs aXb.txt                -> NO MATCH
+a^b.txt                    vs a^b.txt                -> MATCH 
+a^b.txt                    vs aXb.txt                -> NO MATCH
+a$b.txt                    vs a$b.txt                -> MATCH 
+a$b.txt                    vs aXb.txt                -> NO MATCH
+a\b.txt                    vs a\b.txt                -> MATCH 
+a\b.txt                    vs aXb.txt                -> NO MATCH
+a!b.txt                    vs a!b.txt                -> MATCH 
+a!b.txt                    vs aXb.txt                -> NO MATCH
+a#b.txt                    vs a#b.txt                -> MATCH 
+a#b.txt                    vs aXb.txt                -> NO MATCH
+--- extra: what a char as regex syntax would match ---
+a|b.txt                    vs a.txt                  -> MATCH 
+a|b.txt                    vs b.txt                  -> MATCH 
+a|b.txt                    vs a|b.txt                -> MATCH 
+a.b                        vs aXb                    -> NO MATCH
+a+b                        vs aab                    -> NO MATCH
+a+b                        vs a+b                    -> MATCH 
+a{2}                       vs aa                     -> NO MATCH
+a{2}                       vs a{2}                   -> MATCH 
+a^b                        vs a^b                    -> MATCH 
+a$b                        vs a$b                    -> MATCH 
+a\b.txt                    vs a/b.txt                -> MATCH 
+--- required cases ---
+[(]x[)]                    vs (x)                    -> MATCH 
+[(]x[)]                    vs [(]x[)]                -> NO MATCH
+[(]x[)]                    vs (x[                    -> NO MATCH
+[abc]*.txt                 vs a1.txt                 -> MATCH 1=1
+[abc]*.txt                 vs [abc]1.txt             -> NO MATCH
+[abc]*.txt                 vs d1.txt                 -> NO MATCH
+lib[x].dll                 vs libx.dll               -> MATCH 
+lib[x].dll                 vs lib[x].dll             -> NO MATCH
+fun(ction).o               vs fun(ction).o           -> NO MATCH
+fun(ction).o               vs function.o             -> MATCH 1=ction
+(foo)/*.c                  vs foo/a.c                -> MATCH 1=foo;2=a
+(foo)/*.c                  vs (foo)/a.c              -> NO MATCH
+(foo)/(name:*).c           vs foo/a.c                -> MATCH 1=foo;2=a;name=a
+(foo)/(name:*).c           vs (foo)/a.c              -> NO MATCH
+(name:*).(ext:*)           vs a.txt                  -> MATCH 1=a;2=txt;name=a;ext=txt
+(name:*)(x).c              vs a(x).c                 -> NO MATCH
+(name:*)(x).c              vs ax.c                   -> MATCH 1=a;2=x;name=a
+((name:*)).c               vs (a).c                  -> MATCH 1=(a);2=(a);name=(a)
+(name:*)[(]x[)].c          vs a(x).c                 -> MATCH 1=a;name=a
+(name:[(]*).ss             vs (abc.ss                -> MATCH 1=abc;name=(abc
+[(]*.ss                    vs (abc.ss                -> MATCH 1=abc
+(name:a)b)c                vs ab)c                   -> EXN RegexParseException: Invalid pattern '^/proj/(?<name>a)b)c$' at offset 19. Too many )'s.
+(a:b                       vs a:b                    -> NO MATCH
+(name:*                    vs xyz                    -> MATCH 1=xyz;name=xyz
+a(b                        vs a(b                    -> EXN RegexParseException: Invalid pattern '^/proj/a(b$' at offset 11. Not enough )'s.
+a)b                        vs a)b                    -> EXN RegexParseException: Invalid pattern '^/proj/a)b$' at offset 9. Too many )'s.
+(1:*).c                    vs x.c                    -> MATCH 1=x
+(a-b:*).c                  vs x.c                    -> NO MATCH
+(a b:*).c                  vs x.c                    -> NO MATCH
+--- positional numbering ---
+*/*.c                      vs d/x.c                  -> MATCH 1=d;2=x
+(n:*)/*.c                  vs d/x.c                  -> MATCH 1=d;2=x;n=d
+*/(n:*).c                  vs d/x.c                  -> MATCH 1=d;2=x;n=x
+(n:*)/(m:*).c              vs d/x.c                  -> MATCH 1=d;2=x;n=d;m=x
+(foo)/*.c                  vs foo/x.c                -> MATCH 1=foo;2=x
+(n:(m:*)x)                 vs abx                    -> MATCH 1=ab;n=abx;m=ab
+src/**/*.c                 vs src/a/b/x.c            -> MATCH 1=a/b;2=x
+?/*.c                      vs d/x.c                  -> MATCH 1=d;2=x
+(a)(b)*                    vs abz                    -> MATCH 1=a;2=b;3=z
+--- case: ! # in rules ---
+!a.txt                     vs !a.txt                 -> MATCH 
+#a.txt                     vs #a.txt                 -> MATCH 
+a#b                        vs a#b                    -> MATCH 
+--- ExecCore.applyWildcards (multi-file target name generation, positional) ---
+pat *.c, file x.c, out/*.o -> out/x.o
+pat (n:*).c, file x.c, out/*.o -> out/x.o
+pat [(]*.c, file (x.c, out/*.o -> out/x.o
+applyWildcards tag: out/(n:q).o with n=x -> out/x.o
+
+=== A2. project root containing special chars (root literal goes into the regex) ===
+root /tmp/p(q)    *.c vs /tmp/p(q)/x.c -> NO MATCH
+root /tmp/p[q]    *.c vs /tmp/p[q]/x.c -> NO MATCH
+root /tmp/p+q     *.c vs /tmp/p+q/x.c -> MATCH 1=x
+root /tmp/p.q     *.c vs /tmp/p.q/x.c -> MATCH 1=x
+root /tmp/p{1}    *.c vs /tmp/p{1}/x.c -> MATCH 1=x
+root /tmp/p|q     *.c vs /tmp/p|q/x.c -> MATCH 1=
+root /tmp/p$q     *.c vs /tmp/p$q/x.c -> MATCH 1=x
+root /tmp/p^q     *.c vs /tmp/p^q/x.c -> MATCH 1=x
+root /tmp/p!q     *.c vs /tmp/p!q/x.c -> MATCH 1=x
+root /tmp/p#q     *.c vs /tmp/p#q/x.c -> MATCH 1=x
+root /tmp/p[q] vs /tmp/pq/x.c (regex class reading) -> MATCH 1=x
+root /tmp/p|q vs /tmp/p/x.c -> MATCH 1=
+root /tmp/p.q vs /tmp/pXq/x.c -> NO MATCH
+root /tmp/p(q vs same -> EXN RegexParseException: Invalid pattern '^/tmp/p(q/([^/\\]*)\.c$' at offset 23. Not enough )'s.
+root /tmp/p)q vs same -> EXN RegexParseException: Invalid pattern '^/tmp/p)q/([^/\\]*)\.c$' at offset 8. Too many )'s.
+root /tmp/p(q) groups -> NO MATCH
+root /tmp/p(q) with positional * -> NO MATCH
+root /tmp/a\b (backslash in root) -> MATCH 1=x
+
+=== A3. backslash / Windows separators ===
+Path.parse "a\\b\\*.c"  -> PathMask [Directory "a"; Directory "b"; FileMask "*.c"]
+pattern a\*.c vs a/x.c -> MATCH 1=x
+pattern a/*.c vs a\x.c (file given with backslash) -> MATCH 1=x
+pattern a\.c vs a/.c -> MATCH 
+pattern [\\]x vs \x -> MATCH 
+pattern a\(b vs a/(b -> EXN RegexParseException: Invalid pattern '^/proj/a/(b$' at offset 12. Not enough )'s.
+pattern a\*b vs a*b -> NO MATCH
+Path.parse "a\\(b" -> PathMask [Directory "a"; FileName "(b"]
+
+=== B. fileset masks over a real temp tree ===
+files: !a.txt #a.txt (a.txt (foo) (n).c (x).txt [abc]1.txt [x].txt a!b.txt a#b.txt a$b.txt a).txt a+b.txt a.txt a1.txt aXb.txt a\b.txt a^b.txt aab.txt a|b.txt b.txt b2.txt d3.txt foo fun(ction).o function.o lib[x].dll libx.dll x.c {x}.txt
+--- includes (!! / ls) ---
+!! [(]x[)].txt                     -> [[(]x[)].txt]
+!! [abc]*.txt                      -> [[abc]1.txt]
+!! [abc]1.txt                      -> [[abc]1.txt]
+!! a|b.txt                         -> [a|b.txt]
+!! (x).txt                         -> [(x).txt]
+!! (foo)/*.c                       -> [(foo)/a.c]
+!! (n:*).c                         -> []
+!! *(x)*                           -> [(x).txt]
+!! lib[x].dll                      -> [lib[x].dll]
+!! fun(ction).o                    -> [fun(ction).o]
+!! {x}.txt                         -> [{x}.txt]
+!! a+b.txt                         -> [a+b.txt]
+!! a^b.txt                         -> [a^b.txt]
+!! a$b.txt                         -> [a$b.txt]
+!! a!b.txt                         -> [a!b.txt]
+!! !a.txt                          -> [!a.txt]
+!! #a.txt                          -> [#a.txt]
+!! a#b.txt                         -> [a#b.txt]
+!! a\b.txt                         -> [a/b.txt]
+!! a.txt                           -> [a.txt]
+!! ?.txt                           -> [a.txt b.txt]
+!! *                               -> [!a.txt #a.txt (a.txt (n).c (x).txt [abc]1.txt [x].txt a!b.txt a#b.txt a$b.txt a).txt a+b.txt a.txt a1.txt aXb.txt a\b.txt a^b.txt aab.txt a|b.txt b.txt b2.txt d3.txt fun(ction).o function.o lib[x].dll libx.dll x.c {x}.txt]
+!! [x].txt                         -> [[x].txt]
+!! (a.txt                          -> [(a.txt]
+!! a).txt                          -> [a).txt]
+!! *.[ch]                          -> []
+--- includes of literal names (no wildcard => explicit, listed even if absent) ---
+!! (nosuch).txt                    -> [(nosuch).txt]
+!! [nosuch].txt                    -> [[nosuch].txt]
+--- excludes (--) on *.txt ---
+!! *.txt -- [(]x[)].txt            -> [!a.txt #a.txt (a.txt (x).txt [abc]1.txt [x].txt a!b.txt a#b.txt a$b.txt a).txt a+b.txt a.txt a1.txt aXb.txt a\b.txt a^b.txt aab.txt a|b.txt b.txt b2.txt d3.txt {x}.txt]
+!! *.txt -- [abc]*.txt             -> [!a.txt #a.txt (a.txt (x).txt [abc]1.txt [x].txt a\b.txt d3.txt {x}.txt]
+!! *.txt -- a|b.txt                -> [!a.txt #a.txt (a.txt (x).txt [abc]1.txt [x].txt a!b.txt a#b.txt a$b.txt a).txt a+b.txt a.txt a1.txt aXb.txt a\b.txt a^b.txt aab.txt b.txt b2.txt d3.txt {x}.txt]
+!! *.txt -- (x).txt                -> [!a.txt #a.txt (a.txt [abc]1.txt [x].txt a!b.txt a#b.txt a$b.txt a).txt a+b.txt a.txt a1.txt aXb.txt a\b.txt a^b.txt aab.txt a|b.txt b.txt b2.txt d3.txt {x}.txt]
+!! *.txt -- (foo)/*.c              -> [!a.txt #a.txt (a.txt (x).txt [abc]1.txt [x].txt a!b.txt a#b.txt a$b.txt a).txt a+b.txt a.txt a1.txt aXb.txt a\b.txt a^b.txt aab.txt a|b.txt b.txt b2.txt d3.txt {x}.txt]
+!! *.txt -- (n:*).txt              -> [a\b.txt]
+!! *.txt -- lib[x].dll             -> [!a.txt #a.txt (a.txt (x).txt [abc]1.txt [x].txt a!b.txt a#b.txt a$b.txt a).txt a+b.txt a.txt a1.txt aXb.txt a\b.txt a^b.txt aab.txt a|b.txt b.txt b2.txt d3.txt {x}.txt]
+!! *.txt -- {x}.txt                -> [!a.txt #a.txt (a.txt (x).txt [abc]1.txt [x].txt a!b.txt a#b.txt a$b.txt a).txt a+b.txt a.txt a1.txt aXb.txt a\b.txt a^b.txt aab.txt a|b.txt b.txt b2.txt d3.txt]
+!! *.txt -- a+b.txt                -> [!a.txt #a.txt (a.txt (x).txt [abc]1.txt [x].txt a!b.txt a#b.txt a$b.txt a).txt a.txt a1.txt aXb.txt a\b.txt a^b.txt aab.txt a|b.txt b.txt b2.txt d3.txt {x}.txt]
+!! *.txt -- a^b.txt                -> [!a.txt #a.txt (a.txt (x).txt [abc]1.txt [x].txt a!b.txt a#b.txt a$b.txt a).txt a+b.txt a.txt a1.txt aXb.txt a\b.txt aab.txt a|b.txt b.txt b2.txt d3.txt {x}.txt]
+!! *.txt -- a$b.txt                -> [!a.txt #a.txt (a.txt (x).txt [abc]1.txt [x].txt a!b.txt a#b.txt a).txt a+b.txt a.txt a1.txt aXb.txt a\b.txt a^b.txt aab.txt a|b.txt b.txt b2.txt d3.txt {x}.txt]
+!! *.txt -- a!b.txt                -> [!a.txt #a.txt (a.txt (x).txt [abc]1.txt [x].txt a#b.txt a$b.txt a).txt a+b.txt a.txt a1.txt aXb.txt a\b.txt a^b.txt aab.txt a|b.txt b.txt b2.txt d3.txt {x}.txt]
+!! *.txt -- #a.txt                 -> [!a.txt (a.txt (x).txt [abc]1.txt [x].txt a!b.txt a#b.txt a$b.txt a).txt a+b.txt a.txt a1.txt aXb.txt a\b.txt a^b.txt aab.txt a|b.txt b.txt b2.txt d3.txt {x}.txt]
+!! *.txt -- [x].txt                -> [!a.txt #a.txt (a.txt (x).txt [abc]1.txt a!b.txt a#b.txt a$b.txt a).txt a+b.txt a.txt a1.txt aXb.txt a\b.txt a^b.txt aab.txt a|b.txt b.txt b2.txt d3.txt {x}.txt]
+!! *.txt -- a.txt                  -> [!a.txt #a.txt (a.txt (x).txt [abc]1.txt [x].txt a!b.txt a#b.txt a$b.txt a).txt a+b.txt a1.txt aXb.txt a\b.txt a^b.txt aab.txt a|b.txt b.txt b2.txt d3.txt {x}.txt]
+!! *.txt -- a?b.txt                -> [!a.txt #a.txt (a.txt (x).txt [abc]1.txt [x].txt a).txt a.txt a1.txt a\b.txt b.txt b2.txt d3.txt {x}.txt]
+!! *.txt -- *(x)*                  -> [a\b.txt]
+!! *.txt -- (a.txt                 -> [!a.txt #a.txt (x).txt [abc]1.txt [x].txt a!b.txt a#b.txt a$b.txt a).txt a+b.txt a.txt a1.txt aXb.txt a\b.txt a^b.txt aab.txt a|b.txt b.txt b2.txt d3.txt {x}.txt]
+!! *.txt -- a).txt                 -> [!a.txt #a.txt (a.txt (x).txt [abc]1.txt [x].txt a!b.txt a#b.txt a$b.txt a+b.txt a.txt a1.txt aXb.txt a\b.txt a^b.txt aab.txt a|b.txt b.txt b2.txt d3.txt {x}.txt]
+!! *.txt -- a\b.txt                -> [!a.txt #a.txt (a.txt (x).txt [abc]1.txt [x].txt a!b.txt a#b.txt a$b.txt a).txt a+b.txt a.txt a1.txt aXb.txt a^b.txt aab.txt a|b.txt b.txt b2.txt d3.txt {x}.txt]
+--- fileset { } CE ---
+fileset includes [abc]*.txt        -> [[abc]1.txt]
+fileset inc *.txt exc [abc]*.txt   -> [!a.txt #a.txt (a.txt (x).txt [abc]1.txt [x].txt a\b.txt d3.txt {x}.txt]
+fileset inc *.txt exc a|b.txt      -> [!a.txt #a.txt (a.txt (x).txt [abc]1.txt [x].txt a!b.txt a#b.txt a$b.txt a).txt a+b.txt a.txt a1.txt aXb.txt a\b.txt a^b.txt aab.txt b.txt b2.txt d3.txt {x}.txt]
+--- Path.parse results ---
+[(]x[)].txt    -> PathMask [FileName "[(]x[)].txt"]
+(foo)/*.c      -> PathMask [Directory "(foo)"; FileMask "*.c"]
+a|b.txt        -> PathMask [FileName "a|b.txt"]
+(n:*)/x.c      -> PathMask [DirectoryMask "(n:*)"; FileName "x.c"]
+a\b\*.c        -> PathMask [Directory "a"; Directory "b"; FileMask "*.c"]
+[a/b]*.c       -> PathMask [Directory "[a"; FileMask "b]*.c"]
+--- fileset with basedir containing ( and [ ---
+root w(1)[2]: !! *.*               -> [x.c y.h]
+root w(1)[2]: !! *.* -- *.h        -> [x.c]
+root w(1)[2]: !! *.* -- x.c        -> [y.h]
+root w(1)[2]: !! *.* -- *.c        -> [y.h]
+--- extra: wildcard + class in include vs exclude; phony names (root empty) ---
+!! [(]*.txt                        -> []
+!! [a]*.txt                        -> []
+!! *.txt -- [(]*.txt               -> [!a.txt #a.txt [abc]1.txt [x].txt a!b.txt a#b.txt a$b.txt a).txt a+b.txt a.txt a1.txt aXb.txt a\b.txt a^b.txt aab.txt a|b.txt b.txt b2.txt d3.txt {x}.txt]
+!! *.txt -- [x]*.txt               -> [!a.txt #a.txt (a.txt (x).txt [abc]1.txt [x].txt a!b.txt a#b.txt a$b.txt a).txt a+b.txt a.txt a1.txt aXb.txt a\b.txt a^b.txt aab.txt a|b.txt b.txt b2.txt d3.txt {x}.txt]
+phony lock::(name:*) vs lock::foo -> MATCH 1=foo;name=foo
+phony a|b vs xb -> MATCH 
+phony a|b vs a -> MATCH 
+phony a|b vs c -> NO MATCH
+phony build(x) vs build(x) -> NO MATCH
+phony build[x] vs build[x] -> NO MATCH
+phony build[x] vs buildx -> MATCH 
+phony a\b vs a/b -> MATCH 
+phony a\b vs a\b -> MATCH 
+rule [x]/*.c vs x/a.c -> MATCH 1=a
+rule [x]/*.c vs [x]/a.c -> NO MATCH
+rule a||b.c (empty alternative) vs z.c -> MATCH 

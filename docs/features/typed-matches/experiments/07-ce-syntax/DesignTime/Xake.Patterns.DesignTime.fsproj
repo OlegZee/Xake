@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Experiment 05: the design-time half as its own dll. References Xake.dll (it must: Recipe,
+       ExecContext and Rule appear in provided signatures) and the runtime stand-in.
+       AstVia=ivt (default): PatternAst comes from the runtime dll through InternalsVisibleTo.
+       AstVia=link: PatternAst.fs and PatternAstGen.fs are compiled into this dll as well. -->
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <DisableImplicitFSharpCoreReference>true</DisableImplicitFSharpCoreReference>
+    <NoWarn>$(NoWarn);FS0026;NU1603</NoWarn>
+    <AstVia Condition="'$(AstVia)' == ''">ivt</AstVia>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="FSharp.Core" Version="8.0.100" />
+    <PackageReference Include="FSharp.TypeProviders.SDK" Version="8.11.0" GeneratePathProperty="true" ExcludeAssets="all" PrivateAssets="all" />
+    <Reference Include="Xake">
+      <HintPath>../../../../../../src/core/bin/Release/netstandard2.0/Xake.dll</HintPath>
+    </Reference>
+    <ProjectReference Include="../Runtime/Xake.Patterns.Runtime.fsproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="$(PkgFSharp_TypeProviders_SDK)/src/ProvidedTypes.fsi" />
+    <Compile Include="$(PkgFSharp_TypeProviders_SDK)/src/ProvidedTypes.fs" />
+    <Compile Include="../generated/PatternAst.fs" Link="PatternAst.fs" Condition="'$(AstVia)' == 'link'" />
+    <Compile Include="../PatternAstGen.fs" Link="PatternAstGen.fs" Condition="'$(AstVia)' == 'link'" />
+    <Compile Include="Provider.fs" />
+  </ItemGroup>
+  <!-- Every project compiled against the runtime dll fails with FS3031 unless the compiler finds
+       the design-time dll that TypeProviderAssembly names: next to the runtime dll, or in
+       <runtime dir>/../../typeproviders/fsharp41/netstandard2.0/ (the package layout, lib/<tfm>
+       -> package root). The runtime dll builds first (this project references it), so the
+       design-time dll is copied back to bin/typeproviders/..., which serves every configuration
+       and TFM folder under bin/. In the real repo: src/core/bin/typeproviders/fsharp41/netstandard2.0/. -->
+  <Target Name="CopyNextToRuntime" AfterTargets="Build">
+    <Copy SourceFiles="$(TargetPath)" DestinationFolder="../Runtime/bin/typeproviders/fsharp41/netstandard2.0/" SkipUnchangedFiles="true" />
+  </Target>
+</Project>

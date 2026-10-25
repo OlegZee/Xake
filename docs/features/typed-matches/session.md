@@ -44,7 +44,17 @@ implementation. Nothing under `src/` changes on this branch until a decision is 
   design-time dll. `hermetic-sketch.md`: keep hermetic's function API, feed it from patterns
   first.
 
+- 2026-10-25: brief round 2 recorded (Command<>, public PatternAst, applyWildcards on format,
+  escaping, TP SDK from its package). Experiment 06: the TP attribute on a separate
+  `Xake.Patterns.dll` in the same package — Xake.dll-only consumers need no design-time dll
+  (FS3031 only at the Xake.Patterns.dll reference); `#r "nuget:"` and a compiled project work;
+  the typeproviders folder must hold the whole design-time output. Experiment 07 / `ce-syntax.md`:
+  forms A (`Dll.Pattern ..> recipe { let! m = Dll.Get ... }`), B (`Dll.rule { let! m = matched
+  ... }`, agent's leaning) and D (`Dll.Rule <| fun m -> recipe {...}`) compile; no CE can bind
+  `m` implicitly; a type is not a value (`Dll ..>` impossible).
+
 ## Next step
 
-Ask the user the open questions of `phony-types.md` (5) and `ast-reuse.md` (5), record in
-`brief.md`. Then an implementation plan — only on the user's go-ahead.
+Ask the user: confirm the separate dll; the CE form and its 5 questions (`ce-syntax.md`); the
+remaining phony questions (`phony-types.md`: semantics, `Need`, `TryMatch`, no-group type).
+Record in `brief.md`. Then an implementation plan — only on the user's go-ahead.

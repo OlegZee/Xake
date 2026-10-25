@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Experiment 06: the design-time half. References the real Xake.dll (Recipe, ExecContext, Rule
+       appear in provided signatures), Xake.Patterns.dll (what the quotations call) and the stand-in
+       with the public PatternAst. No InternalsVisibleTo anywhere. Nothing is copied next to the
+       runtime dll: where the dll sits is decided by each test (see ../README section 06). -->
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <DisableImplicitFSharpCoreReference>true</DisableImplicitFSharpCoreReference>
+    <NoWarn>$(NoWarn);FS0026;NU1603</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="FSharp.Core" Version="8.0.100" />
+    <PackageReference Include="FSharp.TypeProviders.SDK" Version="8.11.0" GeneratePathProperty="true" ExcludeAssets="all" PrivateAssets="all" />
+    <Reference Include="Xake">
+      <HintPath>../../../../../../src/core/bin/Release/netstandard2.0/Xake.dll</HintPath>
+    </Reference>
+    <ProjectReference Include="../Runtime/Xake.Patterns.fsproj" />
+    <ProjectReference Include="../Core/XakeLike.fsproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="$(PkgFSharp_TypeProviders_SDK)/src/ProvidedTypes.fsi" />
+    <Compile Include="$(PkgFSharp_TypeProviders_SDK)/src/ProvidedTypes.fs" />
+    <Compile Include="Provider.fs" />
+  </ItemGroup>
+</Project>

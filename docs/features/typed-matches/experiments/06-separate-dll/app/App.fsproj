@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Experiment 06, H3: a compiled net8.0 project consuming the package by PackageReference. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <RestoreSources>/Users/olegz/.claude/jobs/d57e8547/tmp/feed-06;https://api.nuget.org/v3/index.json</RestoreSources>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Xake.SepDllExp" Version="0.0.1-exp06" />
+    <Compile Include="Program.fs" />
+  </ItemGroup>
+</Project>

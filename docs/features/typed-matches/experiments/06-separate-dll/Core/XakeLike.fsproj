@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Experiment 06: stand-in for the additions to Xake.dll (brief decision 13): PatternAst and the
+       generation functions as PUBLIC modules, so that other assemblies need no InternalsVisibleTo.
+       The real Xake.dll (src/core build) is used unchanged for everything else. -->
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <DisableImplicitFSharpCoreReference>true</DisableImplicitFSharpCoreReference>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="FSharp.Core" Version="8.0.100" />
+    <Compile Include="PatternAst.fs" />
+    <Compile Include="PatternAstGen.fs" />
+  </ItemGroup>
+</Project>

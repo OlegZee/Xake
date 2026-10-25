@@ -1,0 +1,15 @@
+  Restored /Users/olegz/projects/Xake/.claude/worktrees/feature/typed-matches/docs/features/typed-matches/experiments/06-separate-dll/Core/XakeLike.fsproj (in 602 ms).
+  Restored /Users/olegz/projects/Xake/.claude/worktrees/feature/typed-matches/docs/features/typed-matches/experiments/06-separate-dll/DesignTime/Xake.Patterns.DesignTime.fsproj (in 602 ms).
+  Restored /Users/olegz/projects/Xake/.claude/worktrees/feature/typed-matches/docs/features/typed-matches/experiments/06-separate-dll/Runtime/Xake.Patterns.fsproj (in 602 ms).
+  XakeLike -> /Users/olegz/projects/Xake/.claude/worktrees/feature/typed-matches/docs/features/typed-matches/experiments/06-separate-dll/Core/bin/Release/netstandard2.0/XakeLike.dll
+  Xake.Patterns -> /Users/olegz/projects/Xake/.claude/worktrees/feature/typed-matches/docs/features/typed-matches/experiments/06-separate-dll/Runtime/bin/Release/netstandard2.0/Xake.Patterns.dll
+FSC : warning FS3005: Referenced assembly '/Users/olegz/projects/Xake/.claude/worktrees/feature/typed-matches/docs/features/typed-matches/experiments/06-separate-dll/Runtime/bin/Release/netstandard2.0/Xake.Patterns.dll' has assembly level attribute 'Microsoft.FSharp.Core.CompilerServices.TypeProviderAssemblyAttribute' but no public type provider classes were found [/Users/olegz/projects/Xake/.claude/worktrees/feature/typed-matches/docs/features/typed-matches/experiments/06-separate-dll/DesignTime/Xake.Patterns.DesignTime.fsproj]
+  Xake.Patterns.DesignTime -> /Users/olegz/projects/Xake/.claude/worktrees/feature/typed-matches/docs/features/typed-matches/experiments/06-separate-dll/DesignTime/bin/Release/netstandard2.0/Xake.Patterns.DesignTime.dll
+
+Build succeeded.
+
+FSC : warning FS3005: Referenced assembly '/Users/olegz/projects/Xake/.claude/worktrees/feature/typed-matches/docs/features/typed-matches/experiments/06-separate-dll/Runtime/bin/Release/netstandard2.0/Xake.Patterns.dll' has assembly level attribute 'Microsoft.FSharp.Core.CompilerServices.TypeProviderAssemblyAttribute' but no public type provider classes were found [/Users/olegz/projects/Xake/.claude/worktrees/feature/typed-matches/docs/features/typed-matches/experiments/06-separate-dll/DesignTime/Xake.Patterns.DesignTime.fsproj]
+    1 Warning(s)
+    0 Error(s)
+
+Time Elapsed 00:00:09.75

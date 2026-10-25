@@ -1,0 +1,8 @@
+  Determining projects to restore...
+  XakeLike -> /Users/olegz/projects/Xake/.claude/worktrees/feature/typed-matches/docs/features/typed-matches/experiments/06-separate-dll/Core/bin/Release/netstandard2.0/XakeLike.dll
+  Xake.Patterns -> /Users/olegz/projects/Xake/.claude/worktrees/feature/typed-matches/docs/features/typed-matches/experiments/06-separate-dll/Runtime/bin/Release/netstandard2.0/Xake.Patterns.dll
+  Xake.Patterns.DesignTime -> /Users/olegz/projects/Xake/.claude/worktrees/feature/typed-matches/docs/features/typed-matches/experiments/06-separate-dll/DesignTime/bin/Release/netstandard2.0/Xake.Patterns.DesignTime.dll
+  Xake.SepDllExp -> /Users/olegz/projects/Xake/.claude/worktrees/feature/typed-matches/docs/features/typed-matches/experiments/06-separate-dll/Pkg/bin/Release/netstandard2.0/Xake.SepDllExp.dll
+  Xake.SepDllExp -> /Users/olegz/projects/Xake/.claude/worktrees/feature/typed-matches/docs/features/typed-matches/experiments/06-separate-dll/Pkg/bin/Release/net462/Xake.SepDllExp.dll
+  The package Xake.SepDllExp.0.0.1-exp06 is missing a readme. Go to https://aka.ms/nuget/authoring-best-practices/readme to learn why package readmes are important.
+  Successfully created package '/Users/olegz/.claude/jobs/d57e8547/tmp/feed-06/Xake.SepDllExp.0.0.1-exp06.nupkg'.

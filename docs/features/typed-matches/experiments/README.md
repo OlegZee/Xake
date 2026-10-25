@@ -127,3 +127,55 @@ proposed generation functions (`PatternAstGen.fs`: `unparse`, `groupNames`, `wil
 | `dotnet pack -c Release -o /tmp/xake-tp-feed-05` in `Pkg/` | nupkg: `lib/{net462,netstandard2.0}/` (runtime, Xake.dll, Pkg dll), `typeproviders/fsharp41/netstandard2.0/` (DesignTime dll, runtime dll, Xake.dll, Xake.xml); warnings `NU5100`, `NU5118` (suppressed in the fsproj) |
 | `dotnet fsi use-nuget.fsx` (`#r "nuget: Xake.PatternsExp, 0.0.1-exp"`), also under the SDK 8 fsi | works: the compiler finds the design-time dll in `typeproviders/fsharp41/netstandard2.0` |
 | `consumer/probe.fsx` (runtime `#r` from `Runtime/bin/Release/netstandard2.0`, design-time only in `Runtime/bin/typeproviders/fsharp41/netstandard2.0`) | works (output identical); with that folder moved away: `FS3031` — the compiler probes `<runtime dir>/../../typeproviders/fsharp41/netstandard2.0/` |
+
+## 06-separate-dll — `TypeProviderAssembly` on a separate `Xake.Patterns.dll`, not on `Xake.dll`
+
+For brief "Under discussion" (the FS3031 risk in [`../ast-reuse.md`](../ast-reuse.md) section 6). Copy of 05
+restructured; all netstandard2.0, FSharp.Core 8.0.100; the real `src/core` build of `Xake.dll` is used unchanged.
+
+- `Core/` (`XakeLike.dll`) — stand-in for the additions to `Xake.dll`: `PatternAst` and `PatternAstGen` as **public**
+  modules (05's generated file with `internal` dropped; decision 13).
+- `Runtime/` (`Xake.Patterns.dll`, namespace `Xake.Patterns`) — 05's `PatternRuntime`, references `Xake.dll` + `XakeLike.dll`,
+  carries `TypeProviderAssembly("Xake.Patterns.DesignTime")`. No `InternalsVisibleTo`.
+- `DesignTime/` — 05's provider (replacement map now `Xake.Patterns.DesignTime -> Xake.Patterns`); no copy-back step.
+- `Pkg/` — stand-in for `src/dotnet`, package `Xake.SepDllExp 0.0.1-exp06`; `app/` — compiled net8.0 consumer.
+- `make-stage.sh` lays out `stage/{with,without,xake-only}` (loose dlls); `consumer/*.fsx`; outputs in `*output.txt`,
+  `nupkg-layout.txt`, `stage-layout.txt`.
+
+| hypothesis / run | result |
+|---|---|
+| H1 `consumer/h1-xake-only.fsx`: `#r` only `Xake.dll`, no design-time dll anywhere (`h1-output.txt`) | **pass**: compiles, rule runs; `TypeProviderAssembly` attributes on `Xake.dll` = 0. (Trivially so: the attribute is simply not there. The in-repo corollary: every project that references only `Xake.dll` — engine, tests, `Xake.Dotnet`, hermetic build — never needs the design-time dll.) |
+| H5 no `InternalsVisibleTo` (`Core/` public modules; `Runtime`/`DesignTime` reference them as plain public API) | **pass**: both build, provider works (`use-output.txt`) |
+| positive control `consumer/use.fsx` (= 05's `use.fsx`: `Format`/`Make`, constraints, positional `_n`, `All`, `GlobMasks`, `Glob`, `Rule`, `Get`) against `stage/with` (design-time folder at `../../typeproviders/fsharp41/netstandard2.0` of `lib/netstandard2.0`), SDK 10 and SDK 8 fsi | works, output identical to 05's |
+| first try, `stage/with` whose typeproviders folder held only the design-time dll | `error FS3033: The type provider ... reported an error: Could not load file or assembly 'XakeLike ...'` — the typeproviders folder must hold the **whole design-time output folder** (`Xake.dll`, `Xake.Patterns.dll`, helpers), which is what the F# SDK's `PackageFSharpDesignTimeTools` packs |
+| H4 `consumer/h4-without.fsx` (`stage/without`: `Xake.dll` + `Xake.Patterns.dll`, no design-time dll), both SDKs (`h4-output.txt`) | **pass** (FS3031 as expected), reported at line 7, the `#r` of `Xake.Patterns.dll`, not line 6 (`Xake.dll`): `error FS3031: The type provider '.../stage/without/lib/netstandard2.0/Xake.Patterns.dll' reported an error: Assembly attribute 'TypeProviderAssemblyAttribute' refers to a designer assembly 'Xake.Patterns.DesignTime' which cannot be loaded from path '.../stage/without/lib/netstandard2.0/Xake.Patterns.DesignTime.dll'. The exception reported was: System.IO.FileNotFoundException - Could not load file or assembly '...Xake.Patterns.DesignTime.dll'. The system cannot find the file specified.` (fsi then adds `error FS0193: internal error`) |
+| H4 in the build: `Pkg` first referenced `Xake.Patterns.fsproj` for compilation (as 05's `Pkg` did) | `error FS3031` for both TFMs (same text, path `Runtime/bin/Release/netstandard2.0/...`): any project that **references `Xake.Patterns.dll`** needs the design-time dll. Fix: `ReferenceOutputAssembly="false"` (build order only) and pack the dll by hand with `<None Pack PackagePath="lib/...">`. Also `warning FS3005` in the design-time project itself (references the runtime dll, no provider class in it) — cosmetic, `NoWarn` it |
+| `dotnet pack -c Release -o <feed>` in `Pkg/` (`pack-output.txt`, `nupkg-layout.txt`) | `lib/{net462,netstandard2.0}/` `Xake.dll`, `Xake.Patterns.dll`, `XakeLike.dll`, `Xake.SepDllExp.dll`; `typeproviders/fsharp41/netstandard2.0/` `Xake.Patterns.DesignTime.dll`, `Xake.Patterns.dll`, `Xake.dll`, `XakeLike.dll`; no NU5100/NU5118 this time (suppressed in the fsproj) |
+| H2 `consumer/use-nuget.fsx` (`#i` the feed, `#r "nuget: Xake.SepDllExp, 0.0.1-exp06"`), SDK 10 and SDK 8 fsi (`use-nuget-output.txt`) | **pass**: `All`, positional `Format`, `GlobMasks`, multi-file `Rule` with typed `m.fwk`/`m.lib`/`m.dll` |
+| H3 `app/` (net8.0, `PackageReference` to the nupkg, `dotnet run -c Release`, `h3-output.txt`) | **pass**: compiled typed groups, positional `Format`, `Glob`, `Rule` |
+
+Not covered: `Command<>` (not in 05's provider; 04's is separate), IDE completion. Conclusions: the attribute on a
+separate dll behaves exactly as described, and the cost moves to one rule — **only the packing project may
+not compile against `Xake.Patterns.dll`**, and nothing else in the repo should reference it except scripts/user projects
+through the package. In the real repo `Xake.Patterns.dll` would be its own project (`src/patterns`) referencing `src/core`;
+the design-time project references both; `src/dotnet` packs both plus the design-time folder.
+
+## 07-ce-syntax — lower-noise rule syntax (`Dll.rule { }`, `Dll.Pattern ..>`, `Dll.Rule <|`)
+
+For [`../ce-syntax.md`](../ce-syntax.md). A copy of 05 (`slice-ast.sh`, `PatternAstGen.fs`,
+`Runtime/`, `DesignTime/`; 05 is untouched) with 04's `Command<>` ported onto the AST and the
+members the forms need: static `Pattern` (single-output types and `Command<>` only) and `Patterns`
+(operands for `..>`/`*..>`/`=>`), `Get` checked at run time against the rule's matches
+(`PatternRuntime.getFor`), and a static property `rule : TypedRuleBuilder<T>` — a generic builder
+class of the runtime dll (inherits `RecipeBuilder`, adds `Bind(Matched, T -> Recipe)`, `Run` makes
+the `FileRule`/`MultiFileRule`/`PhonyRule`), instantiated at the provided type itself;
+`matched` is the marker value (`namespace Xake`). Generation cut to `Format` and `Target`.
+
+Build: `sh slice-ast.sh; cd DesignTime; dotnet build -c Release` (7 s, 0 errors).
+
+| run (in `07-ce-syntax/consumer/`) | result |
+|---|---|
+| `dotnet fsi forms.fsx` (output: `consumer/output.txt`) | three real rules (build.fsc.fsx's `out/(cfg:*)/(fwk:*)/(name:*).dll`, build.fsx's dll+xml multi-file rule, build.fsx's `test::(project:*)/(slice:*)` needing `test-build::..`) in forms A (`Dll.Pattern ..> recipe { let! m = Dll.Get ..}`), B (`Dll.rule { let! m = matched ..}`), D (`Dll.Rule <\| fun m -> recipe {..}`) and 05's `Dll.Rule(fun m -> ..)`: all compile and build the same; a mixed `rules [...]` with A, B, D, the string API, `command` and `target` builds `main` |
+| the SDK 8 fsi on `forms.fsx` | same lines (one pair of independent targets in another order) |
+| `dotnet fsi form-c.fsx` | form C: `rule Dll.rule { .. }` in `xakeScript`: `FS3099 'rule' is used with an incorrect number of arguments ... Expected 1 argument(s), but given 2`; `rule (Dll.rule { .. })` and `rule (Test.Rule <\| fun m -> ..)` work |
+| `sh neg/run-neg.sh` (14 cases from `neg/cases.fsx`, output: `neg/output.txt`) | `m.fkw` in A, B, D: `FS0039 ... does not define ... 'fkw'. Maybe you want one of the following: fwk`; `m.pdb` on the multi-file type in A, B: FS0039; `m.slcie` in `Test.rule`: FS0039 with `slice`; `Lib.Pattern ..>`: FS0039 `Maybe you want ... Patterns`; `Test.Pattern ..> recipe {..}` (phony name, file operator): compiles to `FileRule "test::..."`; `matched` in a plain `recipe`: `FS0072 The type of this expression could not be inferred`, in a nested `recipe` inside `Dll.rule`: `FS0041 No overloads match for method 'Bind'. Known types of arguments: Matched * ...`; `let! m = Lib.Get` inside a `Dll` rule (A and B): run time `XakeException "[\|...\|].Get: the rule being run has no groups [\|"lib"\|] (it has [..; "cfg"; "fwk"; "name"]); a Get of another pattern than the rule's?"`; `Dll.rule { }` without `matched` and a one-line `Dll.rule { let! m = matched in .. }`: run |

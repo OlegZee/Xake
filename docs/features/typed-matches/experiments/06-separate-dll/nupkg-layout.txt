@@ -1,0 +1,12 @@
+16384 lib/net462/Xake.Patterns.dll
+6144 lib/net462/Xake.SepDllExp.dll
+680448 lib/net462/Xake.dll
+21504 lib/net462/XakeLike.dll
+16384 lib/netstandard2.0/Xake.Patterns.dll
+6144 lib/netstandard2.0/Xake.SepDllExp.dll
+680448 lib/netstandard2.0/Xake.dll
+21504 lib/netstandard2.0/XakeLike.dll
+1209856 typeproviders/fsharp41/netstandard2.0/Xake.Patterns.DesignTime.dll
+16384 typeproviders/fsharp41/netstandard2.0/Xake.Patterns.dll
+680448 typeproviders/fsharp41/netstandard2.0/Xake.dll
+21504 typeproviders/fsharp41/netstandard2.0/XakeLike.dll

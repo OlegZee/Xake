@@ -1,0 +1,17 @@
+$ dotnet fsi h4-without.fsx   (SDK 10; Xake.dll + Xake.Patterns.dll referenced, no design-time dll)
+
+
+/Users/olegz/projects/Xake/.claude/worktrees/feature/typed-matches/docs/features/typed-matches/experiments/06-separate-dll/consumer/h4-without.fsx(7,1): error FS3031: The type provider '/Users/olegz/projects/Xake/.claude/worktrees/feature/typed-matches/docs/features/typed-matches/experiments/06-separate-dll/consumer/../stage/without/lib/netstandard2.0/Xake.Patterns.dll' reported an error: Assembly attribute 'TypeProviderAssemblyAttribute' refers to a designer assembly 'Xake.Patterns.DesignTime' which cannot be loaded from path '/Users/olegz/projects/Xake/.claude/worktrees/feature/typed-matches/docs/features/typed-matches/experiments/06-separate-dll/consumer/../stage/without/lib/netstandard2.0/Xake.Patterns.DesignTime.dll'. The exception reported was: System.IO.FileNotFoundException - Could not load file or assembly '/Users/olegz/projects/Xake/.claude/worktrees/feature/typed-matches/docs/features/typed-matches/experiments/06-separate-dll/stage/without/lib/netstandard2.0/Xake.Patterns.DesignTime.dll'. The system cannot find the file specified.
+
+
+
+
+error FS0193: internal error: One or more errors occurred. (Processing of a script fragment has stopped because an exception has been raised)
+
+
+$ SDK 8
+
+
+/Users/olegz/projects/Xake/.claude/worktrees/feature/typed-matches/docs/features/typed-matches/experiments/06-separate-dll/consumer/h4-without.fsx(7,1): error FS3031: The type provider '/Users/olegz/projects/Xake/.claude/worktrees/feature/typed-matches/docs/features/typed-matches/experiments/06-separate-dll/consumer/../stage/without/lib/netstandard2.0/Xake.Patterns.dll' reported an error: Assembly attribute 'TypeProviderAssemblyAttribute' refers to a designer assembly 'Xake.Patterns.DesignTime' which cannot be loaded from path '/Users/olegz/projects/Xake/.claude/worktrees/feature/typed-matches/docs/features/typed-matches/experiments/06-separate-dll/consumer/../stage/without/lib/netstandard2.0/Xake.Patterns.DesignTime.dll'. The exception reported was: System.IO.FileNotFoundException - Could not load file or assembly '/Users/olegz/projects/Xake/.claude/worktrees/feature/typed-matches/docs/features/typed-matches/experiments/06-separate-dll/stage/without/lib/netstandard2.0/Xake.Patterns.DesignTime.dll'. The system cannot find the file specified.
+
+

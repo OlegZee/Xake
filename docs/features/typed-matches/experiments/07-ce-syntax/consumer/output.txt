@@ -1,0 +1,32 @@
+--- A: Dll.Pattern ..> recipe { let! m = Dll.Get ... }
+    compileAs locks/Core.Release.lock net8.0
+    dotnet build src/Xake --framework netstandard2.0 --output ./out/netstandard2.0 # out/netstandard2.0/Xake.dll out/netstandard2.0/Xake.xml
+    sh dotnet build core
+    sh dotnet test core slice 2 (test::core/2)
+--- B: Dll.rule { let! m = matched ... }
+    compileAs locks/Core.Release.lock net8.0
+    dotnet build src/Xake --framework netstandard2.0 --output ./out/netstandard2.0 # out/netstandard2.0/Xake.dll out/netstandard2.0/Xake.xml
+    sh dotnet build core
+    sh dotnet test core slice 2 (test::core/2)
+--- D: Dll.Rule <| fun m -> recipe { ... }
+    compileAs locks/Core.Release.lock net8.0
+    dotnet build src/Xake --framework netstandard2.0 --output ./out/netstandard2.0 # out/netstandard2.0/Xake.dll out/netstandard2.0/Xake.xml
+    sh dotnet build core
+    sh dotnet test core slice 2 (test::core/2)
+--- 05: Dll.Rule(fun m -> recipe { ... })
+    compileAs locks/Core.Release.lock net8.0
+    dotnet build src/Xake --framework netstandard2.0 --output ./out/netstandard2.0 # out/netstandard2.0/Xake.dll out/netstandard2.0/Xake.xml
+    sh dotnet build core
+    sh dotnet test core slice 2 (test::core/2)
+--- mixed list (string API, A, B, D, existing target/command builders)
+    compileAs locks/Core.Release.lock net8.0
+    dotnet build src/Xake -f netstandard2.0
+    sh dotnet build core
+    sh dotnet test core slice 2
+--- mixed, 'main'
+    compileAs locks/Core.Release.lock net8.0
+    lib netstandard2.0 Xake
+    sh dotnet build core
+    sh dotnet test core slice 2
+C1 rule (Dll.rule { }): Release net8.0 Core
+C2 rule (Test.Rule <| fun m -> ..): core 2

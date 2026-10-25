@@ -1,0 +1,12 @@
+Lib.All     = ["out/net8.0/A.dll"; "out/net8.0/A.xml"; "out/net8.0/B.dll"; "out/net8.0/B.xml"]
+Pos.Format  = gen/a/core-7.txt
+Lib.Glob    = Fileset
+  ({ FailOnEmpty = false
+     BaseDir = None },
+   [Includes (PathMask [Directory "out"; Directory "net8.0"; FileMask "*.dll"]);
+    Includes (PathMask [Directory "out"; Directory "net8.0"; FileMask "*.xml"])])
+XAKE build tool 1.0.0.0
+
+XAKE build tool 1.0.0.0
+
+multi: fwk=net8.0 lib=Core dll=out/net8.0/Core.dll xml=out/net8.0/Core.xml

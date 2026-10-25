@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Experiment 06: Xake.Patterns.dll = the runtime half of the provider. It is the dll that carries
+       TypeProviderAssembly("Xake.Patterns.DesignTime"); Xake.dll carries nothing. References the real
+       Xake.dll (engine) and the stand-in with the public PatternAst. NO InternalsVisibleTo. -->
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <DisableImplicitFSharpCoreReference>true</DisableImplicitFSharpCoreReference>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="FSharp.Core" Version="8.0.100" />
+    <Reference Include="Xake">
+      <HintPath>../../../../../../src/core/bin/Release/netstandard2.0/Xake.dll</HintPath>
+    </Reference>
+    <ProjectReference Include="../Core/XakeLike.fsproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="Runtime.fs" />
+    <Compile Include="AssemblyInfo.fs" />
+  </ItemGroup>
+</Project>

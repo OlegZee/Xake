@@ -1,0 +1,71 @@
+$ dotnet fsi use.fsx   (SDK 10, stage/with)
+Dll.Text            = out/(fwk:*)/(lib:*).dll
+Dll.Format(...)     = out/net8.0/Xake.dll
+Lib.Make(...).dll   = out/netstandard2.0/Xake.dll ; .xml = out/netstandard2.0/Xake.xml ; fwk = netstandard2.0
+Src.Format ok       = src/a.cs
+Src.Format constr.  = Pattern '(dir:*)/(file:*).(ext:c*)': [("dir", "src"); ("ext", "fs"); ("file", "a")] do not give a path the pattern matches (got 'src/a.fs')
+'/' in a * value    = Pattern 'out/(fwk:*)/(lib:*).dll': [("fwk", "net8.0/x"); ("lib", "Xake")] do not give a path the pattern matches (got 'out/net8.0/x/Xake.dll')
+Pos.Format          = gen/a/core-7.txt
+Deep.Format         = src/x/y/Main.fs
+Nest.Format         = top/x-a.ss
+Lib.All (cross)     = ["out/net462/Xake.dll"; "out/net462/Xake.xml"; "out/net462/Xake.Dotnet.dll";
+ "out/net462/Xake.Dotnet.xml"; "out/netstandard2.0/Xake.dll";
+ "out/netstandard2.0/Xake.xml"; "out/netstandard2.0/Xake.Dotnet.dll";
+ "out/netstandard2.0/Xake.Dotnet.xml"]
+Lib.GlobMasks(lib)  = ["out/*/Xake.dll"; "out/*/Xake.xml"]
+Pos.GlobMasks(_2)   = ["gen/*/*-1.txt"]
+Nest.GlobMasks()    = ["*/*-a.ss"]
+Dll.Glob() : Fileset= Fileset
+  ({ FailOnEmpty = false
+     BaseDir = None },
+   [Includes (PathMask [Directory "out"; DirectoryMask "*"; FileMask "*.dll"])])
+XAKE build tool 1.0.0.0
+
+XAKE build tool 1.0.0.0
+
+rule: fwk=net8.0 lib=Core
+XAKE build tool 1.0.0.0
+
+multi: fwk=net8.0 lib=Core dll=out/net8.0/Core.dll xml=out/net8.0/Core.xml
+XAKE build tool 1.0.0.0
+
+positional: _1=abc name=core _2=7 path=gen/abc/core-7.txt
+XAKE build tool 1.0.0.0
+
+get: _1=a/b name=Main
+
+$ SDK 8 fsi use.fsx
+Dll.Text            = out/(fwk:*)/(lib:*).dll
+Dll.Format(...)     = out/net8.0/Xake.dll
+Lib.Make(...).dll   = out/netstandard2.0/Xake.dll ; .xml = out/netstandard2.0/Xake.xml ; fwk = netstandard2.0
+Src.Format ok       = src/a.cs
+Src.Format constr.  = Pattern '(dir:*)/(file:*).(ext:c*)': [("dir", "src"); ("ext", "fs"); ("file", "a")] do not give a path the pattern matches (got 'src/a.fs')
+'/' in a * value    = Pattern 'out/(fwk:*)/(lib:*).dll': [("fwk", "net8.0/x"); ("lib", "Xake")] do not give a path the pattern matches (got 'out/net8.0/x/Xake.dll')
+Pos.Format          = gen/a/core-7.txt
+Deep.Format         = src/x/y/Main.fs
+Nest.Format         = top/x-a.ss
+Lib.All (cross)     = ["out/net462/Xake.dll"; "out/net462/Xake.xml"; "out/net462/Xake.Dotnet.dll";
+ "out/net462/Xake.Dotnet.xml"; "out/netstandard2.0/Xake.dll";
+ "out/netstandard2.0/Xake.xml"; "out/netstandard2.0/Xake.Dotnet.dll";
+ "out/netstandard2.0/Xake.Dotnet.xml"]
+Lib.GlobMasks(lib)  = ["out/*/Xake.dll"; "out/*/Xake.xml"]
+Pos.GlobMasks(_2)   = ["gen/*/*-1.txt"]
+Nest.GlobMasks()    = ["*/*-a.ss"]
+Dll.Glob() : Fileset= Fileset
+  ({ FailOnEmpty = false
+     BaseDir = None },
+   [Includes (PathMask [Directory "out"; DirectoryMask "*"; FileMask "*.dll"])])
+XAKE build tool 1.0.0.0
+
+XAKE build tool 1.0.0.0
+
+rule: fwk=net8.0 lib=Core
+XAKE build tool 1.0.0.0
+
+multi: fwk=net8.0 lib=Core dll=out/net8.0/Core.dll xml=out/net8.0/Core.xml
+XAKE build tool 1.0.0.0
+
+positional: _1=abc name=core _2=7 path=gen/abc/core-7.txt
+XAKE build tool 1.0.0.0
+
+get: _1=a/b name=Main

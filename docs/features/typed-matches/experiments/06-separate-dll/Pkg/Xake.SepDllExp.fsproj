@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Experiment 06: stand-in for src/dotnet. Package Xake.SepDllExp 0.0.1-exp06 (not the real Xake id):
+         lib/{net462,netstandard2.0}/  Xake.dll  Xake.Patterns.dll  XakeLike.dll  <this dll>
+         typeproviders/fsharp41/netstandard2.0/  Xake.Patterns.DesignTime.dll (+ its folder)
+       Xake.dll is the real src/core build, added by hand; in the real repo it is core's own output. -->
+  <PropertyGroup>
+    <TargetFrameworks>net462;netstandard2.0</TargetFrameworks>
+    <DisableImplicitFSharpCoreReference>true</DisableImplicitFSharpCoreReference>
+    <PackageId>Xake.SepDllExp</PackageId>
+    <Version>0.0.1-exp06</Version>
+    <FSharpToolsDirectory>typeproviders</FSharpToolsDirectory>
+    <NoWarn>$(NoWarn);NU5100;NU5118;FS3005</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="Lib.fs" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="FSharp.Core" Version="8.0.100" />
+    <Reference Include="Xake"><HintPath>../../../../../../src/core/bin/Release/netstandard2.0/Xake.dll</HintPath></Reference>
+    <!-- first pass failed with FS3031 here: compiling against Xake.Patterns.dll needs the design-time dll. The packing project
+         must not reference it for compilation (build order only); its files are packed by hand below. -->
+    <ProjectReference Include="../Runtime/Xake.Patterns.fsproj" PrivateAssets="all" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="../Core/XakeLike.fsproj" PrivateAssets="all" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="../DesignTime/Xake.Patterns.DesignTime.fsproj" IsFSharpDesignTimeProvider="true" PrivateAssets="all" ReferenceOutputAssembly="false" />
+    <None Include="../../../../../../src/core/bin/Release/netstandard2.0/Xake.dll" Pack="true" PackagePath="lib/netstandard2.0;lib/net462" Visible="false" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="../Runtime/bin/Release/netstandard2.0/Xake.Patterns.dll" Pack="true" PackagePath="lib/netstandard2.0;lib/net462" Visible="false" />
+    <None Include="../Core/bin/Release/netstandard2.0/XakeLike.dll" Pack="true" PackagePath="lib/netstandard2.0;lib/net462" Visible="false" />
+  </ItemGroup>
+</Project>

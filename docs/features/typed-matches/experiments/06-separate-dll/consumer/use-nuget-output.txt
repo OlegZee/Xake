@@ -1,0 +1,19 @@
+$ dotnet fsi use-nuget.fsx   (SDK 10)
+nuget: Lib.All      = ["out/net8.0/A.dll"; "out/net8.0/A.xml"; "out/net8.0/B.dll"; "out/net8.0/B.xml"]
+nuget: Pos.Format   = gen/a/core-7.txt
+nuget: Lib.GlobMasks= ["out/net8.0/*.dll"; "out/net8.0/*.xml"]
+XAKE build tool 1.0.0.0
+
+XAKE build tool 1.0.0.0
+
+nuget: multi fwk=net8.0 lib=Core dll=out/net8.0/Core.dll
+
+$ SDK 8 fsi use-nuget.fsx
+nuget: Lib.All      = ["out/net8.0/A.dll"; "out/net8.0/A.xml"; "out/net8.0/B.dll"; "out/net8.0/B.xml"]
+nuget: Pos.Format   = gen/a/core-7.txt
+nuget: Lib.GlobMasks= ["out/net8.0/*.dll"; "out/net8.0/*.xml"]
+XAKE build tool 1.0.0.0
+
+XAKE build tool 1.0.0.0
+
+nuget: multi fwk=net8.0 lib=Core dll=out/net8.0/Core.dll

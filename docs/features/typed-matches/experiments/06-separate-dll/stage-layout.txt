@@ -1,0 +1,11 @@
+stage/with/lib/netstandard2.0/Xake.dll
+stage/with/lib/netstandard2.0/Xake.Patterns.dll
+stage/with/lib/netstandard2.0/XakeLike.dll
+stage/with/typeproviders/fsharp41/netstandard2.0/Xake.dll
+stage/with/typeproviders/fsharp41/netstandard2.0/Xake.Patterns.DesignTime.dll
+stage/with/typeproviders/fsharp41/netstandard2.0/Xake.Patterns.dll
+stage/with/typeproviders/fsharp41/netstandard2.0/XakeLike.dll
+stage/without/lib/netstandard2.0/Xake.dll
+stage/without/lib/netstandard2.0/Xake.Patterns.dll
+stage/without/lib/netstandard2.0/XakeLike.dll
+stage/xake-only/Xake.dll

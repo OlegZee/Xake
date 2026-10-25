@@ -1,0 +1,7 @@
+assembly = Xake, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null
+TypeProviderAssembly attributes on Xake.dll = 0
+XAKE build tool 1.0.0.0
+
+XAKE build tool 1.0.0.0
+
+h1 rule ran: fwk=net8.0 lib=Core

@@ -63,14 +63,21 @@ After experiments 06 and 07 (`ce-syntax.md`).
     only `Xake.dll` from a folder never needs it.
 18. **Rule form D is the main form:** `Dll.Rule <| fun m -> recipe { ... }` (the existing
     `Rule` member, no new code).
-19. **Form A stays if it costs nothing**, with the accessor named **`Dll.Matched`** (not
-    `Get`): `Dll.Pattern ..> recipe { let! m = Dll.Matched ... }`; a run-time check rejects
-    another pattern's `Matched` inside the rule.
-20. **The marker of form B is named `matched`** (`Dll.rule { let! m = matched ... }`). Open:
-    whether form B ships at all beside D.
+19. ~~Form A stays as `Dll.Matched`~~ — **reversed in round 4: form A is dropped**.
+20. **Form B ships beside D**; its marker is named `matched`
+    (`Dll.rule { let! m = matched ... }`).
 21. **`Command<>.Rule` follows today's `command` semantics** (adds AlwaysRerun). Note: the 9
     existing phony rules with groups use `=>` (no AlwaysRerun); migrating them to
     `Command<>.Rule` changes that.
+
+## Decisions, round 4 (2026-10-25)
+
+22. **Forms: D and B; A is dropped** (rather lose A than B).
+23. **`Command<>` without groups is allowed**: `Command<"clean">.Rule <| fun () -> recipe { ... }`
+    (the lambda takes `unit` when there are no groups), and form B `Command<"clean">.rule { ... }`
+    needs no `matched` at all.
+24. **Future option kept open: move the provider into its own package.** For now it ships in
+    the `Xake` package (decision 17); the separate `Xake.Patterns.dll` keeps that split cheap.
 
 ## Open
 

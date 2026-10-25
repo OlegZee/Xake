@@ -17,7 +17,12 @@ implementation. Nothing under `src/` changes on this branch until a decision is 
 
 | PR | Branch | Worktree |
 |----|--------|----------|
-| — | `feature/typed-matches` | `.claude/worktrees/feature/typed-matches` |
+| — (integration → `dev` at the end) | `feature/typed-matches` (pushed) | `.claude/worktrees/feature/typed-matches` |
+| PR1 → `feature/typed-matches` (in progress) | `feature/pattern-ast-format` | `.claude/worktrees/feature/pattern-ast-format` |
+| PR2 → `feature/typed-matches` (in progress) | `feature/script-surface-names` | `.claude/worktrees/feature/script-surface-names` |
+
+Sub-PR branches use this feature folder (`docs/features/typed-matches/`); they branch from and
+merge (squash) into `feature/typed-matches` (decision 45).
 
 ## State
 

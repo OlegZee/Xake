@@ -51,13 +51,26 @@ Answering the questions of `phony-types.md` and `ast-reuse.md`.
     `FSharp.TypeProviders.SDK` package. Open: whether `build.fsc.fsx` can compile `.fs` sources
     taken from a package.
 
-Under discussion (not decided):
-- Put the `TypeProviderAssembly` attribute on a separate runtime dll (`Xake.Patterns.dll`,
-  namespace `Xake.Patterns`) in the same package instead of `Xake.dll`: removes the FS3031 risk
-  for everything that references only `Xake.dll`. To verify by an experiment.
-- The rule definition syntax has too many parentheses (`Dll.Rule(fun m -> recipe { ... })`);
-  candidates via computation expressions: `Dll.Pattern ..> recipe { let! m = Dll.Get ... }`, a
-  builder on the provided type (`Dll.rule { ... }`), a custom operation in `xakeScript`.
+## Decisions, round 3 (2026-10-25)
+
+After experiments 06 and 07 (`ce-syntax.md`).
+
+17. **The provider attribute sits on a separate runtime dll `Xake.Patterns.dll`** (namespace
+    `Xake.Patterns`), not on `Xake.dll`. Still **one package**: `lib/<tfm>/` holds `Xake.dll`
+    and `Xake.Patterns.dll`; `typeproviders/fsharp41/netstandard2.0/` holds the whole
+    design-time output (`Xake.Patterns.DesignTime.dll` and its dependencies). Package consumers
+    always get the design-time dll (it loads on reference, used or not); anything referencing
+    only `Xake.dll` from a folder never needs it.
+18. **Rule form D is the main form:** `Dll.Rule <| fun m -> recipe { ... }` (the existing
+    `Rule` member, no new code).
+19. **Form A stays if it costs nothing**, with the accessor named **`Dll.Matched`** (not
+    `Get`): `Dll.Pattern ..> recipe { let! m = Dll.Matched ... }`; a run-time check rejects
+    another pattern's `Matched` inside the rule.
+20. **The marker of form B is named `matched`** (`Dll.rule { let! m = matched ... }`). Open:
+    whether form B ships at all beside D.
+21. **`Command<>.Rule` follows today's `command` semantics** (adds AlwaysRerun). Note: the 9
+    existing phony rules with groups use `=>` (no AlwaysRerun); migrating them to
+    `Command<>.Rule` changes that.
 
 ## Open
 

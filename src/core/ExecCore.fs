@@ -1,6 +1,5 @@
 module internal Xake.ExecCore
 
-open System.Text.RegularExpressions
 open DependencyAnalysis
 
 open Storage
@@ -16,27 +15,6 @@ let traceLog (level:Logging.Level) fmt =
         return ctx.Logger.Log level "%s" s
     }
     Printf.kprintf write fmt
-
-let wildcardsRegex = Regex(@"\*\*|\*|\?", RegexOptions.Compiled)
-let patternTagRegex = Regex(@"\((?'tag'\w+?)\:[^)]+\)", RegexOptions.Compiled)
-let replace (regex:Regex) (evaluator: Match -> string) text = regex.Replace(text, evaluator)
-let ifNone x = function |Some x -> x | _ -> x
-
-/// Substitutes wildcard and named capture group matches into a file pattern.
-/// Positional wildcards (*, **, ?) are replaced by index, named groups by tag.
-let applyWildcards = function
-    | None -> id
-    | Some matches ->
-        fun pat ->
-            let mutable i = 0
-            let evaluator m =
-                i <- i + 1
-                matches |> Map.tryFind (i.ToString()) |> ifNone ""
-            let evaluatorTag (m: Match) =
-                matches |> (Map.tryFind m.Groups.["tag"].Value) |> ifNone ""
-            pat
-            |> replace wildcardsRegex evaluator
-            |> replace patternTagRegex evaluatorTag
 
 /// A rule that matches a target, with what is needed to rank and explain the choice.
 /// `Pattern` is None for a condition rule (no textual pattern). `Index` is the position in the
@@ -80,7 +58,7 @@ let explainMatch (Rules rules) projectRoot target : RuleMatchInfo<_> list =
                 |> Option.map(fun groups -> groups, pattern)
                 )
             |> Option.map (fun (groups, pattern) ->
-                let generateName = applyWildcards (Map.ofList groups |> Some)
+                let generateName = PatternAst.formatMatches (Map.ofList groups)
 
                 let targets = patterns |> List.map (generateName >> (</>) projectRoot >> File.make >> FileTarget)
                 { Rule = rule; Groups = groups; Targets = targets; Pattern = Some pattern; Specificity = Path.specificity pattern; Index = index })

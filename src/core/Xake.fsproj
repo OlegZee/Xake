@@ -24,6 +24,7 @@
     <Compile Include="Logging.fs" />
     <Compile Include="Pickler.fs" />
     <Compile Include="Env.fs" />
+    <Compile Include="PatternAst.fs" />
     <Compile Include="Path.fs" />
     <Compile Include="PathExt.fs" />
     <Compile Include="File.fsi" />

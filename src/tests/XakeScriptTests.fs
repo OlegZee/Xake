@@ -310,6 +310,11 @@ type ``XakeScript tests``() =
     [<TestCase("dd/a.dll", "dd/*.dll;dd/*.xml", "dd/a.dll;dd/a.xml", TestName="Simple case")>]
     [<TestCase("dd/ff/a.dll", "**/*.dll;**/*.xml", "dd/ff/a.dll;dd/ff/a.xml", TestName="Recurse mask")>]
     [<TestCase("dd/a.dll", "(pat:**/*).dll;(pat:**/*)/main.xml", "dd/a.dll;dd/a/main.xml", TestName="Masks")>]
+    [<TestCase("src/a/b/x1.pdb", "src/**/x?.dll;src/**/x?.pdb", "src/a/b/x1.dll;src/a/b/x1.pdb", TestName="Positional ** and ?")>]
+    [<TestCase("version.json", "version.txt;version.json", "version.txt;version.json", TestName="Literal-only masks")>]
+    // the former applyWildcards left "(lib:)" for an empty value and cut a group at a ')' in a value
+    [<TestCase("out/a/.xml", "out/(fwk:*)/(lib:*).dll;out/(fwk:*)/(lib:*).xml", "out/a/.dll;out/a/.xml", TestName="Empty group value")>]
+    [<TestCase("out/a)b/c.xml", "out/(fwk:*)/(lib:*).dll;out/(fwk:*)/(lib:*).xml", "out/a)b/c.dll;out/a)b/c.xml", TestName="Paren in a group value")>]
     member x.``multitarget rule generates names``(tgt,(masksStr: string),expect:string) =
 
         let masks = masksStr.Split ';'

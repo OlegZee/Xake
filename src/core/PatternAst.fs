@@ -47,6 +47,8 @@ type Issue =
     | ClassLiteral of char
     /// A `\` used as a path separator.
     | BackslashSeparator
+    /// Named groups (their names) in a fileset mask, where they are not groups (see `Warnings.checkMask`).
+    | NamedGroupInMask of string list
 
 /// The characters reserved for future pattern elements.
 let reservedChars = "()[]{}|"
@@ -135,8 +137,14 @@ let warningText (pattern: string) (issues: Issue list) : string option =
           for i in issues do
             match i with
             | ClassLiteral c ->
-                yield sprintf "'[%c]' is read as the literal %s for compatibility; write %s instead"
-                        c (quote c) (if isReserved c then "\\" + string c else string c)
+                yield sprintf "'[%c]' is read as the literal %s for compatibility; write %s instead, or %s for the brackets themselves"
+                        c (quote c) (escape (string c)) (escape ("[" + string c + "]"))
+            | _ -> ()
+          for i in issues do
+            match i with
+            | NamedGroupInMask names ->
+                yield sprintf "named groups (%s) are only meaningful in rule patterns; in a mask they are not groups: an include reads '(name:' and ')' as literal text (a segment with a wildcard then finds no files) and an exclude segment with a wildcard matches the group's body -- this will be an error in a future release; write \\( \\) for literal parentheses"
+                        (names |> List.map (fun n -> "'(" + n + ":...)'") |> String.concat ", ")
             | _ -> ()
           if issues |> List.contains BackslashSeparator then
             yield "'\\' as a path separator is deprecated; use '/'" ]
@@ -147,40 +155,6 @@ let warningText (pattern: string) (issues: Issue list) : string option =
 /// An invalid pattern (an unbalanced reserved `(`, `)` or `[`): the message names the pattern.
 exception PatternException of string
     with override this.Message = match this :> exn with PatternException m -> m | _ -> "invalid pattern"
-
-/// Deprecation warnings about the pattern syntax, reported once per pattern text. A build attaches
-/// its log while it runs; warnings raised while nothing is attached (e.g. by filesets built when a
-/// script is loaded) wait for the next attached log.
-module Warnings =
-
-    let private checkedPatterns = System.Collections.Concurrent.ConcurrentDictionary<string, bool>()
-    let private gate = obj ()
-    let mutable private sinks : (obj * (string -> unit)) list = []
-    let private pending = ResizeArray<string>()
-    let private maxPending = 1000
-
-    let private deliver (message: string) =
-        lock gate (fun () ->
-            match sinks with
-            | [] -> if pending.Count < maxPending then pending.Add message
-            | _ -> for _, sink in sinks do sink message)
-
-    /// Reports the deprecated constructs of a pattern, once per pattern text.
-    let check (pattern: string) =
-        if not (checkedPatterns.ContainsKey pattern) && checkedPatterns.TryAdd(pattern, true) then
-            let _, issues = parseWithIssues pattern
-            warningText pattern issues |> Option.iter deliver
-
-    /// Sends the warnings to `sink` until disposed, starting with those waiting for a log.
-    let internal attach (sink: string -> unit) : System.IDisposable =
-        let key = obj ()
-        let waiting =
-            lock gate (fun () ->
-                sinks <- (key, sink) :: sinks
-                let w = List.ofSeq pending in pending.Clear(); w)
-        waiting |> List.iter sink
-        { new System.IDisposable with
-            member _.Dispose() = lock gate (fun () -> sinks <- sinks |> List.filter (fun (k, _) -> not (obj.ReferenceEquals(k, key)))) }
 
 // Regex fragments. Triple-quoted so the `\\` reaches the regex as a literal backslash inside the
 // character class.
@@ -315,3 +289,47 @@ let formatMatches (matches: Map<string, string>) (pattern: string) : string =
     let nums = wildcards tokens |> List.map snd |> Array.ofList
     let find key = matches |> Map.tryFind key |> Option.defaultValue ""
     format find (fun i -> find (string nums.[i - 1])) tokens
+
+/// Deprecation warnings about the pattern syntax, reported once per pattern text. A build attaches
+/// its log while it runs; warnings raised while nothing is attached (e.g. by filesets built when a
+/// script is loaded) wait for the next attached log.
+module Warnings =
+
+    let private checkedPatterns = System.Collections.Concurrent.ConcurrentDictionary<string, bool>()
+    let private gate = obj ()
+    let mutable private sinks : (obj * (string -> unit)) list = []
+    let private pending = ResizeArray<string>()
+    let private maxPending = 1000
+
+    let private deliver (message: string) =
+        lock gate (fun () ->
+            match sinks with
+            | [] -> if pending.Count < maxPending then pending.Add message
+            | _ -> for _, sink in sinks do sink message)
+
+    let private report (key: string) (pattern: string) (issues: unit -> Issue list) =
+        if not (checkedPatterns.ContainsKey key) && checkedPatterns.TryAdd(key, true) then
+            warningText pattern (issues ()) |> Option.iter deliver
+
+    /// Reports the deprecated constructs of a rule pattern, once per pattern text.
+    let check (pattern: string) = report pattern pattern (fun () -> parseWithIssues pattern |> snd)
+
+    /// Reports the deprecated constructs of a fileset mask, once per mask text. A mask without named
+    /// groups shares its report with the same text used as a rule pattern; a mask with groups is
+    /// reported apart, since the groups are deprecated only in a mask.
+    let checkMask (mask: string) =
+        let tokens, issues = parseWithIssues mask
+        match groupNames tokens with
+        | [] -> report mask mask (fun () -> issues)
+        | names -> report ("\u0000mask:" + mask) mask (fun () -> issues @ [ NamedGroupInMask names ])
+
+    /// Sends the warnings to `sink` until disposed, starting with those waiting for a log.
+    let internal attach (sink: string -> unit) : System.IDisposable =
+        let key = obj ()
+        let waiting =
+            lock gate (fun () ->
+                sinks <- (key, sink) :: sinks
+                let w = List.ofSeq pending in pending.Clear(); w)
+        waiting |> List.iter sink
+        { new System.IDisposable with
+            member _.Dispose() = lock gate (fun () -> sinks <- sinks |> List.filter (fun (k, _) -> not (obj.ReferenceEquals(k, key)))) }

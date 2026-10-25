@@ -208,6 +208,53 @@ let ``exclude: [c] is the literal c, with a warning``() =
                 Assert.AreEqual(all |> List.filter ((<>) (sprintf "%s/a%c1.txt" u c)), files, mask)
                 Assert.AreEqual(1, warnings.Length, mask)
 
+// ------------------------------------------------------------------------------------- groups in masks
+
+let private groupWarning = "only meaningful in rule patterns; in a mask they are not groups"
+
+[<Test>]
+let ``include: a named group in a mask is literal text as before (finds nothing), with one warning``() =
+    let u = uniq ()
+    tree.withTree [ u + "/a.c"; u + "/b.c"; u + "/sub/c.c" ] <| fun root ->
+        for mask in [ u + "/(name:*).c"; u + "/(name:*.c)"; u + "/(d:*)/*.c" ] do
+            for fs in [ !! mask; ls mask; fileset { includes mask } ] do
+                let files, warnings = withWarnings mask (fun () -> fs |> tree.list root)
+                Assert.IsEmpty(files, mask)
+                Assert.LessOrEqual(warnings.Length, 1, mask)
+        // once per mask, naming the group
+        let mask = u + "/(n:?).c"
+        let _, warnings = withWarnings mask (fun () -> for _ in 1 .. 3 do !! mask |> tree.list root |> ignore)
+        Assert.AreEqual(1, warnings.Length)
+        StringAssert.Contains("named groups ('(n:...)') are " + groupWarning, warnings.Head)
+        StringAssert.Contains(@"will be an error in a future release; write \( \) for literal parentheses", warnings.Head)
+
+[<Test>]
+let ``exclude: a named group in a wildcard segment matches its body as before, with one warning``() =
+    let u = uniq ()
+    tree.withTree [ u + "/a.c"; u + "/b.c"; u + "/x.h"; u + "/sub/c.c"; u + "/sub/d.h" ] <| fun root ->
+        let all = !! (u + "/**/*") |> tree.list root
+        let cases =
+            [ u + "/(name:*).c", [ u + "/a.c"; u + "/b.c" ]
+              u + "/(name:a*).c", [ u + "/a.c" ]
+              u + "/(d:*)/*.h", [ u + "/sub/d.h" ]
+              u + "/**/(n:*).c", [ u + "/a.c"; u + "/b.c"; u + "/sub/c.c" ]
+              // a segment without a wildcard is plain text: the group is literal there
+              u + "/(name:a).c", [] ]
+        for mask, removed in cases do
+            let files, warnings = withWarnings mask (fun () -> !! (u + "/**/*") -- mask |> tree.list root)
+            Assert.AreEqual(all |> List.except removed, files, mask)
+            Assert.AreEqual(1, warnings.Length, mask)
+            StringAssert.Contains(groupWarning, warnings.Head)
+
+[<Test>]
+let ``a named group warns in a mask, not in the same rule pattern``() =
+    let u = uniq ()
+    let pattern = u + "/(n:*).c"
+    let _, ruleWarnings = withWarnings pattern (fun () -> matches pattern (u + "/a.c"))
+    Assert.IsEmpty ruleWarnings
+    let _, maskWarnings = withWarnings pattern (fun () -> Empty -- pattern |> ignore)
+    Assert.AreEqual(1, maskWarnings.Length)
+
 // ------------------------------------------------------------------------------------- backslash
 
 [<Test>]

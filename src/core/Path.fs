@@ -96,7 +96,7 @@ module private impl =
     /// holds its plain text.
     let parseMask isLastPart (pattern: string) =
         if notNullOrEmpty pattern then
-            PatternAst.Warnings.check pattern
+            PatternAst.Warnings.checkMask pattern
             let parts = splitMask pattern
             let rooted = pattern.[0] = '/' || (pattern.[0] = '\\' && not (pattern.Length > 1 && PatternAst.isReserved pattern.[1]))
             let fsroot = if rooted then [FsRoot] else []

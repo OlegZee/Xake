@@ -1,4 +1,4 @@
-module internal Xake.ScriptRunner
+﻿module internal Xake.ScriptRunner
 
 open DependencyAnalysis
 
@@ -11,7 +11,7 @@ let toEngineOptions (opts: ExecOptions) (rules: Rules<ExecContext>) : EngineOpti
         | _, Silent -> logger
         | logFileName,level -> CombineLogger logger (FileLogger logFileName level)
     { ProjectRoot = opts.ProjectRoot; Threads = opts.Threads
-      Logger = logger; Teardown = opts.Teardown; Rules = rules; RuleMatch = opts.RuleMatch }
+      Logger = MaskingLogger logger; Teardown = opts.Teardown; Rules = rules; RuleMatch = opts.RuleMatch }
 
 /// Active pattern that classifies ExecOptions into Dump, Dryrun, or Run execution mode.
 let (|Dump|Dryrun|Run|) (opts:ExecOptions) =
@@ -19,6 +19,37 @@ let (|Dump|Dryrun|Run|) (opts:ExecOptions) =
     | _ when opts.DumpDeps -> Dump
     | _ when opts.DryRun -> Dryrun
     | _ -> Run
+
+/// Checks the script variables given by `-d` (or `var`) against the secret variables of the
+/// schema and registers the values of the secret ones for masking before anything is logged.
+/// Returns the errors (an environment-only secret given by `-d`) and the warnings (an
+/// argument secret given by `-d`: visible in the process list).
+let checkSecretVars (opts: ExecOptions) =
+    let given name = Util.getVar opts.Vars name
+    [ for (name, help) in opts.VarSchema do
+        if help.IsSecret then
+            match help.Scope with
+            | ArgOnly -> ()
+            | _ -> help.EnvVarName |> Option.bind Util.getEnvVar |> Option.iter SecretMask.register
+            match help.Scope with
+            | EnvOnly ->
+                let envName = help.EnvVarName |> Option.defaultValue name
+                match [name; envName] |> List.tryFind (given >> Option.isSome) with
+                | Some key ->
+                    given key |> Option.iter SecretMask.register
+                    yield Choice1Of2 (Secrets.fromEnvOnly key envName)
+                | None -> ()
+            | _ ->
+                match given name with
+                | Some value ->
+                    SecretMask.register value
+                    let env = help.EnvVarName |> Option.map (sprintf "; prefer the environment variable %s") |> Option.defaultValue ""
+                    yield Choice2Of2 (sprintf "Secret variable '%s' is given by -d: its value is visible in the process list and the shell history%s" name env)
+                | None -> () ]
+    |> List.partition (function Choice1Of2 _ -> true | _ -> false)
+    |> fun (errors, warnings) ->
+        errors |> List.map (function Choice1Of2 e -> e | Choice2Of2 e -> e),
+        warnings |> List.map (function Choice1Of2 w -> w | Choice2Of2 w -> w)
 
 /// Creates execution context from CLI ExecOptions, handling ResetDb and logger construction.
 let createScriptContext (opts: ExecOptions) rules =
@@ -121,7 +152,8 @@ let runScript options rules =
                 logger.Log Error "Force exiting build process...")
     System.Console.CancelKeyPress.AddHandler(handler)
 
-    logger.Log Level.Debug "Options: %A" { options with Vars = [] }
+    let hideSecretDefaults = List.map (fun (name, help: VarHelp) -> name, if help.IsSecret then { help with DefaultStr = None } else help)
+    logger.Log Level.Debug "Options: %A" { options with Vars = []; VarSchema = hideSecretDefaults options.VarSchema }
         // be careful with debug option as it may contain sensitive info like script variables
 
     let targetLists =
@@ -134,8 +166,15 @@ let runScript options rules =
             tt |> List.map (fun (s: string) -> s.Split(';', '|') |> List.ofArray)
 
     let mutable exitCode = 0
+    let secretErrors, secretWarnings = checkSecretVars options
+    secretWarnings |> List.iter (logger.Log Warning "%s")
     try
         match options with
+        | _ when not secretErrors.IsEmpty ->
+            let errorText = secretErrors |> String.concat "\r\n"
+            do logger.Log Error "%s" errorText
+            exitCode <- 2
+            if options.ThrowOnError then raise (XakeException errorText)
         | Dump ->
             do logger.Log Level.Command "Dumping dependencies for targets %A" targetLists
             targetLists |> List.iter (List.map (ExecCore.makeTarget ctx) >> (dumpDeps ctx))

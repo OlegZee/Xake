@@ -1,4 +1,4 @@
-namespace Xake
+﻿namespace Xake
 
 [<AutoOpen>]
 module XakeScriptBuilder =
@@ -6,10 +6,13 @@ module XakeScriptBuilder =
     open System.Collections.Concurrent
     open System.Threading.Tasks
 
-    let private printVarsHelp (schema: (string * VarHelp) list) =
-        if schema <> [] then
-            printfn "\nScript variables:"
-            for (name, help) in schema do
+    /// The "Script variables" section of --help: names, types, env names, defaults and
+    /// descriptions; a secret variable is marked "(secret)" and shows no default.
+    let internal formatVarsHelp (schema: (string * VarHelp) list) =
+        if schema = [] then []
+        else
+            "\nScript variables:" ::
+            [ for (name, help) in schema do
                 let header =
                     match help.Scope with
                     | EnvOnly ->
@@ -18,13 +21,19 @@ module XakeScriptBuilder =
                     | _ ->
                         sprintf "  -d %s=<value> [%s]" name help.TypeName
                 let required = if help.IsRequired then " (required)" else ""
+                let secret = if help.IsSecret then " (secret)" else ""
                 let envStr =
                     match help.Scope with
                     | EnvOnly -> ""  // env name already shown in header
                     | _ -> help.EnvVarName |> Option.map (sprintf ", env: %s") |> Option.defaultValue ""
-                let defaultStr = help.DefaultStr |> Option.map (sprintf ", default: %s") |> Option.defaultValue ""
+                let defaultStr =
+                    if help.IsSecret then ""
+                    else help.DefaultStr |> Option.map (sprintf ", default: %s") |> Option.defaultValue ""
                 let descStr = help.Description |> Option.map (sprintf " — %s") |> Option.defaultValue ""
-                printfn "%s%s%s%s%s" header required envStr defaultStr descStr
+                yield sprintf "%s%s%s%s%s%s" header required secret envStr defaultStr descStr ]
+
+    let private printVarsHelp (schema: (string * VarHelp) list) =
+        formatVarsHelp schema |> List.iter (printfn "%s")
 
     /// Script builder.
     type RulesBuilder(options) =

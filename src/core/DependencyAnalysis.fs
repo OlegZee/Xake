@@ -46,7 +46,7 @@ let private stampMoved target (recorded: Timestamp) (current: Timestamp option) 
 
 /// Gets single dependency state and reason of a change.
 /// `getStamp` gives the dependee's current change stamp (see getChangeStamp).
-let getDepState getVar getFileList (getChangedDeps: Target -> ChangeReason list) (getStamp: Target -> Timestamp option) x = 
+let rec getDepState getVar getFileList (getChangedDeps: Target -> ChangeReason list) (getStamp: Target -> Timestamp option) x = 
     match x with
     | FileDep (a:File, wrtime) when not((File.exists a) && abs((File.getLastWriteTime a - wrtime).TotalMilliseconds) < TimeCompareToleranceMs) ->
         let dbgInfo = File.exists a |> function
@@ -76,6 +76,23 @@ let getDepState getVar getFileList (getChangedDeps: Target -> ChangeReason list)
             |  [] -> NotChanged, None
             |item::_ ->
                 ChangeReason.Depends dependeeTarget, Some (sprintf "E.g. %A..." item)
+
+    // a clear-value record of a name declared secret is judged as its digest, never printed
+    | EnvVar (name, value) when Secrets.isSecret name ->
+        getDepState getVar getFileList getChangedDeps getStamp (Secrets.scrub x)
+
+    | Var (name, value) when Secrets.isSecret name ->
+        getDepState getVar getFileList getChangedDeps getStamp (Secrets.scrub x)
+
+    | SecretDep (name, source, digest) ->
+        let current =
+            match source with
+            | SecretEnv -> Util.getEnvVar name
+            | SecretArg -> getVar name
+        current |> Option.iter SecretMask.register
+        match Secrets.changeReason name digest current with
+        | Some reason -> ChangeReason.Other reason, None
+        | None -> NotChanged, None
 
     | EnvVar (name,value) when value <> Util.getEnvVar name ->
         ChangeReason.Other <| sprintf "Environment variable %s was changed from '%A' to '%A'" name value (Util.getEnvVar name), None
@@ -157,6 +174,8 @@ let dumpDeps (ctx: ExecContext) (target: Target list) =
 
     let doneTargets = System.Collections.Hashtable()
     let indent i = String.replicate i "  "
+    // the dump goes to stdout, past the loggers: mask the values of secret variables here
+    let printfn fmt = Printf.kprintf (SecretMask.apply >> System.Console.WriteLine) fmt
 
     let rec displayNestedDeps ii =
         function
@@ -183,6 +202,20 @@ let dumpDeps (ctx: ExecContext) (target: Target list) =
                     "NOT EXISTS"
                 | _ -> ""
             printfn "%sFile '%s' %A %s" (indent ii) a.Name wrtime changed
+
+        | EnvVar (name, _) | Var (name, _) when Secrets.isSecret name ->
+            showDepStatus ii (Secrets.scrub d)
+
+        | SecretDep (name, source, digest) ->
+            let current = match source with SecretEnv -> Util.getEnvVar name | SecretArg -> Util.getVar ctx.Vars name
+            let state =
+                match digest with
+                | SecretAbsent -> "unset"
+                | SecretPresent -> "set"
+                | SecretHmac _ -> "set (hashed)"
+            let changed = Secrets.changeReason name digest current |> Option.map (sprintf " CHANGED: %s") |> Option.defaultValue ""
+            let kind = match source with SecretEnv -> "ENV Var" | SecretArg -> "Script var"
+            printfn "%sSecret %s: '%s' = %s%s" (indent ii) kind name state changed
 
         | EnvVar (name,value) ->
             let newValue = Util.getEnvVar name

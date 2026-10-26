@@ -65,7 +65,8 @@ module ShellImpl =
         let! ctx = getCtx()
         let log = ctx.Logger.Log
 
-        do! trace Level.Debug "[shell] settings: '%A'" opts // dangerous to log all options, but we need it for debugging purposes. Consider redacting sensitive info in the future.
+        // the loggers mask the values of secret variables (SecretMask), EnvVars and Args included
+        do! trace Level.Debug "[shell] settings: '%A'" opts
 
         let makeFileWriter path append =
             let sw = new System.IO.StreamWriter(path, append, System.Text.Encoding.UTF8)

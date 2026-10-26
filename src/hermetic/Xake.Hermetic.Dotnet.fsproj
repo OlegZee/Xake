@@ -44,6 +44,7 @@
        and Pack, so it compiles after all three. -->
   <ItemGroup>
     <Compile Include="ToolJson.fs" />
+    <Compile Include="MsbuildLog.fs" />
     <Compile Include="Roots.fs" />
     <Compile Include="Nuget.fs" />
     <Compile Include="Restore.fs" />

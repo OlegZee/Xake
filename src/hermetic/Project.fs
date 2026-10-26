@@ -85,11 +85,23 @@ module Project =
     let internal withProjectLock (project: string) (body: Recipe<ExecContext, 'a>) : Recipe<ExecContext, 'a> =
         withResource (ProjectLocks.resourceFor project) 1 body
 
-    /// Runs `dotnet msbuild <arguments>` with `env` added to its environment, failing the
-    /// recipe (named `name`) on a non-zero exit. The one msbuild driver of this package: the
-    /// lock import below and the description import (`Import`) both go through it.
+    /// The engine's project root, full; the current directory when the options name none.
+    let internal projectRootOf (projectRoot: string) =
+        match projectRoot with
+        | null | "" -> Directory.GetCurrentDirectory ()
+        | dir -> Path.GetFullPath dir
+
+    /// Runs `dotnet msbuild <arguments>` with `env` added to its environment, in the project
+    /// root (where the SDK probe and `requireImportMsbuild` look for `global.json`), failing
+    /// the recipe (named `name`) on a non-zero exit with the first errors msbuild printed
+    /// (`MsbuildLog`): errors are logged at Error, warnings once per engine run at Info. The
+    /// one msbuild driver of this package: the lock import below and the description import
+    /// (`Import`) both go through it.
     let internal runMsbuild (environment: (string * string) list) (arguments: string list) (name: string) =
         recipe {
+            let! options = getCtxOptions ()
+            let! ctx = getCtx ()
+            let log = MsbuildLog.Collector (MsbuildLog.warningsOf (box ctx.Engine))
             let! exitCode =
                 shell {
                     cmd "dotnet"
@@ -97,11 +109,64 @@ module Project =
                     // no msbuild worker node left holding this process's stdout after msbuild
                     // exits (`Described.runRestore`)
                     envs (("MSBUILDDISABLENODEREUSE", "1") :: environment)
+                    workdir (projectRootOf options.ProjectRoot)
                     logprefix "[msbuild]"
-                    stdoutlevel (Tool.diagnosticLevel Level.Verbose)
-                    erroutlevel (Tool.diagnosticLevel Level.Error)
+                    stdoutlevel (log.Level Level.Verbose)
+                    erroutlevel (log.Level Level.Error)
                 }
-            do! Tool.failOnExitCode true name exitCode
+            if exitCode <> 0 then
+                do! trace Error "('%s') failed with exit code '%i'" name exitCode
+                failwith (MsbuildLog.failure "msbuild" name exitCode log)
+        }
+
+    /// The project roots whose MSBuild passed `requireImportMsbuild` in this process.
+    let private msbuildChecked = System.Collections.Concurrent.ConcurrentDictionary<string, unit> ()
+
+    /// Fails unless the MSBuild of the SDK the project root selects is 17.10 or later (.NET SDK
+    /// 8.0.300), which every import needs for `-getResultOutputFile`: one `dotnet msbuild
+    /// -version` in the project root, once per root and process, before the import's restore.
+    /// The refusal names the SDK and says to raise the `global.json` pin or to install a newer
+    /// SDK (`MsbuildLog.floorRefusal`). A version it cannot read skips the check.
+    let internal requireImportMsbuild () : Recipe<ExecContext, unit> =
+        recipe {
+            let! options = getCtxOptions ()
+            let root = projectRootOf options.ProjectRoot
+            if not (msbuildChecked.ContainsKey root) then
+                let! code, lines =
+                    shell {
+                        cmd "dotnet"
+                        args [ "msbuild"; "-version"; "-nologo" ]
+                        env ("MSBUILDDISABLENODEREUSE", "1")
+                        workdir root
+                        logprefix "[msbuild]"
+                        stdoutlevel (fun _ -> Level.Verbose)
+                        erroutlevel (fun _ -> Level.Verbose)
+                        resultAndOutput
+                    }
+                match (if code = 0 then MsbuildLog.parseVersion lines else None) with
+                | None ->
+                    do! trace Info "'dotnet msbuild -version' in '%s' printed no version (exit code %d): the MSBuild version is not checked" root code
+                | Some version ->
+                    match MsbuildLog.floorRefusal version "" None with
+                    | None -> msbuildChecked.[root] <- ()
+                    | Some _ ->
+                        let! _, sdkLines =
+                            shell {
+                                cmd "dotnet"
+                                args [ "--version" ]
+                                workdir root
+                                stdoutlevel (fun _ -> Level.Verbose)
+                                erroutlevel (fun _ -> Level.Verbose)
+                                resultAndOutput
+                            }
+                        let sdk = sdkLines |> List.map (fun (s: string) -> s.Trim ()) |> List.filter ((<>) "") |> List.tryLast |> Option.defaultValue "unknown"
+                        let pin =
+                            match Lock.sdkPinAt root with
+                            | Some file, (Pinned _ | RollsForward _) -> Some file
+                            | _ -> None
+                        let refusal = MsbuildLog.floorRefusal version sdk pin |> Option.get
+                        do! trace Error "%s" refusal
+                        failwith refusal
         }
 
     /// One property from a design-time build's result dump (the `-getResultOutputFile` json
@@ -363,6 +428,8 @@ module Project =
                 failwith "ImportOptions.Projects is empty: there is nothing to import, and an empty lock would be written without a word. A script that filters its project list by File.Exists silently comes to this when it runs from the wrong directory"
             if List.isEmpty options.Frameworks then
                 failwith "ImportOptions.Frameworks is empty: name at least one target framework to import for"
+            // the MSBuild `-getResultOutputFile` needs, before the first restore
+            do! requireImportMsbuild ()
 
             let variantDir = if options.Variant = "" then "" else options.Variant + "/"
 
@@ -420,8 +487,12 @@ module Project =
             let! hermetic = HermeticMode.enabled ()
             let sdkRefusals = ResizeArray<string>()
             let sdkRefused = System.Collections.Generic.Dictionary<string, string list>()
+            // msbuild runs in the project root (`runMsbuild`): it is given full paths, a
+            // relative `Projects` entry or `Output` being the current directory's as before
+            let output = Path.GetFullPath options.Output
             for project in options.Projects do
-                let projectDir = Path.GetDirectoryName (Path.GetFullPath project)
+                let projectFile = Path.GetFullPath project
+                let projectDir = Path.GetDirectoryName projectFile
                 let pinFile, pin = Lock.sdkPinAt projectDir
 
                 // one hold of the project's lock for the whole project: the restore and every
@@ -435,9 +506,9 @@ module Project =
                     // the same run reports the project's own framework list: the restore is
                     // the one msbuild run here that is not per framework, so asking it costs
                     // nothing and tells us which legs of the matrix this project has
-                    let restoreDump = sprintf "%s.%s.restore.msbuild" options.Output (Path.GetFileNameWithoutExtension project)
+                    let restoreDump = sprintf "%s.%s.restore.msbuild" output (Path.GetFileNameWithoutExtension project)
                     do! msbuild
-                            ([ project; "-nologo"; "-verbosity:quiet"; "-t:Restore" ] @ restoreSwitches
+                            ([ projectFile; "-nologo"; "-verbosity:quiet"; "-t:Restore" ] @ restoreSwitches
                              @ [ "-getProperty:TargetFrameworks,TargetFramework"
                                  sprintf "-getResultOutputFile:%s" restoreDump ]) project
 
@@ -458,14 +529,14 @@ module Project =
                     for framework in frameworks do
                         do! trace Info "importing '%s' for '%s'%s" project framework (if options.Variant = "" then "" else " (" + options.Variant + ")")
 
-                        let dump = sprintf "%s.%s.%s.msbuild" options.Output (Path.GetFileNameWithoutExtension project) framework
+                        let dump = sprintf "%s.%s.%s.msbuild" output (Path.GetFileNameWithoutExtension project) framework
                         let preprocessed = dump + ".pp"
                         let switches = buildSwitches framework
 
                         // the design-time build; the compiler's command line comes back as an
                         // item list. No `-restore`: the one above already ran, for every target
                         do! msbuild
-                                ([ project; "-nologo"; "-verbosity:quiet" ] @ switches
+                                ([ projectFile; "-nologo"; "-verbosity:quiet" ] @ switches
                                  @ [ sprintf "-t:%s" targets
                                      sprintf "-getItem:%s" items
                                      sprintf "-getProperty:%s" wantedProperties
@@ -482,7 +553,7 @@ module Project =
 
                         // the files that took part in the evaluation; MSBuildAllProjects no
                         // longer tells, the preprocessed project does
-                        do! msbuild ([ project; "-nologo" ] @ switches @ [ sprintf "-pp:%s" preprocessed ]) project
+                        do! msbuild ([ projectFile; "-nologo" ] @ switches @ [ sprintf "-pp:%s" preprocessed ]) project
 
                         let imports = File.ReadAllText preprocessed |> parseImports
                         let entry = parseImport framework dump imports pin graph

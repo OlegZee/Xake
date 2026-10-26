@@ -32,3 +32,12 @@ suggested default without discussion. This file is authoritative over brief.md.
 18. Minimum length for masking: 4 characters (default).
 19. A plain `getEnv` of a name declared secret: treated as secret too, the name decides (default).
 20-24. Build log (f): **not touched now**. The roadmap claim was wrong (the file already starts fresh per run); the consumer's growth is to be traced in its own script or CI first. The nearby defects (lost tail, name clash, hard-coded "See build.log") stay in the brief as a backlog item. PR4 dropped.
+
+## Round 4: satellites (PR5)
+
+25. S71 stays; **PR5 is deferred**, not started.
+26-28. Recorded for when it is done: capture msbuild's satellite `Csc` call (not compose it); a culture-suffixed resx under invariant globalization fails the import; C# first, F# when a consumer needs it.
+
+## Outcome
+
+PR1 `pr/lock-eol-packs`, PR2-core `pr/msbuild-diagnostics-core`, PR2-hermetic `pr/import-diagnostics`, PR3 `pr/secret-vars` implemented on 2026-10-26; PR4 and PR5 dropped/deferred. Version note: tag `v3.12.0` already exists (#89), so the core PRs are the **3.13.0** train and hermetic moves to `[3.13, 3.14)` when it adopts them.

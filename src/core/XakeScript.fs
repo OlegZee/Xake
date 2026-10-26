@@ -97,9 +97,13 @@ module XakeScript =
     /// Creates a file rule that maps a pattern to a recipe.
     let ( ..> ) pattern actionBody = FileRule (pattern, actionBody)
 
-    /// Creates a multi-file rule from a sequence of patterns and a shared recipe.
+    /// Creates a multi-file rule from a sequence of patterns and a shared recipe. Every pattern
+    /// must have the same named groups (the outputs are named from the groups of the one that
+    /// matched); otherwise raises PatternAst.PatternException when the rule is created.
     let ( *..> ) (patterns: #seq<string>) actionBody =
-        MultiFileRule (patterns |> List.ofSeq, actionBody)
+        let patterns = List.ofSeq patterns
+        PatternAst.checkSameGroups ("Multi-file rule " + PatternAst.showPatterns patterns) patterns
+        MultiFileRule (patterns, actionBody)
 
     /// Creates phony action (check if I can unify the operator name)
     let (=>) name action = PhonyRule (name, action)

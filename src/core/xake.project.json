@@ -33,6 +33,7 @@
     "RuleBuilder.fs",
     "ScriptFuncs.fs",
     "Vars.fs",
+    "TypedTargets.fs",
     "Fingerprints.fs",
     "ProcessExec.fs",
     "FileTasksImpl.fs",

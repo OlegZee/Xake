@@ -94,14 +94,15 @@ module Project =
     /// Runs `dotnet msbuild <arguments>` with `env` added to its environment, in the project
     /// root (where the SDK probe and `requireImportMsbuild` look for `global.json`), failing
     /// the recipe (named `name`) on a non-zero exit with the first errors msbuild printed
-    /// (`MsbuildLog`): errors are logged at Error, warnings once per engine run at Info. The
+    /// (`Tool.failOnExitCodeWith`): errors are logged at Error, warnings once per engine run at
+    /// Info (`MsbuildLog.diagnostics`), other stderr lines at Error. The
     /// one msbuild driver of this package: the lock import below and the description import
     /// (`Import`) both go through it.
     let internal runMsbuild (environment: (string * string) list) (arguments: string list) (name: string) =
         recipe {
             let! options = getCtxOptions ()
             let! ctx = getCtx ()
-            let log = MsbuildLog.Collector (MsbuildLog.warningsOf (box ctx.Engine))
+            let log = MsbuildLog.diagnostics (box ctx.Engine) Level.Verbose
             let! exitCode =
                 shell {
                     cmd "dotnet"
@@ -111,12 +112,10 @@ module Project =
                     envs (("MSBUILDDISABLENODEREUSE", "1") :: environment)
                     workdir (projectRootOf options.ProjectRoot)
                     logprefix "[msbuild]"
-                    stdoutlevel (log.Level Level.Verbose)
-                    erroutlevel (log.Level Level.Error)
+                    stdoutlevel log.Level
+                    erroutlevel (fun line -> match log.Level line with Level.Verbose -> Level.Error | level -> level)
                 }
-            if exitCode <> 0 then
-                do! trace Error "('%s') failed with exit code '%i'" name exitCode
-                failwith (MsbuildLog.failure "msbuild" name exitCode log)
+            do! Tool.failOnExitCodeWith true name log exitCode
         }
 
     /// The project roots whose MSBuild passed `requireImportMsbuild` in this process.

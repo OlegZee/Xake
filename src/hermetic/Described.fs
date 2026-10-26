@@ -216,12 +216,12 @@ module Described =
     /// Runs `dotnet restore` on `project` (one synthesized project or the batch project) in the
     /// project root (where `global.json` selects the SDK), msbuild's diagnostics classified
     /// (`MsbuildLog`): the exit code and what the run printed, for a failure that names the errors.
-    let private runRestore (root: string) (project: string) : Recipe<ExecContext, int * MsbuildLog.Collector> =
+    let private runRestore (root: string) (project: string) : Recipe<ExecContext, int * Tool.DiagnosticLog> =
         recipe {
             System.Threading.Interlocked.Increment &processes |> ignore
             let! options = getCtxOptions ()
             let! ctx = getCtx ()
-            let log = MsbuildLog.Collector (MsbuildLog.warningsOf (box ctx.Engine))
+            let log = MsbuildLog.diagnostics (box ctx.Engine) Level.Verbose
             let workDir =
                 match options.ProjectRoot with
                 | null | "" -> Directory.GetCurrentDirectory ()
@@ -241,8 +241,8 @@ module Described =
                     env ("MSBUILDDISABLENODEREUSE", "1")
                     workdir workDir
                     logprefix "[restore]"
-                    stdoutlevel (log.Level Level.Verbose)
-                    erroutlevel (log.Level Level.Verbose)
+                    stdoutlevel log.Level
+                    erroutlevel log.Level
                 }
             return exitCode, log
         }
@@ -295,7 +295,7 @@ module Described =
                                 File.WriteAllText (project, text)
                                 let! exitCode, log = runRestore root project
                                 if exitCode <> 0 then
-                                    failwithf "'%s': restoring the packages of the description for %s failed with exit code %d (see '%s'): %s\n  %s"
+                                    failwithf "'%s': restoring the packages of the description for %s failed with exit code %d (see '%s'): %s%s"
                                         d.Name framework exitCode project
                                         (packages |> List.map (fun p -> p.Id + " " + defaultArg p.Version "*") |> String.concat ", ")
                                         log.Summary
@@ -363,7 +363,7 @@ module Described =
                     do! trace Info "restoring %d package set(s) in one restore ('%s')" keys.Length batch
                     let! exitCode, log = runRestore root batch
                     if exitCode <> 0 then
-                        do! trace Warning "the batch restore '%s' failed with exit code %d; each target restores its packages alone:\n  %s" batch exitCode log.Summary
+                        do! trace Warning "the batch restore '%s' failed with exit code %d; each target restores its packages alone%s" batch exitCode log.Summary
                     else
                         for key, (framework, _) in wanted do
                             cache.[key] <- readRestored root (Path.Combine (dir, key)) framework })

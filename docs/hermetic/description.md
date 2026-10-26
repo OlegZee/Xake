@@ -110,8 +110,8 @@ the project root (`ExecOptions.ProjectRoot`, where `global.json` selects the SDK
 older MSBuild:
 
 ```
-the import needs MSBuild 17.10 or later (.NET SDK 8.0.300+); found 17.8.3 (SDK 8.0.121): raise the pin in global.json (<file>)
-the import needs MSBuild 17.10 or later (.NET SDK 8.0.300+); found 17.8.3 (SDK 8.0.121): install SDK 8.0.300 or later
+the import needs MSBuild 17.10 or later (.NET SDK 8.0.300+, or any 9.x/10.x SDK); found 17.8.3 (SDK 8.0.121): raise the pin in global.json (<file>)
+the import needs MSBuild 17.10 or later (.NET SDK 8.0.300+, or any 9.x/10.x SDK); found 17.8.3 (SDK 8.0.121): install SDK 8.0.300 or later
 ```
 
 The first when a `global.json` at or above the project root pins the SDK, the second otherwise.
@@ -122,17 +122,17 @@ Every msbuild run of an import runs in the project root, so `global.json` is loo
 SDK probe looks, whatever the process's current directory. msbuild's diagnostics go to the log
 by their shape (`<project> : error NU1008: ...`, `<file>(1,2): error CS0103: ...`,
 `MSBUILD : error MSB1001: ...`, `error NU1301: ...`): errors at Error, warnings at Info, each
-distinct warning once per build run; other lines stay at Verbose. A failed run fails the import
-naming its first five distinct errors with their project:
+distinct warning once per build run; other lines stay at Verbose (the core's
+`Tool.diagnosticLevel` and `Tool.DiagnosticLog`, Xake 3.13). A failed run fails the import
+naming its first five distinct errors, each with its project (the `[entry]` suffix dropped):
 
 ```
-'<root>/obj/xake/import/<id>/import.sln': msbuild failed with exit code 1:
-  App.csproj: NU1008: The following PackageReference items cannot define a value for Version: ...
+Exiting due to FailOnError set on '<root>/obj/xake/import/<id>/import.sln'
+  /repo/App/App.csproj : error NU1008: The following PackageReference items cannot define a value for Version: ...
   +2 more, see the log
 ```
 
-When msbuild printed no error line, the message holds its last lines instead. The restore of a
-description's packages (`Described.restore`) reports its failures the same way.
+The restore of a description's packages (`Described.restore`) reports its failures the same way.
 
 ## Import that records msbuild's compile inputs: `Import.record`
 

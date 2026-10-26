@@ -18,7 +18,7 @@ One line per item.
     `Tool.DiagnosticLog` (warnings once per run, error summary), the msbuild task, csc/fsc and the
     core's `dotnet restore` runners; Xake 3.13
   - [x] PR2-hermetic (`pr/import-diagnostics`): local `MsbuildLog` classifier + summary in `runMsbuild` and `Described` restore, msbuild in `ProjectRoot`, `dotnet msbuild -version` floor check, docs
-  - [ ] Hermetic adopts the core classifier (drops `MsbuildLog`, `// TODO core 3.13`) when its Xake range moves to `[3.13, 3.14)`
+  - [x] Hermetic adopts the core classifier: `Xake [3.13.0.43, 3.14)`, `MsbuildLog` keeps only the per-engine-run warning dedupe and the floor check
   - [ ] Confirm the floor with one run on an 8.0.2xx SDK (decision 13)
 - [x] PR3 secrets, core part: `pr/secret-vars` (secret vars, `SecretDep`, db 0.6, masking, `-d` rules; release note under 3.13.0 because v3.12.0 is already tagged)
 - [ ] PR3 secrets, hermetic part: `Environment` fields on `Import.RecordOptions`/`Project.ImportOptions`, range bump

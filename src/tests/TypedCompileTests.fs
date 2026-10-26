@@ -82,3 +82,16 @@ type ``Typed targets: compile-time errors``() =
         let script = File.ReadAllLines sample |> Array.map referenceXake |> String.concat "\n"
         let errors, output = typecheck "sample" script
         Assert.That(errors, Is.Empty, output)
+
+    [<Test>]
+    member _.``the snippets of docs/typed-targets.md type-check``() =
+        // the blocks marked `<!-- snippet -->` form one script, in the order of the page
+        let doc = File.ReadAllLines(Path.Combine(__SOURCE_DIRECTORY__, "..", "..", "docs", "typed-targets.md"))
+        let snippets =
+            [ for i in 0 .. doc.Length - 2 do
+                if doc.[i].Trim() = "<!-- snippet -->" && doc.[i + 1].StartsWith "```fsharp" then
+                    yield! doc |> Array.skip (i + 2) |> Array.takeWhile (fun l -> not (l.StartsWith "```")) ]
+        Assert.That(snippets, Is.Not.Empty)
+        let script = String.concat "\n" (sprintf "#r @\"%s\"" xakeDll :: snippets)
+        let errors, output = typecheck "docs-typed-targets" script
+        Assert.That(errors, Is.Empty, output)

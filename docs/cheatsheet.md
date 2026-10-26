@@ -76,6 +76,11 @@ Capture groups of the rule's pattern (file or phony): `let! name = getRuleMatch 
 absent), `let! all = getRuleMatches ()` (a map). Also `getVar`, `getEnv`, `getCtxOptions`,
 `getTargetFile` (file rules only), `getTargetFullName`, `alwaysRerun ()`.
 
+Typed groups (`open Xake.Typed` after `open Xake`; see [typed-targets.md](typed-targets.md)):
+`type G = { cfg: string; name: string }`, `let X = Target<G> "out/(cfg:*)/(name:*).dll"`,
+`X.Rule <| fun m -> recipe { ... m.cfg ... }`, `need [ X.Format { cfg = "Release"; name = "a" } ]`;
+`Command<G> "pack::(name:*)"` is a phony rule that always runs.
+
 ## Shell task
 
 ```fsharp

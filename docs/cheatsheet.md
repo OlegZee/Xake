@@ -76,6 +76,24 @@ Capture groups of the rule's pattern (file or phony): `let! name = getRuleMatch 
 absent), `let! all = getRuleMatches ()` (a map). Also `getVar`, `getEnv`, `getCtxOptions`,
 `getTargetFile` (file rules only), `getTargetFullName`, `alwaysRerun ()`.
 
+## Script variables
+
+```fsharp
+let vars = {|
+	config = Var.string(cliArg = "config") |> withDefault "Debug"          // -d config=Release
+	token  = Var.secret<string>(envVar = "ACME_API_TOKEN") |> required    // env only, never logged
+	key    = Var.env<string>(envVar = "LICENSE_KEY") |> secretHashed      // rebuild when it changes
+|}
+xake ExecOptions.Default {
+	varschema vars                                   // --help lists them
+	phony "main" (recipe { let! token = vars.token in () })
+}
+```
+
+A secret: the database keeps whether it is set (`secret`) or a salted hash (`secretHashed`),
+never the value; every log masks it as `***`; `-d` is refused for `Var.secret`. See
+[tasks.md](tasks.md#secret-variables).
+
 ## Shell task
 
 ```fsharp

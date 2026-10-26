@@ -377,11 +377,14 @@ module DotNetFwk =
             let project = dir </> "restore.csproj"
             File.WriteAllText (project, restoreProjectText [ packageId, version ])
             let args = restoreArgs project |> List.map Tool.quoteArgument |> String.concat " "
+            // no build to log to: the output is only classified for the failure message
+            let diagnostics = Tool.DiagnosticLog Level.Verbose
+            let classify line = diagnostics.Level line |> ignore
             let exitCode =
-                try pexecSync ignore ignore "dotnet" args [ "NUGET_PACKAGES", root ] (Some dir)
+                try pexecSync classify classify "dotnet" args [ "NUGET_PACKAGES", root ] (Some dir)
                 with _ -> -1
             if exitCode <> 0 then
-                failwith (restoreFailure root exitCode project [ packageId, version ])
+                failwith (restoreFailure root exitCode project [ packageId, version ] + diagnostics.Summary)
             try Directory.Delete (dir, true) with _ -> ()
 
         /// `locate ()`, restoring `packageId version` first when it finds nothing.
@@ -943,6 +946,7 @@ module DotNetFwk =
                     let project = dir </> "restore.csproj"
                     File.WriteAllText (project, restoreProjectText packages)
 
+                    let diagnostics = Tool.DiagnosticLog Level.Verbose
                     let! exitCode =
                         shell {
                             cmd "dotnet"
@@ -950,12 +954,12 @@ module DotNetFwk =
                             env ("NUGET_PACKAGES", root)
                             workdir dir
                             logprefix "[restore]"
-                            stdoutlevel (Tool.diagnosticLevel Level.Verbose)
-                            erroutlevel (Tool.diagnosticLevel Level.Verbose)
+                            stdoutlevel diagnostics.Level
+                            erroutlevel diagnostics.Level
                         }
 
                     if exitCode <> 0 then
-                        failwith (restoreFailure root exitCode project packages)
+                        failwith (restoreFailure root exitCode project packages + diagnostics.Summary)
                     try Directory.Delete (dir, true) with _ -> ()
         }
 

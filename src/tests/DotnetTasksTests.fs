@@ -481,6 +481,87 @@ let greet name = sprintf "Hello, %s" name
         Assert.AreEqual(Level.Verbose, classify "Microsoft (R) Visual C# Compiler")
 
     [<Test>]
+    member __.``classifies msbuild and NuGet diagnostics without a source position``() =
+
+        let classify = Impl.levelFromString Level.Verbose
+
+        // `<origin> : error CODE: text`, the origin a project, a solution or a tool
+        Assert.AreEqual(Level.Error, classify "/p/a.csproj : error NU1101: Unable to find package X. No packages exist with this id")
+        Assert.AreEqual(Level.Error, classify "/p/a.csproj : error NU1008: Projects that use central package version management should not define the version [/t/import.sln]")
+        Assert.AreEqual(Level.Error, classify "    C:\\src\\My App\\a.csproj : error NU1605: Detected package downgrade [C:\\src\\s.sln]")
+        Assert.AreEqual(Level.Error, classify "MSBUILD : error MSB1001: Unknown switch.")
+        Assert.AreEqual(Level.Error, classify "CSC : error CS2001: Source file '/p/x.cs' could not be found.")
+        // NuGet errors of `dotnet restore` with no origin at all
+        Assert.AreEqual(Level.Error, classify "error NU1301: Unable to load the service index for source https://example.org/v3/index.json.")
+        // msbuild/NuGet warnings are Info: a large solution repeats them for every project
+        Assert.AreEqual(Level.Info, classify "/p/a.csproj : warning NU1603: X 1.0.0 depends on Y (>= 1.0.0) but Y 1.0.0 was not found [/p/s.sln]")
+        Assert.AreEqual(Level.Info, classify "/usr/share/dotnet/sdk/8.0.426/Microsoft.Common.targets : warning MSB3277: Found conflicts")
+        Assert.AreEqual(Level.Info, classify "warning NU1701: Package 'X 1.0.0' was restored using '.NETFramework,Version=v4.6.1'")
+        // compiler warnings keep their level
+        Assert.AreEqual(Level.Warning, classify "a.csproj(12,5): warning MSB4011: imported twice")
+
+        // msbuild's summary lines are not diagnostics
+        Assert.AreEqual(Level.Verbose, classify "Build FAILED.")
+        Assert.AreEqual(Level.Verbose, classify "    0 Error(s)")
+        Assert.AreEqual(Level.Verbose, classify "    3 Warning(s)")
+        Assert.AreEqual(Level.Verbose, classify "  Determining projects to restore...")
+
+    [<Test>]
+    member __.``logs a flood of identical warnings once per run``() =
+
+        let run = Tool.DiagnosticLog Level.Verbose
+        let warning = "/p/a.csproj : warning NU1603: X 1.0.0 depends on Y (>= 1.0.0) [/p/s.sln]"
+        let levels = List.init 500 (fun _ -> run.Level warning)
+        Assert.AreEqual(Level.Info, List.head levels)
+        Assert.That(List.tail levels |> List.forall ((=) Level.Never), Is.True, "a repeat is not logged")
+        // a different warning, and a compiler warning repeated, are logged once each too
+        Assert.AreEqual(Level.Info, run.Level "/p/b.csproj : warning NU1603: X 1.0.0 depends on Y (>= 1.0.0) [/p/s.sln]")
+        Assert.AreEqual(Level.Warning, run.Level "a.cs(1,1): warning CS0168: unused variable")
+        Assert.AreEqual(Level.Never, run.Level "a.cs(1,1): warning CS0168: unused variable")
+        // errors and plain output are never suppressed
+        Assert.AreEqual(Level.Error, run.Level "MSBUILD : error MSB1001: Unknown switch.")
+        Assert.AreEqual(Level.Error, run.Level "MSBUILD : error MSB1001: Unknown switch.")
+        Assert.AreEqual(Level.Verbose, run.Level "Build FAILED.")
+        Assert.AreEqual(Level.Verbose, run.Level "Build FAILED.")
+        // a new run starts afresh
+        Assert.AreEqual(Level.Info, (Tool.DiagnosticLog Level.Verbose).Level warning)
+
+    [<Test>]
+    member __.``summarizes the first distinct errors of a failed run``() =
+
+        let run = Tool.DiagnosticLog Level.Verbose
+        [ "  Determining projects to restore..."
+          "/p/a.csproj : error NU1008: Projects that use central package version management should not define the version [/t/import.sln]"
+          "/p/a.csproj : warning NU1603: X depends on Y"
+          // msbuild repeats every error in its summary, with another entry suffix
+          "    /p/a.csproj : error NU1008: Projects that use central package version management should not define the version [/p/a.csproj]"
+          "/p/b.csproj : error NU1101: Unable to find package X [/t/import.sln]"
+          "/p/x/a.cs(1,1): error CS0103: The name 'y' does not exist [/p/x/x.csproj]" ]
+        |> List.iter (run.Level >> ignore)
+
+        // the [entry] suffix of the origin shape goes, the project of a positioned error stays
+        Assert.AreEqual(
+            [ "/p/a.csproj : error NU1008: Projects that use central package version management should not define the version"
+              "/p/b.csproj : error NU1101: Unable to find package X"
+              "/p/x/a.cs(1,1): error CS0103: The name 'y' does not exist [/p/x/x.csproj]" ],
+            run.Errors)
+        Assert.AreEqual(
+            "\n  /p/a.csproj : error NU1008: Projects that use central package version management should not define the version"
+            + "\n  /p/b.csproj : error NU1101: Unable to find package X"
+            + "\n  /p/x/a.cs(1,1): error CS0103: The name 'y' does not exist [/p/x/x.csproj]",
+            run.Summary)
+
+        // the first five, then how many more
+        let many = List.init 8 (fun i -> sprintf "/p/p%d.csproj : error NU1101: Unable to find package X [/t/import.sln]" i)
+        let summary = Tool.errorSummary 5 many
+        Assert.That(summary, Does.Contain "/p/p4.csproj : error NU1101")
+        Assert.That(summary, Does.Not.Contain "/p/p5.csproj")
+        Assert.That(summary, Does.EndWith "\n  +3 more, see the log")
+        // no error line, no summary
+        Assert.AreEqual("", Tool.errorSummary 5 [])
+        Assert.AreEqual("", (Tool.DiagnosticLog Level.Verbose).Summary)
+
+    [<Test>]
     member __.``builds resource names``() =
 
         let dynamic = {ResourceSetOptions.Default with DynamicPrefix = false}

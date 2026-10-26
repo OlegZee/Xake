@@ -3,6 +3,18 @@
 The `Xake` package (engine and `Xake.Dotnet`). Xake.Hermetic.Dotnet has its own notes
 ([hermetic/README.md](hermetic/README.md)).
 
+## 3.12.0 (unreleased)
+
+- **msbuild and NuGet diagnostics in the log.** `Tool.diagnosticLevel` (and the forwarder
+  `levelFromString`) also recognizes `<origin> : error|warning CODE: text [entry]`
+  (`MSBUILD : error MSB1001`, `CSC : error CS2001`, `/p/a.csproj : error NU1101`) and NuGet's
+  `warning NU1xxx:` without an origin. Errors go to `Error` (before: `Verbose`, invisible at the
+  default verbosity), these warnings to `Info`. The `msbuild` task, csc/fsc and the
+  reference-pack `dotnet restore` classify through the new `Tool.DiagnosticLog` (a repeated
+  warning is logged once per run) and fail with the first 5 distinct errors, then
+  "+N more, see the log" (`Tool.failOnExitCodeWith`, `Tool.errorSummary`). Signatures unchanged;
+  more lines now reach `Error`. See [dotnet-build.md](dotnet-build.md#troubleshooting).
+
 ## 3.10.1 (unreleased)
 
 - **Rule selection: the most specific matching rule wins.** When several rules match a target,

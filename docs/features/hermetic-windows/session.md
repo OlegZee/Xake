@@ -5,6 +5,7 @@ Branch `feature/hermetic-windows`, worktree `.claude/worktrees/feature+hermetic-
 | PR | Branch | Worktree | State |
 |---|---|---|---|
 | none yet | `feature/hermetic-windows` | `.claude/worktrees/feature+hermetic-windows` | docs only, uncommitted |
+| PR2-core | `pr/msbuild-diagnostics-core` | `.claude/worktrees/agent-a409090deab5766dd` | committed, not pushed |
 
 ## Where things stand
 

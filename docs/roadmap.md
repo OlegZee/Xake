@@ -150,7 +150,7 @@ An imported lock records the SHA-256 of every msbuild file its evaluation read (
 `Directory.Build.props`/`.targets`, `.projitems`, the script's own probe targets), and `Locks.staleOf` (`check`, and every
 replay) compares them byte for byte. Git's `core.autocrlf` checks the same commit out with LF on macOS/Linux and CRLF on
 Windows, so a lock set recorded on one OS is stale on the other: every import named at once ("... changed since the
-import that wrote it"), although nothing changed (xake-ar: locks recorded on macOS, built on Windows). The lock file itself is
+import that wrote it"), although nothing changed (the consumer solution: locks recorded on macOS, built on Windows). The lock file itself is
 already compared with `\r\n` normalized (`Locks.fs`, `existing`); the files it names are not.
 
 Proposal: hash the text inputs of an evaluation with line endings normalized (CRLF -> LF before hashing; a lone CR kept)
@@ -164,7 +164,7 @@ say a lock set is portable across OSes and `core.autocrlf` settings.
 
 `Var.env`/`Var.string` resolve through `getEnv`/`getVar`, which record the value as a dependency: `EnvVar (name, value)`
 in `.xake`, and a change is reported as "Environment variable X was changed from '<old>' to '<new>'"
-(`DependencyAnalysis.fs`). A token or license key declared as a variable (xake-ar: `AA_AR_TOKEN`, `BABEL_LICENSE_KEY_11_8`)
+(`DependencyAnalysis.fs`). A token or license key declared as a variable (the consumer solution: a feed token and an obfuscator license key)
 thus lands in clear text in the database on every machine and, when it rotates, in the build log.
 
 Proposal: a secret variable, e.g. `Var.secret<'t>(envVar = ...)` or `|> secret` on any var. It resolves like any other
@@ -181,11 +181,11 @@ database; trace levels that dump the context must mask it too.
 An imported entry names a targeting pack file as `pack:<id>/<version>/...` and hashes whichever copy msbuild used: the
 installed one under `<dotnet>/packs` or the nuget.org package in the package folder. The two are not byte-identical
 (the package's assemblies are signed), so the same project recorded on two machines with the same SDK gets different
-hashes when one has the pack installed and the other downloads it (xake-ar: macOS vs Windows, 336 hashes per entry).
-xake-ar works around it in its msbuild probe (`NetCoreTargetingPackRoot` set to a folder that does not exist, so every pack
+hashes when one has the pack installed and the other downloads it (the consumer solution: macOS vs Windows, 336 hashes per entry).
+The consumer solution works around it in its msbuild probe (`NetCoreTargetingPackRoot` set to a folder that does not exist, so every pack
 comes from NuGet). Proposal: `Import.RecordOptions.PacksFrom = NuGet | Installed` with NuGet as the default (the import
 passes the property itself); together with a pinned pack version (`KnownFrameworkReference` /
-`KnownAppHostPack`, today also a probe target in xake-ar) the recorded references do not depend on the machine.
+`KnownAppHostPack`, today also a probe target in the consumer script) the recorded references do not depend on the machine.
 
 ### The MSBuild an import needs, checked up front (idea, 2026-10-26)
 
@@ -206,13 +206,13 @@ level, and the failure message naming the first few errors and the project they 
 ### A build log per run (idea, 2026-10-26)
 
 `filelog "build.log" ...` appends every message to the file (`File.AppendAllLines`), so the log grows across runs and a CI
-artifact holds every earlier build of that checkout (xake-ar's TeamCity steps delete it first). Proposal: start the file
+artifact holds every earlier build of that checkout (the consumer's CI steps delete it first). Proposal: start the file
 anew per run by default, with `filelog ... append` for the old behaviour (or keep the last N runs as `build.1.log`, ...).
 
 ### Satellite assemblies in imported locks (gap, 2026-10-26)
 
 `Import.record` records no satellite (`<culture>/<asm>.resources.dll`) compilations, so a build from locks has none and a
-nuspec that ships them leaves them out (xake-ar: 37 files per brand, `ja` and `zh-CN`; GCCN, a Chinese brand, ships without
+nuspec that ships them leaves them out (the consumer solution: 37 files per brand, `ja` and `zh-CN`; one brand ships without
 its `zh-CN` resources). Proposal: record msbuild's satellite generation (the culture `.resx` -> `.resources` ->
 `al`/csc `/out:<culture>/<asm>.resources.dll` step, signed like the main assembly) as entries of their own, with the
 replay writing `out/.../<culture>/`; `RunFolder` and pack then find them like any other built file.

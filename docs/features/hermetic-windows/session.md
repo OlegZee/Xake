@@ -8,6 +8,7 @@ Branch `feature/hermetic-windows`, worktree `.claude/worktrees/feature+hermetic-
 | PR2-core | `pr/msbuild-diagnostics-core` | `.claude/worktrees/agent-a409090deab5766dd` | committed, not pushed |
 | PR3 | `pr/secret-vars` | `.claude/worktrees/agent-aa55c82459e825ae5` | core done, not pushed |
 | PR1 | `pr/lock-eol-packs` (committed on `worktree-agent-ac02d3da3009192a9`: the name is held by a stale worktree `.claude/worktrees/pr+lock-eol-packs` at an older commit) | `.claude/worktrees/agent-ac02d3da3009192a9` | (a) and (b) pushed to `pr/lock-eol-packs` |
+| PR2-hermetic | `pr/import-diagnostics` | `.claude/worktrees/agent-a1765fdc13c027b5a` | committed, not pushed |
 
 ## Where things stand
 

@@ -3,7 +3,37 @@
 The `Xake` package (engine and `Xake.Dotnet`). Xake.Hermetic.Dotnet has its own notes
 ([hermetic/README.md](hermetic/README.md)).
 
-## 3.10.1 (unreleased)
+## Unreleased (version to be decided)
+
+- **New: `Xake.Typed`, typed rule patterns declared with records** (`open Xake.Typed` after
+  `open Xake`). `Target<'G>`, `Target<'G,'O>` (outputs as a record of patterns) and `Command<'G>`
+  (always runs, the typed replacement for phony rules) carry the pattern's groups as record
+  fields (records, anonymous records, `string`, `unit`); rules in form D (`X.Rule <| fun m -> ...`)
+  or form B (`X.rule { let! m = matched ... }`); paths for `need` generated from the pattern
+  (`Format`, `Paths`, `For`, `Make`, `Glob`, `Any`). A record that disagrees with its pattern
+  fails when the script starts. `getRuleMatch` and the string rules are not deprecated; phony `=>`
+  is planned to be phased out in favour of `Command` (no warning yet). See
+  [typed-targets.md](typed-targets.md), which also holds the migration guide.
+- **New: public `PatternAst`** (`parse`, `format`, `glob`, `escape`, `reservedChars`): the one parser of
+  the pattern grammar, with `PatternAst.format` generating a path from a pattern and group values
+  and `PatternAst.glob` turning a rule pattern into a mask. Bare wildcards substitute by position.
+- **Behaviour change: multi-file string rules** (`*..>`, `targets`) check at creation that every
+  output has the same set of named groups, and raise a `PatternException` naming the differing
+  output. Such rules used to be accepted.
+- **Escaping: `( ) [ ] { } |` are reserved** in rule patterns and fileset masks (apart from
+  `(name:...)`), `\` before one escapes it (`\(`, `\{`, `\|`, ...). This release keeps their
+  former meaning for an unescaped one and logs a warning once per pattern; a later major release
+  turns the warnings into errors and gives the characters new meaning (character classes,
+  `{a,b}`). Also warned: `[c]` instead of `\c`, `\` as a path separator (write `/`), a named
+  group in a mask. See [overview.md](overview.md#patterns-masks-and-paths).
+- **Intended breaks** (the script runs, the meaning changed): a `\` before a reserved character
+  is an escape, so `src\(x)\*.cs` is the directory `src(x)`; `[c]` in a mask include means the
+  literal `c`; `sub[1]` in a mask means `sub1`.
+- Fixes: a project root containing `(`, `[` or `|` no longer mismatches or crashes the rule
+  matcher; a lone `(`, `)` or `[` in a pattern gives a clear error instead of a regex exception;
+  multi-file rule outputs with an empty group value, or a `)` in a value, are named correctly.
+
+## 3.12.0 (released)
 
 - **Rule selection: the most specific matching rule wins.** When several rules match a target,
   Xake now picks the one with the most literal characters, then the fewest `**`, then the
@@ -14,6 +44,9 @@ The `Xake` package (engine and `Xake.Dotnet`). Xake.Hermetic.Dotnet has its own 
   in the script restores the old order — a **deprecated** one-release migration aid.
   `-d EXPLAIN_RULE=<target>` prints the candidate rules and the winner. See
   [overview.md](overview.md#rule-selection--the-most-specific-rule-wins).
+
+## 3.10.1 (released)
+
 - **Progress line: running tasks as coloured Braille dots** (one dot per task, cells filled
   column-wise `⠁⠃⠇⡇⡏⡟⡿⣿`, at most 4 cells for 30 tasks, `⣿⣿⣿⣿+` above; green, yellow past
   half, red above the cap). Redirected output keeps the `N tasks` text.
@@ -54,7 +87,7 @@ The `Xake` package (engine and `Xake.Dotnet`). Xake.Hermetic.Dotnet has its own 
   that is where `Run.Throttle`/`FscRun.Throttle` go. See
   [hermetic/lock.md](hermetic/lock.md#building-from-xake-generated-locks).
 
-## 3.9.0 (unreleased)
+## 3.9.0 (released)
 
 - **Project description in the core.** `xake.project.json` (the format Xake.Hermetic.Dotnet
   introduced) is now `Xake.Dotnet.Description`: parse, validate, `load`/`save`/`find`/`beside`,

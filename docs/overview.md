@@ -210,6 +210,12 @@ let mask = tokens |> PatternAst.glob (function "lib" -> Some "core" | _ -> None)
 let files = !! mask
 ```
 
+## Typed targets
+
+Rules with groups can declare them as record fields (`open Xake.Typed`): `m.cfg` instead of
+`getRuleMatch "cfg"`, and paths for `need` generated from the pattern. See
+[typed-targets.md](typed-targets.md), which also covers the migration from the string API.
+
 ## Useful links
 
 - Wiki home: https://github.com/OlegZee/Xake/wiki

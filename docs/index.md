@@ -31,6 +31,7 @@ commit touching the file; lengths are approximate line counts. Index written 202
 |---|---|---|---|
 | [session.md](session.md) | cross-feature engine facts, release notes, traps; read at every session start (CLAUDE.md) | ~190 | current; its `build.fsc.fsx` section describes the pre-#42 form |
 | [roadmap.md](roadmap.md) | agreed-but-unscheduled items: principles, engine, Xake.Dotnet, Xake.Hermetic.Dotnet backlog | ~110 | current (2026-10-11) |
+| [typed-targets.md](typed-targets.md) | `Xake.Typed`: typed rule groups, path generation, `Command`, migration from `getRuleMatch` | declaring rules with groups | ~330 | 2026-10-26 | current |
 | [tasks.md](tasks.md) | reference of all built-in tasks: `sh`, copy, rm, `csc`/`fsc`/`resolve`/`Csc.run` | ~535 | current (2026-10-11) |
 | [hermetic/README.md](hermetic/README.md) | entry page of `Xake.Hermetic.Dotnet` 0.2: what is new, the pieces, two ways in | ~170 | current |
 | [hermetic/workflows.md](hermetic/workflows.md) | team flows A-G: composed lock, imported project, fresh machine, CI, release, offline | ~750 | current; header still names 0.1 versions |

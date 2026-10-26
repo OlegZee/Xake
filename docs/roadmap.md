@@ -189,10 +189,10 @@ passes the property itself); together with a pinned pack version (`KnownFramewor
 
 ### The MSBuild an import needs, checked up front (idea, 2026-10-26)
 
-`Import.record` evaluates every project with `-getResultOutputFile` (MSBuild 17.9+, .NET SDK 8.0.200+). On SDK 8.0.1xx each
+`Import.record` evaluates every project with `-getResultOutputFile` (MSBuild 17.10+, .NET SDK 8.0.300+; `-getProperty`/`-getItem` alone are 17.8). On SDK 8.0.1xx each
 evaluation fails with `MSB1001: Unknown switch` and the import ends with "Exiting due to FailOnError set on ...import.sln"
 (seen on Windows with SDK 8.0.121). Proposal: read the MSBuild version once (`dotnet msbuild -version`) before the restore
-and fail with "the import needs MSBuild 17.9 or later (.NET SDK 8.0.200+); found <v> (SDK <sdk>)"; say the minimum in
+and fail with "the import needs MSBuild 17.10 or later (.NET SDK 8.0.300+); found <v> (SDK <sdk>)"; say the minimum in
 `docs/hermetic/`.
 
 ### msbuild errors of an import in the log (idea, 2026-10-26)

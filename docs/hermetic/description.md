@@ -100,6 +100,40 @@ other repository imports; not the SDK's, package or `obj/` files) and `Dropped` 
 knows that the description has no field for: other properties and item types of the repository
 files, targets, attribute arguments it cannot write, the SDK's implicit packages).
 
+### What an import needs, and how it fails
+
+**Requirement: MSBuild 17.10 or later, that is .NET SDK 8.0.300 or later**, for every import
+(`Import.descriptions`, `Import.record`, `Project.import`): each passes msbuild's
+`-getResultOutputFile`, which came with MSBuild 17.10 (`-getProperty`/`-getItem` are 17.8, but
+they are not enough). Before its first restore an import runs `dotnet msbuild -version` once in
+the project root (`ExecOptions.ProjectRoot`, where `global.json` selects the SDK) and refuses an
+older MSBuild:
+
+```
+the import needs MSBuild 17.10 or later (.NET SDK 8.0.300+); found 17.8.3 (SDK 8.0.121): raise the pin in global.json (<file>)
+the import needs MSBuild 17.10 or later (.NET SDK 8.0.300+); found 17.8.3 (SDK 8.0.121): install SDK 8.0.300 or later
+```
+
+The first when a `global.json` at or above the project root pins the SDK, the second otherwise.
+A version the check cannot read skips it (a line at Info says so). Building from a lock needs no
+msbuild and has no such floor.
+
+Every msbuild run of an import runs in the project root, so `global.json` is looked up where the
+SDK probe looks, whatever the process's current directory. msbuild's diagnostics go to the log
+by their shape (`<project> : error NU1008: ...`, `<file>(1,2): error CS0103: ...`,
+`MSBUILD : error MSB1001: ...`, `error NU1301: ...`): errors at Error, warnings at Info, each
+distinct warning once per build run; other lines stay at Verbose. A failed run fails the import
+naming its first five distinct errors with their project:
+
+```
+'<root>/obj/xake/import/<id>/import.sln': msbuild failed with exit code 1:
+  App.csproj: NU1008: The following PackageReference items cannot define a value for Version: ...
+  +2 more, see the log
+```
+
+When msbuild printed no error line, the message holds its last lines instead. The restore of a
+description's packages (`Described.restore`) reports its failures the same way.
+
 ## Import that records msbuild's compile inputs: `Import.record`
 
 `Import.record options projects` writes, for each project file, its description (as

@@ -107,14 +107,15 @@ masks: an include treats the group as literal text (finds nothing), an exclude u
 ## (f) Version
 
 Open (tm 51; tm 41's 4.0.0 was reconsidered once escaping was softened). Decide after the spec
-fixes how much breaks. The user releases 3.12 separately from what is already on `dev`.
+fixes how much breaks. 3.12.0 is released (tag `v3.12.0`); nothing of this feature is in it.
 
 ## Not classified / parked from the frozen brief
 
 - tm 9 hermetic path functions from patterns: not now (sketch exists, `hermetic-sketch.md`).
 - tm 11 roadmap "Rules with arguments": separate task.
 - tm 16 TP SDK not vendored; tm 44 building the provider via `build.fsc.fsx` deferred (both TP-only).
-- tm 45 integration branch: obsolete here; each PR goes to `dev` (see kickoff).
+- tm 45 integration branch: **not decided for this feature** — PRs straight to `dev` or an
+  integration branch again is the user's call; ask before the first implementation PR (Phase 3).
 - tm 1/2/3/5/12/17/24/26/32 TP packaging and naming: only relevant if the TP returns.
 - tm 10 `[<Literal>]` patterns: concerned the TP only.
 

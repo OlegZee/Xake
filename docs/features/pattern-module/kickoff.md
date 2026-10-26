@@ -24,7 +24,9 @@ repeat that: no code before the spec is approved.
   `EnterWorktree path=<worktree>` before delegating.
 - One worktree per PR, named like the branch, under `.claude/worktrees/` (no `work/*`, `prep/*`).
 - PRs go to `OlegZee/Xake`: always pass `--repo OlegZee/Xake` to `gh` (it defaults to upstream
-  FakeBuild/Xake). Feature PRs squash into `dev`.
+  FakeBuild/Xake). Feature PRs squash; whether they go straight into `dev` or into an
+  integration branch (as `feature/typed-matches` did) is NOT decided — ask the user before the
+  first implementation PR.
 - Right after each merge give the user the worktree/branch removal command.
 - Keep the PR/branch/worktree table in `session.md` current; update `session.md` and
   `tracker.md` before ending a session.
@@ -54,7 +56,8 @@ EscapingDiskTests,PatternAstTests,TypedTargets*,TypedCompileTests}.fs`, `docs/ov
    mainstream-glob style cases (gitignore/picomatch) and the on-disk corpus from
    `EscapingDiskTests`; they fail or are skipped until Phase 3. Exit: user approves the vectors.
 3. **IMPLEMENTATION** of the module (one AST, one matcher; no third-party glob library) until the
-   conformance tests pass. Exit: tests green, review by the user, PR to `dev`, merged.
+   conformance tests pass. Exit: tests green, review by the user, PR merged (target branch per
+   the user's choice above).
 4. **MIGRATION** of rules and `Fileset` onto the module. Compat corpus: `samples/`, code blocks in
    docs, existing tests; `getRuleMatch` unchanged; `applyWildcards` onto `format`. Exit: whole test
    suite and `dotnet fsi build.fsx -- -- build test` green, behaviour changes listed in release

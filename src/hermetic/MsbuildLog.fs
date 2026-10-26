@@ -12,8 +12,8 @@ open Xake
 /// classified line by line; the errors kept for a failure that names them; and the MSBuild
 /// version an import needs (`-getResultOutputFile` is MSBuild 17.10, .NET SDK 8.0.300).
 ///
-/// TODO core 3.12: the core's `Tool.diagnosticLevel` learns these shapes in Xake 3.12; this
-/// local classifier goes when the package moves to `Xake [3.12, 3.13)`.
+/// TODO core 3.13: the core's `Tool.diagnosticLevel` knows these shapes since Xake 3.13.0; this
+/// local classifier goes when the package moves to `Xake [3.13, 3.14)`.
 module internal MsbuildLog =
 
     type Kind = ErrorLine | WarningLine

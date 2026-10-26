@@ -1,6 +1,27 @@
 # Xake.Hermetic.Dotnet
 
-## 0.7.0 (next release)
+## 0.8.0 (next release)
+
+Lock portability: a lock set recorded on one OS builds on another, whatever line ends the
+checkout gives the repository's files. No lock format change; existing locks stay readable.
+
+- Line-end neutral hashes ([lock.md](lock.md#recorded-locks-importrecord), "Line ends"): the
+  text inputs of an import (`Evaluation.Imports`, the `App.Files` beside the lock, the
+  project's own `App.config`) are recorded with the hash of their content read with CRLF as
+  LF (`FileHash.textSha256`), and checked against that hash or the raw one
+  (`FileHash.textMatches`): a lock recorded over LF is current on a CRLF checkout
+  (`core.autocrlf`) and the reverse, a lock recorded by 0.7 is current where it was. Binaries
+  are still compared byte for byte.
+- Targeting packs from NuGet by default ([lock.md](lock.md#recorded-locks-importrecord), "Packs"):
+  `Import.RecordOptions.PacksFrom = NuGet | Installed`, `NuGet` the default. The import points
+  `NetCoreTargetingPackRoot` at a folder that does not exist, so the targeting, apphost and
+  runtime packs come from the package folder: the same hashes on every machine, the SBOM row of a
+  pack has its `Sha512`. Every lock with a pack reference changes once on its next import, and
+  the import needs the packs on its feed. `Installed` keeps the behaviour of 0.7 (offline imports).
+  `RecordOptions` gains the field: a script that builds it without `RecordOptions.Default with`
+  adds `PacksFrom`.
+
+## 0.7.0
 
 `Locks.compile` builds the assembly and checks its target
 ([design note](../features/hermetic-build/locks-compile-targets.md)). **Breaking: `compile`

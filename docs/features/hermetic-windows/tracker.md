@@ -8,7 +8,11 @@ One line per item.
 - [ ] Scrub the customer abbreviation in `analysis/lock-content.md` ("Tests")
 - [ ] Owner interview over `brief.md` section 4
 - [ ] Roadmap corrections (`brief.md` section 6) applied to `docs/roadmap.md`
-- [ ] PR1 lock portability: (a) line-ending-neutral hashes + (b) packs from NuGet (hermetic 0.8)
+- [x] PR1 lock portability: (a) line-ending-neutral hashes + (b) packs from NuGet (hermetic 0.8), branch `pr/lock-eol-packs`, not yet merged
+  - [x] (a) `FileHash.textSha256`/`textMatches`: Imports, App.Files, own App.config; staleOf, Apps.write, rehash
+  - [x] (b) `RecordOptions.PacksFrom = NuGet | Installed`, NuGet default (`NetCoreTargetingPackRoot`)
+  - [ ] (b) follow-up: a restore failure for a missing pack on a private feed names the cause (brief §3 b)
+  - [ ] (b) verify a missing pack root on SDK 8 and 9 imports (the tests ran the imports on SDK 10.0.402)
 - [ ] PR2 import diagnostics: (c) msbuild errors + run in `ProjectRoot`, (d) MSBuild floor check
   - [x] PR2-core (`pr/msbuild-diagnostics-core`): `Tool.diagnosticLevel` msbuild/NuGet shapes,
     `Tool.DiagnosticLog` (warnings once per run, error summary), the msbuild task, csc/fsc and the

@@ -278,6 +278,20 @@ the lock may name (recorded <sha>): the installed pack '<dotnet>/packs/...' (<sh
 The installed file is hashed through `FileHash` (memoised by path, length and write time), so
 a build of many locks naming one pack hashes each of its files once.
 
+**Packs: from NuGet by default** (`RecordOptions.PacksFrom`, since 0.8). With `PacksFrom =
+Import.NuGet` (the default) the import hands every msbuild run
+`-p:NetCoreTargetingPackRoot=$(ProjectRoot)/obj/xake/no-installed-packs`, a folder that does not
+exist, so msbuild downloads the targeting, apphost and runtime packs into the package folder and
+the lock records the package's hashes, whatever this .NET has installed: two machines record the
+same lock, it builds with or without the pack installed, and the SBOM row of the pack has the
+package's `Sha512`. The SDK's own apphost (no runtime identifier) is not a pack and is
+unaffected. The import then needs the `Microsoft.*.App.Ref` (and `.Host.<rid>`,
+`.Runtime.<rid>`) packages on its feed; a private feed without a nuget.org upstream fails the
+restore. `PacksFrom = Import.Installed` passes no such property (msbuild's default, the behaviour
+before 0.8: an offline import), and a script's own `NetCoreTargetingPackRoot` in `Properties`
+wins over the default. The pack versions follow the SDK; an exact `global.json` pin fixes them.
+Switching to NuGet changes every lock with a pack reference once, on its next import.
+
 ### Format 2
 
 ```json
@@ -411,7 +425,7 @@ copy-to-output items go into a run folder (`Locks.runFolderWith`, [Run folders](
   the config (a redirect to a stand-in). Recorded beside the lock in
   `<lock without .json>.files/<tfm>/app/` as text (LF), each with its hash; the project's own
   config that msbuild copies as it is (a .NET application's `App.config`) is named where it is,
-  by its hash, and copied byte for byte. A changed file beside the lock fails the build (*does
+  by its (line-end neutral, see "Line ends" below) hash, and copied byte for byte. A changed file beside the lock fails the build (*does
   not have the hash the lock records; run the import again*). The repository files the
   recorded ones come from, the project's `App.config` (msbuild's `AppConfig`) and its
   `runtimeconfig.template.json` (`UserRuntimeConfig`), are in `Evaluation.Imports` with the
@@ -485,6 +499,21 @@ the runner checks the hashes, the prerequisite checks the SDK. Two points are sp
   on them and compares the hashes. A changed or missing file fails the build: *the lock '...' is
   stale: '.../app.csproj' changed since the import that wrote it; run the import again*. With
   the variable `LOCK_STALE=warn` this is a warning, except under CI.
+- Line ends: a lock set is portable across operating systems and `core.autocrlf` settings.
+  The text inputs of an import (`Evaluation.Imports`, the files written beside the lock in
+  `App.Files`, the project's own `App.config`) are recorded with the hash of their content
+  read with CRLF as LF (a lone CR kept, a BOM and the encoding unchanged: a UTF-16 file is
+  hashed as its bytes are), `FileHash.textSha256`; `Lock.rehash` fills `Imports` the same
+  way. The check (`Locks.staleOf`, the build's check of `App.Files`, `FileHash.textMatches`)
+  accepts that hash or the raw one, so a lock recorded
+  over LF checks out current with CRLF and the reverse, and a lock recorded before 0.8 (raw
+  hashes) is still current on a checkout with the line ends it was recorded with; such a
+  lock recorded over CRLF becomes portable with one import. A file whose only change is its
+  line ends is not stale (msbuild does not care either). What is text goes by role, not by
+  extension: package files, packs, references, analyzers, copy items and the binaries beside
+  the lock are compared byte for byte. A repository that wants identical bytes as well can
+  pin the line ends in `.gitattributes` (`*.props *.targets *.csproj text eol=lf`,
+  `<lock>.files/** -text`); the hashes do not need it.
 - The lock records `Recorded.Projects[].Path`, the script's `OutOf` layout at import time: a
   script that changes its layout imports again.
 - `$(SourceRevisionId)` is resolved from the project's own git repository at build time: a
@@ -1120,6 +1149,7 @@ lives in its own `Json` module.
   - `Project` -- the project file path ("" when composed)
   - `ProjectRefs` -- `ProjectReference` items, as project files
   - `Imports` -- the msbuild files (outside the SDK) whose evaluation produced this entry, hashed
+    with CRLF read as LF (a raw hash, as before 0.8, is accepted too)
   - `Sdk` -- `NETCoreSdkVersion`, the SDK that evaluated the project
   - `SdkPin` -- `Lock.SdkPin option`, typed (`NoGlobalJson | Pinned v | RollsForward (v, policy)
     | NoVersion file`); written as `"none"`, `"exact <v>"`, `"<v> rollForward:<policy>"`, `"no

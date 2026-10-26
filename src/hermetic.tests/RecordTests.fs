@@ -145,6 +145,18 @@ type ``Recorded lock identities``() =
             Directory.Delete (empty, true)
 
     [<Test>]
+    member x.``packs from NuGet by default: a pack root that does not exist; Installed passes none``() =
+        let options = { Import.RecordOptions.Default with Properties = [ "Brand", "Globex" ] }
+        Assert.That(options.PacksFrom, Is.EqualTo Import.NuGet)
+        let globals = Import.recordGlobals "/r/proj" options
+        Assert.That(globals, Is.EqualTo [ "NuGetAudit", "false"; "NetCoreTargetingPackRoot", "/r/proj/obj/xake/no-installed-packs"; "Brand", "Globex" ])
+        Assert.That(Import.recordGlobals "/r/proj/" options, Is.EqualTo globals)
+        Assert.That(Import.recordGlobals "/r/proj" { options with PacksFrom = Import.Installed }, Is.EqualTo [ "NuGetAudit", "false"; "Brand", "Globex" ])
+        // the script's own value wins
+        let own = { options with Properties = [ "netcoretargetingpackroot", "/opt/packs" ] }
+        Assert.That(Import.recordGlobals "/r/proj" own, Is.EqualTo [ "NuGetAudit", "false"; "netcoretargetingpackroot", "/opt/packs" ])
+
+    [<Test>]
     member x.``a pack identity is the copy whose hash the lock recorded, installed or the package's``() =
         let dir = Path.Combine (Path.GetTempPath (), "xake-pack-candidates-" + string (Guid.NewGuid ()))
         let write (path: string) (text: string) =

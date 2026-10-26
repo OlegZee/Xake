@@ -317,7 +317,8 @@ module Apps =
             let warnings = ResizeArray<string> ()
             let checkHash (what: string) (path: string) (sha: string) =
                 if not (File.Exists path) then failwithf "'%s' (%s): the %s '%s' is missing" name framework what path
-                if sha <> "" && FileHash.sha256 path <> sha then
+                // all text (runtimeconfig.json, deps.json, a .config): line ends do not count
+                if sha <> "" && not (FileHash.textMatches path sha) then
                     failwithf "'%s' (%s): the %s '%s' does not have the hash the lock '%s' records; run the import again" name framework what path lockPath
             // a file deps.json names: the copy-local source placed under that name
             let sourceOf (file: string) =

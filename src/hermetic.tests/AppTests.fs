@@ -320,6 +320,17 @@ type ``Import record applications``() =
         Assert.That(lock, Does.Contain "\"Host\": { \"Rid\": \"\" }")
         Assert.That(lock, Does.Contain "\"To\": \"runtimes/linux-x64/native/libe_sqlite3.so\"")
         Assert.That(lock, Does.Contain "{ \"Id\": \"project:lib\", \"Sha256\": \"\", \"To\": \"Lib.Core.dll\" }")
+        // the targeting pack from NuGet (PacksFrom's default), installed or not: the hash of the
+        // package folder's copy, and its SBOM row has the package's Sha512
+        let pack = Text.RegularExpressions.Regex.Match (lock, "\"Id\": \"pack:microsoft\\.netcore\\.app\\.ref/([^/]+)/ref/net8\\.0/Microsoft\\.CSharp\\.dll\", \"Sha256\": \"([0-9a-f]+)\"")
+        Assert.That(pack.Success, lock)
+        let packages =
+            match Environment.GetEnvironmentVariable "NUGET_PACKAGES" with
+            | null | "" -> Path.Combine (Environment.GetFolderPath Environment.SpecialFolder.UserProfile, ".nuget", "packages")
+            | p -> p
+        let packageCopy = Path.Combine (packages, "microsoft.netcore.app.ref", pack.Groups.[1].Value, "ref", "net8.0", "Microsoft.CSharp.dll")
+        Assert.That(Xake.Dotnet.Hash.sha256 packageCopy, Is.EqualTo pack.Groups.[2].Value)
+        Assert.That(lock, Does.Match "(?i)\\{ \"Id\": \"microsoft\\.netcore\\.app\\.ref\", \"Version\": \"[^\"]+\", \"Sha512\": \"[^\"]+\"")
         Assert.That(filesOf ours, Is.EqualTo (filesOf theirs))
         for f in [ "console.deps.json"; "console.runtimeconfig.json" ] do
             Assert.That(File.ReadAllText (ours </> f), Is.EqualTo (File.ReadAllText (theirs </> f)), f)
@@ -354,6 +365,27 @@ type ``Import record applications``() =
                 Assert.That(string e, Does.Contain (sprintf "/%s' changed since the import that wrote it; run the import again" file))
             finally File.WriteAllText (file, text)
         RecordKit.build x.TestOptions "build-app-stale-2" "Release"
+
+    [<Test>]
+    member x.``other line ends in a checkout of the app's text files: the build is the same``() =
+        x.Prepare ()
+        let flip (text: string) = if text.Contains "\r\n" then text.Replace ("\r\n", "\n") else text.Replace ("\n", "\r\n")
+        // an import file, the project's own App.config (recorded with CRLF, now LF), the
+        // App.Files written beside the lock and a generated config (recorded with LF, now CRLF)
+        let files =
+            [ "console/console.csproj"; "console/App.config"; "console/runtimeconfig.template.json"; "winexe/App.config" ]
+            @ [ for f in Directory.GetFiles ("locks", "*.*", SearchOption.AllDirectories) do
+                  if f.EndsWith ".json" && Path.GetFileName (Path.GetDirectoryName f) = "app" || f.EndsWith ".config" then
+                      yield f.Replace ('\\', '/') ]
+        Assert.That(files |> List.filter (fun f -> f.StartsWith "locks/"), Has.Length.AtLeast 3)
+        let saved = [ for f in files -> f, File.ReadAllBytes f ]
+        try
+            for f, bytes in saved do File.WriteAllText (f, flip (Text.Encoding.UTF8.GetString bytes))
+            Assert.That(File.ReadAllText "console/App.config", Does.Not.Contain "\r")
+            RecordKit.build x.TestOptions "build-line-ends" "Release"
+            Assert.That(File.ReadAllText "build-line-ends.log", Does.Not.Contain "run the import again")
+        finally
+            for f, bytes in saved do File.WriteAllBytes (f, bytes)
 
     [<Test>]
     member x.``an explicit RID: the apphost pack pinned with its hash, its bytes in the output``() =

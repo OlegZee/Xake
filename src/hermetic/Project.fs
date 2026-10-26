@@ -309,7 +309,7 @@ module Project =
             Evaluation =
                 { Project = prop "MSBuildProjectFullPath" |> slash
                   ProjectRefs = items "ProjectReference" |> List.map (identity >> resolveAgainstProject)
-                  Imports = imports |> List.map Csc.hashed
+                  Imports = imports |> List.map (fun f -> { Path = f; Sha256 = FileHash.textSha256 f } : Lock.Hashed)
                   Sdk = prop "NETCoreSdkVersion"
                   SdkPin = Some pin
                   Properties =

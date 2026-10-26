@@ -10,15 +10,48 @@ open Xake.Dotnet
 /// import hashes the same package files for every entry that copies them (on the trial product
 /// 13,638 copy-local items, mostly the same files in 72 test projects), a run folder checks
 /// them again. A file rewritten in place gets a new write time, hence a new key.
+///
+/// Text inputs (an import's msbuild files, an application's recorded files) are recorded by
+/// `textSha256`, the hash of their content with CRLF line ends read as LF, and checked by
+/// `textMatches`, which also accepts the raw hash (a lock an older package recorded): a lock
+/// set is then the same whichever line ends a checkout gives its files (`core.autocrlf`).
 module FileHash =
 
-    let private memo = System.Collections.Concurrent.ConcurrentDictionary<struct (string * int64 * int64), string> ()
+    // the key carries the mode (0 raw, 1 text): one path has a hash of each kind
+    let private memo = System.Collections.Concurrent.ConcurrentDictionary<struct (int * string * int64 * int64), string> ()
+
+    let private memoised (mode: int) (compute: string -> string) (path: string) : string =
+        let info = FileInfo path
+        if not info.Exists then compute path
+        else memo.GetOrAdd (struct (mode, info.FullName, info.Length, info.LastWriteTimeUtc.Ticks), fun _ -> compute path)
+
+    /// `bytes` with every CRLF pair read as LF; a lone CR (and a lone LF) kept, nothing else
+    /// changed (a BOM, the encoding: a UTF-16 file is hashed as its bytes are, CR NUL LF NUL).
+    let normalizeLineEnds (bytes: byte[]) : byte[] =
+        let result = ResizeArray<byte> (bytes.Length)
+        for i in 0 .. bytes.Length - 1 do
+            if not (bytes.[i] = 13uy && i + 1 < bytes.Length && bytes.[i + 1] = 10uy) then result.Add bytes.[i]
+        result.ToArray ()
+
+    /// The SHA-256 (lowercase hex, as `Csc.sha256`) of a file's content after `normalizeLineEnds`;
+    /// "" when it does not exist, as `Csc.sha256`.
+    let private textHash (path: string) : string =
+        if not (File.Exists path) then "" else
+        use algo = System.Security.Cryptography.SHA256.Create ()
+        algo.ComputeHash (normalizeLineEnds (File.ReadAllBytes path)) |> Array.map (sprintf "%02x") |> String.concat ""
 
     /// `Csc.sha256 path`, memoised; a missing file is hashed (and fails) as `Csc.sha256` does.
-    let sha256 (path: string) : string =
-        let info = FileInfo path
-        if not info.Exists then Csc.sha256 path
-        else memo.GetOrAdd (struct (info.FullName, info.Length, info.LastWriteTimeUtc.Ticks), fun _ -> Csc.sha256 path)
+    let sha256 (path: string) : string = memoised 0 Csc.sha256 path
+
+    /// The hash a lock records for a text input: of the content with CRLF read as LF
+    /// (`normalizeLineEnds`), memoised apart from `sha256`; "" for a missing file, as `sha256`.
+    let textSha256 (path: string) : string = memoised 1 textHash path
+
+    /// Whether the text file `path` has the hash `sha` a lock records: the line-end neutral one
+    /// (`textSha256`) or, for a lock recorded by an older package, the raw one (`sha256`).
+    /// "" never matches: it is the lock's "not hashed", which the caller handles.
+    let textMatches (path: string) (sha: string) : bool =
+        sha <> "" && (textSha256 path = sha || sha256 path = sha)
 
 /// The imported compilation of a project: exactly what `dotnet build` would have handed the
 /// compiler, plus the identity (path and SHA-256) of everything the compiler would read that
@@ -540,7 +573,7 @@ module Lock =
     let rehash (entry: Entry) : Entry =
         { entry with
             Compilation = entry.Compilation |> mapCompilation Csc.rehash Fsc.rehash
-            Evaluation = { entry.Evaluation with Imports = entry.Evaluation.Imports |> List.map (fun h -> { h with Sha256 = Csc.sha256 h.Path }) } }
+            Evaluation = { entry.Evaluation with Imports = entry.Evaluation.Imports |> List.map (fun h -> { h with Sha256 = FileHash.textSha256 h.Path }) } }
         |> withoutSdkCompilerHash
         |> fun e ->
             match e.Recorded, Roots.dotnetRoot () with

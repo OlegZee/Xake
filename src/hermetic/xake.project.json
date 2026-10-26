@@ -7,6 +7,7 @@
   "frameworks": ["net462", "netstandard2.0"],
   "sources": [
     "ToolJson.fs",
+    "MsbuildLog.fs",
     "Roots.fs",
     "Nuget.fs",
     "Restore.fs",
@@ -25,7 +26,7 @@
     "Sign.fs"
   ],
   "packages": [
-    { "id": "Xake", "version": "[3.11.0.40, 3.12)" },
+    { "id": "Xake", "version": "[3.13.0.43, 3.14)" },
     { "id": "FSharp.Core", "version": "8.0.100" }
   ],
   "options": { "doc": true },

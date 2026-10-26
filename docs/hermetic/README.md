@@ -20,6 +20,14 @@ checkout gives the repository's files. No lock format change; existing locks sta
   the import needs the packs on its feed. `Installed` keeps the behaviour of 0.7 (offline imports).
   `RecordOptions` gains the field: a script that builds it without `RecordOptions.Default with`
   adds `PacksFrom`.
+- Import diagnostics: an import (`Import.record`, `Import.descriptions`, `Project.import`)
+  checks up front that MSBuild is 17.10 or later (.NET SDK 8.0.300+, or any 9.x/10.x SDK) and says to raise the
+  `global.json` pin or install a newer SDK; msbuild's errors reach the log at Error (warnings at
+  Info, once each), a failed msbuild or restore names its first five errors and their project,
+  and msbuild runs in the project root ([description.md](description.md#what-an-import-needs-and-how-it-fails)).
+- On Xake 3.13: depends on `Xake [3.13.0.43, 3.14)` (was `[3.11.0.40, 3.12)`); the import's
+  msbuild and restore runs classify their output with the core's `Tool.diagnosticLevel` /
+  `Tool.DiagnosticLog` and fail through `Tool.failOnExitCodeWith`.
 
 ## 0.7.0
 

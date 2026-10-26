@@ -213,14 +213,23 @@ module Described =
     /// The folder all synthesized restore projects live in: `obj/xake/restore/<key>/restore.csproj`.
     let private restoreDir (projectRoot: string) = Path.Combine (projectRoot, "obj", "xake", "restore")
 
-    /// Runs `dotnet restore` on `project` (one synthesized project or the batch project).
-    let private runRestore (root: string) (project: string) : Recipe<ExecContext, int> =
+    /// Runs `dotnet restore` on `project` (one synthesized project or the batch project) in the
+    /// project root (where `global.json` selects the SDK), msbuild's diagnostics classified
+    /// (`MsbuildLog`): the exit code and what the run printed, for a failure that names the errors.
+    let private runRestore (root: string) (project: string) : Recipe<ExecContext, int * Tool.DiagnosticLog> =
         recipe {
             System.Threading.Interlocked.Increment &processes |> ignore
+            let! options = getCtxOptions ()
+            let! ctx = getCtx ()
+            let log = MsbuildLog.diagnostics (box ctx.Engine) Level.Verbose
+            let workDir =
+                match options.ProjectRoot with
+                | null | "" -> Directory.GetCurrentDirectory ()
+                | dir -> Path.GetFullPath dir
             let! exitCode =
                 shell {
                     cmd "dotnet"
-                    args ([ "restore"; project; "-v:quiet"; "-nologo"; "-p:NuGetAudit=false"
+                    args ([ "restore"; Path.GetFullPath project; "-v:quiet"; "-nologo"; "-p:NuGetAudit=false"
                             "-p:ImportDirectoryBuildProps=false"; "-p:ImportDirectoryBuildTargets=false"
                             "-p:ImportDirectoryPackagesProps=false"; "-p:ManagePackageVersionsCentrally=false" ]
                          |> List.map Tool.quoteArgument)
@@ -230,12 +239,12 @@ module Described =
                     // `dotnet restore` exits, so reading its output to the end waits for the
                     // node's idle timeout (the Linux CI hang of 0.4.0)
                     env ("MSBUILDDISABLENODEREUSE", "1")
-                    workdir (Path.GetDirectoryName project)
+                    workdir workDir
                     logprefix "[restore]"
-                    stdoutlevel (Tool.diagnosticLevel Level.Verbose)
-                    erroutlevel (Tool.diagnosticLevel Level.Verbose)
+                    stdoutlevel log.Level
+                    erroutlevel log.Level
                 }
-            return exitCode
+            return exitCode, log
         }
 
     /// The `Restored` of a restore project whose `obj/project.assets.json` is written.
@@ -284,11 +293,12 @@ module Described =
                                 Directory.CreateDirectory dir |> ignore
                                 let project = Path.Combine (dir, "restore.csproj")
                                 File.WriteAllText (project, text)
-                                let! exitCode = runRestore root project
+                                let! exitCode, log = runRestore root project
                                 if exitCode <> 0 then
-                                    failwithf "'%s': restoring the packages of the description for %s failed with exit code %d (see '%s'): %s"
+                                    failwithf "'%s': restoring the packages of the description for %s failed with exit code %d (see '%s'): %s%s"
                                         d.Name framework exitCode project
                                         (packages |> List.map (fun p -> p.Id + " " + defaultArg p.Version "*") |> String.concat ", ")
+                                        log.Summary
                                 let restored = readRestored root dir framework
                                 cache.[key] <- restored
                                 return restored })
@@ -351,9 +361,9 @@ module Described =
                           yield "</Project>"
                           yield "" ] |> String.concat "\n")
                     do! trace Info "restoring %d package set(s) in one restore ('%s')" keys.Length batch
-                    let! exitCode = runRestore root batch
+                    let! exitCode, log = runRestore root batch
                     if exitCode <> 0 then
-                        do! trace Warning "the batch restore '%s' failed with exit code %d; each target restores its packages alone" batch exitCode
+                        do! trace Warning "the batch restore '%s' failed with exit code %d; each target restores its packages alone%s" batch exitCode log.Summary
                     else
                         for key, (framework, _) in wanted do
                             cache.[key] <- readRestored root (Path.Combine (dir, key)) framework })

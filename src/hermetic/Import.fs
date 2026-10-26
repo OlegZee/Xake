@@ -715,6 +715,7 @@ module Import =
     /// fingerprint). Only the description: `record` also writes the locks.
     let project (project: string) (descriptionOf: string -> string) (globals: (string * string) list) : Recipe<ExecContext, Imported> =
         recipe {
+            do! Project.requireImportMsbuild ()
             let! options = getCtxOptions ()
             let root = options.ProjectRoot
             let full (p: string) = Path.GetFullPath (if Path.IsPathRooted p then p else root </> p)
@@ -733,7 +734,12 @@ module Import =
     /// `project` for each of `projects`, concurrently (at most the processor count of msbuild
     /// processes at once); the results in order.
     let descriptions (projects: string list) (descriptionOf: string -> string) (globals: (string * string) list) : Recipe<ExecContext, Imported list> =
-        projects |> List.map (fun p -> project p descriptionOf globals) |> concurrently
+        recipe {
+            // the MSBuild the evaluations need, checked once for all of them
+            do! Project.requireImportMsbuild ()
+            let! imported = projects |> List.map (fun p -> project p descriptionOf globals) |> concurrently
+            return imported
+        }
 
     // ---- recording msbuild's resolved compile inputs ----------------------------------------
 
@@ -1668,6 +1674,8 @@ module Import =
     let record (options: RecordOptions) (projects: string list) : Recipe<ExecContext, Imported list> =
         recipe {
             if List.isEmpty options.Configurations then failwith "RecordOptions.Configurations is empty: name at least one configuration"
+            // the MSBuild `-getResultOutputFile` needs, before the restore of every project
+            do! Project.requireImportMsbuild ()
             let! ctxOptions = getCtxOptions ()
             let root = slash (Path.GetFullPath ctxOptions.ProjectRoot)
             let full (p: string) = slash (Path.GetFullPath (if Path.IsPathRooted p then p else root </> p))

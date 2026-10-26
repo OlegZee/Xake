@@ -737,8 +737,24 @@ module Import =
 
     // ---- recording msbuild's resolved compile inputs ----------------------------------------
 
+    /// <summary>
+    /// Where the import takes the .NET targeting, apphost and runtime packs from
+    /// (`RecordOptions.PacksFrom`). The installed pack under the SDK's `packs/` and the nuget.org
+    /// package of the same version are not byte-identical (the package is signed), so a lock
+    /// recorded from one has other hashes than a lock recorded from the other.
+    /// </summary>
+    type PacksFrom =
+        /// The nuget.org packages, downloaded into the package folder by the import's restore
+        /// (`NetCoreTargetingPackRoot` pointed at a folder that does not exist): the same lock
+        /// on every machine, a build without the pack installed fetches the same package, and
+        /// the SBOM row of the pack has its `Sha512`. Needs the packs on the feed.
+        | NuGet
+        /// The packs this .NET has installed, where it has them (msbuild's default; an import
+        /// without feed access to the packs): the lock builds only where the same pack is installed.
+        | Installed
+
     /// What `record` is told: the configurations to record, the properties msbuild runs with,
-    /// the script's extra roots and its layout.
+    /// the script's extra roots and its layout, where the packs come from.
     type RecordOptions = {
         /// One lock per project and configuration, e.g. `["Release"]`
         Configurations: string list
@@ -753,12 +769,28 @@ module Import =
         /// The output folder of a project for a configuration and framework (`outOf cfg fwk name`):
         /// where a project reference is found (`project:<name>`)
         OutOf: string -> string -> string -> string
+        /// Where the targeting, apphost and runtime packs come from: `NuGet` (the default) or `Installed`
+        PacksFrom: PacksFrom
     } with
         static member Default =
             { Configurations = [ "Release" ]; Properties = []; Roots = []
               DescriptionOf = Description.beside
               LockOf = (fun name cfg -> sprintf "locks/%s/%s.json" name cfg)
-              OutOf = (fun cfg fwk name -> sprintf "out/%s/%s/%s" cfg fwk name) }
+              OutOf = (fun cfg fwk name -> sprintf "out/%s/%s/%s" cfg fwk name)
+              PacksFrom = NuGet }
+
+    /// The global properties of every msbuild run of an import under the project root `root`:
+    /// `NuGetAudit=false`, the script's `Properties`, and for `PacksFrom = NuGet` a
+    /// `NetCoreTargetingPackRoot` that does not exist (a fixed path under `obj/`, so the
+    /// intermediate folders keyed by the globals stay the same between imports), unless the
+    /// script sets that property itself.
+    let internal recordGlobals (root: string) (options: RecordOptions) : (string * string) list =
+        let setsPackRoot = options.Properties |> List.exists (fun (k, _) -> k.Equals ("NetCoreTargetingPackRoot", StringComparison.OrdinalIgnoreCase))
+        [ "NuGetAudit", "false" ]
+        @ (match options.PacksFrom with
+           | NuGet when not setsPackRoot -> [ "NetCoreTargetingPackRoot", root.TrimEnd('/') + "/obj/xake/no-installed-packs" ]
+           | _ -> [])
+        @ options.Properties
 
     /// The targets of the design-time build: what `CoreBuild` runs up to the compiler, but the
     /// project's `PreBuildEvent` -- `BuildOnlySettings` (what a build, not a design-time
@@ -1643,7 +1675,7 @@ module Import =
             // with the script variable `NUGET_PACKAGES`, msbuild restores into the build's folder too
             let environment = if packageSource = DotNetFwk.ScriptVariable then [ "NUGET_PACKAGES", packageRoot ] else []
             let! roots = Roots.currentWith options.Roots
-            let globals = [ "NuGetAudit", "false" ] @ options.Properties
+            let globals = recordGlobals root options
             let primary = List.head options.Configurations
             let started = DateTime.UtcNow
             let temp = root </> "obj" </> "xake" </> "import" </> Guid.NewGuid().ToString "N"

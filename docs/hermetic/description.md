@@ -137,6 +137,7 @@ folder.
 | `DescriptionOf` | project file -> description file (default `Description.beside`) |
 | `LockOf` | description name -> configuration -> lock file |
 | `OutOf` | configuration -> framework -> project name -> output folder: where a project reference is found |
+| `PacksFrom` | where the targeting, apphost and runtime packs come from: `Import.NuGet` (default) or `Import.Installed`, see [lock.md](lock.md#recorded-locks-importrecord) "Packs" |
 
 ## API
 

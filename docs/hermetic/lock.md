@@ -278,6 +278,20 @@ the lock may name (recorded <sha>): the installed pack '<dotnet>/packs/...' (<sh
 The installed file is hashed through `FileHash` (memoised by path, length and write time), so
 a build of many locks naming one pack hashes each of its files once.
 
+**Packs: from NuGet by default** (`RecordOptions.PacksFrom`, since 0.8). With `PacksFrom =
+Import.NuGet` (the default) the import hands every msbuild run
+`-p:NetCoreTargetingPackRoot=$(ProjectRoot)/obj/xake/no-installed-packs`, a folder that does not
+exist, so msbuild downloads the targeting, apphost and runtime packs into the package folder and
+the lock records the package's hashes, whatever this .NET has installed: two machines record the
+same lock, it builds with or without the pack installed, and the SBOM row of the pack has the
+package's `Sha512`. The SDK's own apphost (no runtime identifier) is not a pack and is
+unaffected. The import then needs the `Microsoft.*.App.Ref` (and `.Host.<rid>`,
+`.Runtime.<rid>`) packages on its feed; a private feed without a nuget.org upstream fails the
+restore. `PacksFrom = Import.Installed` passes no such property (msbuild's default, the behaviour
+before 0.8: an offline import), and a script's own `NetCoreTargetingPackRoot` in `Properties`
+wins over the default. The pack versions follow the SDK; an exact `global.json` pin fixes them.
+Switching to NuGet changes every lock with a pack reference once, on its next import.
+
 ### Format 2
 
 ```json

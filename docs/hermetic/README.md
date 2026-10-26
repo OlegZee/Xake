@@ -12,6 +12,14 @@ checkout gives the repository's files. No lock format change; existing locks sta
   (`FileHash.textMatches`): a lock recorded over LF is current on a CRLF checkout
   (`core.autocrlf`) and the reverse, a lock recorded by 0.7 is current where it was. Binaries
   are still compared byte for byte.
+- Targeting packs from NuGet by default ([lock.md](lock.md#recorded-locks-importrecord), "Packs"):
+  `Import.RecordOptions.PacksFrom = NuGet | Installed`, `NuGet` the default. The import points
+  `NetCoreTargetingPackRoot` at a folder that does not exist, so the targeting, apphost and
+  runtime packs come from the package folder: the same hashes on every machine, the SBOM row of a
+  pack has its `Sha512`. Every lock with a pack reference changes once on its next import, and
+  the import needs the packs on its feed. `Installed` keeps the behaviour of 0.7 (offline imports).
+  `RecordOptions` gains the field: a script that builds it without `RecordOptions.Default with`
+  adds `PacksFrom`.
 
 ## 0.7.0
 

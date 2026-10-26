@@ -320,6 +320,17 @@ type ``Import record applications``() =
         Assert.That(lock, Does.Contain "\"Host\": { \"Rid\": \"\" }")
         Assert.That(lock, Does.Contain "\"To\": \"runtimes/linux-x64/native/libe_sqlite3.so\"")
         Assert.That(lock, Does.Contain "{ \"Id\": \"project:lib\", \"Sha256\": \"\", \"To\": \"Lib.Core.dll\" }")
+        // the targeting pack from NuGet (PacksFrom's default), installed or not: the hash of the
+        // package folder's copy, and its SBOM row has the package's Sha512
+        let pack = Text.RegularExpressions.Regex.Match (lock, "\"Id\": \"pack:microsoft\\.netcore\\.app\\.ref/([^/]+)/ref/net8\\.0/Microsoft\\.CSharp\\.dll\", \"Sha256\": \"([0-9a-f]+)\"")
+        Assert.That(pack.Success, lock)
+        let packages =
+            match Environment.GetEnvironmentVariable "NUGET_PACKAGES" with
+            | null | "" -> Path.Combine (Environment.GetFolderPath Environment.SpecialFolder.UserProfile, ".nuget", "packages")
+            | p -> p
+        let packageCopy = Path.Combine (packages, "microsoft.netcore.app.ref", pack.Groups.[1].Value, "ref", "net8.0", "Microsoft.CSharp.dll")
+        Assert.That(Xake.Dotnet.Hash.sha256 packageCopy, Is.EqualTo pack.Groups.[2].Value)
+        Assert.That(lock, Does.Match "(?i)\\{ \"Id\": \"microsoft\\.netcore\\.app\\.ref\", \"Version\": \"[^\"]+\", \"Sha512\": \"[^\"]+\"")
         Assert.That(filesOf ours, Is.EqualTo (filesOf theirs))
         for f in [ "console.deps.json"; "console.runtimeconfig.json" ] do
             Assert.That(File.ReadAllText (ours </> f), Is.EqualTo (File.ReadAllText (theirs </> f)), f)

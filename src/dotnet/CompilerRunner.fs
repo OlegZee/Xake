@@ -1,4 +1,4 @@
-namespace Xake.Dotnet
+﻿namespace Xake.Dotnet
 
 open System.IO
 
@@ -191,13 +191,15 @@ module internal CompilerRunner =
             // crash (exit 134, `Environment.FailFast`) logs nothing at the default verbosity
             let output = System.Collections.Generic.Queue<string> ()
             let sawError = ref false
+            // one run: a repeated warning is logged once, the errors are kept for the failure
+            let diagnostics = Tool.DiagnosticLog plan.Diagnostics
             let keep (stream: string) (line: string) =
                 lock output (fun () ->
                     output.Enqueue (stream + line)
                     if output.Count > 200 then output.Dequeue () |> ignore)
             let classify (stream: string) (line: string) =
                 keep stream line
-                let level = plan.Diagnostics line
+                let level = diagnostics.Level line
                 if level = Level.Error then sawError.Value <- true
                 level
 
@@ -224,7 +226,7 @@ module internal CompilerRunner =
                             (if exitCode = 134 || exitCode = -6 then " (an abort: Environment.FailFast or a runtime crash)" else "")
                             rspFile
                             (match printed with [] -> "(it printed nothing)" | lines -> lines |> String.concat "\n")
-                do! Tool.failOnExitCode plan.FailOnError plan.Name exitCode
+                do! Tool.failOnExitCodeWith plan.FailOnError plan.Name diagnostics exitCode
 
                 // an output next to the compiler's, declared by the rule; rewritten only when it
                 // differs, so an up-to-date one keeps its timestamp

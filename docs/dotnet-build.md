@@ -426,9 +426,16 @@ refusing to record or compile a lock that names other paths, and `Project.import
 - `'X' is not a known .NET Framework profile` — the name did not normalize to a known moniker.
 - `Failed to obtain mono framework (check if mono and pkg-config are installed)` — `pkg-config`
   is missing from `PATH`.
-- Compiler diagnostics are logged at `Warning`/`Error` and everything else at `Verbose`; run
-  with `-vv` (or `filelog "build.log" Diag`) to see the full command line, which is traced at
-  `Debug`.
+- Diagnostic classification (`Tool.diagnosticLevel`, used by csc, fsc, the `msbuild` task and
+  the reference-pack `dotnet restore`): errors are logged at `Error` in every shape — positioned
+  (`a.cs(1,1): error CS0103`), positionless (`error FS0084`, `error NU1301`) and msbuild's
+  `<origin> : error CODE: text [entry]` (`MSBUILD : error MSB1001`, `/p/a.csproj : error NU1101`).
+  Compiler warnings are `Warning`; msbuild/NuGet warnings (`<origin> : warning NU1603`,
+  `warning NU1701`) are `Info`, so they reach a Chatty file log but not the console. Within one
+  tool run an identical warning line is logged once. A failed run's exception repeats its first
+  5 distinct errors (the `[entry]` suffix dropped), then "+N more, see the log". Everything else
+  is `Verbose`; run with `-vv` (or `filelog "build.log" Diag`) to see it and the full command
+  line, which is traced at `Debug`.
 
 ## History: what changed and when
 

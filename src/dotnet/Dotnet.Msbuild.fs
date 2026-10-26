@@ -91,19 +91,20 @@ module MsbuildImpl =
             do! trace Info "%s making '%s' using framework '%s'" pfx settings.BuildFile fwkInfo.Version
             do! trace Debug "Command line: '%s'" (commandLineArgs |> String.concat " ")
 
+            let diagnostics = Tool.DiagnosticLog Level.Verbose
             let! exitCode =
                 shell {
                     cmd fwkInfo.MsbuildTool
                     args commandLineArgs
                     envs fwkInfo.EnvVars
                     logprefix pfx
-                    stdoutlevel (Tool.diagnosticLevel Level.Verbose)
-                    erroutlevel (Tool.diagnosticLevel Level.Verbose)
+                    stdoutlevel diagnostics.Level
+                    erroutlevel diagnostics.Level
                 }
 
 
             do! trace Info "%s done '%s'" pfx settings.BuildFile
-            do! Tool.failOnExitCode settings.FailOnError settings.BuildFile exitCode
+            do! Tool.failOnExitCodeWith settings.FailOnError settings.BuildFile diagnostics exitCode
         }
 
     /// Computation expression builder for the msbuild task.

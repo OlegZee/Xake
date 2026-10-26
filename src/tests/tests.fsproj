@@ -30,6 +30,7 @@
     <Compile Include="CommandTests.fs" />
     <Compile Include="XakeEngineTests.fs" />
     <Compile Include="VarsTests.fs" />
+    <Compile Include="SecretVarsTests.fs" />
     <Compile Include="FingerprintsTests.fs" />
     <Compile Include="DelegatedTests.fs" />
     <Compile Include="ResourceGuardTests.fs" />

@@ -52,6 +52,36 @@ let private logFilter =
 type ILogger = 
     abstract Log : Level -> Printf.StringFormat<'a, unit> -> 'a
 
+/// <summary>
+/// The values of secret variables resolved in this process. Every logger Xake creates replaces
+/// each of them with `***` before writing, as CI systems mask their secrets. Values shorter than
+/// `MinLength` are not registered (masking them would garble unrelated text).
+/// </summary>
+module SecretMask =
+
+    /// Shortest value that is masked.
+    let MinLength = 4
+
+    /// The replacement text.
+    let Mask = "***"
+
+    let private gate = obj ()
+    // longest first, so a value that contains another is replaced whole
+    let mutable private values : string[] = [||]
+
+    /// Registers a value to mask in all output from now on.
+    let register (value: string) =
+        if not (isNull value) && value.Length >= MinLength then
+            lock gate (fun () ->
+                if not (Array.contains value values) then
+                    values <- Array.append values [| value |] |> Array.sortBy (fun v -> -v.Length))
+
+    /// Replaces every registered value in a text with `***`.
+    let apply (text: string) =
+        let current = values
+        if current.Length = 0 || isNull text then text
+        else current |> Array.fold (fun (t: string) v -> if t.Contains v then t.Replace(v, Mask) else t) text
+
 let private createFileLogger fileName = 
     MailboxProcessor.Start(fun mbox -> 
         let rec loop() = 
@@ -72,7 +102,7 @@ let CustomLogger filter writeFn =
           member __.Log level format = 
               let write = 
                   if filter level then 
-                      sprintf "[%s] %s" (LevelToString level) >> writeFn
+                      SecretMask.apply >> sprintf "[%s] %s" (LevelToString level) >> writeFn
                   else ignore
               Printf.kprintf write format }
 
@@ -90,7 +120,7 @@ let FileLogger name maxLevel =
               let write = 
                   match Set.contains level filterLevels with
                   | true -> 
-                      sprintf "[%s] [%A] %s" (LevelToString level) 
+                      SecretMask.apply >> sprintf "[%s] [%A] %s" (LevelToString level) 
                           System.DateTime.Now >> logger.Post
                   | false -> ignore
               Printf.kprintf write format }
@@ -281,7 +311,7 @@ let private ConsoleLoggerBase (write: Level -> string -> unit) maxLevel =
           member __.Log level format = 
               let write = 
                   match filterLevels |> Set.contains level with
-                  | true -> write level
+                  | true -> SecretMask.apply >> write level
                   | false -> ignore
               Printf.kprintf write format }
 
@@ -327,6 +357,17 @@ let PrefixLogger (prefix:string) (log : ILogger) =
     { new ILogger with
           member __.Log level format = 
               let write = sprintf "%s%s" prefix >> log.Log level "%s"
+              Printf.kprintf write format }
+
+/// <summary>
+/// A logger decorator that masks the values of secret variables (see SecretMask) before
+/// passing a message on; Xake wraps the script's logger in it, custom loggers included.
+/// </summary>
+/// <param name="log"></param>
+let MaskingLogger (log : ILogger) = 
+    { new ILogger with
+          member __.Log level format = 
+              let write = SecretMask.apply >> log.Log level "%s"
               Printf.kprintf write format }
 
 /// <summary>

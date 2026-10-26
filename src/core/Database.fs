@@ -6,11 +6,12 @@ module BuildLog =
     
     /// Current database schema version, written to the header of every database file.
     /// 0.5 adds the Dependency case ArtifactDep2 (dependee target with its change stamp).
-    let XakeDbVersion = "0.5"
+    /// 0.6 adds the Dependency case SecretDep (a secret variable's digest, never its value).
+    let XakeDbVersion = "0.6"
 
-    /// Oldest database version this Xake still reads. A database of 0.4 has no ArtifactDep2
-    /// records (its pickles are a subset of 0.5), so it loads as is and is rewritten with
-    /// the current header on open. Older databases are discarded.
+    /// Oldest database version this Xake still reads. A database of 0.4 or 0.5 has no
+    /// ArtifactDep2/SecretDep records (its pickles are a subset of 0.6), so it loads as is and
+    /// is rewritten with the current header on open. Older databases are discarded.
     let XakeDbMinReadVersion = "0.4"
 
     /// In-memory build database mapping targets to their last build results.
@@ -61,6 +62,19 @@ module Storage =
                 ((fun (n, s, o, w) -> {StepInfo.Name = n; Start = s; OwnTime = o * 1<ms>; WaitTime = w * 1<ms>}), 
                  fun ({StepInfo.Name = n; Start = s; OwnTime = o; WaitTime = w}) -> (n, s, o / 1<ms>, w / 1<ms>)) (quad str date int int)
         
+        let bytes =
+            { pickle = (fun (b: byte[]) (st: OutState) -> st.Write(b.Length); st.Write(b))
+              unpickle = fun (st: InState) -> st.ReadBytes(st.ReadInt32()) }
+
+        let secretSource =
+            alt (function SecretEnv -> 0 | SecretArg -> 1) [| wrap0 SecretEnv; wrap0 SecretArg |]
+
+        let secretDigest =
+            alt (function SecretAbsent -> 0 | SecretPresent -> 1 | SecretHmac _ -> 2)
+                [| wrap0 SecretAbsent
+                   wrap0 SecretPresent
+                   wrap (SecretHmac, fun (SecretHmac (salt, h) | OtherwiseFail (salt, h)) -> salt, h) (pair bytes bytes) |]
+
         // Fileset of FilesetOptions * FilesetElement list
         let dependency = 
             alt (function 
@@ -70,14 +84,16 @@ module Storage =
                 | Var _ -> 3
                 | AlwaysRerun -> 4
                 | GetFiles _ -> 5
-                | ArtifactDep2 _ -> 6) 
+                | ArtifactDep2 _ -> 6
+                | SecretDep _ -> 7) 
                 [| wrap (ArtifactDep, fun (ArtifactDep f | OtherwiseFail f) -> f) target                   
                    wrap (FileDep, fun (FileDep(f, ts) | OtherwiseFail (f, ts)) -> (f, ts))  (pair file date)                   
                    wrap (EnvVar, fun (EnvVar(n, v) | OtherwiseFail (n,v)) -> n, v)  (pair str (option str))
                    wrap (Var, fun (Var(n, v)| OtherwiseFail (n,v)) -> n, v)        (pair str (option str))
                    wrap0 AlwaysRerun                   
                    wrap (GetFiles, fun (GetFiles(fs, fi)| OtherwiseFail (fs,fi)) -> fs, fi)  (pair filesetPickler filelistPickler)
-                   wrap (ArtifactDep2, fun (ArtifactDep2(t, ts) | OtherwiseFail (t, ts)) -> (t, ts)) (pair target date) |]
+                   wrap (ArtifactDep2, fun (ArtifactDep2(t, ts) | OtherwiseFail (t, ts)) -> (t, ts)) (pair target date)
+                   wrap (SecretDep, fun (SecretDep(n, src, d) | OtherwiseFail (n, src, d)) -> (n, src, d)) (triple str secretSource secretDigest) |]
         
         let result = 
             wrap 
@@ -163,10 +179,20 @@ module Storage =
                     try 
                         File.Delete(dbpath)
                     with _ -> ()
+            // a clear value recorded (by an older Xake, or before the name was declared secret)
+            // for a variable now declared secret becomes its digest, and the file is rewritten
+            let scrubbed =
+                (!db).Status |> Map.map (fun _ r ->
+                    let deps = r.Depends |> List.map Secrets.scrub
+                    if deps = r.Depends then r else { r with Depends = deps })
+            let hasClearSecrets =
+                (!db).Status |> Map.exists (fun key r -> not (obj.ReferenceEquals(r, scrubbed.[key])))
+            db := { Status = scrubbed }
             // check if we can cleanup db; a database of an older (still readable) version is
             // rewritten so that the header carries the current version of the records appended next
-            if !isOldVersion || !recordCount > (!db).Status.Count * 5 then 
+            if !isOldVersion || hasClearSecrets || !recordCount > (!db).Status.Count * 5 then 
                 if !isOldVersion then log Level.Message "Upgrading database to version %s" XakeDbVersion
+                elif hasClearSecrets then log Level.Message "Removing the values of secret variables from the database"
                 else log Level.Message "Compacting database"
                 File.Move(dbpath, bkpath)
                 use writer =

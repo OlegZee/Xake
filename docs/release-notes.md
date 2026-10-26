@@ -14,6 +14,18 @@ The `Xake` package (engine and `Xake.Dotnet`). Xake.Hermetic.Dotnet has its own 
   warning is logged once per run) and fail with the first 5 distinct errors, then
   "+N more, see the log" (`Tool.failOnExitCodeWith`, `Tool.errorSummary`). Signatures unchanged;
   more lines now reach `Error`. See [dotnet-build.md](dotnet-build.md#troubleshooting).
+- **Breaking (binary): secret script variables.** `Var.secret<'t>(envVar = ...)` (environment
+  only), `|> secret` and `|> secretHashed` on any var. The database keeps a digest, never the
+  value: presence only by default (a rotated token rebuilds nothing, unset/set does), a salted
+  HMAC-SHA256 with `secretHashed` (a changed value rebuilds). Change reasons name the variable
+  only. Every logger masks resolved secret values (4 characters or more) as `***`, `--dump` and
+  `--dryrun` included; `--help` shows no default for a secret; `-d` is refused for `Var.secret`
+  and warned about for an argument var marked `secret`. A plain `getEnv`/`getVar` of a name
+  declared secret is treated as secret. `OptionalVar`/`RequiredVar` gain a `Secret` field and
+  `VarHelp` an `IsSecret` field: code compiled against an older Xake that builds these records
+  must be recompiled (Xake.Hermetic.Dotnet needs a range bump). Database format 0.6 (new
+  dependency case `SecretDep`); 0.4/0.5 databases load and are upgraded, clear values of names
+  now declared secret are replaced by their digest. See [tasks.md](tasks.md#secret-variables).
 
 ## 3.10.1 (unreleased)
 

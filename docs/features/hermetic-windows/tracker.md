@@ -17,6 +17,7 @@ One line per item.
   - [x] PR2-core (`pr/msbuild-diagnostics-core`): `Tool.diagnosticLevel` msbuild/NuGet shapes,
     `Tool.DiagnosticLog` (warnings once per run, error summary), the msbuild task, csc/fsc and the
     core's `dotnet restore` runners; Xake 3.13
-- [ ] PR3 secrets: (e) Xake 3.12 + hermetic `Environment` fields and range bump
+- [x] PR3 secrets, core part: `pr/secret-vars` (secret vars, `SecretDep`, db 0.6, masking, `-d` rules; release note under 3.13.0 because v3.12.0 is already tagged)
+- [ ] PR3 secrets, hermetic part: `Environment` fields on `Import.RecordOptions`/`Project.ImportOptions`, range bump
 - [ ] PR4 log fixes: (f) flush on exit, name clash, real `FileLog` name in messages (Xake)
 - [ ] PR5 satellites: (g) after the owner reopens S71

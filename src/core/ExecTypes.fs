@@ -1,4 +1,4 @@
-namespace Xake
+﻿namespace Xake
 
 open Xake.WorkerPool
 
@@ -77,5 +77,7 @@ type VarHelp = {
     IsRequired: bool
     Description: string option
     Scope: LookupScope
+    /// A secret variable: --help shows no default, -d is refused (env-only) or warned about.
+    IsSecret: bool
 }
 

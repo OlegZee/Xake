@@ -560,6 +560,72 @@ recipe {
 }
 ```
 
+## Script variables
+
+Typed variables resolve from `-d NAME=value` (or `var` in the script) and the environment, and
+record what they read as a dependency, so a changed value rebuilds the targets that read it:
+
+```fsharp
+let vars = {|
+    config = Var.string(cliArg = "config") |> withDefault "Debug"   // -d config=..., env CONFIG
+    jobs   = Var.int(envVar = "XAKE_JOBS")                          // 't option
+    feed   = Var.env<string>(envVar = "PACKAGE_FEED") |> required   // environment only
+|}
+
+xake ExecOptions.Default {
+    varschema vars          // names, types, defaults and descriptions in --help
+    phony "main" (recipe {
+        let! config = vars.config
+        ()
+    })
+}
+```
+
+`Var.create`/`string`/`int`/`bool` look at `-d` first, then the environment; `Var.env` only at
+the environment, `Var.arg` only at `-d`. `describe` adds a description, `required` fails when the
+value is absent, `withDefault` gives a value instead.
+
+### Secret variables
+
+A token or license key must not end up in the build database (`.xake`) or the log. Mark the
+variable secret:
+
+```fsharp
+let vars = {|
+    AcmeApiToken = Var.secret<string>(envVar = "ACME_API_TOKEN", description = "API token") |> required
+    LicenseKey   = Var.string(cliArg = "licenseKey", envVar = "LICENSE_KEY") |> secret
+|}
+```
+
+- `Var.secret<'t>(envVar = ...)` reads the environment only; `|> secret` works on any var
+  (before or after `required`/`withDefault`). Resolution is unchanged.
+- The database keeps whether the variable was set, never the value (presence only): a rotated
+  token rebuilds nothing, unset to set (or back) rebuilds. `|> secretHashed` keeps a salted
+  HMAC-SHA256 of the value instead (a random salt stored with the digest), so a changed value
+  rebuilds the targets that read it. The change reason names the variable only: "Secret variable
+  ACME_API_TOKEN changed" / "... is now set" / "... is now unset".
+- Every logger Xake creates (console, `filelog`, `CustomLogger`, and a custom `ILogger` given in
+  the options) replaces each resolved secret value of 4 characters or more with `***`: change
+  reasons, `--dryrun`, `--dump`, the `shell` settings dump at Debug, tool output, errors. A
+  conversion error (a `Var.secret<int>` that does not parse) does not quote the value. A value a
+  tool transforms (base64, URL-encoded) is not recognised; values shorter than 4 characters are
+  not masked.
+- `--help` lists a secret with "(secret)", its name, type and description, never a default.
+- `-d ACME_API_TOKEN=...` for a `Var.secret` is refused ("secret variables come from the
+  environment"). For an argument var marked `|> secret`, `-d` is accepted with a warning: the
+  value is visible in the process list and the shell history.
+- The name decides: once a name is declared secret (`varschema`, or a recipe resolving the
+  secret var), a plain `getEnv "ACME_API_TOKEN"` is recorded and masked as a secret too. Declare
+  secrets in `varschema` so that a clear value an older Xake recorded under that name is turned
+  into a digest when the database is opened (the file is rewritten).
+- Child processes inherit the environment, so an environment secret reaches tools as it is. A
+  `-d` value reaches a tool only when the script passes it, e.g.
+  `sh "tool" { envs ["ACME_API_TOKEN", token] }`. Prefer the environment over command-line
+  arguments or msbuild `-p:` properties, which tools echo in their own output.
+
+The database format is 0.6 with this change; 0.4 and 0.5 files are read and upgraded on open. An
+older Xake meeting a 0.6 database recreates it (a full rebuild).
+
 ## Notes
 
 - Prefer `Xake.Tasks` namespace in new scripts

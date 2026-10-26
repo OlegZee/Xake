@@ -95,10 +95,13 @@ module ScriptFuncs =
     /// </summary>
     /// <param name="variableName">Name of the environment variable to retrieve</param>
     /// <returns>Recipe that returns the environment variable value</returns>
+    /// <remarks>A name declared secret (`|> secret`, `Var.secret`) is recorded as a secret:
+    /// a digest instead of the value, and the value is masked in all output.</remarks>
     let getEnv variableName =
         let value = Util.getEnvVar variableName
         recipe {
-            do! EnvVar (variableName,value) |> recordDependency
+            if Secrets.isSecret variableName then value |> Option.iter SecretMask.register
+            do! Secrets.toDependency SecretEnv variableName value |> recordDependency
             return value
         }
 
@@ -109,11 +112,13 @@ module ScriptFuncs =
     /// </summary>
     /// <param name="variableName">Name of the script variable to retrieve</param>
     /// <returns>Recipe that returns the variable value</returns>
+    /// <remarks>A name declared secret is recorded as a secret, see `getEnv`.</remarks>
     let getVar variableName = recipe {
         let! ctx = getCtx()
         let value = Util.getVar ctx.Vars variableName
 
-        do! Var (variableName,value) |> recordDependency
+        if Secrets.isSecret variableName then value |> Option.iter SecretMask.register
+        do! Secrets.toDependency SecretArg variableName value |> recordDependency
         return value
     }
 

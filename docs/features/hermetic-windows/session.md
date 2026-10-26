@@ -38,3 +38,24 @@ abbreviation; reword it before committing (public repository).
   public means Xake 3.12 and a range bump.
 - (a), (b) and (g) change the consumer's locks: plan the re-imports.
 - Do not run the consumer's test suites; Xake unit tests are fine.
+
+## 2026-10-26, evening: interview held, four PRs open
+
+Decisions in `interview.md` (authoritative). PR4 (build log) dropped, PR5 (satellites) deferred.
+
+| PR | Branch | Worktree | State |
+|---|---|---|---|
+| #93 PR2-core: msbuild/NuGet diagnostics in `Tool.diagnosticLevel`, error summary | `pr/msbuild-diagnostics-core` | `.claude/worktrees/agent-a409090deab5766dd` | draft, 421 tests green |
+| #94 PR1: line-ending-neutral hashes, packs from NuGet, 0.8.0 | `pr/lock-eol-packs` (origin; locally `worktree-agent-ac02d3da3009192a9`) | `.claude/worktrees/agent-ac02d3da3009192a9` | draft, 310 tests green |
+| #95 PR2-hermetic: MSBuild floor check, import errors in the log, ProjectRoot | `pr/import-diagnostics` | `.claude/worktrees/agent-a1765fdc13c027b5a` | draft, 310 tests green |
+| #96 PR3: secret variables (core, 3.13 train) | `pr/secret-vars` | `.claude/worktrees/agent-aa55c82459e825ae5` | draft, 434 tests green |
+| (docs) brief, analyses, interview, roadmap scrub | `feature/hermetic-windows` | `.claude/worktrees/feature+hermetic-windows` | pushed; merged into every PR branch |
+
+Known rough edges: the stale worktree `.claude/worktrees/pr+lock-eol-packs` holds the local
+branch `pr/lock-eol-packs` at c3febad (pre-work); the real PR1 work is the agent branch above,
+pushed under the PR name. Core PRs are 3.13.0 (tag `v3.12.0` exists at #89); hermetic follows
+with `[3.13, 3.14)` and the `Environment` fields of `RecordOptions`/`ImportOptions` (PR3 hermetic
+item in `tracker.md`). Merge order suggestion: #93, #94, #95 (README conflict with #94 trivial),
+#96; then a release of core 3.13.0 and hermetic 0.8.0.
+
+Next step: owner reviews the four drafts; after each merge, remove its worktree and branch.

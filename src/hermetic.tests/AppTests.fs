@@ -356,6 +356,27 @@ type ``Import record applications``() =
         RecordKit.build x.TestOptions "build-app-stale-2" "Release"
 
     [<Test>]
+    member x.``other line ends in a checkout of the app's text files: the build is the same``() =
+        x.Prepare ()
+        let flip (text: string) = if text.Contains "\r\n" then text.Replace ("\r\n", "\n") else text.Replace ("\n", "\r\n")
+        // an import file, the project's own App.config (recorded with CRLF, now LF), the
+        // App.Files written beside the lock and a generated config (recorded with LF, now CRLF)
+        let files =
+            [ "console/console.csproj"; "console/App.config"; "console/runtimeconfig.template.json"; "winexe/App.config" ]
+            @ [ for f in Directory.GetFiles ("locks", "*.*", SearchOption.AllDirectories) do
+                  if f.EndsWith ".json" && Path.GetFileName (Path.GetDirectoryName f) = "app" || f.EndsWith ".config" then
+                      yield f.Replace ('\\', '/') ]
+        Assert.That(files |> List.filter (fun f -> f.StartsWith "locks/"), Has.Length.AtLeast 3)
+        let saved = [ for f in files -> f, File.ReadAllBytes f ]
+        try
+            for f, bytes in saved do File.WriteAllText (f, flip (Text.Encoding.UTF8.GetString bytes))
+            Assert.That(File.ReadAllText "console/App.config", Does.Not.Contain "\r")
+            RecordKit.build x.TestOptions "build-line-ends" "Release"
+            Assert.That(File.ReadAllText "build-line-ends.log", Does.Not.Contain "run the import again")
+        finally
+            for f, bytes in saved do File.WriteAllBytes (f, bytes)
+
+    [<Test>]
     member x.``an explicit RID: the apphost pack pinned with its hash, its bytes in the output``() =
         let ours, theirs = x.Outputs "ridapp" "net8.0/win-x64"
         let lock = File.ReadAllText (RecordKit.lockOf "ridapp" "Release")

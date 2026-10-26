@@ -1,6 +1,19 @@
 # Xake.Hermetic.Dotnet
 
-## 0.7.0 (next release)
+## 0.8.0 (next release)
+
+Lock portability: a lock set recorded on one OS builds on another, whatever line ends the
+checkout gives the repository's files. No lock format change; existing locks stay readable.
+
+- Line-end neutral hashes ([lock.md](lock.md#recorded-locks-importrecord), "Line ends"): the
+  text inputs of an import (`Evaluation.Imports`, the `App.Files` beside the lock, the
+  project's own `App.config`) are recorded with the hash of their content read with CRLF as
+  LF (`FileHash.textSha256`), and checked against that hash or the raw one
+  (`FileHash.textMatches`): a lock recorded over LF is current on a CRLF checkout
+  (`core.autocrlf`) and the reverse, a lock recorded by 0.7 is current where it was. Binaries
+  are still compared byte for byte.
+
+## 0.7.0
 
 `Locks.compile` builds the assembly and checks its target
 ([design note](../features/hermetic-build/locks-compile-targets.md)). **Breaking: `compile`

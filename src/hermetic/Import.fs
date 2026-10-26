@@ -1242,7 +1242,7 @@ module Import =
             | Some _ when not (runtime || redirects) -> None, None
             | Some (path, name) when path.StartsWith (scratch, comparison) ->
                 Some (name, Text.Encoding.UTF8.GetBytes (configText ctx.ProjectFile (p "TargetFramework") name path)), None
-            | Some (path, name) -> None, Some ({ Name = name; Path = path; Sha256 = FileHash.sha256 path } : Lock.AppFile)
+            | Some (path, name) -> None, Some ({ Name = name; Path = path; Sha256 = FileHash.textSha256 path } : Lock.AppFile)
         if not runtime && List.isEmpty copy && List.isEmpty content && Option.isNone config && Option.isNone ownConfig then None, [] else
         let host =
             if not runtime || not (isTrue (p "UseAppHost")) then None
@@ -1498,7 +1498,8 @@ module Import =
               Evaluation =
                 { Project = slash ctx.ProjectFile
                   ProjectRefs = projects |> List.map (fun (o, _) -> o.Name)
-                  Imports = ctx.Inputs @ appSources |> List.distinct |> List.map Csc.hashed
+                  // text: hashed with CRLF read as LF, so a lock holds on any checkout (`FileHash`)
+                  Imports = ctx.Inputs @ appSources |> List.distinct |> List.map (fun f -> { Path = f; Sha256 = FileHash.textSha256 f } : Lock.Hashed)
                   Sdk = sdk
                   SdkPin = Some ctx.Pin
                   Properties = d.Props |> Map.filter (fun k v -> List.contains k keptProperties && v <> "") }

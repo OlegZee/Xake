@@ -436,10 +436,12 @@ module Locks =
 
     /// The files an entry's import read (`Evaluation.Imports`: the project file,
     /// `Directory.Build.props`, an application's `App.config`, ...) that are missing or no
-    /// longer have the hash the lock records. Pure (reads the files).
+    /// longer have the hash the lock records. Text: a file whose line ends alone differ (a
+    /// CRLF checkout of an LF-recorded file, or the reverse) is current (`FileHash.textMatches`).
+    /// Pure (reads the files).
     let staleOf (entry: Lock.Entry) : string list =
         entry.Evaluation.Imports
-        |> List.filter (fun h -> h.Sha256 <> "" && (not (File.Exists h.Path) || FileHash.sha256 h.Path <> h.Sha256))
+        |> List.filter (fun h -> h.Sha256 <> "" && (not (File.Exists h.Path) || not (FileHash.textMatches h.Path h.Sha256)))
         |> List.map (fun h -> h.Path)
 
     let private staleMessage (lockPath: string) (entry: Lock.Entry) (changed: string list) =

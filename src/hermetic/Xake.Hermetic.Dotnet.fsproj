@@ -8,7 +8,7 @@
          break. Same mechanism as src/dotnet: the build script and CI override it with
          /p:Version=...; this is the value a plain `dotnet pack` produces. -->
     <PackageId>Xake.Hermetic.Dotnet</PackageId>
-    <Version>0.7.0</Version>
+    <Version>0.8.0</Version>
     <OutputType>Library</OutputType>
     <!-- The SDK would otherwise reference its own FSharp.Core, see the pin below. -->
     <DisableImplicitFSharpCoreReference>true</DisableImplicitFSharpCoreReference>

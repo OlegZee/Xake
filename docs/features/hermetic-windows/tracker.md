@@ -12,7 +12,7 @@ One line per item.
 - [ ] PR2 import diagnostics: (c) msbuild errors + run in `ProjectRoot`, (d) MSBuild floor check
   - [x] PR2-core (`pr/msbuild-diagnostics-core`): `Tool.diagnosticLevel` msbuild/NuGet shapes,
     `Tool.DiagnosticLog` (warnings once per run, error summary), the msbuild task, csc/fsc and the
-    core's `dotnet restore` runners; Xake 3.12
+    core's `dotnet restore` runners; Xake 3.13
 - [ ] PR3 secrets: (e) Xake 3.12 + hermetic `Environment` fields and range bump
 - [ ] PR4 log fixes: (f) flush on exit, name clash, real `FileLog` name in messages (Xake)
 - [ ] PR5 satellites: (g) after the owner reopens S71

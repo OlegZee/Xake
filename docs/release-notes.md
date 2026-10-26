@@ -3,7 +3,7 @@
 The `Xake` package (engine and `Xake.Dotnet`). Xake.Hermetic.Dotnet has its own notes
 ([hermetic/README.md](hermetic/README.md)).
 
-## 3.12.0 (unreleased)
+## 3.13.0 (unreleased)
 
 - **msbuild and NuGet diagnostics in the log.** `Tool.diagnosticLevel` (and the forwarder
   `levelFromString`) also recognizes `<origin> : error|warning CODE: text [entry]`

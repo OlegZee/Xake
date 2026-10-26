@@ -1,6 +1,6 @@
 # Xake.Hermetic.Dotnet
 
-## 0.8.0 (next release)
+## 0.8.0 (2026-10-27)
 
 Lock portability: a lock set recorded on one OS builds on another, whatever line ends the
 checkout gives the repository's files. No lock format change; existing locks stay readable.

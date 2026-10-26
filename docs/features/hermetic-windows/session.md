@@ -41,3 +41,4 @@ abbreviation; reword it before committing (public repository).
   public means Xake 3.12 and a range bump.
 - (a), (b) and (g) change the consumer's locks: plan the re-imports.
 - Do not run the consumer's test suites; Xake unit tests are fine.
+| bootstrap bump | `pr/bootstrap-313-080` | `.claude/worktrees/agent-aafb0d275e76fb7cd` | build.fsx / build.fsc.fsx on Xake 3.13.0.43 / hermetic 0.8.0.44, docs; committed, not pushed |

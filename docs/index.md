@@ -7,9 +7,9 @@ commit touching the file; lengths are approximate line counts. Index written 202
 
 - Xake is an F# build tool in the spirit of Shake: build scripts are F# (`xakeScript { }`,
   `recipe { }`), with dependency tracking, incremental rebuilds and parallel execution.
-- Package `Xake` (3.6.0.24 on nuget.org) carries the engine (`src/core`) and the .NET tasks
+- Package `Xake` (3.13.0.43 on nuget.org) carries the engine (`src/core`) and the .NET tasks
   `csc`, `fsc`, `msbuild`, `resgen` (`src/dotnet`, namespace `Xake.Dotnet`).
-- Package `Xake.Hermetic.Dotnet` (0.2.0.25, preview, `src/hermetic`) adds the lock: a JSON file
+- Package `Xake.Hermetic.Dotnet` (0.8.0.44, preview, `src/hermetic`) adds the lock: a JSON file
   in git recording what the compiler is handed plus SHA-256 of every outside input; also
   restore, SBOM, verify, deterministic pack, signing skeleton.
 - Xake builds itself: `build.fsx` (msbuild-based, build of record) and `build.fsc.fsx` (fsc from

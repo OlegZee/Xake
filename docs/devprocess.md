@@ -250,9 +250,9 @@ means the nuget.org version and the git tag never match exactly. Pushing uses
 ### Bootstrapping note
 
 Both build scripts bootstrap from nuget.org: the build builds Xake with an already published
-Xake. `build.fsx` starts with `#r "nuget: Xake, 3.7.0.26"`; `build.fsc.fsx` (the declarative
+Xake. `build.fsx` starts with `#r "nuget: Xake, 3.13.0.43"`; `build.fsc.fsx` (the declarative
 build, which needs `Locks`/`Import`/`Fingerprints` from the hermetic package) with
-`#r "nuget: Xake, 3.9.0.30"` and `#r "nuget: Xake.Hermetic.Dotnet, 0.3.0.28"`. Those references are intentionally *behind* the
+`#r "nuget: Xake, 3.13.0.43"` and `#r "nuget: Xake.Hermetic.Dotnet, 0.8.0.44"`. Those references are intentionally *behind* the
 version being released: bump them only after a release has landed on nuget.org, to the exact
 published version (`X.Y.Z.<run>`, not the tag; a bare `X.Y.Z` does not exist and resolves
 upwards with NU1603), and only when the script needs what it brings. Bump `Xake` in both

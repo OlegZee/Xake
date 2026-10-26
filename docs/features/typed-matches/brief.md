@@ -200,6 +200,15 @@ After experiments 06 and 07 (`ce-syntax.md`).
     include/exclude asymmetry. No third-party glob library in Core. #90 stays as is (warnings
     lead there).
 
+## Decisions, round 12 (2026-10-26), on PR3 (#91)
+
+61. **String rules do not warn about an unclosed group** (typed patterns reject it).
+62. **The case-only pair `X.Rule` (form D) / `X.rule` (form B) stays.**
+63. **Bare wildcards are allowed in `Command<>` patterns** (positional, as in decision 6).
+64. As built in #91: outputs of `Target<'G,'O>` are a record of patterns (labels = field names,
+    anonymous records too); constructors take `string` or `string list`; untyped
+    `Pattern`/`PatternMatch` stay internal; errors reuse `PatternAst.PatternException`.
+
 25. **No `Need` and no `TryMatch` members** on `Pattern<>` or `Command<>`
     (`need [ X.Make(...) ]` stays the way to require targets).
 

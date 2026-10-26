@@ -19,7 +19,7 @@ implementation. Nothing under `src/` changes on this branch until a decision is 
 |----|--------|----------|
 | — (integration → `dev` at the end) | `feature/typed-matches` (pushed) | `.claude/worktrees/feature/typed-matches` |
 | #90 PR1 → `feature/typed-matches` — **merged** 2026-10-25 (ba03903); worktree/branch to be removed by the user | `feature/pattern-ast-format` | `.claude/worktrees/feature/pattern-ast-format` |
-| PR3 → `feature/typed-matches` (in progress) | `feature/typed-targets` | `.claude/worktrees/feature/typed-targets` |
+| #91 PR3 → `feature/typed-matches` — **merged** 2026-10-26 (d7981c5); worktree/branch to be removed by the user | `feature/typed-targets` | `.claude/worktrees/feature/typed-targets` |
 | PR2 deferred (decision 47) | `feature/script-surface-names` (empty, at 9e42f4c) | `.claude/worktrees/feature/script-surface-names` |
 
 Subagents can only write to the worktree the session is in: switch the session

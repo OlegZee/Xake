@@ -28,7 +28,7 @@ touched, so it is not re-litigated:
   Developing against unreleased libraries: a temporary `#r` on dlls (or a `#i` local feed);
   see docs/devprocess.md, "Bootstrapping note". `samples/gettingstarted.fsx` references the
   published package (`#r "nuget: Xake"`) and is checked against it after each release.
-- `src/hermetic` builds on the *published* `Xake` (PackageReference `[3.10.0.35, 3.11)`), not on
+- `src/hermetic` builds on the *published* `Xake` (PackageReference `[3.13.0.43, 3.14)`), not on
   `src/core`/`src/dotnet`. The floor is the exact published version: `[3.4.0, 4.0)` warns NU1603
   because no plain `3.4.0` exists. A local feed (`-d NUGET_SOURCE=<folder>`) is only for working
   against an unreleased base; a packed `3.4.0.99` in `~/.nuget/packages/xake/` shadows the
@@ -51,6 +51,8 @@ touched, so it is not re-litigated:
 - `samples/features.fsx` had a catch-all `"(dir:*)/(file:*).(ext:c*)"` rule declared *after*
   `temp/AssemblyInfo.cs`; since the last matching rule wins, it shadowed it and the sample had
   been failing for a long time. The catch-all now comes first.
+
+- Trap: tag `v3.12.0` was used by #89; check the tag list before writing a release-notes heading.
 
 ## Earlier work: modernizing `src/dotnet`
 
@@ -160,7 +162,7 @@ Scripts' own `shell { args }` stay raw.
 
 ```bash
 dotnet build src/core -c Release && dotnet build src/dotnet -c Release   # both TFMs, 0 warnings
-dotnet restore src/hermetic.tests                                        # Xake 3.7.0.26 from nuget.org, no NU1603
+dotnet restore src/hermetic.tests                                        # Xake 3.13.0.43 from nuget.org, no NU1603
 dotnet build src/hermetic -c Release --no-restore                        # Xake.Hermetic.Dotnet, both TFMs, 0 warnings
 dotnet test src/tests -c Release                                         # 258 passed, 1 skipped
 dotnet test src/hermetic.tests -c Release --no-restore                   # 118 passed
@@ -194,6 +196,8 @@ data, no msbuild for them. `build.fsx` stays the build of record (packages, rele
   (and `update-locks -d LOCK_REFRESH=Xake` when the core range moved) in the same PR, or CI's
   `build-fsc` fails on the fingerprint check (#72, #79). The locks name the SDK compiler by
   version: a removed SDK patch needs `update-locks` and the matching pin in `build.yml`.
+- Trap: adding a source file to a project needs `import` AND `update-locks` (the lock lists the
+  sources); CI `build-fsc` failed on #95 with FS0039 when only `import` ran.
 - Bootstrap: `#r "nuget: Xake, 3.13.0.43"` and `#r "nuget: Xake.Hermetic.Dotnet, 0.8.0.44"`, no
   `build.fsx` run first. Its `clean` removes `out/Release` only (`out/netstandard2.0` is
   `build.fsx`'s).

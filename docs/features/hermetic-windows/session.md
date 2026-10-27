@@ -42,3 +42,17 @@ abbreviation; reword it before committing (public repository).
 - (a), (b) and (g) change the consumer's locks: plan the re-imports.
 - Do not run the consumer's test suites; Xake unit tests are fine.
 | bootstrap bump | `pr/bootstrap-313-080` | `.claude/worktrees/agent-aafb0d275e76fb7cd` | build.fsx / build.fsc.fsx on Xake 3.13.0.43 / hermetic 0.8.0.44, docs; committed, not pushed |
+
+## Closed 2026-10-27
+
+The series is closed. Merged: #93 (msbuild and NuGet diagnostics in the log, core), #94 (line-ending-neutral
+text hashes, targeting packs from NuGet by default), #95 (import diagnostics: MSBuild 17.10 floor check,
+msbuild errors in the log, runs in `ProjectRoot`), #96 (secret script variables), #97 (bootstrap on Xake 3.13.0.43
+and Xake.Hermetic.Dotnet 0.8.0.44). Released: `v3.13.0` (Xake 3.13.0.43) and `hermetic-v0.8.0`
+(Xake.Hermetic.Dotnet 0.8.0.44).
+
+Deferred (see `docs/roadmap.md`): build log defects (owner: not now; PR4 dropped); satellite assemblies
+(S71 stays closed); the `Environment` fields on `Import.RecordOptions`/`Project.ImportOptions`; the floor check
+through the SDK probe and `MSBuild.deps.json`; a confirmation run of the 17.10 floor on an SDK 8.0.2xx.
+
+Next step: validation by the consumer on Windows (old locks keep working, decision 1; one re-import at the consumer is recommended to record the NuGet pack hashes and normalized text hashes, decision 29).

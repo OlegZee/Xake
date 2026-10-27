@@ -24,7 +24,7 @@ commit touching the file; lengths are approximate line counts. Index written 202
 | Base docs | this page, below | engine, tasks, .NET toolchain, process, roadmap, cross-feature session notes |
 | Hermetic product docs | [hermetic/index.md](hermetic/index.md) | user-facing reference of `Xake.Hermetic.Dotnet`: lock, restore, SBOM, verify, pack, signing, mode, workflows |
 | Feature working notes | [features/hermetic-build/index.md](features/hermetic-build/index.md) | session log, tracker, brief, design notes, experiments, proving scripts of `feature/hermetic-build` |
-| Windows findings | [features/hermetic-windows/brief.md](features/hermetic-windows/brief.md) | the seven remarks from the Windows run of the consumer solution (2026-10-26): analyses, brief with the owner's decision list, PR split; branch `feature/hermetic-windows` |
+| Windows findings | [features/hermetic-windows/brief.md](features/hermetic-windows/brief.md) | closed 2026-10-27 (#93-#97, Xake 3.13.0, Xake.Hermetic.Dotnet 0.8.0): the seven remarks from the Windows run of the consumer solution (2026-10-26), analyses, brief with the owner's decision list, PR split; branch `feature/hermetic-windows` |
 
 ## Key cross-cutting pages
 

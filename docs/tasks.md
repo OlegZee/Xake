@@ -475,7 +475,7 @@ let strings = resourceset {
 "app.dll" ..> csc { src !!"src/*.cs"; resources strings }
 ```
 
-`resgen` compiles resx files to standalone `.resources` (full framework only):
+`resgen` compiles resx files to standalone `.resources` on any host, `dotnet fsi` included:
 
 ```fsharp
 "resources" => resgen { resources strings; targetdir "out" }
@@ -494,6 +494,7 @@ let strings = resourceset {
 | `NUGET_PACKAGES` | The build's package folder, relative to the project root or absolute; overrides the environment variable of the same name for everything Xake restores or reads there (see below) |
 | `NUGET_FETCH` | `off` turns off every download into the package folder (a missing package fails the build); default `on` |
 | `NETCORE_REF_VERSION` | Pins of the `Microsoft.NETCore.App.Ref` targeting pack, one per major.minor (`6.0.36;7.0.20`); a pinned `netN.0` target always compiles against the NuGet package at that version, never an installed pack (see [csc](#csc)) |
+| `NETFX_REFERENCE_ASSEMBLIES_VERSION` | Version of the `Microsoft.NETFramework.ReferenceAssemblies.*` packages .NET Framework targets compile against (default 1.0.3) |
 | `NETSTANDARD_LIBRARY_VERSION` / `NETSTANDARD_LIBRARY_REF_VERSION` | Versions of the `NETStandard.Library` (netstandard2.0, default 2.0.3) and `NETStandard.Library.Ref` (netstandard2.1, default 2.1.0) reference packages |
 | `FSHARP_CORE_VERSION` | `FSharp.Core` package version `fsc` references by default (8.0.100); for a `netN.0` target only when set, else the SDK's own |
 | `HERMETIC` | `on`: every composed `csc`/`fsc` compilation must name only paths under the project root and the `NUGET_PACKAGES` script variable's folder; fsc's compiler may come from an SDK `global.json` pins exactly (`rollForward: disable`). Missing configuration fails at resolve time naming the variable that fixes it. `on`/`off` (also `true`/`yes`/`1`, `false`/`no`/`0`), default `off`; see [dotnet-build.md](dotnet-build.md#hermetic-mode) |

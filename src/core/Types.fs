@@ -125,7 +125,7 @@ module DomainTypes =
         /// The most specific matching rule wins; ties fall back to last declared (default).
         | MostSpecific
         /// Legacy order: the last declared matching rule wins, specificity ignored.
-        /// Restored by `-d RULE_MATCH=last`; deprecated, removed after one minor.
+        /// Restored by `ruleMatch LastDeclared` in the script; deprecated, removed after one minor.
         | LastDeclared
 
     /// Defines common exception type

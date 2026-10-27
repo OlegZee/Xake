@@ -168,6 +168,10 @@ Variable:
 dotnet fsi build.fsx -- -- build -d Version=1.2.3
 ```
 
+Script operations override the command line: `consolelog` beats `-ll`, `filelog` beats `-fl` and
+`-fll`, `rootdir` beats `-r`, and `var` beats `-d`. `want` is the exception: targets named on the
+command line win (`wantOverride` forces the script's).
+
 Dry run:
 
 ```bash

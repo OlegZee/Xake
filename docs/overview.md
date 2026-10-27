@@ -103,8 +103,8 @@ matching rules the winner is chosen by comparing, in order:
    non-`/` characters); a named group `(name:*)` counts exactly like the bare `*` inside it.
 
 Only when two *different* patterns tie on all three does declaration order decide: the
-**last declared** rule wins (as before), and Xake logs a warning naming both patterns so the
-ambiguity is visible. Two rules written with the *same* pattern string are the ordinary override
+**last declared** rule wins (as before), and Xake logs a warning naming both patterns. The warning is
+hidden at the default console level (`Normal`); it shows in `build.log` or with `-ll Loud`. Two rules written with the *same* pattern string are the ordinary override
 idiom — the last one silently wins, no warning.
 
 ```fsharp

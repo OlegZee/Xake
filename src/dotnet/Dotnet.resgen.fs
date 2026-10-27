@@ -54,10 +54,9 @@ module ResgenImpl =
 
             rcfile
 #else
-            // ResXResourceReader ships with the full framework only; netstandard2.0 supports
-            // plain string resources via Xake.Dotnet.Resx, which reads the resx itself and
-            // writes with System.Resources.ResourceWriter (typed values and ResXFileRef are
-            // not supported there).
+            // ResXResourceReader ships with the full framework only; elsewhere Xake.Dotnet.Resx
+            // compiles the resx itself, following the SDK's GenerateResource format (typed
+            // values and ResXFileRef entries included).
             Xake.Dotnet.Resx.compile resxfile rcfile
             rcfile
 #endif

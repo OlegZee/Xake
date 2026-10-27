@@ -109,8 +109,10 @@ Windows registry is consulted.
   `ref/netstandard2.1` is byte-identical), but no restore step can bring it to a machine that
   lacks it, so it is not read. `netstandard.dll` alone carries the whole surface, so that single directory is the
   entire `AssemblyDirs`. The `fsc` task recognizes the profile and adds `--targetprofile:netstandard`
-  and `-r:netstandard.dll` (instead of `mscorlib.dll`) on top of `--noframework`. `csc` has no
-  netstandard support.
+  and `-r:netstandard.dll` (instead of `mscorlib.dll`) on top of `--noframework`. `csc` takes the
+  same profile: name it with `targetfwk "netstandard2.0"` and add framework assemblies by file
+  name, `grefs ["netstandard.dll"]`. On Windows the registry provider is tried first, then the
+  SDK, as for .NET Framework.
 - **.NET** (`net5.0` and later: `net6.0`, `net8.0`, `net10.0`; also spelled `sdk-net10.0`) is
   resolved against the targeting pack `Microsoft.NETCore.App.Ref`
   (`DotNetFwk.sdkImpl.netcoreRefSource`):
@@ -392,7 +394,7 @@ refusing to record or compile a lock that names other paths, and `Project.import
 | `csc` → net20…net48 | yes, SDK Roslyn + NuGet reference assemblies | yes, registry Framework first, SDK as fallback |
 | `fsc` → net4x | yes, SDK fsc + NuGet reference assemblies, FSharp.Core package and a netstandard facade (see below) | yes, as on Linux/macOS (the registry provider, when it knows the profile, takes the installed `fsc.exe`) |
 | `msbuild` | `dotnet msbuild` through a launcher script | registry `msbuild.exe`, else `dotnet msbuild` |
-| `resgen`, `.resx` embedded in `csc`/`fsc` | **no** — needs the full framework | yes, when Xake itself runs on net462 |
+| `resgen`, `.resx` embedded in `csc`/`fsc` | yes, `Resx.compile` | yes |
 | mono profiles 2.0/3.5/4.0/4.5 | yes, with mono + `pkg-config` | yes, with mono installed |
 
 ## Known limitations
@@ -409,10 +411,6 @@ refusing to record or compile a lock that names other paths, and `Project.import
   `FSharp.Core.dll` next to the output unless `args ["--nocopyfsharpcore"]`. Before 3.5 this
   failed with FS0074 ("You must add a reference to assembly 'netstandard'") unless the script
   referenced both itself.
-- **`.resx` compilation requires the full framework.** `ResXResourceReader` lives in
-  `System.Windows.Forms`; the netstandard2.0 build of `Xake.Dotnet` fails with an explicit
-  message. Only the `net462` asset in the package can do it, i.e. this works when the build
-  script itself runs on the full framework.
 - **The first full-framework build needs the network** to restore the reference assemblies.
 - **`resgen`/mono paths are lightly exercised.** There is no CI coverage for mono; the SDK path
   is what the tests and `samples/fullframework.fsx` exercise.
@@ -434,7 +432,7 @@ refusing to record or compile a lock that names other paths, and `Project.import
   `warning NU1701`) are `Info`, so they reach a Chatty file log but not the console. Within one
   tool run an identical warning line is logged once. A failed run's exception repeats its first
   5 distinct errors (the `[entry]` suffix dropped), then "+N more, see the log". Everything else
-  is `Verbose`; run with `-vv` (or `filelog "build.log" Diag`) to see it and the full command
+  is `Verbose`; run with `-ll Diag` (or `filelog "build.log" Diag`) to see it and the full command
   line, which is traced at `Debug`.
 
 ## History: what changed and when

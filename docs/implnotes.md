@@ -33,7 +33,7 @@ beyond the 10 ms tolerance; a phony's completion time is later) or when the depe
 date. So a dependee rebuilt by an earlier separate run, or an earlier command-line target group,
 still triggers its dependents.
 
-The database file starts with a version header (`BuildLog.XakeDbVersion`, now `0.5`). Versions from
+The database file starts with a version header (`BuildLog.XakeDbVersion`, now `0.6`). Versions from
 `XakeDbMinReadVersion` (`0.4`) on are read; an older-version file is rewritten with the current header
 on open. A `0.4` database holds the stampless `ArtifactDep`, which counts as changed once, so each
 such dependent rebuilds one time and records `ArtifactDep2`. Older databases are discarded.
@@ -91,4 +91,4 @@ that toolchain is discovered and selected.
 
 Teardown rules are defined in script and run during shutdown when engine mode calls `StopAsync`.
 
-In CLI script mode, teardown targets are carried through options and may require explicit demand depending on run mode.
+In CLI script mode the `teardown` targets run automatically after the build, whether it succeeded or failed (`ScriptRunner.fs`). A teardown failure is logged; it fails the run (exit code 2) only when the build itself succeeded, otherwise the original build error is kept.

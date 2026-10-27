@@ -24,3 +24,4 @@ One line per item.
 - [ ] PR3 secrets, hermetic part: `Environment` fields on `Import.RecordOptions`/`Project.ImportOptions`, range bump
 - [ ] PR4 log fixes: (f) flush on exit, name clash, real `FileLog` name in messages (Xake)
 - [ ] PR5 satellites: (g) after the owner reopens S71
+- [x] bootstrap bump build.fsx / build.fsc.fsx to 3.13.0.43 / 0.8.0.44

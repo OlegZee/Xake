@@ -20,9 +20,9 @@ touched, so it is not re-litigated:
 - The mono provider built its `PATH` env var as `sdkroot </> ("bin" + ";" + PATH)` — `+` binds
   tighter than `</>`, and `;` is not the Unix separator. Fixed, but the mono path has no test
   coverage.
-- `build.fsx` bootstraps from nuget.org (`#r "nuget: Xake, 3.7.0.26"`, the 3.7.0 release as
-  nuget.org carries it); `build.fsc.fsx` from `Xake 3.10.0.35` and
-  `Xake.Hermetic.Dotnet 0.5.0.36` (all commands work, `update-locks` included).
+- `build.fsx` bootstraps from nuget.org (`#r "nuget: Xake, 3.13.0.43"`, the 3.13.0 release as
+  nuget.org carries it); `build.fsc.fsx` from `Xake 3.13.0.43` and
+  `Xake.Hermetic.Dotnet 0.8.0.44` (all commands work, `update-locks` included).
   The base script stays on the base package only. The nuget references stay behind the release being made; bump
   them only after a release lands on nuget.org, to the exact published `X.Y.Z.<run>`.
   Developing against unreleased libraries: a temporary `#r` on dlls (or a `#i` local feed);
@@ -194,7 +194,7 @@ data, no msbuild for them. `build.fsx` stays the build of record (packages, rele
   (and `update-locks -d LOCK_REFRESH=Xake` when the core range moved) in the same PR, or CI's
   `build-fsc` fails on the fingerprint check (#72, #79). The locks name the SDK compiler by
   version: a removed SDK patch needs `update-locks` and the matching pin in `build.yml`.
-- Bootstrap: `#r "nuget: Xake, 3.10.0.35"` and `#r "nuget: Xake.Hermetic.Dotnet, 0.5.0.36"`, no
+- Bootstrap: `#r "nuget: Xake, 3.13.0.43"` and `#r "nuget: Xake.Hermetic.Dotnet, 0.8.0.44"`, no
   `build.fsx` run first. Its `clean` removes `out/Release` only (`out/netstandard2.0` is
   `build.fsx`'s).
 - Own database `.xake.fsc` (`xake { ExecOptions.Default with DbFileName = ... }`): the scripts no

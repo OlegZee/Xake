@@ -147,6 +147,12 @@ module XakeScriptBuilder =
         member __.Teardown(XakeScript (options, rules), targets: string list) =
             XakeScript ({options with Teardown = targets}, rules)
 
+        /// Targets run sequentially before the build, once options and variables are final.
+        /// Unlike `teardown` (a later op replaces the earlier list), several `setup` ops accumulate.
+        [<CustomOperation("setup")>]
+        member __.Setup(XakeScript (options, rules), targets: string list) =
+            XakeScript ({options with Setup = options.Setup @ targets}, rules)
+
         /// Starts the engine, returning a long-lived XakeEngine.
         [<CustomOperation("start")>]
         member __.Start(XakeScript (options, rules)) : XakeEngine =
@@ -180,6 +186,8 @@ module XakeScriptBuilder =
         /// Starts a XakeEngine from a fully assembled XakeScript.
         static member Start(XakeScript (options, rules)) =
             let ctx, finalize = ScriptRunner.createScriptContext options rules
+            try ScriptRunner.runSetupAsync ctx options.Setup |> Async.RunSynchronously
+            with _ -> finalize (); reraise ()
             XakeEngine (ctx.Engine, ctx.Vars, ctx.ShowProgress, finalize)
 
         /// Starts a XakeEngine from raw EngineOptions without a script.

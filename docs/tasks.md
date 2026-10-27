@@ -627,6 +627,33 @@ let vars = {|
 The database format is 0.6 with this change; 0.4 and 0.5 files are read and upgraded on open. An
 older Xake meeting a 0.6 database recreates it (a full rebuild).
 
+## Setup and teardown
+
+```fsharp
+do xakeScript {
+    setup ["banner"]
+    teardown ["cleanup"]
+    command "banner" {
+        let! mode = getVar "MODE"
+        do! trace Message "building in %A mode" mode }
+    ...
+}
+```
+
+`setup` targets run sequentially, in the order given, before the first target (command line mode:
+once options and variables are final; engine mode: once at start). A failing setup target is
+logged, the build is skipped, `teardown` still runs and the run fails (exit code 2, or
+`XakeException` with `ThrowOnError`). `--dryrun` and `--dump` do not run setup (the dry run lists
+the setup targets).
+
+The ops differ in one respect: several `setup` ops **accumulate** (`setup ["a"]` then `setup ["b"]`
+runs `a`, `b`), while a later `teardown` op **replaces** the earlier list.
+
+Setup targets go through the normal up-to-date check. A target that reads variables records `Var`
+dependencies and would be skipped on the next run as up to date. Declare such targets with
+`command "name" { ... }`, which is a phony rule that always reruns (it records `alwaysRerun()` for
+you); with `phony` put `alwaysRerun()` inside the recipe.
+
 ## Notes
 
 - Prefer `Xake.Tasks` namespace in new scripts

@@ -79,6 +79,17 @@ Log levels:
 - `Chatty`
 - `Diag`
 
+### Run banner
+
+Every run (including `--dump` and `--dryrun`) logs one compact block at `Info`, so it is in the
+default file log (`Chatty`) and not on the default console (`Normal`): the Xake version, mode,
+effective targets, project root, database file, threads, rule matching, console and file log,
+setup and teardown targets, and the script variables as `NAME=value`. It is written after the
+secret variables are registered (`checkSecretVars`) and before setup; values of secret variables
+are shown as `***`. `-d` and `var` values end up in one list, so every variable is labelled
+`(script/cli)`. The `Options: %A` dump at `Debug` (`-fll Diag`) remains as the verbose form; it
+does not include variables.
+
 ## Runtime and platform
 
 The current repository targets modern `dotnet` workflow with .NET SDK 8.0+ (see `global.json`).
@@ -90,5 +101,7 @@ that toolchain is discovered and selected.
 ## Teardown behavior
 
 Teardown rules are defined in script and run during shutdown when engine mode calls `StopAsync`.
+
+The `setup` op is the counterpart: its targets run sequentially before the build (CLI mode, after the secret check; engine mode, once at start), a failure skips the build, runs teardown and fails the run (exit code 2). Several `setup` ops accumulate, a later `teardown` replaces. Setup does not run for `--dump`/`--dryrun`.
 
 In CLI script mode the `teardown` targets run automatically after the build, whether it succeeded or failed (`ScriptRunner.fs`). A teardown failure is logged; it fails the run (exit code 2) only when the build itself succeeded, otherwise the original build error is kept.

@@ -3,6 +3,20 @@
 The `Xake` package (engine and `Xake.Dotnet`). Xake.Hermetic.Dotnet has its own notes
 ([hermetic/README.md](hermetic/README.md)).
 
+## 3.14.0 (unreleased)
+
+- **`setup` op.** `setup ["a"; "b"]` runs the targets sequentially before the build (CLI: after
+  options and variables are final; engine: once at start). Symmetric to `teardown`, but several
+  `setup` ops accumulate while `teardown` replaces. A setup failure is logged, skips the build,
+  still runs teardown and fails the run (exit code 2, `XakeException` with `ThrowOnError`).
+  Not run in `--dump`/`--dryrun`; the dry run lists the setup targets. New `ExecOptions.Setup`
+  (binary break for code that builds `ExecOptions` with a record expression, not `with`).
+  Declare setup targets that must run every time with `command "name" { ... }` (always reruns).
+- **Run banner at `Info`.** Version, mode, targets, root, database, threads, rule matching, log
+  settings, setup/teardown and the script variables (secrets as `***`, source labelled
+  `script/cli`) are logged once per run, also for `--dump` and `--dryrun`. Visible in the default
+  `build.log`, not on the default console.
+
 ## 3.13.0 (released as 3.13.0.43, 2026-10-27)
 
 - **msbuild and NuGet diagnostics in the log.** `Tool.diagnosticLevel` (and the forwarder

@@ -19,6 +19,20 @@ do xakeScript {
 Rules go straight in the script body. The older `rules [ ... ]` wrapper still works, and both
 forms may be mixed.
 
+## Setup and teardown
+
+```fsharp
+do xakeScript {
+	setup ["login"]        // runs before the build; several setup ops accumulate
+	teardown ["logout"]    // runs after the build; a later teardown op replaces the earlier one
+	command "login" { do! trace Message "logging in" }   // `command` always reruns
+	...
+}
+```
+
+A setup failure skips the build (teardown still runs, exit code 2). Declare setup
+targets that must run every time with `command` (or `alwaysRerun()` in a `phony`). See [tasks.md](tasks.md#setup-and-teardown).
+
 ## Dependency operators
 
 `<==` demand targets in parallel:

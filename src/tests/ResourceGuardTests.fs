@@ -26,7 +26,11 @@ type ``Resource need guard``() =
                     false
                 with _ -> true)
         if not (build.Wait 60000) then Assert.Fail (sprintf "'%s' hung" label)
-        build.Result, File.ReadAllText log
+        // the file logger writes asynchronously: wait for its last line (database closed)
+        let read () = try File.ReadAllText log with _ -> ""
+        let deadline = System.DateTime.Now.AddSeconds 5.0
+        while not ((read ()).Contains "Closing database") && System.DateTime.Now < deadline do System.Threading.Thread.Sleep 20
+        build.Result, read ()
 
     [<Test>]
     member x.``need of a rule target inside withResource fails, naming the resource and both targets``() =

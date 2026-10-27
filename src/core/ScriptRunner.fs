@@ -70,13 +70,65 @@ let runTeardownAsync (ctx: ExecContext) =
             do! ExecCore.demandTarget ctx targetName |> Async.Ignore
     }
 
+/// Runs the setup targets sequentially, in the order given, through the normal demand path.
+let runSetupAsync (ctx: ExecContext) (setup: string list) =
+    async {
+        for targetName in setup do
+            do! ExecCore.demandTarget ctx targetName |> Async.Ignore
+    }
+
+/// The compact run banner, one line per item in a stable order. Values of secret variables are
+/// shown as `***`. The sources of the variables are not tracked (`-d` and `var` end up in one
+/// list), so each is labelled `script/cli`.
+let bannerLines (options: ExecOptions) (targetLists: string list list) =
+    let version =
+        let asm = typeof<ExecOptions>.Assembly
+        match asm.GetCustomAttributes(typeof<System.Reflection.AssemblyInformationalVersionAttribute>, false) with
+        | [| :? System.Reflection.AssemblyInformationalVersionAttribute as a |] -> a.InformationalVersion
+        | _ -> asm.GetName().Version.ToString()
+    let mode =
+        match options with
+        | Dump -> "dump"
+        | Dryrun -> "dry-run"
+        | _ -> "run"
+    let list = function [] -> "(none)" | xs -> String.concat ", " xs
+    let targets =
+        if List.isEmpty options.Targets then "main (default)"
+        else targetLists |> List.map (String.concat "|") |> String.concat ", "
+    let db = if options.NoPersist then "(no persist)" else options.ProjectRoot </> options.DbFileName
+    let fileLog =
+        match options.FileLog, options.FileLogLevel with
+        | null,_ | "",_ | _, Silent -> "(off)"
+        | name, level -> sprintf "%s (%A)" (System.IO.Path.GetFullPath(options.ProjectRoot </> name)) level
+    let vars =
+        options.Vars |> List.map (fun (name, value) ->
+            let shown = if Secrets.isSecret name || SecretMask.apply value <> value then "***" else value
+            sprintf "    %s=%s (script/cli)" name shown)
+    [ yield sprintf "Xake %s" version
+      yield sprintf "  mode:         %s" mode
+      yield sprintf "  targets:      %s" targets
+      yield sprintf "  project root: %s" options.ProjectRoot
+      yield sprintf "  database:     %s" db
+      yield sprintf "  threads:      %d" options.Threads
+      yield sprintf "  rule match:   %A" options.RuleMatch
+      yield sprintf "  console log:  %A" options.ConLogLevel
+      yield sprintf "  file log:     %s" fileLog
+      yield sprintf "  setup:        %s" (list options.Setup)
+      yield sprintf "  teardown:     %s" (list options.Teardown)
+      if List.isEmpty vars then yield "  vars:         (none)"
+      else
+        yield "  vars:"
+        yield! vars ]
+
 /// Performs a dry run: analyzes dependencies and logs what would be rebuilt without executing anything.
 /// Displays estimated build time and parallelism degree.
-let dryRun (ctx: ExecContext) (groups: string list list) =
+let dryRun (ctx: ExecContext) (setup: string list) (groups: string list list) =
     let options = ctx.Options
     let getDeps = getChangeReasons ctx |> memoizeRec
 
     // getPlainDeps getDeps (getExecTime ctx)
+    if not setup.IsEmpty then
+        do ctx.Logger.Log Command "Setup targets (not run in dry mode) %A" setup
     do ctx.Logger.Log Command "Running (dry) targets %A" groups
     let doneTargets = System.Collections.Hashtable()
 
@@ -168,6 +220,7 @@ let runScript options rules =
     let mutable exitCode = 0
     let secretErrors, secretWarnings = checkSecretVars options
     secretWarnings |> List.iter (logger.Log Warning "%s")
+    bannerLines options targetLists |> List.iter (logger.Log Info "%s")
     try
         match options with
         | _ when not secretErrors.IsEmpty ->
@@ -179,31 +232,49 @@ let runScript options rules =
             do logger.Log Level.Command "Dumping dependencies for targets %A" targetLists
             targetLists |> List.iter (List.map (ExecCore.makeTarget ctx) >> (dumpDeps ctx))
         | Dryrun ->
-            targetLists |> dryRun ctx
+            targetLists |> dryRun ctx options.Setup
         | _ ->
-            let start = System.DateTime.Now
             let mutable reraisedError = None
-            try
-                targetLists |> ExecCore.runBuild ctx |> fun a -> Async.RunSynchronously(a, cancellationToken = cts.Token) |> ignore
-                ctx.Logger.Log Message "\n\n    Build completed in %A\n" (System.DateTime.Now - start)
-            with
-            | :? System.OperationCanceledException ->
-                // Ctrl+C: build async workflow was cancelled; fall through to teardown on main thread
-                ctx.Logger.Log Message "\n\n\tBuild interrupted after running for %A\n" (System.DateTime.Now - start)
-                exitCode <- 1
-            | exn ->
-                let exceptions = exn |> ExecCore.unwindAggEx
-                let errors = exceptions |> Seq.map (fun e -> e.Message) in
-                let details = exceptions |> Seq.last |> fun e -> e.ToString()
-                let errorText = errors |> String.concat "\r\n"
+            let setupOk =
+                try
+                    runSetupAsync ctx options.Setup |> fun a -> Async.RunSynchronously(a, cancellationToken = cts.Token)
+                    true
+                with
+                | :? System.OperationCanceledException ->
+                    ctx.Logger.Log Message "\n\n\tBuild interrupted during setup\n"
+                    exitCode <- 1
+                    false
+                | exn ->
+                    let errorText = exn |> ExecCore.unwindAggEx |> Seq.map (fun e -> e.Message) |> String.concat "\r\n"
+                    ctx.Logger.Log Error "Setup failed: %s. The build is skipped" errorText
+                    ctx.Logger.Log Verbose "Setup error details are:\n%A\n\n" exn
+                    if options.ThrowOnError then
+                        reraisedError <- Some (XakeException (sprintf "Setup failure: %s" errorText))
+                    exitCode <- 2
+                    false
+            if setupOk then
+                let start = System.DateTime.Now
+                try
+                    targetLists |> ExecCore.runBuild ctx |> fun a -> Async.RunSynchronously(a, cancellationToken = cts.Token) |> ignore
+                    ctx.Logger.Log Message "\n\n    Build completed in %A\n" (System.DateTime.Now - start)
+                with
+                | :? System.OperationCanceledException ->
+                    // Ctrl+C: build async workflow was cancelled; fall through to teardown on main thread
+                    ctx.Logger.Log Message "\n\n\tBuild interrupted after running for %A\n" (System.DateTime.Now - start)
+                    exitCode <- 1
+                | exn ->
+                    let exceptions = exn |> ExecCore.unwindAggEx
+                    let errors = exceptions |> Seq.map (fun e -> e.Message) in
+                    let details = exceptions |> Seq.last |> fun e -> e.ToString()
+                    let errorText = errors |> String.concat "\r\n"
 
-                do ctx.Logger.Log Error "Error '%s'. See build.log for more details" errorText
-                do ctx.Logger.Log Verbose "Error details are:\n%A\n\n" details
-                do ctx.Logger.Log Message "\n\n\tBuild failed after running for %A\n" (System.DateTime.Now - start)
+                    do ctx.Logger.Log Error "Error '%s'. See build.log for more details" errorText
+                    do ctx.Logger.Log Verbose "Error details are:\n%A\n\n" details
+                    do ctx.Logger.Log Message "\n\n\tBuild failed after running for %A\n" (System.DateTime.Now - start)
 
-                if options.ThrowOnError then
-                    reraisedError <- Some (XakeException errorText)
-                exitCode <- 2
+                    if options.ThrowOnError then
+                        reraisedError <- Some (XakeException errorText)
+                    exitCode <- 2
 
             try
                 ctx |> runTeardownAsync |> Async.RunSynchronously

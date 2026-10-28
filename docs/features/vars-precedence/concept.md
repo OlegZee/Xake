@@ -411,3 +411,38 @@ E-2, L-1, the `defaulted` flag, database 0.7 for `Var`, DEP-5 b/c, Q-5.
   is the one value that can still change during a run.
 - **Q-F** If V1 is preferred anyway: strict stop, or "relaxed first sight" (§2.3 b), and exit with a
   re-run code or restart in-process?
+
+## 8. Variant 3: the script states how a value is computed (owner's direction, 2026-10-28)
+
+Written after #103 merged into this branch; see [after-103.md](after-103.md). `ExecOptions.Vars`
+(the input values) and `Var.*` (typed declarations) are separate concepts. The script owns the
+rule for each name; libraries only read names.
+
+```fsharp
+xake {
+    var "NUGET_PACKAGES" [Env "XX_NUGET_PACKAGES"; Default ".packages"]
+    var "CONFIG" "Release"          // unchanged form: a constant
+}
+```
+
+- **Syntax: a list of sources, first defined wins.** The list is the chain itself. `var` is
+  overloaded on `string` and on the list; checked on the SDK 10 compiler (an overloaded custom
+  operation compiles and resolves). The record form (`{ Env = Some ...; Default = Some ... }`) is
+  longer at the call site and no simpler to build.
+- **Evaluated when the op is applied**, i.e. at launch: the environment is read once, the result
+  enters `ExecOptions.Vars` as the script value. `-d` is prepended by `ApplyCommandLine` (#103) and
+  still wins; engine `?vars` must go on top as well (fix the order at `XakeScriptBuilder.fs:298`).
+- **One dependency per read: `Var (name, final value)`.** Moving an equal value between the
+  environment and `-d` does not rebuild; no `EnvVar` is recorded for a rule's environment source.
+- **Libraries read only the variable set (owner: option б).** No implicit environment fallback in
+  Xake.Dotnet / Xake.Hermetic.Dotnet; an unset name takes the library's fixed default, no
+  environment read. Breaking: a CI that set `NUGET_PACKAGES` only in the environment adds a `var`
+  rule (or `-d`). Release note required.
+- **The banner shows the real source (owner: needed):** `cli`, `request`, `script`,
+  `env:<NAME>`, `default`. Needs the source kept per name next to the value; the shape (a new
+  `ExecOptions` field vs a richer `Vars` element) is an implementation decision.
+- **`Var.*` stays** as typed reading (int/bool) and as an alternative description; no modularity
+  is required of it.
+
+Open: how a secret is declared in this form (a `Secret` source wrapper or a `secret` op), and
+whether `Var.*` declarations keep their own env fallback or read the variable set only.

@@ -32,3 +32,15 @@ writes its conformance tests from spec §9 first:
 4. hermetic move: `HermeticVars` (`CI` lenient), Xake `[3.14, 3.15)`, Xake.Hermetic.Dotnet 0.9.
 
 Release as Xake 3.14 with the release note of spec V-3 and §8.1.
+
+## 2026-10-28 (late): variant 3, the script states the rule
+
+dev merged in (eec2b2c: #103 "command line wins", #101). Gap analysis in `after-103.md`: with
+`ExecOptions.Vars` (input values) and `Var.*` (declarations) treated as separate concepts, variants
+1/2a/2b/2c are not needed. The owner chose **variant 3** (`concept.md` §8):
+`var "N" [Env "X"; Default "d"]`, evaluated when the op applies, one `Var (name, value)` dependency;
+libraries read the variable set only (no env fallback, breaking); the banner shows the real source.
+Spec rev. 3 is superseded; the plan above is replaced by the tracker.
+
+Next step: spec rev. 4 for variant 3 with conformance tests. Two points to settle with the owner
+first: how a secret is declared in the list form, and whether `Var.*` keeps its own env fallback.

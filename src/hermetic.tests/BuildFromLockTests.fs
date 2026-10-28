@@ -60,7 +60,7 @@ type ``Building from Xake-generated locks``() =
     /// `build` (and the layout's dll rule) with the script's `extra` rules beside them.
     member private x.ScriptWith (extra: Rule<ExecContext> list) (label: string) (vars: (string * string) list) (descriptions: Fileset) (cfg: string) =
         xake {x.TestOptions with FileLog = label + ".log"; ThrowOnError = true; Vars = ("CI", "off") :: vars; FileLogLevel = Loud} {
-            wantOverride [ "build" ]
+            want [ "build" ]
             rules extra
             rules [
                 command "build" { do! Locks.needAll descriptions cfg lockOf outOf }
@@ -79,7 +79,7 @@ type ``Building from Xake-generated locks``() =
     member private x.Generate (label: string) (descriptionOf: string -> string) (projects: string list) (configs: string list) =
         let ran = ResizeArray ()
         xake {x.TestOptions with FileLog = label + ".log"; ThrowOnError = true; Vars = [ "CI", "off" ]; FileLogLevel = Loud} {
-            wantOverride [ "update-locks" ]
+            want [ "update-locks" ]
             rules [ LockRule.lockRule lockOf outOf descriptionOf id ran; LockRule.updateLocks configs projects ]
         }
         List.ofSeq ran
@@ -260,7 +260,7 @@ type ``Building from Xake-generated locks``() =
     /// The dll rule's body given as `compile lockPath fwk`, wanting `goal`.
     member private x.BuildWith (compile: string -> string -> Recipe<ExecContext, unit>) (label: string) (vars: (string * string) list) (goal: string) =
         xake {x.TestOptions with FileLog = label + ".log"; ThrowOnError = true; Vars = ("CI", "off") :: vars; FileLogLevel = Loud} {
-            wantOverride [ goal ]
+            want [ goal ]
             rules [
                 target "out/(cfg:*)/(fwk:*)/(name:*).dll" {
                     let! cfg = getRuleMatch "cfg"
@@ -417,7 +417,7 @@ type ``Building from Xake-generated locks``() =
             do! Locks.doc Locks.Settings.Default (lockOf name cfg) fwk }
         let build label (goal: string) =
             xake {x.TestOptions with FileLog = label + ".log"; ThrowOnError = true; Vars = [ "CI", "off" ]; FileLogLevel = Loud} {
-                wantOverride [ goal ]
+                want [ goal ]
                 rules [
                     target "out/(cfg:*)/(fwk:*)/(name:*).dll" { do! compile }
                     target "out/(cfg:*)/(fwk:*)/(name:*).xml" { do! doc }
@@ -442,7 +442,7 @@ type ``Building from Xake-generated locks``() =
         x.Generate "generate-output" fixtureOf [ "B" ] [ "Release" ] |> ignore
         let build label (goal: string) =
             xake {x.TestOptions with FileLog = label + ".log"; ThrowOnError = true; Vars = [ "CI", "off" ]; FileLogLevel = Loud} {
-                wantOverride [ goal ]
+                want [ goal ]
                 rules [
                     target "out/(cfg:*)/(fwk:*)/(name:*).(ext:*)" {
                         let! cfg = getRuleMatch "cfg"
@@ -506,7 +506,7 @@ type ``Building from Xake-generated locks``() =
         Description.write (root </> "desc/P" </> Description.FileName) d |> ignore
         let run (label: string) (goal: string) (rs: Rule<ExecContext> list) =
             xake {x.TestOptions with ProjectRoot = root; DbFileName = root </> ".xake"; FileLog = root </> (label + ".log"); ThrowOnError = true; Vars = [ "CI", "off" ]; FileLogLevel = Loud} {
-                wantOverride [ goal ]
+                want [ goal ]
                 rules rs
             }
         run "generate" "update-locks"
@@ -550,7 +550,7 @@ type ``Building from Xake-generated locks``() =
         let descriptionOf (_: string) = "desc/P/" + Description.FileName
         let run (root: string) (label: string) (goal: string) (rs: Rule<ExecContext> list) =
             xake {x.TestOptions with ProjectRoot = root; DbFileName = root </> ".xake"; FileLog = root </> (label + ".log"); ThrowOnError = true; Vars = [ "CI", "off" ]; FileLogLevel = Loud} {
-                wantOverride [ goal ]
+                want [ goal ]
                 rules rs
             }
         let buildRules = [
@@ -636,7 +636,7 @@ type ``Building from Xake-generated locks``() =
             root
         let run (root: string) (label: string) (vars: (string * string) list) (goal: string) =
             xake {x.TestOptions with ProjectRoot = root; DbFileName = root </> ".xake"; FileLog = root </> (label + ".log"); ThrowOnError = true; Vars = ("CI", "off") :: vars; FileLogLevel = Loud} {
-                wantOverride [ goal ]
+                want [ goal ]
                 rules [
                     LockRule.lockRule lockOf outOf fixtureOf id (ResizeArray ())
                     LockRule.updateLocks [ "Release" ] [ "B"; "Cs" ]

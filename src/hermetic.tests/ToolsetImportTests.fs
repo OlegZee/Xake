@@ -60,7 +60,7 @@ type ``Toolset compiler from a project``() =
         let lockFile = Directory.GetCurrentDirectory() </> "toolset.json"
 
         do xake {x.TestOptions with FileLog="toolset-import.log"; ThrowOnError = true} {
-            wantOverride (["import"])
+            want (["import"])
 
             rules [
                 "import" => recipe {
@@ -94,7 +94,7 @@ type ``Toolset compiler from a project``() =
         let lockFile = Directory.GetCurrentDirectory() </> "toolset-compile.json"
 
         do xake {x.TestOptions with FileLog="toolset-compile.log"; FileLogLevel = Verbosity.Diag; ThrowOnError = true} {
-            wantOverride (["build"])
+            want (["build"])
 
             rules [
                 "build" => recipe {

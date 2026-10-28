@@ -42,7 +42,7 @@ type ``Csc lock``() =
     /// `csc { ...; lock }` uses (`Csc.runOptions`).
     member private x.Build (label: string) ((settings: CscSettingsType), (lockPath: string option)) =
         xake {x.TestOptions with FileLog = label + ".log"; ThrowOnError = true; Vars = [ "CI", "off" ]} {
-            wantOverride ([label])
+            want ([label])
             rules [
                 label => recipe {
                     match lockPath with
@@ -61,7 +61,7 @@ type ``Csc lock``() =
     /// `Run` with explicit script variables (none: the environment variable `CI` decides).
     member private x.RunWith (label: string) (vars: (string * string) list) (body: Recipe<ExecContext, unit>) =
         xake {x.TestOptions with FileLog = label + ".log"; ThrowOnError = true; Vars = vars; FileLogLevel = Loud} {
-            wantOverride ([label])
+            want ([label])
             rules [ label => body ]
         }
 

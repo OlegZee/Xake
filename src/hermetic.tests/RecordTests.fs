@@ -354,7 +354,7 @@ type ``Import record``() =
 
     member private x.Run (label: string) (rules': Rule<ExecContext> list) (targets: string list) =
         xake {x.TestOptions with FileLog = label + ".log"; ThrowOnError = true; Vars = [ "CI", "off"; "CSC_SERVER", "off" ]; FileLogLevel = Loud} {
-            wantOverride targets
+            want targets
             rules rules'
         }
 
@@ -522,7 +522,7 @@ module internal RecordKit =
 
     let run (options: ExecOptions) (label: string) (rules': Rule<ExecContext> list) (targets: string list) =
         xake {options with FileLog = label + ".log"; ThrowOnError = true; Vars = options.Vars @ [ "CI", "off"; "CSC_SERVER", "off" ]; FileLogLevel = Loud} {
-            wantOverride targets
+            want targets
             rules rules'
         }
 

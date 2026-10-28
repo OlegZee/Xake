@@ -516,8 +516,8 @@ the reference packs (`NETStandard.Library` for netstandard2.0,
 `FSharp.Core`. They go to, and are read from, one package folder:
 
 1. the script variable `NUGET_PACKAGES` -- `var "NUGET_PACKAGES" ".nuget/packages"` in
-   `xakeScript`, or `-d NUGET_PACKAGES:.nuget/packages` on the command line; a relative path is
-   under the project root. The child `dotnet restore` gets it as the environment variable, so
+   `xakeScript`, or `-d NUGET_PACKAGES:.nuget/packages` on the command line (`-d` wins over
+   `var`); a relative path is under the project root. The child `dotnet restore` gets it as the environment variable, so
    NuGet puts the packages there. Every compile reads it, so changing it rebuilds them;
 2. else the environment variable `NUGET_PACKAGES`;
 3. else `~/.nuget/packages`.
@@ -563,8 +563,8 @@ recipe {
 
 ## Script variables
 
-Typed variables resolve from `-d NAME=value` (or `var` in the script) and the environment, and
-record what they read as a dependency, so a changed value rebuilds the targets that read it:
+Typed variables resolve from `-d NAME=value` (or `var` in the script; `-d` wins over `var`) and
+the environment, and record what they read as a dependency, so a changed value rebuilds the targets that read it:
 
 ```fsharp
 let vars = {|

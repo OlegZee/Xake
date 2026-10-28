@@ -34,7 +34,7 @@ type ``Package folder script variable``() =
 
         do xake {x.TestOptions with FileLog = "pkgroot-abs.log"; ThrowOnError = true
                                     Vars = ["NUGET_PACKAGES", pkgs]} {
-            wantOverride (["PkgAbs.dll"; "pkgabs"])
+            want (["PkgAbs.dll"; "pkgabs"])
             rules [
                 "PkgAbs.dll" ..> csc {
                     targetfwk "netstandard2.0"
@@ -77,7 +77,7 @@ type ``Package folder script variable``() =
 
         do xake {x.TestOptions with FileLog = "pkgroot-rel.log"; ThrowOnError = true
                                     Vars = ["NUGET_PACKAGES", "pkgs-rel"]} {
-            wantOverride (["pkgrel"])
+            want (["pkgrel"])
             rules [
                 "pkgrel" => recipe {
                     let! f = fsc { targetfwk "netstandard2.0"; src !!"pkgrel.fs"; out (File.make "pkgrel.dll"); resolve }
@@ -100,7 +100,7 @@ type ``Package folder script variable``() =
         let resolved = ref None
 
         do xake {x.TestOptions with FileLog = "pkgroot-env.log"; ThrowOnError = true} {
-            wantOverride (["pkgenv"])
+            want (["pkgenv"])
             rules [
                 "pkgenv" => recipe {
                     let! c = csc {
@@ -130,7 +130,7 @@ type ``Package folder script variable``() =
             Assert.Catch(fun () ->
                 do xake {x.TestOptions with FileLog = "pkgroot-off.log"; ThrowOnError = true
                                             Vars = ["NUGET_PACKAGES", pkgs; "NUGET_FETCH", "off"]} {
-                    wantOverride (["PkgOff.dll"])
+                    want (["PkgOff.dll"])
                     rules [
                         "PkgOff.dll" ..> csc {
                             targetfwk "netstandard2.0"
@@ -157,7 +157,7 @@ type ``Package folder script variable``() =
         let build name (vars: (string * string) list) =
             do xake {x.TestOptions with FileLog = "pkgroot-warm.log"; ThrowOnError = true
                                         Vars = ["NUGET_PACKAGES", pkgs] @ vars} {
-                wantOverride ([name])
+                want ([name])
                 rules [
                     name ..> csc {
                         targetfwk "netstandard2.0"

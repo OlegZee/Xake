@@ -19,7 +19,7 @@ module XakeScript =
 
         /// Console output verbosity level. Default is Warn
         ConLogLevel: Verbosity
-        /// Overrides "want", i.e. target list
+        /// Targets to build: the default for `want`, which replaces it; command-line targets replace both
         Targets: string list
 
         /// Global script variables

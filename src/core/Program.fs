@@ -1,147 +1,15 @@
 ﻿namespace Xake
 
-module ParseArgs = begin
-
-    type 't ParseMode =
-        | TopLevel
-        | Number of string*('t -> int -> 't)
-        | String of string*('t -> string -> 't)
-        | KeyValue of string*('t -> string -> string -> 't)
-
-    let getArgs = System.Environment.GetCommandLineArgs >> List.ofArray
-
-    let rec getScriptArgs = function
-    | [] -> []
-    | "--" :: rest -> rest
-    | _ :: tail -> getScriptArgs tail
-
-    let parseTopLevel (arg:string) optionsSoFar = 
-        match arg.ToLowerInvariant() with 
-
-        | "-h" | "/h" | "--help" | "/help" | "/?" | "-?" ->
-            printf """
-Usage:
- dotnet fsi <script file> [-- -- options target..]
-
-Options:
-  -h                  - displays help screen
-  -t <task count>     - parallelize execution to <task count> processes. Defaults to CPU cores
-  -r <root path>      - override the root path. Default is current directory
-  -ll <log level>     - console log level (Silent | Quiet | Normal | Loud | Chatty | Diag)
-  -fl <file log path> - specifies the name of the log file
-  -fll <log level>    - specifies the logging level to a log file
-  target1 .. targetN  - define the list of targets to be executed sequentially
-  target1;target2;..targetN -- execute the targets simultaneously
-  -d <name>=<value>   - defines a script variable value
-  --dryrun            - prints dependency graph and estimates the build duration
-  --dump              - prints dependency graph based on the last run
-  --resetdb           - reset the database before starting the build
-  --progress, -p      - display progress indicator
-  --noprogress, -p-   - do not display progress
-
-            """
-            { optionsSoFar with ShowHelp = true; Nologo = true }, TopLevel
-        | "-t" | "/t" -> 
-            optionsSoFar, Number ("thread count", fun o v -> {o with ExecOptions.Threads = v})
-        | "-r" | "/r" -> 
-            optionsSoFar, String ("root folder", fun o v -> {o with ExecOptions.ProjectRoot = v})
-        | "-fl" | "/fl" -> 
-            optionsSoFar, String ("file log filename", fun o v -> {o with ExecOptions.FileLog = v})
-        | "-d" | "/d" -> 
-            optionsSoFar, KeyValue ("variable", fun o k v -> {o with Vars = o.Vars @ [(k,v)] })
-        | "-ll" | "/ll" -> 
-            optionsSoFar, String ("console verbosity", fun o s -> {o with ConLogLevel = s |> parseVerbosity })
-        | "-fll" | "/fll" -> 
-            optionsSoFar, String ("filelog verbosity", fun o s -> {o with FileLogLevel = s |> parseVerbosity })
-        | "-nologo" -> 
-            {optionsSoFar with Nologo = true}, TopLevel
-        | "--dryrun" | "--dry-run" -> 
-            {optionsSoFar with DryRun = true}, TopLevel
-        | "--dump" -> 
-            {optionsSoFar with DumpDeps = true}, TopLevel
-        | "--resetdb" -> 
-            {optionsSoFar with ResetDb = true}, TopLevel
-        | "--progress" | "-p" -> 
-            {optionsSoFar with Progress = true}, TopLevel
-        | "--noprogress" | "-p-" -> 
-            {optionsSoFar with Progress = false}, TopLevel
-
-        | x when x.StartsWith("-") || x.StartsWith("/") ->
-            printfn "Option '%s' is unrecognized" x
-            optionsSoFar, TopLevel
-        | _ -> 
-            {optionsSoFar with Targets = optionsSoFar.Targets @ [arg]}, TopLevel
-
-    let (|NumberVar|_|) str =
-        match System.Int32.TryParse str with
-        | (true, n) -> Some (NumberVar n)
-        | _ -> None
-
-    let readNumber name arg optionsSoFar fn = 
-        match arg with
-        | NumberVar v -> (fn optionsSoFar v, TopLevel)
-        | _ -> 
-            printfn "%s needs a second argument" name
-            optionsSoFar, TopLevel
-
-    let readString name arg optionsSoFar fn =
-        fn optionsSoFar arg, TopLevel
-
-    let readKeyValue name (arg:string) optionsSoFar fn =
-        
-        let k,v =
-            match arg.IndexOfAny([|':'; '='|], 1) with
-            | -1 -> arg,""
-            | n -> arg.Substring(0, n), arg.Substring(n+1)
-
-        fn optionsSoFar k v, TopLevel
-
-    let foldFunction state element =
-        try
-            match state with
-            | optionsSoFar, TopLevel ->
-                parseTopLevel element optionsSoFar
-
-            | optionsSoFar, Number (name, fn) ->
-                readNumber name element optionsSoFar fn
-
-            | optionsSoFar, String (name, fn) ->
-                readString name element optionsSoFar fn
-
-            | optionsSoFar, KeyValue (name, fn) ->
-                readKeyValue name element optionsSoFar fn
-        with e ->
-            let argName =
-                match state with
-                | (_, Number (name, _)) | (_, KeyValue (name, _)) | (_, String (name, _)) ->
-                    name
-                | _ ->
-                    "switch"
-            printfn "Failed to parse '%s' due to %s" argName e.Message
-            fst state, TopLevel
-
-end
-
 [<AutoOpen>]
 module Main =
 
     open ParseArgs
 
     /// <summary>
-    /// Creates a script with script parameters passed as list of strings.
+    /// Creates a script with script parameters passed as list of strings. The arguments are
+    /// applied over the script's options when it runs, so the command line wins over the script.
     /// </summary>
-    /// <param name="args"></param>
-    /// <param name="initialOptions"></param>
-    let xakeArgs args initialOptions =
-        let options =
-            if initialOptions.IgnoreCommandLine then initialOptions
-            else args |> List.fold foldFunction (initialOptions, TopLevel) |> fst
-        
-        if not options.Nologo then
-            let ver = typeof<ExecOptions>.Assembly.GetName().Version.ToString()
-            printf "XAKE build tool %s\n\n" ver
-
-        RulesBuilder options
+    let xakeArgs args initialOptions = RulesBuilder (initialOptions, Some args)
 
     /// <summary>
     /// Create xake build script using command-line arguments to define script options
@@ -158,6 +26,3 @@ module Main =
 
     let xakeEngine =
         RulesBuilder { ExecOptions.Default with IgnoreCommandLine = true; NoPersist = true; ConLogLevel = Silent; FileLogLevel = Silent; Progress = false }
-
-    // Runs the set of rules - need a function accepting target list and rules
-    // let run = ExecCore.runScript

@@ -16,6 +16,21 @@ The `Xake` package (engine and `Xake.Dotnet`). Xake.Hermetic.Dotnet has its own 
   settings, setup/teardown and the script variables (secrets as `***`, source labelled
   `script/cli`) are logged once per run, also for `--dump` and `--dryrun`. Visible in the default
   `build.log`, not on the default console.
+- **Behaviour change: the command line wins over the script.** A script that pinned a value with
+  `var "NAME" v` now yields to `-d NAME=value`; `-d` also wins over `ExecOptions.Vars` passed to
+  `xake`/`xakeArgs`. The last `-d` wins when a name is given twice (before: the first); `var`
+  still wins over `ExecOptions.Vars`. `consolelog` yields to `-ll`, `filelog` to `-fl` (path) and
+  `-fll` (level), each separately, and `rootdir` to `-r`, the way `want` already yielded to
+  targets on the command line. `IgnoreCommandLine = true` still skips the command line entirely.
+  The environment is not involved. Engine mode's per-demand variables are unchanged. Mechanism:
+  `Run` applies the command line over the script's options, changing only the fields whose flags
+  are given; the logo and `--help` text are printed then. This adds nothing to `ExecOptions` or
+  `XakeScript`.
+- **Breaking (source): `wantOverride` removed; `want` always yields to command-line targets.** A
+  script that uses `wantOverride` fails to compile; replace it with `want`. `want` now replaces
+  `ExecOptions.Targets` passed to `xake`/`xakeArgs` (before: it yielded to them), the way `var`
+  wins over `ExecOptions.Vars`; command-line targets replace both. `src/hermetic.tests` still use
+  `wantOverride` until the hermetic package moves to Xake 3.14.
 
 ## 3.13.0 (released as 3.13.0.43, 2026-10-27)
 

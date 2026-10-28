@@ -109,7 +109,7 @@ type ``Fsc record tests``() =
         File.WriteAllText ("a.fs", "module A\nlet a = 1\n")
         let resolved = ref None
         do xake {x.TestOptions with FileLog="fsc-nofwk.log"; ThrowOnError = true} {
-            wantOverride (["nofwk"])
+            want (["nofwk"])
             rules [
                 "nofwk" => recipe {
                     let! f = fsc { src !!"a.fs"; out (File.make "nofwk.dll"); resolve }
@@ -137,7 +137,7 @@ type ``Fsc record tests``() =
     member x.``fsc compiles for the SDK framework with no targetfwk and no ref``() =
         try File.Delete "sdkfwk/hello.dll" with _ -> ()
         do xake {x.TestOptions with FileLog="fsc-sdkfwk.log"; ThrowOnError = true} {
-            wantOverride (["sdkfwk/hello.dll"])
+            want (["sdkfwk/hello.dll"])
             rules [
                 "sdkfwk/hello.dll" ..> recipe {
                     do! need ["hello.fs"]
@@ -160,7 +160,7 @@ type ``Fsc record tests``() =
         File.WriteAllText ("a.fs", "module A\nlet a = 1\n")
         let resolved = ref None
         do xake {x.TestOptions with FileLog="fsc-net6.log"; ThrowOnError = true} {
-            wantOverride (["net6"])
+            want (["net6"])
             rules [
                 "net6" => recipe {
                     let! f = fsc { targetfwk "net6.0"; src !!"a.fs"; out (File.make "net6.dll"); resolve }
@@ -186,7 +186,7 @@ type ``Fsc record tests``() =
         Directory.CreateDirectory "rc-fsc" |> ignore
         File.WriteAllText ("rc-fsc/hw.fs", "[<EntryPoint>]\nlet main _ = printfn \"Hello world!\"; 0\n")
         do xake {x.TestOptions with FileLog="fsc-rc.log"; ThrowOnError = true} {
-            wantOverride (["rc-fsc/hw.dll"])
+            want (["rc-fsc/hw.dll"])
             rules [ ["rc-fsc/hw.dll"; "rc-fsc/hw.runtimeconfig.json"] *..> recipe { do! fsc { src !!"rc-fsc/hw.fs" } } ]
         }
         let sdkFwk = DotNetFwk.sdkFramework x.TestOptions.ProjectRoot |> Option.get
@@ -199,7 +199,7 @@ type ``Fsc record tests``() =
         let sdkFwk = DotNetFwk.sdkFramework x.TestOptions.ProjectRoot |> Option.get
         let resolved = ResizeArray<Fsc>()
         do xake {x.TestOptions with FileLog="fsc-netfwk.log"; ThrowOnError = true} {
-            wantOverride (["explicit"])
+            want (["explicit"])
             rules [
                 "explicit" => recipe {
                     let! f1 = fsc { targetfwk sdkFwk; src !!"a.fs"; out (File.make "explicit.dll"); resolve }
@@ -233,7 +233,7 @@ type ``Fsc record tests``() =
         let fsharpCore = System.Reflection.Assembly.GetAssembly(typeof<option<int>>).Location
         let resolved = ref None
         do xake {x.TestOptions with FileLog="fsc-resolve.log"; ThrowOnError = true} {
-            wantOverride (["resolve"])
+            want (["resolve"])
             rules [
                 "resolve" => recipe {
                     let! f = fsc {
@@ -281,7 +281,7 @@ type ``Fsc record tests``() =
         let built = ref 0
         let build () =
             xake {x.TestOptions with FileLog="fsc-run.log"; ThrowOnError = true} {
-                wantOverride (["e2e/e2e.dll"])
+                want (["e2e/e2e.dll"])
                 rules [
                     "e2e/e2e.dll" ..> recipe {
                         built.Value <- built.Value + 1
@@ -318,7 +318,7 @@ type ``Fsc record tests``() =
         File.WriteAllText ("rh.fs", "module Rh\nlet now () = System.DateTime.Now\n")
         if File.Exists "rh/rh.dll" then File.Delete "rh/rh.dll"
         do xake {x.TestOptions with FileLog="fsc-rehash.log"; ThrowOnError = true} {
-            wantOverride (["rh"])
+            want (["rh"])
             rules [
                 "rh" => recipe {
                     let! f = fsc { src !!"rh.fs"; out (File.make "rh/rh.dll"); resolve }
@@ -340,7 +340,7 @@ type ``Fsc record tests``() =
         if File.Exists "hm/hm.dll" then File.Delete "hm/hm.dll"
         let build () =
             xake {x.TestOptions with FileLog="fsc-hash.log"; ThrowOnError = true} {
-                wantOverride (["hm"])
+                want (["hm"])
                 rules [
                     "hm" => recipe {
                         let! f = fsc {
@@ -371,7 +371,7 @@ type ``Fsc record tests``() =
     member x.``fsc compiles a net462 exe with no ref``() =
         try Directory.Delete ("fx462", true) with _ -> ()
         do xake {x.TestOptions with FileLog="fsc-net462.log"; ThrowOnError = true} {
-            wantOverride (["fx462/hello.exe"])
+            want (["fx462/hello.exe"])
             rules [
                 "fx462/hello.exe" ..> recipe {
                     do! need ["hello462.fs"]
@@ -392,7 +392,7 @@ type ``Fsc record tests``() =
         File.WriteAllText ("a.fs", "module A\nlet a = 1\n")
         let resolved = ref None
         do xake {x.TestOptions with FileLog = sprintf "fsc-%s.log" name; ThrowOnError = true; Vars = vars} {
-            wantOverride ([name])
+            want ([name])
             rules [
                 name => recipe {
                     let! f = build ()
@@ -457,7 +457,7 @@ type ``Fsc record tests``() =
     member x.``fsc compiles netstandard2.1 against the NETStandard.Library.Ref package``() =
         try File.Delete "ns21/ns21.dll" with _ -> ()
         do xake {x.TestOptions with FileLog="fsc-ns21.log"; ThrowOnError = true} {
-            wantOverride (["ns21/ns21.dll"])
+            want (["ns21/ns21.dll"])
             rules [
                 "ns21/ns21.dll" ..> recipe {
                     do! need ["ns21.fs"]
@@ -482,7 +482,7 @@ type ``Fsc record tests``() =
     member x.``fsc compiles for .NET against the FSharp.Core package when FSHARP_CORE_VERSION is set``() =
         try File.Delete "fcnet/hello.dll" with _ -> ()
         do xake {x.TestOptions with FileLog="fsc-fcnet.log"; ThrowOnError = true; Vars = ["FSHARP_CORE_VERSION", DotNetFwk.fsharpCoreVersion]} {
-            wantOverride (["fcnet/hello.dll"])
+            want (["fcnet/hello.dll"])
             rules [
                 "fcnet/hello.dll" ..> recipe {
                     do! need ["fcnet.fs"]

@@ -574,3 +574,18 @@ let ``Var.arg ignores env var``() =
         Assert.AreEqual("default", !result)
     finally
         System.Environment.SetEnvironmentVariable("EXT_MY_PATH", null)
+
+[<Test>]
+let ``Var.string reads the -d value when the script also has var``() =
+    let myVar = Var.string(cliArg = "pinned") |> withDefault "default"
+    let result = ref ""
+
+    do xakeArgs ["-d"; "pinned=from-cli"] DebugOptions {
+        var "pinned" "from-script"
+        phony "main" (recipe {
+            let! v = myVar
+            result := v
+        })
+    }
+
+    Assert.AreEqual("from-cli", !result)

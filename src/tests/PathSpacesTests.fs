@@ -62,7 +62,7 @@ type ``Paths with spaces``() =
             let compiler = f.Dependencies.Compiler
             { f with Dependencies = { f.Dependencies with Compiler = { compiler with Path = underLink sdkDir link compiler.Path } } }
         do xake {x.TestOptions with FileLog="fsc-spaces.log"; ThrowOnError = true} {
-            wantOverride (["fsc-spaces"])
+            want (["fsc-spaces"])
             rules [
                 "fsc-spaces" => recipe {
                     let! lib = fsc { src !!"lib dir/l.fs"; out (File.make "lib dir/l.dll"); resolve }
@@ -88,7 +88,7 @@ type ``Paths with spaces``() =
         File.WriteAllText ("src dir/c.cs", "public static class C { public static int X => 1; }")
         if File.Exists "out/c.dll" then File.Delete "out/c.dll"
         do xake {x.TestOptions with FileLog="csc-spaces.log"; ThrowOnError = true} {
-            wantOverride (["csc-spaces"])
+            want (["csc-spaces"])
             rules [
                 "csc-spaces" => recipe {
                     let! c = csc { src !!"src dir/c.cs"; out (File.make "out/c.dll"); resolve }

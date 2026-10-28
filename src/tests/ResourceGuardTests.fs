@@ -20,7 +20,7 @@ type ``Resource need guard``() =
             Task.Run (fun () ->
                 try
                     xake {x.TestOptions with FileLog = log; FileLogLevel = Verbosity.Diag; ThrowOnError = true; Threads = threads} {
-                        wantOverride ["main"]
+                        want ["main"]
                         rules rules'
                     }
                     false

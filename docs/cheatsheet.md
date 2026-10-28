@@ -182,9 +182,11 @@ Variable:
 dotnet fsi build.fsx -- -- build -d Version=1.2.3
 ```
 
-Script operations override the command line: `consolelog` beats `-ll`, `filelog` beats `-fl` and
-`-fll`, `rootdir` beats `-r`, and `var` beats `-d`. `want` is the exception: targets named on the
-command line win (`wantOverride` forces the script's).
+The command line wins over the script: `-d` beats `var` (and `ExecOptions.Vars`), `-ll` beats
+`consolelog`, `-fl` and `-fll` each beat their half of `filelog`, `-r` beats `rootdir`, and targets
+named on the command line beat `want` (always: there is no hard override; `want` itself beats
+`ExecOptions.Targets`). The script ops act as defaults. `IgnoreCommandLine = true` skips the
+command line.
 
 Dry run:
 

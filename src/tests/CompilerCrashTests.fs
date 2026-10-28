@@ -23,7 +23,7 @@ type ``Compiler crash``() =
         let failed =
             try
                 xake {x.TestOptions with FileLog = "crash.log"; FileLogLevel = Verbosity.Diag; ThrowOnError = true} {
-                    wantOverride [ "a.dll" ]
+                    want [ "a.dll" ]
                     rules [ "a.dll" ..> csc { targetfwk "netstandard2.0"; src (!! "a.cs"); cscpath fake } ]
                 }
                 false

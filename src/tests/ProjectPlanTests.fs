@@ -136,7 +136,7 @@ type ``Composed compilation from a description``() =
         // dotnet build first: its obj/ and bin/ (generated AssemblyInfo sources) must stay out
         runDotnet dir [ "build"; "Lib.csproj"; "-c"; "Release" ]
         do xake {x.TestOptions with ThrowOnError = true} {
-            wantOverride ["out/netstandard2.0/Lib.dll"; "out/net8.0/Lib.dll"]
+            want ["out/netstandard2.0/Lib.dll"; "out/net8.0/Lib.dll"]
             rules [
                 "out/(fwk:*)/Lib.dll" ..> recipe {
                     let! fwk = getRuleMatch "fwk"
@@ -176,7 +176,7 @@ app.Run();
 }
 """
         do xake {x.TestOptions with ThrowOnError = true} {
-            wantOverride ["out/web/Web.dll"]
+            want ["out/web/Web.dll"]
             rules [ "out/web/Web.dll" ..> csc { project "web/xake.project.json" } ]
         }
         let _, _, references = shape (root </> "out" </> "web" </> "Web.dll")
@@ -202,7 +202,7 @@ app.Run();
 }
 """
         do xake {x.TestOptions with ThrowOnError = true} {
-            wantOverride ["out/fs/FsLib.dll"]
+            want ["out/fs/FsLib.dll"]
             rules [ "out/fs/FsLib.dll" ..> fsc { project "fslib/xake.project.json" } ]
         }
         let types, _, _ = shape (root </> "out" </> "fs" </> "FsLib.dll")
@@ -223,7 +223,7 @@ app.Run();
 """
         let message = failureOf (fun () ->
             do xake {x.TestOptions with ThrowOnError = true} {
-                wantOverride ["out/pkg/Pkg.dll"]
+                want ["out/pkg/Pkg.dll"]
                 rules [ "out/pkg/Pkg.dll" ..> csc { project "pkg/xake.project.json" } ]
             })
         Assert.That(message, Does.Contain "'Pkg': the description references packages (Newtonsoft.Json 13.0.3) for netstandard2.0")
@@ -244,14 +244,14 @@ app.Run();
 """
         let message = failureOf (fun () ->
             do xake {x.TestOptions with ThrowOnError = true} {
-                wantOverride ["out/app/App.dll"]
+                want ["out/app/App.dll"]
                 rules [ "out/app/App.dll" ..> csc { project "app/xake.project.json" } ]
             })
         Assert.That(message, Does.Contain "'App': projectRefs 'Core' have no output path; pass each one's output with `ref`")
         // with the output given it composes, the reference included
         let resolved = ref None
         do xake {x.TestOptions with ThrowOnError = true} {
-            wantOverride ["out/app/App.dll"]
+            want ["out/app/App.dll"]
             rules [
                 "out/app/App.dll" ..> recipe {
                     let! c = csc { ref (!! "out/core/Core.dll"); project "app/xake.project.json"; resolve }
@@ -276,13 +276,13 @@ app.Run();
 """
         let message = failureOf (fun () ->
             do xake {x.TestOptions with ThrowOnError = true} {
-                wantOverride ["out/sat/Sat.dll"]
+                want ["out/sat/Sat.dll"]
                 rules [ "out/sat/Sat.dll" ..> csc { project "sat/xake.project.json" } ]
             })
         Assert.That(message, Does.Contain "resource 'Strings.de.resx' is culture-specific (de)")
         let message = failureOf (fun () ->
             do xake {x.TestOptions with ThrowOnError = true} {
-                wantOverride ["out/sat/Sat2.dll"]
+                want ["out/sat/Sat2.dll"]
                 rules [ "out/sat/Sat2.dll" ..> fsc { project "sat/xake.project.json" } ]
             })
         Assert.That(message, Does.Contain "'Sat': the description 'sat/xake.project.json' is C#, not for fsc")
@@ -301,13 +301,13 @@ app.Run();
 """
         let message = failureOf (fun () ->
             do xake {x.TestOptions with ThrowOnError = true} {
-                wantOverride ["out/two/Two.dll"]
+                want ["out/two/Two.dll"]
                 rules [ "out/two/Two.dll" ..> recipe { let! _ = csc { project "two/xake.project.json"; resolve } in () } ]
             })
         Assert.That(message, Does.Contain "'Two': the description targets netstandard2.0, net8.0; choose one with targetfwk")
         let message = failureOf (fun () ->
             do xake {x.TestOptions with ThrowOnError = true} {
-                wantOverride ["out/two/Two.dll"]
+                want ["out/two/Two.dll"]
                 rules [ "out/two/Two.dll" ..> recipe { let! _ = csc { targetfwk "net462"; project "two/xake.project.json"; resolve } in () } ]
             })
         Assert.That(message, Does.Contain "framework 'net462' is not one of the description's (netstandard2.0, net8.0)")
@@ -333,7 +333,7 @@ app.Run();
         let described = ref None
         let overridden = ref None
         do xake {x.TestOptions with ThrowOnError = true} {
-            wantOverride ["out/ovr/Ovr.dll"; "out/ovr/Ovr2.dll"]
+            want ["out/ovr/Ovr.dll"; "out/ovr/Ovr2.dll"]
             rules [
                 "out/ovr/Ovr.dll" ..> recipe {
                     let! c = csc { project "ovr/xake.project.json"; resolve }

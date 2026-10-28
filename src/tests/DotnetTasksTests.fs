@@ -27,7 +27,7 @@ type ``Dotnet tasks tests``() =
         let needExecuteCount = ref 0
         
         do xake {x.TestOptions with FileLog="skipbuild.log"; ConLogLevel = Verbosity.Diag; ThrowOnError = true} {  // one thread to avoid simultaneous access to 'wasExecuted'
-            wantOverride (["hello"])
+            want (["hello"])
             filelog "csc-err.log" Verbosity.Diag
 
             rules [
@@ -98,7 +98,7 @@ type ``Dotnet tasks tests``() =
         // was a no-op
         let runBuild () =
             xake {x.TestOptions with FileLog="skipbuild.log"; ConLogLevel = Verbosity.Diag; ThrowOnError = true} {
-                wantOverride (["helloresx.exe"])
+                want (["helloresx.exe"])
 
                 rules [
                     "helloresx.exe" ..> recipe {
@@ -181,7 +181,7 @@ type ``Dotnet tasks tests``() =
 
         let runBuild () =
             xake {x.TestOptions with FileLog="csc-refhash.log"; ConLogLevel = Verbosity.Diag; ThrowOnError = true} {
-                wantOverride (["hashapp.exe"])
+                want (["hashapp.exe"])
 
                 rules [
                     "hashlib.dll" ..> recipe {
@@ -244,7 +244,7 @@ type ``Dotnet tasks tests``() =
 
         let build () =
             xake {x.TestOptions with FileLog="csc-missingref.log"; ThrowOnError = true} {
-                wantOverride (["missingref"])
+                want (["missingref"])
                 rules [
                     "missingref" => recipe {
                         let! options = Csc.runOptions settings
@@ -269,7 +269,7 @@ type ``Dotnet tasks tests``() =
         let fsharpCore = System.Reflection.Assembly.GetAssembly(typeof<option<int>>).Location
 
         do xake {x.TestOptions with FileLog="fsc-netstandard.log"; ThrowOnError = true} {
-            wantOverride (["hi.dll"])
+            want (["hi.dll"])
 
             rules [
                 "hi.dll" ..> recipe {
@@ -348,7 +348,7 @@ let greet name = sprintf "Hello, %s" name
         File.WriteAllText ("managedcsc.cs", "public class C {}")
         let resolved = ref ""
         do xake {x.TestOptions with FileLog="csc-managed.log"; ThrowOnError = true} {
-            wantOverride (["managedcsc"])
+            want (["managedcsc"])
             rules [
                 "managedcsc" => recipe {
                     let! c = Csc.ofSettings { CscSettingsType.Default with
@@ -382,7 +382,7 @@ let greet name = sprintf "Hello, %s" name
         File.WriteAllText ("refpack.cs", "public class C {}")
         let resolved = ref None
         do xake {x.TestOptions with FileLog="refpack.log"; ThrowOnError = true} {
-            wantOverride (["refpack"])
+            want (["refpack"])
             rules [
                 "refpack" => recipe {
                     let! c = Csc.ofSettings { CscSettingsType.Default with
@@ -410,7 +410,7 @@ let greet name = sprintf "Hello, %s" name
             Assert.Catch(fun () ->
                 do xake {x.TestOptions with FileLog="refpackbad.log"; ThrowOnError = true
                                             Vars = ["NETSTANDARD_LIBRARY_VERSION", "0.0.1-xake-missing"]} {
-                    wantOverride (["refpackbad"])
+                    want (["refpackbad"])
                     rules [
                         "refpackbad" => recipe {
                             let! _ = Csc.ofSettings { CscSettingsType.Default with
@@ -578,7 +578,7 @@ let greet name = sprintf "Hello, %s" name
         File.WriteAllText ("a.cs", "public class A { public static string Now() => System.DateTime.Now.ToString(); }")
         let resolved = ref None
         do xake {x.TestOptions with FileLog="csc-nofwk.log"; ThrowOnError = true} {
-            wantOverride (["nofwk"])
+            want (["nofwk"])
             rules [
                 "nofwk" => recipe {
                     let! c = Csc.ofSettings { CscSettingsType.Default with Src = !!"a.cs"; Out = File.make "nofwk/nofwk.dll" }
@@ -612,7 +612,7 @@ let greet name = sprintf "Hello, %s" name
         try File.Delete "net6/hw6.exe" with _ -> ()
         let resolved = ref None
         do xake {x.TestOptions with FileLog="csc-net6.log"; ThrowOnError = true} {
-            wantOverride (["net6"])
+            want (["net6"])
             rules [
                 "net6" => recipe {
                     let! c = csc { targetfwk "net6.0"; src !!"hw6.cs"; out (File.make "net6/hw6.exe"); resolve }
@@ -640,7 +640,7 @@ let greet name = sprintf "Hello, %s" name
         let ex =
             Assert.Throws<XakeException> (fun () ->
                 do xake {x.TestOptions with FileLog="csc-net99.log"; ThrowOnError = true; CustomLogger = CustomLogger ((=) Level.Error) errorlist.Add} {
-                    wantOverride (["net99"])
+                    want (["net99"])
                     rules [
                         "net99" => recipe {
                             do! csc { targetfwk "net99.0"; src !!"hw99.cs"; out (File.make "net99/hw99.exe") }
@@ -704,7 +704,7 @@ let greet name = sprintf "Hello, %s" name
             try File.Delete (sprintf "pinned/pin-%s.exe" fwk) with _ -> ()
             try File.Delete x.TestOptions.DbFileName with _ -> ()
             do xake {x.TestOptions with FileLog="csc-pinned.log"; ThrowOnError = true; Vars = vars} {
-                wantOverride (["pinned"])
+                want (["pinned"])
                 rules [
                     "pinned" => recipe {
                         let! c = csc { targetfwk fwk; src !!"pin.cs"; out (File.make (sprintf "pinned/pin-%s.exe" fwk)); resolve }
@@ -739,7 +739,7 @@ let greet name = sprintf "Hello, %s" name
             | None -> do! csc { src !!(dir </> "hw.cs") }
         }
         do xake {x.TestOptions with FileLog= dir + ".log"; ThrowOnError = true} {
-            wantOverride [List.head targets]
+            want [List.head targets]
             rules [ match targets with [ t ] -> t ..> body | ts -> ts *..> body ]
         }
 

@@ -19,6 +19,20 @@ do xakeScript {
 Rules go straight in the script body. The older `rules [ ... ]` wrapper still works, and both
 forms may be mixed.
 
+## Setup and teardown
+
+```fsharp
+do xakeScript {
+	setup ["login"]        // runs before the build; several setup ops accumulate
+	teardown ["logout"]    // runs after the build; a later teardown op replaces the earlier one
+	command "login" { do! trace Message "logging in" }   // `command` always reruns
+	...
+}
+```
+
+A setup failure skips the build (teardown still runs, exit code 2). Declare setup
+targets that must run every time with `command` (or `alwaysRerun()` in a `phony`). See [tasks.md](tasks.md#setup-and-teardown).
+
 ## Dependency operators
 
 `<==` demand targets in parallel:
@@ -168,9 +182,11 @@ Variable:
 dotnet fsi build.fsx -- -- build -d Version=1.2.3
 ```
 
-Script operations override the command line: `consolelog` beats `-ll`, `filelog` beats `-fl` and
-`-fll`, `rootdir` beats `-r`, and `var` beats `-d`. `want` is the exception: targets named on the
-command line win (`wantOverride` forces the script's).
+The command line wins over the script: `-d` beats `var` (and `ExecOptions.Vars`), `-ll` beats
+`consolelog`, `-fl` and `-fll` each beat their half of `filelog`, `-r` beats `rootdir`, and targets
+named on the command line beat `want` (always: there is no hard override; `want` itself beats
+`ExecOptions.Targets`). The script ops act as defaults. `IgnoreCommandLine = true` skips the
+command line.
 
 Dry run:
 

@@ -516,8 +516,8 @@ the reference packs (`NETStandard.Library` for netstandard2.0,
 `FSharp.Core`. They go to, and are read from, one package folder:
 
 1. the script variable `NUGET_PACKAGES` -- `var "NUGET_PACKAGES" ".nuget/packages"` in
-   `xakeScript`, or `-d NUGET_PACKAGES:.nuget/packages` on the command line; a relative path is
-   under the project root. The child `dotnet restore` gets it as the environment variable, so
+   `xakeScript`, or `-d NUGET_PACKAGES:.nuget/packages` on the command line (`-d` wins over
+   `var`); a relative path is under the project root. The child `dotnet restore` gets it as the environment variable, so
    NuGet puts the packages there. Every compile reads it, so changing it rebuilds them;
 2. else the environment variable `NUGET_PACKAGES`;
 3. else `~/.nuget/packages`.
@@ -563,8 +563,8 @@ recipe {
 
 ## Script variables
 
-Typed variables resolve from `-d NAME=value` (or `var` in the script) and the environment, and
-record what they read as a dependency, so a changed value rebuilds the targets that read it:
+Typed variables resolve from `-d NAME=value` (or `var` in the script; `-d` wins over `var`) and
+the environment, and record what they read as a dependency, so a changed value rebuilds the targets that read it:
 
 ```fsharp
 let vars = {|
@@ -626,6 +626,33 @@ let vars = {|
 
 The database format is 0.6 with this change; 0.4 and 0.5 files are read and upgraded on open. An
 older Xake meeting a 0.6 database recreates it (a full rebuild).
+
+## Setup and teardown
+
+```fsharp
+do xakeScript {
+    setup ["banner"]
+    teardown ["cleanup"]
+    command "banner" {
+        let! mode = getVar "MODE"
+        do! trace Message "building in %A mode" mode }
+    ...
+}
+```
+
+`setup` targets run sequentially, in the order given, before the first target (command line mode:
+once options and variables are final; engine mode: once at start). A failing setup target is
+logged, the build is skipped, `teardown` still runs and the run fails (exit code 2, or
+`XakeException` with `ThrowOnError`). `--dryrun` and `--dump` do not run setup (the dry run lists
+the setup targets).
+
+The ops differ in one respect: several `setup` ops **accumulate** (`setup ["a"]` then `setup ["b"]`
+runs `a`, `b`), while a later `teardown` op **replaces** the earlier list.
+
+Setup targets go through the normal up-to-date check. A target that reads variables records `Var`
+dependencies and would be skipped on the next run as up to date. Declare such targets with
+`command "name" { ... }`, which is a phony rule that always reruns (it records `alwaysRerun()` for
+you); with `phony` put `alwaysRerun()` inside the recipe.
 
 ## Notes
 

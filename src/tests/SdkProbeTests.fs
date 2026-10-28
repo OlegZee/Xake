@@ -45,7 +45,7 @@ type ``SDK probe``() =
     let resolveCompiler (options: ExecOptions) (root: string) =
         let resolved = ref ""
         do xake {options with ProjectRoot = root; FileLog = root </> "probe.log"; FileLogLevel = Verbosity.Diag; ThrowOnError = true} {
-            wantOverride (["probe"])
+            want (["probe"])
             rules [
                 "probe" => recipe {
                     let! c = csc {

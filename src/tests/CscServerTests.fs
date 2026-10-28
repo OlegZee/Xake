@@ -30,7 +30,7 @@ type ``Csc compiler server``() =
 
     member private x.Build (label: string) (settings: CscSettingsType) =
         xake {x.TestOptions with FileLog = label + ".log"; FileLogLevel = Verbosity.Diag; ThrowOnError = true} {
-            wantOverride ([label])
+            want ([label])
             rules [ label => recipe { do! Csc.compile settings } ]
         }
 
@@ -79,7 +79,7 @@ type ``Csc compiler server``() =
         let mutable entries : Csc list = []
 
         do xake {x.TestOptions with FileLog = "server-lock.log"; ThrowOnError = true} {
-            wantOverride (["server-lock"])
+            want (["server-lock"])
             rules [
                 "server-lock" => recipe {
                     let! shared = Csc.ofSettings (settings (Shared (Some 60)) "ServerLock.cs" "ServerLock.dll")
@@ -106,7 +106,7 @@ type ``Csc compiler server``() =
         let build (label: string) (value: string) =
             xake {x.TestOptions with FileLog = label + ".log"; FileLogLevel = Verbosity.Diag; ThrowOnError = true
                                      Vars = ["CSC_SERVER", value]} {
-                wantOverride ([label])
+                want ([label])
                 rules [ label => recipe { do! Csc.compile inheriting } ]
             }
 

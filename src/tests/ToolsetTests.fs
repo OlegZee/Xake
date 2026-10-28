@@ -24,7 +24,7 @@ type ``Toolset compiler``() =
         File.WriteAllText (srcFile, "public class ComposedToolset {}\n")
 
         do xake {x.TestOptions with FileLog="toolset-composed.log"; FileLogLevel = Verbosity.Diag; ThrowOnError = true} {
-            wantOverride (["ComposedToolset.dll"])
+            want (["ComposedToolset.dll"])
 
             rules [
                 "ComposedToolset.dll" ..> csc {
@@ -50,7 +50,7 @@ type ``Toolset compiler``() =
 
         do xake {x.TestOptions with FileLog="toolset-var.log"; FileLogLevel = Verbosity.Diag; ThrowOnError = true
                                     Vars = ["CSC_TOOLSET", toolsetVersion]} {
-            wantOverride (["VarToolset.dll"])
+            want (["VarToolset.dll"])
 
             rules [
                 "VarToolset.dll" ..> csc {
@@ -76,7 +76,7 @@ type ``Toolset compiler``() =
 
         do xake {x.TestOptions with FileLog="toolset-block.log"; ThrowOnError = true
                                     Vars = ["CSC_TOOLSET", toolsetVersion]} {
-            wantOverride (["blocktoolset"])
+            want (["blocktoolset"])
 
             rules [
                 "blocktoolset" => recipe {

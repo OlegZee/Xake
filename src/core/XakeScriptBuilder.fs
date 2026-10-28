@@ -1,5 +1,116 @@
 ﻿namespace Xake
 
+module ParseArgs =
+
+    type 't ParseMode =
+        | TopLevel
+        | Number of string*('t -> int -> 't)
+        | String of string*('t -> string -> 't)
+        | KeyValue of string*('t -> string -> string -> 't)
+
+    let getArgs = System.Environment.GetCommandLineArgs >> List.ofArray
+
+    let rec getScriptArgs = function
+    | [] -> []
+    | "--" :: rest -> rest
+    | _ :: tail -> getScriptArgs tail
+
+    let parseTopLevel (arg:string) optionsSoFar = 
+        match arg.ToLowerInvariant() with 
+
+        | "-h" | "/h" | "--help" | "/help" | "/?" | "-?" ->
+            printf """
+Usage:
+ dotnet fsi <script file> [-- -- options target..]
+
+Options:
+  -h                  - displays help screen
+  -t <task count>     - parallelize execution to <task count> processes. Defaults to CPU cores
+  -r <root path>      - override the root path. Default is current directory
+  -ll <log level>     - console log level (Silent | Quiet | Normal | Loud | Chatty | Diag)
+  -fl <file log path> - specifies the name of the log file
+  -fll <log level>    - specifies the logging level to a log file
+  target1 .. targetN  - define the list of targets to be executed sequentially
+  target1;target2;..targetN -- execute the targets simultaneously
+  -d <name>=<value>   - defines a script variable value
+  --dryrun            - prints dependency graph and estimates the build duration
+  --dump              - prints dependency graph based on the last run
+  --resetdb           - reset the database before starting the build
+  --progress, -p      - display progress indicator
+  --noprogress, -p-   - do not display progress
+
+            """
+            { optionsSoFar with ShowHelp = true; Nologo = true }, TopLevel
+        | "-t" | "/t" -> 
+            optionsSoFar, Number ("thread count", fun o v -> {o with ExecOptions.Threads = v})
+        | "-r" | "/r" -> 
+            optionsSoFar, String ("root folder", fun o v -> {o with ExecOptions.ProjectRoot = v})
+        | "-fl" | "/fl" -> 
+            optionsSoFar, String ("file log filename", fun o v -> {o with ExecOptions.FileLog = v})
+        | "-d" | "/d" -> 
+            optionsSoFar, KeyValue ("variable", fun o k v -> {o with Vars = (k,v) :: o.Vars })  // last -d first: getVar is first match
+        | "-ll" | "/ll" -> 
+            optionsSoFar, String ("console verbosity", fun o s -> {o with ConLogLevel = s |> parseVerbosity })
+        | "-fll" | "/fll" -> 
+            optionsSoFar, String ("filelog verbosity", fun o s -> {o with FileLogLevel = s |> parseVerbosity })
+        | "-nologo" -> 
+            {optionsSoFar with Nologo = true}, TopLevel
+        | "--dryrun" | "--dry-run" -> 
+            {optionsSoFar with DryRun = true}, TopLevel
+        | "--dump" -> 
+            {optionsSoFar with DumpDeps = true}, TopLevel
+        | "--resetdb" -> 
+            {optionsSoFar with ResetDb = true}, TopLevel
+        | "--progress" | "-p" -> 
+            {optionsSoFar with Progress = true}, TopLevel
+        | "--noprogress" | "-p-" -> 
+            {optionsSoFar with Progress = false}, TopLevel
+
+        | x when x.StartsWith("-") || x.StartsWith("/") ->
+            printfn "Option '%s' is unrecognized" x
+            optionsSoFar, TopLevel
+        | _ -> 
+            {optionsSoFar with Targets = optionsSoFar.Targets @ [arg]}, TopLevel
+
+    let (|NumberVar|_|) str =
+        match System.Int32.TryParse str with
+        | (true, n) -> Some (NumberVar n)
+        | _ -> None
+
+    let readNumber name arg optionsSoFar fn = 
+        match arg with
+        | NumberVar v -> (fn optionsSoFar v, TopLevel)
+        | _ -> 
+            printfn "%s needs a second argument" name
+            optionsSoFar, TopLevel
+
+    let readString name arg optionsSoFar fn =
+        fn optionsSoFar arg, TopLevel
+
+    let readKeyValue name (arg:string) optionsSoFar fn =
+        let k,v =
+            match arg.IndexOfAny([|':'; '='|], 1) with
+            | -1 -> arg,""
+            | n -> arg.Substring(0, n), arg.Substring(n+1)
+
+        fn optionsSoFar k v, TopLevel
+
+    let foldFunction state element =
+        try
+            match state with
+            | optionsSoFar, TopLevel ->
+                parseTopLevel element optionsSoFar
+            | optionsSoFar, Number (name, fn) ->
+                readNumber name element optionsSoFar fn
+            | optionsSoFar, String (name, fn) ->
+                readString name element optionsSoFar fn
+            | optionsSoFar, KeyValue (name, fn) ->
+                readKeyValue name element optionsSoFar fn
+        with e ->
+            let argName = match state with | _, Number (name, _) | _, KeyValue (name, _) | _, String (name, _) -> name | _ -> "switch"
+            printfn "Failed to parse '%s' due to %s" argName e.Message
+            fst state, TopLevel
+
 [<AutoOpen>]
 module XakeScriptBuilder =
 
@@ -35,15 +146,32 @@ module XakeScriptBuilder =
     let private printVarsHelp (schema: (string * VarHelp) list) =
         formatVarsHelp schema |> List.iter (printfn "%s")
 
-    /// Script builder.
-    type RulesBuilder(options) =
+    /// Script builder; `args` are the command line (None: not from xakeArgs, no logo either).
+    type RulesBuilder internal (options: ExecOptions, args: string list option) =
 
-        let updRules (XakeScript (options,rules)) f = XakeScript (options, f(rules))
-        let updTargets (XakeScript (options,rules)) f = XakeScript ({options with Targets = f(options.Targets)}, rules)
+        let updRules (XakeScript (options, rules)) f = XakeScript (options, f(rules))
+        let updTargets (XakeScript (options, rules)) f = XakeScript ({options with Targets = f(options.Targets)}, rules)
         let addRule rule (Rules rules) :Rules<_> =    Rules (rule :: rules)
 
         let updateVar (key: string) (value: string) =
             List.filter(fst >> ((<>) key)) >> ((@) [key, value])
+
+        new (options: ExecOptions) = RulesBuilder(options, None)
+
+        /// Applies the command line over the script's options: only the fields whose flags are given
+        /// change (`-d` is prepended, so it wins over `var`); command-line targets replace `want`'s.
+        member internal __.ApplyCommandLine(XakeScript (options, rules) as script) =
+            match args with
+            | None -> script
+            | Some args ->
+                let options =
+                    if options.IgnoreCommandLine then options
+                    else
+                        let cli = args |> List.fold ParseArgs.foldFunction ({ options with Targets = [] }, ParseArgs.TopLevel) |> fst
+                        if cli.Targets = [] then { cli with Targets = options.Targets } else cli
+                if not options.Nologo then
+                    printf "XAKE build tool %s\n\n" (typeof<ExecOptions>.Assembly.GetName().Version.ToString())
+                XakeScript (options, rules)
 
         member __.Zero() = XakeScript (options, Rules [])
         member this.Yield(()) = this.Zero()
@@ -75,7 +203,8 @@ module XakeScriptBuilder =
         member this.For(items: #seq<'T>, f: 'T -> XakeScript) =
             items |> Seq.fold (fun acc x -> this.Combine(acc, f x)) (XakeScript (options, Rules []))
 
-        member __.Run(XakeScript (options, rules)) =
+        member this.Run(script: XakeScript) =
+            let (XakeScript (options, rules)) = this.ApplyCommandLine script
             if options.ShowHelp then
                 printVarsHelp options.VarSchema
                 exit 0
@@ -131,13 +260,7 @@ module XakeScriptBuilder =
 
         [<CustomOperation("want")>]
         member __.Want(script, targets) =
-
-            updTargets script (function |[] -> targets |x -> x)    // Options override script!
-
-        [<CustomOperation("wantOverride")>]
-        member __.WantOverride(script,targets) =
-
-            updTargets script (fun _ -> targets)
+            updTargets script (fun _ -> targets)    // over ExecOptions.Targets; CLI targets win in Run
 
         [<CustomOperation("noPersist")>]
         member __.NoPersist(XakeScript (options, rules)) =
@@ -147,9 +270,16 @@ module XakeScriptBuilder =
         member __.Teardown(XakeScript (options, rules), targets: string list) =
             XakeScript ({options with Teardown = targets}, rules)
 
+        /// Targets run sequentially before the build, once options and variables are final.
+        /// Unlike `teardown` (a later op replaces the earlier list), several `setup` ops accumulate.
+        [<CustomOperation("setup")>]
+        member __.Setup(XakeScript (options, rules), targets: string list) =
+            XakeScript ({options with Setup = options.Setup @ targets}, rules)
+
         /// Starts the engine, returning a long-lived XakeEngine.
         [<CustomOperation("start")>]
-        member __.Start(XakeScript (options, rules)) : XakeEngine =
+        member this.Start(script: XakeScript) : XakeEngine =
+            let (XakeScript (options, rules)) = this.ApplyCommandLine script
             // explicitly disable progress for long-lived engine
             XakeEngine.Start (XakeScript ({ options with Progress = false }, rules))
 
@@ -180,6 +310,8 @@ module XakeScriptBuilder =
         /// Starts a XakeEngine from a fully assembled XakeScript.
         static member Start(XakeScript (options, rules)) =
             let ctx, finalize = ScriptRunner.createScriptContext options rules
+            try ScriptRunner.runSetupAsync ctx options.Setup |> Async.RunSynchronously
+            with _ -> finalize (); reraise ()
             XakeEngine (ctx.Engine, ctx.Vars, ctx.ShowProgress, finalize)
 
         /// Starts a XakeEngine from raw EngineOptions without a script.

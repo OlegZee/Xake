@@ -19,7 +19,7 @@ module XakeScript =
 
         /// Console output verbosity level. Default is Warn
         ConLogLevel: Verbosity
-        /// Overrides "want", i.e. target list
+        /// Targets to build: the default for `want`, which replaces it; command-line targets replace both
         Targets: string list
 
         /// Global script variables
@@ -56,6 +56,9 @@ module XakeScript =
         /// Targets executed sequentially during XakeEngine.StopAsync.
         Teardown: string list
 
+        /// Targets executed sequentially before the build (CLI) or at engine start; accumulated by the `setup` op.
+        Setup: string list
+
         /// Deferred --help exit; set by CLI parser, acted on in Run.
         ShowHelp: bool
 
@@ -85,6 +88,7 @@ module XakeScript =
             ResetDb = false
             NoPersist = false
             Teardown = []
+            Setup = []
             ShowHelp = false
             VarSchema = []
             RuleMatch = MostSpecific

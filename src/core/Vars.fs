@@ -153,7 +153,7 @@ module Vars =
     type RulesBuilder with
 
         [<CustomOperation("varschema")>]
-        member _.Vars(XakeScript (options, rules), schema: 'a) : XakeScript =
+        member _.Vars(XakeScript (options, rules, wo), schema: 'a) : XakeScript =
             let getOptionValue (v: obj) =
                 if v = null then None
                 else
@@ -203,4 +203,4 @@ module Vars =
                             makeEntry defaultStr.IsNone defaultStr
                         else None)
                 |> Array.toList
-            XakeScript ({ options with VarSchema = options.VarSchema @ schemaEntries }, rules)
+            XakeScript ({ options with VarSchema = options.VarSchema @ schemaEntries }, rules, wo)

@@ -142,5 +142,5 @@ module XakeScript =
     let delegated (executor: DelegatedExecutor<ExecContext>) (rule: ExecContext Rule) : ExecContext Rule =
         DelegatedRule (rule, executor)
 
-    /// Main type.
-    type XakeScript = XakeScript of ExecOptions * Rules<ExecContext>
+    /// Main type: the options, the rules and whether `wantOverride` fixed the targets.
+    type XakeScript = XakeScript of ExecOptions * Rules<ExecContext> * bool

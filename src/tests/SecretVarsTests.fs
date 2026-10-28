@@ -316,7 +316,7 @@ type ``Secret variables``() =
                plain = Var.string(cliArg = "plain") |> withDefault "visible" |}
         let options =
             let builder = RulesBuilder(ExecOptions.Default)
-            builder.Vars(builder.Zero(), schema) |> fun (XakeScript (o, _)) -> o
+            builder.Vars(builder.Zero(), schema) |> fun (XakeScript (o, _, _)) -> o
         let lines = XakeScriptBuilder.formatVarsHelp options.VarSchema
         let text = String.concat "\n" lines
         StringAssert.Contains("$ACME_API_TOKEN_HELP [string] (secret) — the API token", text)

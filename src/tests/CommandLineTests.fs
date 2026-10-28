@@ -49,7 +49,7 @@ let ``accepts various switches``() =
 
     // CLI-level assertions: verify parsing directly
     let parsed = parseArgs args {XakeOptions with DbFileName = ".xake-vari"}
-    Assert.AreEqual([("AA", "BBB"); ("AA1", "CCC")], parsed.Vars)
+    Assert.AreEqual([("AA1", "CCC"); ("AA", "BBB")], parsed.Vars)   // last -d first
     Assert.AreEqual("aaaaa", parsed.FileLog)
     Assert.AreEqual(Verbosity.Silent, parsed.FileLogLevel)
     Assert.AreEqual(Verbosity.Loud, parsed.ConLogLevel)
@@ -436,3 +436,200 @@ let ``banner masks the values of secret variables``() =
         Assert.That(text, Does.Contain "licenseKey=*** (script/cli)")
         Assert.That(text, Does.Contain "PLAIN=visible (script/cli)")
         Assert.That(text, Does.Not.Contain "banner-secret-value-42")
+
+// --- the command line wins over the script's ops ---
+
+/// The script options after the command line is applied (what Run gets).
+let private scriptOptions (XakeScript (options, _, _)) = options
+let private quiet = { XakeOptions with Nologo = true; NoPersist = true; FileLog = ""; ConLogLevel = Silent; ThrowOnError = true }
+
+[<Test>]
+let ``-d wins over the var op``() =
+    let seen = ref None
+    do xakeArgs ["-d"; "X=cli"] quiet {
+        var "X" "script"
+        phony "main" (recipe { let! v = getVar "X" in seen := v })
+    }
+    Assert.AreEqual(Some "cli", !seen)
+
+[<Test>]
+let ``var op without -d gives the script value``() =
+    let seen = ref None
+    do xakeArgs ["-d"; "Y=other"] quiet {
+        var "X" "script"
+        phony "main" (recipe { let! v = getVar "X" in seen := v })
+    }
+    Assert.AreEqual(Some "script", !seen)
+
+[<Test>]
+let ``-d wins over ExecOptions Vars``() =
+    let seen = ref None
+    do xakeArgs ["-d"; "X=cli"] { quiet with Vars = ["X", "options"] } {
+        phony "main" (recipe { let! v = getVar "X" in seen := v })
+    }
+    Assert.AreEqual(Some "cli", !seen)
+
+[<Test>]
+let ``var op wins over ExecOptions Vars``() =
+    let seen = ref None
+    do xakeArgs [] { quiet with Vars = ["X", "options"] } {
+        var "X" "script"
+        phony "main" (recipe { let! v = getVar "X" in seen := v })
+    }
+    Assert.AreEqual(Some "script", !seen)
+
+[<Test>]
+let ``last -d of a duplicated name wins``() =
+    let seen = ref None
+    do xakeArgs ["-d"; "X=first"; "-d"; "X=second"] quiet {
+        var "X" "script"
+        phony "main" (recipe { let! v = getVar "X" in seen := v })
+    }
+    Assert.AreEqual(Some "second", !seen)
+
+[<Test>]
+let ``IgnoreCommandLine keeps the var op value``() =
+    let seen = ref None
+    do xakeArgs ["-d"; "X=cli"] { quiet with IgnoreCommandLine = true } {
+        var "X" "script"
+        phony "main" (recipe { let! v = getVar "X" in seen := v })
+    }
+    Assert.AreEqual(Some "script", !seen)
+
+[<Test>]
+let ``-ll wins over consolelog``() =
+    let b = xakeArgs ["-ll"; "Diag"] quiet
+    Assert.AreEqual(Verbosity.Diag, (b.ConLog(b.Zero(), Loud) |> b.ApplyCommandLine |> scriptOptions).ConLogLevel)
+    let b2 = xakeArgs [] quiet
+    Assert.AreEqual(Verbosity.Loud, (b2.ConLog(b2.Zero(), Loud) |> b2.ApplyCommandLine |> scriptOptions).ConLogLevel)
+
+[<Test>]
+let ``-fl wins over the filelog path, the level stays the script's``() =
+    let b = xakeArgs ["-fl"; "b.log"] quiet
+    let o = b.FileLog(b.Zero(), "a.log", Chatty) |> b.ApplyCommandLine |> scriptOptions
+    Assert.AreEqual("b.log", o.FileLog)
+    Assert.AreEqual(Verbosity.Chatty, o.FileLogLevel)
+
+[<Test>]
+let ``-fll wins over the filelog level, the path stays the script's``() =
+    let b = xakeArgs ["-fll"; "Diag"] quiet
+    let o = b.FileLog(b.Zero(), "a.log", Chatty) |> b.ApplyCommandLine |> scriptOptions
+    Assert.AreEqual("a.log", o.FileLog)
+    Assert.AreEqual(Verbosity.Diag, o.FileLogLevel)
+
+[<Test>]
+let ``-r wins over rootdir``() =
+    let b = xakeArgs ["-r"; "y"] quiet
+    Assert.AreEqual("y", (b.RootDir(b.Zero(), "x") |> b.ApplyCommandLine |> scriptOptions).ProjectRoot)
+    let b2 = xakeArgs [] quiet
+    Assert.AreEqual("x", (b2.RootDir(b2.Zero(), "x") |> b2.ApplyCommandLine |> scriptOptions).ProjectRoot)
+
+[<Test>]
+let ``an invalid -ll value does not block consolelog``() =
+    let b = xakeArgs ["-ll"; "Shouty"] quiet
+    Assert.AreEqual(Verbosity.Loud, (b.ConLog(b.Zero(), Loud) |> b.ApplyCommandLine |> scriptOptions).ConLogLevel)
+
+[<Test>]
+let ``IgnoreCommandLine lets the ops apply``() =
+    let b = xakeArgs ["-ll"; "Diag"; "-r"; "y"; "-fl"; "b.log"] { quiet with IgnoreCommandLine = true }
+    let o = b.RootDir(b.FileLog(b.ConLog(b.Zero(), Loud), "a.log", Chatty), "x") |> b.ApplyCommandLine |> scriptOptions
+    Assert.AreEqual(Verbosity.Loud, o.ConLogLevel)
+    Assert.AreEqual("a.log", o.FileLog)
+    Assert.AreEqual("x", o.ProjectRoot)
+
+[<Test>]
+let ``want keeps the CLI targets, wantOverride replaces them``() =
+    let b = xakeArgs ["cliTarget"] quiet
+    Assert.AreEqual(["cliTarget"], (b.Want(b.Zero(), ["scriptTarget"]) |> b.ApplyCommandLine |> scriptOptions).Targets)
+    Assert.AreEqual(["scriptTarget"], (b.WantOverride(b.Zero(), ["scriptTarget"]) |> b.ApplyCommandLine |> scriptOptions).Targets)
+    let b2 = xakeArgs [] quiet
+    Assert.AreEqual(["scriptTarget"], (b2.Want(b2.Zero(), ["scriptTarget"]) |> b2.ApplyCommandLine |> scriptOptions).Targets)
+
+[<Test>]
+let ``engine per-demand vars come after the script's vars``() =
+    let seen = ref (None, None)
+    let eng =
+        xakeEngine {
+            var "V" "script"
+            phony "t" (recipe {
+                let! v = getVar "V"
+                let! w = getVar "W"
+                seen := (v, w)
+            })
+            start
+        }
+    try eng.Demand("t", ["V", "demand"; "W", "demand"]).Wait()
+    finally eng.StopAsync().Wait()
+    Assert.AreEqual((Some "script", Some "demand"), !seen)
+
+// --- mixed: the CLI wins per name / per field, not all-or-nothing ---
+
+[<Test>]
+let ``vars mix per name: -d where given, var where not``() =
+    let seen = ref []
+    do xakeArgs ["-d"; "A=cli"; "-d"; "C=cli"] quiet {
+        var "A" "script"
+        var "B" "script"
+        phony "main" (recipe {
+            let! a = getVar "A"
+            let! b = getVar "B"
+            let! c = getVar "C"
+            seen := [a; b; c]
+        })
+    }
+    Assert.AreEqual([Some "cli"; Some "script"; Some "cli"], !seen)
+
+[<Test>]
+let ``vars mix per name with ExecOptions Vars``() =
+    let seen = ref []
+    do xakeArgs ["-d"; "A=cli"; "-d"; "C=cli"] { quiet with Vars = ["D", "options"] } {
+        var "A" "script"
+        var "B" "script"
+        phony "main" (recipe {
+            let! a = getVar "A"
+            let! b = getVar "B"
+            let! c = getVar "C"
+            let! d = getVar "D"
+            seen := [a; b; c; d]
+        })
+    }
+    Assert.AreEqual([Some "cli"; Some "script"; Some "cli"; Some "options"], !seen)
+
+let private applyLogAndRoot (b: RulesBuilder) =
+    b.RootDir(b.FileLog(b.ConLog(b.Zero(), Loud), "a.log", Chatty), "x") |> b.ApplyCommandLine |> scriptOptions
+
+[<Test>]
+let ``options mix per field: only -ll given``() =
+    let o = xakeArgs ["-ll"; "Diag"] quiet |> applyLogAndRoot
+    Assert.AreEqual(Verbosity.Diag, o.ConLogLevel)
+    Assert.AreEqual("a.log", o.FileLog)
+    Assert.AreEqual(Verbosity.Chatty, o.FileLogLevel)
+    Assert.AreEqual("x", o.ProjectRoot)
+
+[<Test>]
+let ``options mix per field: only -fl and -r given``() =
+    let o = xakeArgs ["-fl"; "b.log"; "-r"; "y"] quiet |> applyLogAndRoot
+    Assert.AreEqual(Verbosity.Loud, o.ConLogLevel)
+    Assert.AreEqual("b.log", o.FileLog)
+    Assert.AreEqual(Verbosity.Chatty, o.FileLogLevel)
+    Assert.AreEqual("y", o.ProjectRoot)
+
+[<Test>]
+let ``end to end: -d and var read together, CLI log level, script file log path``() =
+    withTempRoot "cli-mixed-e2e" <| fun testRoot ->
+        let logFile = testRoot </> "script.log"
+        let seen = ref []
+        do xakeArgs ["-d"; "A=cli"; "-fll"; "Chatty"] { quiet with ProjectRoot = testRoot } {
+            var "A" "script"
+            var "B" "script"
+            filelog logFile Loud    // at Loud the Info banner would not be written
+            phony "main" (recipe {
+                let! a = getVar "A"
+                let! b = getVar "B"
+                seen := [a; b]
+            })
+        }
+        Assert.AreEqual([Some "cli"; Some "script"], !seen)
+        // the run banner shows the effective file log: the script's path at the CLI's level
+        let text = readLogEventually logFile (fun t -> t.Contains "file log:")
+        Assert.That(text, Does.Contain (sprintf "%s (Chatty)" (Path.GetFullPath logFile)))

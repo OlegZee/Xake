@@ -19,7 +19,7 @@ module XakeScript =
 
         /// Console output verbosity level. Default is Warn
         ConLogLevel: Verbosity
-        /// Overrides "want", i.e. target list
+        /// Targets to build: the default for `want`, which replaces it; command-line targets replace both
         Targets: string list
 
         /// Global script variables
@@ -142,5 +142,5 @@ module XakeScript =
     let delegated (executor: DelegatedExecutor<ExecContext>) (rule: ExecContext Rule) : ExecContext Rule =
         DelegatedRule (rule, executor)
 
-    /// Main type: the options, the rules and whether `wantOverride` fixed the targets.
-    type XakeScript = XakeScript of ExecOptions * Rules<ExecContext> * bool
+    /// Main type.
+    type XakeScript = XakeScript of ExecOptions * Rules<ExecContext>

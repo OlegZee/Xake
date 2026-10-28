@@ -118,7 +118,7 @@ type ``Project description``() =
         let loaded = ref None
         let depends = ref []
         do xake {x.TestOptions with ThrowOnError = true} {
-            wantOverride ["roundtrip"]
+            want ["roundtrip"]
             rules [
                 "roundtrip" => recipe {
                     do! Description.save ("saved" </> Description.FileName) (Description.parse (minimal "Saved"))
@@ -142,7 +142,7 @@ type ``Project description``() =
         let found = ref None
         let depends = ref []
         do xake {x.TestOptions with ThrowOnError = true} {
-            wantOverride ["find-b"]
+            want ["find-b"]
             rules [
                 "find-b" => recipe {
                     let! d = Description.find (!! "find/*/xake.project.json") "B"

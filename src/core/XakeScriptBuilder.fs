@@ -149,8 +149,8 @@ module XakeScriptBuilder =
     /// Script builder; `args` are the command line (None: not from xakeArgs, no logo either).
     type RulesBuilder internal (options: ExecOptions, args: string list option) =
 
-        let updRules (XakeScript (options, rules, wo)) f = XakeScript (options, f(rules), wo)
-        let updTargets (XakeScript (options, rules, wo)) f = XakeScript ({options with Targets = f(options.Targets)}, rules, wo)
+        let updRules (XakeScript (options, rules)) f = XakeScript (options, f(rules))
+        let updTargets (XakeScript (options, rules)) f = XakeScript ({options with Targets = f(options.Targets)}, rules)
         let addRule rule (Rules rules) :Rules<_> =    Rules (rule :: rules)
 
         let updateVar (key: string) (value: string) =
@@ -159,8 +159,8 @@ module XakeScriptBuilder =
         new (options: ExecOptions) = RulesBuilder(options, None)
 
         /// Applies the command line over the script's options: only the fields whose flags are given
-        /// change (`-d` is prepended, so it wins over `var`); targets replace `want`'s, not `wantOverride`'s.
-        member internal __.ApplyCommandLine(XakeScript (options, rules, wo) as script) =
+        /// change (`-d` is prepended, so it wins over `var`); command-line targets replace `want`'s.
+        member internal __.ApplyCommandLine(XakeScript (options, rules) as script) =
             match args with
             | None -> script
             | Some args ->
@@ -168,30 +168,30 @@ module XakeScriptBuilder =
                     if options.IgnoreCommandLine then options
                     else
                         let cli = args |> List.fold ParseArgs.foldFunction ({ options with Targets = [] }, ParseArgs.TopLevel) |> fst
-                        if cli.Targets = [] || wo then { cli with Targets = options.Targets } else cli
+                        if cli.Targets = [] then { cli with Targets = options.Targets } else cli
                 if not options.Nologo then
                     printf "XAKE build tool %s\n\n" (typeof<ExecOptions>.Assembly.GetName().Version.ToString())
-                XakeScript (options, rules, wo)
+                XakeScript (options, rules)
 
-        member __.Zero() = XakeScript (options, Rules [], false)
+        member __.Zero() = XakeScript (options, Rules [])
         member this.Yield(()) = this.Zero()
 
         // --- flat script body: rules may be written directly in the script, no `rules [..]` needed ---
 
         /// Yields a single rule into the script body.
-        member __.Yield(rule: ExecContext Rule) = XakeScript (options, Rules [rule], false)
+        member __.Yield(rule: ExecContext Rule) = XakeScript (options, Rules [rule])
 
         /// Yields a list of rules into the script body (`yield! rules` or a bare list).
         member __.Yield(rules: ExecContext Rule list) =
-            XakeScript (options, Rules (List.rev rules), false)
+            XakeScript (options, Rules (List.rev rules))
 
         member this.YieldFrom(rules: #seq<ExecContext Rule>) =
             this.Yield(rules |> List.ofSeq)
 
         /// Rules accumulate in reverse declaration order (last matching rule wins),
         /// which is what the `rules [..]` operation has always done.
-        member __.Combine(XakeScript (opts, Rules head, wo1), XakeScript (_, Rules tail, wo2)) =
-            XakeScript (opts, Rules (tail @ head), wo1 || wo2)
+        member __.Combine(XakeScript (opts, Rules head), XakeScript (_, Rules tail)) =
+            XakeScript (opts, Rules (tail @ head))
 
         member __.Delay(f: unit -> XakeScript) = f ()
         member __.Delay(f: unit -> XakeEngine) = f ()
@@ -201,44 +201,44 @@ module XakeScriptBuilder =
 
         /// `for x in xs do ...` inside a script body, generating rules.
         member this.For(items: #seq<'T>, f: 'T -> XakeScript) =
-            items |> Seq.fold (fun acc x -> this.Combine(acc, f x)) (XakeScript (options, Rules [], false))
+            items |> Seq.fold (fun acc x -> this.Combine(acc, f x)) (XakeScript (options, Rules []))
 
         member this.Run(script: XakeScript) =
-            let (XakeScript (options, rules, _)) = this.ApplyCommandLine script
+            let (XakeScript (options, rules)) = this.ApplyCommandLine script
             if options.ShowHelp then
                 printVarsHelp options.VarSchema
                 exit 0
             ScriptRunner.runScript options rules
 
         [<CustomOperation("dryrun")>]
-        member __.DryRun(XakeScript (options, rules, wo)) =
-            XakeScript ({options with DryRun = true}, rules, wo)
+        member __.DryRun(XakeScript (options, rules)) =
+            XakeScript ({options with DryRun = true}, rules)
 
         /// Sets the project root directory for relative paths in rules. Defaults to current directory.        
         [<CustomOperation("rootdir")>]
-        member __.RootDir(XakeScript (options, rules, wo), dir) =
-            XakeScript ({options with ProjectRoot = dir}, rules, wo)
+        member __.RootDir(XakeScript (options, rules), dir) =
+            XakeScript ({options with ProjectRoot = dir}, rules)
 
         [<CustomOperation("var")>]
-        member __.AddVar(XakeScript (options, rules, wo), name, value) =
+        member __.AddVar(XakeScript (options, rules), name, value) =
 
-            XakeScript ({options with Vars = options.Vars |> updateVar name value }, rules, wo)
+            XakeScript ({options with Vars = options.Vars |> updateVar name value }, rules)
 
         [<CustomOperation("filelog")>]
-        member __.FileLog(XakeScript (options, rules, wo), filename, ?loglevel) =
+        member __.FileLog(XakeScript (options, rules), filename, ?loglevel) =
 
             let loglevel = defaultArg loglevel Verbosity.Chatty in
-            XakeScript ({options with FileLog = filename; FileLogLevel = loglevel}, rules, wo)
+            XakeScript ({options with FileLog = filename; FileLogLevel = loglevel}, rules)
 
         [<CustomOperation("consolelog")>]
-        member __.ConLog(XakeScript (options, rules, wo), ?loglevel) =
+        member __.ConLog(XakeScript (options, rules), ?loglevel) =
 
             let loglevel = defaultArg loglevel Verbosity.Chatty in
-            XakeScript ({options with ConLogLevel =loglevel}, rules, wo)
+            XakeScript ({options with ConLogLevel =loglevel}, rules)
 
         [<CustomOperation("ruleMatch")>]
-        member __.RuleMatch(XakeScript (options, rules, wo), mode: RuleMatchMode) =
-            XakeScript ({options with RuleMatch = mode}, rules, wo)
+        member __.RuleMatch(XakeScript (options, rules), mode: RuleMatchMode) =
+            XakeScript ({options with RuleMatch = mode}, rules)
 
         [<CustomOperation("rule")>]
         member __.Rule(script, rule) =
@@ -260,33 +260,28 @@ module XakeScriptBuilder =
 
         [<CustomOperation("want")>]
         member __.Want(script, targets) =
-
-            updTargets script (function |[] -> targets |x -> x)    // ExecOptions.Targets and CLI targets win
-
-        [<CustomOperation("wantOverride")>]
-        member __.WantOverride(XakeScript (options, rules, _), targets) =
-            XakeScript ({options with Targets = targets}, rules, true)   // true: CLI targets do not replace them
+            updTargets script (fun _ -> targets)    // over ExecOptions.Targets; CLI targets win in Run
 
         [<CustomOperation("noPersist")>]
-        member __.NoPersist(XakeScript (options, rules, wo)) =
-            XakeScript ({options with NoPersist = true}, rules, wo)
+        member __.NoPersist(XakeScript (options, rules)) =
+            XakeScript ({options with NoPersist = true}, rules)
 
         [<CustomOperation("teardown")>]
-        member __.Teardown(XakeScript (options, rules, wo), targets: string list) =
-            XakeScript ({options with Teardown = targets}, rules, wo)
+        member __.Teardown(XakeScript (options, rules), targets: string list) =
+            XakeScript ({options with Teardown = targets}, rules)
 
         /// Targets run sequentially before the build, once options and variables are final.
         /// Unlike `teardown` (a later op replaces the earlier list), several `setup` ops accumulate.
         [<CustomOperation("setup")>]
-        member __.Setup(XakeScript (options, rules, wo), targets: string list) =
-            XakeScript ({options with Setup = options.Setup @ targets}, rules, wo)
+        member __.Setup(XakeScript (options, rules), targets: string list) =
+            XakeScript ({options with Setup = options.Setup @ targets}, rules)
 
         /// Starts the engine, returning a long-lived XakeEngine.
         [<CustomOperation("start")>]
         member this.Start(script: XakeScript) : XakeEngine =
-            let (XakeScript (options, rules, wo)) = this.ApplyCommandLine script
+            let (XakeScript (options, rules)) = this.ApplyCommandLine script
             // explicitly disable progress for long-lived engine
-            XakeEngine.Start (XakeScript ({ options with Progress = false }, rules, wo))
+            XakeEngine.Start (XakeScript ({ options with Progress = false }, rules))
 
         [<CustomOperation("engine")>]
         member this.Engine script : XakeEngine = this.Start script
@@ -313,7 +308,7 @@ module XakeScriptBuilder =
         }
 
         /// Starts a XakeEngine from a fully assembled XakeScript.
-        static member Start(XakeScript (options, rules, _)) =
+        static member Start(XakeScript (options, rules)) =
             let ctx, finalize = ScriptRunner.createScriptContext options rules
             try ScriptRunner.runSetupAsync ctx options.Setup |> Async.RunSynchronously
             with _ -> finalize (); reraise ()

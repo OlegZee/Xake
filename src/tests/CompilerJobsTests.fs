@@ -47,9 +47,9 @@ type ``Compiler jobs``() =
             let source = sprintf "%s%d.cs" label i
             if not (File.Exists source) then File.WriteAllText (source, sprintf "class C%d {}\n" i)
         // one target needing all of them, so they are built in parallel (the targets of
-        // `wantOverride` are built one after another)
+        // `want` are built one after another)
         xake {x.TestOptions with FileLog = label + ".log"; FileLogLevel = Verbosity.Diag; ThrowOnError = true; Threads = 4; Vars = vars} {
-            wantOverride ["main"]
+            want ["main"]
             rules [
                 "main" => recipe { do! need [ for i in 1..count -> sprintf "%s%d.dll" label i ] }
                 sprintf "%s(n:*).dll" label ..> recipe {
@@ -115,7 +115,7 @@ type ``Compiler jobs``() =
         System.Environment.SetEnvironmentVariable ("XAKE_FSC_JOBS", "1")
         try
             xake {x.TestOptions with FileLog = "fsc-env.log"; FileLogLevel = Verbosity.Diag; ThrowOnError = true; Threads = 4} {
-                wantOverride ["main"]
+                want ["main"]
                 rules [
                     "main" => recipe { do! need [ for i in 1..3 -> sprintf "fj%d.dll" i ] }
                     "fj(n:*).dll" ..> recipe {
@@ -170,7 +170,7 @@ type ``Compiler jobs``() =
         for i in 1..3 do File.WriteAllText (sprintf "ft%d.fs" i, sprintf "module M%d\nlet v = %d\n" i i)
         use compilers = Resource.newResource "fsc-compilers" 1
         xake {x.TestOptions with FileLog = "fsc-throttle.log"; FileLogLevel = Verbosity.Diag; ThrowOnError = true; Threads = 4} {
-            wantOverride ["main"]
+            want ["main"]
             rules [
                 "main" => recipe { do! need [ for i in 1..3 -> sprintf "ft%d.dll" i ] }
                 "ft(n:*).dll" ..> recipe {

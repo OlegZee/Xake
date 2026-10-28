@@ -32,7 +32,7 @@ let ``accepts various switches``() =
         "/FL"; "aaaaa"; "/D"; "AA=BBB"; "/D"; "AA1=CCC"; "/FLL"; "Silent"]
 
     do xakeArgs args {XakeOptions with DbFileName = ".xake-vari"} {
-        wantOverride (["test"])
+        want (["test"])
 
         rules [
             "test" => recipe {
@@ -440,7 +440,7 @@ let ``banner masks the values of secret variables``() =
 // --- the command line wins over the script's ops ---
 
 /// The script options after the command line is applied (what Run gets).
-let private scriptOptions (XakeScript (options, _, _)) = options
+let private scriptOptions (XakeScript (options, _)) = options
 let private quiet = { XakeOptions with Nologo = true; NoPersist = true; FileLog = ""; ConLogLevel = Silent; ThrowOnError = true }
 
 [<Test>]
@@ -538,10 +538,9 @@ let ``IgnoreCommandLine lets the ops apply``() =
     Assert.AreEqual("x", o.ProjectRoot)
 
 [<Test>]
-let ``want keeps the CLI targets, wantOverride replaces them``() =
+let ``want yields to the CLI targets``() =
     let b = xakeArgs ["cliTarget"] quiet
     Assert.AreEqual(["cliTarget"], (b.Want(b.Zero(), ["scriptTarget"]) |> b.ApplyCommandLine |> scriptOptions).Targets)
-    Assert.AreEqual(["scriptTarget"], (b.WantOverride(b.Zero(), ["scriptTarget"]) |> b.ApplyCommandLine |> scriptOptions).Targets)
     let b2 = xakeArgs [] quiet
     Assert.AreEqual(["scriptTarget"], (b2.Want(b2.Zero(), ["scriptTarget"]) |> b2.ApplyCommandLine |> scriptOptions).Targets)
 

@@ -54,7 +54,7 @@ type ``Hermetic mode``() =
         let resolved = ref None
         try
             do xake {options with ProjectRoot = root; FileLog = root </> (name + ".log"); ThrowOnError = true; Vars = vars} {
-                wantOverride ([name])
+                want ([name])
                 rules [
                     name => recipe {
                         let! v = build ()

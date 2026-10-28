@@ -42,5 +42,9 @@ dev merged in (eec2b2c: #103 "command line wins", #101). Gap analysis in `after-
 libraries read the variable set only (no env fallback, breaking); the banner shows the real source.
 Spec rev. 3 is superseded; the plan above is replaced by the tracker.
 
-Next step: spec rev. 4 for variant 3 with conformance tests. Two points to settle with the owner
-first: how a secret is declared in the list form, and whether `Var.*` keeps its own env fallback.
+Settled the same day: a secret is a separate list element (`[Secret; Env "X"]`); `varschema`
+takes a `Var.*` declaration completely and evaluates it at launch, so its fallback is a
+declaration, not an instruction (concept §8).
+
+Next step: spec rev. 4 for variant 3 with conformance tests (concept §8 lists three detail points
+the spec proposes answers to).

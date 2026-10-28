@@ -10,7 +10,7 @@
 - [x] A: spec rev. 3 rejected; concept variants 1/2a/2b/2c (`concept.md`)
 - [x] Merge dev (#103 CLI wins, #101); gap analysis `after-103.md`
 - [x] A: owner's direction: variant 3 (`var` with a source list, libraries read vars only, banner shows real source), `concept.md` §8
-- [ ] A: spec rev. 4 for variant 3 + conformance tests (open: secret form, `Var.*` env fallback)
+- [ ] A: spec rev. 4 for variant 3 + conformance tests (secret as list element, `varschema` evaluates `Var.*` at launch)
 - [ ] PR 1: core `var` source-list overload, engine `?vars` on top, source per name, banner
 - [ ] PR 2: Xake.Dotnet readers without env fallback, fixed defaults
 - [ ] PR 3: Xake.Hermetic.Dotnet on Xake `[3.14, 3.15)` (readers without env fallback)

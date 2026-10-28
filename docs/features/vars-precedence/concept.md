@@ -444,5 +444,19 @@ xake {
 - **`Var.*` stays** as typed reading (int/bool) and as an alternative description; no modularity
   is required of it.
 
-Open: how a secret is declared in this form (a `Secret` source wrapper or a `secret` op), and
-whether `Var.*` declarations keep their own env fallback or read the variable set only.
+**Secrets (owner, 2026-10-28): a separate element of the list**, e.g.
+`var "TOKEN" [Secret; Env "CI_TOKEN"]`; `SecretHashed` likewise (the two existing modes,
+presence and HMAC). The mask and the dependency rules are those of 3.13.
+
+**`Var.*` (owner, 2026-10-28): `varschema` takes the declaration completely.** Its env name, scope,
+default and secret mode are evaluated by `varschema` at launch, exactly like a source list:
+`Var.string(envVar = "X") |> withDefault "d"` ≡ `var "N" [Env "X"; Default "d"]`. The fallback
+becomes a declaration, not an instruction run on each read: `let! x = schema.Field` in a recipe is a
+lookup in the variable set, one `Var (name, value)` dependency, no `getEnv` (today
+`Vars.fs:105-133` reads the environment on every read and records `EnvVar`). `Var.*` is the typed
+spelling of the same rule plus `--help` text.
+
+Points for spec rev. 4: a `Var` read in a recipe whose declaration never went through `varschema`
+(proposed: variable set only, then its own constant default, no environment read, consistent with
+option б); the same name declared by both `var [...]` and `varschema` (error vs last wins);
+`-d` of a secret (3.13 refuses it for env-only secrets).

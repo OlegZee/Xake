@@ -46,5 +46,10 @@ Settled the same day: a secret is a separate list element (`[Secret; Env "X"]`);
 takes a `Var.*` declaration completely and evaluates it at launch, so its fallback is a
 declaration, not an instruction (concept §8).
 
-Next step: spec rev. 4 for variant 3 with conformance tests (concept §8 lists three detail points
-the spec proposes answers to).
+Owner's answers: a duplicate declaration (`var [...]` + `varschema`) is an error; `-d` of a secret
+is an error at launch (fail-fast); a `Var` read outside `varschema`: "variable set only" or error.
+
+**Spec rev. 4 written** (`spec.md`: 36 rules, 59 conformance tests). Next step: the owner confirms
+§10 (K-3 Var outside varschema, S-5 constant var + varschema, L-4 HERMETIC with env-sourced
+NUGET_PACKAGES, SOURCE_DATE_EPOCH, Var.env given by -d), then PR 1 (core) starts with the tests
+of §9.

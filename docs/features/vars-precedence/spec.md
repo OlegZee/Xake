@@ -1,540 +1,474 @@
 # Spec: variable evaluation
 
-Status: rev. 3 for the owner's approval, 2026-10-28. Rev. 1 and rev. 2 were reviewed in PR #102.
-Rev. 2 had M-3 without a combinator and `SecretDep` without a kind. Rev. 3 replaces registration at
-task construction with the `defaulted` flag (DEP-1, DEP-5, database 0.7), makes secrets readable
-only through their declaration (S-6), sets the `NUGET_PACKAGES` default to `.packages`, makes the
-library variables `ArgAndEnv`, models `CSC_SERVER` as it is in 3.13, and adds §8.1.
+Status: rev. 4 for the owner's approval, 2026-10-28. It replaces rev. 3 (rejected: lazy evaluation,
+`defaulted` flag, database 0.7). It formalizes [concept.md](concept.md) §8 (variant 3) and the
+owner's decisions of 2026-10-28, which are not to be reopened. The 3.13 behaviour is in
+[analysis.md](analysis.md); the state after #103 is in [after-103.md](after-103.md). File:line
+references are to this branch (dev with #103). Keywords MUST, MUST NOT, SHOULD, MAY are normative.
+Every rule has an id; the conformance tests of §9 reference them. Points the owner still has to
+confirm are marked **[owner]** and collected in §10. No code before this spec is approved and the
+tests of §9 exist.
 
-This spec formalizes the owner's decisions P1-P11 of 2026-10-28 and the two reviews. They are not
-to be reopened. It supersedes the "Options" of [analysis.md](analysis.md); the analysis stays the
-record of 3.13 behaviour (file:line references against origin/dev 92ef634; the banner and `setup`
-of #101, 4ef149d, are taken into account here). Where the decisions left a gap, the rule is marked
-**[gap]** and listed in §10. Keywords MUST, MUST NOT, SHOULD, MAY are normative. Every rule has an id
-that the conformance tests of §9 reference. Per the owner's rule, no code before this spec is
-approved and the tests of §9 exist.
+## 1. Scope and non-goals
 
-## 1. Goal, principle, non-goals
-
-**G-1 (Evaluator, P1).** A variable is a named value computed **once per run** from its sources by
-one evaluator, the `VarStore` of the run. `Var.*` values are *declarations* (how to compute the
-value), not readers. Every reader (`let! x = someVar`, `getVar "X"`, a library, the banner, the
-dependency check) MUST obtain the value from the store; two readers of one name in one run MUST see
-the same value.
-
-**G-2.** What the build tracks is "the value of X changed", never "where X was read from": a change
-of source with an equal value MUST NOT rebuild anything; a change of value MUST rebuild the targets
-that read X.
+In scope: how a build variable gets its value (the chain), the `var` source-list overload, how
+`varschema` evaluates `Var.*` declarations, secrets, what is recorded as a dependency, the banner and
+`--help`, engine mode, and how Xake.Dotnet and Xake.Hermetic.Dotnet read their variables.
 
 Non-goals:
-- **N-1** No auto-discovery of declarations (no reflection over loaded assemblies, no registration
-  at task construction): a declaration is known to the store only once a reader or `varschema`
-  hands it over (D-1).
-- **N-2** No environment lookup for names nobody declared: `getVar "X"` alone never consults the
-  environment (the weak declaration is `ArgOnly`, S-4).
-- **N-3** No source in dependencies: the database never records which of `Request`, `Cli`,
-  `Script`, `Env` a value came from (the `defaulted` flag of DEP-1 is not a source).
-- **N-4** `getEnv` is unchanged except for secrets (S-6): it reads the process environment (live,
-  not the snapshot) and records `EnvVar`; it is not a variable read.
-
-## 2. Model
-
-### 2.1 Declarations
-
-**M-1.** A declaration is the untyped record
-
-```fsharp
-type VarDecl = {
-    Name        : string           // the store key; also the -d / var / ?vars key
-    Scope       : LookupScope      // ArgAndEnv | ArgOnly | EnvOnly
-    EnvName     : string           // ignored when Scope = ArgOnly
-    Default     : string option    // the string form of the typed default (P8)
-    Required    : bool
-    Secret      : SecretMode       // NotSecret | SecretPresence | SecretHash
-    TypeName    : string           // "string", "int", "bool", or the type's name
-    Canonical   : string -> string // format (parse v); raises on a value that does not parse
-    Description : string option
-    Owner       : DeclOwner }      // Script | Library of string
-```
-
-The typed `OptionalVar<'t>` / `RequiredVar<'t>` keep their API and expose `.Decl : VarDecl`
-(`Parse : string -> 't`, `Format : 't -> string` stay on the typed value).
-
-**M-2.** `Name` is the explicit `name`, else `cliArg`, else the `varschema` field name. `EnvName`
-defaults to the 3.13 derivation `toEnvName Name` (camelCase → UPPER_SNAKE), which is `Name` itself
-for an UPPER_SNAKE name; `envName "Y"` (new combinator) sets it explicitly.
-
-**M-3.** `Owner` is a plain field, `Script` by default; a library module sets
-`Owner = Library "<package>"` on the declarations it builds (no public combinator). It only selects
-the source label of the default: `Default` for `Script`, `LibraryDefault` for `Library`.
-
-### 2.2 Sources and the chain
-
-**M-4.** `VarSource = Request | Cli | Script | Env | Default | LibraryDefault`, in this order of
-precedence.
-
-**M-5 (chain B, P2).** The value of a declaration `d` is
-
-```fsharp
-let evaluate (d: VarDecl) : (string * VarSource) option =
-    [ Request, request.TryFind d.Name                       // engine mode ?vars
-      Cli,     cli.TryFind d.Name                           // -d, last occurrence
-      Script,  script.TryFind d.Name                        // var op / ExecOptions.Vars, last in script order
-      Env,     (if d.Scope = ArgOnly then None else envSnapshot.TryFind d.EnvName)
-      (if d.Owner = Script then Default else LibraryDefault), d.Default ]
-    |> List.filter (fun (src, _) -> d.Scope <> EnvOnly || not (List.contains src [Request; Cli; Script]))   // M-9
-    |> List.tryPick (fun (src, v) -> v |> Option.map (fun v -> v, src))
-```
-
-The first source that *defines* the name wins; no later source is consulted.
-
-**M-6 (definedness).** A source defines a name iff it has an entry for it:
-- `-d X=` (and `-d X` with no separator) defines X as the empty string;
-- `var "X" ""` defines X as the empty string;
-- an environment variable defines X iff it is present in the snapshot (an empty value defines `""`
-  on Unix; on Windows an empty variable does not exist);
-- a declaration without `withDefault` does not define.
-The evaluator MUST NOT trim or interpret values; trimming and parsing are the reader's (`Canonical`).
-
-**M-7 (duplicates).** Within `Cli` the last `-d X=` on the command line wins. Within `Script` the
-last write wins, where `ExecOptions.Vars` entries come first and `var` ops follow in script order.
-Within `Request` the last pair wins.
-
-**M-8.** `var "X" v` (Script, layer 3) and `withDefault v'` on a declaration of X (layer 5/6) are
-different layers and MAY coexist; Script wins. The error "two defaults" exists only between two
-strong declarations of X with different `Default` (D-6).
-
-**M-9 (EnvOnly).** For `Scope = EnvOnly`, `Request`, `Cli` and `Script` are not sources. An entry
-for the name (or for `EnvName`) in one of them:
-- for a secret declaration MUST fail the run (exit 2, E-3), as in 3.13;
-- otherwise MUST be ignored with warning W-1, once per run per name.
-
-**M-10 (ArgOnly).** For `Scope = ArgOnly`, `Env` is never consulted.
-
-**M-11.** A typed reader converts the winning string with `Parse`; a parse failure fails the reader
-(the 3.13 messages of `Vars.fs:36-52`, the value omitted for a secret). A `RequiredVar` without a
-default whose evaluation is `None` fails with E-6.
-
-### 2.3 Worked examples
-
-`NUGET_PACKAGES` declared by `DotNetVars.packages` (`ArgAndEnv`, env `NUGET_PACKAGES`, library
-default `.packages`, resolved against the project root by the reader):
-
-| `-d` | `var` | env | value | source |
-|---|---|---|---|---|
-| `/ci/pkgs` | `pkgs` | `/m/pkgs` | `/ci/pkgs` | cli |
-| (none) | `pkgs` | `/m/pkgs` | `pkgs` | script |
-| (none) | (none) | `/m/pkgs` | `/m/pkgs` | env |
-| (none) | (none) | (none) | `.packages` | library default |
-| `NUGET_PACKAGES=` | `pkgs` | `/m/pkgs` | `""` | cli |
-
-The last row: `-d X=` defines X as empty, so neither `var` nor the environment is consulted. The
-reader treats a blank value as "the machine folder" (`~/.nuget/packages`, the 3.13 meaning), which
-`HERMETIC=on` refuses (P-2). `-d NUGET_PACKAGES=a -d NUGET_PACKAGES=b` yields `b` (M-7).
-
-`-d AAA=hello`, a recipe reads `let! a = Var.string "AAA" |> withDefault "x"` → `hello (cli)`;
-without `-d` and with `AAA` absent from the environment → `x (default)`; with `AAA=env` →
-`env (env)`. `getVar "AAA"` in another recipe of the same run returns the same value, because the
-strong declaration was registered first (otherwise D-7 applies).
-
-Secret: `token = Var.secret "API_TOKEN"` (`EnvOnly`, `SecretPresence`). Environment `API_TOKEN=s3`
-→ `s3 (env)`, masked everywhere, recorded as a digest (DEP-4). `-d API_TOKEN=s3` → the run fails
-with E-3 before the banner, the value registered for masking first. `getVar "API_TOKEN"` or
-`getEnv "API_TOKEN"` after the declaration is known → E-7 (S-6).
-
-## 3. `VarStore`: API and lifecycle
-
-**S-1 (P3).** `ExecContext.Vars : (string * string) list` is removed; `ExecContext.Variables :
-VarStore` replaces it:
-
-```fsharp
-type VarSource = Request | Cli | Script | Env | Default | LibraryDefault
-
-type VarStore =
-    abstract Evaluate    : VarDecl -> (string * VarSource) option  // registers d (D-1 b), memoized
-    abstract TryGet      : string  -> (string * VarSource) option  // by the registered declaration, else weak (S-4)
-    abstract Declared    : unit -> VarDecl list                    // registered strong declarations
-    abstract WithRequest : (string * string) list -> VarStore      // engine-mode overlay (S-7)
-```
-
-`Evaluate` and `TryGet` record nothing; recording is the job of the recipe-level readers (DEP-1).
-
-**S-2 (inputs).** The store is built once per run, in `Run` (CLI and dry-run/dump) or in
-`XakeEngine.Start` (engine mode), from immutable inputs: the `-d` list, the script values
-(`ExecOptions.Vars` then `var` ops), the `varschema` declarations, and an **environment snapshot
-taken once** at construction. The store MUST NOT read the live environment afterwards.
-`ExecOptions.Vars` stays as the script-values input only; the CLI list is kept apart (O-1).
-
-**S-3 (at `Run`, before the banner).** In this order: register the `varschema` declarations (D-1 a,
-conflicts D-6); evaluate each of them, registering secret values for masking (S-6); fail on E-3
-and on E-6 for a `Required` schema declaration without value; print `--help` (which exits) or the
-banner (P-3). Names first declared later evaluate lazily.
-
-**S-4 (weak declaration).** `TryGet name` with no registered declaration evaluates the implicit
-weak declaration `{ Name = name; Scope = ArgOnly; Default = None; Secret = NotSecret;
-TypeName = "string"; Canonical = id; Owner = Script }`. It does not register a strong declaration.
-
-**S-5 (memo, P4).** The store memoizes per name for one run (the lifetime of the `getChangeReasons`
-memo and of `Scheduler.newRun`; in engine mode, the engine's lifetime, S-7): the result, `None`
-included, is computed once with `ConcurrentDictionary.GetOrAdd`; the declaration of a name is fixed
-atomically at its first strong registration; later registrations are compared against it (D-6).
-Evaluation is pure over the S-2 inputs, so a race that evaluates twice yields equal results.
-
-**S-6 (secrets).** A secret is readable only through its declaration.
-- A value whose declaration is secret MUST be registered with `SecretMask` on its first evaluation,
-  before it is returned to anyone; for schema declarations that is before the banner.
-- A weak read `getVar "X"` where `X` is the `Name` of a secret declaration known to the run's store
-  (schema, or registered by an earlier read), and `getEnv "Y"` where `Y` is the `EnvName` (or `Name`)
-  of such a declaration, MUST fail with E-7 instead of returning the value. A read before the
-  declaration is known is not detected; `varschema` makes the declaration known from `Run`.
-- The 3.13 global `Secrets.declare` registry becomes the store's: secrecy is a property of the run's
-  declarations, not of the process.
-
-**S-7 (engine mode).** `XakeEngine` builds one base store at `Start`. `Demand(target, ?vars)` uses
-`base.WithRequest vars`: an overlay whose `Request` layer is `vars`, with its own memo for the names
-`vars` defines and delegating every other name (and every registration) to the base. Two demands with
-different `?vars` MUST NOT see each other's request values. `StopAsync` (teardown) uses the base
-store. Unused `?vars` are not reported.
-
-**S-8 (dependency checks).** `DependencyAnalysis` MUST consult the run's store (S-5), never a list
-(DEP-5).
-
-## 4. Declarations
-
-### 4.1 Entry paths (P5)
-
-**D-1.** A strong declaration enters the store in one of two ways; a third, weak, one never registers:
-- (a) `varschema` at `Run` (S-3). `varschema` accepts the 3.13 record form and, new, a
-  `VarDecl list` (so `varschema DotNetVars.all` works);
-- (b) at the point of use: a recipe binds a typed declaration (`let! p = DotNetVars.packages`) or
-  calls `ctx.Variables.Evaluate decl`. The declaration is an ordinary F# value carried by the reader;
-- (c) weak read: `getVar "X"` (S-4).
-
-**D-2 (no discovery, N-1).** The banner lists what is declared at `Run` (D-1 a) plus the undeclared
-names defined by `-d`/`var` (P-3). A name whose first strong declaration arrives later is logged
-once at `Info` on its first evaluation, text L-1.
-
-**D-3 (library reads).** A library MUST read its variables through its own declarations; a script
-reads them through the exposed values (`let! p = DotNetVars.packages`). A library MUST NOT call
-`getVar` for a name it declares.
-
-**D-4a (recommended practice).** A script SHOULD add the library declarations it uses to its schema,
-`varschema DotNetVars.all` (or a subset), so that they appear in `--help` and in the banner from
-`Run`, and so that the dependency check judges them by their declaration (DEP-5). This is a
-recommendation: a script without it stays correct for defaulted values (DEP-5); see DEP-5 c for the
-one case it does not cover.
-
-### 4.2 Typed defaults (P8)
-
-**D-4.** `withDefault x` stores `x` and its string form `Format x` in `Default`. `Format` defaults to
-`string x` (`ToString`, invariant culture); `Var.create` gains `?parse` and `?format` (default parse:
-3.13 `Convert.ChangeType`, invariant culture).
-
-**D-5.** When a declaration with a default is registered, the store MUST check
-`Parse (Format x) = x`; a violation fails (startup for schema, first evaluation otherwise) with E-5.
-`Canonical v = Format (Parse v)`.
-
-### 4.3 Conflicts (P6)
-
-**D-6.** Two strong declarations of one name are *equal* iff they have the same `Scope`, `EnvName`
-(when not `ArgOnly`), `Default`, `Secret` and **[gap]** `TypeName`. `Description`, `Required` and
-`Owner` do not take part (the first registered `Owner` labels the default). A registration that is
-not equal to the fixed one fails with E-1, naming both. Two equal declarations are one.
-
-**D-7 (read before declaration).** A weak read of X while X has no strong declaration marks X "read
-before its declaration" and memoizes the weak value. When a strong declaration of X arrives, the
-store evaluates X by it and compares with the value already returned: equal (string, source
-ignored) → no message; different → E-2. No name ever has two values in one run, in any order of
-reads. Reads by the banner, `--help` and the dependency check (DEP-5) do not mark.
-
-### 4.4 Library declarations
-
-**D-8.** Every library variable is `ArgAndEnv` with `EnvName = Name` (CI and developer machines set
-the environment; one rule for all), except the compiler-server pair of D-9. This widens 3.13, where
-most of them were `getVar`-only (release note, V-3). Parsing lives in the declaration, so every
-source is parsed alike (G-1). `HERMETIC` lives in Xake.Dotnet (`HermeticMode.fs:75`), hence in
-`DotNetVars`.
-
-| Module.value | Name | Scope | EnvName | Default (owner lib) | Notes |
-|---|---|---|---|---|---|
-| `DotNetVars.packages` | `NUGET_PACKAGES` | ArgAndEnv | `NUGET_PACKAGES` | `.packages` | relative → project root; `~/` → user profile; blank → machine folder |
-| `DotNetVars.fetch` | `NUGET_FETCH` | ArgAndEnv | `NUGET_FETCH` | `on` | off/false/no/0 = off |
-| `DotNetVars.netfx` | `NETFX` | ArgAndEnv | `NETFX` | none | |
-| `DotNetVars.netfxTarget` | `NETFX-TARGET` | ArgAndEnv | `NETFX-TARGET` | none | also read by `Described.fs:626`; POSIX shells cannot export a name with `-` |
-| `DotNetVars.cscServer` | `CSC_SERVER` | ArgOnly | - | none | D-9 |
-| `DotNetVars.cscServerEnv` | `XAKE_CSC_SERVER` | EnvOnly | `XAKE_CSC_SERVER` | `on` | D-9 |
-| `DotNetVars.cscToolset` | `CSC_TOOLSET` | ArgAndEnv | `CSC_TOOLSET` | none | |
-| `DotNetVars.fsharpCoreVersion` | `FSHARP_CORE_VERSION` | ArgAndEnv | `FSHARP_CORE_VERSION` | none | |
-| `DotNetVars.fscVer` | `FSCVER` | ArgAndEnv | `FSCVER` | none | |
-| `DotNetVars.netstandardLibraryVersion` | `NETSTANDARD_LIBRARY_VERSION` | ArgAndEnv | same | none | built-in pick stays in the reader |
-| `DotNetVars.netstandardLibraryRefVersion` | `NETSTANDARD_LIBRARY_REF_VERSION` | ArgAndEnv | same | none | |
-| `DotNetVars.referenceAssembliesVersion` | `NETFX_REFERENCE_ASSEMBLIES_VERSION` | ArgAndEnv | same | none | |
-| `DotNetVars.netcoreRefVersion` | `NETCORE_REF_VERSION` | ArgAndEnv | same | none | |
-| `DotNetVars.hermetic` | `HERMETIC` | ArgAndEnv | `HERMETIC` | `off` | 3.13 had no env fallback on purpose |
-| `HermeticVars.ci` | `CI` | ArgAndEnv | `CI` | none | D-10 |
-| `HermeticVars.lockRefresh` | `LOCK_REFRESH` | ArgAndEnv | `LOCK_REFRESH` | none | blank = unset (reader) |
-| `HermeticVars.lockStale` | `LOCK_STALE` | ArgAndEnv | `LOCK_STALE` | `fail` | fail/warn |
-
-`DotNetVars.all` / `HermeticVars.all : VarDecl list` list every row of the module. Sketch:
-
-```fsharp
-module DotNetVars =
-    let packages =
-        Var.string "NUGET_PACKAGES" |> withDefault ".packages" |> owned
-        |> describe "Package folder; relative to the project root"
-    let cscServer = Var.create<CscServerSetting>("CSC_SERVER", parse = CscServerSetting.parse,
-                                                format = CscServerSetting.format) |> argOnly |> owned
-    let cscServerEnv = Var.create<bool>("XAKE_CSC_SERVER", parse = Switch.parseLenient) |> envOnly
-                       |> withDefault true |> owned
-    // ...       (owned: internal helper setting Owner = Library "Xake", M-3)
-    let all : VarDecl list = [ packages.Decl; fetch.Decl; cscServer.Decl; cscServerEnv.Decl; (* ... *) ]
-```
-
-`DotNetFwk.packageRoot` reads `let! p = DotNetVars.packages` and resolves it; `packageRootWithSource`
-returns the store's `VarSource` instead of `PackageRootSource` (P-1).
-
-**D-9 (compiler server, the 3.13 semantics kept).** In 3.13 (`Csc.fs:30-63`, `docs/csc-server.md`)
-the two names carry different things: `CSC_SERVER` (script variable, `-d`/`var`) is one value with
-three meanings, `on` | `off` | a number of keepalive seconds (implying the server), case-insensitive;
-`XAKE_CSC_SERVER` (environment only) is a switch: `0`/`false`/`off`/`no` → in-process, anything else
-→ server. Neither is a plain bool or int, so they are modelled as two declarations:
-- `cscServer`: `CSC_SERVER`, `ArgOnly`, type `CscServerSetting = On | Off | Keepalive of int`;
-  `parse` accepts `on`, `off` and a non-negative integer (trimmed, case-insensitive); any other
-  value is a parse error (M-11), no longer the 3.13 warning-and-server guess;
-- `cscServerEnv`: `XAKE_CSC_SERVER`, `EnvOnly`, bool with the 3.13 lenient switch parser, library
-  default `on`.
-The reader's order is unchanged: the target's own `noserver`/`keepalive`, then `cscServer`, then
-`cscServerEnv`. `Csc.RunOptions.Default` (`Csc.fs:166`), used by a direct `Csc.run` outside any
-recipe, keeps reading `XAKE_CSC_SERVER` from the environment; it has no store and records nothing.
-
-**D-10 (`CI`).** One lenient parser for every source: unset, `""`, `0`, `false`, `off`, `no`
-(trimmed, case-insensitive) → off; any other value → on. This is the 3.13 environment rule; a
-`-d CI=bogus`, an error in 3.13, is now on.
-
-## 5. Dependencies and database (P7)
-
-**DEP-1.** Every read from inside a recipe (`getVar`, a bound `Var.*`, a library read through its
-declaration) MUST record one dependency `Var (name, value, defaulted)`:
-- `value : string option` is `None` when undefined, otherwise the **canonical** form `Canonical v`
-  (D-5; `v` itself for weak reads);
-- `defaulted : bool` is true iff the winning layer was `Default` or `LibraryDefault`.
-Two reads of one name in one recipe record one dependency.
-
-**DEP-2.** No source MUST be recorded: `defaulted` only says "no source defined the name, the
-declaration's default applied"; whether the value came from `Request`, `Cli`, `Script` or `Env` is
-never recorded. The evaluator MUST NOT write `EnvVar`; `getEnv` keeps writing `EnvVar` (N-4).
-
-Rationale (DEP-1, DEP-2): the dependency carries the value, not the source, because a declaration
-can change between runs (scope, env name, default). The previous value then legitimately "falls
-off" and the target rebuilds; recording the source would make such a change invisible or yield a
-wrong "unchanged". `defaulted` exists because the default belongs to a declaration the next run's
-check may not know yet (a library declaration is registered only when a recipe reads it, D-1 b).
-
-**DEP-3.** Reads outside recipes (banner, `--help`, S-3 checks, the dependency check itself) MUST
-NOT record anything.
-
-**DEP-4 (secrets).** A read of a secret records `SecretDep (name, digest)` (no source kind) with the
-3.13 digest rules (`SecretPresence`: set/unset; `SecretHash`: salted HMAC), never the value.
-
-**DEP-5 (check).** At the next run, `Var (name, recorded, defaulted)` is judged by the registered
-declaration of `name` if any (schema, or read earlier in this run), else by the weak one (S-4):
-- (a) if some source (`Request`, `Cli`, `Script`, `Env`, as the declaration's scope allows)
-  defines the name → up to date iff the canonical value equals `recorded`;
-- (b) if no source defines it and `defaulted = true` → with a registered declaration, up to date iff
-  its default (canonical) equals `recorded`, so a changed default rebuilds; with the weak
-  declaration, up to date (the default would apply again);
-- (c) if no source defines it and `defaulted = false` → up to date iff `recorded = None`.
-Otherwise the change reason is C-1. `SecretDep (name, d)` is judged against the same evaluation
-through `Secrets.changeReason`. A check-time evaluation by the weak declaration MUST NOT mark D-7.
-Note on (a)/(c) with the weak declaration: it is `ArgOnly`, so a library value that came from the
-environment (`defaulted = false`, recorded `Some v`) is judged `None` and the target rebuilds on
-every run unless the declaration is registered before the check, i.e. `varschema` (D-4a, Q-5).
-
-**DEP-6 (database 0.7, compatibility).** The database version becomes **0.7** for the third field of
-`Var`. `SecretDep` loses its source kind in the type; the 0.7 pickle writes it without. Records of
-0.4-0.6 load as is: an old `Var (n, v)` loads as `Var (n, v, false)`; an old `EnvVar (n, v)`
-(including those 3.13 `Var.*` wrote for env-sourced values) is still checked against the current
-environment, so an unchanged environment does not rebuild and no migration is needed; an old
-`SecretDep` with either kind is checked by its digest only, against the store value of the name.
-The first rebuild of such a target writes the new form. 3.13 cannot read a 0.7 database.
-
-## 6. Options, policies, banner
-
-### 6.1 Options precedence (P9)
-
-**O-1.** `xakeArgs` MUST keep the options parsed from the command line apart from the initial
-`ExecOptions` and apply them in `Run` **over** the result of the script ops, field by field.
-`IgnoreCommandLine = true` keeps skipping the CLI. `-nologo` and `--help` keep acting at parse time.
-
-**O-2.** Resulting precedence (higher wins):
-
-| Setting | CLI | Script op | Initial `ExecOptions` |
+- **N-1** No lazy evaluation and no declaration during the run. Every value is computed at launch.
+- **N-2** No database format change. The `Var`, `EnvVar` and `SecretDep` cases stay as in 3.13
+  (database 0.6).
+- **N-3** `getEnv` is unchanged: an explicit, live read of the process environment by a script
+  recipe that records `EnvVar`. It is not a variable read and libraries do not use it for variables.
+- **N-4** The environment used for tool discovery is not a build variable and is out of scope:
+  `PATH`, `DOTNET_ROOT`, `DOTNET_HOST_PATH`, `ProgramFiles` (`DotNetFwk.fs:128,181,410-424`).
+- **N-5** The options precedence (`-ll`/`-fl`/`-fll`/`-r`/targets over `consolelog`/`filelog`/
+  `rootdir`/`want`) landed in #103 and is not changed here.
+- **N-6** No warning for unused `-d` names or unused engine `?vars`.
+
+## 2. Definitions
+
+- **Input values**: name/value pairs given from outside a declaration: engine `?vars` (request),
+  `-d` (cli), `ExecOptions.Vars` and `var "N" "v"` (script). `ExecOptions.Vars` stays the input
+  layer; it is not a declaration.
+- **Declaration**: the rule that computes a name from sources: a `var "N" [sources]` op, or a
+  `Var.*` value handed to `varschema`. `Var.*` is the typed spelling of the same rule plus help text.
+- **Source**: an element of a declaration's list: `Env "X"` (environment variable `X`), `Default "v"`
+  (the constant `v`). The markers `Secret` and `SecretHashed` are list elements too, but they define
+  nothing; they set the secret mode.
+- **Key**: the name a variable is stored and read under. For `var` it is the op's name. For a
+  `Var.*` declaration it is `cliArg`, else `name`, else the `varschema` field name (the 3.13
+  `resolvedCliName`, `Vars.fs:111-112`).
+- **Launch**: in `Run` (run, dry-run, dump), after `ApplyCommandLine` and after the `--help` exit,
+  before the banner, `setup` and any target; in `XakeEngine.Start`, before `setup`.
+- **Variable set**: the immutable map `key -> entry` built at launch (V-1). An entry holds the
+  value (or none), its origin, its secret mode and whether a declaration exists for the key.
+- **Origin**: where the winning value came from: `request`, `cli`, `script`, `env:<NAME>`,
+  `default`.
+
+## 3. Rules
+
+### 3.1 The variable set and the chain
+
+**V-1.** At launch Xake builds the variable set once. It holds every key that appears in `-d`,
+`ExecOptions.Vars`, a `var` op or a `varschema` declaration. A key that no input names is absent,
+and a read of it gives `None`. The set does not change during the run; in engine mode it lives as
+long as the engine, with a per-demand overlay (G-2).
+
+**V-2 (chain, first defined wins).** For a key `N` the value is taken from the first layer that
+defines `N`, and no later layer is consulted:
+1. request: the engine's `?vars` of the demand, the last pair for `N` wins;
+2. cli: `-d N=v`, the last `-d` of `N` wins;
+3. script: `ExecOptions.Vars`, then the constant `var "N" "v"` ops in script order, the last wins;
+4. the declaration of `N`: its sources in list order.
+
+**V-3 (environment read once).** Each `Env "X"` source is read from the process environment once,
+at launch, and only when the layers above it have not defined the key. No variable reads the
+environment after launch.
+
+**V-4 (definedness).** `-d N=` and `var "N" ""` define `N` as the empty string. `Env "X"` defines
+iff `X` is present in the environment, an empty value included (Windows has no empty variables).
+`Default "v"` always defines. The evaluator neither trims nor interprets values; readers do.
+
+**V-5.** Keys are compared ordinally (case-sensitive), as `Util.getVar` does today. The
+case-insensitive `-d EXPLAIN_RULE` (`ExecCore.fs:208-210`) is unchanged.
+
+### 3.2 `var` with a source list
+
+**R-1.** `var "N" "v"` is unchanged: a script value, layer 3.
+
+**R-2.** `var "N" [sources]` declares `N`; the list is layer 4. The sources are `Env "X"` and
+`Default "v"`, tried in list order. `Secret` makes `N` a presence secret and `SecretHashed` an HMAC
+secret (the 3.13 modes); a marker may stand anywhere in the list. With both markers, `SecretHashed`
+wins (the 3.13 `Secrets.declare` rule).
+
+**R-3.** The list is evaluated at launch (V-3), once, and its result is the value of layer 4.
+A list that has no source that defines (no `Env` present, no `Default`) leaves `N` unset unless a
+layer above defines it.
+
+**R-4.** A later `var "N" [...]` replaces an earlier one. A constant `var "N" "v"` is layer 3, so it
+wins over `var "N" [...]` whatever their order in the script.
+
+### 3.3 `varschema`
+
+**S-1 (a declaration is a source list).** `varschema` evaluates each `Var.*` field at launch exactly
+as `var KEY [sources]`, where the sources are:
+- `Env E` when the scope is not `ArgOnly`, with `E` = `envVar`, else the 3.13 derivation
+  `toEnvName (name, else the field name)` (`Vars.fs:56-57,113`);
+- then `Default d` when the field has `withDefault x`, with `d` the invariant string form of `x`;
+- `Secret` / `SecretHashed` per the field's secret mode.
+So `Var.string(envVar = "X") |> withDefault "d"` in `varschema` gives the same value, origin and
+dependency as `var "N" [Env "X"; Default "d"]`. `EnvOnly` and `ArgAndEnv` evaluate alike; the scope
+only shapes the `--help` header. `-d`, `var "N" "v"` and request values stand above the declaration
+for every scope (V-2).
+
+**S-2 (required).** A `required` field without `withDefault` whose key has no value after V-2 fails
+the launch with E-3.
+
+**S-3 (types).** At launch the value of a typed field (`int`, `bool`, any `'t`) is converted with
+the 3.13 conversion (`Convert.ChangeType`, `Vars.fs:47-53`); a failure fails the launch with E-4.
+A read whose entry has origin `default` returns the field's own typed default without parsing.
+
+**S-4 (one declaration per key).** A key declared by `varschema` and by `var "N" [...]`, or by two
+`varschema` fields (in one or several `varschema` ops), fails the launch with E-2.
+
+**S-5 (constant plus declaration). [owner]** A constant `var "N" "v"` (or an `ExecOptions.Vars`
+entry) for a key that `varschema` declares is not a conflict: it is the script value, layer 3, and it
+wins over the declaration's sources. The declaration still applies its type check (S-3), its secret
+mode (X-2) and its help text. Rationale: the 3.13 test "Var.string reads the -d value when the script
+also has var" (`VarsTests.fs:579`) pins exactly this pairing, and a constant has no sources that
+could disagree with the declaration's.
+
+### 3.4 Reads and dependencies
+
+**K-1 (`getVar`).** `getVar "N"` returns the set's value of `N` and records one `Var (N, value)`
+(`SecretDep` for a secret, X-4). A declared key returns its evaluated value, its default included
+(this removes the 3.13 trap where a `withDefault` was invisible to `getVar`).
+
+**K-2 (declared `Var.*`).** `let! x = decl` (a `varschema` field, or any `Var.*` value whose key is
+declared at launch by `varschema` or `var [...]`) is a lookup of the key in the set and records one
+`Var (key, value)`. It never calls `getEnv` and never records `EnvVar`.
+
+**K-3 (undeclared `Var.*`). [owner]** A `Var.*` read in a recipe whose key was not declared at launch
+takes the set's value for its key (layers 1-3), else its own `withDefault` constant, else `None`
+(a `required` field without default then fails the reading target with E-3). It does not read the
+environment. If the declaration has an environment source, the read logs W-1 once per key per run.
+It records `Var (key, set value)`, so `None` when the default applied: a changed default in the
+code does not rebuild, as in 3.13.
+Rationale for "set, then own default" over an error: (1) inline `Var.*` reads are common in 3.13
+scripts and tests, and they keep working when `-d`/`var` give the value; (2) an error could only fire
+at read time, deep in the build, not at launch, so it would not be fail-fast anyway; (3) W-1 names
+the one thing that changed (the environment is no longer read) and how to fix it.
+
+**K-4.** One read records one dependency per key per recipe, whatever the number of reads.
+
+**K-5 (value, not source).** At the next run `Var (N, v)` is up to date iff the set's value of `N`
+equals `v` (`DependencyAnalysis.fs:100`, unchanged). The origin is never recorded, so moving an equal
+value between the environment, `-d`, `var` and a default does not rebuild. No `EnvVar` is recorded
+for a declaration's `Env` source.
+
+**K-6.** `EnvVar` records (from `getEnv`, and from 3.13 `Var.*` reads in old databases) are checked
+against the live environment as today (`DependencyAnalysis.fs:97`).
+
+### 3.5 Secrets
+
+**X-1.** A key is secret iff its declaration has `Secret`/`SecretHashed` (list) or a secret mode
+(`varschema`). At launch Xake declares it in the `Secrets` registry and registers its value with
+`SecretMask` before anything is logged, the banner included.
+
+**X-2 (own sources only).** A secret takes its value only from its declaration (layer 4). At launch,
+a `-d` of the key or of any of its `Env` names fails with E-1a; a constant `var` or an
+`ExecOptions.Vars` entry for the key fails with E-1b. A request value fails the demand (G-4). The
+offending value is registered for masking before the error is printed.
+
+**X-3.** A secret's value is `***` in the banner and in every log line (`MaskingLogger`, unchanged);
+`--help` shows no default for it.
+
+**X-4.** A read of a secret records `SecretDep (key, SecretArg, digest)` with the 3.13 digest of its
+mode (`SecretPresence`: set/unset; `SecretHash`: salted HMAC), never the value. The check compares
+it with the set's value (`DependencyAnalysis.fs:88-93`, the `SecretArg` branch, unchanged).
+
+**X-5.** The 3.13 warning for an argument secret given by `-d` (`ScriptRunner.fs:42-47`) goes: X-2
+makes it an error.
+
+### 3.6 Libraries
+
+**L-1.** Xake.Dotnet and Xake.Hermetic.Dotnet read build variables only from the variable set:
+`getVar` for tracked reads, `ctx.Vars` for untracked ones. They MUST NOT read the process environment
+for a variable of the table below (no `getEnv`, no `GetEnvironmentVariable`). An unset name takes the
+library's fixed constant default. Libraries declare nothing: the script owns the rule for each name.
+
+**L-2 (affected variables).** "set" means the variable set (`-d`, `var`, `?vars`, a declaration).
+
+| Name | 3.13 / 3.14-pre | 3.14 | A CI that relied on the environment adds |
 |---|---|---|---|
-| project root | `-r` | `rootdir` | `ProjectRoot` |
-| console level | `-ll` | `consolelog` | `ConLogLevel` |
-| file log name | `-fl` | `filelog name` | `FileLog` |
-| file log level | `-fll` | `filelog _ level` (default `Chatty`) | `FileLogLevel` |
-| targets | targets on the CLI | `want` | `Targets` |
-| threads | `-t` | - | `Threads` |
-| dry run, dump, reset db, progress | switches set them | `dryrun` sets dry run | fields |
-| variables | `-d` (M-5 layer 2) | `var` (layer 3) | `Vars` (layer 3, before `var`) |
+| `NUGET_PACKAGES` | set, else env `NUGET_PACKAGES` (raw, untracked, `DotNetFwk.fs:341,790`), else `~/.nuget/packages` | set, else `~/.nuget/packages` | `var "NUGET_PACKAGES" [Env "NUGET_PACKAGES"]` |
+| `NUGET_FETCH` | set, default on | unchanged | - |
+| `NETFX`, `NETFX-TARGET`, `CSC_TOOLSET`, `FSCVER`, `FSHARP_CORE_VERSION`, `NETSTANDARD_LIBRARY_VERSION`, `NETSTANDARD_LIBRARY_REF_VERSION`, `NETFX_REFERENCE_ASSEMBLIES_VERSION`, `NETCORE_REF_VERSION` | set only | unchanged | - |
+| `HERMETIC` | set only, default off | unchanged | - |
+| `CSC_SERVER` / `XAKE_CSC_SERVER` | `CSC_SERVER` from the set (`on`/`off`/seconds), else env `XAKE_CSC_SERVER` (raw switch, `Csc.fs:31-35`), else server | `CSC_SERVER` from the set, else `XAKE_CSC_SERVER` **from the set** (same switch parser), else server | `var "XAKE_CSC_SERVER" [Env "XAKE_CSC_SERVER"]` or `-d XAKE_CSC_SERVER=0` |
+| `CSC_JOBS` / `XAKE_CSC_JOBS`, `FSC_JOBS` / `XAKE_FSC_JOBS` | `*_JOBS` from `ctx.Vars`, else env `XAKE_*_JOBS` (`CompilerRunner.fs:140-146`); untracked | `*_JOBS` from `ctx.Vars` only, untracked | `var "CSC_JOBS" [Env "XAKE_CSC_JOBS"]` (likewise FSC) |
+| `CI` (hermetic) | set (strict `on/off/true/false/yes/no/1/0`), else env `CI` (lenient, `getEnv`, `Lock.fs:1344-1354`) | set only (strict parser), unset = off | `var "CI" [Env "CI"]` (`CI=true` parses) |
+| `LOCK_REFRESH` (hermetic) | set, else env (`Locks.fs:108-110`) | set only | `var "LOCK_REFRESH" [Env "LOCK_REFRESH"]` |
+| `LOCK_STALE` (hermetic) | set only, default fail | unchanged | - |
+| `SOURCE_DATE_EPOCH` (hermetic) **[owner]** | env only, raw (`Pack.fs:44`, `Sbom.fs:596`) | set only; the recipe-level callers pass it; context-free defaults use the 1980 epoch | `var "SOURCE_DATE_EPOCH" [Env "SOURCE_DATE_EPOCH"]` |
 
-`-fl` without `-fll` keeps the level of the op (or `ExecOptions`), and vice versa. `wantOverride`
-replaces the targets whatever the CLI says; it stays the only hard override. Boolean switches
-(`--dryrun`, `noPersist`) combine by OR.
+**L-3 (child processes).** A library that starts `dotnet restore`/`msbuild` passes the resolved
+package folder as `NUGET_PACKAGES=<folder>` in the child's environment in every case, so an
+environment value cannot redirect the child (today `Import.fs:1684` passes it only for a script
+variable). `DotNetFwk.nugetRoot ()` and `Roots.nugetRoot ()` return `~/.nuget/packages` without
+reading the environment.
 
-### 6.2 Policies (P10)
+**L-4 (hermetic policy). [owner]** `packageRootWithSource` returns `ScriptVariable` when
+`NUGET_PACKAGES` is defined in the set, whatever its origin, and `UserProfile` otherwise;
+`EnvironmentVariable` is no longer produced (the case stays, `[<Obsolete>]`). `HERMETIC=on` accepts
+`ScriptVariable` (an `env:` origin included: the script chose that rule) and refuses `UserProfile`
+with the 3.13 message (`HermeticMode.fs:155`). A blank value counts as unset.
 
-**P-1.** A library policy that needs to know *where* a value came from MUST use the `VarSource`
-from `Evaluate`/`TryGet`, not a second read of the environment.
+**L-5.** `Csc.RunOptions.Default.Server` becomes `Shared None`; it no longer reads `XAKE_CSC_SERVER`
+(`Csc.fs:166`). Inside a recipe the server is resolved from the set (L-2); a direct `Csc.run` outside
+a recipe sets `Server` itself.
 
-**P-2.** `HERMETIC=on` MUST refuse a package folder whose `NUGET_PACKAGES` source is `Env`, or whose
-value is blank (the machine folder), with the 3.13 message of `HermeticMode.fs:155`; every other
-source, the project-local default `.packages` included, is accepted. Rationale: the lock must be
-reproducible from the build's own settings, and a machine-level profile folder is not one. The
-source is a property of the run, not recorded (DEP-2).
+### 3.7 Banner and help
 
-**P-3 (banner).** The banner's vars section prints, sorted by name, one line per name declared at
-`Run` and per name defined by `-d` or `var` (undeclared ones with the value of their highest
-defining layer, not evaluated, so the banner never triggers D-7):
-`    NAME=value (source)` with `source` ∈ `request | cli | script | env | default | library default`;
-a secret's value as `***`; a declared name without value as `    NAME (not set)`. The 3.13 label
-`(script/cli)` goes away.
+**B-1 (banner).** The banner's `vars:` section prints one line per key of the set, sorted ordinally:
+`    NAME=value (origin)` with origin `cli`, `script`, `env:<NAME>` or `default`; a secret's value as
+`***`; a declared key without value as `    NAME (not set)`. Shadowed entries are not printed (each
+name once). The 3.13 label `(script/cli)` goes. The engine prints no banner (unchanged); the
+`request` origin is kept in the set for engine demands.
 
-## 7. Diagnostics (exact texts)
+**B-2 (help).** `--help` prints the "Script variables:" section: the `varschema` declarations in the
+3.13 format (`XakeScriptBuilder.fs:122-144`), then each `var "N" [...]` rule as
+`  -d N=<value> [string], env: X, Y, default: d`, with `(secret)` and no default for a secret.
+Constant `var` ops are not listed. `--help` exits before launch evaluation: it reads no environment
+and raises no E-* error.
 
-Errors fail the run with exit 2 (`XakeException` under `ThrowOnError`); at `Run` they are printed
-before the banner; at first evaluation they fail the reading target.
+### 3.8 Engine mode
 
-- **E-1** `Variable 'X' is declared twice with different settings: <a> and <b>; declare it once (or identically)`
-  where `<a>`/`<b>` render as `scope=ArgAndEnv env=X default=v secret=no type=string (<owner>)`.
-- **E-2** `Variable 'X' was read before its declaration (getVar gave 'a' (cli), the declaration gives 'b' (env)); read it through <decl> or declare it in varschema`
-  where `<decl>` is the declaring value if known (e.g. `DotNetVars.packages`), else `its declaration`.
-  Secret values are `***`.
-- **E-3** (3.13 text kept) `Variable 'X' is secret: secret variables come from the environment, set ENV instead of passing -d X=...`
-- **E-5** `Variable 'X': the default 'v' does not survive format/parse (got 'w'); fix the declaration's format`.
-- **E-6** (3.13 text kept) `Required variable 'X' is not provided`.
-- **E-7** `X is a secret; read it through its declaration` (from `getVar "X"` or `getEnv "X"`, S-6).
-- **W-1** `Variable 'X' is read from the environment only (ENV); its -d/var value is ignored`.
-- **W-2** (end of a run in `Run` mode) `-d X was not used by the build` (one line per name; not in
-  dry-run/dump, not for engine `?vars`; a name read only by the banner counts as unused).
-- **W-3** (3.13 text kept) the warning for an `ArgAndEnv` secret given by `-d`.
-- **L-1** (`Info`, once per name) `NAME=value (source)`, value masked for a secret, e.g.
-  `NUGET_PACKAGES=.packages (library default)`.
-- **C-1** (change reason) `Variable X changed from 'a' to 'b'`; `<unset>` for `None`,
-  `'v' (default)` for a defaulted value. For readability only, the check MAY name the scope of the
-  declaration in force at check time: `Variable X (environment) changed ...` for `EnvOnly`,
-  `(argument)` for `ArgOnly`, nothing for `ArgAndEnv`; it says nothing about the source of either
-  value. For a secret the 3.13 `Secret variable X is now set|is now unset|changed`. Replaces
-  `Global script variable %s was changed '%A'->'%A'` (`DependencyAnalysis.fs:101`).
+**G-1.** `XakeEngine.Start` builds the base set once, reading the environment once. A change of the
+environment after `Start` is not seen by variables until a new engine starts (`getEnv` in a recipe
+stays live, N-3).
 
-## 8. Compatibility and versioning (P11)
+**G-2 (request on top).** `Demand(target, ?vars)` evaluates an overlay: `?vars` is layer 1 over the
+base set (V-2), with origin `request`, converted per S-3 for typed declared keys. `makeCtx` puts the
+request pairs first (`XakeScriptBuilder.fs:299` today appends them), and the test
+`engine per-demand vars come after the script's vars` (`CommandLineTests.fs:548`) is inverted to
+expect the request value.
 
-### 8.1 What an existing 3.13 script sees
+**G-3.** Overlays are per demand: concurrent demands with different `?vars` do not see each other's
+values. A demand without `?vars` uses the base set. The dependency check of a demand uses its overlay.
 
-- `var "X" v` keeps working; it is now overridden by `-d X=...` (and engine `?vars`).
-- `getVar "X"` is unchanged for ordinary names: same value, still a dependency.
-- Tasks of a script without `varschema` do not rebuild because of the upgrade: values the library
-  defaults are recorded `defaulted` and stay up to date (DEP-5 b). Exception: a library value taken
-  from the environment rebuilds on every run until `varschema DotNetVars.all` is added (DEP-5, Q-5).
-- `consolelog`, `filelog`, `rootdir` yield to `-ll`, `-fl`/`-fll`, `-r`.
-- `NUGET_PACKAGES` unset now means `.packages` under the project root, not `~/.nuget/packages`: the
-  first build restores into the project. `-d NUGET_PACKAGES=` keeps the machine folder.
-- Library variables (`NUGET_FETCH`, `NETFX`, `HERMETIC`, `CSC_TOOLSET`, `LOCK_STALE`, ...) now also
-  read the environment variable of the same name.
-- `CSC_SERVER` with a value other than `on`/`off`/a number fails instead of warning.
-- A secret can no longer be read with `getVar`/`getEnv` once its declaration is known (E-7).
-- `EnvVar` is no longer written for variables; the database becomes 0.7 (3.13 cannot read it back).
+**G-4.** A `?vars` pair for a secret key fails that demand with E-1b before any target runs; an
+E-4 conversion failure likewise. `Start` itself fails (raises `XakeException`) on any launch error.
 
-### 8.2 Versions and release note
+## 4. Diagnostics
 
-**V-1.** Xake **3.14**, breaking: `ExecContext.Vars` removed (`ExecContext.Variables : VarStore`);
-`VarStore`, `VarSource`, `VarDecl` (with `Owner`), `envName`, `Var.create ?parse ?format`,
-`varschema` over `VarDecl list` added; `Var` dependency gains `defaulted`; `SecretDep` without
-source kind; database 0.7 (reads 0.4+); CLI over ops for options (O-2). `Util.getVar` (internal)
-goes. Xake.Dotnet (in the Xake package) reads through `DotNetVars`.
+Launch errors are collected, printed together at `Error`, and fail the run with exit code 2 before
+`setup` and any target (`XakeException` under `ThrowOnError`), as the 3.13 secret errors do
+(`ScriptRunner.fs:226-230`). In engine mode they fail `Start`, or the demand (G-4).
 
-**V-2.** Xake.Hermetic.Dotnet 0.9 references Xake `[3.14, 3.15)` and reads `CI`, `LOCK_REFRESH`,
-`LOCK_STALE` through `HermeticVars`, `NETFX-TARGET` and `HERMETIC` through `DotNetVars`.
+- **E-1a** (3.13 text, `Types.fs:206`), a `-d` of a secret that has an `Env` source; `GIVEN` is the
+  name given to `-d`, `ENV` the first `Env` source:
+  `Variable 'GIVEN' is secret: secret variables come from the environment, set ENV instead of passing -d GIVEN=...`
+- **E-1b**, any other value given to a secret from outside its declaration:
+  `Variable 'N' is secret: its value comes only from its declaration's sources, not from WHERE`
+  with `WHERE` one of `-d N=...` (secret without `Env` source), `var "N" "..."`, `ExecOptions.Vars`,
+  `the ?vars of Demand`.
+- **E-2** `Variable 'N' is declared twice: by A and by B; declare it once`, with `A`/`B` one of
+  `varschema field F`, `var "N" [...]`.
+- **E-3** (3.13 text, `Vars.fs:148`) `Required variable 'N' is not provided`. At launch for a
+  `varschema` field (S-2); at read time for an undeclared `Var.*` read (K-3).
+- **E-4** (3.13 texts, `Vars.fs:41,43`) `Failed to convert value 'v' for variable 'N' to type 'T'.`,
+  for a secret `Failed to convert the value of secret variable 'N' to type 'T'.`
+- **W-1** (once per key per run, at the read) `Variable 'N' is read through a declaration that is not in varschema: its environment variable ENV is not read; add it to varschema or use var "N" [Env "ENV"]`
+- **C-1** The change reason of a `Var` stays the 3.13 text
+  `Global script variable N was changed 'a'->'b'` (`DependencyAnalysis.fs:101`); secrets keep the
+  3.13 masked reasons.
 
-**V-3 (release note).** The items of §8.1, plus: `-d X=1 -d X=2` gives `2` (was `1`) and
-`ExecOptions.Vars` no longer beats `-d`; `varschema ... withDefault` defaults are now values seen by
-`getVar` once declared; `Var.env` given by `-d` warns (W-1) instead of silently ignoring; the banner
-shows the real source and unused `-d` names are reported (W-2); `CI` from `-d`/`var` is parsed as
-the environment value was (D-10); Xake.Dotnet behaviour change: the `NUGET_PACKAGES` default and
-`HERMETIC=on` accepting it (P-2); scopes widened to `ArgAndEnv` (D-8).
+## 5. Data shapes
 
-**V-4 (migration).** `var` stays the way to set a value in the script. `getVar "NUGET_PACKAGES"` in
-a script recipe keeps working but may hit E-2 when the library reads the name through its
-declaration with a different result; read `DotNetVars.packages` instead. Add
-`varschema DotNetVars.all` (D-4a): the library variables show in `--help` and the banner, and their
-env values are judged correctly by the check. `ctx.Vars` users switch to `ctx.Variables.TryGet`;
-`getVar`/`getEnv` of a secret switch to the secret's declaration.
+Public API (namespace `Xake`, auto-opened):
+
+```fsharp
+/// A source of a `var` rule, tried in list order; the markers define nothing.
+type VarSource =
+    | Env of string          // environment variable, read once at launch
+    | Default of string      // constant
+    | Secret                 // presence secret (3.13 SecretPresence)
+    | SecretHashed           // HMAC secret (3.13 SecretHash)
+
+/// Where the value of a variable came from (banner, diagnostics).
+[<RequireQualifiedAccess>]
+type VarOrigin = Request | Cli | Script | Env of string | Default
+//  labels:      request | cli | script | env:<NAME>     | default
+
+/// One entry of the variable set.
+type VarEntry = { Value: string option; Origin: VarOrigin option; Secret: SecretMode; Declared: bool }
+
+/// A declaration, written by `var [...]` and by `varschema`.
+type VarRule = {
+    Name: string; Sources: VarSource list; Required: bool
+    ValueType: System.Type          // typeof<string> for `var [...]`; the field's 't for varschema
+    DeclaredBy: string }            // "var" | "varschema field F" (E-2)
+
+// RulesBuilder
+[<CustomOperation("var")>] member AddVar(script, name: string, value: string)              // unchanged
+[<CustomOperation("var")>] member AddVar(script, name: string, sources: VarSource list)   // new
+```
+
+`VarSource.Env` coexists with the `Xake.Env` module (`Env.isUnix` still resolves; checked with
+`dotnet fsi`), and the overloaded custom operation compiles on SDK 10 (owner's check).
+
+Records:
+- `ExecOptions.Vars : (string * string) list`: **type unchanged**; it now holds only script values
+  (`ExecOptions.Vars` entries and constant `var` ops).
+- `ExecOptions.CliVars : (string * string) list` (new): the `-d` pairs, last first. `ApplyCommandLine`
+  writes `-d` here instead of prepending to `Vars`; this is what keeps `cli` apart from `script`.
+- `ExecOptions.VarRules : VarRule list` (new): `var [...]` and `varschema` both append here;
+  `VarSchema : (string * VarHelp) list` stays for `--help` (`VarHelp` unchanged).
+- `ExecContext.Vars : (string * string) list`: **type unchanged**; it is the set flattened, one pair
+  per defined key with its final value (request pairs first in a demand). `Util.getVar`, the
+  dependency check, `EXPLAIN_RULE` and `jobsLimit` keep working on it.
+- `ExecContext.VarSet : Map<string, VarEntry>` (new): the set with origins and secret modes; the
+  banner, K-2/K-3 and the hermetic policy (L-4) read it.
+
+Source compatibility: code that builds `ExecOptions` or `ExecContext` with `{ X.Default with ... }`
+compiles unchanged; a full record expression must add the new fields. Code that inspected
+`options.Vars` after `ApplyCommandLine` for `-d` values reads `CliVars` instead. `getVar`, `var "N"
+"v"`, `Var.*`, `varschema`, `withDefault`, `required`, `secret`, `secretHashed` keep their signatures.
+No database change (N-2).
+
+## 6. Compatibility
+
+### 6.1 What an existing 3.13 / 3.14-pre script sees
+
+- `var "N" "v"`, `-d`, `getVar` work as in 3.14-pre (#103): `-d` wins over `var`, the last `-d` wins.
+- Engine `Demand(t, ?vars)` values now win over the script's `var` (they were shadowed).
+- `varschema` fields are evaluated at launch: a missing `required` value or a bad typed value fails
+  the run before any target (was: when a recipe read it). `getVar` of a declared key sees its
+  environment value or default.
+- A `Var.*` read inline in a recipe and not in `varschema` no longer reads the environment (W-1).
+  `-d`/`var` values and its own default still apply.
+- `Var.env`/`Var.secret` keys are now overridable by `-d` for non-secrets (3.13 ignored `-d`); for
+  secrets `-d` is an error, including argument-scope secrets (3.13 warned).
+- A target whose 3.13 record has `Var (N, None)` + `EnvVar (E, v)` (a `Var.*` read from the
+  environment) rebuilds once when `N` is now declared in `varschema` (the set has `v`); an inline,
+  undeclared read stays up to date while `E` is unchanged and records the 3.14 form on its next
+  rebuild. `--resetdb` forces a clean state.
+- The banner shows each name once with its real origin.
+- Xake.Dotnet and the hermetic package no longer read the environment for build variables (L-2): a
+  CI that exported `NUGET_PACKAGES`, `XAKE_CSC_SERVER`, `XAKE_*_JOBS`, `CI`, `LOCK_REFRESH` or
+  `SOURCE_DATE_EPOCH` adds a `var "N" [Env "N"]` rule or passes `-d`.
+
+### 6.2 Release note (3.14)
+
+> **Variables are evaluated once, at launch, by rules the script states.**
+> - New: `var "N" [Env "X"; Default "v"]` declares a variable by a list of sources tried in order;
+>   `Secret` / `SecretHashed` in the list make it a secret. `var "N" "v"` is unchanged.
+> - Precedence: engine `?vars` > `-d` (last wins) > `var "N" "v"` > the variable's own sources.
+> - `varschema` evaluates `Var.*` declarations at launch: environment, default, required and type
+>   errors are reported before any target runs; `getVar` sees declared values.
+> - Moving an equal value between the environment, `-d` and `var` no longer rebuilds anything.
+> - Secrets accept no value from `-d`, `var "N" "v"` or `?vars` (error).
+> - **Breaking:** Xake.Dotnet no longer reads `NUGET_PACKAGES`, `XAKE_CSC_SERVER`, `XAKE_CSC_JOBS`,
+>   `XAKE_FSC_JOBS` from the environment. Add e.g. `var "NUGET_PACKAGES" [Env "NUGET_PACKAGES"]` to
+>   the script, or pass `-d NUGET_PACKAGES=<dir>`. Child `dotnet` processes get the resolved package
+>   folder explicitly. `Csc.RunOptions.Default` no longer reads `XAKE_CSC_SERVER`.
+> - **Breaking:** a `Var.*` read in a recipe without `varschema` no longer reads the environment.
+> - The banner shows each variable once, with its source (`cli`, `script`, `env:NAME`, `default`);
+>   `--help` lists `var [...]` rules.
+> - Xake.Hermetic.Dotnet 0.9 (on Xake 3.14) no longer reads `CI`, `LOCK_REFRESH` or
+>   `SOURCE_DATE_EPOCH` from the environment: add `var "CI" [Env "CI"]` and the like on CI.
+
+## 7. Implementation split
+
+1. **PR 1, core (Xake 3.14)**: `VarSource`, `VarOrigin`, `VarEntry`, `VarRule`; the `var` overload;
+   `CliVars` in `ApplyCommandLine`; launch evaluation in `Run`/`Start` (V, R, S, X rules);
+   `resolveVar` becomes a set lookup (K-2, K-3, W-1); `checkSecretVars` replaced by X-2; banner B-1,
+   help B-2; engine overlay G-1..G-4 and the inverted test. Tests §9.1-9.6.
+2. **PR 2, Xake.Dotnet readers** (same `Xake` package, ships with PR 1 in 3.14): L-1..L-3, L-5, the
+   `NUGET_PACKAGES`, `CSC_SERVER` pair and `*_JOBS` rows of L-2, `PackageRootSource` and
+   `HERMETIC` policy L-4, docs (`csc-server.md`, the `HermeticMode.fs:155` hint). Tests §9.7.
+3. **PR 3, Xake.Hermetic.Dotnet 0.9** on Xake `[3.14, 3.15)` (`src/hermetic/*.fsproj:84`): `CI`,
+   `LOCK_REFRESH`, `SOURCE_DATE_EPOCH` per L-2, `Import.fs:1684` per L-3, docs. Tests §9.8.
+
+## 8. Engine summary (long-lived)
+
+`Start`: ApplyCommandLine → evaluate base set (env read once) → launch errors fail `Start` → setup.
+`Demand(t, ?vars)`: overlay (G-2), secret/type errors fail the demand (G-4), targets run against the
+overlay. `StopAsync`: teardown with the base set. Environment changes after `Start` are not seen.
 
 ## 9. Conformance tests
 
-Each line: given / when / then, with the rules it covers.
+One line each: given / when / then (rules).
 
-1. Given `-d X=a` and `Var.string "X"`; when one recipe binds it and another calls `getVar "X"`; then both get `a` (G-1, D-7).
-2. Given `-d X=a` and `var "X" "b"`; then `a (cli)` (M-5).
-3. Given `var "X" "b"` and env `X=e`, `Var.string "X"`; then `b (script)` (M-5).
-4. Given env `X=e`, `Var.string "X" |> withDefault "d"`; then `e (env)`; without env, `d (default)` (M-5).
-5. Given env `X=e`, `Var.arg "X"`; then `None` (M-10).
-6. Given `-d X=v`, `Var.env "X"`; then `None` and W-1 once; with `Var.secret "X"` the run fails with E-3 and `v` is masked (M-9).
-7. Given `-d X=1 -d X=2`; then `2` (M-7).
-8. Given `ExecOptions.Vars = [X,a]`, `var "X" "b"`, `var "X" "c"`; then `c (script)` (M-7).
-9. Given `-d X=`; then `Some "" (cli)`, recorded `Var (X, Some "", false)` (M-6, DEP-1).
-10. Given X undefined and `getVar "X"`; then `Var (X, None, false)`; next run with `-d X=a` rebuilds with C-1 `from <unset> to 'a'` (DEP-5 a).
-11. Given a target built with `-d X=a`; when rerun with `var "X" "a"` and no `-d`; then up to date (G-2, DEP-2).
-12. Given a target built with `-d X=a`; when rerun with `-d X=b`; then rebuilt, C-1 (DEP-5 a).
-13. Given `Var.int "N"` read with `-d N=04`; when rerun with `-d N=4`; then up to date, recorded `Some "4"` (D-5, DEP-1).
-14. Given `Var.string "S" |> secretHashed` from env; then `SecretDep (S, SecretHmac _)`, value never in the db; a changed value rebuilds with the masked reason (DEP-4).
-15. Given a 0.6 database with `EnvVar (X, Some e)` and env unchanged; then up to date, no migration; env changed → rebuilt (DEP-6).
-16. Given a 0.6 database with `Var (X, Some a)`; then it loads as `Var (X, Some a, false)` and `-d X=a` keeps it up to date (DEP-6).
-17. Given a 0.6 database with `SecretDep (S, SecretEnv, d)` and an unchanged value; then up to date by digest only (DEP-6).
-18. Given `Var.string "X" |> withDefault "a"` in `varschema` and `... withDefault "b"` read by a recipe; then E-1 naming both (D-6).
-19. Given `getVar "X"` read first (from `-d X=a`), then a strong `Var.string "X" |> withDefault "d"`; then no error (D-7).
-20. Given `getVar "X"` read first (→ `None`), then a strong declaration with default `d`; then E-2 (D-7).
-21. Given nothing defines `NUGET_PACKAGES`; when a recipe binds `DotNetVars.packages`; then `.packages (library default)`, `Var (NUGET_PACKAGES, Some ".packages", true)` and L-1 once (D-1 b, D-2, M-3).
-22. Given a target that read `DotNetVars.packages` defaulted in run 1, no `varschema`; when run 2 starts with nothing defining the name; then up to date by the weak declaration (DEP-5 b).
-23. Given the same target and `varschema` with `NUGET_PACKAGES` declared with another default; then rebuilt (DEP-5 b, DEP rationale).
-24. Given the same target and run 2 with `-d NUGET_PACKAGES=p`; then rebuilt (DEP-5 a).
-25. Given env `NUGET_PACKAGES=/m` only; when a script recipe calls `getVar "NUGET_PACKAGES"` (→ `None`) before a library read (→ `/m`); then E-2 (D-7).
-26. Given `HERMETIC=on` and `NUGET_PACKAGES` from env (resp. `-d NUGET_PACKAGES=`, resp. library default `.packages`, resp. `-d p`); then refused, refused, accepted, accepted (P-2).
-27. Given `Var.secret "T"` in `varschema`; when a recipe calls `getVar "T"` or `getEnv "T"`; then E-7 (S-6).
-28. Given `Var.secret "T"` in `varschema` and env `T=s`; then `s` is masked in the banner and every log line, L-1 and C-1 included (S-6).
-29. Given `-d A=1`, `var "B" "2"`, env `C=3`, `varschema` declaring C (`ArgAndEnv`) and D (default 4); then the banner shows `A=1 (cli)`, `B=2 (script)`, `C=3 (env)`, `D=4 (default)` (P-3).
-30. Given `-d UNUSED=1` that nothing reads; then W-2 at the end of the run; engine `?vars` never warn (D-2, S-7).
-31. Given `consolelog Quiet` and `-ll Loud`; then `Loud`; `filelog "a.log" Diag` with `-fl b.log` gives `b.log` at `Diag`; `rootdir "x"` with `-r y` gives `y` (O-1, O-2).
-32. Given `wantOverride ["t"]` and CLI target `u`; then `t`; `want ["t"]` with CLI `u` gives `u` (O-2).
-33. Given an engine with `var "X" "s"`; when `Demand("t", ["X","r1"])`, concurrently `Demand("t2", ["X","r2"])` and a plain `Demand("t3")`; then `r1 (request)`, `r2 (request)`, `s (script)` (S-7).
-34. Given `Var.create<T>(format = f, parse = p) |> withDefault x` with `p (f x) <> x`; then E-5 (D-5).
-35. Given `Var.string "R" |> required` in `varschema` and R undefined; then E-6 before the banner; the same declaration only read in a recipe fails that target (S-3, M-11).
-36. Given `-d CSC_SERVER=30` (resp. `off`, resp. `bogus`, resp. env `XAKE_CSC_SERVER=no`, resp. nothing); then keepalive 30 (resp. in-process, resp. parse error, resp. in-process, resp. server) (D-9).
-37. Given env `CI=True` (resp. `-d CI=0`, resp. `-d CI=` , resp. `var "CI" "yes"`); then on (resp. off, off, on) (D-10).
-38. Given env `NUGET_FETCH=off` and no `-d`; then fetching is off (D-8).
-39. Given `getEnv "PATH"` in a recipe; then `EnvVar (PATH, _)` is recorded and no variable is registered (N-4, DEP-2).
+### 9.1 Chain and `var` lists
+1. Given `var "X" [Env "A"; Default "d"]`, env `A=a`; when a recipe reads `getVar "X"`; then `Some "a"`, banner `X=a (env:A)` (R-2, V-2).
+2. Given the same rule, `A` unset; then `Some "d"`, banner `X=d (default)` (R-2, V-4).
+3. Given `var "X" [Env "A"; Env "B"; Default "d"]`, `A` unset, `B=b`; then `b (env:B)` (V-2).
+4. Given `var "X" [Env "A"; Default "d"]`, env `A=` (Unix); then `Some ""` (V-4).
+5. Given `var "X" [Env "A"]`, `A=a` and `-d X=c`; then `c (cli)` (V-2).
+6. Given `-d X=1 -d X=2`; then `2 (cli)` (V-2).
+7. Given `ExecOptions.Vars = [X,a]` and `var "X" "b"`; then `b (script)` (V-2).
+8. Given `var "X" [Default "d"]` and `var "X" "s"`, in either order; then `s (script)` (R-4).
+9. Given `var "X" [Default "a"]` then `var "X" [Default "b"]`; then `b (default)` (R-4).
+10. Given `var "X" [Env "A"]`, `A` unset; then `getVar "X"` = `None`, banner `X (not set)` (R-3, B-1).
+11. Given `var "X" [Env "A"]`, `A=a` at launch; when a recipe sets `A=z` in the process and another reads `getVar "X"`; then `a` (V-3).
 
-## 10. Gaps filled, open questions
+### 9.2 `varschema`
+12. Given `varschema {| X = Var.string(envVar = "A") |> withDefault "d" |}`; then tests 1-2 give the same values and origins with `X` as key (S-1).
+13. Given `Var.string "buildConfig"` in `varschema`, env `BUILD_CONFIG=r`; then `r (env:BUILD_CONFIG)` (S-1).
+14. Given `Var.arg "X"` in `varschema`, env `X=e`; then `X (not set)` (S-1).
+15. Given `Var.env(envVar = "A")` as field `X`, `A=a` and `-d X=c`; then `c (cli)` (S-1, V-2).
+16. Given `Var.string "R" |> required` in `varschema`, `R` unset; when the script runs; then E-3 at launch, exit 2, neither `setup` nor any target runs (S-2).
+17. Given `Var.int "N"` in `varschema` and `-d N=x`; then E-4 at launch (S-3).
+18. Given `Var.int "N" |> withDefault 5` in `varschema`, nothing set; then `let! n` = `5`, `getVar "N"` = `Some "5"`, banner `N=5 (default)` (S-3, K-1).
+19. Given `varschema` field `X` and `var "X" [Default "d"]`; then E-2 at launch (S-4).
+20. Given two `varschema` ops each with a field of key `X`; then E-2 (S-4).
+21. Given `Var.string "X" |> withDefault "d"` in `varschema` and `var "X" "s"`; then `s (script)`, no error; with `Var.int "X"` and `var "X" "s"`, E-4 (S-5, S-3).
+22. Given `--help` and a `required` field that is unset; then help is printed, exit 0, no E-3 (B-2).
 
-Gaps filled here (owner to confirm or change):
-1. D-6: `TypeName` is part of declaration equality (`Var.int "N"` vs `Var.string "N"` conflict).
-2. O-2: per-field CLI overlay for `filelog`; booleans by OR.
-3. P-3: the banner shows undeclared `-d`/`var` names without evaluating them, so it never triggers D-7.
-4. DEP-5 b with a registered declaration compares its default with the recorded value, so a changed default rebuilds.
-5. S-6: a secret read via `getVar`/`getEnv` before its declaration is known is not detected; secrecy moves from the process-wide registry to the run's store.
-6. D-9: `CSC_SERVER` values `on`/`off`/seconds and `XAKE_CSC_SERVER` switch kept as two declarations (3.13 semantics), the first `ArgOnly` and the second `EnvOnly` as in 3.13; an invalid `CSC_SERVER` is a parse error.
+### 9.3 Reads and dependencies
+23. Given a `varschema` field `X` from env `A=v`; when a recipe reads `let! x = schema.X`; then the recorded deps contain `Var (X, Some "v")` and no `EnvVar` (K-2, K-5).
+24. Given a target built with env `A=v` (`var "X" [Env "A"]`); when rerun with no `A` and `-d X=v`; then up to date (K-5).
+25. Given the same target; when rerun with `-d X=w`; then rebuilt with C-1 `'Some "v"'->'Some "w"'` (K-5, C-1).
+26. Given a `varschema` `withDefault "d"` read by a target; when rerun with `withDefault "e"`; then rebuilt (K-5, S-1).
+27. Given an inline `Var.string(name = "X", envVar = "A") |> withDefault "d"`, not in `varschema`, `A=a`; then `d`, W-1 once per run, recorded `Var (X, None)` (K-3).
+28. Given the inline read of 27 and `-d X=c`; then `c`, recorded `Var (X, Some "c")` (K-3).
+29. Given an inline `Var.string "X" |> required`, nothing set; then the reading target fails with E-3; the launch does not (K-3).
+30. Given a recipe reading `getVar "X"` twice and `let! x = schema.X`; then one `Var (X, _)` is recorded (K-4).
+31. Given `getEnv "PATH"` in a recipe; then `EnvVar (PATH, _)` recorded and checked live (N-3, K-6).
+32. Given a 3.13 database with `Var (X, None)` + `EnvVar (A, Some v)` and env `A=v`; when `X` is a `varschema` field of `Env "A"`; then rebuilt once, then up to date (K-5, §6.1).
 
-Decided by the owner since rev. 1 (for the record): M-2, M-3 (plain `Owner`), no registration at
-task construction, the `defaulted` flag and database 0.7, `SecretDep` without kind, secrets only via
-declarations (former Q-4), `NUGET_PACKAGES` default `.packages` and the simpler P-2, all library
-variables `ArgAndEnv` (former Q-3), `CI` lenient (former Q-1), no warning for unused `?vars` (former Q-2).
+### 9.4 Secrets
+33. Given `var "T" [Secret; Env "A"]` and `-d T=s`; then E-1a naming `A`, exit 2, `s` masked in all output (X-2).
+34. Given the same rule and `-d A=s`; then E-1a with `GIVEN` = `A` (X-2).
+35. Given the same rule and `var "T" "s"` (resp. `ExecOptions.Vars [T,s]`); then E-1b with `var "T" "..."` (resp. `ExecOptions.Vars`) (X-2).
+36. Given `Var.string "T" |> secret` (argument scope) in `varschema` and `-d T=s`; then E-1a (3.13: warning) (X-2, X-5).
+37. Given `var "T" [Secret; Env "A"]`, `A=s`; then banner `T=*** (env:A)`, `s` in no log line, db holds `SecretDep (T, SecretArg, SecretPresent)` (X-1, X-3, X-4).
+38. Given `[SecretHashed; Env "A"]` and a changed `A`; then rebuilt with the masked reason; with `[Secret; Env "A"]` up to date; with `A` unset, rebuilt (X-4).
+39. Given `[Secret; SecretHashed; Env "A"]`; then the mode is HMAC (R-2).
+40. Given `var "T" [Secret; Default "x"]`; then `--help` lists `T` with `(secret)` and no default (X-3, B-2).
 
-Open questions:
-- **Q-5** A library value taken from the environment, in a script without `varschema`, is judged by
-  the weak (`ArgOnly`) declaration at the next check and rebuilds on every run (DEP-5 note).
-  Options: (a) accept it; `varschema DotNetVars.all` becomes the documented requirement for env-fed
-  library variables; (b) judge an undeclared name at check time by `ArgAndEnv` with `EnvName = Name`
-  (matches every library declaration of D-8 except the D-9 pair, but a plain `getVar "X"` recorded
-  `None` would then rebuild on every run while env `X` is set); (c) the library exposes its
-  declarations to the check (contradicts N-1).
+### 9.5 Banner and help
+41. Given `-d A=1`, `var "B" "2"`, `var "C" [Env "E"]` with `E=3`, `varschema` `D` (`withDefault 4`) and `F` (unset); then the vars section is exactly `A=1 (cli)`, `B=2 (script)`, `C=3 (env:E)`, `D=4 (default)`, `F (not set)` (B-1).
+42. Given `-d X=1 -d X=2` and `var "X" "s"`; then one line `X=2 (cli)` (B-1).
+43. Given `varschema` fields and `var "R" [Env "A"; Env "B"; Default "d"]` and `var "K" "v"`; then `--help` lists the fields, then `-d R=<value> [string], env: A, B, default: d`, and not `K` (B-2).
+
+### 9.6 Engine
+44. Given `xakeEngine { var "V" "s"; ... }`; when `Demand("t", ["V","r"])`, then a plain `Demand("t")`; then `r`, then `s` (G-2; inverts `CommandLineTests.fs:548`).
+45. Given two concurrent demands with `["V","r1"]` and `["V","r2"]`; then each sees its own value (G-3).
+46. Given `var "T" [Secret; Env "A"]`; when `Demand("t", ["T","x"])`; then the demand fails with E-1b `the ?vars of Demand`, no target runs (G-4).
+47. Given `var "X" [Env "A"]`, `A=a` at `Start`; when `A` changes and `Demand` runs; then `a` (G-1).
+48. Given a `required` unset `varschema` field; when `start`; then `Start` raises `XakeException` with E-3 (G-4).
+
+### 9.7 Xake.Dotnet
+49. Given env `NUGET_PACKAGES=/m`, no `var`/`-d`; then `packageRoot ()` = `~/.nuget/packages`, the child restore gets `NUGET_PACKAGES=~/.nuget/packages`, source `UserProfile` (L-1, L-3, L-4).
+50. Given `var "NUGET_PACKAGES" [Env "NUGET_PACKAGES"]`, env `/m`; then `/m`, source `ScriptVariable`, `HERMETIC=on` accepts it (L-4).
+51. Given `HERMETIC=on` and `NUGET_PACKAGES` unset (resp. `-d NUGET_PACKAGES=`); then refused with the 3.13 message (L-4).
+52. Given env `XAKE_CSC_SERVER=0` only; then the compiler server is used; with `-d XAKE_CSC_SERVER=0`, in-process; with also `-d CSC_SERVER=30`, keepalive 30 (L-2).
+53. Given env `XAKE_CSC_JOBS=2` only; then no limit; with `var "CSC_JOBS" [Env "XAKE_CSC_JOBS"]`, limit 2 and no dependency recorded (L-2).
+54. Given env `XAKE_CSC_SERVER=0`; then `Csc.RunOptions.Default.Server = Shared None` (L-5).
+55. Given the sources of `src/dotnet`; then no `getEnv` or `GetEnvironmentVariable` names a variable of L-2 (L-1; a source scan test).
+
+### 9.8 Xake.Hermetic.Dotnet
+56. Given env `CI=true`, no `var`; then `underCi` = false; with `var "CI" [Env "CI"]`, true; with `-d CI=bogus`, the 3.13 error (L-2).
+57. Given env `LOCK_REFRESH=all` only; then no refresh; with `var "LOCK_REFRESH" [Env "LOCK_REFRESH"]`, refresh (L-2).
+58. Given env `SOURCE_DATE_EPOCH=1700000000` only; then pack and SBOM use 1980-01-01; with `var "SOURCE_DATE_EPOCH" [Env "SOURCE_DATE_EPOCH"]`, 2023-11-14 (L-2).
+59. Given the sources of `src/hermetic`; then no `getEnv` or `GetEnvironmentVariable` names a variable of L-2 (L-1).
+
+## 10. Points for the owner
+
+1. **K-3** (requested decision): a `Var.*` read in a recipe that never went through `varschema` takes
+   the set value, then its own constant default, never the environment, and warns W-1. The
+   alternative was an error; it could only fire at read time, not at launch.
+2. **S-5**: a constant `var "N" "v"` plus a `varschema` declaration of `N` is the script value
+   feeding the declaration, not a conflict (E-2 only for `var "N" [...]` vs `varschema`).
+3. **L-4**: `HERMETIC=on` accepts `NUGET_PACKAGES` from any origin once the script declares it,
+   `env:` included (3.13 refused the environment); it refuses only the unset default.
+4. **L-2, `SOURCE_DATE_EPOCH`**: it is a cross-tool reproducible-builds convention that is normally
+   exported. Under L-1 it becomes set-only, which changes `Pack.Options.Default` and
+   `Sbom.timestamp ()` (context-free today) into values passed by recipe-level callers.
+5. **§6.1**: `Var.env` (non-secret) given by `-d` now takes the `-d` value (S-1 equivalence with a
+   source list); 3.13 ignored it.

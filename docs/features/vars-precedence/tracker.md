@@ -11,7 +11,9 @@
 - [x] Merge dev (#103 CLI wins, #101); gap analysis `after-103.md`
 - [x] A: owner's direction: variant 3 (`var` with a source list, libraries read vars only, banner shows real source), `concept.md` §8
 - [x] A: spec rev. 4 for variant 3 (36 rules, 59 conformance tests)
-- [ ] A: owner approval of spec rev. 4 (§10: K-3, S-5, L-4, SOURCE_DATE_EPOCH, Var.env with -d)
+- [x] A: owner answers on rev. 4 §10; Var.* untouched (final)
+- [x] A: spec rev. 5 (45 rules, 58 conformance tests)
+- [ ] A: owner approval of spec rev. 5 (§10: X-5 Var.arg secret via -d, L-4 blank NUGET_PACKAGES)
 - [ ] PR 1: core `var` source-list overload, engine `?vars` on top, source per name, banner
 - [ ] PR 2: Xake.Dotnet readers without env fallback, fixed defaults
 - [ ] PR 3: Xake.Hermetic.Dotnet on Xake `[3.14, 3.15)` (readers without env fallback)

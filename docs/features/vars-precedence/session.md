@@ -53,3 +53,10 @@ is an error at launch (fail-fast); a `Var` read outside `varschema`: "variable s
 §10 (K-3 Var outside varschema, S-5 constant var + varschema, L-4 HERMETIC with env-sourced
 NUGET_PACKAGES, SOURCE_DATE_EPOCH, Var.env given by -d), then PR 1 (core) starts with the tests
 of §9.
+
+**Rev. 5 (same day).** Defect trace in `spec4-trace.md`. Owner: `Var.*`/`varschema` untouched,
+final (3.13 behaviour, documented in §6.1); second definition = launch error; invalid switch value
+= error; empty switch = its default (`CI` off); `NUGET_PACKAGES` default `.packages`; E-7 dropped
+(getVar of a secret returns the value, masking is output-only); HERMETIC env restriction lifted;
+per-demand `?vars` on top (G-*). Next: owner approves rev. 5 §10 (X-5, L-4), then PR 1 (core),
+tests of §9 first.

@@ -17,4 +17,5 @@ next Xake release), B2/B3, E1/E2, B4 after the Xake release.
 | PR | Branch | Worktree | Status |
 |---|---|---|---|
 | #104 hermetic 0.9.0 | `pr/hermetic-090` | `.claude/worktrees/pr+hermetic-090` | merged (02de528), tagged; worktree to remove |
-| review | `docs/release-process` | `.claude/worktrees/docs/release-process` | draft |
+| #105 review | `docs/release-process` | `.claude/worktrees/docs/release-process` | draft |
+| #106 A1 + E3 | `pr/exact-versions` | `.claude/worktrees/pr/exact-versions` | draft |

@@ -563,8 +563,43 @@ recipe {
 
 ## Script variables
 
-Typed variables resolve from `-d NAME=value` (or `var` in the script; `-d` wins over `var`) and
-the environment, and record what they read as a dependency, so a changed value rebuilds the targets that read it:
+Every variable value is computed once, at launch: after the command line is applied and before
+`setup` and the first target (run, `--dryrun`, `--dump`, engine `start`). A recipe only reads. A
+read records the final value as one `Var (name, value)` dependency, never where it came from, so
+moving an equal value between the environment, `-d` and the script does not rebuild.
+
+The value of a name comes from the first of (first defined wins):
+
+1. the engine's per-demand `Demand(target, vars)` (engine mode only);
+2. `-d NAME=value` on the command line (the last `-d` of a name wins);
+3. the script's one value: `var "NAME" "value"` or an `ExecOptions.Vars` entry;
+4. the name's declaration: a `var` rule or a `varschema` field, its sources in list order.
+
+A **`var` rule** declares where a value comes from:
+
+```fsharp
+xakeScript {
+    var "CONFIG" "Release"                                            // a constant
+    var "NUGET_PACKAGES" [Env "XX_NUGET_PACKAGES"; Default ".packages"]  // first defined source wins
+    var "OUT" [Cli "out"; Env "OUT_DIR"; Default "bin"]              // set with -d out=..., not -d OUT=...
+    var "TOKEN" [Secret; Env "ACME_API_TOKEN"]                       // a secret, see below
+    ...
+}
+```
+
+`Env "X"` defines the name when the environment variable `X` is present (an empty value
+included), `Default "v"` always. `Cli "ext"` gives the name another command-line name; `Secret`
+and `SecretHashed` make it a secret. These markers define nothing and may stand anywhere in the
+list. A rule with no defining source leaves the name unset (`getVar` returns `None`).
+
+A **name is defined once** in the script: two `var` ops of a name (either form), a `var` op and an
+`ExecOptions.Vars` entry, or a `varschema` field and either of them stop the run before any target
+(`Variable 'N' is defined twice in the script: by A and by B; define it once`). `-d` and the
+engine's per-demand variables are not script definitions.
+
+**Typed variables** are declared in `varschema`; a field is the rule of its sources:
+`Var.string(envVar = "X") |> withDefault "d"` as field `N` is `var "N" [Env "X"; Default "d"]`,
+plus its type, `required` flag and secret mode:
 
 ```fsharp
 let vars = {|
@@ -574,7 +609,7 @@ let vars = {|
 |}
 
 xake ExecOptions.Default {
-    varschema vars          // names, types, defaults and descriptions in --help
+    varschema vars          // declares them; names, types, defaults and descriptions in --help
     phony "main" (recipe {
         let! config = vars.config
         ()
@@ -582,9 +617,27 @@ xake ExecOptions.Default {
 }
 ```
 
-`Var.create`/`string`/`int`/`bool` look at `-d` first, then the environment; `Var.env` only at
-the environment, `Var.arg` only at `-d`. `describe` adds a description, `required` fails when the
-value is absent, `withDefault` gives a value instead.
+- `Var.create`/`string`/`int`/`bool` take `-d` and the environment; `Var.env` only the
+  environment (`-d` of it stops the run), `Var.arg` only `-d`. `describe` adds a description.
+- The **key** of a field (what `getVar`, the banner and per-demand variables use) is its `name`,
+  else the field name. Its **command-line name** is `cliArg`, else the key: with
+  `p = Var.string(cliArg = "pkg")`, `-d pkg=v` sets `p`, and `-d p=v` stops the run
+  (`-d p: the variable is set on the command line as pkg; use -d pkg=...`). The environment name
+  is `envVar`, else the key in UPPER_SNAKE_CASE (`buildConfig` -> `BUILD_CONFIG`).
+- A `required` field without a value, or a value that does not convert to the field's type,
+  stops the run before any target. `withDefault` gives a value instead; a typed default is
+  returned as is.
+- **A `Var` read needs a declaration.** `let! x = vars.config` returns the value of the key from
+  the variable set; it reads no environment itself. A `Var.*` value read in a recipe without a
+  `varschema` field (or `var` rule) of its key fails that target ("... is read through Var but is
+  not declared: declare it in varschema, or use getVar ..."); one whose declaration differs from
+  the stored one (another env name, default, type, ...) fails too. Read script values with
+  `getVar "N"` and the environment, live, with `getEnv "X"` (recorded as `EnvVar`).
+
+The run banner (at `Info`, in `build.log`) lists each variable once with its source: `cli` (or
+`cli:<name>` when given under another command-line name), `script`, `env:<NAME>`, `default`, or
+`(not set)`; secrets as `***`. `--help` lists the `varschema` fields and the `var` rules, with
+their command-line names, without evaluating anything.
 
 ### Secret variables
 
@@ -596,31 +649,34 @@ let vars = {|
     AcmeApiToken = Var.secret<string>(envVar = "ACME_API_TOKEN", description = "API token") |> required
     LicenseKey   = Var.string(cliArg = "licenseKey", envVar = "LICENSE_KEY") |> secret
 |}
+// or as a rule: var "ACME_API_TOKEN" [Secret; Env "ACME_API_TOKEN"]
 ```
 
 - `Var.secret<'t>(envVar = ...)` reads the environment only; `|> secret` works on any var
-  (before or after `required`/`withDefault`). Resolution is unchanged.
+  (before or after `required`/`withDefault`); in a `var` rule, `Secret` or `SecretHashed`.
+- A secret takes its value only from its own sources: `-d` of it, under its key, its
+  command-line name or one of its environment names, stops the run ("secret variables come from
+  the environment, set ACME_API_TOKEN instead of passing -d ..."), and so does a script value of
+  its name. `Var.arg ... |> secret` thus takes its value only from `withDefault`.
 - The database keeps whether the variable was set, never the value (presence only): a rotated
   token rebuilds nothing, unset to set (or back) rebuilds. `|> secretHashed` keeps a salted
   HMAC-SHA256 of the value instead (a random salt stored with the digest), so a changed value
   rebuilds the targets that read it. The change reason names the variable only: "Secret variable
   ACME_API_TOKEN changed" / "... is now set" / "... is now unset".
-- Every logger Xake creates (console, `filelog`, `CustomLogger`, and a custom `ILogger` given in
-  the options) replaces each resolved secret value of 4 characters or more with `***`: change
-  reasons, `--dryrun`, `--dump`, the `shell` settings dump at Debug, tool output, errors. A
-  conversion error (a `Var.secret<int>` that does not parse) does not quote the value. A value a
-  tool transforms (base64, URL-encoded) is not recognised; values shorter than 4 characters are
-  not masked.
+- `getVar` and `getEnv` of a secret return the real value; masking applies to output only. Every
+  logger Xake creates (console, `filelog`, `CustomLogger`, and a custom `ILogger` given in
+  the options) replaces each secret value of 4 characters or more with `***`: the banner, the
+  `Debug` options dump, change reasons, `--dryrun`, `--dump`, the `shell` settings dump at Debug,
+  tool output, errors. A conversion error (a `Var.secret<int>` that does not parse) does not quote
+  the value. A value a tool transforms (base64, URL-encoded) is not recognised; values shorter than
+  4 characters are not masked.
 - `--help` lists a secret with "(secret)", its name, type and description, never a default.
-- `-d ACME_API_TOKEN=...` for a `Var.secret` is refused ("secret variables come from the
-  environment"). For an argument var marked `|> secret`, `-d` is accepted with a warning: the
-  value is visible in the process list and the shell history.
-- The name decides: once a name is declared secret (`varschema`, or a recipe resolving the
-  secret var), a plain `getEnv "ACME_API_TOKEN"` is recorded and masked as a secret too. Declare
-  secrets in `varschema` so that a clear value an older Xake recorded under that name is turned
-  into a digest when the database is opened (the file is rewritten).
+- The name decides: a declared secret's key and environment names are secret for the whole run,
+  so a plain `getEnv "ACME_API_TOKEN"` is recorded and masked as a secret too. Declaring secrets
+  also turns a clear value an older Xake recorded under that name into a digest when the database
+  is opened (the file is rewritten).
 - Child processes inherit the environment, so an environment secret reaches tools as it is. A
-  `-d` value reaches a tool only when the script passes it, e.g.
+  value reaches a tool otherwise only when the script passes it, e.g.
   `sh "tool" { envs ["ACME_API_TOKEN", token] }`. Prefer the environment over command-line
   arguments or msbuild `-p:` properties, which tools echo in their own output.
 

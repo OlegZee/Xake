@@ -9,6 +9,11 @@ The `Xake` package (engine and `Xake.Dotnet`). Xake.Hermetic.Dotnet has its own 
   the run number as a fourth component (3.14.0 is `3.14.0.45`); the same for
   Xake.Hermetic.Dotnet from its next release. A dependency range or `#r` can be written from the
   tag. Older releases keep their four-part versions.
+- **`ExecContext.withLogger logger ctx`**: the context with its logger replaced, for code
+  outside `Xake.dll` (a `{ ctx with Logger = ... }` compiled elsewhere breaks when
+  `ExecContext` gains a field). The records Xake.Hermetic.Dotnet builds — `ExecContext`,
+  `CscSettingsType`, `RunOptions`, `Csc`, `FscSettingsType`, `FscRunOptions`, `Fsc` — get no new
+  fields until 4.0 (`RecordShapeTests` guards the field lists; docs/devprocess.md).
 
 ## 3.14.0 (released as 3.14.0.45, 2026-10-28)
 

@@ -121,6 +121,15 @@ hermetic 0.9.0 went out with the run number as a fourth component (`v3.14.0` is 
 is no `3.14.0`): a floor on one of those is that four-part version. Raise the floor only when the
 hermetic package needs what the release brings.
 
+**The records the hermetic package builds.** An F# record expression or `{ r with ... }` copy
+compiled against one Xake calls the record's full constructor, so a field added in a later Xake
+breaks a published hermetic package at run time (`MissingMethodException`). Until Xake 4.0 these
+records do not grow: `ExecContext`, `CscSettingsType`, `RunOptions`, `Csc`, `FscSettingsType`,
+`FscRunOptions`, `Fsc`. A new setting goes through a function or a builder operation instead;
+code outside `Xake.dll` changes a context through `ExecContext.withLogger` and the like, never a
+record copy. `src/tests/RecordShapeTests.fs` holds the field lists and fails on a change. Why and
+how this was decided: docs/features/release-process/review.md (option B).
+
 **Developing against an unreleased base.** Normally `src/hermetic` restores `Xake` from
 nuget.org and needs nothing else. When it needs a `src/core`/`src/dotnet` change that is not
 released yet, pack the base into a folder at a version inside the range and hand that folder to

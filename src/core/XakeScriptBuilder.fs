@@ -48,7 +48,7 @@ Options:
         | "-fl" | "/fl" -> 
             optionsSoFar, String ("file log filename", fun o v -> {o with ExecOptions.FileLog = v})
         | "-d" | "/d" -> 
-            optionsSoFar, KeyValue ("variable", fun o k v -> {o with Vars = (k,v) :: o.Vars })  // last -d first: getVar is first match
+            optionsSoFar, KeyValue ("variable", fun o k v -> {o with CliVars = (k,v) :: o.CliVars })  // last -d first: getVar is first match
         | "-ll" | "/ll" -> 
             optionsSoFar, String ("console verbosity", fun o s -> {o with ConLogLevel = s |> parseVerbosity })
         | "-fll" | "/fll" -> 
@@ -121,7 +121,7 @@ module XakeScriptBuilder =
     /// is marked "(secret)" and shows no default. Constant `var` ops are not listed.
     let private ruleHelpLines (decls: VarDecl list) =
         [ for d in decls do
-            if d.DeclaredBy.StartsWith "var " then
+            if d.DeclaredBy = VarDecl.ruleLabel d.Key then
                 let envs = d.Sources |> List.choose (function Env e -> Some e | _ -> None)
                 let secret = if d.Secret <> NotSecret then " (secret)" else ""
                 let envStr = if envs.IsEmpty then "" else ", env: " + String.concat ", " envs
@@ -180,7 +180,7 @@ module XakeScriptBuilder =
         new (options: ExecOptions) = RulesBuilder(options, None)
 
         /// Applies the command line over the script's options: only the fields whose flags are given
-        /// change (`-d` is prepended, so it wins over `var`); command-line targets replace `want`'s.
+        /// change (`-d` goes to `CliVars`: it wins over `var` at launch); command-line targets replace `want`'s.
         member internal __.ApplyCommandLine(XakeScript (options, rules) as script) =
             match args with
             | None -> script
@@ -244,7 +244,7 @@ module XakeScriptBuilder =
         [<CustomOperation("var")>]
         member __.AddVar(XakeScript (options, rules), name: string, value: string) =
             XakeScript ({ options with Vars = options.Vars @ [name, value]
-                                       VarDefinedBy = options.VarDefinedBy @ [name, sprintf "var \"%s\" \"...\"" name] }, rules)
+                                       VarDefinedBy = options.VarDefinedBy @ [name, VarDecl.constantLabel name] }, rules)
 
         /// A variable rule: at launch its sources are tried in list order (`Env "X"`, `Default "v"`),
         /// unless `-d` or a script value defines the name; `Secret`/`SecretHashed` make it a secret.
@@ -325,9 +325,10 @@ module XakeScriptBuilder =
         let mutable stopped = false
         let inFlight = ConcurrentDictionary<string, Lazy<Task<ExecStatus>>> ()
 
+        // the demand's own vars come first: they win over the script's, the last pair of a name wins
         let makeCtx extraVars = {
             Engine = engine
-            Vars = vars @ defaultArg extraVars []
+            Vars = List.rev (defaultArg extraVars []) @ vars
             Progress = Progress.emptyProgress()
             NeedRebuild = fun _ -> false
             ShowProgress = showProgress
@@ -339,21 +340,39 @@ module XakeScriptBuilder =
         }
 
         /// Starts a XakeEngine from a fully assembled XakeScript.
+        /// The variables are evaluated here, once (environment changes after Start are not seen);
+        /// a launch error raises XakeException.
         static member Start(XakeScript (options, rules)) =
-            let ctx, finalize = ScriptRunner.createScriptContext options rules
+            let ctx, finalize, launchErrors = ScriptRunner.createScriptContext options rules
+            if not launchErrors.IsEmpty then
+                let errorText = launchErrors |> String.concat "\r\n"
+                ctx.Logger.Log Error "%s" errorText
+                finalize ()
+                raise (XakeException errorText)
             try ScriptRunner.runSetupAsync ctx options.Setup |> Async.RunSynchronously
             with _ -> finalize (); reraise ()
             XakeEngine (ctx.Engine, ctx.Vars, ctx.ShowProgress, finalize)
 
-        /// Starts a XakeEngine from raw EngineOptions without a script.
+        /// Starts a XakeEngine from raw EngineOptions without a script; `options.Variables` is
+        /// used as given (empty by default: no declarations).
         static member Start(options: EngineOptions) =
-            let ctx, finalize = ExecCore.createContext options []
+            let ctx, finalize = ExecCore.createContext options (ScriptRunner.flatVars options.Variables)
             XakeEngine (ctx.Engine, ctx.Vars, ctx.ShowProgress, finalize)
 
         /// Builds a single target by name. Serializes concurrent requests for the same target:
         /// if a demand is in-flight, waits for it to complete then re-evaluates with the new context.
-        member _.Demand(targetName: string, ?vars: (string * string) list) : Task =
+        /// `vars` win over the script's values; a value for a secret, an environment-only or a
+        /// mistyped variable fails the demand before any target runs.
+        member this.Demand(targetName: string, ?vars: (string * string) list) : Task =
             if stopped then raise (System.InvalidOperationException "XakeEngine has been stopped")
+            match ScriptRunner.checkRequestVars engine.Options.Variables (defaultArg vars []) with
+            | [] -> this.DemandChecked(targetName, vars)
+            | errors ->
+                let errorText = errors |> String.concat "\r\n"
+                engine.RootLogger.Log Error "%s" errorText
+                Task.FromException (XakeException errorText)
+
+        member private _.DemandChecked(targetName: string, vars: (string * string) list option) : Task =
             let demandCtx = makeCtx vars
             let rec tryDemand () : Task =
                 let newLazy = Lazy<_>(fun () ->

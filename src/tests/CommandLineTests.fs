@@ -49,7 +49,7 @@ let ``accepts various switches``() =
 
     // CLI-level assertions: verify parsing directly
     let parsed = parseArgs args {XakeOptions with DbFileName = ".xake-vari"}
-    Assert.AreEqual([("AA1", "CCC"); ("AA", "BBB")], parsed.Vars)   // last -d first
+    Assert.AreEqual([("AA1", "CCC"); ("AA", "BBB")], parsed.CliVars)   // last -d first
     Assert.AreEqual("aaaaa", parsed.FileLog)
     Assert.AreEqual(Verbosity.Silent, parsed.FileLogLevel)
     Assert.AreEqual(Verbosity.Loud, parsed.ConLogLevel)
@@ -407,7 +407,7 @@ let ``banner is logged at Info with the effective settings``() =
         for expected in [ "[INF]"; "Xake "; "mode:         run"; "targets:      build"; "project root: " + testRoot
                           "database:     (no persist)"; "threads:      3"; "rule match:   MostSpecific"
                           "console log:  Silent"; "(Chatty)"; "setup:        prepare"; "teardown:     cleanup"
-                          "FLAVOR=blue (script/cli)"; "SCRIPT_VAR=yes (script/cli)" ] do
+                          "FLAVOR=blue (cli)"; "SCRIPT_VAR=yes (script)" ] do
             Assert.That(text, Does.Contain expected)
 
 [<Test>]
@@ -427,14 +427,18 @@ let ``banner masks the values of secret variables``() =
     withTempRoot "cli-banner-secret" <| fun testRoot ->
         let logFile = testRoot </> "build.log"
         let schema = {| licenseKey = Var.string(cliArg = "licenseKey", envVar = "BANNER_LICENSE_KEY") |> secret |}
-        xakeArgs ["-d"; "licenseKey=banner-secret-value-42"; "-d"; "PLAIN=visible"; "main"] { XakeOptions with ProjectRoot = testRoot; NoPersist = true; Nologo = true; FileLog = logFile; FileLogLevel = Chatty; ConLogLevel = Silent } {
-            varschema schema
-            rules [ "main" => recipe { return () } ]
-        }
+        System.Environment.SetEnvironmentVariable("BANNER_LICENSE_KEY", "banner-secret-value-42")
+        try
+            xakeArgs ["-d"; "PLAIN=visible"; "main"] { XakeOptions with ProjectRoot = testRoot; NoPersist = true; Nologo = true; FileLog = logFile; FileLogLevel = Chatty; ConLogLevel = Silent } {
+                varschema schema
+                rules [ "main" => recipe { return () } ]
+            }
+        finally
+            System.Environment.SetEnvironmentVariable("BANNER_LICENSE_KEY", null)
 
         let text = readLogEventually logFile (fun t -> t.Contains "PLAIN=")
-        Assert.That(text, Does.Contain "licenseKey=*** (script/cli)")
-        Assert.That(text, Does.Contain "PLAIN=visible (script/cli)")
+        Assert.That(text, Does.Contain "licenseKey=*** (env:BANNER_LICENSE_KEY)")
+        Assert.That(text, Does.Contain "PLAIN=visible (cli)")
         Assert.That(text, Does.Not.Contain "banner-secret-value-42")
 
 // --- the command line wins over the script's ops ---
@@ -470,13 +474,14 @@ let ``-d wins over ExecOptions Vars``() =
     Assert.AreEqual(Some "cli", !seen)
 
 [<Test>]
-let ``var op wins over ExecOptions Vars``() =
-    let seen = ref None
-    do xakeArgs [] { quiet with Vars = ["X", "options"] } {
-        var "X" "script"
-        phony "main" (recipe { let! v = getVar "X" in seen := v })
-    }
-    Assert.AreEqual(Some "script", !seen)
+let ``a var op and ExecOptions Vars of one name fail the launch``() =   // spec 8.1-4
+    let ex =
+        Assert.Throws<XakeException>(fun () ->
+            xakeArgs [] { quiet with Vars = ["X", "options"] } {
+                var "X" "script"
+                phony "main" (recipe { () })
+            })
+    StringAssert.Contains("Variable 'X' is defined twice in the script: by ExecOptions.Vars and by var \"X\" \"...\"; define it once", ex.Data0)
 
 [<Test>]
 let ``last -d of a duplicated name wins``() =
@@ -545,7 +550,7 @@ let ``want yields to the CLI targets``() =
     Assert.AreEqual(["scriptTarget"], (b2.Want(b2.Zero(), ["scriptTarget"]) |> b2.ApplyCommandLine |> scriptOptions).Targets)
 
 [<Test>]
-let ``engine per-demand vars come after the script's vars``() =
+let ``engine per-demand vars win over the script's vars``() =   // spec 8.7-39
     let seen = ref (None, None)
     let eng =
         xakeEngine {
@@ -559,7 +564,7 @@ let ``engine per-demand vars come after the script's vars``() =
         }
     try eng.Demand("t", ["V", "demand"; "W", "demand"]).Wait()
     finally eng.StopAsync().Wait()
-    Assert.AreEqual((Some "script", Some "demand"), !seen)
+    Assert.AreEqual((Some "demand", Some "demand"), !seen)
 
 // --- mixed: the CLI wins per name / per field, not all-or-nothing ---
 

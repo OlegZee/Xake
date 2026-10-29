@@ -183,7 +183,7 @@ type ``Vars conformance (spec section 8)``() =
                 let! b = getVar "VC07Y"
                 seen.Value <- [a; b] })
         }
-        Assert.AreEqual([None; None], seen.Value)
+        Assert.AreEqual(([None; None]: string option list), seen.Value)
         let banner = bannerVars logged
         Assert.That(banner, Does.Contain "VC07X (not set)")
         Assert.That(banner, Does.Contain "VC07Y (not set)")
@@ -198,7 +198,7 @@ type ``Vars conformance (spec section 8)``() =
             let ops = b.AddVar(b.Vars(b.Zero(), schema), "VC08X", [Env "VC08_A"])
             let (XakeScript (o, _)) = ops
             Assert.AreEqual(["VC08Y"; "VC08X"], o.VarDecls |> List.map (fun d -> d.Key))
-            Assert.AreEqual([], o.Vars, "the ops record no value")
+            Assert.IsEmpty(o.Vars, "the ops record no value")
             // changed after the ops, before Run: seen
             setEnv "VC08_A" "z"
             let seen = ref []

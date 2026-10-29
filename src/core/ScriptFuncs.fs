@@ -77,9 +77,15 @@ module ScriptFuncs =
             do! ExecCore.need t'
         }
 
+    /// A variable read records one dependency per name and value, whatever the number of reads.
     let private recordDependency d = recipe {
         let! result = getResult()
-        do! setResult { result with Depends = d :: result.Depends }
+        let repeated =
+            match d with
+            | Var _ | EnvVar _ | SecretDep _ -> List.contains d result.Depends
+            | _ -> false
+        if not repeated then
+            do! setResult { result with Depends = d :: result.Depends }
     }
 
     /// <summary>

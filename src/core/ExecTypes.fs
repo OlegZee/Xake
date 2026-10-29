@@ -58,6 +58,11 @@ type VarEntry = {
 
 module internal VarDecl =
 
+    /// How the diagnostics name a definition of a variable (spec E-2, E-7).
+    let constantLabel (name: string) = sprintf "var \"%s\" \"...\"" name
+    let ruleLabel (name: string) = sprintf "var \"%s\" [...]" name
+    let fieldLabel (field: string) = sprintf "varschema field %s" field
+
     /// The declaration of a `var "N" [sources]` rule: a string in both scopes, never required;
     /// the secret markers set its mode (`SecretHashed` wins) and are not kept as sources.
     let ofRule (name: string) (sources: VarSource list) =
@@ -72,7 +77,7 @@ module internal VarDecl =
             elif List.contains Secret sources then SecretPresence
             else NotSecret
           ValueType = typeof<string>
-          DeclaredBy = sprintf "var \"%s\" [...]" name }
+          DeclaredBy = ruleLabel name }
 
     /// The names of its `Env` sources, in list order.
     let envNames (decl: VarDecl) = decl.Sources |> List.choose (function Env e -> Some e | _ -> None)

@@ -12,7 +12,14 @@ mismatched or missing declaration = error. It is written up in [brief.md](brief.
 (rev. 1-3 lazy store, variants 1/2a/2b/2c, rev. 4 lenient read, rev. 5 "Var untouched") moved to
 [archive/](archive/README.md) with a short description of each.
 
-Next step: spec rev. 6 (`spec.md`) from the brief, with conformance tests; the owner approves it;
-then PR 1 starts with the tests of the spec. Proposed split (not yet approved): PR 1 core (`var`
+**Spec rev. 6 written** (`spec.md`: 43 rules, 10 diagnostics, 60 tests, no open points). Points the
+writer decided itself, for the owner's review: E-6 (`-d` of a non-secret `Var.env` fails the launch);
+`var [...]` rules evaluated when the op applies, like `varschema`; declaration equality T-1 (inline
+`Var.env`/`Var.secret` always E-8); no `ProjectDefault` case, to keep published hermetic 0.10
+working; hermetic floor rises with PR 2. Compatibility: `build.fsx` `NUGET_KEY = Var.env` lacks
+`|> secret` and would print in the banner, so PR 1 marks it secret; secret fields rebuild once
+(dependency record changes).
+
+Next step: the owner approves rev. 6 and the PR split; then PR 1 starts with the tests of the spec. Proposed split (not yet approved): PR 1 core (`var`
 lists, `varschema` at launch, `Var` reads, second-definition errors, `?vars` on top, banner sources);
 PR 2 library readers (no env fallback, switches, `.packages`) in Xake.Dotnet and the hermetic package.

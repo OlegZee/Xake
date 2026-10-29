@@ -68,6 +68,9 @@ module Vars =
         static member secret<'t>(?envVar: string, ?description: string) : OptionalVar<'t> =
             { Var.env<'t>(?envVar = envVar, ?description = description) with Secret = SecretPresence }
 
+        static member read<'t>(key: string) : Recipe<ExecContext, 't option> =
+            failwith "Var.read: not implemented"
+
     /// Marks a variable secret: the database keeps only whether it is set (a changed value
     /// rebuilds nothing, unset/set does), the value is masked (`***`) in all output and
     /// `--help` shows no default. Works on any var, before or after `required`/`withDefault`.

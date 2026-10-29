@@ -5,6 +5,41 @@ open Xake.ProcessExec
 open Xake.Tasks
 open System.IO
 
+/// <summary>
+/// The build variables Xake.Dotnet reads, as a schema a script MAY import:
+/// <c>varschema DotNetVars.Default</c>, or with fields changed by copy-and-update, e.g.
+/// <c>varschema { DotNetVars.Default with NUGET_PACKAGES = Var.string() |> withDefault ".packages" }</c>
+/// to take the environment variable `NUGET_PACKAGES` too. Each field is named by its variable,
+/// is a string, takes `-d NAME=value` and no environment variable (the library reads none), and
+/// carries the library's fixed default where it has one. Without the import the library reads
+/// the same names with the same defaults; importing shows them in `--help` and the banner.
+/// </summary>
+type DotNetVars = {
+    /// The build's package folder, relative to the project root or absolute.
+    NUGET_PACKAGES: RequiredVar<string>
+    /// Whether packages missing from the package folder are downloaded: on or off.
+    NUGET_FETCH: RequiredVar<string>
+    /// Hermetic mode for csc and fsc: on or off.
+    HERMETIC: RequiredVar<string>
+    /// The csc compiler server: on, off or a number of keepalive seconds; unset, XAKE_CSC_SERVER.
+    CSC_SERVER: OptionalVar<string>
+    /// The csc compiler server when CSC_SERVER is unset: on or off.
+    XAKE_CSC_SERVER: RequiredVar<string>
+    /// The limit on concurrent csc launches; unset or 0, none. Not a dependency.
+    CSC_JOBS: OptionalVar<string>
+    /// The limit on concurrent fsc launches; unset or 0, none. Not a dependency.
+    FSC_JOBS: OptionalVar<string>
+} with
+    static member Default : DotNetVars = {
+        NUGET_PACKAGES = Var.arg<string>(description = "The build's package folder, relative to the project root or absolute") |> withDefault ".packages"
+        NUGET_FETCH = Var.arg<string>(description = "Download packages missing from the package folder: on or off") |> withDefault "on"
+        HERMETIC = Var.arg<string>(description = "Hermetic mode for csc and fsc: on or off") |> withDefault "off"
+        CSC_SERVER = Var.arg<string>(description = "The csc compiler server: on, off or keepalive seconds; unset, XAKE_CSC_SERVER")
+        XAKE_CSC_SERVER = Var.arg<string>(description = "The csc compiler server when CSC_SERVER is unset: on or off") |> withDefault "on"
+        CSC_JOBS = Var.arg<string>(description = "The limit on concurrent csc launches; unset or 0, none")
+        FSC_JOBS = Var.arg<string>(description = "The limit on concurrent fsc launches; unset or 0, none")
+    }
+
 module internal PkgConfig =
 
     /// Runs pkg-config and returns its first line of output, or "" on any failure.

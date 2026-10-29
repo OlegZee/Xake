@@ -1329,28 +1329,24 @@ module Lock =
         | Compilation.Fsc _ -> options.FscRun.FailOnError
 
     /// <summary>
-    /// Whether this build runs under CI, decided once per build: the script variable `CI`
-    /// when set (`on`/`true`/`yes`/`1` is CI, `off`/`false`/`no`/`0` is not, case-insensitive,
-    /// anything else fails), otherwise the environment variable `CI` that GitHub Actions,
-    /// GitLab CI, Azure Pipelines and most other services set (non-empty and not `0`/`false`
-    /// is CI). Same convention as `NETFX` and `CSC_SERVER`: `-d CI=off` or
-    /// <c>xakeScript { var "CI" "on" }</c> forces either way. Reading it (`getVar`, then
-    /// `getEnv`) makes it a tracked dependency of the target, so changing it reruns the target.
-    /// Under CI, `buildWith` (and so `build` and `csc { lock }`) fails on a missing lock
-    /// instead of recording it.
+    /// Whether this build runs under CI: the build variable `CI` (read, and so a dependency,
+    /// here): `on`/`true`/`yes`/`1` is CI, `off`/`false`/`no`/`0`, empty or unset is not,
+    /// case-insensitive; anything else fails. Same convention as `HERMETIC` and `NUGET_FETCH`.
+    /// The environment variable `CI` that GitHub Actions, GitLab CI, Azure Pipelines and most
+    /// other services set counts only through the script: <c>var "CI" [Env "CI"]</c>, or
+    /// `-d CI=on`. Under CI, `buildWith` (and so `build` and `csc { lock }`) fails on a missing
+    /// lock instead of recording it.
     /// </summary>
     let underCi : Recipe<ExecContext, bool> =
         recipe {
-            let! variable = getVar "CI"
-            match variable |> Option.map (fun v -> v.Trim().ToLowerInvariant ()) with
-            | Some ("on" | "true" | "yes" | "1") -> return true
-            | Some ("off" | "false" | "no" | "0") -> return false
-            | Some other -> return failwithf "CI='%s': expected on or off" other
-            | None ->
-                let! env = getEnv "CI"
-                match env |> Option.map (fun v -> v.Trim().ToLowerInvariant ()) with
-                | None | Some ("" | "0" | "false") -> return false
-                | Some _ -> return true
+            let! variable = Var.read<string> "CI"
+            match variable |> Option.map (fun v -> v.Trim ()) with
+            | None | Some "" -> return false
+            | Some v ->
+                match v.ToLowerInvariant () with
+                | "on" | "true" | "yes" | "1" -> return true
+                | "off" | "false" | "no" | "0" -> return false
+                | _ -> return failwithf "CI='%s': expected on or off" v
         }
 
     /// The extra roots that read a lock against the package folder the options restore into

@@ -38,6 +38,7 @@
     <Compile Include="SdkFreeImportTests.fs" />
     <Compile Include="AppTests.fs" />
     <Compile Include="RunFolderTests.fs" />
+    <Compile Include="HermeticVarsTests.fs" />
   </ItemGroup>
   <ItemGroup>
     <!-- The `Xake` package (engine and Xake.Dotnet) flows in through this reference. -->

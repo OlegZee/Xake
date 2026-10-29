@@ -5,6 +5,80 @@ open Xake.WorkerPool
 /// Execution status of a single target: built, skipped, or was already a file.
 type ExecStatus = | Succeed | Skipped | JustFile
 
+/// Controls which source(s) a variable resolves from.
+type LookupScope = ArgAndEnv | EnvOnly | ArgOnly
+
+/// An element of a `var "N" [...]` source list: `Env`/`Default` are tried in list order, the
+/// first that defines the name gives its value; `Secret`/`SecretHashed` define nothing, they
+/// make the variable a secret (presence only, or a salted HMAC; with both, `SecretHashed`).
+type VarSource =
+    | Env of string
+    | Default of string
+    | Secret
+    | SecretHashed
+
+/// Where the value of a variable came from (the banner shows it).
+[<RequireQualifiedAccess>]
+type VarOrigin =
+    /// the engine's per-demand `?vars`
+    | Request
+    /// `-d NAME=value`
+    | Cli
+    /// an `ExecOptions.Vars` entry or a constant `var "N" "v"`
+    | Script
+    /// an `Env` source of the declaration
+    | Env of string
+    /// a `Default` source of the declaration
+    | Default
+
+/// A variable declaration: a `var "N" [...]` rule or a `varschema` field, recorded by the op
+/// without a value and evaluated at launch. A Var read finds its value through an equal
+/// declaration: all fields but `DeclaredBy` equal.
+type VarDecl = {
+    Key: string
+    /// The `Env`/`Default` sources in list order (no secret markers).
+    Sources: VarSource list
+    /// The typed default of a field (`withDefault`), the first `Default` of a rule.
+    DefaultValue: obj option
+    Scope: LookupScope
+    /// `required` without a default.
+    Required: bool
+    Secret: SecretMode
+    ValueType: System.Type
+    /// `var "N" [...]` or `varschema field F`, for the diagnostics.
+    DeclaredBy: string
+}
+
+/// A variable of the set built at launch: its value (if any), where it came from, its declaration.
+type VarEntry = {
+    Value: string option
+    Origin: VarOrigin option
+    Decl: VarDecl option
+}
+
+module internal VarDecl =
+
+    /// The declaration of a `var "N" [sources]` rule: a string in both scopes, never required;
+    /// the secret markers set its mode (`SecretHashed` wins) and are not kept as sources.
+    let ofRule (name: string) (sources: VarSource list) =
+        let sources' = sources |> List.filter (function Env _ | Default _ -> true | Secret | SecretHashed -> false)
+        { Key = name
+          Sources = sources'
+          DefaultValue = sources' |> List.tryPick (function Default v -> Some (box v) | _ -> None)
+          Scope = ArgAndEnv
+          Required = false
+          Secret =
+            if List.contains SecretHashed sources then SecretHash
+            elif List.contains Secret sources then SecretPresence
+            else NotSecret
+          ValueType = typeof<string>
+          DeclaredBy = sprintf "var \"%s\" [...]" name }
+
+    /// The names of its `Env` sources, in list order.
+    let envNames (decl: VarDecl) = decl.Sources |> List.choose (function Env e -> Some e | _ -> None)
+
+    let isSecret (decl: VarDecl) = decl.Secret <> NotSecret
+
 /// Engine-level options: immutable after construction.
 type EngineOptions = {
     ProjectRoot: string
@@ -14,6 +88,9 @@ type EngineOptions = {
     Rules: Rules<ExecContext>
     /// How to select among the rules that match a target.
     RuleMatch: RuleMatchMode
+    /// The variable set built at launch: every key with its value, origin and declaration.
+    /// Var reads, the banner and the per-demand checks look here.
+    Variables: Map<string, VarEntry>
 } with
     static member Default = {
         ProjectRoot = System.IO.Directory.GetCurrentDirectory()
@@ -22,6 +99,7 @@ type EngineOptions = {
         Teardown = []
         Rules = Rules []
         RuleMatch = MostSpecific
+        Variables = Map.empty
     }
 
 /// Engine-level immutable state shared across all tasks.
@@ -72,9 +150,6 @@ module internal Util =
     let private valueByName variableName = function |name,value when name = variableName -> Some value | _ -> None
     /// Looks up a script variable by name from a key-value list.
     let getVar (vars: (string * string) list) name = vars |> List.tryPick (valueByName name)
-
-/// Controls which source(s) a variable resolves from.
-type LookupScope = ArgAndEnv | EnvOnly | ArgOnly
 
 /// Help metadata for --help output.
 type VarHelp = {

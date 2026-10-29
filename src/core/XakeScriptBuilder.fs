@@ -117,10 +117,26 @@ module XakeScriptBuilder =
     open System.Collections.Concurrent
     open System.Threading.Tasks
 
-    /// The "Script variables" section of --help: names, types, env names, defaults and
-    /// descriptions; a secret variable is marked "(secret)" and shows no default.
-    let internal formatVarsHelp (schema: (string * VarHelp) list) =
-        if schema = [] then []
+    /// The `--help` lines of `var "N" [...]` rules: name, env names, the first default; a secret
+    /// is marked "(secret)" and shows no default. Constant `var` ops are not listed.
+    let private ruleHelpLines (decls: VarDecl list) =
+        [ for d in decls do
+            if d.DeclaredBy.StartsWith "var " then
+                let envs = d.Sources |> List.choose (function Env e -> Some e | _ -> None)
+                let secret = if d.Secret <> NotSecret then " (secret)" else ""
+                let envStr = if envs.IsEmpty then "" else ", env: " + String.concat ", " envs
+                let defaultStr =
+                    match d.Secret, d.Sources |> List.tryPick (function Default v -> Some v | _ -> None) with
+                    | NotSecret, Some v -> sprintf ", default: %s" v
+                    | _ -> ""
+                yield sprintf "  -d %s=<value> [string]%s%s%s" d.Key secret envStr defaultStr ]
+
+    /// The "Script variables" section of --help: the `varschema` fields (names, types, env names,
+    /// defaults and descriptions), then the `var "N" [...]` rules; a secret variable is marked
+    /// "(secret)" and shows no default.
+    let private formatHelpLines (schema: (string * VarHelp) list) (decls: VarDecl list) =
+        let rules = ruleHelpLines decls
+        if schema = [] && rules = [] then []
         else
             "\nScript variables:" ::
             [ for (name, help) in schema do
@@ -141,10 +157,18 @@ module XakeScriptBuilder =
                     if help.IsSecret then ""
                     else help.DefaultStr |> Option.map (sprintf ", default: %s") |> Option.defaultValue ""
                 let descStr = help.Description |> Option.map (sprintf " — %s") |> Option.defaultValue ""
-                yield sprintf "%s%s%s%s%s%s" header required secret envStr defaultStr descStr ]
+                yield sprintf "%s%s%s%s%s%s" header required secret envStr defaultStr descStr
+              yield! rules ]
 
-    let private printVarsHelp (schema: (string * VarHelp) list) =
-        formatVarsHelp schema |> List.iter (printfn "%s")
+    /// The "Script variables" section of --help for a `varschema` alone.
+    let internal formatVarsHelp (schema: (string * VarHelp) list) = formatHelpLines schema []
+
+    /// The "Script variables" section of --help for the script's options. It is built from the
+    /// declarations only: nothing is evaluated, no environment variable is read.
+    let internal formatHelp (options: ExecOptions) = formatHelpLines options.VarSchema options.VarDecls
+
+    let private printVarsHelp (options: ExecOptions) =
+        formatHelp options |> List.iter (printfn "%s")
 
     /// Script builder; `args` are the command line (None: not from xakeArgs, no logo either).
     type RulesBuilder internal (options: ExecOptions, args: string list option) =
@@ -152,9 +176,6 @@ module XakeScriptBuilder =
         let updRules (XakeScript (options, rules)) f = XakeScript (options, f(rules))
         let updTargets (XakeScript (options, rules)) f = XakeScript ({options with Targets = f(options.Targets)}, rules)
         let addRule rule (Rules rules) :Rules<_> =    Rules (rule :: rules)
-
-        let updateVar (key: string) (value: string) =
-            List.filter(fst >> ((<>) key)) >> ((@) [key, value])
 
         new (options: ExecOptions) = RulesBuilder(options, None)
 
@@ -206,7 +227,7 @@ module XakeScriptBuilder =
         member this.Run(script: XakeScript) =
             let (XakeScript (options, rules)) = this.ApplyCommandLine script
             if options.ShowHelp then
-                printVarsHelp options.VarSchema
+                printVarsHelp options
                 exit 0
             ScriptRunner.runScript options rules
 
@@ -219,10 +240,20 @@ module XakeScriptBuilder =
         member __.RootDir(XakeScript (options, rules), dir) =
             XakeScript ({options with ProjectRoot = dir}, rules)
 
+        /// A script value of a variable (`-d` and the engine's per-demand vars win over it).
         [<CustomOperation("var")>]
-        member __.AddVar(XakeScript (options, rules), name, value) =
+        member __.AddVar(XakeScript (options, rules), name: string, value: string) =
+            XakeScript ({ options with Vars = options.Vars @ [name, value]
+                                       VarDefinedBy = options.VarDefinedBy @ [name, sprintf "var \"%s\" \"...\"" name] }, rules)
 
-            XakeScript ({options with Vars = options.Vars |> updateVar name value }, rules)
+        /// A variable rule: at launch its sources are tried in list order (`Env "X"`, `Default "v"`),
+        /// unless `-d` or a script value defines the name; `Secret`/`SecretHashed` make it a secret.
+        /// The op only records the declaration.
+        [<CustomOperation("var")>]
+        member __.AddVar(XakeScript (options, rules), name: string, sources: VarSource list) =
+            let decl = VarDecl.ofRule name sources
+            XakeScript ({ options with VarDecls = options.VarDecls @ [decl]
+                                       VarDefinedBy = options.VarDefinedBy @ [name, decl.DeclaredBy] }, rules)
 
         [<CustomOperation("filelog")>]
         member __.FileLog(XakeScript (options, rules), filename, ?loglevel) =

@@ -63,26 +63,22 @@
     <Compile Include="Sign.fs" />
   </ItemGroup>
 
-  <ItemGroup>
-    <!-- Built on the published package, not on src/dotnet and src/core: the `Xake` package
-         carries both Xake.dll and Xake.Dotnet.dll, and the range is what the nuspec
-         dependency says. 3.14.0 is the release this package builds on (nothing new is used from it;
-         its `want` replaces `wantOverride`, which the tests used). 3.13.0 brought
-         `Tool.diagnosticLevel`, which knows msbuild's and NuGet's diagnostic shapes and `Tool.DiagnosticLog` /
-         `Tool.failOnExitCodeWith` repeat a failed run's first errors, which the import's msbuild
-         and restore runs use (3.11.0 brought the quoted compiler runner and `Tool.quoteArgument`;
-         3.9.0 brought the project description, `Xake.Dotnet.Description`, `ProjectPlan`,
-         and the `Project` field of `CscSettingsType`/`FscSettingsType`; 3.8.0 `ArtifactDep2`,
-         the run folder rule relies on it, and `ResxFormat`). nuget.org carries 3.14.0 as
-         3.14.0.45 (publish.yml appends the run number); the lower bound is that exact
-         published version, or NuGet warns NU1603 on every restore.
+  <!-- Built on the published package, not on src/dotnet and src/core: the `Xake` package
+       carries both Xake.dll and Xake.Dotnet.dll, and the range is what the nuspec dependency
+       says. The floor is the oldest Xake this package runs on (a version that is on nuget.org,
+       or NuGet warns NU1603); it moves only when the package needs what a release brings.
+       The upper bound is 4.0: until then the records this package builds do not grow
+       (docs/devprocess.md, "The records the hermetic package builds"; RecordShapeTests).
+       Which Xake brought what: docs/hermetic/README.md.
 
-         The upper bound is the next minor. F# records are not binary-compatible across
-         releases that add a field (a copy-and-update expression compiles to the full
-         constructor), so a 3.x minor that adds a field to a record this package builds
-         (`CscSettingsType`, `FscSettingsType`, `Csc`, `Fsc`, the run options) needs a release
-         of this package with it. -->
-    <PackageReference Include="Xake" Version="[3.14.0.45, 3.15)" />
+       XakeVersion is overridable for CI (-p:XakeVersion=[3.999.0-dev] with a local feed, or
+       [<newest published>]), so the tests run against an unreleased base or the newest release
+       (build.fsx XAKE_VERSION / NUGET_SOURCE, .github/workflows/build.yml `hermetic-compat`). -->
+  <PropertyGroup>
+    <XakeVersion Condition="'$(XakeVersion)' == ''">[3.14.0.45, 4.0)</XakeVersion>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Xake" Version="$(XakeVersion)" />
   </ItemGroup>
 
   <!-- Test assemblies only; no other package sees these internals. hermetic.tests tests the

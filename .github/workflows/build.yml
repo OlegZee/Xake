@@ -37,6 +37,37 @@ jobs:
         path: build.log
         retention-days: 5
 
+  # Xake.Hermetic.Dotnet's range on Xake runs up to 4.0 (docs/devprocess.md, "The records the
+  # hermetic package builds"). Its tests run here against the base of this commit (src/core +
+  # src/dotnet packed as 3.999.0-dev into a local feed; a prerelease, so no range picks it up by
+  # itself) and against the newest Xake on nuget.org, so a break shows before a release.
+  hermetic-compat:
+    if: github.event_name != 'push' || !startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+    - uses: actions/checkout@v7
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v6
+      with:
+        dotnet-version: '10.0.x'
+    - name: Hermetic tests on this commit's Xake
+      run: |
+        dotnet fsi build.fsx -- -- out/pkg/Xake/Xake.3.999.0-dev.nupkg -d Version=3.999.0-dev
+        dotnet fsi build.fsx -- -- test-project::hermetic -d "XAKE_VERSION=[3.999.0-dev]" -d "NUGET_SOURCE=$PWD/out/pkg/Xake"
+    - name: Hermetic tests on the newest published Xake
+      run: |
+        LATEST=$(curl -sf https://api.nuget.org/v3-flatcontainer/xake/index.json | jq -r '[.versions[] | select(test("-") | not)] | last')
+        echo "newest Xake on nuget.org: $LATEST"
+        dotnet fsi build.fsx -- -- test-project::hermetic -d "XAKE_VERSION=[$LATEST]"
+    - name: Upload build log
+      uses: actions/upload-artifact@v7
+      if: always()
+      with:
+        name: hermetic-compat-log-${{ github.run_number }}
+        path: build.log
+        retention-days: 5
+
   # The declarative self-build (build.fsc.fsx): the three libraries compiled by fsc from the
   # committed descriptions and locks, no msbuild for them; fails on a stale fingerprint
   # (`check`). The script bootstraps from the published Xake / Xake.Hermetic.Dotnet packages.

@@ -128,5 +128,5 @@ type ``Hermetic vars conformance (spec section 8-9)``() =
         Assert.AreEqual((ArgOnly, Some "fail"), (d.LOCK_STALE.Scope, d.LOCK_STALE.DefaultValue))
         Assert.AreEqual(ArgOnly, d.LOCK_REFRESH.Scope)
         Assert.AreEqual(ArgOnly, d.SOURCE_DATE_EPOCH.Scope)
-        let props = typeof<HermeticVars>.GetProperties() |> Array.map (fun p -> p.Name) |> Array.sort |> List.ofArray
+        let props = typeof<HermeticVars>.GetProperties(Reflection.BindingFlags.Public ||| Reflection.BindingFlags.Instance) |> Array.map (fun p -> p.Name) |> Array.sort |> List.ofArray
         Assert.That(props, Is.EqualTo [ "CI"; "LOCK_REFRESH"; "LOCK_STALE"; "SOURCE_DATE_EPOCH" ])

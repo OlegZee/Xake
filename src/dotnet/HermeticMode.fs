@@ -39,9 +39,9 @@ module HermeticMode =
         ProjectRoots: string list
         /// The package folder in effect
         PackageRoot: string
-        /// Whether the package folder is the build's own (the script variable
-        /// `NUGET_PACKAGES`); when not, the mode fails with message 2 and paths under the folder
-        /// are not reported one by one
+        /// Whether the package folder is the build's own (the build variable `NUGET_PACKAGES`,
+        /// or its default `.packages`: always, from `roots ()`); when not, the mode fails with
+        /// message 2 and paths under the folder are not reported one by one
         PackageRootDeclared: bool
         /// The .NET installation root (`$(DotnetRoot)`), `None` when there is none
         DotnetRoot: string option
@@ -57,22 +57,16 @@ module HermeticMode =
     /// Parses a `HERMETIC` value: `on|true|yes|1` -> true, `off|false|no|0` (and unset or
     /// empty) -> false, case-insensitive; anything else fails with message 1.
     let parse (value: string option) : bool =
-        match value |> Option.map (fun v -> v.Trim()) with
-        | None | Some "" -> false
-        | Some v ->
-            match v.ToLowerInvariant() with
-            | "on" | "true" | "yes" | "1" -> true
-            | "off" | "false" | "no" | "0" -> false
-            | _ -> failwithf "HERMETIC='%s': expected on or off" v
+        DotNetFwk.parseSwitch "HERMETIC" value |> Option.defaultValue false
 
     /// <summary>
-    /// Whether the build runs in hermetic mode: the script variable `HERMETIC` (read, and so a
-    /// dependency, here; no environment fallback -- the content rule belongs to the build
-    /// definition), default off. An unrecognized value fails (message 1).
+    /// Whether the build runs in hermetic mode: the build variable `HERMETIC` (read, and so a
+    /// dependency, here, with `Var.read`; no environment fallback -- the content rule belongs to
+    /// the build definition), default off. An unrecognized value fails (message 1).
     /// </summary>
     let enabled () : Recipe<ExecContext, bool> =
         recipe {
-            let! v = getVar "HERMETIC"
+            let! v = Var.read<string> "HERMETIC"
             return parse v
         }
 
@@ -152,7 +146,7 @@ module HermeticMode =
         let package =
             if roots.PackageRootDeclared then []
             else
-                [ sprintf "'%s': HERMETIC=on needs a package folder of the build's own: set the NUGET_PACKAGES script variable (var \"NUGET_PACKAGES\" \".nuget/packages\", or -d NUGET_PACKAGES=<dir>)" name ]
+                [ sprintf "'%s': HERMETIC=on needs a package folder of the build's own: the build variable NUGET_PACKAGES names it (-d NUGET_PACKAGES=<dir>; unset, .packages under the project root)" name ]
         let paths =
             inputs
             |> List.filter (fun i -> not (System.String.IsNullOrEmpty i.Path))

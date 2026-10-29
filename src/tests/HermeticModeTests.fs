@@ -85,7 +85,7 @@ type ``Hermetic mode``() =
         | Choice2Of2 text -> Assert.Fail text; Unchecked.defaultof<_>
 
     let message2 name =
-        sprintf "'%s': HERMETIC=on needs a package folder of the build's own: set the NUGET_PACKAGES script variable (var \"NUGET_PACKAGES\" \".nuget/packages\", or -d NUGET_PACKAGES=<dir>)" name
+        sprintf "'%s': HERMETIC=on needs a package folder of the build's own: the build variable NUGET_PACKAGES names it (-d NUGET_PACKAGES=<dir>; unset, .packages under the project root)" name
 
     [<Test>]
     member __.``HERMETIC values parse like CI and anything else fails``() =
@@ -114,20 +114,23 @@ type ``Hermetic mode``() =
         let c : Csc = cscIn x.TestOptions root "off" [ "HERMETIC", "off" ] None |> resolved
         Assert.That(c.Name, Is.EqualTo "off")
 
-    [<Test; Category("Integration")>]
-    member x.``message 2: no NUGET_PACKAGES script variable``() =
-        let root = projectRoot "m2" None
-        let text = cscIn x.TestOptions root "m2" (without ["NUGET_PACKAGES"] (fullVars root)) None |> failure
-        Assert.That(text, Does.Contain (message2 "m2"))
+    [<Test>]
+    member x.``message 2: a package folder that is not the build's own``() =
+        // `roots ()` always declares it (the build variable, or its default .packages); a caller
+        // with roots of its own may not
+        let roots : HermeticMode.Roots =
+            { ProjectRoots = [ "/p" ]; PackageRoot = "/pkgs"; PackageRootDeclared = false; DotnetRoot = None
+              SdkPin = DotNetFwk.NoGlobalJson; SdkInstalled = (fun _ -> false); TargetingPackVersion = (fun _ -> None) }
+        Assert.That(HermeticMode.check "m2" roots [], Is.EqualTo [ message2 "m2" ])
 
     [<Test; Category("Integration")>]
-    member x.``message 2: the environment variable NUGET_PACKAGES alone does not count``() =
+    member x.``without NUGET_PACKAGES the build's .packages is accepted, the environment's is not read``() =
         let root = projectRoot "m2env" None
         let saved = System.Environment.GetEnvironmentVariable "NUGET_PACKAGES"
         System.Environment.SetEnvironmentVariable ("NUGET_PACKAGES", nuget ())
         try
-            let text = cscIn x.TestOptions root "m2env" (without ["NUGET_PACKAGES"] (fullVars root)) None |> failure
-            Assert.That(text, Does.Contain (message2 "m2env"))
+            let c : Csc = cscIn x.TestOptions root "m2env" (without ["NUGET_PACKAGES"] (fullVars root)) None |> resolved
+            Assert.That(norm c.Dependencies.Compiler.Path, Does.StartWith (norm (root </> ".packages") + "/microsoft.net.compilers.toolset/"))
         finally
             System.Environment.SetEnvironmentVariable ("NUGET_PACKAGES", saved)
 

@@ -95,7 +95,7 @@ type ``Package folder script variable``() =
         Assert.That(packageIds pkgs, Is.EqualTo [ "fsharp.core"; "netstandard.library" ])
 
     [<Test; Category("Integration")>]
-    member x.``without the script variable the environment's package folder is used``() =
+    member x.``without the variable the build's .packages is used, not the environment's``() =
         File.WriteAllText ("PkgEnv.cs", "public class PkgEnv {}\n")
         let resolved = ref None
 
@@ -116,7 +116,7 @@ type ``Package folder script variable``() =
         }
 
         let c = resolved.Value |> Option.get
-        let root = norm (DotNetFwk.nugetRoot ()) + "/"
+        let root = norm x.PackageRoot + "/"
         Assert.That(norm c.Dependencies.Compiler.Path, Does.StartWith (root + "microsoft.net.compilers.toolset/"))
         Assert.That(c.Dependencies.References |> List.map (fun r -> norm r.Path),
                     Does.Contain (root + "netstandard.library/2.0.3/build/netstandard2.0/ref/mscorlib.dll"))

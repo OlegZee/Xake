@@ -395,10 +395,10 @@ let greet name = sprintf "Hello, %s" name
         }
         let c = resolved.Value |> Option.get
         let norm (p: string) = p.Replace('\\', '/')
-        let refDir = norm (DotNetFwk.nugetRoot () </> "netstandard.library" </> version </> "build" </> "netstandard2.0" </> "ref")
+        let refDir = norm (x.PackageRoot </> "netstandard.library" </> version </> "build" </> "netstandard2.0" </> "ref")
         let refs = c.Dependencies.References |> List.map (fun r -> norm r.Path)
         Assert.That(refs, Does.Contain (refDir + "/mscorlib.dll"))
-        Assert.That(c.Args, Does.Contain ("/reference:" + DotNetFwk.nugetRoot () </> "netstandard.library" </> version </> "build" </> "netstandard2.0" </> "ref" </> "mscorlib.dll"))
+        Assert.That(c.Args, Does.Contain ("/reference:" + x.PackageRoot </> "netstandard.library" </> version </> "build" </> "netstandard2.0" </> "ref" </> "mscorlib.dll"))
 
     // A reference-pack version that does not exist fails the build, naming the package and
     // the version, instead of being swallowed.
@@ -623,7 +623,7 @@ let greet name = sprintf "Hello, %s" name
         }
         let c = resolved.Value |> Option.get
         let norm (p: string) = p.Replace('\\', '/')
-        let pkgRoot = norm (DotNetFwk.nugetRoot ()) + "/microsoft.netcore.app.ref/"
+        let pkgRoot = norm (x.PackageRoot) + "/microsoft.netcore.app.ref/"
         let refs = c.Dependencies.References |> List.map (fun r -> norm r.Path)
         Assert.That(c.Framework, Is.EqualTo "net6.0")
         Assert.That(refs, Is.Not.Empty)
@@ -713,7 +713,7 @@ let greet name = sprintf "Hello, %s" name
                 ]
             }
             resolved.Value |> Option.get |> fun c -> c.Dependencies.References |> List.map (fun r -> r.Path.Replace('\\', '/'))
-        let nugetRoot = (DotNetFwk.nugetRoot ()).Replace('\\', '/')
+        let nugetRoot = (x.PackageRoot).Replace('\\', '/')
         let pins = ["NETCORE_REF_VERSION", "6.0.36;8.0.31"]
         for fwk, version in ["net6.0", "6.0.36"; "net8.0", "8.0.31"] do
             let refs = resolveWith fwk pins

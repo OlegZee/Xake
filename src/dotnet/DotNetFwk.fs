@@ -372,12 +372,11 @@ module DotNetFwk =
                 let candidates = if Array.isEmpty released then dirs else released
                 candidates |> Array.sortBy versionKey |> Array.tryLast
 
+        // `~/.nuget/packages`; the environment variable `NUGET_PACKAGES` is not read (a build
+        // variable, spec L-3): a child restore gets the folder in use explicitly
         let internal nugetRoot () =
-            match %"NUGET_PACKAGES" with
-            | null | "" ->
-                System.Environment.GetFolderPath System.Environment.SpecialFolder.UserProfile
-                    </> ".nuget" </> "packages"
-            | dir -> dir
+            System.Environment.GetFolderPath System.Environment.SpecialFolder.UserProfile
+                </> ".nuget" </> "packages"
 
         let defaultVersions =
             { NetStandardLibrary = netstandardLibraryVersion
@@ -774,26 +773,31 @@ module DotNetFwk =
                 let refDir = refAssembliesDir packageRoot projectRoot versions moniker
                 sdkFwkInfo projectRoot [refDir; refDir </> "Facades"] moniker
 
-    /// The machine's NuGet package cache: the environment variable `NUGET_PACKAGES`, else
-    /// `~/.nuget/packages`. This is the package folder of a caller with no build; a recipe asks
-    /// `packageRoot ()`, which honours the script variable `NUGET_PACKAGES` first.
+    /// The machine's NuGet package cache, `~/.nuget/packages`: the package folder of a caller
+    /// with no build (the environment variable `NUGET_PACKAGES` is not read). A recipe asks
+    /// `packageRoot ()`, the build's own folder.
     let nugetRoot () = sdkImpl.nugetRoot ()
 
+    /// The default of the build variable `NUGET_PACKAGES`: `.packages` under the project root.
+    let defaultPackageFolder = ".packages"
+
     /// <summary>
-    /// The package folder of the build: the script variable `NUGET_PACKAGES` (relative to the
-    /// project root, or absolute; read, and so a dependency, here), else `nugetRoot ()` (the
-    /// environment variable, else `~/.nuget/packages`). Everything Xake restores or looks up in
-    /// the package folder from a recipe goes here: `restorePackage None`, `downloadPackages None`,
-    /// the reference packs `resolveFramework` reads, the `toolset` compiler, fsc's default
-    /// `FSharp.Core`.
+    /// The package folder of the build: the build variable `NUGET_PACKAGES` (relative to the
+    /// project root, or absolute; read, and so a dependency, here; `Var.read`, so a declaration
+    /// of it -- `DotNetVars`, a `var` rule -- is honoured), else `.packages` under the project
+    /// root; a blank value counts as unset. The environment variable counts only through the
+    /// script: `var "NUGET_PACKAGES" [Env "NUGET_PACKAGES"]`. Everything Xake restores or looks
+    /// up in the package folder from a recipe goes here: `restorePackage None`,
+    /// `downloadPackages None`, the reference packs `resolveFramework` reads, the `toolset`
+    /// compiler, fsc's default `FSharp.Core`; a child `dotnet restore` gets it as its
+    /// `NUGET_PACKAGES`.
     /// </summary>
     let packageRoot () : Recipe<ExecContext, string> =
         recipe {
             let! options = getCtxOptions ()
-            let! var = getVar "NUGET_PACKAGES"
-            match var |> Option.map (fun v -> v.Trim()) |> Option.filter ((<>) "") with
-            | Some dir -> return Path.GetFullPath (Path.Combine (Path.GetFullPath options.ProjectRoot, dir))
-            | None -> return nugetRoot ()
+            let! var = Var.read<string> "NUGET_PACKAGES"
+            let dir = var |> Option.map (fun v -> v.Trim()) |> Option.filter ((<>) "") |> Option.defaultValue defaultPackageFolder
+            return Path.GetFullPath (Path.Combine (Path.GetFullPath options.ProjectRoot, dir))
         }
 
     /// The .NET SDK installation root, when one can be located: compilers, analyzers and
@@ -802,29 +806,25 @@ module DotNetFwk =
 
     /// Where the package folder of a build came from (`packageRootWithSource`).
     type PackageRootSource =
-        /// the script variable `NUGET_PACKAGES`: a folder of the build's own
+        /// the build variable `NUGET_PACKAGES`, or its default `.packages`: a folder of the
+        /// build's own -- what `packageRootWithSource` returns
         | ScriptVariable
-        /// the environment variable `NUGET_PACKAGES`: the machine's
-        | EnvironmentVariable
-        /// `~/.nuget/packages`: the machine's
-        | UserProfile
+        /// the environment variable `NUGET_PACKAGES`: no longer produced (the environment is
+        /// not read; Xake 3.16)
+        | [<System.Obsolete "No longer produced: the package folder is always the build's own (ScriptVariable)">] EnvironmentVariable
+        /// `~/.nuget/packages`: no longer produced (the default is `.packages`; Xake 3.16)
+        | [<System.Obsolete "No longer produced: the package folder is always the build's own (ScriptVariable)">] UserProfile
 
     /// <summary>
-    /// `packageRoot ()` together with where it came from: the script variable `NUGET_PACKAGES`
-    /// (read, and so a dependency, here), else the environment variable, else
-    /// `~/.nuget/packages`. Only `ScriptVariable` makes the folder part of the build's
-    /// configuration, which is what `HERMETIC=on` asks for.
+    /// `packageRoot ()` together with where it came from: always `ScriptVariable` -- the
+    /// build variable `NUGET_PACKAGES` and its default `.packages` are both a folder of the
+    /// build's own, which is what `HERMETIC=on` asks for. The source is kept for callers
+    /// compiled against older Xake versions.
     /// </summary>
     let packageRootWithSource () : Recipe<ExecContext, string * PackageRootSource> =
         recipe {
             let! root = packageRoot ()
-            let! var = getVar "NUGET_PACKAGES"
-            match var |> Option.map (fun v -> v.Trim()) |> Option.filter ((<>) "") with
-            | Some _ -> return root, ScriptVariable
-            | None ->
-                match %"NUGET_PACKAGES" with
-                | null | "" -> return root, UserProfile
-                | _ -> return root, EnvironmentVariable
+            return root, ScriptVariable
         }
 
     /// How `global.json` selects the .NET SDK for a project root: the file found searching
@@ -911,19 +911,30 @@ module DotNetFwk =
     let sdkTargetingPackVersion (projectRoot: string) (moniker: string) : string option =
         sdkImpl.sdkTargetingPackVersion (Path.GetFullPath projectRoot) moniker
 
+    /// Parses an on/off switch (`HERMETIC`, `NUGET_FETCH`, `XAKE_CSC_SERVER`, ...):
+    /// `on|true|yes|1` -> `Some true`, `off|false|no|0` -> `Some false`, unset, empty or blank ->
+    /// `None` (the switch's default); anything else fails with `NAME='value': expected on or off`.
+    /// Trimmed, case-insensitive.
+    let parseSwitch (name: string) (value: string option) : bool option =
+        match value |> Option.map (fun v -> v.Trim()) with
+        | None | Some "" -> None
+        | Some v ->
+            match v.ToLowerInvariant() with
+            | "on" | "true" | "yes" | "1" -> Some true
+            | "off" | "false" | "no" | "0" -> Some false
+            | _ -> failwithf "%s='%s': expected on or off" name v
+
     /// <summary>
-    /// Whether Xake may download packages into the package folder: the script variable `NUGET_FETCH`
-    /// (read, and so a dependency, here) -- `off`, `false`, `no` or `0` turn fetching off,
-    /// anything else, or unset, leaves it on. `restorePackage` and `downloadPackages` honour it:
-    /// with fetching off a package missing from the folder fails the build, naming it. This is
-    /// what `Restore.Options.Enabled` of Xake.Hermetic.Dotnet is to default to.
+    /// Whether Xake may download packages into the package folder: the build variable
+    /// `NUGET_FETCH` (read, and so a dependency, here) -- `on`/`off` (`parseSwitch`), default on;
+    /// any other value fails. `restorePackage` and `downloadPackages` honour it: with fetching off
+    /// a package missing from the folder fails the build, naming it. This is what
+    /// `Restore.Options.Enabled` of Xake.Hermetic.Dotnet is to default to.
     /// </summary>
     let fetchEnabled () : Recipe<ExecContext, bool> =
         recipe {
-            let! var = getVar "NUGET_FETCH"
-            match var |> Option.map (fun v -> v.Trim().ToLowerInvariant()) with
-            | Some ("off" | "false" | "no" | "0") -> return false
-            | _ -> return true
+            let! var = Var.read<string> "NUGET_FETCH"
+            return parseSwitch "NUGET_FETCH" var |> Option.defaultValue true
         }
 
     /// The failure of a package that is missing while fetching is off.
@@ -935,8 +946,8 @@ module DotNetFwk =
     let private buildPackageRoot () = packageRoot ()
 
     /// The package folder in effect, normalized to forward slashes without a trailing one:
-    /// `None` is the machine's own cache (`nugetRoot ()`, the environment only: this function
-    /// has no build to read the script variable from -- a recipe passes `packageRoot ()`),
+    /// `None` is the machine's own cache (`nugetRoot ()`, `~/.nuget/packages`: this function
+    /// has no build to read the build variable from -- a recipe passes `packageRoot ()`),
     /// `Some dir` a folder of the build's own.
     let normalizedPackageRoot (packageRoot: string option) =
         (packageRoot |> Option.defaultWith nugetRoot).Replace('\\', '/').TrimEnd '/'
@@ -955,10 +966,10 @@ module DotNetFwk =
     /// one package folder are NuGet's own business, and it handles them. A failed attempt is
     /// left on disk, named by the message, so it can be re-run by hand.
     ///
-    /// `packageRoot` `None` is the build's package folder (`packageRoot ()`: the script variable
-    /// `NUGET_PACKAGES`, else the environment's), `Some dir` (absolute) a folder of the caller's
+    /// `packageRoot` `None` is the build's package folder (`packageRoot ()`: the build variable
+    /// `NUGET_PACKAGES`, else `.packages`), `Some dir` (absolute) a folder of the caller's
     /// choosing. The child `dotnet restore` gets it as the environment variable `NUGET_PACKAGES`.
-    /// With fetching off (`fetchEnabled`, the script variable `NUGET_FETCH`) nothing is
+    /// With fetching off (`fetchEnabled`, the build variable `NUGET_FETCH`) nothing is
     /// started: packages already in the folder pass, a missing one fails naming it.
     let downloadPackages (packageRoot: string option) (packages: (string * string) list) : Recipe<ExecContext, unit> =
         recipe {
@@ -1000,8 +1011,8 @@ module DotNetFwk =
 
     /// The folder of one NuGet package (`<packageRoot>/<id lowercase>/<version>`), fetching it
     /// into the package folder first when it is not there yet. `packageRoot` is `None` for the
-    /// build's package folder (`packageRoot ()`: the script variable `NUGET_PACKAGES`, else the
-    /// environment's), `Some dir` (absolute) for a folder of the caller's choosing. Restoring
+    /// build's package folder (`packageRoot ()`: the build variable `NUGET_PACKAGES`, else
+    /// `.packages`), `Some dir` (absolute) for a folder of the caller's choosing. Restoring
     /// cannot change *what* a version is, so this is safe to call from any recipe; it starts no
     /// process when the folder already exists, and fails naming the package when it does not
     /// and fetching is off (`fetchEnabled`).
@@ -1072,8 +1083,8 @@ module DotNetFwk =
     /// (or above) the project root is honoured. Memoized per (package folder, root, framework).
     ///
     /// For callers with no build: reference packages are read from (and restored into) the
-    /// machine's cache, `nugetRoot ()` -- the environment variable `NUGET_PACKAGES`, never the
-    /// script variable. A recipe calls `resolveFramework`, which honours the script variable.
+    /// machine's cache, `nugetRoot ()` (`~/.nuget/packages`), never the build variable. A recipe
+    /// calls `resolveFramework`, which honours the build variable `NUGET_PACKAGES`.
     /// </summary>
     let locateFrameworkIn (projectRoot: string) (fwk: string option) : FrameworkInfo =
         locateFrameworkMemo (nugetRoot (), Path.GetFullPath projectRoot, sdkImpl.defaultVersions, fwk)
@@ -1126,8 +1137,8 @@ module DotNetFwk =
     /// For a .NET (`netN.0`) target the targeting pack `Microsoft.NETCore.App.Ref` is restored
     /// the same way when `NETCORE_REF_VERSION` pins it or no installed pack will do (see
     /// `sdkImpl.netcoreRefSource`).
-    /// The package folder is the build's, `packageRoot ()` (the script variable
-    /// `NUGET_PACKAGES`, else the environment's), and part of the memo key.
+    /// The package folder is the build's, `packageRoot ()` (the build variable
+    /// `NUGET_PACKAGES`, else `.packages`), and part of the memo key.
     /// </summary>
     let resolveFramework (fwk: string option) : Recipe<ExecContext, FrameworkInfo> =
         recipe {

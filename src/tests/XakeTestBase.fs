@@ -14,6 +14,10 @@ type XakeTestBase(folder) =
     
     member x.TestOptions with get() = testOptions
 
+    /// The build's package folder of a script run with `TestOptions` and no `NUGET_PACKAGES`:
+    /// `.packages` under the project root (Xake.Dotnet's default).
+    member x.PackageRoot = Path.GetFullPath (Path.Combine (testOptions.ProjectRoot, ".packages"))
+
     [<OneTimeSetUp>]
     member __.Setup () =
         rememberDir <- Directory.GetCurrentDirectory()
@@ -24,6 +28,13 @@ type XakeTestBase(folder) =
                 Targets = ["main"]
                 ConLogLevel = Diag; FileLogLevel = Silent
                 ProjectRoot = outFolder
+                // the test jobs switch the compiler server with the environment variable
+                // XAKE_CSC_SERVER (testjobs.fsx); Xake.Dotnet reads only build variables, so it
+                // is passed on as the test runner's `-d`
+                CliVars =
+                    match System.Environment.GetEnvironmentVariable "XAKE_CSC_SERVER" with
+                    | null | "" -> []
+                    | value -> [ "XAKE_CSC_SERVER", value ]
         }
 
         Directory.CreateDirectory outFolder |> ignore

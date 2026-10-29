@@ -25,40 +25,41 @@ module CscTypes =
         | InProcess
 
     module CompilerServer =
-        /// The default for a fresh `RunOptions`: the server, unless `XAKE_CSC_SERVER` says
-        /// `0`, `false` or `off` -- the CI switch for a box where a lingering `VBCSCompiler`
-        /// is unwelcome.
-        let fromEnvironment () =
-            match System.Environment.GetEnvironmentVariable "XAKE_CSC_SERVER" with
-            | null -> Shared None
-            | v when List.contains (v.Trim().ToLowerInvariant()) ["0"; "false"; "off"; "no"] -> InProcess
-            | _ -> Shared None
+        /// The default for a fresh `RunOptions`: the server. No longer reads the environment
+        /// variable `XAKE_CSC_SERVER`, which is a build variable now (`resolve`).
+        [<System.Obsolete "Always Shared None: XAKE_CSC_SERVER is read from the build variables by CompilerServer.resolve">]
+        let fromEnvironment () = Shared None
 
+        /// <summary>
         /// The server setting in effect for one compilation. `Some` (a target's own `noserver`
-        /// or `keepalive`) wins; `None` inherits: the script variable `CSC_SERVER` (`on`,
-        /// `off`, or a number of keepalive seconds; case-insensitive; set in `xakeScript { var
-        /// ... }` or with `-d`), then the environment variable `XAKE_CSC_SERVER`
-        /// (`fromEnvironment`), then `Shared None`. An unrecognized `CSC_SERVER` value is
-        /// traced as a warning and taken as `on`. Reading the variable makes it a dependency
-        /// of the target, like `NETFX`: changing it rebuilds.
+        /// or `keepalive`) wins; `None` inherits from the build variables (read with
+        /// `Var.read`, and so dependencies of the target, like `NETFX`: changing one rebuilds):
+        /// `CSC_SERVER` -- `on`, `off`, or a number of keepalive seconds -- then
+        /// `XAKE_CSC_SERVER` -- `on` or `off` -- then `Shared None`. Values are trimmed and
+        /// case-insensitive; an empty one is unset; any other value fails the target. The
+        /// environment counts only through the script, e.g.
+        /// <c>var "XAKE_CSC_SERVER" [Env "XAKE_CSC_SERVER"]</c>.
+        /// </summary>
         let resolve (setting: CompilerServer option) : Recipe<ExecContext, CompilerServer> =
             recipe {
                 match setting with
                 | Some server -> return server
                 | None ->
-                    let! var = getVar "CSC_SERVER"
-                    match var with
-                    | None -> return fromEnvironment ()
+                    let! var = Var.read<string> "CSC_SERVER"
+                    match var |> Option.map (fun v -> v.Trim()) |> Option.filter ((<>) "") with
                     | Some value ->
-                        match value.Trim().ToLowerInvariant() with
+                        match value.ToLowerInvariant() with
                         | "on" -> return Shared None
                         | "off" -> return InProcess
                         | v ->
                             match System.Int32.TryParse v with
-                            | true, seconds -> return Shared (Some seconds)
-                            | _ ->
-                                do! trace Warning "CSC_SERVER='%s' is not 'on', 'off' or a number of seconds; using the compiler server" value
-                                return Shared None
+                            | true, seconds when seconds >= 0 -> return Shared (Some seconds)
+                            | _ -> return failwithf "CSC_SERVER='%s': expected on, off or a number of seconds" value
+                    | None ->
+                        let! fallback = Var.read<string> "XAKE_CSC_SERVER"
+                        match DotNetFwk.parseSwitch "XAKE_CSC_SERVER" fallback with
+                        | Some false -> return InProcess
+                        | _ -> return Shared None
             }
 
     type CscSettingsType = {
@@ -98,7 +99,7 @@ module CscTypes =
         /// target, like `CSC_SERVER`. `CscPath` still overrides everything, this included.
         Toolset: string option
         /// Compiler server use; see `CompilerServer`. `None` (the default) inherits it from
-        /// the script variable `CSC_SERVER`, then the environment variable `XAKE_CSC_SERVER`
+        /// the build variable `CSC_SERVER`, then the build variable `XAKE_CSC_SERVER`
         /// (see `CompilerServer.resolve`).
         Server: CompilerServer option
         /// A project description (`xake.project.json`, relative to the project root) the
@@ -144,8 +145,8 @@ module CscTypes =
         FailOnError: bool
         /// Path to the csc executable, overriding the compiler the compilation names.
         CscPath: string option
-        /// Compiler server use; see `CompilerServer`. Default: `Shared None`, unless the
-        /// environment variable `XAKE_CSC_SERVER` is `0`, `false` or `off`.
+        /// Compiler server use; see `CompilerServer`. Default: `Shared None` (a recipe resolves
+        /// the build variables `CSC_SERVER`/`XAKE_CSC_SERVER` itself, `CompilerServer.resolve`).
         Server: CompilerServer
         /// Environment variables the compiler process is started with: the framework's
         /// (`DotNetFwk.FrameworkInfo.EnvVars`) -- empty on the SDK path, set on the mono and
@@ -154,7 +155,7 @@ module CscTypes =
         Environment: (string * string) list
         /// A resource the script supplies and the units one compile takes. When set, the
         /// compiler's launch -- and nothing before it: every input is built and verified by
-        /// then -- runs under `withResource resource units`, and `CSC_JOBS`/`XAKE_CSC_JOBS` are
+        /// then -- runs under `withResource resource units`, and `CSC_JOBS` is
         /// not read. Data rather than a hook: the resource is the script's own, so it can be
         /// shared with other rules (one cap on everything heavy) or sized to the machine. A
         /// script must still not `need` while holding the same resource elsewhere
@@ -163,7 +164,7 @@ module CscTypes =
     } with static member Default = {
             FailOnError = true
             CscPath = None
-            Server = CompilerServer.fromEnvironment ()
+            Server = Shared None
             Environment = []
             Throttle = None
         }
@@ -491,8 +492,8 @@ module Csc =
 
     /// The path `csc.dll` would have under a `Microsoft.Net.Compilers.Toolset`-shaped package
     /// (`<packageRoot>/<packageId>/<version>/tasks/netcore/bincore/csc.dll`), fetching the
-    /// package into the build's package folder (`DotNetFwk.packageRoot`: the script variable
-    /// `NUGET_PACKAGES`, else the environment's) first when it is not there yet. This is `ofSettings`'s
+    /// package into the build's package folder (`DotNetFwk.packageRoot`: the build variable
+    /// `NUGET_PACKAGES`, else `.packages`) first when it is not there yet. This is `ofSettings`'s
     /// `toolset` operation.
     let private restoreToolsetCompiler (packageId: string) (version: string) =
         recipe {

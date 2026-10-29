@@ -258,7 +258,7 @@ type ``Library vars conformance (spec section 8-8, PR 2 spec)``() =
             Assert.AreEqual(name, name')
             Assert.AreEqual((None, None, None, ArgOnly, def), (n, c, e, scope, def'), name)
         // every property is one of the above, each a string variable
-        let props = typeof<DotNetVars>.GetProperties() |> Array.map (fun p -> p.Name, p.PropertyType.GetGenericArguments().[0]) |> List.ofArray
+        let props = typeof<DotNetVars>.GetProperties(Reflection.BindingFlags.Public ||| Reflection.BindingFlags.Instance) |> Array.map (fun p -> p.Name, p.PropertyType.GetGenericArguments().[0]) |> List.ofArray
         Assert.That(props |> List.map fst |> List.sort, Is.EqualTo (expected |> List.map fst |> List.sort))
         Assert.That(props |> List.forall (fun (_, t) -> t = typeof<string>), Is.True)
 

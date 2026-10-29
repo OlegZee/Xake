@@ -216,10 +216,9 @@ the compiler. `CompilerRunner` is internal and is the single launcher of `Csc.ru
 `Fsc.run`, so this is no hook on `Csc.run` and no new public surface on the record API: the
 existing decision (no hooks on `Csc.run`) stands.
 
-**The limit.** Script variable `CSC_JOBS` (positive integer; unset, empty or `0` =
-unlimited), then the environment variable `XAKE_CSC_JOBS`, then unlimited: the same lookup
-order and spelling convention as `CSC_SERVER` / `XAKE_CSC_SERVER`
-(`Csc.CompilerServer.resolve`). A value that is not a non-negative integer is traced as a
+**The limit.** Build variable `CSC_JOBS` (positive integer; unset, empty or `0` =
+unlimited), then unlimited. (Until Xake 3.15 the environment variable `XAKE_CSC_JOBS` came
+second; since 3.16 it counts only through the script: `var "CSC_JOBS" [Env "XAKE_CSC_JOBS"]`.) A value that is not a non-negative integer is traced as a
 warning and taken as unlimited. One difference from `CSC_SERVER`, deliberate: the value is
 read from `ctx.Vars` **without** `getVar`, so it is **not** recorded as a dependency.
 Concurrency does not change any output; changing `-d CSC_JOBS=4` must not rebuild the

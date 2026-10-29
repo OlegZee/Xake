@@ -260,7 +260,7 @@ checked, and a composed compilation has none).
 |---|---|---|
 | `FailOnError` | a compile error fails the build | `true` |
 | `CscPath` | compiler executable overriding the one the `Csc` names | `None` |
-| `Server` | `Shared of keepAlive: int option` (`/shared`, plus `/keepalive:<n>`) or `InProcess` | `Shared None`, unless env `XAKE_CSC_SERVER` is `0`, `false`, `no` or `off` |
+| `Server` | `Shared of keepAlive: int option` (`/shared`, plus `/keepalive:<n>`) or `InProcess` | `Shared None` (`csc {}` resolves `CSC_SERVER`/`XAKE_CSC_SERVER` itself) |
 | `Environment` | environment variables of the compiler process | `[]`; the framework's own on the mono and Framework paths |
 | `Throttle` | `(Resource * int) option`: a resource of the script and the units one compile takes; the launch acquires it in place of the `CSC_JOBS` limit, which is then not read | `None` (`CSC_JOBS`) |
 
@@ -276,9 +276,11 @@ it off or tune it in one place for the whole script with the `CSC_SERVER` variab
 with `noserver` / `keepalive`. Precedence, first that is set wins:
 
 1. the target's `noserver` or `keepalive`;
-2. the script variable `CSC_SERVER`: `on`, `off`, or a number of keepalive seconds
-   (case-insensitive; anything else logs a warning and counts as `on`);
-3. the environment variable `XAKE_CSC_SERVER` (`0`, `false`, `no`, `off` turn the server off);
+2. the build variable `CSC_SERVER`: `on`, `off`, or a number of keepalive seconds
+   (case-insensitive; empty is unset; anything else fails the target);
+3. the build variable `XAKE_CSC_SERVER` (`on`/`off`; also `true`/`yes`/`1`, `false`/`no`/`0`;
+   anything else fails); the environment variable of that name counts only through the script,
+   `var "XAKE_CSC_SERVER" [Env "XAKE_CSC_SERVER"]`;
 4. the server, with Roslyn's own keepalive.
 
 The switch is silently skipped (the compile runs in-process) for a compiler that has no
@@ -488,16 +490,17 @@ let strings = resourceset {
 | `NETFX` | Framework whose tools are used, overriding the target framework |
 | `NETFX-TARGET` | Default `targetfwk` for all compiler tasks; unset, they target the SDK's own .NET framework |
 | `FSCVER` | F# compiler version `fsc` asks for (Windows registry provider only) |
-| `CSC_SERVER` | `csc` compiler server: `on`, `off` or keepalive seconds; overridden by a target's `noserver`/`keepalive`, overrides env `XAKE_CSC_SERVER` |
-| `CSC_JOBS` / `FSC_JOBS` | At most this many `csc` / `fsc` processes at once (`0` or unset: unlimited); then env `XAKE_CSC_JOBS` / `XAKE_FSC_JOBS`; not a dependency, changing it rebuilds nothing; a target's `throttle` takes its place (see [csc-server.md](csc-server.md#limiting-concurrent-compiles-csc_jobs-fsc_jobs)) |
+| `CSC_SERVER` | `csc` compiler server: `on`, `off` or keepalive seconds; overridden by a target's `noserver`/`keepalive`, overrides `XAKE_CSC_SERVER` |
+| `XAKE_CSC_SERVER` | `csc` compiler server when `CSC_SERVER` is unset: `on` or `off` (default `on`) |
+| `CSC_JOBS` / `FSC_JOBS` | At most this many `csc` / `fsc` processes at once (`0` or unset: unlimited); not a dependency, changing it rebuilds nothing; a target's `throttle` takes its place (see [csc-server.md](csc-server.md#limiting-concurrent-compiles-csc_jobs-fsc_jobs)) |
 | `CSC_TOOLSET` | `csc` compiler package version (`Microsoft.Net.Compilers.Toolset`) for targets with no `toolset`; empty or unset means the SDK's compiler |
-| `NUGET_PACKAGES` | The build's package folder, relative to the project root or absolute; overrides the environment variable of the same name for everything Xake restores or reads there (see below) |
-| `NUGET_FETCH` | `off` turns off every download into the package folder (a missing package fails the build); default `on` |
+| `NUGET_PACKAGES` | The build's package folder, relative to the project root or absolute; default `.packages`; the environment variable of the same name is not read (see below) |
+| `NUGET_FETCH` | `off` turns off every download into the package folder (a missing package fails the build); default `on`; any other value than on/off fails |
 | `NETCORE_REF_VERSION` | Pins of the `Microsoft.NETCore.App.Ref` targeting pack, one per major.minor (`6.0.36;7.0.20`); a pinned `netN.0` target always compiles against the NuGet package at that version, never an installed pack (see [csc](#csc)) |
 | `NETFX_REFERENCE_ASSEMBLIES_VERSION` | Version of the `Microsoft.NETFramework.ReferenceAssemblies.*` packages .NET Framework targets compile against (default 1.0.3) |
 | `NETSTANDARD_LIBRARY_VERSION` / `NETSTANDARD_LIBRARY_REF_VERSION` | Versions of the `NETStandard.Library` (netstandard2.0, default 2.0.3) and `NETStandard.Library.Ref` (netstandard2.1, default 2.1.0) reference packages |
 | `FSHARP_CORE_VERSION` | `FSharp.Core` package version `fsc` references by default (8.0.100); for a `netN.0` target only when set, else the SDK's own |
-| `HERMETIC` | `on`: every composed `csc`/`fsc` compilation must name only paths under the project root and the `NUGET_PACKAGES` script variable's folder; fsc's compiler may come from an SDK `global.json` pins exactly (`rollForward: disable`). Missing configuration fails at resolve time naming the variable that fixes it. `on`/`off` (also `true`/`yes`/`1`, `false`/`no`/`0`), default `off`; see [dotnet-build.md](dotnet-build.md#hermetic-mode) |
+| `HERMETIC` | `on`: every composed `csc`/`fsc` compilation must name only paths under the project root and the build's package folder (`NUGET_PACKAGES`); fsc's compiler may come from an SDK `global.json` pins exactly (`rollForward: disable`). Missing configuration fails at resolve time naming the variable that fixes it. `on`/`off` (also `true`/`yes`/`1`, `false`/`no`/`0`), default `off`; see [dotnet-build.md](dotnet-build.md#hermetic-mode) |
 
 ```bash
 dotnet fsi build.fsx -- -- build -d NETFX-TARGET:net-4.6.2
@@ -515,18 +518,21 @@ the reference packs (`NETStandard.Library` for netstandard2.0,
 `Microsoft.NETFramework.ReferenceAssemblies.*` for .NET Framework) and `fsc`'s default
 `FSharp.Core`. They go to, and are read from, one package folder:
 
-1. the script variable `NUGET_PACKAGES` -- `var "NUGET_PACKAGES" ".nuget/packages"` in
+1. the build variable `NUGET_PACKAGES` -- `var "NUGET_PACKAGES" ".nuget/packages"` in
    `xakeScript`, or `-d NUGET_PACKAGES:.nuget/packages` on the command line (`-d` wins over
-   `var`); a relative path is under the project root. The child `dotnet restore` gets it as the environment variable, so
-   NuGet puts the packages there. Every compile reads it, so changing it rebuilds them;
-2. else the environment variable `NUGET_PACKAGES`;
-3. else `~/.nuget/packages`.
+   `var`); a relative path is under the project root. Every compile reads it, so changing it
+   rebuilds them;
+2. else `.packages` under the project root.
+
+The child `dotnet restore` gets the folder as its environment variable `NUGET_PACKAGES`, so NuGet
+puts the packages there. The environment variable is not read by Xake itself (3.16); to take it,
+`var "NUGET_PACKAGES" [Env "NUGET_PACKAGES"]`.
 
 `csc { ...; lock "app.json" }` and `fsc { lock }` (Xake.Hermetic.Dotnet) use the same folder
 and write it in the lock as `$(NuGetPackageRoot)`; there is no per-target folder.
 `DotNetFwk.locateFramework` and
-`locateFrameworkIn`, which run without a build, have no script variables and use the
-environment's folder.
+`locateFrameworkIn`, which run without a build, have no build variables and use the
+machine's cache, `~/.nuget/packages`.
 
 Turning fetching off: `-d NUGET_FETCH:off` (or `var "NUGET_FETCH" "off"`) makes Xake download
 nothing, for CI with a warm cache; a package missing from the folder then fails the build before
@@ -534,8 +540,24 @@ the compiler runs, naming the package and version and saying fetching is off. `n
 `lock` (Xake.Hermetic.Dotnet) is the same for one locked target.
 
 The packages an F# script itself references with `#r "nuget: ..."` are restored by `dotnet
-fsi` before the script, and so before Xake, runs: the script variable cannot reach them. Set the
+fsi` before the script, and so before Xake, runs: the build variable cannot reach them. Set the
 environment variable `NUGET_PACKAGES` for those.
+
+The variables Xake.Dotnet reads are also exported as a schema a script MAY import, to list them
+in `--help` and the banner and to feed them from the environment by copy-and-update (an option,
+not needed for the defaults):
+
+```fsharp
+xakeScript {
+    varschema { DotNetVars.Default with NUGET_PACKAGES = Var.string() |> withDefault ".packages" }   // + env NUGET_PACKAGES
+}
+```
+
+`DotNetVars.Default` has `NUGET_PACKAGES`, `NUGET_FETCH`, `HERMETIC`, `CSC_SERVER`,
+`XAKE_CSC_SERVER`, `CSC_JOBS`, `FSC_JOBS`: string fields named by the variable, `-d` only, with the
+library's defaults. The library reads them with `Var.read<'t> "NAME"`, which trusts whatever
+declaration the script gave the name and checks only its type.
+
 
 ## Inner recipe helpers
 

@@ -57,7 +57,9 @@ full output (`console.log`) into `out/test/<project>/<slice>/`; the console show
 line per job. One job runs alone by naming it: `dotnet fsi build.fsx -- -- test::hermetic/run`.
 A new fixture lands in the `rest` slice of its project; move it into a slice when it gets slow.
 Fixtures that use the compiler server go into the `server` jobs, which run one after the
-other (the server is one per machine); every other job runs with `XAKE_CSC_SERVER=off`.
+other (the server is one per machine); every other job runs with `XAKE_CSC_SERVER=off` in its
+environment, which `XakeTestBase` passes to the scripts as `-d XAKE_CSC_SERVER=off` (Xake.Dotnet
+reads build variables only).
 
 Run filtered tests:
 

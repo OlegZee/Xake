@@ -55,7 +55,7 @@ no file target.) Every custom operation of
 | `resolve` | (none) | returns the `Csc` (`Csc.ofSettings`) instead of compiling; must be the last operation | -- |
 | `args` | `string list` | raw extra switches, appended last (`CommandArgs`) | `[]` |
 | `nofailonerror` | (none) | do not fail the build on a compile error | `FailOnError = true` |
-| `noserver` | (none) | compile in a fresh csc process instead of through the Roslyn compiler server (`VBCSCompiler`); see [csc-server.md](csc-server.md) | `Server = Shared None` (env `XAKE_CSC_SERVER=0` turns it off) |
+| `noserver` | (none) | compile in a fresh csc process instead of through the Roslyn compiler server (`VBCSCompiler`); see [csc-server.md](csc-server.md) | `Server = Shared None` (the build variable `XAKE_CSC_SERVER=off` turns it off) |
 | `keepalive` | `int` (seconds) | idle time after which a compiler server this build starts exits (`/keepalive`) | Roslyn's own default, 600 |
 | `throttle` | `Resource * int` | the compiler launch acquires this resource of the script, that many units, in place of the `CSC_JOBS` limit; see [csc-server.md](csc-server.md#limiting-concurrent-compiles-csc_jobs-fsc_jobs) | `None` (`CSC_JOBS`) |
 
@@ -142,8 +142,8 @@ be determined (no SDK) does the compile fail with `csc needs a target framework`
 - When the package is not in the folder, `DotNetFwk.resolveFramework` fetches it with
   `DotNetFwk.restorePackage`, the same mechanism `toolset` uses: one synthesized
   `PackageDownload` project under `<ProjectRoot>/obj/xake/restore/<n>/`, so the repository's
-  `nuget.config` and private feeds apply. The folder is `NUGET_PACKAGES`, else
-  `~/.nuget/packages`.
+  `nuget.config` and private feeds apply. The folder is the build variable `NUGET_PACKAGES`,
+  else `.packages` under the project root.
 - A failed download fails the build with
   `restoring 1 package(s) into '<folder>' failed with exit code 1 (see '<project>'): NETStandard.Library 2.0.3`.
   A package that downloads but has no reference assemblies where they are expected fails

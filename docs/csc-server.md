@@ -14,20 +14,30 @@ failed, falling back to local build"). Nothing else about the invocation changed
 
 ```fsharp
 type CompilerServer =
-    | Shared of keepAlive: int option   // default: CompilerServer.fromEnvironment () = Shared None
-    | InProcess                         //   unless XAKE_CSC_SERVER is 0/false/off/no
+    | Shared of keepAlive: int option   // default (RunOptions.Default.Server): Shared None
+    | InProcess
 
 RunOptions      = { FailOnError; CscPath; Server: CompilerServer; Environment }
 CscSettingsType = { ...; Server: CompilerServer option }   // `noserver`, `keepalive <s>` in the builder; None = inherit
 ```
 
 Opt-out, most specific first: `noserver` (or `keepalive <s>`) in `csc {}` /
-`Server = Some InProcess` on `CscSettingsType`; the script variable `CSC_SERVER` (`on`, `off`, or
+`Server = Some InProcess` on `CscSettingsType`; the build variable `CSC_SERVER` (`on`, `off`, or
 a number of keepalive seconds; set in `xakeScript { var ... }` or with `-d`) for the whole script;
-the environment variable `XAKE_CSC_SERVER=0` (`false`/`off`/`no`), which changes the default for
-the whole process -- the CI switch. `Server = InProcess` on `RunOptions` is the same choice for a
-direct `Csc.run`. The precedence is `CompilerServer.resolve`'s; see
-[csc-syntax.md](csc-syntax.md).
+then the build variable `XAKE_CSC_SERVER` (`on`/`off`; `0`, `false`, `no` are off) -- the CI
+switch. Both are build variables only (Xake 3.16): an invalid value fails the compiling target
+(`CSC_SERVER='bogus': expected on, off or a number of seconds`), an empty one is unset, and the
+environment counts only through the script:
+
+```fsharp
+xakeScript {
+    var "XAKE_CSC_SERVER" [Env "XAKE_CSC_SERVER"]   // or -d XAKE_CSC_SERVER=off on the CI command line
+}
+```
+
+`Server = InProcess` on `RunOptions` is the same choice for a direct `Csc.run`
+(`RunOptions.Default.Server` is `Shared None` and reads nothing). The precedence is
+`CompilerServer.resolve`'s; see [csc-syntax.md](csc-syntax.md).
 
 ## Limiting concurrent compiles: `CSC_JOBS`, `FSC_JOBS`
 
@@ -37,9 +47,11 @@ budget (fsc has no server and runs the whole compiler per process). Lookup, firs
 
 | Where | Value |
 |---|---|
-| script variable `CSC_JOBS` / `FSC_JOBS` (`-d`, or `var` in `xakeScript`) | a positive integer; `0` or empty is unlimited |
-| environment variable `XAKE_CSC_JOBS` / `XAKE_FSC_JOBS` | the same |
+| build variable `CSC_JOBS` / `FSC_JOBS` (`-d`, or `var` in `xakeScript`) | a positive integer; `0` or empty is unlimited |
 | default | unlimited |
+
+The environment variables `XAKE_CSC_JOBS` / `XAKE_FSC_JOBS` are no longer read (Xake 3.16); a
+script that wants them says so: `var "CSC_JOBS" [Env "XAKE_CSC_JOBS"]`.
 
 A value that is not a non-negative integer is traced as a warning and taken as unlimited.
 The budget is taken inside the launcher that `Csc.run` and `Fsc.run` share, around the compiler
@@ -52,7 +64,7 @@ the cap still bounds concurrent compilations.
 
 ```bash
 dotnet fsi build.fsx -- -- build -d CSC_JOBS:6
-XAKE_FSC_JOBS=2 dotnet fsi build.fsx -- -- build
+dotnet fsi build.fsx -- -- build -d FSC_JOBS:2
 ```
 
 A script that wants its own budget -- one resource shared by csc, fsc and its other heavy

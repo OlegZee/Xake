@@ -1,6 +1,6 @@
 # Spec: variable evaluation
 
-Status: rev. 6, amended 2026-10-29: evaluation at launch; approved by the owner 2026-10-29. It formalizes [brief.md](brief.md), whose decisions are final. It
+Status: rev. 6, amended 2026-10-29 (evaluation at launch; names), approved. It formalizes [brief.md](brief.md), whose decisions are final. It
 replaces rev. 5 (git 7d11d56, see [archive](archive/README.md)) and revives S-1..S-4 of rev. 4
 (git 8b3ddc6); ids are kept where the rule is unchanged. Retired: rev. 5 Y-1..Y-3, X-6,
 W-3; rev. 4 S-5, K-2, K-3, W-1. File:line references are to this branch (dev, Xake 3.15.0). MUST, MUST NOT, SHOULD, MAY
@@ -30,10 +30,12 @@ banner, `--help`, the debug options dump, engine mode, and how Xake.Dotnet and X
 - **Declaration**: a `var "N" [sources]` op (a **rule**) or a `Var.*` field of a `varschema` op (a **field**). An op only
   records it in `ExecOptions.VarDecls`, without a value; nothing is evaluated when the op is applied.
 - **Source**: `Env "X"` (environment variable `X`) or `Default "v"` (the constant `v`). The markers `Secret` and
-  `SecretHashed` are list elements that define nothing; they set the secret mode.
+  `SecretHashed` are list elements that define nothing; they set the secret mode. `Cli "ext"` is a marker too: it
+  names the external name (R-5).
 - **Script definition**: an `ExecOptions.Vars` entry, a constant `var` op, a rule or a field; each names one key.
-- **Key** of a `Var.*` value: `CliArgName`, else `Name`, else `FieldName`, verbatim (3.13 `resolvedCliName`,
-  `Vars.fs:111-112`). **Env name**: `EnvName`, else `toEnvName (Name, else FieldName)` (`Vars.fs:56-57,113`). `varschema`
+- **Key** of a `Var.*` value: `Name`, else `FieldName`, verbatim (3.13 keyed by `CliArgName` first, `resolvedCliName`,
+  `Vars.fs:111-112`; changed, A-1, §6.1). **External name**: `CliArgName` of a field, or the `Cli "ext"` source of a rule or
+  field list, else the key; it is what `-d` uses (A-2). **Env name**: `EnvName`, else `toEnvName (Name, else FieldName)` (`Vars.fs:56-57,113`). `varschema`
   sets `FieldName` by reflection (`Vars.fs:176`); keys are always compared resolved, never by reference.
 - **Var read**: `let! x = v` in a recipe for an `OptionalVar`/`RequiredVar` `v`, a field of the schema or an inline value
   (the `Bind` overloads, `Vars.fs:136-149`).
@@ -43,7 +45,7 @@ banner, `--help`, the debug options dump, engine mode, and how Xake.Dotnet and X
   conversion, required checks, the `-d` overlay with scope, second-definition and secret checks, `SecretMask`
   registration. The variable set is final from then on, so the dependency graph is computed on it.
 - **Variable set**: the immutable map `key -> entry` built at launch (V-1): value (or none), origin, declaration.
-- **Origin**: `request`, `cli`, `script` (the **input origins**), `env:<NAME>`, `default`.
+- **Origin**: `request`, `cli` (shown `cli:EXT` when the external name differs from the key, A-3), `script` (the **input origins**), `env:<NAME>`, `default`.
 - **Switch**: a library variable with a closed set of values: `HERMETIC`, `NUGET_FETCH`, `CI`, `CSC_SERVER`,
   `XAKE_CSC_SERVER`, `LOCK_STALE`.
 
@@ -57,7 +59,7 @@ during the run; in engine mode it lives as long as the engine, with a per-demand
 
 **V-2 (chain, first defined wins).** For a key `N` the value comes from the first layer that defines `N`:
 1. request: the engine's `?vars` of the demand, the last pair for `N` wins;
-2. cli: `-d N=v`, the last `-d` of `N` wins;
+2. cli: `-d N=v` (`N` the external name, A-2, set on the key), the last `-d` of it wins;
 3. script: the `ExecOptions.Vars` entry or the constant `var "N" "v"` (at most one script definition, R-4);
 4. the declaration of `N` (at most one, R-4): its sources in list order.
 Layers 1-2 do not apply to a declaration that refuses them (S-5, X-2): that is an error, never a silent skip.
@@ -78,6 +80,8 @@ string values; readers do (L-7). Only a field's type conversion interprets (S-3)
 **R-2.** `var "N" [sources]` is a rule for `N`, layer 4: `Env "X"` and `Default "v"` tried in list order. `Secret` makes
 `N` a presence secret, `SecretHashed` an HMAC secret (the 3.13 modes); a marker may stand anywhere in the list; with both,
 `SecretHashed` wins (3.13 `Secrets.declare`). An empty list is allowed and defines nothing.
+
+**R-5 (`Cli` marker).** A list MAY hold `Cli "ext"`, at most one per rule, else the launch fails (E-10); its position in the list is irrelevant and it defines no value. `-d` is always the top layer (V-2) whatever the position of `Cli`.
 
 **R-3.** The op only records the rule (`ExecOptions.VarDecls`, no value). At launch the list is evaluated: the first
 defining source gives the rule's value and its origin (`env:<X>` or `default`); none leaves the rule without value.
@@ -108,7 +112,7 @@ not parsed: a read returns the field's typed default itself (T-2).
 another `varschema` op, a rule, a constant `var`, an `ExecOptions.Vars` entry) is a second definition: E-2 (R-4).
 
 **S-5 (scope).** `ArgAndEnv` and `ArgOnly` fields take layers 1-2. An `EnvOnly` field (`Var.env`, `Var.secret`) takes
-its value only from its sources: `-d` of its key fails the launch with E-6 (E-1a when secret, X-2); `?vars` fails the
+its value only from its sources: `-d` of its key or external name fails the launch with E-6 (E-1a when secret, X-2); `?vars` fails the
 demand (G-4). The scope also shapes the `--help` header (B-2).
 
 **S-6 (launch).** The `varschema` op sets `FieldName` by reflection and records the fields as declarations; it evaluates
@@ -127,7 +131,7 @@ live at the next run (`DependencyAnalysis.fs:97`). Nothing else reads the enviro
 **T-1 (declaration equality).** The declaration of a `Var.*` value is the `VarDecl` that S-1 builds from it with its
 resolved key; a rule's is built from its list (scope `ArgAndEnv`, type `string`, `Required = false`, `DefaultValue` the
 first `Default`). Two declarations are equal iff all of these are equal: `Key` (ordinal), `Sources` (the `Env`/`Default`
-elements in order), `DefaultValue` (`Object.Equals`), `Scope`, `Required` (true only for `required` without default),
+elements in order), `DefaultValue` (`Object.Equals`), the external name (ordinal), `Scope`, `Required` (true only for `required` without default),
 `Secret` (the mode), `ValueType` (`System.Type` equality). `DeclaredBy` and the description are not compared.
 
 **T-2 (a Var read).** A Var read looks up its key in `ctx.Engine.Options.Variables` (§5). If the entry has a declaration
@@ -154,7 +158,7 @@ Xake declares the key and its `Env` names in the `Secrets` registry and register
 first, before the launch logs anything, the debug options dump and the banner included.
 
 **X-2 (own sources only).** A secret takes its value only from its declaration, whatever its scope. At launch a `-d` of
-its key or of any of its `Env` names fails with E-1a (E-1b when it has no `Env` source); a script value for the key is a
+its key or of any of its `Env` names fails with E-1a (E-1b when it has no `Env` source); the same for its external name: `-d` of a secret is E-1 under either name (A-4); a script value for the key is a
 second definition (E-2); a request value fails the demand (G-4). The offending value is registered for masking first.
 
 **X-3.** A secret's value is `***` in the banner, the debug options dump and every log line (`MaskingLogger`,
@@ -217,12 +221,12 @@ E-5. Values are trimmed and case-insensitive. `HERMETIC`, `NUGET_FETCH`, `CI`, `
 ### 3.7 Banner, help, debug dump
 
 **B-1 (banner).** The `vars:` section prints one line per key of the set, sorted ordinally: `    NAME=value (origin)`
-with origin `cli`, `script`, `env:<NAME>` or `default`; a secret as `***`; a declared key without value as
+with origin `cli` (`cli:EXT` when the external name differs from the key, A-3), `script`, `env:<NAME>` or `default`; a secret as `***`; a declared key without value as
 `    NAME (not set)`. Each name once; fields are keys like any other (V-1). The 3.13 label `(script/cli)` goes. The engine
 prints no banner; the `request` origin exists for demands only.
 
 **B-2 (help).** `--help` prints "Script variables:": the fields in the 3.13 format (`XakeScriptBuilder.fs:122-144`),
-then each rule as `  -d N=<value> [string], env: X, Y, default: d`, with `(secret)` and no default for a secret.
+then each rule as `  -d EXT=<value> [string], env: X, Y, default: d` (the external name; `(key N)` appended when it differs from the key), with `(secret)` and no default for a secret.
 Constant `var` ops are not listed. `--help` is printed by `Run` before launch and exits: it evaluates nothing and reads no environment, so no launch
 error (E-1..E-4, E-6) is reported and no default or environment value is shown.
 
@@ -247,6 +251,34 @@ base set; a demand's dependency check uses its overlay.
 
 **G-4.** Before any target of the demand runs, a `?vars` pair for a secret fails it with E-1b, for an `EnvOnly` field
 with E-6, an unconvertible value for a typed field with E-4. `Start` raises `XakeException` on any launch error.
+
+### 3.9 Names (PR 1)
+
+**A-1 (key).** The key of a declaration is its internal name: a rule's name, a field's `Name`, else its field name.
+`getVar`, `?vars`, the banner, E-2 and the variable set use the key. The environment name is unchanged (explicit
+`envVar`, else derived from the key).
+
+**A-2 (external name).** The external name is `cliArg` of a field or the `Cli "ext"` source of a list, else the key.
+`-d EXT=v` sets the value of the key (layer 2). `-d KEY=v` for a declaration whose external name differs from its key
+fails the launch with E-9; no layer-1/2 value is taken for it. An undeclared `-d` name goes into the set as is (key =
+external name). `Cli` is allowed in the list of a rule; a field names it with `cliArg`.
+
+**A-3 (shown).** The banner origin is `cli:EXT` when the value came by `-d` under a differing external name; `--help` shows
+the external name, with the key when it differs (B-2).
+
+**A-4 (secrets).** `-d` of a secret is E-1a/E-1b under either name (X-2). The external name takes part in T-1.
+
+### 3.10 Import of library declarations (outline for PR 2, not part of PR 1)
+
+The option, as decided in brief.md; rules and tests are written in the PR 2 spec.
+- A library MAY export its declarations as a schema record (e.g. a `DotNet.Vars.Default` of `Var.*` fields). A script
+  imports it with `varschema` and overrides fields with copy-and-update.
+- Without the import the library reads `getVar` with its fixed default (L-1 unchanged).
+- A library reads an imported field by key and type, trusting the declaration stored in the set (the script may have
+  overridden it), not by the field-by-field equality of T-1..T-3. This needs a new read operation for libraries,
+  provisionally `Var.read` (T-4 still applies when the key is not declared). Its name, the schema names and keys are
+  fixed in the PR 2 spec.
+- No auto-import: no assembly scanning.
 
 ## 4. Diagnostics
 
@@ -275,6 +307,8 @@ they fail `Start` or the demand (G-4). No diagnostic prints a secret's value or 
 - **E-8** (T-4; fails the reading target) `Variable 'N' is read through Var but is not declared: declare it in
   varschema, or use getVar "N" or getEnv "ENV"`; `ENV` the read's env name; for an `ArgOnly` read the text ends at
   `or use getVar "N"`.
+- **E-9** (A-2) `-d KEY: the variable is set on the command line as EXT; use -d EXT=...`
+- **E-10** (R-5, A-2) `Variable 'N' has more than one command-line name: A and B`
 - **C-1** A `Var` change reason stays `Global script variable N was changed 'a'->'b'` (`DependencyAnalysis.fs:101`);
   secrets keep the 3.13 masked reasons.
 
@@ -282,11 +316,11 @@ they fail `Start` or the demand (G-4). No diagnostic prints a secret's value or 
 
 ```fsharp
 // namespace Xake, auto-opened
-type VarSource = Env of string | Default of string | Secret | SecretHashed   // tried in list order; markers define nothing
+type VarSource = Env of string | Default of string | Cli of string | Secret | SecretHashed   // Env/Default tried in list order; markers (Secret, SecretHashed, Cli) define nothing
 [<RequireQualifiedAccess>]
-type VarOrigin = Request | Cli | Script | Env of string | Default          // request | cli | script | env:<NAME> | default
+type VarOrigin = Request | Cli of string | Script | Env of string | Default          // request | cli:<EXT> | script | env:<NAME> | default
 type VarDecl = {
-    Key: string; Sources: VarSource list   // Env/Default only, list order
+    Key: string; CliName: string; Sources: VarSource list   // CliName: external name (A-2); Sources: Env/Default only, list order
     DefaultValue: obj option; Scope: LookupScope; Required: bool; Secret: SecretMode
     ValueType: System.Type; DeclaredBy: string }   // "var \"N\" [...]" | "varschema field F" (E-2, E-7)
 type VarEntry = { Value: string option; Origin: VarOrigin option; Decl: VarDecl option }
@@ -326,6 +360,9 @@ compiles on SDK 10 (owner's check). Where things live (no field on `ExecContext`
   it in `varschema` and read the field, or use `getVar`/`getEnv`.
 - A read through a declaration that differs from the stored one fails (E-7): typically `Var.string "nugetPackages"`
   against `var "NUGET_PACKAGES" [...]`, or the same key with another default. Read the field itself.
+- **Names changed (A-1, A-2):** a 3.15 field with `cliArg` was keyed by the `cliArg` value; `getVar` now uses the
+  `Name`/field name, and `-d` uses the external name (`cliArg`). `getVar "<cliArg>"` and `?vars` under the old key find
+  nothing; `-d KEY=` for such a field is an error (E-9) that names the right option.
 - Declarations are evaluated at launch, once, after the command line is applied (an environment change made after the
   ops and before `Run` is seen; one made by a recipe or setup target is not): a missing `required` value or a bad typed value fails the run before any target
   (3.15: when a recipe read it); `getVar` of a field's key sees its environment value or default; the field shows in
@@ -355,6 +392,8 @@ compiles on SDK 10 (owner's check). Where things live (no field on `ExecContext`
 >   from the environment (add `var "NUGET_PACKAGES" [Env "NUGET_PACKAGES"]` or pass `-d`); unset `NUGET_PACKAGES` is
 >   `<project root>/.packages`; an invalid `CSC_SERVER`, `NUGET_FETCH`, `XAKE_CSC_SERVER` is an error; an empty
 >   on/off value is the default (`-d CI=` is off).
+> - **Breaking:** a field with `cliArg` is keyed by its `Name`/field name (3.15: by `cliArg`); `-d` takes the external
+>   name (`cliArg`, or `Cli "ext"` in a `var` list); `-d KEY=` for such a variable is an error naming the right option.
 > - The banner shows each variable once with its source; `--help` lists `var [...]` rules; `-v` shows variables, masked.
 > - Xake.Hermetic.Dotnet no longer reads `CI`, `LOCK_REFRESH`, `SOURCE_DATE_EPOCH` from the environment: add
 >   `var "CI" [Env "CI"]` and the like on CI.
@@ -367,13 +406,13 @@ compiles on SDK 10 (owner's check). Where things live (no field on `ExecContext`
    Var reads in `Vars.fs` (`resolveVar`, `Bind`) per T-1..T-4; `checkSecretVars` replaced (X-5); B-1..B-3; engine
    G-1..G-4. Tests `CommandLineTests.fs:473,548` inverted, tests that inspect `ExecOptions` after ops (`scriptOptions`) moved to the
    launched context, `VarsTests.fs`/`SecretVarsTests.fs` inline reads moved to
-   `varschema` or `getVar`; `build.fsx` `NUGET_KEY` made `|> secret`. Tests §8.1-8.7.
+   `varschema` or `getVar`; `build.fsx` `NUGET_KEY` made `|> secret`. Names (A-1..A-4, R-5, E-9, E-10, T-1 with the external name) are part of PR 1. Tests §8.1-8.7, §8.10.
 2. **PR 2, library readers**: Xake.Dotnet (same `Xake` package; ships in the same Xake release as PR 1) L-1..L-7 for
    `NUGET_PACKAGES`, `NUGET_FETCH`, `HERMETIC`, the `CSC_SERVER` pair, `*_JOBS`; docs (`csc-server.md`, the
    `HermeticMode.fs:155` hint). Xake.Hermetic.Dotnet (its next minor): `CI`, `LOCK_REFRESH`, `LOCK_STALE`,
    `SOURCE_DATE_EPOCH`, `Import.fs:1684`/`Project.fs:475` per L-3. Its range already goes up to 4.0
    (`[3.14.0.45, 4.0)`); its floor rises to the Xake release with PR 1, because the remedy `var "CI" [Env "CI"]`
-   needs the overload. The published hermetic 0.10 keeps working on that release (N-8, L-4). Tests §8.8-8.9.
+   needs the overload. The published hermetic 0.10 keeps working on that release (N-8, L-4). Tests §8.8-8.9. The optional import of library declarations (§3.10) is outlined for the PR 2 spec and decided there.
 
 ## 8. Conformance tests
 
@@ -457,6 +496,16 @@ runs. "The read fails": the launch succeeds, other targets run, the reading targ
 58. Given env `SOURCE_DATE_EPOCH=1700000000` only; then pack and SBOM use 1980-01-01; with `var "SOURCE_DATE_EPOCH" [Env "SOURCE_DATE_EPOCH"]`, 2023-11-14 (L-2).
 59. Given the sources of `src/hermetic`; then no `getEnv`, `GetEnvironmentVariable` or Var read names a variable of L-2 (L-1).
 60. Given the published hermetic 0.10 against `dev` with PR 2 (CI job `hermetic-compat`), `NUGET_PACKAGES` unset, `HERMETIC=on`; then the child restore gets `<root>/.packages`, the policy accepts it, and `Record shapes frozen until Xake 4` passes unchanged (L-4, N-8, §5).
+
+### 8.10 Names (PR 1)
+61. Given field `P = Var.string(cliArg = "pkg", envVar = "A")` and `-d pkg=v`; then `getVar "P"` = `Some "v"`, banner `P=v (cli:pkg)`, `getVar "pkg"` = `None` (A-1, A-2, A-3).
+62. Given the same field and `-d P=v`; then launch fails with E-9 `-d P: the variable is set on the command line as pkg; use -d pkg=...` (A-2).
+63. Given `var "P" [Cli "pkg"; Env "A"]` and `-d pkg=v` (resp. `[Env "A"; Cli "pkg"]`, resp. `-d P=v`); then `P=v (cli:pkg)` (resp. same, resp. E-9) (R-5, A-2).
+64. Given `var "P" [Cli "a"; Cli "b"]`; then launch fails with E-10 `Variable 'P' has more than one command-line name: a and b` (R-5).
+65. Given `-d Z=1` for an undeclared `Z`; then `Z=1 (cli)` and `getVar "Z"` = `Some "1"` (A-2).
+66. Given `var "T" [Secret; Env "A"; Cli "tok"]` and `-d tok=s` (resp. `-d T=s`, resp. `-d A=s`); then launch fails with E-1a each time, `s` masked (A-4, X-2).
+67. Given field `X = Var.string(cliArg = "a")` read inline as `Var.string("X", cliArg = "b")`; then the read fails with E-7 (external name differs) (T-1, T-3).
+68. Given `--help` with field `P` (`cliArg = "pkg"`) and `var "R" [Cli "r"; Env "E"]`; then `-d pkg=<value>` with `(key P)` and `-d r=<value>` with `(key R)` are listed (B-2, A-3).
 
 ## 9. Open points
 

@@ -19,3 +19,8 @@ next Xake release), B2/B3, E1/E2, B4 after the Xake release.
 | #104 hermetic 0.9.0 | `pr/hermetic-090` | `.claude/worktrees/pr+hermetic-090` | merged (02de528), tagged; worktree to remove |
 | #105 review | `docs/release-process` | `.claude/worktrees/docs/release-process` | draft |
 | #106 A1 + E3 | `pr/exact-versions` | `.claude/worktrees/pr/exact-versions` | draft |
+| #107 B1 `ExecContext.withLogger` + record-shape test | `pr/exec-context-with-logger` | `.claude/worktrees/pr/exec-context-with-logger` | draft |
+
+Merge order: #105 (this folder; #106 links to review.md), #106, #107 (its 3.15.0 release-notes
+block repeats #106's plus one bullet: take #107's side). From then on each implementation PR
+updates tracker.md itself.

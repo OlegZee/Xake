@@ -5,7 +5,7 @@ Decided 2026-10-29: A, B, E now; then D (after vars and patterns). See [review.m
 | # | Item | Status |
 |---|---|---|
 | A1 | `publish.yml`: the version is the tag (`X.Y.Z`), no run number; devprocess.md, docs/session.md | in PR #106 (`pr/exact-versions`) |
-| B1 | core: `ExecContext` helper for the logger copy (hermetic `Lock.fs:1598` stops building the record); record-shape snapshot test for the seven records | todo (ships in the next Xake) |
+| B1 | core: `ExecContext` helper for the logger copy (hermetic `Lock.fs:1598` stops building the record); record-shape snapshot test for the seven records | in PR #107 (`pr/exec-context-with-logger`), ships in 3.15 |
 | B2 | hermetic: range `[<floor>, 4.0)`, an overridable Xake version property for CI; the rule in devprocess.md | todo |
 | B3 | CI: hermetic tests against `src/core` + `src/dotnet` of `dev` (local feed, exact version) and against the newest published Xake | todo |
 | B4 | hermetic: `Lock.fs:1598` onto the B1 helper (after the Xake release with B1) | todo |

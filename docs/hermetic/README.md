@@ -1,6 +1,6 @@
 # Xake.Hermetic.Dotnet
 
-## Unreleased
+## 0.10.0 (2026-10-29)
 
 - Depends on `Xake [3.14.0.45, 4.0)` (was `[3.14.0.45, 3.15)`): a new Xake minor no longer needs
   a release of this package. The records it builds do not grow until Xake 4.0, and CI runs its

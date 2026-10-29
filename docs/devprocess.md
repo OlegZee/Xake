@@ -119,6 +119,15 @@ makes NuGet resolve the next version up and warn **NU1603** ("depends on Xake (>
 Xake 3.4.0 was not found") on every restore, ours and every consumer's. Raise the floor only to
 a version that is on nuget.org, and only when the hermetic package needs what it brings.
 
+**The records the hermetic package builds.** An F# record expression or `{ r with ... }` copy
+compiled against one Xake calls the record's full constructor, so a field added in a later Xake
+breaks a published hermetic package at run time (`MissingMethodException`). Until Xake 4.0 these
+records do not grow: `ExecContext`, `CscSettingsType`, `RunOptions`, `Csc`, `FscSettingsType`,
+`FscRunOptions`, `Fsc`. A new setting goes through a function or a builder operation instead;
+code outside `Xake.dll` changes a context through `ExecContext.withLogger` and the like, never a
+record copy. `src/tests/RecordShapeTests.fs` holds the field lists and fails on a change. Why and
+how this was decided: docs/features/release-process/review.md (option B).
+
 **Developing against an unreleased base.** Normally `src/hermetic` restores `Xake` from
 nuget.org and needs nothing else. When it needs a `src/core`/`src/dotnet` change that is not
 released yet, pack the base into a folder at a version inside the range and hand that folder to

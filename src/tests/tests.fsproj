@@ -48,6 +48,7 @@
     <Compile Include="HermeticModeTests.fs" />
     <Compile Include="DescriptionTests.fs" />
     <Compile Include="ProjectPlanTests.fs" />
+    <Compile Include="RecordShapeTests.fs" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\core\Xake.fsproj" />

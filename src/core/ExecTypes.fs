@@ -55,6 +55,13 @@ and ExecContext = {
     /// Shortcut to the build database agent.
     member ctx.Db = ctx.Engine.Db
 
+/// Functions over the execution context for code outside this assembly. A record copy
+/// (`{ ctx with ... }`) compiled in another assembly calls the full constructor and breaks
+/// when a field is added; these keep the copy inside Xake.dll.
+module ExecContext =
+    /// The context with its logger replaced, e.g. by one that also collects lines.
+    let withLogger (logger: ILogger) (ctx: ExecContext) = { ctx with Logger = logger }
+
 /// Internal utility functions for reading environment and script variables.
 module internal Util =
 

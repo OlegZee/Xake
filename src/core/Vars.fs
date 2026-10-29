@@ -68,8 +68,42 @@ module Vars =
         static member secret<'t>(?envVar: string, ?description: string) : OptionalVar<'t> =
             { Var.env<'t>(?envVar = envVar, ?description = description) with Secret = SecretPresence }
 
+        /// <summary>
+        /// The read a library uses for a build variable it may export in a schema: the value of
+        /// `key` in the variable set, by key and type. When the key is declared (a `varschema`
+        /// field or a `var "N" [...]` rule, the library's exported field or the script's own),
+        /// that declaration is trusted as it is -- its sources, default and scope are the
+        /// script's business -- and only its type must be `'t`; a field's typed default comes
+        /// back typed. Undeclared, it is `getVar key`, the value converted to `'t`. Records what
+        /// `getVar` records (one `Var`, or a `SecretDep` for a secret), never reads the
+        /// environment; `None` when the key has no value: the library applies its own default.
+        /// </summary>
         static member read<'t>(key: string) : Recipe<ExecContext, 't option> =
-            failwith "Var.read: not implemented"
+            recipe {
+                let! ctx = getCtx()
+                let entry = ctx.Engine.Options.Variables |> Map.tryFind key
+                match entry with
+                | Some { Decl = Some stored } when stored.ValueType <> typeof<'t> ->
+                    failwithf "Variable '%s' is read as '%s' but is declared by %s as '%s': declare it as '%s'"
+                              key typeof<'t>.FullName stored.DeclaredBy stored.ValueType.FullName typeof<'t>.FullName
+                | _ -> ()
+                let! value = getVar key
+                match value, entry with
+                | None, _ -> return None
+                | Some v, Some ({ Decl = Some stored } as entry) ->
+                    match stored.DefaultValue with
+                    | Some typed when value = entry.Value && entry.Origin = Some VarOrigin.Default -> return Some (unbox<'t> typed)
+                    | _ ->
+                        match ScriptRunner.convertVar stored v with
+                        | Ok converted -> return Some (unbox<'t> converted)
+                        | Result.Error e -> return failwith e
+                | Some v, _ ->
+                    let decl : VarDecl =
+                        { VarDecl.ofRule key [] with ValueType = typeof<'t>; Secret = if Secrets.isSecret key then SecretPresence else NotSecret }
+                    match ScriptRunner.convertVar decl v with
+                    | Ok converted -> return Some (unbox<'t> converted)
+                    | Result.Error e -> return failwith e
+            }
 
     /// Marks a variable secret: the database keeps only whether it is set (a changed value
     /// rebuilds nothing, unset/set does), the value is masked (`***`) in all output and

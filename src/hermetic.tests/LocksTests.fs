@@ -50,7 +50,7 @@ type ``Lock generation``() =
 
     member private x.Run (label: string) (vars: (string * string) list) (targets: string list) (rs: Rule<ExecContext> list) =
         xake {x.TestOptions with FileLog = label + ".log"; ThrowOnError = true; Vars = ("CI", "off") :: vars; FileLogLevel = Loud} {
-            wantOverride targets
+            want targets
             rules rs
         }
 

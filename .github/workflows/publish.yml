@@ -28,8 +28,10 @@ jobs:
       with:
         dotnet-version: 10.0.x
 
-    # The tag carries the release version; the run number becomes the fourth component, so
-    # re-tagging or re-running never collides with an already published version. The prefix
+    # The tag is the published version, exactly (`v3.15.0` -> 3.15.0): floors and bootstrap
+    # references can be written from the tag alone. A re-run of the same tag is a no-op push
+    # (--skip-duplicate); a broken release is replaced by the next patch, never re-published.
+    # The prefix
     # picks the package and the build variable its version goes into (VERSION for Xake,
     # HERMETIC_VERSION for Xake.Hermetic.Dotnet) and the pack command.
     - name: Pick package and version from tag
@@ -50,7 +52,7 @@ jobs:
           *)
             echo "::error::tag '$TAG_NAME' is neither v* nor hermetic-v*"; exit 1 ;;
         esac
-        echo "version=${VERSION}.${{ github.run_number }}" >> $GITHUB_OUTPUT
+        echo "version=${VERSION}" >> $GITHUB_OUTPUT
 
     - name: Build, test and pack
       run: |

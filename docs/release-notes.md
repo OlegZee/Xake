@@ -3,7 +3,19 @@
 The `Xake` package (engine and `Xake.Dotnet`). Xake.Hermetic.Dotnet has its own notes
 ([hermetic/README.md](hermetic/README.md)).
 
-## 3.14.0 (unreleased)
+## 3.15.0 (2026-10-29)
+
+- **The published version is the tag.** `v3.15.0` goes to nuget.org as `3.15.0`, no longer with
+  the run number as a fourth component (3.14.0 is `3.14.0.45`); the same for
+  Xake.Hermetic.Dotnet from its next release. A dependency range or `#r` can be written from the
+  tag. Older releases keep their four-part versions.
+- **`ExecContext.withLogger logger ctx`**: the context with its logger replaced, for code
+  outside `Xake.dll` (a `{ ctx with Logger = ... }` compiled elsewhere breaks when
+  `ExecContext` gains a field). The records Xake.Hermetic.Dotnet builds — `ExecContext`,
+  `CscSettingsType`, `RunOptions`, `Csc`, `FscSettingsType`, `FscRunOptions`, `Fsc` — get no new
+  fields until 4.0 (`RecordShapeTests` guards the field lists; docs/devprocess.md).
+
+## 3.14.0 (released as 3.14.0.45, 2026-10-28)
 
 - **`setup` op.** `setup ["a"; "b"]` runs the targets sequentially before the build (CLI: after
   options and variables are final; engine: once at start). Symmetric to `teardown`, but several
@@ -29,8 +41,8 @@ The `Xake` package (engine and `Xake.Dotnet`). Xake.Hermetic.Dotnet has its own 
 - **Breaking (source): `wantOverride` removed; `want` always yields to command-line targets.** A
   script that uses `wantOverride` fails to compile; replace it with `want`. `want` now replaces
   `ExecOptions.Targets` passed to `xake`/`xakeArgs` (before: it yielded to them), the way `var`
-  wins over `ExecOptions.Vars`; command-line targets replace both. `src/hermetic.tests` still use
-  `wantOverride` until the hermetic package moves to Xake 3.14.
+  wins over `ExecOptions.Vars`; command-line targets replace both. `src/hermetic.tests` moved to `want`
+  with Xake.Hermetic.Dotnet 0.9.0.
 
 ## 3.13.0 (released as 3.13.0.43, 2026-10-27)
 

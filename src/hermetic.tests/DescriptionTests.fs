@@ -90,7 +90,7 @@ type ``Project description``() =
         let found = ref None
         let depends = ref []
         do xake {x.TestOptions with ThrowOnError = true} {
-            wantOverride ["find-b"]
+            want ["find-b"]
             rules [
                 "find-b" => recipe {
                     let! d = Description.find (!! "find/*/xake.project.json") "B"
@@ -114,7 +114,7 @@ type ``Project description``() =
     member x.``find fails naming the missing project``() =
         let e = Assert.Catch(fun () ->
             do xake {x.TestOptions with ThrowOnError = true} {
-                wantOverride ["find-none"]
+                want ["find-none"]
                 rules [ "find-none" => recipe { let! _ = Description.find (!! "nowhere/*/xake.project.json") "Nope" in () } ]
             })
         Assert.That(e.ToString(), Does.Contain "no description named 'Nope'")

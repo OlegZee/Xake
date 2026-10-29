@@ -87,7 +87,7 @@ type ``Resx resources of an imported project``() =
         let lockFile = dir </> "resx.lock.json"
 
         do xake {x.TestOptions with FileLog="resx-import.log"; ThrowOnError = true} {
-            wantOverride (["build"])
+            want (["build"])
 
             rules [
                 "build" => recipe {
@@ -116,7 +116,7 @@ type ``Resx resources of an imported project``() =
         Assert.That(File.Exists resourcesOutput, Is.False)
 
         do xake {x.TestOptions with FileLog="resx-compile.log"; ThrowOnError = true} {
-            wantOverride (["compile"])
+            want (["compile"])
 
             rules [
                 "compile" => recipe {

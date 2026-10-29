@@ -13,26 +13,28 @@ touched, so it is not re-litigated:
   declares `MIT`, packs `Icon.png` and `readme.md`, and packs with zero warnings. The readme is
   referenced as `readme.md` — that is the git-tracked casing, and `README.md` would break the
   pack on a case-sensitive CI filesystem.
-- The published version is *not* the tag: `publish.yml` appends the run number, so `v3.3.0`
-  publishes as `3.3.0.<run>`.
+- The published version is the tag from 3.15 on (`v3.15.0` -> `3.15.0`); up to 3.14.0 /
+  hermetic 0.9.0 `publish.yml` appended the run number (`v3.14.0` -> `3.14.0.45`). Decision:
+  docs/features/release-process/review.md, option A.
 - `FSharp.Core` in the nupkg is whatever the SDK pins — currently `10.1.400`. Bumping the SDK
   raises the floor for every consumer. Pin it explicitly in the projects if that matters.
 - The mono provider built its `PATH` env var as `sdkroot </> ("bin" + ";" + PATH)` — `+` binds
   tighter than `</>`, and `;` is not the Unix separator. Fixed, but the mono path has no test
   coverage.
-- `build.fsx` bootstraps from nuget.org (`#r "nuget: Xake, 3.13.0.43"`, the 3.13.0 release as
-  nuget.org carries it); `build.fsc.fsx` from `Xake 3.13.0.43` and
-  `Xake.Hermetic.Dotnet 0.8.0.44` (all commands work, `update-locks` included).
+- `build.fsx` and `build.fsc.fsx` bootstrap from nuget.org (versions in their first lines;
+  `build.fsc.fsx` also takes `Xake.Hermetic.Dotnet`).
   The base script stays on the base package only. The nuget references stay behind the release being made; bump
-  them only after a release lands on nuget.org, to the exact published `X.Y.Z.<run>`.
+  them only after a release lands on nuget.org, to the exact published version (the tag from
+  3.15 on, `X.Y.Z.<run>` before).
   Developing against unreleased libraries: a temporary `#r` on dlls (or a `#i` local feed);
   see docs/devprocess.md, "Bootstrapping note". `samples/gettingstarted.fsx` references the
   published package (`#r "nuget: Xake"`) and is checked against it after each release.
-- `src/hermetic` builds on the *published* `Xake` (PackageReference `[3.13.0.43, 3.14)`), not on
-  `src/core`/`src/dotnet`. The floor is the exact published version: `[3.4.0, 4.0)` warns NU1603
-  because no plain `3.4.0` exists. A local feed (`-d NUGET_SOURCE=<folder>`) is only for working
-  against an unreleased base; a packed `3.4.0.99` in `~/.nuget/packages/xake/` shadows the
-  release until deleted.
+- `src/hermetic` builds on the *published* `Xake` (`XakeVersion` in its fsproj, `[<floor>, 4.0)`
+  since #108), not on `src/core`/`src/dotnet`. The floor must exist on nuget.org or NuGet warns
+  NU1603; `build.fsc.fsx bump-base` moves it. Working against an unreleased base: pack it as
+  `3.999.0-dev` and pass `-d XAKE_VERSION=[3.999.0-dev] -d NUGET_SOURCE=<folder>` (CI
+  `hermetic-compat`; docs/devprocess.md); delete `~/.nuget/packages/xake/3.999.0-dev` before
+  packing a changed base again.
 - **The supported floor is .NET 8**, enforced in three places (`global.json`, the tests TFM, the
   CI matrix) and by an explicit `FSharp.Core` 8.0.100 pin with
   `DisableImplicitFSharpCoreReference`. Without the pin the SDK's own FSharp.Core lands in the

@@ -1,5 +1,20 @@
 # Xake.Hermetic.Dotnet
 
+## 0.10.0 (2026-10-29)
+
+- Depends on `Xake [3.14.0.45, 4.0)` (was `[3.14.0.45, 3.15)`): a new Xake minor no longer needs
+  a release of this package. The records it builds do not grow until Xake 4.0, and CI runs its
+  tests against the base of every commit and the newest Xake on nuget.org
+  ([devprocess.md](../devprocess.md), "The records the hermetic package builds").
+- Published as the tag version exactly (`hermetic-v0.10.0` -> `0.10.0`), no run number.
+
+## 0.9.0 (2026-10-28)
+
+On Xake 3.14: depends on `Xake [3.14.0.45, 3.15)` (was `[3.13.0.43, 3.14)`). No API or lock
+format change; the package's own code is the same as 0.8.0. A script moving to it moves to Xake
+3.14 too, whose `want` yields to the command-line targets and whose `wantOverride` is gone
+([release notes](../release-notes.md)).
+
 ## 0.8.0 (2026-10-27)
 
 Lock portability: a lock set recorded on one OS builds on another, whatever line ends the

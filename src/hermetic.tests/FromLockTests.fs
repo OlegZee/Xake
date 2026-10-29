@@ -71,7 +71,7 @@ type ``Csc fromlock``() =
         let project, outDll, assemblyInfoCs, assemblyInfoContent = makeLock dir
 
         do xake {x.TestOptions with FileLog="csc-fromlock.log"; ThrowOnError = true} {
-            wantOverride (["hello"])
+            want (["hello"])
 
             rules [
                 "hello" => recipe {
@@ -99,7 +99,7 @@ type ``Csc fromlock``() =
 
         let build () =
             xake {x.TestOptions with FileLog="csc-fromlock-tamper.log"; ThrowOnError = true} {
-                wantOverride (["hello-tamper"])
+                want (["hello-tamper"])
 
                 rules [
                     "hello-tamper" => recipe {
@@ -152,7 +152,7 @@ type ``Csc fromlock``() =
             Assert.That(File.Exists scratchCscDll, Is.False, "the scratch NuGet cache already has the package -- test setup is wrong")
 
             do xake {x.TestOptions with FileLog="csc-fromlock-restore.log"; ThrowOnError = true} {
-                wantOverride (["hello-restore"])
+                want (["hello-restore"])
 
                 rules [
                     "hello-restore" => recipe {
@@ -181,7 +181,7 @@ type ``Csc fromlock``() =
 
         let build () =
             xake {x.TestOptions with FileLog="csc-fromlock-missing-sdk.log"; ThrowOnError = true} {
-                wantOverride (["hello-missing-sdk"])
+                want (["hello-missing-sdk"])
 
                 rules [
                     "hello-missing-sdk" => recipe {
@@ -203,7 +203,7 @@ type ``Csc fromlock``() =
 
         let build () =
             xake {x.TestOptions with FileLog="csc-fromlock-missing-anywhere.log"; ThrowOnError = true} {
-                wantOverride (["hello-missing-anywhere"])
+                want (["hello-missing-anywhere"])
 
                 rules [
                     "hello-missing-anywhere" => recipe {
@@ -257,7 +257,7 @@ type ``Csc fromlock``() =
         let mutable resolved : Csc option = None
 
         do xake {x.TestOptions with FileLog="csc-resolve.log"; ThrowOnError = true} {
-            wantOverride (["hello-resolve"])
+            want (["hello-resolve"])
 
             rules [
                 "hello-resolve" => recipe {
@@ -311,7 +311,7 @@ type ``Csc fromlock``() =
         let mutable resolved : Csc option = None
 
         do xake {x.TestOptions with FileLog="csc-builder-resolve.log"; ThrowOnError = true} {
-            wantOverride (["hello-builder-resolve"])
+            want (["hello-builder-resolve"])
 
             rules [
                 "hello-builder-resolve" => recipe {
@@ -355,7 +355,7 @@ type ``Csc fromlock``() =
         let mutable resolved : Csc option = None
 
         do xake {x.TestOptions with FileLog="csc-resolve-resx.log"; ThrowOnError = true} {
-            wantOverride (["hello-resolve-resx"])
+            want (["hello-resolve-resx"])
 
             rules [
                 "hello-resolve-resx" => recipe {
@@ -392,7 +392,7 @@ type ``Csc fromlock``() =
         Assert.That(project.Args, Has.Some.Matches<string> (fun a -> a = "/res:" + resourcesPath + ",Sample.Application.HelloResxStrings.resources"))
 
         do xake {x.TestOptions with FileLog="csc-resolve-resx-compile.log"; ThrowOnError = true} {
-            wantOverride (["hello-fromlock-resx"])
+            want (["hello-fromlock-resx"])
 
             rules [
                 "hello-fromlock-resx" => recipe {
@@ -433,7 +433,7 @@ type ``Csc fromlock``() =
             File.WriteAllText (Path.Combine (gitDir, "refs", "heads", "main"), sha + "\n")
 
             do xake {x.TestOptions with FileLog="csc-fromlock-sourcelink.log"; ThrowOnError = true} {
-                wantOverride (["hello-sourcelink"])
+                want (["hello-sourcelink"])
 
                 rules [
                     "hello-sourcelink" => recipe {
@@ -470,7 +470,7 @@ type ``Csc fromlock``() =
 
             let build () =
                 xake {x.TestOptions with FileLog="csc-fromlock-sourcelink-missing.log"; ThrowOnError = true} {
-                    wantOverride (["hello-sourcelink-missing"])
+                    want (["hello-sourcelink-missing"])
 
                     rules [
                         "hello-sourcelink-missing" => recipe {

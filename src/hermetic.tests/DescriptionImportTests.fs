@@ -82,8 +82,13 @@ type ``Description import``() =
             Assert.That(pkg.Bundle, Is.EqualTo [ "Xake" ], "the PrivateAssets=all reference is packed into the package")
             Assert.That((pkg.Icon, pkg.Readme), Is.EqualTo ((Some "../../Icon.png", Some "../../readme.md")))
             Assert.That(pkg.License, Is.EqualTo (Some "MIT"))
+            // the Xake range as the project file states it (XakeVersion's default), not a copy here
+            let xakeRange =
+                let m = System.Text.RegularExpressions.Regex.Match (File.ReadAllText (x.OwnProjects () |> List.last), @"<XakeVersion [^>]*>([^<]+)</XakeVersion>")
+                Assert.That(m.Success, "XakeVersion in the hermetic project file")
+                m.Groups.[1].Value
             Assert.That(hermetic.Packages |> List.map (fun p -> p.Id, p.Version),
-                        Is.EqualTo [ "Xake", Some "[3.14.0.45, 4.0)"; "FSharp.Core", Some "8.0.100" ])
+                        Is.EqualTo [ "Xake", Some xakeRange; "FSharp.Core", Some "8.0.100" ])
             Assert.That(hermetic.Sources, Does.Contain "Import.fs")
             Assert.That(hermetic.Package.Value.Readme, Is.EqualTo (Some "readme.md"))
         | _ -> Assert.Fail "three descriptions expected"

@@ -105,7 +105,8 @@ publish. `src/core` is marked `IsPackable=false` and is never published on its o
 
 `Xake.Hermetic.Dotnet` is a **consumer of the published `Xake`**: `src/hermetic` has
 `<PackageReference Include="Xake" Version="$(XakeVersion)" />` with `XakeVersion` defaulting to
-the range (`[3.14.0.45, 4.0)`), not ProjectReferences to `src/core`/`src/dotnet`, so it compiles
+the range (`[<floor>, 4.0)`; the fsproj is the one place it is written, `build.fsc.fsx
+bump-base` moves the floor), not ProjectReferences to `src/core`/`src/dotnet`, so it compiles
 against the assemblies on nuget.org and the nuspec dependency comes straight from that reference.
 The range is the whole contract between the two: the hermetic assembly uses only public
 `Xake`/`Xake.Dotnet` API (no `InternalsVisibleTo` between packages), and the records it builds
@@ -121,7 +122,16 @@ not found") on every restore, ours and every consumer's. Since 3.15 the publishe
 tag (`v3.15.0` -> `3.15.0`), so the floor is written from the tag. Releases up to 3.14.0 and
 hermetic 0.9.0 went out with the run number as a fourth component (`v3.14.0` is `3.14.0.45`, there
 is no `3.14.0`): a floor on one of those is that four-part version. Raise the floor only when the
-hermetic package needs what the release brings.
+hermetic package needs what the release brings, with one command:
+
+```bash
+dotnet fsi build.fsc.fsx -- -- bump-base -d XAKE_FLOOR=3.15.0   # default: the newest Xake on nuget.org
+```
+
+It refuses a version nuget.org does not have, writes the floor into `XakeVersion` (the upper
+bound stays), re-imports the descriptions and re-resolves Xake in the hermetic lock only (as
+`LOCK_REFRESH=Xake`; the core locks are not touched). What remains by hand: the line in
+docs/hermetic/README.md saying why the floor moved.
 
 **The records the hermetic package builds.** An F# record expression or `{ r with ... }` copy
 compiled against one Xake calls the record's full constructor, so a field added in a later Xake
@@ -266,9 +276,10 @@ and tag the next patch.
 ### Bootstrapping note
 
 Both build scripts bootstrap from nuget.org: the build builds Xake with an already published
-Xake. `build.fsx` starts with `#r "nuget: Xake, 3.14.0.45"`; `build.fsc.fsx` (the declarative
-build, which needs `Locks`/`Import`/`Fingerprints` from the hermetic package) with
-`#r "nuget: Xake, 3.14.0.45"` and `#r "nuget: Xake.Hermetic.Dotnet, 0.9.0.46"`. Those references are intentionally *behind* the
+Xake. `build.fsx` starts with `#r "nuget: Xake, <version>"`; `build.fsc.fsx` (the declarative
+build, which needs `Locks`/`Import`/`Fingerprints` from the hermetic package) with the same and
+`#r "nuget: Xake.Hermetic.Dotnet, <version>"` (the first lines of the scripts are the one place
+the versions are written). Those references are intentionally *behind* the
 version being released: bump them only after a release has landed on nuget.org, to the exact
 published version (the tag from 3.15 on; the four-part `X.Y.Z.<run>` for releases up to
 3.14.0 / hermetic 0.9.0, where a bare `X.Y.Z` does not exist and resolves upwards with

@@ -21,20 +21,20 @@ touched, so it is not re-litigated:
 - The mono provider built its `PATH` env var as `sdkroot </> ("bin" + ";" + PATH)` — `+` binds
   tighter than `</>`, and `;` is not the Unix separator. Fixed, but the mono path has no test
   coverage.
-- `build.fsx` bootstraps from nuget.org (`#r "nuget: Xake, 3.14.0.45"`, the 3.14.0 release as
-  nuget.org carries it); `build.fsc.fsx` from `Xake 3.14.0.45` and
-  `Xake.Hermetic.Dotnet 0.9.0.46`.
+- `build.fsx` and `build.fsc.fsx` bootstrap from nuget.org (versions in their first lines;
+  `build.fsc.fsx` also takes `Xake.Hermetic.Dotnet`).
   The base script stays on the base package only. The nuget references stay behind the release being made; bump
   them only after a release lands on nuget.org, to the exact published version (the tag from
   3.15 on, `X.Y.Z.<run>` before).
   Developing against unreleased libraries: a temporary `#r` on dlls (or a `#i` local feed);
   see docs/devprocess.md, "Bootstrapping note". `samples/gettingstarted.fsx` references the
   published package (`#r "nuget: Xake"`) and is checked against it after each release.
-- `src/hermetic` builds on the *published* `Xake` (PackageReference `[3.14.0.45, 3.15)`, since hermetic 0.9.0), not on
-  `src/core`/`src/dotnet`. The floor is the exact published version: `[3.4.0, 4.0)` warns NU1603
-  because no plain `3.4.0` exists. A local feed (`-d NUGET_SOURCE=<folder>`) is only for working
-  against an unreleased base; a packed `3.4.0.99` in `~/.nuget/packages/xake/` shadows the
-  release until deleted.
+- `src/hermetic` builds on the *published* `Xake` (`XakeVersion` in its fsproj, `[<floor>, 4.0)`
+  since #108), not on `src/core`/`src/dotnet`. The floor must exist on nuget.org or NuGet warns
+  NU1603; `build.fsc.fsx bump-base` moves it. Working against an unreleased base: pack it as
+  `3.999.0-dev` and pass `-d XAKE_VERSION=[3.999.0-dev] -d NUGET_SOURCE=<folder>` (CI
+  `hermetic-compat`; docs/devprocess.md); delete `~/.nuget/packages/xake/3.999.0-dev` before
+  packing a changed base again.
 - **The supported floor is .NET 8**, enforced in three places (`global.json`, the tests TFM, the
   CI matrix) and by an explicit `FSharp.Core` 8.0.100 pin with
   `DisableImplicitFSharpCoreReference`. Without the pin the SDK's own FSharp.Core lands in the

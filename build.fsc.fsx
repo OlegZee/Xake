@@ -1,7 +1,7 @@
 // Declarative self-build (docs/hermetic/lock.md): what a project is lives in src/<dir>/xake.project.json,
 // how it compiles in locks/<name>/Release.json; both committed, written only by `import` and `update-locks`.
 // `build` compiles from them with fsc, no msbuild; `check` fails where `build` only warns (xake.fingerprints).
-// Bootstrap: the published packages (exact X.Y.Z.<run>, bumped only after a release lands on nuget.org).
+// Bootstrap: the published packages (the exact published version, bumped only after a release lands on nuget.org).
 #r "nuget: Xake, 3.14.0.45"
 #r "nuget: Xake.Hermetic.Dotnet, 0.9.0.46"
 #load "testjobs.fsx"   // the test jobs, shared with build.fsx
@@ -16,7 +16,30 @@ let vars = {|
     Version         = Var.create<string>(description = "Xake package version") |> withDefault "0.0.1"
     HermeticVersion = Var.create<string>(description = "Xake.Hermetic.Dotnet package version") |> withDefault "0.3.0"
     TestFilter      = Var.string(cliArg = "FILTER", envVar = "FILTER", description = "Runs only the tests whose name matches this regex, e.g. 'Lock'")
+    XakeFloor       = Var.string(cliArg = "XAKE_FLOOR", description = "bump-base: the Xake version Xake.Hermetic.Dotnet's range starts at, e.g. 3.15.0; default the newest on nuget.org")
 |}
+
+/// The project file that holds Xake.Hermetic.Dotnet's Xake range (`XakeVersion`, the one place it is written).
+let hermeticProject = "src/hermetic/Xake.Hermetic.Dotnet.fsproj"
+let private xakeVersionRx =
+    System.Text.RegularExpressions.Regex @"(<XakeVersion Condition=""'\$\(XakeVersion\)' == ''"">\[)([^,\]]+)(,[^<]*</XakeVersion>)"
+
+/// The stable Xake versions on nuget.org, oldest first (the flat-container index).
+let publishedXake () =
+    use http = new System.Net.Http.HttpClient ()
+    let json = http.GetStringAsync("https://api.nuget.org/v3-flatcontainer/xake/index.json").Result
+    use doc = System.Text.Json.JsonDocument.Parse json
+    [ for v in doc.RootElement.GetProperty("versions").EnumerateArray () -> v.GetString () ]
+    |> List.filter (fun v -> not (v.Contains "-"))
+
+/// Writes `floor` as the lower bound of the Xake range in the hermetic project file; the upper
+/// bound stays. Returns the floor it replaced.
+let setXakeFloor (floor: string) =
+    let text = System.IO.File.ReadAllText hermeticProject
+    let m = xakeVersionRx.Match text
+    if not m.Success then failwith $"{hermeticProject}: no default XakeVersion range to move"
+    System.IO.File.WriteAllText (hermeticProject, xakeVersionRx.Replace (text, "${1}" + floor + "${3}", 1))
+    m.Groups.[2].Value
 
 let projects = [ "Xake", "src/core"; "Xake.Dotnet", "src/dotnet"; "Xake.Hermetic.Dotnet", "src/hermetic" ]
 let descriptions = !! "src/*/xake.project.json"
@@ -54,6 +77,28 @@ do xake { ExecOptions.Default with DbFileName = ".xake.fsc" } {
             do! Fingerprints.record fingerprints (lockOf name cfg) (descriptionOf name :: [ for r in d.ProjectRefs -> lockOf r cfg ])
         }
         command "update-locks" { for name, _ in projects do do! need [ $"lock::{name}::Release" ] }
+
+        // Moves Xake.Hermetic.Dotnet onto a newer Xake (docs/devprocess.md): the floor of its
+        // range in the project file, the descriptions re-imported, Xake re-resolved in its lock
+        // only. -d XAKE_FLOOR=<version on nuget.org>; default the newest release.
+        command "bump-base" {
+            let! requested = vars.XakeFloor
+            let published = publishedXake ()
+            let floor = requested |> Option.defaultValue (List.last published)
+            if not (List.contains floor published) then
+                failwith $"Xake {floor} is not on nuget.org; a floor that does not exist warns NU1603 on every restore"
+            let previous = setXakeFloor floor
+            do! trace Level.Message "Xake floor %s -> %s (%s)" previous floor hermeticProject
+            // right after a release the local NuGet HTTP cache still lists the old versions (it
+            // keeps a package's version list for 30 minutes) and the lock's restore fails NU1102
+            if previous <> floor then
+                do! sh "dotnet nuget locals http-cache --clear" { failonerror }
+            do! need [ "import" ]
+            // the lock keeps the Xake it holds unless LOCK_REFRESH names it; the lock rule reads
+            // the script variable, else the environment, and this run asks for nothing else
+            System.Environment.SetEnvironmentVariable ("LOCK_REFRESH", "Xake")
+            do! need [ "lock::Xake.Hermetic.Dotnet::Release" ]
+        }
         "check" => Fingerprints.check fingerprints
 
         // (c) every described project's Release outputs, from the committed files only (fresh clone, CI)

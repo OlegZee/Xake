@@ -161,7 +161,7 @@ type ``Restore``() =
         let problems = ref []
         let log = name + ".log"
         do xake {x.TestOptions with FileLog = log; FileLogLevel = Verbosity.Diag; ThrowOnError = true} {
-            wantOverride ([name])
+            want ([name])
             rules [ name => recipe { let! p = Restore.ensure options request in problems.Value <- p } ]
         }
         problems.Value, File.ReadAllText (x.TestOptions.ProjectRoot </> log)
@@ -213,7 +213,7 @@ type ``Restore``() =
     member x.``into takes the package folder relative to the project root``() =
         let mutable root = ""
         do xake {x.TestOptions with FileLog="restore-into.log"; ThrowOnError = true} {
-            wantOverride (["into"])
+            want (["into"])
             rules [
                 "into" => recipe {
                     let! options = Restore.into ".packages"
@@ -244,7 +244,7 @@ type ``Restore``() =
 
             let options = { Lock.Options.Default with Restore = { Restore.Options.Default with PackageRoot = Some root } }
             do xake {x.TestOptions with FileLog="restore-e2e.log"; ThrowOnError = true} {
-                wantOverride (["hello-restored"])
+                want (["hello-restored"])
                 rules [ "hello-restored" => recipe { do! Lock.compileWith options entry } ]
             }
 
@@ -266,7 +266,7 @@ type ``Restore``() =
 
             let build () =
                 xake {x.TestOptions with FileLog="restore-off.log"; ThrowOnError = true} {
-                    wantOverride (["hello-no-restore"])
+                    want (["hello-no-restore"])
                     rules [ "hello-no-restore" => recipe { do! Lock.compileWith options entry } ]
                 }
             let ex = Assert.Throws<XakeException> (fun () -> build () |> ignore)
@@ -288,7 +288,7 @@ type ``Restore``() =
 
             let build () =
                 xake {x.TestOptions with FileLog="restore-sha512.log"; ThrowOnError = true} {
-                    wantOverride (["hello-bad-sha512"])
+                    want (["hello-bad-sha512"])
                     rules [ "hello-bad-sha512" => recipe { do! Lock.compileWith options entry } ]
                 }
             let ex = Assert.Throws<XakeException> (fun () -> build () |> ignore)

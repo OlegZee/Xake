@@ -19,7 +19,7 @@ type ``Description import``() =
     member x.Import (projects: string list) (descriptionOf: string -> string) (globals: (string * string) list) =
         let result = ref []
         do xake {x.TestOptions with FileLog = "import.log"; ThrowOnError = true} {
-            wantOverride [ "import" ]
+            want [ "import" ]
             rules [
                 "import" => recipe {
                     do! alwaysRerun ()   // as a `command` would
@@ -83,7 +83,7 @@ type ``Description import``() =
             Assert.That((pkg.Icon, pkg.Readme), Is.EqualTo ((Some "../../Icon.png", Some "../../readme.md")))
             Assert.That(pkg.License, Is.EqualTo (Some "MIT"))
             Assert.That(hermetic.Packages |> List.map (fun p -> p.Id, p.Version),
-                        Is.EqualTo [ "Xake", Some "[3.13.0.43, 3.14)"; "FSharp.Core", Some "8.0.100" ])
+                        Is.EqualTo [ "Xake", Some "[3.14.0.45, 3.15)"; "FSharp.Core", Some "8.0.100" ])
             Assert.That(hermetic.Sources, Does.Contain "Import.fs")
             Assert.That(hermetic.Package.Value.Readme, Is.EqualTo (Some "readme.md"))
         | _ -> Assert.Fail "three descriptions expected"

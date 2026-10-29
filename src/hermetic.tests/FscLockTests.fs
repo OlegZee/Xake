@@ -28,7 +28,7 @@ type ``Fsc lock``() =
 
     member private x.RunWith (label: string) (vars: (string * string) list) (body: Recipe<ExecContext, unit>) =
         xake {x.TestOptions with FileLog = label + ".log"; ThrowOnError = true; Vars = vars; FileLogLevel = Loud} {
-            wantOverride ([label])
+            want ([label])
             rules [ label => body ]
         }
 
@@ -171,7 +171,7 @@ type ``Fsc lock``() =
     /// `Run` against another project root (one with a `global.json` of the test's own).
     member private x.RunIn (root: string) (label: string) (body: Recipe<ExecContext, unit>) =
         xake {x.TestOptions with ProjectRoot = root; FileLog = label + ".log"; ThrowOnError = true; Vars = [ "CI", "off" ]; FileLogLevel = Loud} {
-            wantOverride ([label])
+            want ([label])
             rules [ label => body ]
         }
 

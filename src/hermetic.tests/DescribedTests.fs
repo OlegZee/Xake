@@ -45,7 +45,7 @@ type ``Described compilation``() =
 
     member private x.Run (label: string) (body: Recipe<ExecContext, unit>) =
         xake {x.TestOptions with FileLog = label + ".log"; ThrowOnError = true; Vars = [ "CI", "off" ]; FileLogLevel = Loud} {
-            wantOverride ([label])
+            want ([label])
             rules [ label => body ]
         }
 
@@ -251,7 +251,7 @@ type ``Described compilation``() =
         Assert.That(described.Value.Sources |> List.exists (fun s -> s.EndsWith "/route/**/*.cs"), Is.True)
         Assert.That(described.Value.Options |> List.exists (fun o -> o.StartsWith "/pathmap"), Is.True)
         do xake {x.TestOptions with FileLog = "route-lock.log"; ThrowOnError = true; Vars = [ "CI", "off" ]} {
-            wantOverride [ "out/R.dll" ]
+            want [ "out/R.dll" ]
             rules [ "out/R.dll" ..> csc { project "route/xake.project.json"; lock lockPath } ]
         }
         Assert.That(File.Exists "out/R.dll", Is.True)
@@ -282,7 +282,7 @@ type ``Described compilation``() =
         if File.Exists "out/Cs.dll" then File.Delete "out/Cs.dll"
         let build label =
             xake {x.TestOptions with FileLog = label + ".log"; ThrowOnError = true; Vars = [ "CI", "off" ]; FileLogLevel = Loud} {
-                wantOverride ([ "out/Cs.dll" ])
+                want ([ "out/Cs.dll" ])
                 rules [ "out/Cs.dll" ..> csc { project "cs/xake.project.json"; config "Release"; lock lockPath } ]
             }
         let mutable masked = None
@@ -426,7 +426,7 @@ type ``Described compilation``() =
             results.Add r }
         let before = Described.restoreProcesses ()
         xake {x.TestOptions with FileLog = "same.log"; ThrowOnError = true; Vars = [ "CI", "off" ]; FileLogLevel = Loud} {
-            wantOverride [ "both" ]
+            want [ "both" ]
             rules [ "both" <== [ "x"; "y" ]; "x" => restoreOf "X"; "y" => restoreOf "Y" ]
         }
         Assert.That(Described.restoreProcesses () - before, Is.EqualTo 1)

@@ -29,8 +29,8 @@ The `Xake` package (engine and `Xake.Dotnet`). Xake.Hermetic.Dotnet has its own 
 - **Breaking (source): `wantOverride` removed; `want` always yields to command-line targets.** A
   script that uses `wantOverride` fails to compile; replace it with `want`. `want` now replaces
   `ExecOptions.Targets` passed to `xake`/`xakeArgs` (before: it yielded to them), the way `var`
-  wins over `ExecOptions.Vars`; command-line targets replace both. `src/hermetic.tests` still use
-  `wantOverride` until the hermetic package moves to Xake 3.14.
+  wins over `ExecOptions.Vars`; command-line targets replace both. `src/hermetic.tests` moved to `want`
+  with Xake.Hermetic.Dotnet 0.9.0.
 
 ## 3.13.0 (released as 3.13.0.43, 2026-10-27)
 

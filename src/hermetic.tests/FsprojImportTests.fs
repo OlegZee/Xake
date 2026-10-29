@@ -88,7 +88,7 @@ type ``Project import of an fsproj``() =
 
         let lockFile = dir </> "fsproj.lock.json"
         do xake {x.TestOptions with FileLog = "fsproj-import.log"; ThrowOnError = true; Vars = [ "CI", "off" ]} {
-            wantOverride ([ "import" ])
+            want ([ "import" ])
             rules [
                 "import" => Project.import {
                     Project.ImportOptions.Default with
@@ -127,7 +127,7 @@ type ``Project import of an fsproj``() =
         // is whatever the import recorded, and nothing here rewrites it
         for f in [ appDll; coreDll ] do File.Delete f
         do xake {x.TestOptions with FileLog = "fsproj-compile.log"; ThrowOnError = true; Vars = [ "CI", "off" ]} {
-            wantOverride ([ "compile" ])
+            want ([ "compile" ])
             rules [
                 "compile" => recipe {
                     do! Lock.compile core

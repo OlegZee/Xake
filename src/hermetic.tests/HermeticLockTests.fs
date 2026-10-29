@@ -53,7 +53,7 @@ type ``Hermetic lock``() =
     let run (options: ExecOptions) (root: string) (label: string) (vars: (string * string) list) (body: Recipe<ExecContext, unit>) =
         try
             do xake {options with ProjectRoot = root; FileLog = root </> (label + ".log"); FileLogLevel = Loud; ThrowOnError = true; Vars = vars} {
-                wantOverride ([label])
+                want ([label])
                 rules [ label => body ]
             }
             None

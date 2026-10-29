@@ -1679,9 +1679,10 @@ module Import =
             let! ctxOptions = getCtxOptions ()
             let root = slash (Path.GetFullPath ctxOptions.ProjectRoot)
             let full (p: string) = slash (Path.GetFullPath (if Path.IsPathRooted p then p else root </> p))
-            let! packageRoot, packageSource = DotNetFwk.packageRootWithSource ()
-            // with the script variable `NUGET_PACKAGES`, msbuild restores into the build's folder too
-            let environment = if packageSource = DotNetFwk.ScriptVariable then [ "NUGET_PACKAGES", packageRoot ] else []
+            let! packageRoot = DotNetFwk.packageRoot ()
+            // msbuild restores into the build's package folder (the build variable
+            // `NUGET_PACKAGES`, else `.packages`), whatever the environment says
+            let environment = [ "NUGET_PACKAGES", packageRoot ]
             let! roots = Roots.currentWith options.Roots
             let globals = recordGlobals root options
             let primary = List.head options.Configurations

@@ -138,8 +138,8 @@ module Locks =
     /// with `config` (the SDK preset), `--deterministic+`, the tokenized `--pathmap`, and no
     /// `-o` (the output path is the build's);</item>
     /// <item>packages through `Described.restore` (msbuild restore). A version the current
-    /// lock holds is passed as exact, so it stays; the script variable (or environment
-    /// variable) `LOCK_REFRESH=&lt;ids|*&gt;` lets the named packages resolve as declared again;</item>
+    /// lock holds is passed as exact, so it stays; the build variable
+    /// `LOCK_REFRESH=&lt;ids|*&gt;` lets the named packages resolve as declared again;</item>
     /// <item>a project reference to B: B's configuration `refConfig` (this one, else Release,
     /// else Debug -- whichever B has a lock for at `lockOf B c`) and framework
     /// `nearestFramework`, recorded as B's output path `outOf cfgB fwkB B` + `/&lt;assembly&gt;.dll`

@@ -1531,30 +1531,20 @@ module Lock =
     /// <summary>
     /// The record-time gate (`record`, the recording branch of `buildWith`, `Project.import`):
     /// under `HERMETIC=on`, every reason not to write the lock at `lockPath` with `entries`,
-    /// tokenized against `roots` -- the package folder not being the build's own (message 2,
-    /// `DotNetFwk.packageRootWithSource`), then one line per offending path (message 9,
-    /// `hermeticViolations`). Empty, and reading nothing but `HERMETIC`, with the mode off.
+    /// tokenized against `roots`: one line per offending path (message 9,
+    /// `hermeticViolations`). The package folder is always the build's own (the build variable
+    /// `NUGET_PACKAGES`, else `.packages`), so message 2 does not arise here. Empty, and reading
+    /// nothing but `HERMETIC`, with the mode off.
     /// </summary>
     let hermeticRecordGate (lockPath: string) roots (entries: Entry list) : Recipe<ExecContext, string list> =
         recipe {
             let! on = HermeticMode.enabled ()
             match on, entries with
             | false, _ | _, [] -> return []
-            | true, first :: _ ->
-                let! _, source = DotNetFwk.packageRootWithSource ()
-                let package =
-                    if source = DotNetFwk.ScriptVariable then []
-                    else
-                        // the base's own message 2, by asking its check with nothing but an
-                        // undeclared folder
-                        HermeticMode.check first.Name
-                            { ProjectRoots = []; PackageRoot = ""; PackageRootDeclared = false; DotnetRoot = None
-                              SdkPin = DotNetFwk.NoGlobalJson; SdkInstalled = (fun _ -> true); TargetingPackVersion = (fun _ -> None) }
-                            []
+            | true, _ ->
                 return
-                    package
-                    @ [ for e in entries do
-                          for path in hermeticViolations roots e -> hermeticRecordMessage e.Name lockPath path ]
+                    [ for e in entries do
+                        for path in hermeticViolations roots e -> hermeticRecordMessage e.Name lockPath path ]
         }
 
     /// <summary>
@@ -1878,8 +1868,8 @@ module Lock =
     ///     do! Lock.record "locks/app.json" (Lock.Compilation.Csc c) }
     /// </code>
     /// Nothing is compiled here. Under `HERMETIC=on` a lock naming a path outside
-    /// `$(ProjectRoot)` and `$(NuGetPackageRoot)` that no prerequisite covers, or recorded
-    /// without the script variable `NUGET_PACKAGES`, is refused (`hermeticRecordGate`).
+    /// `$(ProjectRoot)` and `$(NuGetPackageRoot)` that no prerequisite covers is refused
+    /// (`hermeticRecordGate`).
     /// </summary>
     let record (path: string) (c: Compilation) : Recipe<ExecContext, unit> =
         recipe {

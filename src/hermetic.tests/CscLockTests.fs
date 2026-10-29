@@ -271,12 +271,12 @@ type ``Csc lock``() =
         Assert.That(File.Exists "LockN.dll", Is.False)
 
     [<Test; Category("Integration")>]
-    member x.``under CI (environment variable) a missing lock fails through csc { lock }``() =
+    member x.``under CI (-d CI=true) a missing lock fails through csc { lock }``() =
         let lockPath = x.Fresh "LockH"
 
         x.WithCi "true" (fun () ->
             let run () =
-                x.RunWith "lock-h" [] (csc {
+                x.RunWith "lock-h" [ "CI", "true" ] (csc {
                     src !!"LockH.cs"
                     out (File.make "LockH.dll")
                     target Library

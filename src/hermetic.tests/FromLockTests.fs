@@ -118,17 +118,12 @@ type ``Csc fromlock``() =
     member x.``restores the toolset compiler named by the lock``() =
 
         // exercises the restore path for real, without touching the user's own NuGet cache:
-        // point NUGET_PACKAGES at a scratch directory for the duration of this test.
-        // `Roots.nugetRoot ()` (and `DotNetFwk.sdkImpl.nugetRoot ()`, which it delegates to)
-        // reads it directly, and `restorePackage` shells out to `dotnet restore`, which
-        // inherits it like any other environment variable -- confirmed against this package
-        // before writing the test.
+        // the build variable NUGET_PACKAGES names a scratch directory; `restorePackage` passes
+        // it to `dotnet restore` as its environment variable.
         let originalNugetPackages = System.Environment.GetEnvironmentVariable "NUGET_PACKAGES"
         let scratchNuget = Path.Combine (Path.GetTempPath(), "xake-fromlock-restore-" + System.Guid.NewGuid().ToString("N"))
 
         try
-            System.Environment.SetEnvironmentVariable ("NUGET_PACKAGES", scratchNuget)
-
             let dir = Directory.GetCurrentDirectory()
             let project, outDll, _, _ = makeLock dir
 
@@ -151,7 +146,7 @@ type ``Csc fromlock``() =
 
             Assert.That(File.Exists scratchCscDll, Is.False, "the scratch NuGet cache already has the package -- test setup is wrong")
 
-            do xake {x.TestOptions with FileLog="csc-fromlock-restore.log"; ThrowOnError = true} {
+            do xake {x.TestOptions with FileLog="csc-fromlock-restore.log"; ThrowOnError = true; Vars = [ "NUGET_PACKAGES", scratchNuget ]} {
                 want (["hello-restore"])
 
                 rules [
@@ -164,7 +159,6 @@ type ``Csc fromlock``() =
             Assert.That(File.Exists scratchCscDll, Is.True, "the toolset package was not restored into the scratch NuGet cache")
             Assert.That(File.Exists outDll, Is.True, "csc did not produce Hello.dll after restoring the compiler")
         finally
-            System.Environment.SetEnvironmentVariable ("NUGET_PACKAGES", originalNugetPackages)
             try Directory.Delete (scratchNuget, true) with _ -> ()
 
     [<Test>]

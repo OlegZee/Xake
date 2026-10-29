@@ -304,10 +304,8 @@ type ``Run folders``() =
         |> Array.filter (fun f -> not (Path.GetFileName(f).StartsWith ".xake-run"))
         |> Array.map (fun f -> Path.GetRelativePath(dir, f).Replace ('\\', '/')) |> Array.sort |> List.ofArray
 
-    let packages () =
-        match Environment.GetEnvironmentVariable "NUGET_PACKAGES" with
-        | null | "" -> Environment.GetFolderPath Environment.SpecialFolder.UserProfile </> ".nuget/packages"
-        | p -> p
+    /// the build's package folder (`.packages` under the project root, Xake.Dotnet's default)
+    let packages () = Path.GetFullPath ".packages"
 
     let mutable prepared = false
 

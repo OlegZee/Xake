@@ -66,11 +66,11 @@ module internal HermeticVarValues =
 /// `builtin` / `make`.
 module Roots =
 
-    /// The machine's NuGet package cache: the *environment* variable `NUGET_PACKAGES`, else
-    /// `~/.nuget/packages` (`DotNetFwk.nugetRoot`). This is the package folder of the
-    /// context-free functions here (`builtin`, `make`), which have no build to read the script
+    /// The machine's NuGet package cache, `~/.nuget/packages` (`DotNetFwk.nugetRoot`; the
+    /// environment variable `NUGET_PACKAGES` is not read). This is the package folder of the
+    /// context-free functions here (`builtin`, `make`), which have no build to read the build
     /// variable from. A recipe takes the build's folder instead -- `current`/`currentWith`,
-    /// which follow `DotNetFwk.packageRoot ()`: the script variable `NUGET_PACKAGES` first --
+    /// which follow `DotNetFwk.packageRoot ()`: the build variable `NUGET_PACKAGES`, else `.packages` --
     /// so a lock recorded in a build with its own package folder tokenizes that folder as
     /// `$(NuGetPackageRoot)`.
     let nugetRoot () = DotNetFwk.nugetRoot ()
@@ -171,8 +171,8 @@ module Roots =
     let currentWith (extra: (string * string) list) : Recipe<ExecContext, (string * string) list> =
         recipe {
             let! options = getCtxOptions()
-            // the build's package folder (the script variable `NUGET_PACKAGES`, else the
-            // environment's), read -- and so a dependency -- here; an explicit override wins
+            // the build's package folder (the build variable `NUGET_PACKAGES`, else
+            // `.packages`), read -- and so a dependency -- here; an explicit override wins
             let! packageRoot = DotNetFwk.packageRoot ()
             let extra =
                 if extra |> List.exists (fst >> (=) nugetPackageRootToken) then extra
@@ -183,5 +183,5 @@ module Roots =
     /// The built-in roots for the project root this build runs with -- the engine's
     /// `ExecOptions.ProjectRoot`, not the process's current directory -- with
     /// `$(NuGetPackageRoot)` at the build's package folder (`DotNetFwk.packageRoot ()`: the
-    /// script variable `NUGET_PACKAGES`, else the environment's, else `~/.nuget/packages`).
+    /// build variable `NUGET_PACKAGES`, else `.packages` under the project root).
     let current : Recipe<ExecContext, (string * string) list> = currentWith []

@@ -44,7 +44,7 @@ module Pack =
         /// https://reproducible-builds.org/specs/source-date-epoch/; read, and so a dependency,
         /// here; clamped to 1980), the DOS epoch when it is unset, empty or not a number. The
         /// environment variable counts only through the script: `var "SOURCE_DATE_EPOCH" [Env "SOURCE_DATE_EPOCH"]`.
-        static member current () : Xake.Recipe<Xake.ExecContext, Options> =
+        static member current () : Xake.DomainTypes.Recipe<Xake.ExecContext, Options> =
             Xake.Builder.recipe {
                 let! timestamp = HermeticVarValues.readSourceDateEpoch
                 return { Options.Default with Timestamp = timestamp }

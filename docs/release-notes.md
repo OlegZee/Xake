@@ -3,7 +3,7 @@
 The `Xake` package (engine and `Xake.Dotnet`). Xake.Hermetic.Dotnet has its own notes
 ([hermetic/README.md](hermetic/README.md)).
 
-## 3.15.0 (unreleased)
+## 3.15.0 (2026-10-29)
 
 - **The published version is the tag.** `v3.15.0` goes to nuget.org as `3.15.0`, no longer with
   the run number as a fourth component (3.14.0 is `3.14.0.45`); the same for

@@ -172,10 +172,26 @@ workflow that opens the bootstrap PR after a publish run.
    still moving with hermetic; if it does not come, A + B is enough.
 3. **Not C**: with a stabilizing engine it turns most hermetic changes into empty Xake releases.
 
-## 6. Decision needed
+## 6. Decision (owner, 2026-10-29)
 
-- A (exact `X.Y.Z`): yes / no.
-- B: the rule "no new fields in `CscSettingsType`, `FscSettingsType`, `Csc`, `Fsc`,
-  `RunOptions`, `FscRunOptions`, `ExecContext` until 4.0" — accepted?
-- D: now, at the next `src/dotnet` need, or not at all; and if it comes, meta-package `Xake` or
-  a breaking 4.0.
+**A, B and E now; then D.** C is not taken.
+
+D's scope grows by the two engine features in flight, because both change the surface that
+`Xake.Dotnet` and hermetic consume from the engine:
+
+- **variables** (`feature/vars-precedence`, variant 3: `var "N" [Env ..; Default ..]`, libraries
+  read the variable set only, no env fallback). `Xake.Dotnet` and hermetic are those libraries
+  (`NETFX`, `NETFX-TARGET`, `FSCVER`, `CSC_SERVER`, `CSC_JOBS`/`FSC_JOBS`, `NUGET_FETCH`,
+  `HERMETIC`, `LOCK_REFRESH`, ...);
+- **patterns** (`feature/pattern-module`: the public pattern module; hermetic's and the tasks'
+  rule patterns and filesets sit on it).
+
+So D comes after both land in the engine, and includes moving `Xake.Dotnet` and hermetic onto
+their final APIs. The engine contract the split leaves behind is then: recipes, `ExecContext`,
+the variable set, the pattern module, `Tool`-level process plumbing. Variant 3 is breaking for
+libraries; if it ships as Xake 4.0, D can ship in the same 4.0 and the meta-package variant is
+not needed (to decide when the vars spec rev. 4 fixes the version).
+
+B's rule ("no new fields until 4.0") covers `CscSettingsType`, `FscSettingsType`, `Csc`, `Fsc`,
+`RunOptions`, `FscRunOptions`, `ExecContext`. If the vars work needs a field in one of them, it
+waits for 4.0 or goes through a function.

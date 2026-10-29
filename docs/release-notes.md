@@ -3,10 +3,59 @@
 The `Xake` package (engine and `Xake.Dotnet`). Xake.Hermetic.Dotnet has its own notes
 ([hermetic/README.md](hermetic/README.md)).
 
-## 3.16.0 (unreleased)
+## Unreleased (next minor)
 
-<!-- PR 1 (variable evaluation at launch) adds its entries to this section; the ones below are
-     PR 2's (library readers, import of library declarations). -->
+**Variables are evaluated once, before the build, by declarations the script states.**
+Details: [tasks.md](tasks.md#script-variables).
+
+- **New: `var "N" [sources]`.** `var "N" [Env "X"; Default "v"]` takes the first defined source
+  in list order; `Cli "ext"` sets the name's command-line name (`-d ext=...`); `Secret` /
+  `SecretHashed` make it a secret. `var "N" "v"` keeps its meaning (a script value).
+- **Evaluation at launch.** `var` rules and `varschema` fields are evaluated once, before `setup`
+  and the first target (run, `--dryrun`, `--dump`, engine `start`): the environment is read
+  there, and a missing `required` value or a value that does not convert to the field's type
+  stops the run before any target (before: when a recipe read it). A `varschema` field's value is
+  visible to `getVar` and in the banner. `--help` evaluates nothing.
+- **Precedence:** engine per-demand variables > `-d` (the last wins) > the script's one definition
+  of the name (`var` or `ExecOptions.Vars`) > the declaration's sources. A read records the final
+  value (`Var (N, value)`), not its source, so moving an equal value between the environment,
+  `-d` and `var` no longer rebuilds.
+- **Breaking: a `Var.*` read in a recipe needs a declaration** of its key: a `varschema` field
+  (or an equal `var [...]` rule). Without one the reading target fails ("... is read through Var
+  but is not declared: declare it in varschema, or use getVar ..."); with a different one (another
+  env name, default, type, required flag, secret mode or command-line name) it fails too. A Var
+  read no longer reads the environment and no longer records `EnvVar`; use `getVar` for script
+  values and `getEnv` for the environment.
+- **Breaking: the key of a field is its `name`, else its field name.** `cliArg` is only its
+  command-line name: with `p = Var.string(cliArg = "pkg")`, `-d pkg=v` sets `p` and `getVar "p"`
+  reads it (3.15 keyed it by `pkg`; a script reading `getVar "pkg"` changes). `-d p=v` for such
+  a field stops the run (`-d p: the variable is set on the command line as pkg; use -d pkg=...`).
+- **Breaking: a name defined twice in the script stops the run**: two `var` ops, a `var` op and an
+  `ExecOptions.Vars` entry, a `varschema` field and a rule (before: the later `var` replaced the
+  earlier value, `var` won over `ExecOptions.Vars`).
+- **Breaking: `-d` of a secret stops the run**, under its key, its command-line name or one of its
+  environment names (3.15 warned for an argument secret); `-d` of a `Var.env` field stops the run
+  (3.15 ignored it). `getVar`/`getEnv` of a secret return the value; masking applies to output.
+  Mark credential fields secret: `build.fsx` now has `NUGET_KEY = Var.env ... |> secret`.
+- **Engine:** `Demand(target, vars)` values now win over the script's values (they were shadowed);
+  a per-demand value for a secret, an environment-only or a mistyped variable fails the demand
+  before any target. `XakeEngine.Start` raises `XakeException` on a launch error.
+- **Output:** the banner lists each variable once with its source (`cli`, `cli:<name>`, `script`,
+  `env:<NAME>`, `default`, `(not set)`), secrets as `***` (3.14 labelled all `script/cli`);
+  `--help` lists `var [...]` rules after the `varschema` fields, with their command-line names;
+  the `Debug` options dump shows the variables, secrets masked.
+- **Dependencies:** a target whose record comes from a 3.15 Var read (`Var (N, None)` +
+  `EnvVar`) rebuilds once; a secret field's record moves from `SecretDep (env name, SecretEnv)` to
+  `SecretDep (key, SecretArg)`, one rebuild. Repeated reads of a name in one recipe record one
+  dependency. The database format is unchanged (0.6).
+- **API:** new `VarSource`, `VarOrigin`, `VarDecl`, `VarEntry`; new fields `ExecOptions.CliVars`
+  (the `-d` pairs; `-d` no longer goes into `ExecOptions.Vars`), `ExecOptions.VarDecls`,
+  `ExecOptions.VarDefinedBy` (where each `var`/`varschema` definition came from, for the
+  diagnostics) and `EngineOptions.Variables` (the variable set built at launch). Binary break for
+  code that builds `ExecOptions`/`EngineOptions` with a full record expression (not `with`);
+  `ExecContext` and the records Xake.Hermetic.Dotnet builds are unchanged.
+
+Library readers (Xake.Dotnet) and the optional import of library declarations:
 
 - **Breaking: Xake.Dotnet reads its build variables only from the variable set**, never from
   the environment. `NUGET_PACKAGES`, `XAKE_CSC_SERVER`, `XAKE_CSC_JOBS`, `XAKE_FSC_JOBS` set

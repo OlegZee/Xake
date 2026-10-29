@@ -75,7 +75,7 @@
        [<newest published>]), so the tests run against an unreleased base or the newest release
        (build.fsx XAKE_VERSION / NUGET_SOURCE, .github/workflows/build.yml `hermetic-compat`). -->
   <PropertyGroup>
-    <XakeVersion Condition="'$(XakeVersion)' == ''">[3.14.0.45, 4.0)</XakeVersion>
+    <XakeVersion Condition="'$(XakeVersion)' == ''">[3.16.0, 4.0)</XakeVersion>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Xake" Version="$(XakeVersion)" />

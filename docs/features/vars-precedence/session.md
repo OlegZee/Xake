@@ -30,9 +30,9 @@ PR 1 started 2026-10-29 by an implementer subagent: tests of spec §8.1-8.7 firs
 | PR | Branch | Worktree | State |
 |---|---|---|---|
 | #102 (draft) | `feature/vars-precedence` | `.claude/worktrees/feature+hermetic-windows` | spec, brief, archive |
-| PR 1 (not opened) | `feature/vars-core` | agent worktree (`.claude/worktrees/agent-…`) | in progress |
-| PR 2 | `feature/vars-libraries` (planned) | - | after PR 1 |
+| #111 (draft) | `feature/vars-core` | `.claude/worktrees/agent-acc07368580609689` | done: 523 tests green, 0 warnings; owner review |
+| PR 2 (not opened) | `feature/vars-libraries` | agent worktree | in progress: import spec, then library readers |
 
-Next step: review PR 1's report, push `feature/vars-core`, open the PR to dev; then PR 2. Proposed split (not yet approved): PR 1 core (`var`
-lists, `varschema` at launch, `Var` reads, second-definition errors, `?vars` on top, banner sources);
-PR 2 library readers (no env fallback, switches, `.packages`) in Xake.Dotnet and the hermetic package.
+PR 1 done 2026-10-30 (#111): core + names + docs; deviations in `pr1-notes.md` (on that branch), e.g. an extra `ExecOptions.VarDefinedBy` field for E-2. PR 2 started from `feature/vars-core`: first `pr2-spec.md` (import conventions, proposed), then L-1..L-7.
+
+Next step: the owner reviews #111 and PR 2 (import conventions in `pr2-spec.md`).

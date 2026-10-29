@@ -31,11 +31,13 @@ let launchVariables (opts: ExecOptions) : Map<string, VarEntry> * string list =
     for d in decls do
         if VarDecl.isSecret d then
             Secrets.declare d.Key d.Secret
+            Secrets.declare d.CliName d.Secret
             VarDecl.envNames d |> List.iter (fun e -> Secrets.declare e d.Secret)
     for (name, value) in opts.CliVars @ opts.Vars do
         if Secrets.isSecret name then SecretMask.register value
 
     let errors = ResizeArray<string>()
+    let given name = Util.getVar opts.CliVars name |> Option.isSome
 
     // one script definition per key: the ExecOptions.Vars entries first, then the ops in script order
     let named key = List.filter (fst >> (=) key)
@@ -47,35 +49,46 @@ let launchVariables (opts: ExecOptions) : Map<string, VarEntry> * string list =
         | a :: b :: _ -> errors.Add (sprintf "Variable '%s' is defined twice in the script: by %s and by %s; define it once" key a b)
         | _ -> ()
 
-    // a secret takes nothing from -d, neither under its name nor under an env name of its sources
     for d in decls do
+        // one command-line name per rule
+        match d.Sources |> List.choose (function Cli ext -> Some ext | _ -> None) with
+        | a :: b :: _ -> errors.Add (sprintf "Variable '%s' has more than one command-line name: %s and %s" d.Key a b)
+        | _ -> ()
+        // a secret takes nothing from -d, under its key, its external name or an env name of its sources
         if VarDecl.isSecret d then
             match VarDecl.envNames d with
             | env :: _ as envs ->
-                for given in d.Key :: envs |> List.distinct do
-                    if Util.getVar opts.CliVars given |> Option.isSome then errors.Add (Secrets.fromEnvOnly given env)
+                for name in d.Key :: d.CliName :: envs |> List.distinct do
+                    if given name then errors.Add (Secrets.fromEnvOnly name env)
             | [] ->
-                if Util.getVar opts.CliVars d.Key |> Option.isSome then errors.Add (secretGiven d.Key (sprintf "-d %s=..." d.Key))
+                for name in [d.Key; d.CliName] |> List.distinct do
+                    if given name then errors.Add (secretGiven name (sprintf "-d %s=..." name))
+        // -d of the key is refused when the variable has another command-line name
+        elif d.CliName <> d.Key && given d.Key then
+            errors.Add (sprintf "-d %s: the variable is set on the command line as %s; use -d %s=..." d.Key d.CliName d.CliName)
 
     let declared = decls |> List.rev |> List.map (fun d -> d.Key, d) |> Map.ofList     // the first declaration of a key
     let ownValue (d: VarDecl) =
         d.Sources |> List.tryPick (function
             | Env e -> Util.getEnvVar e |> Option.map (fun v -> v, VarOrigin.Env e)
             | Default v -> Some (v, VarOrigin.Default)
-            | Secret | SecretHashed -> None)
-    let keys = (opts.CliVars |> List.map fst) @ (opts.Vars |> List.map fst) @ (decls |> List.map (fun d -> d.Key)) |> List.distinct
+            | Cli _ | Secret | SecretHashed -> None)
+    // a -d name is a key unless it is the command-line name of a declaration, or the refused key of one
+    let consumed = set [ for d in decls do if d.CliName <> d.Key then yield d.CliName; yield d.Key ]
+    let undeclaredCli = opts.CliVars |> List.map fst |> List.filter (consumed.Contains >> not)
+    let keys = undeclaredCli @ (opts.Vars |> List.map fst) @ (decls |> List.map (fun d -> d.Key)) |> List.distinct
     let variables =
         [ for key in keys do
             let decl = Map.tryFind key declared
-            let cli = Util.getVar opts.CliVars key
+            let cliName = decl |> Option.map (fun d -> d.CliName) |> Option.defaultValue key
             let value =
-                match decl, cli with
+                match decl, Util.getVar opts.CliVars cliName with
                 | Some d, _ when VarDecl.isSecret d -> ownValue d       // -d refused above
                 | Some d, Some _ when d.Scope = EnvOnly ->
                     let env = VarDecl.envNames d |> List.tryHead |> Option.defaultValue key
-                    errors.Add (envOnlyGiven key env (sprintf "-d %s=..." key))
+                    errors.Add (envOnlyGiven key env (sprintf "-d %s=..." cliName))
                     ownValue d
-                | _, Some v -> Some (v, VarOrigin.Cli)
+                | _, Some v -> Some (v, VarOrigin.Cli cliName)
                 | _, None ->
                     match Util.getVar opts.Vars key, decl with
                     | Some v, _ -> Some (v, VarOrigin.Script)
@@ -93,6 +106,7 @@ let launchVariables (opts: ExecOptions) : Map<string, VarEntry> * string list =
             yield key, entry ]
         |> Map.ofList
     variables, List.ofSeq errors
+
 
 /// The variable set flattened to the context's `Vars`: one pair per key that has a value.
 let flatVars (variables: Map<string, VarEntry>) =
@@ -167,9 +181,9 @@ let runSetupAsync (ctx: ExecContext) (setup: string list) =
             do! ExecCore.demandTarget ctx targetName |> Async.Ignore
     }
 
-let private originText = function
+let private originText (key: string) = function
     | VarOrigin.Request -> "request"
-    | VarOrigin.Cli -> "cli"
+    | VarOrigin.Cli ext -> if ext = key then "cli" else "cli:" + ext
     | VarOrigin.Script -> "script"
     | VarOrigin.Env name -> "env:" + name
     | VarOrigin.Default -> "default"
@@ -201,7 +215,7 @@ let bannerLines (options: ExecOptions) (variables: Map<string, VarEntry>) (targe
             match entry.Value, entry.Origin with
             | Some value, Some origin ->
                 let shown = if isSecretEntry name entry || SecretMask.apply value <> value then "***" else value
-                yield sprintf "    %s=%s (%s)" name shown (originText origin)
+                yield sprintf "    %s=%s (%s)" name shown (originText name origin)
             | _ -> yield sprintf "    %s (not set)" name ]
     [ yield sprintf "Xake %s" version
       yield sprintf "  mode:         %s" mode

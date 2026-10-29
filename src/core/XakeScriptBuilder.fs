@@ -119,6 +119,8 @@ module XakeScriptBuilder =
 
     /// The `--help` lines of `var "N" [...]` rules: name, env names, the first default; a secret
     /// is marked "(secret)" and shows no default. Constant `var` ops are not listed.
+    let private keyNote (cliName: string) (key: string) = if cliName = key then "" else sprintf " (key %s)" key
+
     let private ruleHelpLines (decls: VarDecl list) =
         [ for d in decls do
             if d.DeclaredBy = VarDecl.ruleLabel d.Key then
@@ -129,7 +131,7 @@ module XakeScriptBuilder =
                     match d.Secret, d.Sources |> List.tryPick (function Default v -> Some v | _ -> None) with
                     | NotSecret, Some v -> sprintf ", default: %s" v
                     | _ -> ""
-                yield sprintf "  -d %s=<value> [string]%s%s%s" d.Key secret envStr defaultStr ]
+                yield sprintf "  -d %s=<value> [string]%s%s%s%s" d.CliName (keyNote d.CliName d.Key) secret envStr defaultStr ]
 
     /// The "Script variables" section of --help: the `varschema` fields (names, types, env names,
     /// defaults and descriptions), then the `var "N" [...]` rules; a secret variable is marked
@@ -146,7 +148,10 @@ module XakeScriptBuilder =
                         let envName = help.EnvVarName |> Option.defaultValue name
                         sprintf "  $%s [%s]" envName help.TypeName
                     | _ ->
-                        sprintf "  -d %s=<value> [%s]" name help.TypeName
+                        // the command-line name, with the key of the variable when it differs
+                        let key =
+                            decls |> List.tryPick (fun d -> if d.CliName = name && d.DeclaredBy <> VarDecl.ruleLabel d.Key then Some d.Key else None)
+                        sprintf "  -d %s=<value> [%s]%s" name help.TypeName (key |> Option.map (keyNote name) |> Option.defaultValue "")
                 let required = if help.IsRequired then " (required)" else ""
                 let secret = if help.IsSecret then " (secret)" else ""
                 let envStr =

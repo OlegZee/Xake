@@ -10,10 +10,12 @@ type LookupScope = ArgAndEnv | EnvOnly | ArgOnly
 
 /// An element of a `var "N" [...]` source list: `Env`/`Default` are tried in list order, the
 /// first that defines the name gives its value; `Secret`/`SecretHashed` define nothing, they
-/// make the variable a secret (presence only, or a salted HMAC; with both, `SecretHashed`).
+/// make the variable a secret (presence only, or a salted HMAC; with both, `SecretHashed`);
+/// `Cli "ext"` defines nothing either: `-d ext=v` sets the variable instead of `-d N=v`.
 type VarSource =
     | Env of string
     | Default of string
+    | Cli of string
     | Secret
     | SecretHashed
 
@@ -22,8 +24,8 @@ type VarSource =
 type VarOrigin =
     /// the engine's per-demand `?vars`
     | Request
-    /// `-d NAME=value`
-    | Cli
+    /// `-d NAME=value`, with the name given (the external name of the variable)
+    | Cli of string
     /// an `ExecOptions.Vars` entry or a constant `var "N" "v"`
     | Script
     /// an `Env` source of the declaration
@@ -35,8 +37,12 @@ type VarOrigin =
 /// without a value and evaluated at launch. A Var read finds its value through an equal
 /// declaration: all fields but `DeclaredBy` equal.
 type VarDecl = {
+    /// The internal name: what `getVar`, `?vars`, the banner and the variable set use.
     Key: string
-    /// The `Env`/`Default` sources in list order (no secret markers).
+    /// The external name: what `-d` uses (`cliArg` of a field, `Cli` of a rule, else the key).
+    CliName: string
+    /// The `Env`/`Default` sources in list order (no markers; a rule with more than one `Cli`
+    /// keeps them all here, for the launch error).
     Sources: VarSource list
     /// The typed default of a field (`withDefault`), the first `Default` of a rule.
     DefaultValue: obj option
@@ -64,10 +70,17 @@ module internal VarDecl =
     let fieldLabel (field: string) = sprintf "varschema field %s" field
 
     /// The declaration of a `var "N" [sources]` rule: a string in both scopes, never required;
-    /// the secret markers set its mode (`SecretHashed` wins) and are not kept as sources.
+    /// the secret markers set its mode (`SecretHashed` wins), `Cli` its external name; markers
+    /// are not kept as sources.
     let ofRule (name: string) (sources: VarSource list) =
-        let sources' = sources |> List.filter (function Env _ | Default _ -> true | Secret | SecretHashed -> false)
+        let cliNames = sources |> List.choose (function Cli ext -> Some ext | _ -> None)
+        let sources' =
+            sources |> List.filter (function
+                | Env _ | Default _ -> true
+                | Cli _ -> cliNames.Length > 1      // kept for the launch error (two command-line names)
+                | Secret | SecretHashed -> false)
         { Key = name
+          CliName = cliNames |> List.tryHead |> Option.defaultValue name
           Sources = sources'
           DefaultValue = sources' |> List.tryPick (function Default v -> Some (box v) | _ -> None)
           Scope = ArgAndEnv

@@ -89,15 +89,16 @@ module Vars =
     let withDefault (value: 't) (v: OptionalVar<'t>) : RequiredVar<'t> =
         { required v with DefaultValue = Some value }
 
-    /// The declaration a `Var.*` value stands for (its key resolved: `cliArg`, else `name`, else
-    /// the field name), with its env name: the sources are its env name (unless argument-only)
-    /// and its default, as a string.
+    /// The declaration a `Var.*` value stands for (its key: `name`, else the field name; its
+    /// command-line name: `cliArg`, else the key), with its env name: the sources are its env
+    /// name (unless argument-only) and its default, as a string.
     let internal declare (fieldName: string) (name: string option) (cliArgName: string option) (envName: string option)
                          (scope: LookupScope) (secret: SecretMode) (defaultValue: obj option) (isRequired: bool) (valueType: System.Type) =
         let resolvedName = defaultArg name fieldName
         let resolvedEnvName = envName |> Option.defaultWith (fun () -> toEnvName resolvedName)
         let decl : VarDecl =
-            { Key = defaultArg cliArgName resolvedName
+            { Key = resolvedName
+              CliName = defaultArg cliArgName resolvedName
               Sources =
                 [ if scope <> ArgOnly then yield Env resolvedEnvName
                   match defaultValue with
@@ -115,6 +116,7 @@ module Vars =
     let private differences (stored: VarDecl) (read: VarDecl) =
         [ if stored.Sources <> read.Sources then yield "sources"
           elif stored.DefaultValue <> read.DefaultValue then yield "DefaultValue"
+          if stored.CliName <> read.CliName then yield "command-line name"
           if stored.Scope <> read.Scope then yield "scope"
           if stored.Required <> read.Required then yield "required"
           if stored.Secret <> read.Secret then yield "secret mode"
@@ -146,7 +148,9 @@ module Vars =
                                      key stored.DeclaredBy (String.concat ", " fields) key
             | _ ->
                 let getEnvHint = if decl.Scope = ArgOnly then "" else sprintf " or getEnv \"%s\"" envName
-                return failwithf "Variable '%s' is read through Var but is not declared: declare it in varschema, or use getVar \"%s\"%s" key key getEnvHint
+                // an inline Var.arg has no key of its own (no name, no field): it is named by its command-line name
+                let shown = if key = "" then decl.CliName else key
+                return failwithf "Variable '%s' is read through Var but is not declared: declare it in varschema, or use getVar \"%s\"%s" shown shown getEnvHint
         }
 
     type RecipeBuilder with
@@ -201,7 +205,7 @@ module Vars =
                                 declare p.Name (getStringOption "Name") (getStringOption "CliArgName") (getStringOption "EnvName")
                                         scope secret defaultValue isRequired innerTy
                             let defaultStr = defaultValue |> Option.map (sprintf "%A")
-                            Some (decl, (decl.Key, {
+                            Some (decl, (decl.CliName, {
                                 TypeName     = innerTy.Name.ToLowerInvariant()
                                 // Always show the env var name (explicit or auto-derived)
                                 EnvVarName   = if scope = ArgOnly then None else Some envName

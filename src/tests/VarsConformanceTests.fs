@@ -6,7 +6,7 @@ open NUnit.Framework
 
 open Xake
 
-/// The conformance tests of docs/features/vars-precedence/spec.md §8.1-8.7 (variable evaluation
+/// The conformance tests of docs/features/vars-precedence/spec.md §8.1-8.7 and §8.10 (variable evaluation
 /// at launch); each test is named by its spec number. Every test uses its own variable and
 /// environment names: the secret registries and the environment are process-wide.
 [<TestFixture>]
@@ -914,3 +914,107 @@ type ``Vars conformance (spec section 8)``() =
         try
             StringAssert.Contains("Variable 'VC45X' is read through Var but is not declared", demandFails (eng.Demand "t"))
         finally eng.StopAsync().Wait()
+
+    // --- 8.10 Names: the key and the external (-d) name ---
+
+    [<Test>]
+    member x.``8.10-61 -d of the external name sets the key``() =
+        let logged = List<string>()
+        let schema = {| VC61P = Var.string(cliArg = "vc61pkg", envVar = "VC61_A") |}
+        let seen = ref []
+        do xakeArgs ["-d"; "vc61pkg=v"] (x.Opts logged) {
+            varschema schema
+            phony "main" (recipe {
+                let! p = getVar "VC61P"
+                let! ext = getVar "vc61pkg"
+                seen.Value <- [p; ext] })
+        }
+        Assert.AreEqual([Some "v"; None], seen.Value)
+        Assert.That(bannerVars logged, Does.Contain "VC61P=v (cli:vc61pkg)")
+
+    [<Test>]
+    member x.``8.10-62 -d of the key of a declaration with an external name fails the launch``() =
+        let schema = {| VC62P = Var.string(cliArg = "vc62pkg", envVar = "VC62_A") |}
+        let text =
+            fails (fun () ->
+                do xakeArgs ["-d"; "VC62P=v"] (x.Opts (List<string>())) {
+                    varschema schema
+                    phony "main" (recipe { return () })
+                })
+        StringAssert.Contains("-d VC62P: the variable is set on the command line as vc62pkg; use -d vc62pkg=...", text)
+
+    [<Test>]
+    member x.``8.10-63 a Cli source names the external name of a rule, anywhere in the list``() =
+        let run args first =
+            let logged = List<string>()
+            if first then
+                do xakeArgs args (x.Opts logged) {
+                    var "VC63P" [Cli "vc63pkg"; Env "VC63_A"]
+                    phony "main" (recipe { return () })
+                }
+            else
+                do xakeArgs args (x.Opts logged) {
+                    var "VC63P" [Env "VC63_A"; Cli "vc63pkg"]
+                    phony "main" (recipe { return () })
+                }
+            bannerVars logged
+        Assert.That(run ["-d"; "vc63pkg=v"] true, Does.Contain "VC63P=v (cli:vc63pkg)")
+        Assert.That(run ["-d"; "vc63pkg=v"] false, Does.Contain "VC63P=v (cli:vc63pkg)")
+        let text = fails (fun () -> run ["-d"; "VC63P=v"] true |> ignore)
+        StringAssert.Contains("-d VC63P: the variable is set on the command line as vc63pkg; use -d vc63pkg=...", text)
+
+    [<Test>]
+    member x.``8.10-64 two Cli sources fail the launch``() =
+        let text =
+            fails (fun () ->
+                do xakeArgs [] (x.Opts (List<string>())) {
+                    var "VC64P" [Cli "a"; Cli "b"]
+                    phony "main" (recipe { return () })
+                })
+        StringAssert.Contains("Variable 'VC64P' has more than one command-line name: a and b", text)
+
+    [<Test>]
+    member x.``8.10-65 an undeclared -d name is its own key``() =
+        let logged = List<string>()
+        let seen = ref None
+        do xakeArgs ["-d"; "VC65Z=1"] (x.Opts logged) {
+            phony "main" (recipe { let! z = getVar "VC65Z" in seen.Value <- z })
+        }
+        Assert.AreEqual(Some "1", seen.Value)
+        Assert.That(bannerVars logged, Does.Contain "VC65Z=1 (cli)")
+
+    [<Test>]
+    member x.``8.10-66 -d of a secret fails under any of its names``() =
+        let run (given: string) =
+            let logged = List<string>()
+            let text =
+                fails (fun () ->
+                    do xakeArgs ["-d"; given + "=vc66-secret-given"] (x.Opts logged) {
+                        var "VC66T" [Secret; Env "VC66_A"; Cli "vc66tok"]
+                        phony "main" (recipe { return () })
+                    })
+            StringAssert.Contains(sprintf "Variable '%s' is secret: secret variables come from the environment, set VC66_A instead of passing -d %s=..." given given, text)
+            StringAssert.DoesNotContain("vc66-secret-given", text + allText logged)
+        run "vc66tok"
+        run "VC66T"
+        run "VC66_A"
+
+    [<Test>]
+    member x.``8.10-67 the external name takes part in declaration equality``() =
+        let schema = {| VC67X = Var.string(cliArg = "a") |}
+        let text =
+            fails (fun () ->
+                do xakeArgs [] (x.Opts (List<string>())) {
+                    varschema schema
+                    phony "main" (recipe { let! _ = Var.string("VC67X", cliArg = "b") in () })
+                })
+        StringAssert.Contains("Variable 'VC67X' is read through a Var declaration that differs from its declaration by varschema field VC67X in command-line name:", text)
+
+    [<Test>]
+    member x.``8.10-68 --help shows the external name with the key``() =
+        let b = RulesBuilder(ExecOptions.Default)
+        let schema = {| VC68P = Var.string(cliArg = "vc68pkg") |}
+        let (XakeScript (o, _)) = b.AddVar(b.Vars(b.Zero(), schema), "VC68R", [Cli "vc68r"; Env "VC68_E"])
+        let lines = XakeScriptBuilder.formatHelp o
+        Assert.That(lines, Has.Some.Contains("-d vc68pkg=<value>").And.Contains("(key VC68P)"))
+        Assert.That(lines, Has.Some.Contains("-d vc68r=<value>").And.Contains("(key VC68R)").And.Contains("env: VC68_E"))

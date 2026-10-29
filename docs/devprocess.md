@@ -104,12 +104,14 @@ assembly into the same nupkg — so the engine and the tasks always share one ve
 publish. `src/core` is marked `IsPackable=false` and is never published on its own.
 
 `Xake.Hermetic.Dotnet` is a **consumer of the published `Xake`**: `src/hermetic` has
-`<PackageReference Include="Xake" Version="[3.4.0.21, 4.0)" />`, not ProjectReferences to
-`src/core`/`src/dotnet`, so it compiles against the assemblies on nuget.org and the nuspec
-dependency (`[3.4.0.21, 4.0.0)`) comes straight from that reference. The range is the whole
-contract between the two: the hermetic assembly uses only public `Xake`/`Xake.Dotnet` API (no
-`InternalsVisibleTo` between packages), so any 3.x from the floor on works with it and a Xake
-major bump must re-release it. `build.fsx`'s pack checks only that the packed nuspec depends on
+`<PackageReference Include="Xake" Version="$(XakeVersion)" />` with `XakeVersion` defaulting to
+the range (`[3.14.0.45, 4.0)`), not ProjectReferences to `src/core`/`src/dotnet`, so it compiles
+against the assemblies on nuget.org and the nuspec dependency comes straight from that reference.
+The range is the whole contract between the two: the hermetic assembly uses only public
+`Xake`/`Xake.Dotnet` API (no `InternalsVisibleTo` between packages), and the records it builds
+do not grow until 4.0 (below), so any 3.x from the floor on works with it and a Xake major bump
+must re-release it. CI checks that claim on every push (`hermetic-compat` in `build.yml`: the
+hermetic tests against the base of the commit and against the newest Xake on nuget.org). `build.fsx`'s pack checks only that the packed nuspec depends on
 `Xake` and not on `Xake.Dotnet` (which is not a package), and fails (deleting the nupkg)
 otherwise. **`Xake.Hermetic.Dotnet` 0.x may break** between minor versions; it is a preview.
 
@@ -132,19 +134,22 @@ how this was decided: docs/features/release-process/review.md (option B).
 
 **Developing against an unreleased base.** Normally `src/hermetic` restores `Xake` from
 nuget.org and needs nothing else. When it needs a `src/core`/`src/dotnet` change that is not
-released yet, pack the base into a folder at a version inside the range and hand that folder to
-the restore as an extra source:
+released yet, pack the base at a prerelease version into a folder and point the hermetic build
+and tests at exactly that version, with the folder as an extra source (what CI's
+`hermetic-compat` does):
 
 ```bash
-dotnet pack src/dotnet -c Release -p:Version=3.4.0.99 -o /tmp/xake-feed
-dotnet fsi build.fsx -- -- build test pack -d NUGET_SOURCE=/tmp/xake-feed   # or export NUGET_SOURCE
-# by hand: dotnet restore src/hermetic.tests -p:RestoreAdditionalProjectSources=/tmp/xake-feed
+dotnet fsi build.fsx -- -- out/pkg/Xake/Xake.3.999.0-dev.nupkg -d Version=3.999.0-dev
+dotnet fsi build.fsx -- -- build test-project::hermetic -d "XAKE_VERSION=[3.999.0-dev]" -d "NUGET_SOURCE=$PWD/out/pkg/Xake"
 ```
 
-`NUGET_SOURCE` (unset by default) is passed to the hermetic build and pack as
-`-p:RestoreAdditionalProjectSources=`. The packed version lands in the NuGet global cache
-(`~/.nuget/packages/xake/3.4.0.99`) and wins over the released one from then on: delete that
-folder when done, and release the base before the hermetic package that needs it.
+`XAKE_VERSION` (unset by default) becomes `-p:XakeVersion=` of the hermetic build and test
+build, `NUGET_SOURCE` their `-p:RestoreAdditionalProjectSources=`; `pack` takes only
+`NUGET_SOURCE`, so the nuspec always carries the range. A prerelease is never picked by the
+range itself, but the NuGet global cache keeps the first package of a version: delete
+`~/.nuget/packages/xake/3.999.0-dev` before packing a changed base again. Release the base before
+the hermetic package that needs it. `test-project::<project>` runs all test jobs of one test
+project (`tests` or `hermetic`).
 
 Note that `build.fsx` builds only `netstandard2.0` into `out/`; the `net462` assets come from
 `dotnet pack`, which builds both target frameworks.

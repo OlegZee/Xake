@@ -30,6 +30,10 @@ let vars = {|
     // inside the range and name that folder here (-d NUGET_SOURCE=/tmp/xake-feed or
     // $NUGET_SOURCE); it is handed to the restore as an extra source (docs/devprocess.md).
     NugetSource = Var.string(cliArg = "NUGET_SOURCE", envVar = "NUGET_SOURCE", description = "Extra NuGet source for restoring Xake.Hermetic.Dotnet, for developing against an unreleased Xake")
+    // The Xake version src/hermetic is built and tested against instead of its range, e.g.
+    // `[3.999.0-dev]` with NUGET_SOURCE naming the folder it was packed into, or the newest
+    // release (CI `hermetic-compat`). Never applied to `pack`: the nuspec keeps the range.
+    XakeVersion = Var.string(cliArg = "XAKE_VERSION", envVar = "XAKE_VERSION", description = "Xake version (a NuGet range, e.g. [3.999.0-dev]) to build and test Xake.Hermetic.Dotnet against, instead of its range")
 |}
 
 let frameworks = ["netstandard2.0" (*; "net462" *)]
@@ -91,6 +95,14 @@ let restoreSource = recipe {
     return [ for s in Option.toList source -> "-p:RestoreAdditionalProjectSources=" + s ]
 }
 
+/// The restore arguments of a build or test of src/hermetic: NUGET_SOURCE, plus
+/// `-p:XakeVersion=...` when XAKE_VERSION is set.
+let hermeticRestore = recipe {
+    let! source = restoreSource
+    let! xake = vars.XakeVersion
+    return source @ [ for v in Option.toList xake -> "-p:XakeVersion=" + v ]
+}
+
 let dotnet arglist = sh "dotnet" { args arglist; failonerror }
 
 do xakeScript {
@@ -105,10 +117,18 @@ do xakeScript {
 
         "test" <== [ for j in testJobs -> $"test::{testJobName j}" ]
 
+        // all jobs of one test project, e.g. `test-project::hermetic`
+        "test-project::(project:*)" => recipe {
+            let! project = getRuleMatch "project"
+            do! need [ for j in testJobs do if j.Project = project then $"test::{testJobName j}" ]
+        }
+
         // a test project, built once for all its jobs
         "test-build::(project:*)" => recipe {
             let! project = getRuleMatch "project"
+            let! restore = if project = "hermetic" then hermeticRestore else recipe { return [] }
             do! sh $"dotnet build {testProjectDir project} -c Release" {
+                args restore
                 logprefix $"[test-build {project}]"
                 stdoutlevel (fun l -> if l.Contains ": error " then Level.Error else Level.Info)
                 failonerror }
@@ -151,7 +171,7 @@ do xakeScript {
             do! needFiles allFiles
             do! need [for dep in lib.Needs -> $"out/%s{framework}/%s{dep}.dll"]
             let! version = versionOf lib.Package
-            let! source = restoreSource
+            let! source = if lib.Package = hermeticPackage then hermeticRestore else restoreSource
 
             do! dotnet ([
                 "build"

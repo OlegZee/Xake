@@ -1,4 +1,4 @@
-#r "nuget: Xake, 3.13.0.43"
+#r "nuget: Xake, 3.14.0.45"
 // #r "out/netstandard2.0/Xake.dll"
 #load "testjobs.fsx"
 

@@ -113,11 +113,13 @@ major bump must re-release it. `build.fsx`'s pack checks only that the packed nu
 `Xake` and not on `Xake.Dotnet` (which is not a package), and fails (deleting the nupkg)
 otherwise. **`Xake.Hermetic.Dotnet` 0.x may break** between minor versions; it is a preview.
 
-**The lower bound is the exact published version.** The release workflow appends the run
-number, so `v3.4.0` went to nuget.org as `3.4.0.21`; there is no `3.4.0`. A floor of `3.4.0`
-makes NuGet resolve the next version up and warn **NU1603** ("depends on Xake (>= 3.4.0) but
-Xake 3.4.0 was not found") on every restore, ours and every consumer's. Raise the floor only to
-a version that is on nuget.org, and only when the hermetic package needs what it brings.
+**The lower bound is a version that is on nuget.org.** A floor that does not exist makes NuGet
+resolve the next version up and warn **NU1603** ("depends on Xake (>= 3.4.0) but Xake 3.4.0 was
+not found") on every restore, ours and every consumer's. Since 3.15 the published version is the
+tag (`v3.15.0` -> `3.15.0`), so the floor is written from the tag. Releases up to 3.14.0 and
+hermetic 0.9.0 went out with the run number as a fourth component (`v3.14.0` is `3.14.0.45`, there
+is no `3.14.0`): a floor on one of those is that four-part version. Raise the floor only when the
+hermetic package needs what the release brings.
 
 **Developing against an unreleased base.** Normally `src/hermetic` restores `Xake` from
 nuget.org and needs nothing else. When it needs a `src/core`/`src/dotnet` change that is not
@@ -219,16 +221,16 @@ git push origin master --tags
 ```
 
 A release of both is two tags and two workflow runs, **base first**: tag `vX.Y.Z`, wait for
-`Xake X.Y.Z.<run>` to be on nuget.org, raise the `Xake` floor in
+`Xake X.Y.Z` to be on nuget.org, raise the `Xake` floor in
 `src/hermetic/Xake.Hermetic.Dotnet.fsproj` to that exact published version (if the hermetic
 package needs it; see the lower-bound rule above), merge, then tag `hermetic-v0.A.B`. If the
 floor is not on nuget.org yet, the hermetic release fails at restore, before anything is pushed.
 
-**The published version is not the tag.** The workflow appends the GitHub run number as a
-fourth component, so tag `v3.3.0` publishes `3.3.0.<run>` and `hermetic-v0.1.0` publishes
-`0.1.0.<run>`. That makes re-running a release harmless — the version is always fresh — but it
-means the nuget.org version and the git tag never match exactly. Pushing uses
-`--skip-duplicate`, so a re-run never fails on an already-published version.
+**The published version is the tag**, exactly: `v3.15.0` publishes `3.15.0`, `hermetic-v0.10.0`
+publishes `0.10.0` (up to 3.14.0 / 0.9.0 the run number was appended: `3.14.0.45`, `0.9.0.46`;
+in 3.4..3.14 it was never used to re-publish a version). Pushing uses `--skip-duplicate`, so a
+re-run of the same tag is a no-op. A release that went out broken is not re-published: fix it
+and tag the next patch.
 
 ### Release checklist
 
@@ -250,12 +252,13 @@ means the nuget.org version and the git tag never match exactly. Pushing uses
 ### Bootstrapping note
 
 Both build scripts bootstrap from nuget.org: the build builds Xake with an already published
-Xake. `build.fsx` starts with `#r "nuget: Xake, 3.13.0.43"`; `build.fsc.fsx` (the declarative
+Xake. `build.fsx` starts with `#r "nuget: Xake, 3.14.0.45"`; `build.fsc.fsx` (the declarative
 build, which needs `Locks`/`Import`/`Fingerprints` from the hermetic package) with
-`#r "nuget: Xake, 3.13.0.43"` and `#r "nuget: Xake.Hermetic.Dotnet, 0.8.0.44"`. Those references are intentionally *behind* the
+`#r "nuget: Xake, 3.14.0.45"` and `#r "nuget: Xake.Hermetic.Dotnet, 0.9.0.46"`. Those references are intentionally *behind* the
 version being released: bump them only after a release has landed on nuget.org, to the exact
-published version (`X.Y.Z.<run>`, not the tag; a bare `X.Y.Z` does not exist and resolves
-upwards with NU1603), and only when the script needs what it brings. Bump `Xake` in both
+published version (the tag from 3.15 on; the four-part `X.Y.Z.<run>` for releases up to
+3.14.0 / hermetic 0.9.0, where a bare `X.Y.Z` does not exist and resolves upwards with
+NU1603), and only when the script needs what it brings. Bump `Xake` in both
 scripts together, so the fsc build does not run on an older engine than the msbuild one.
 
 To work on a script against *unreleased* libraries, there are two ways; `NUGET_SOURCE` is not

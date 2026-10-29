@@ -89,6 +89,10 @@ do xake { ExecOptions.Default with DbFileName = ".xake.fsc" } {
                 failwith $"Xake {floor} is not on nuget.org; a floor that does not exist warns NU1603 on every restore"
             let previous = setXakeFloor floor
             do! trace Level.Message "Xake floor %s -> %s (%s)" previous floor hermeticProject
+            // right after a release the local NuGet HTTP cache still lists the old versions (it
+            // keeps a package's version list for 30 minutes) and the lock's restore fails NU1102
+            if previous <> floor then
+                do! sh "dotnet nuget locals http-cache --clear" { failonerror }
             do! need [ "import" ]
             // the lock keeps the Xake it holds unless LOCK_REFRESH names it; the lock rule reads
             // the script variable, else the environment, and this run asks for nothing else

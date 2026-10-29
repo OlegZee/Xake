@@ -130,8 +130,10 @@ dotnet fsi build.fsc.fsx -- -- bump-base -d XAKE_FLOOR=3.15.0   # default: the n
 
 It refuses a version nuget.org does not have, writes the floor into `XakeVersion` (the upper
 bound stays), re-imports the descriptions and re-resolves Xake in the hermetic lock only (as
-`LOCK_REFRESH=Xake`; the core locks are not touched). What remains by hand: the line in
-docs/hermetic/README.md saying why the floor moved.
+`LOCK_REFRESH=Xake`; the core locks are not touched). When the floor changes it first clears the
+local NuGet HTTP cache: for 30 minutes after a release that cache still lists the old versions
+and the restore fails NU1102 although nuget.org has the package. What remains by hand: the line
+in docs/hermetic/README.md saying why the floor moved.
 
 **The records the hermetic package builds.** An F# record expression or `{ r with ... }` copy
 compiled against one Xake calls the record's full constructor, so a field added in a later Xake

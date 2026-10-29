@@ -9,5 +9,6 @@ banner (#101); CLI over the script's ops (#103); spec rev. 1-5 (archived).
 - [x] Owner approval of the PR split (PR 1 core, PR 2 libraries), 2026-10-29
 - [x] Archive shortened to one README (idea, key details, good, why rejected)
 - [ ] PR 1 (in progress, `feature/vars-core`): core — names (key = internal name, `cliArg`/`Cli` = -d name), `var` source lists, `varschema` evaluated at launch, `Var` read by stored declaration, errors, `?vars` on top, banner sources, debug dump
-- [ ] PR 2: optional import of library declarations (schema records, read by key and type); library readers without environment fallback (Xake.Dotnet, Xake.Hermetic.Dotnet), switch values, `.packages`
-- [ ] Release notes (breaking: undeclared `Var` read, libraries no longer read the environment), docs
+- [x] PR 2 spec for the import ([pr2-spec.md](pr2-spec.md)), conventions proposed (2026-10-30)
+- [ ] PR 2 (implemented 2026-10-30, `feature/vars-libraries`, owner review): optional import of library declarations (`Var.read`, `DotNetVars`, `HermeticVars`); library readers without environment fallback (Xake.Dotnet, Xake.Hermetic.Dotnet), switch values, `.packages`; hermetic floor 3.16.0 (needs the release, [pr2-notes.md](pr2-notes.md))
+- [x] Release notes (breaking: undeclared `Var` read, libraries no longer read the environment), docs -- PR 1 and PR 2 sections

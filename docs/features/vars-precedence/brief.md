@@ -34,6 +34,25 @@ over ops (#103). To do: per-demand `?vars` on top (today below the script's valu
 - **Secrets**: `-d` of a secret is an error at launch. `getVar`/`getEnv` of a secret return the real
   value; masking applies to output only; the dependency records presence or HMAC per mode.
 
+## Names (owner, 2026-10-29; PR 1)
+
+- **The key** of a declaration is its internal name: the rule's name, or a field's `Name`, else its
+  field name. `getVar`, `?vars`, the banner and the second-definition check use the key.
+- **The external name** is what `-d` uses: `cliArg` of a field, or a `Cli "ext"` source in a list
+  (at most one), else the key. `-d ext=v` sets the key's value; `-d key=v` for a declaration whose
+  external name differs is an error at launch. The environment name is unchanged (explicit `envVar`,
+  else derived from the internal name).
+- Breaking: in 3.15 a field with `cliArg` was keyed by `cliArg`.
+
+## Import of library declarations (owner, 2026-10-29: an option; PR 2)
+
+A library may export its declarations as a schema record (`DotNet.Vars.Default` of `Var.*`
+fields); a script imports it with `varschema` and overrides fields with copy-and-update. Optional:
+without the import the library reads `getVar` with its fixed default. A library reads an imported
+field by key and type, trusting the stored declaration (the script may have overridden it), not by
+field-by-field equality. No auto-import (no assembly scanning). Conventions (schema name, keys) are
+fixed in the PR 2 spec.
+
 ## Reading
 
 - **`Var.*` read in a recipe**: if a declaration with the same key is stored, and it equals the

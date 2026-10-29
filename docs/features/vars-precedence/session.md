@@ -24,7 +24,15 @@ working; hermetic floor rises with PR 2. Compatibility: `build.fsx` `NUGET_KEY =
 declarations are evaluated at launch (`ScriptRunner.createScriptContext`: Run, dryrun, Start), not
 when the op is applied; ops only record declarations; `--help` evaluates nothing.
 
-Next step: PR 1 (core) starts with the conformance tests of spec §8; the PR split (PR 1 core,
-PR 2 libraries) awaits the owner's word. Proposed split (not yet approved): PR 1 core (`var`
+PR split approved (PR 1 core, PR 2 library readers); archive shortened to one README.
+PR 1 started 2026-10-29 by an implementer subagent: tests of spec §8.1-8.7 first, then the core.
+
+| PR | Branch | Worktree | State |
+|---|---|---|---|
+| #102 (draft) | `feature/vars-precedence` | `.claude/worktrees/feature+hermetic-windows` | spec, brief, archive |
+| PR 1 (not opened) | `feature/vars-core` | agent worktree (`.claude/worktrees/agent-…`) | in progress |
+| PR 2 | `feature/vars-libraries` (planned) | - | after PR 1 |
+
+Next step: review PR 1's report, push `feature/vars-core`, open the PR to dev; then PR 2. Proposed split (not yet approved): PR 1 core (`var`
 lists, `varschema` at launch, `Var` reads, second-definition errors, `?vars` on top, banner sources);
 PR 2 library readers (no env fallback, switches, `.packages`) in Xake.Dotnet and the hermetic package.

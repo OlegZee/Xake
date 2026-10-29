@@ -21,8 +21,12 @@ over ops (#103). To do: per-demand `?vars` on top (today below the script's valu
 - **`var "N" [sources]`**, an overload beside `var "N" "v"`. Sources: `Env "X"`, `Default "v"`;
   secrecy is a separate list element, `Secret` (presence) or `SecretHashed` (HMAC).
   Example: `var "NUGET_PACKAGES" [Env "XX_NUGET_PACKAGES"; Default ".packages"]`.
-- **`varschema` imports a `Var.*` declaration completely** and evaluates it eagerly at declaration,
-  the same way as a source list: `Var.string(envVar = "X") |> withDefault "d"` ≡
+- **Evaluation at launch.** Ops only record declarations; every declaration is evaluated once when
+  the script starts (`Run`, dryrun, engine `Start`: one place, `ScriptRunner.createScriptContext`),
+  after the command line is applied and before the first target, so the dependency graph sees the
+  final set. `--help` evaluates nothing.
+- **`varschema` imports a `Var.*` declaration completely** and evaluates it at launch, the same way
+  as a source list: `Var.string(envVar = "X") |> withDefault "d"` ≡
   `var "N" [Env "X"; Default "d"]`. Its scope, required flag and secret mode are kept with the
   value; type conversion and a missing required value fail the launch.
 - **A second definition of a name is an error at launch**: two rules, a constant and a rule, a

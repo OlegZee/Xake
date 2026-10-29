@@ -20,6 +20,11 @@ working; hermetic floor rises with PR 2. Compatibility: `build.fsx` `NUGET_KEY =
 `|> secret` and would print in the banner, so PR 1 marks it secret; secret fields rebuild once
 (dependency record changes).
 
-Next step: the owner approves rev. 6 and the PR split; then PR 1 starts with the tests of the spec. Proposed split (not yet approved): PR 1 core (`var`
+**Rev. 6 approved by the owner (2026-10-29)**, with all six writer's decisions, and one amendment:
+declarations are evaluated at launch (`ScriptRunner.createScriptContext`: Run, dryrun, Start), not
+when the op is applied; ops only record declarations; `--help` evaluates nothing.
+
+Next step: PR 1 (core) starts with the conformance tests of spec §8; the PR split (PR 1 core,
+PR 2 libraries) awaits the owner's word. Proposed split (not yet approved): PR 1 core (`var`
 lists, `varschema` at launch, `Var` reads, second-definition errors, `?vars` on top, banner sources);
 PR 2 library readers (no env fallback, switches, `.packages`) in Xake.Dotnet and the hermetic package.

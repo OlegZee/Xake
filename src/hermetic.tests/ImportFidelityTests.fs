@@ -117,6 +117,7 @@ type ``Import fidelity``() =
 
     member private x.Run (label: string) (rules': Rule<ExecContext> list) (targets: string list) =
         xake {x.TestOptions with FileLog = label + ".log"; ThrowOnError = true; Vars = [ "CI", "off"; "CSC_SERVER", "off" ]; FileLogLevel = Loud} {
+            varschema {| Version = version |}     // a Var read needs a declaration of its key
             want targets
             rules rules'
         }

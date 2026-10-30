@@ -25,6 +25,9 @@ type ``Building from Xake-generated locks``() =
     let defaultVersion = Var.string (name = "TEST_VERSION") |> withDefault "1.2.3"
     let otherVersion = Var.string (name = "OTHER_VERSION") |> withDefault "9.9.9"
     let versions = [ "p/B/**", defaultVersion; "**", otherVersion ]
+    /// The version variables' declarations: a Var read needs one of its key.
+    let versionSchema = {| TestVersion = defaultVersion; OtherVersion = otherVersion |}
+    let isVersionVar (name: string, _: string) = name = "TEST_VERSION" || name = "OTHER_VERSION"
     let fixtureOf name = sprintf "p/%s/%s" name Description.FileName
 
     let describe (name: string) (language: Description.Language) (sources: string list) (refs: string list) (doc: bool) =
@@ -58,8 +61,13 @@ type ``Building from Xake-generated locks``() =
         [ for h in md.TypeDefinitions -> md.GetString (md.GetTypeDefinition h).Name ]
 
     /// `build` (and the layout's dll rule) with the script's `extra` rules beside them.
+    /// A version variable in `vars` is given as `-d` (a script value next to its declaration
+    /// would define it twice).
     member private x.ScriptWith (extra: Rule<ExecContext> list) (label: string) (vars: (string * string) list) (descriptions: Fileset) (cfg: string) =
-        xake {x.TestOptions with FileLog = label + ".log"; ThrowOnError = true; Vars = ("CI", "off") :: vars; FileLogLevel = Loud} {
+        let versionArgs = vars |> List.filter isVersionVar |> List.collect (fun (name, value) -> [ "-d"; name + "=" + value ])
+        let vars = vars |> List.filter (isVersionVar >> not)
+        xakeArgs versionArgs {x.TestOptions with FileLog = label + ".log"; ThrowOnError = true; Vars = ("CI", "off") :: vars; FileLogLevel = Loud} {
+            varschema versionSchema
             want [ "build" ]
             rules extra
             rules [
@@ -260,6 +268,7 @@ type ``Building from Xake-generated locks``() =
     /// The dll rule's body given as `compile lockPath fwk`, wanting `goal`.
     member private x.BuildWith (compile: string -> string -> Recipe<ExecContext, unit>) (label: string) (vars: (string * string) list) (goal: string) =
         xake {x.TestOptions with FileLog = label + ".log"; ThrowOnError = true; Vars = ("CI", "off") :: vars; FileLogLevel = Loud} {
+            varschema versionSchema
             want [ goal ]
             rules [
                 target "out/(cfg:*)/(fwk:*)/(name:*).dll" {
@@ -506,6 +515,7 @@ type ``Building from Xake-generated locks``() =
         Description.write (root </> "desc/P" </> Description.FileName) d |> ignore
         let run (label: string) (goal: string) (rs: Rule<ExecContext> list) =
             xake {x.TestOptions with ProjectRoot = root; DbFileName = root </> ".xake"; FileLog = root </> (label + ".log"); ThrowOnError = true; Vars = [ "CI", "off" ]; FileLogLevel = Loud} {
+                varschema versionSchema
                 want [ goal ]
                 rules rs
             }

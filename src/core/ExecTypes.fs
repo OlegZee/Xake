@@ -62,41 +62,6 @@ type VarEntry = {
     Decl: VarDecl option
 }
 
-module internal VarDecl =
-
-    /// How the diagnostics name a definition of a variable (spec E-2, E-7).
-    let constantLabel (name: string) = sprintf "var \"%s\" \"...\"" name
-    let ruleLabel (name: string) = sprintf "var \"%s\" [...]" name
-    let fieldLabel (field: string) = sprintf "varschema field %s" field
-
-    /// The declaration of a `var "N" [sources]` rule: a string in both scopes, never required;
-    /// the secret markers set its mode (`SecretHashed` wins), `Cli` its external name; markers
-    /// are not kept as sources.
-    let ofRule (name: string) (sources: VarSource list) =
-        let cliNames = sources |> List.choose (function Cli ext -> Some ext | _ -> None)
-        let sources' =
-            sources |> List.filter (function
-                | Env _ | Default _ -> true
-                | Cli _ -> cliNames.Length > 1      // kept for the launch error (two command-line names)
-                | Secret | SecretHashed -> false)
-        { Key = name
-          CliName = cliNames |> List.tryHead |> Option.defaultValue name
-          Sources = sources'
-          DefaultValue = sources' |> List.tryPick (function Default v -> Some (box v) | _ -> None)
-          Scope = ArgAndEnv
-          Required = false
-          Secret =
-            if List.contains SecretHashed sources then SecretHash
-            elif List.contains Secret sources then SecretPresence
-            else NotSecret
-          ValueType = typeof<string>
-          DeclaredBy = ruleLabel name }
-
-    /// The names of its `Env` sources, in list order.
-    let envNames (decl: VarDecl) = decl.Sources |> List.choose (function Env e -> Some e | _ -> None)
-
-    let isSecret (decl: VarDecl) = decl.Secret <> NotSecret
-
 /// Engine-level options: immutable after construction.
 type EngineOptions = {
     ProjectRoot: string

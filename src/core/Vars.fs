@@ -109,18 +109,8 @@ module Vars =
               Required = isRequired && defaultValue.IsNone
               Secret = secret
               ValueType = valueType
-              DeclaredBy = VarDecl.fieldLabel fieldName }
+              DeclaredBy = VarEvaluation.fieldLabel fieldName }
         decl, resolvedEnvName
-
-    /// The fields in which a read's declaration differs from the stored one.
-    let private differences (stored: VarDecl) (read: VarDecl) =
-        [ if stored.Sources <> read.Sources then yield "sources"
-          elif stored.DefaultValue <> read.DefaultValue then yield "DefaultValue"
-          if stored.CliName <> read.CliName then yield "command-line name"
-          if stored.Scope <> read.Scope then yield "scope"
-          if stored.Required <> read.Required then yield "required"
-          if stored.Secret <> read.Secret then yield "secret mode"
-          if stored.ValueType <> read.ValueType then yield "type" ]
 
     /// A Var read: the value of the variable set under the read's key, through a stored
     /// declaration equal to the read's; recorded by `getVar` (one `Var`, or a `SecretDep`).
@@ -132,7 +122,7 @@ module Vars =
             let key = decl.Key
             match ctx.Engine.Options.Variables |> Map.tryFind key with
             | Some ({ Decl = Some stored } as entry) ->
-                match differences stored decl with
+                match VarEvaluation.differences stored decl with
                 | [] ->
                     let! value = getVar key
                     return
@@ -140,17 +130,11 @@ module Vars =
                         | None, _ -> None
                         | Some _, Some typed when value = entry.Value && entry.Origin = Some VarOrigin.Default -> Some (unbox<'t> typed)
                         | Some v, _ ->
-                            match ScriptRunner.convertVar stored v with
+                            match VarEvaluation.convertVar stored v with
                             | Ok converted -> Some (unbox<'t> converted)
                             | Result.Error e -> failwith e
-                | fields ->
-                    return failwithf "Variable '%s' is read through a Var declaration that differs from its declaration by %s in %s: read it through that declaration, or use getVar \"%s\""
-                                     key stored.DeclaredBy (String.concat ", " fields) key
-            | _ ->
-                let getEnvHint = if decl.Scope = ArgOnly then "" else sprintf " or getEnv \"%s\"" envName
-                // an inline Var.arg has no key of its own (no name, no field): it is named by its command-line name
-                let shown = if key = "" then decl.CliName else key
-                return failwithf "Variable '%s' is read through Var but is not declared: declare it in varschema, or use getVar \"%s\"%s" shown shown getEnvHint
+                | fields -> return failwith (VarEvaluation.readMismatch stored decl fields)
+            | _ -> return failwith (VarEvaluation.readUndeclared decl envName)
         }
 
     type RecipeBuilder with

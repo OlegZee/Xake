@@ -41,6 +41,7 @@
     <Compile Include="XakeScript.fs" />
     <Compile Include="DependencyAnalysis.fs" />
     <Compile Include="ExecCore.fs" />
+    <Compile Include="VarEvaluation.fs" />
     <Compile Include="ScriptRunner.fs" />
     <Compile Include="XakeScriptBuilder.fs" />
     <Compile Include="RuleBuilder.fs" />

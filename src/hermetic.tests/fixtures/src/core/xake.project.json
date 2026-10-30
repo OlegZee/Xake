@@ -27,6 +27,7 @@
     "XakeScript.fs",
     "DependencyAnalysis.fs",
     "ExecCore.fs",
+    "VarEvaluation.fs",
     "ScriptRunner.fs",
     "XakeScriptBuilder.fs",
     "RuleBuilder.fs",

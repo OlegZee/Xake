@@ -54,3 +54,14 @@ Recorded here as asked; spec.md carries it as §3.9 (A-1..A-4), R-5, E-9, E-10 a
     secret reads record `SecretDep (key, SecretArg, _)`; CommandLineTests 473/548 inverted, `-d`
     parsed into `CliVars`, banner labels `cli`/`script`/`env:X`. Two duplicated VarsTests were merged
     into their varschema twins.
+
+## Code layout (review of #111)
+
+The variable evaluation lives in `src/core/VarEvaluation.fs`, `module internal Xake.VarEvaluation`
+(compiled before `ScriptRunner.fs`): the declaration helpers (`ruleDecl`, labels), `launch` (the
+variable set and launch errors), `checkRequestVars`, `convertVar`, the read-time comparison and
+E-7/E-8 texts, and the banner and debug-dump views. `ScriptRunner.createScriptContext` calls
+`VarEvaluation.launch`; the public types (`VarSource`, `VarOrigin`, `VarDecl`, `VarEntry`) stay in
+`ExecTypes.fs`, the `Var.*` API in `Vars.fs`. A new core source file also goes into
+`src/core/xake.project.json`, `locks/Xake/Release.json`, `xake.fingerprints` and the hermetic
+test fixture `src/hermetic.tests/fixtures/src/core/xake.project.json`.

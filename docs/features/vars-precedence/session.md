@@ -36,3 +36,11 @@ PR 1 started 2026-10-29 by an implementer subagent: tests of spec §8.1-8.7 firs
 Next step: review PR 1's report, push `feature/vars-core`, open the PR to dev; then PR 2. Proposed split (not yet approved): PR 1 core (`var`
 lists, `varschema` at launch, `Var` reads, second-definition errors, `?vars` on top, banner sources);
 PR 2 library readers (no env fallback, switches, `.packages`) in Xake.Dotnet and the hermetic package.
+| #111 (draft) | `feature/vars-core` | `.claude/worktrees/agent-acc07368580609689` | done: 523 tests green, 0 warnings; owner review |
+| #112 (draft, base `feature/vars-core`) | `feature/vars-libraries` | `.claude/worktrees/agent-afb9a9d9fb75e5c02` | done: 547 tests green; hermetic floor 3.16.0 needs a decision |
+
+PR 1 done 2026-10-30 (#111): core + names + docs; deviations in `pr1-notes.md` (on that branch), e.g. an extra `ExecOptions.VarDefinedBy` field for E-2. PR 2 started from `feature/vars-core`: first `pr2-spec.md` (import conventions, proposed), then L-1..L-7.
+
+PR 2 done 2026-10-30 (#112, stacked on #111): library readers L-1..L-7, `Var.read`, schemas `DotNetVars.Default` / `HermeticVars.Default` (conventions proposed in `pr2-spec.md`). Hermetic floor `[3.16.0, 4.0)` breaks CI until Xake 3.16.0 is published: split the hermetic commits or release first. Follow-ups: `bump-base` sets env `LOCK_REFRESH` (no longer read); CI step for test 60.
+
+Next step: the owner reviews #111 and #112 and decides the hermetic floor path.

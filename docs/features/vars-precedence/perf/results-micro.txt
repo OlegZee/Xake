@@ -1,0 +1,4 @@
+CASE=1 secrets=0 pct=0 lines=10000 masked_lines=0 leaked=0 warmup_ms=1.07 runs=20 median_ms=0.037 p95_ms=0.038 min_ms=0.024 ns_per_line_median=3.7
+CASE=2 secrets=5 pct=0 lines=10000 masked_lines=0 leaked=0 warmup_ms=1.69 runs=20 median_ms=1.151 p95_ms=1.312 min_ms=1.053 ns_per_line_median=115.2
+CASE=3 secrets=5 pct=1 lines=10000 masked_lines=100 leaked=0 warmup_ms=1.68 runs=20 median_ms=1.169 p95_ms=1.392 min_ms=1.038 ns_per_line_median=116.9
+CASE=4 secrets=5 pct=10 lines=10000 masked_lines=1000 leaked=0 warmup_ms=1.94 runs=20 median_ms=1.221 p95_ms=1.256 min_ms=1.161 ns_per_line_median=122.1

@@ -10,12 +10,12 @@ feature folder: [features/vars-precedence](features/vars-precedence/session.md).
   (`src/core/VarEvaluation.fs`; the types and the pure parts are in `src/core/Vars.fs`): Run,
   `--dryrun`, `--dump` and engine `start`; `--help` evaluates nothing. A recipe only reads.
 - **The chain:** engine per-demand `?vars` > `-d` (the last wins) > the script's one definition
-  (`var "N" "v"` or `ExecOptions.Vars`, script constants only) > the declaration's sources
+  (`var "N" "v"` or `ExecOptions.ScriptVars`, script constants only) > the declaration's sources
   (`var "N" [Cli ..; Env ..; Default ..]` or a `varschema` field), first defined in list order.
   A name defined twice in the script is a launch error.
 - **Environment prefix (2026-10-31):** every declaration without an explicit `Env` / `envVar`
   reads `XAKE__<NAME>` first (`VarEvaluation.implicitEnvName`: the key in UPPER_SNAKE, characters
-  other than `A-Z0-9_` as `_`); a constant `var "N" "v"` / `ExecOptions.Vars` entry is
+  other than `A-Z0-9_` as `_`); a constant `var "N" "v"` / `ExecOptions.ScriptVars` entry is
   overridden by `XAKE__N` (origin `env:XAKE__N`, still no declaration for a Var read); `Var.arg`
   has no env source; undeclared names get none (no `XAKE__*` scan); two keys of one implicit name
   are a launch error (E-12). The 3.15 derived name without the prefix is gone. `build.fsx` names

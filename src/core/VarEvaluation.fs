@@ -82,7 +82,7 @@ let launch (opts: ExecOptions) : Map<string, VarEntry> * string list =
             Secrets.declare d.Key d.Secret
             Secrets.declare d.CliName d.Secret
             envNames d |> List.iter (fun e -> Secrets.declare e d.Secret)
-    for (name, value) in opts.CliVars @ opts.Vars do
+    for (name, value) in opts.CliVars @ opts.ScriptVars do
         if Secrets.isSecret name then SecretMask.register value
 
     let errors = ResizeArray<string>()
@@ -90,13 +90,13 @@ let launch (opts: ExecOptions) : Map<string, VarEntry> * string list =
     let readEnv name = if opts.IgnoreEnvironment then None else Util.getEnvVar name
     let given name = Util.getVar opts.CliVars name |> Option.isSome
 
-    // one script definition per key: the ExecOptions.Vars entries first, then the ops in script order
+    // one script definition per key: the ExecOptions.ScriptVars entries first, then the ops in script order
     let named key = List.filter (fst >> (=) key)
-    for key in (opts.Vars |> List.map fst) @ (opts.VarDefinedBy |> List.map fst) |> List.distinct do
+    for key in (opts.ScriptVars |> List.map fst) @ (opts.VarDefinedBy |> List.map fst) |> List.distinct do
         let byOps = opts.VarDefinedBy |> named key |> List.map snd
         let constants = byOps |> List.filter ((=) (constantLabel key)) |> List.length
-        let fromOptions = (opts.Vars |> named key |> List.length) - constants
-        match List.replicate (max 0 fromOptions) "ExecOptions.Vars" @ byOps with
+        let fromOptions = (opts.ScriptVars |> named key |> List.length) - constants
+        match List.replicate (max 0 fromOptions) "ExecOptions.ScriptVars" @ byOps with
         | a :: b :: _ -> errors.Add (sprintf "Variable '%s' is defined twice in the script: by %s and by %s; define it once" key a b)
         | _ -> ()
 
@@ -104,11 +104,11 @@ let launch (opts: ExecOptions) : Map<string, VarEntry> * string list =
 
     // different keys of one implicit env name (P-5): constants and declarations that read their implicit name
     let constantOps = opts.VarDefinedBy |> List.filter (fun (k, label) -> label = constantLabel k) |> List.map fst
-    let optionKeys = opts.Vars |> List.map fst |> List.filter (fun k -> not (List.contains k constantOps))
+    let optionKeys = opts.ScriptVars |> List.map fst |> List.filter (fun k -> not (List.contains k constantOps))
     let readsImplicit key =
         match Map.tryFind key declared with
         | Some d -> envNames d = [implicitEnvName key]
-        | None -> true                          // a constant or an ExecOptions.Vars entry
+        | None -> true                          // a constant or an ExecOptions.ScriptVars entry
     // with IgnoreEnvironment no implicit name is read: no collision check (Q-4)
     (if opts.IgnoreEnvironment then [] else optionKeys @ (opts.VarDefinedBy |> List.map fst))
     |> List.distinct
@@ -145,7 +145,7 @@ let launch (opts: ExecOptions) : Map<string, VarEntry> * string list =
     // a -d name is a key unless it is the command-line name of a declaration, or the refused key of one
     let consumed = set [ for d in decls do if d.CliName <> d.Key then yield d.CliName; yield d.Key ]
     let undeclaredCli = opts.CliVars |> List.map fst |> List.filter (consumed.Contains >> not)
-    let keys = undeclaredCli @ (opts.Vars |> List.map fst) @ (decls |> List.map (fun d -> d.Key)) |> List.distinct
+    let keys = undeclaredCli @ (opts.ScriptVars |> List.map fst) @ (decls |> List.map (fun d -> d.Key)) |> List.distinct
     let variables =
         [ for key in keys do
             let decl = Map.tryFind key declared
@@ -159,7 +159,7 @@ let launch (opts: ExecOptions) : Map<string, VarEntry> * string list =
                     ownValue d
                 | _, Some v -> Some (v, VarOrigin.Cli cliName)
                 | _, None ->
-                    match Util.getVar opts.Vars key, decl with
+                    match Util.getVar opts.ScriptVars key, decl with
                     | Some v, _ ->
                         // a constant reads its implicit env name first (P-3)
                         let env = implicitEnvName key
@@ -276,7 +276,7 @@ let private hideDecl (d: VarDecl) =
 let maskOptions (options: ExecOptions) =
     let hideValues = List.map (fun (name, value) -> name, if Secrets.isSecret name then "***" else value)
     let hideSecretDefaults = List.map (fun (name, help: VarHelp) -> name, if help.IsSecret then { help with DefaultStr = None } else help)
-    { options with Vars = hideValues options.Vars; CliVars = hideValues options.CliVars
+    { options with ScriptVars = hideValues options.ScriptVars; CliVars = hideValues options.CliVars
                    VarDecls = List.map hideDecl options.VarDecls
                    VarSchema = hideSecretDefaults options.VarSchema }
 

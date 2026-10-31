@@ -22,9 +22,9 @@ module XakeScript =
         /// Targets to build: the default for `want`, which replaces it; command-line targets replace both
         Targets: string list
 
-        /// Global script variables: the script's values (a `var "N" "v"` op appends here).
+        /// The script's values: the entries given to `xake`/`xakeArgs` and every `var "N" "v"` op (appended); `CliVars` holds `-d`.
         /// A name defined twice in the script is an error at launch.
-        Vars: (string * string) list
+        ScriptVars: (string * string) list
 
         /// The `-d` values of the command line, the last `-d` first.
         CliVars: (string * string) list
@@ -95,7 +95,7 @@ module XakeScript =
             FileLogLevel = Chatty
             Targets = []
             ThrowOnError = false
-            Vars = List<string*string>.Empty
+            ScriptVars = []
             CliVars = []
             VarDecls = []
             VarDefinedBy = []

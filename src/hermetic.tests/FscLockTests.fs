@@ -27,7 +27,7 @@ type ``Fsc lock``() =
         Lock.read (Roots.builtin (Directory.GetCurrentDirectory())) path
 
     member private x.RunWith (label: string) (vars: (string * string) list) (body: Recipe<ExecContext, unit>) =
-        xake {x.TestOptions with FileLog = label + ".log"; ThrowOnError = true; Vars = vars; FileLogLevel = Loud} {
+        xake {x.TestOptions with FileLog = label + ".log"; ThrowOnError = true; ScriptVars = vars; FileLogLevel = Loud} {
             want ([label])
             rules [ label => body ]
         }
@@ -170,7 +170,7 @@ type ``Fsc lock``() =
 
     /// `Run` against another project root (one with a `global.json` of the test's own).
     member private x.RunIn (root: string) (label: string) (body: Recipe<ExecContext, unit>) =
-        xake {x.TestOptions with ProjectRoot = root; FileLog = label + ".log"; ThrowOnError = true; Vars = [ "CI", "off" ]; FileLogLevel = Loud} {
+        xake {x.TestOptions with ProjectRoot = root; FileLog = label + ".log"; ThrowOnError = true; ScriptVars = [ "CI", "off" ]; FileLogLevel = Loud} {
             want ([label])
             rules [ label => body ]
         }

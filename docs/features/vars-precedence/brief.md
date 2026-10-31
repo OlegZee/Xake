@@ -7,13 +7,13 @@ formalizes them (implemented in #111 and #112, shipping as Xake 4.0); rejected d
 
 Every variable value is computed at launch, before the first target runs. A recipe only reads.
 A read records one dependency on the final value, `Var (name, value)`, never on its source.
-`ExecOptions.Vars` (input values) and the declarations (`var [...]` rules, `Var.*` in `varschema`)
+`ExecOptions.ScriptVars` (input values) and the declarations (`var [...]` rules, `Var.*` in `varschema`)
 are separate concepts.
 
 ## The chain (first defined wins)
 
 engine per-demand `?vars` > `-d` (the last `-d` of a name wins) > the script's rule or constant >
-the rule's own sources in list order. Already on dev: `-d` over `var`/`ExecOptions.Vars`, CLI options
+the rule's own sources in list order. Already on dev: `-d` over `var`/`ExecOptions.ScriptVars`, CLI options
 over ops (#103). To do: per-demand `?vars` on top (today below the script's values).
 
 ## Declarations
@@ -30,7 +30,7 @@ over ops (#103). To do: per-demand `?vars` on top (today below the script's valu
   `var "N" [Env "X"; Default "d"]`. Its scope, required flag and secret mode are kept with the
   value; type conversion and a missing required value fail the launch.
 - **A second definition of a name is an error at launch**: two rules, a constant and a rule, a
-  `var` and an `ExecOptions.Vars` entry, a `varschema` field and a rule.
+  `var` and an `ExecOptions.ScriptVars` entry, a `varschema` field and a rule.
 - **Secrets**: `-d` of a secret is an error at launch. `getVar`/`getEnv` of a secret return the real
   value; masking applies to output only; the dependency records presence or HMAC per mode.
 
@@ -88,7 +88,7 @@ fixed in the PR 2 spec.
 2. An explicit `Env "X"` in a rule, or `envVar = "X"` on a `Var.*` field, replaces the implicit source (`XAKE__` is
    then not read).
 3. A constant `var "N" "v"` is a declaration too: `XAKE__N` overrides its value (in effect the rule
-   `[Env "XAKE__N"; Default "v"]`). Initial `ExecOptions.Vars` entries given to `xake`/`xakeArgs` are treated as
+   `[Env "XAKE__N"; Default "v"]`). Initial `ExecOptions.ScriptVars` entries given to `xake`/`xakeArgs` are treated as
    constants (the implementer's assumption, see the spec, P-3).
 4. Strict: a name without a declaration gets no implicit source; `XAKE__*` variables are not scanned into the set.
 5. `Var.*`: the derived env name changes from `toEnvName key` to `XAKE__` + that, with no compatibility path (4.0 is

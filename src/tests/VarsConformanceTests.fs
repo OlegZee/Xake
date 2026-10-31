@@ -124,17 +124,17 @@ type ``Vars conformance (spec section 8)``() =
             Assert.That(banner, Does.Contain "VC03X=c (cli)"))
 
     [<Test>]
-    member x.``8.1-4 ExecOptions Vars and a var op of one name fail the launch``() =
+    member x.``8.1-4 ExecOptions ScriptVars and a var op of one name fail the launch``() =
         let logged = List<string>()
         let ran = ref false
         let text =
             fails (fun () ->
-                do xakeArgs [] { x.Opts logged with Vars = ["VC04X", "a"]; Setup = ["prep"] } {
+                do xakeArgs [] { x.Opts logged with ScriptVars = ["VC04X", "a"]; Setup = ["prep"] } {
                     var "VC04X" "b"
                     phony "prep" (recipe { ran.Value <- true })
                     phony "main" (recipe { ran.Value <- true })
                 })
-        StringAssert.Contains(e2 "VC04X" "ExecOptions.Vars" "var \"VC04X\" \"...\"", text)
+        StringAssert.Contains(e2 "VC04X" "ExecOptions.ScriptVars" "var \"VC04X\" \"...\"", text)
         Assert.IsFalse(ran.Value, "neither setup nor a target runs")
 
     [<Test>]
@@ -151,8 +151,8 @@ type ``Vars conformance (spec section 8)``() =
         StringAssert.Contains(e2 "VC05X" rule rule, text)
         let text = fails (fun () -> do xakeArgs [] (x.Opts logged) { var "VC05X" "a"; var "VC05X" "b"; phony "main" main })
         StringAssert.Contains(e2 "VC05X" constant constant, text)
-        let text = fails (fun () -> do xakeArgs [] { x.Opts logged with Vars = ["VC05X", "a"; "VC05X", "b"] } { phony "main" main })
-        StringAssert.Contains(e2 "VC05X" "ExecOptions.Vars" "ExecOptions.Vars", text)
+        let text = fails (fun () -> do xakeArgs [] { x.Opts logged with ScriptVars = ["VC05X", "a"; "VC05X", "b"] } { phony "main" main })
+        StringAssert.Contains(e2 "VC05X" "ExecOptions.ScriptVars" "ExecOptions.ScriptVars", text)
 
     [<Test>]
     member x.``8.1-6 all second definitions are reported together, no value printed``() =
@@ -199,7 +199,7 @@ type ``Vars conformance (spec section 8)``() =
             let ops = b.AddVar(b.Vars(b.Zero(), schema), "VC08X", [Env "VC08_A"])
             let (XakeScript (o, _)) = ops
             Assert.AreEqual(["VC08Y"; "VC08X"], o.VarDecls |> List.map (fun d -> d.Key))
-            Assert.IsEmpty(o.Vars, "the ops record no value")
+            Assert.IsEmpty(o.ScriptVars, "the ops record no value")
             // changed after the ops, before Run: seen
             setEnv "VC08_A" "z"
             let seen = ref []
@@ -330,8 +330,8 @@ type ``Vars conformance (spec section 8)``() =
         StringAssert.Contains(e2 "VC15X" field "var \"VC15X\" [...]", text)
         let text = fails (fun () -> do xakeArgs [] (x.Opts logged) { varschema schema; var "VC15X" "s"; phony "main" main })
         StringAssert.Contains(e2 "VC15X" field "var \"VC15X\" \"...\"", text)
-        let text = fails (fun () -> do xakeArgs [] { x.Opts logged with Vars = ["VC15X", "s"] } { varschema schema; phony "main" main })
-        StringAssert.Contains(e2 "VC15X" "ExecOptions.Vars" field, text)
+        let text = fails (fun () -> do xakeArgs [] { x.Opts logged with ScriptVars = ["VC15X", "s"] } { varschema schema; phony "main" main })
+        StringAssert.Contains(e2 "VC15X" "ExecOptions.ScriptVars" field, text)
         let other = {| VC15X = Var.string(envVar = "VC15_B") |}
         let text = fails (fun () -> do xakeArgs [] (x.Opts logged) { varschema schema; varschema other; phony "main" main })
         StringAssert.Contains(e2 "VC15X" field field, text)
@@ -443,7 +443,7 @@ type ``Vars conformance (spec section 8)``() =
         let expected = "Variable 'VC22Y' is read through Var but is not declared: declare it in varschema, or use getVar \"VC22Y\" or getEnv \"XAKE__VC22Y\""
         StringAssert.Contains(expected, fails (fun () -> do xakeArgs ["-d"; "VC22Y=1"] (x.Opts logged) { phony "main" readString }))
         StringAssert.Contains(expected, fails (fun () -> do xakeArgs [] (x.Opts logged) { var "VC22Y" "1"; phony "main" readString }))
-        StringAssert.Contains(expected, fails (fun () -> do xakeArgs [] { x.Opts logged with Vars = ["VC22Y", "1"] } { phony "main" readString }))
+        StringAssert.Contains(expected, fails (fun () -> do xakeArgs [] { x.Opts logged with ScriptVars = ["VC22Y", "1"] } { phony "main" readString }))
         StringAssert.Contains(expected, fails (fun () -> do xakeArgs [] (x.Opts logged) { phony "main" readString }))
         let text = fails (fun () -> do xakeArgs [] (x.Opts logged) { phony "main" (recipe { let! _ = Var.arg<string>(cliArg = "VC22Y") in () }) })
         StringAssert.Contains("declare it in varschema, or use getVar \"VC22Y\"", text)
@@ -603,11 +603,11 @@ type ``Vars conformance (spec section 8)``() =
         StringAssert.DoesNotContain("vc28-secret-script", text + allText logged)
         let text =
             fails (fun () ->
-                do xakeArgs [] { x.Opts logged with Vars = ["VC28T", "vc28-secret-options"] } {
+                do xakeArgs [] { x.Opts logged with ScriptVars = ["VC28T", "vc28-secret-options"] } {
                     var "VC28T" [Secret; Env "VC28_A"]
                     phony "main" (recipe { return () })
                 })
-        StringAssert.Contains(e2 "VC28T" "ExecOptions.Vars" "var \"VC28T\" [...]", text)
+        StringAssert.Contains(e2 "VC28T" "ExecOptions.ScriptVars" "var \"VC28T\" [...]", text)
         StringAssert.DoesNotContain("vc28-secret-options", text + allText logged)
 
     [<Test>]
@@ -1070,7 +1070,7 @@ type ``Vars conformance (spec section 8)``() =
             let logged = List<string>()
             let seen = ref None
             if withOptions then
-                do xakeArgs args { x.Opts logged with Vars = ["VC88X", "s"] } {
+                do xakeArgs args { x.Opts logged with ScriptVars = ["VC88X", "s"] } {
                     phony "main" (recipe { let! v = getVar "VC88X" in seen.Value <- v })
                 }
             else
@@ -1225,7 +1225,7 @@ type ``Vars conformance (spec section 8)``() =
         withEnv ["XAKE__VC97X", "e"; "XAKE__VC97Y", "e"; "XAKE__VC97Z", "e"] (fun () ->
             let logged = List<string>()
             let seen = ref []
-            do xakeArgs [] { x.NoEnv logged with Vars = ["VC97Y", "s"] } {
+            do xakeArgs [] { x.NoEnv logged with ScriptVars = ["VC97Y", "s"] } {
                 var "VC97X" "s"
                 var "VC97Z" [Default "d"]
                 phony "main" (recipe {

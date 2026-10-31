@@ -92,4 +92,4 @@ Readings taken by the implementer, for the owner:
 - Test 60 (the published hermetic package against the new Xake, `test60-published-hermetic.fsx`)
   has no CI job.
 - Optional: measure the launch-evaluation cost, dev vs 4.0.
-- Idea for 4.0: rename `ExecOptions.Vars` (script constants only) to say so.
+- Done 2026-10-31 (feature/vars-ignore-env): `ExecOptions.Vars` renamed to `ScriptVars`; `ExecOptions.IgnoreEnvironment` added (spec §3.12).

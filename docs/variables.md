@@ -46,7 +46,7 @@ a read records the final value, not where it came from.
 
 ## The two ways to declare
 
-**A script constant**, `var "N" "v"`, is a value the script states. `ExecOptions.Vars` entries
+**A script constant**, `var "N" "v"`, is a value the script states. `ExecOptions.ScriptVars` entries
 (the options given to `xake`/`xakeArgs`) are constants too.
 
 **A rule**, `var "N" [sources]`, says where a value comes from. The sources are tried in list
@@ -105,7 +105,7 @@ rule): `config2Path` gives `XAKE__CONFIG2PATH`, not `XAKE__CONFIG2_PATH`.
 | `var "CONFIG" []` | `XAKE__CONFIG` |
 | `buildConfig = Var.string()` | `XAKE__BUILD_CONFIG` |
 | `var "netfx-target.v2" []` | `XAKE__NETFX_TARGET_V2` |
-| `var "VERSION" "1.0.0"` (a constant, also an `ExecOptions.Vars` entry) | `XAKE__VERSION`, else `1.0.0` |
+| `var "VERSION" "1.0.0"` (a constant, also an `ExecOptions.ScriptVars` entry) | `XAKE__VERSION`, else `1.0.0` |
 | `var "X" [Env "A"; Default "d"]`, `Var.string(envVar = "A")` | `A` only: an explicit env name replaces the implicit source |
 | `Var.arg()` | no environment source at all |
 
@@ -117,7 +117,7 @@ Rules of the prefix:
 - **A constant stays a constant** for everything else: it is not a declaration for a `Var` read,
   `--help` does not list it, it is not a secret. The environment only overrides its value.
 - **Collisions are errors.** Two keys with the same implicit name (`a-b` and `A_B`, `fooBar` and
-  `FOO_BAR`, a constant `x` and a rule `X`) stop the run (E-12); constants and `ExecOptions.Vars`
+  `FOO_BAR`, a constant `x` and a rule `X`) stop the run (E-12); constants and `ExecOptions.ScriptVars`
   entries count. Declarations with an explicit env name or no env source (`Var.arg`) take no
   part, except a rule whose explicit `Env` is its own implicit name.
 - **Secrets travel this way.** `var "T" [Secret]` reads `XAKE__T`; `-d T=...` and
@@ -137,12 +137,12 @@ The value of a name is the first defined of:
 
 1. the engine's per-demand variables, `Demand(target, vars)` (engine mode only);
 2. `-d NAME=value` (the last `-d` of a name wins);
-3. the script's one definition: the constant `var "N" "v"` or the `ExecOptions.Vars` entry,
+3. the script's one definition: the constant `var "N" "v"` or the `ExecOptions.ScriptVars` entry,
    unless `XAKE__N` is present;
 4. the declaration's sources in list order (the implicit `XAKE__<KEY>` first, unless the
    declaration names an `Env` itself).
 
-A name is **defined once** in the script: two `var` ops, a `var` and an `ExecOptions.Vars`
+A name is **defined once** in the script: two `var` ops, a `var` and an `ExecOptions.ScriptVars`
 entry, a `varschema` field and either of them, are E-2. `-d` and per-demand variables are not
 script definitions.
 
@@ -205,7 +205,7 @@ also for a plain `getEnv`.
   explicit `Env`. `-d` of a secret, under its key, command-line name or any env name, stops the
   run (E-1a: "set XAKE__T instead of passing -d"; E-1b for a secret with no env source, i.e.
   `Var.arg ... |> secret`); a per-demand value of a secret name is E-1b; a script constant or
-  `ExecOptions.Vars` entry of a secret name is a second definition (E-2).
+  `ExecOptions.ScriptVars` entry of a secret name is a second definition (E-2).
 - **Masking.** Every logger Xake creates (console, `filelog`, `CustomLogger`, a custom `ILogger`
   given in the options) replaces each secret value of **4 or more characters** with `***`: the
   banner, the Debug dump, change reasons, `--dryrun`, `--dump`, tool output, errors. A value
@@ -227,7 +227,7 @@ At `Info` (in `build.log`) the run banner lists each variable once with its sour
 | Source | Meaning |
 |---|---|
 | `cli` / `cli:<name>` | `-d`, under the key / under another command-line name |
-| `script` | a constant or `ExecOptions.Vars` entry |
+| `script` | a constant or `ExecOptions.ScriptVars` entry |
 | `env:<NAME>` | an environment variable, e.g. `env:XAKE__CONFIG` |
 | `default` | a `Default` source |
 | `request` | a per-demand value (engine mode) |
@@ -293,8 +293,8 @@ are the program's own input. A single field can also be closed to the environmen
 
 | Member | Holds |
 |---|---|
-| `ExecOptions.Vars` | script constants only (`(name * value) list`) |
-| `ExecOptions.CliVars` | the `-d` pairs (they no longer go into `Vars`) |
+| `ExecOptions.ScriptVars` | script constants only (`(name * value) list`); `Vars` before 4.0 |
+| `ExecOptions.CliVars` | the `-d` pairs (they no longer go into the script values) |
 | `ExecOptions.VarDecls` | the declarations (`VarDecl`: key, command-line name, sources, default, scope, required, secret mode, type, declared-by) |
 | `ExecOptions.VarDefinedBy` | where each `var`/`varschema` definition came from, for E-2 |
 | `ExecOptions.IgnoreEnvironment` | `true`: no declaration reads the environment at launch (see above) |
@@ -338,6 +338,7 @@ Launch errors are collected, printed together at `Error`, and fail the run (exit
 | the later `var` replaced the earlier; `var` beat `ExecOptions.Vars` | a second definition stops the run (E-2) |
 | `-d` of a secret warned; `-d` of `Var.env` was ignored | both stop the run; pass secrets as `XAKE__<KEY>` |
 | `-d` pairs went into `ExecOptions.Vars` | into `ExecOptions.CliVars` |
+| `ExecOptions.Vars` | `ExecOptions.ScriptVars` (`{ ExecOptions.Default with ScriptVars = [...] }`) |
 | per-demand variables were shadowed by the script | they win |
 | Xake.Dotnet read `NUGET_PACKAGES`, `XAKE_CSC_SERVER`, `XAKE_CSC_JOBS`, `XAKE_FSC_JOBS` from the environment | `var "NUGET_PACKAGES" [Env "NUGET_PACKAGES"]`, `var "CSC_JOBS" [Env "XAKE_CSC_JOBS"]`, ... or `-d` |
 | package folder: `NUGET_PACKAGES`, else `~/.nuget/packages` | `<project root>/.packages` |

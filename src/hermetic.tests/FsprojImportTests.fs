@@ -87,7 +87,7 @@ type ``Project import of an fsproj``() =
         File.Copy (coreDll, baselineDir </> "Core.dll", true)
 
         let lockFile = dir </> "fsproj.lock.json"
-        do xake {x.TestOptions with FileLog = "fsproj-import.log"; ThrowOnError = true; Vars = [ "CI", "off" ]} {
+        do xake {x.TestOptions with FileLog = "fsproj-import.log"; ThrowOnError = true; ScriptVars = [ "CI", "off" ]} {
             want ([ "import" ])
             rules [
                 "import" => Project.import {
@@ -126,7 +126,7 @@ type ``Project import of an fsproj``() =
         // both compiled from the lock, the library first: the application's reference to it
         // is whatever the import recorded, and nothing here rewrites it
         for f in [ appDll; coreDll ] do File.Delete f
-        do xake {x.TestOptions with FileLog = "fsproj-compile.log"; ThrowOnError = true; Vars = [ "CI", "off" ]} {
+        do xake {x.TestOptions with FileLog = "fsproj-compile.log"; ThrowOnError = true; ScriptVars = [ "CI", "off" ]} {
             want ([ "compile" ])
             rules [
                 "compile" => recipe {

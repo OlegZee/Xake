@@ -3,7 +3,18 @@
 The `Xake` package (engine and `Xake.Dotnet`). Xake.Hermetic.Dotnet has its own notes
 ([hermetic/README.md](hermetic/README.md)).
 
-## Unreleased (next minor)
+## 4.0.0 (unreleased)
+
+A breaking release: variables are evaluated at launch by declarations, and Xake.Dotnet reads
+only the variable set. Xake.Hermetic.Dotnet builds against the in-repo Xake until 4.0 and
+ships its next release (0.11) together with it; at 4.0 `Xake.Dotnet` and the hermetic package
+are split out of this repository (release-process decision D).
+
+Migration, in short: a CI that put `NUGET_PACKAGES`, `XAKE_CSC_SERVER`, `XAKE_CSC_JOBS` or
+`XAKE_FSC_JOBS` in the environment adds `var "NUGET_PACKAGES" [Env "NUGET_PACKAGES"]` (and the
+like, see below) or passes `-d`; a recipe that reads `Var.*` declares the key in `varschema`; a
+script that reads `getVar "pkg"` for a field with `cliArg = "pkg"` reads the field's own key;
+a name defined twice in a script is removed; credentials are not passed with `-d`.
 
 **Variables are evaluated once, before the build, by declarations the script states.**
 Details: [tasks.md](tasks.md#script-variables).
@@ -55,7 +66,7 @@ Details: [tasks.md](tasks.md#script-variables).
   code that builds `ExecOptions`/`EngineOptions` with a full record expression (not `with`);
   `ExecContext` and the records Xake.Hermetic.Dotnet builds are unchanged.
 
-Library readers (Xake.Dotnet) and the optional import of library declarations:
+### Library readers (Xake.Dotnet) and the optional import of library declarations
 
 - **Breaking: Xake.Dotnet reads its build variables only from the variable set**, never from
   the environment. `NUGET_PACKAGES`, `XAKE_CSC_SERVER`, `XAKE_CSC_JOBS`, `XAKE_FSC_JOBS` set

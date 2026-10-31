@@ -1215,3 +1215,171 @@ type ``Vars conformance (spec section 8)``() =
                 eng.Demand("t").Wait()
             finally eng.StopAsync().Wait()
             Assert.AreEqual([Some "r"; Some "e"], List.ofSeq seen))
+
+    // --- 8.12 Ignoring the environment (amendment 2026-10-31) ---
+
+    member x.NoEnv (logged: List<string>) = { x.Opts logged with IgnoreEnvironment = true }
+
+    [<Test>]
+    member x.``8.12-97 IgnoreEnvironment: XAKE__ NAME does not override a constant or a default``() =
+        withEnv ["XAKE__VC97X", "e"; "XAKE__VC97Y", "e"; "XAKE__VC97Z", "e"] (fun () ->
+            let logged = List<string>()
+            let seen = ref []
+            do xakeArgs [] { x.NoEnv logged with Vars = ["VC97Y", "s"] } {
+                var "VC97X" "s"
+                var "VC97Z" [Default "d"]
+                phony "main" (recipe {
+                    let! a = getVar "VC97X"
+                    let! b = getVar "VC97Y"
+                    let! c = getVar "VC97Z"
+                    seen.Value <- [a; b; c] })
+            }
+            Assert.AreEqual([Some "s"; Some "s"; Some "d"], seen.Value)
+            let banner = bannerVars logged
+            Assert.That(banner, Does.Contain "VC97X=s (script)")
+            Assert.That(banner, Does.Contain "VC97Y=s (script)")
+            Assert.That(banner, Does.Contain "VC97Z=d (default)"))
+
+    [<Test>]
+    member x.``8.12-98 IgnoreEnvironment: an explicit Env source is not read, the default wins``() =
+        withEnv ["VC98_A", "a"; "XAKE__VC98N", "7"] (fun () ->
+            let logged = List<string>()
+            let schema = {| VC98Y = Var.string(envVar = "VC98_A") |> withDefault "d"; VC98N = Var.int() |> withDefault 5 |}
+            let typed = ref 0
+            do xakeArgs [] (x.NoEnv logged) {
+                var "VC98X" [Env "VC98_A"; Default "d"]
+                varschema schema
+                phony "main" (recipe { let! n = schema.VC98N in typed.Value <- n })
+            }
+            Assert.AreEqual(5, typed.Value)
+            let banner = bannerVars logged
+            Assert.That(banner, Does.Contain "VC98X=d (default)")
+            Assert.That(banner, Does.Contain "VC98Y=d (default)")
+            Assert.That(banner, Does.Contain "VC98N=5 (default)"))
+
+    [<Test>]
+    member x.``8.12-99 IgnoreEnvironment: a required field set only in the environment fails the launch``() =
+        withEnv ["XAKE__VC99R", "r"] (fun () ->
+            let ran = ref false
+            let schema = {| VC99R = Var.string() |> required |}
+            let text =
+                fails (fun () ->
+                    do xakeArgs [] (x.NoEnv (List<string>())) {
+                        varschema schema
+                        phony "main" (recipe { ran.Value <- true })
+                    })
+            StringAssert.Contains("Required variable 'VC99R' is not provided", text)
+            Assert.IsFalse ran.Value)
+
+    [<Test>]
+    member x.``8.12-100 IgnoreEnvironment: an environment-only secret is unset, -d of it still fails``() =
+        withEnv ["XAKE__VC100T", "vc100-secret-env"; "XAKE__VC100E", "v"] (fun () ->
+            let logged = List<string>()
+            let schema = {| VC100E = Var.env<string>() |}
+            do xakeArgs [] (x.NoEnv logged) {
+                var "VC100T" [Secret]
+                varschema schema
+                phony "main" (recipe { return () })
+            }
+            let banner = bannerVars logged
+            Assert.That(banner, Does.Contain "VC100T (not set)")
+            Assert.That(banner, Does.Contain "VC100E (not set)")
+            StringAssert.DoesNotContain("vc100-secret-env", allText logged)
+            let text =
+                fails (fun () ->
+                    do xakeArgs ["-d"; "VC100T=vc100-given"] (x.NoEnv (List<string>())) {
+                        var "VC100T" [Secret]
+                        phony "main" (recipe { return () })
+                    })
+            StringAssert.Contains("Variable 'VC100T' is secret", text)
+            StringAssert.DoesNotContain("vc100-given", text)
+            let text =
+                fails (fun () ->
+                    do xakeArgs ["-d"; "VC100E=x"] (x.NoEnv (List<string>())) {
+                        varschema schema
+                        phony "main" (recipe { return () })
+                    })
+            StringAssert.Contains("Variable 'VC100E' comes only from the environment variable XAKE__VC100E, not from -d VC100E=...", text))
+
+    [<Test>]
+    member x.``8.12-101 IgnoreEnvironment: getEnv still reads the environment``() =
+        withEnv ["VC101_A", "a"] (fun () ->
+            let seen = ref (None, None)
+            let deps = ref []
+            do xakeArgs [] (x.NoEnv (List<string>())) {
+                var "VC101X" [Env "VC101_A"]
+                phony "main" (recipe {
+                    let! v = getVar "VC101X"
+                    let! e = getEnv "VC101_A"
+                    let! r = getResult()
+                    deps.Value <- r.Depends
+                    seen.Value <- (v, e) })
+            }
+            Assert.AreEqual((None, Some "a"), seen.Value)
+            Assert.That(deps.Value, Does.Contain(EnvVar ("VC101_A", Some "a"))))
+
+    [<Test>]
+    member x.``8.12-102 IgnoreEnvironment: -d still applies unless IgnoreCommandLine``() =
+        withEnv ["XAKE__VC102X", "e"] (fun () ->
+            let run ignoreCli =
+                let logged = List<string>()
+                let seen = ref None
+                do xakeArgs ["-d"; "VC102X=c"] { x.NoEnv logged with IgnoreCommandLine = ignoreCli } {
+                    var "VC102X" "s"
+                    phony "main" (recipe { let! v = getVar "VC102X" in seen.Value <- v })
+                }
+                seen.Value, bannerVars logged
+            let v, banner = run false
+            Assert.AreEqual(Some "c", v)
+            Assert.That(banner, Does.Contain "VC102X=c (cli)")
+            let v, banner = run true
+            Assert.AreEqual(Some "s", v)
+            Assert.That(banner, Does.Contain "VC102X=s (script)"))
+
+    [<Test>]
+    member x.``8.12-103 IgnoreEnvironment: no implicit-name collision check, E-2 stays``() =
+        let main = recipe { return () }
+        do xakeArgs [] (x.NoEnv (List<string>())) { var "vc103-a" []; var "VC103_A" [Default "x"]; phony "main" main }
+        StringAssert.Contains(e2 "VC103X" "var \"VC103X\" \"...\"" "var \"VC103X\" [...]",
+            fails (fun () -> do xakeArgs [] (x.NoEnv (List<string>())) { var "VC103X" "1"; var "VC103X" []; phony "main" main }))
+
+    [<Test>]
+    member x.``8.12-104 the banner shows IgnoreEnvironment and no env origin``() =
+        withEnv ["VC104_A", "a"] (fun () ->
+            let run ignoreEnv =
+                let logged = List<string>()
+                do xakeArgs [] { x.Opts logged with IgnoreEnvironment = ignoreEnv } {
+                    var "VC104X" [Env "VC104_A"; Default "d"]
+                    phony "main" (recipe { return () })
+                }
+                lock logged (fun () -> List.ofSeq logged), bannerVars logged
+            let lines, banner = run true
+            let envLine = lines |> List.tryFindIndex (fun l -> l.EndsWith "  environment:  ignored (IgnoreEnvironment)")
+            let varsLine = lines |> List.tryFindIndex (fun l -> l.EndsWith "  vars:")
+            Assert.IsTrue(envLine.IsSome, "the environment line")
+            Assert.Less(envLine.Value, varsLine.Value, "before vars:")
+            Assert.That(banner, Does.Contain "VC104X=d (default)")
+            Assert.That(banner, Has.None.Contains "(env:")
+            let lines, banner = run false
+            Assert.That(lines, Has.None.Contains "environment:")
+            Assert.That(banner, Does.Contain "VC104X=a (env:VC104_A)"))
+
+    [<Test>]
+    member x.``8.12-105 engines read the environment unless IgnoreEnvironment is given``() =
+        Assert.IsFalse ExecOptions.Default.IgnoreEnvironment
+        let (XakeScript (o, _)) = xakeEngine.Zero()
+        Assert.IsFalse o.IgnoreEnvironment
+        Assert.IsTrue o.IgnoreCommandLine
+        withEnv ["XAKE__VC105V", "e"] (fun () ->
+            let seen = List<string option>()
+            let eng =
+                RulesBuilder { ExecOptions.Default with IgnoreCommandLine = true; IgnoreEnvironment = true; NoPersist = true; ConLogLevel = Silent; FileLogLevel = Silent; Progress = false } {
+                    var "VC105V" "s"
+                    phony "t" (recipe { let! v = getVar "VC105V" in lock seen (fun () -> seen.Add v) })
+                    start
+                }
+            try
+                eng.Demand("t", ["VC105V", "r"]).Wait()
+                eng.Demand("t").Wait()
+            finally eng.StopAsync().Wait()
+            Assert.AreEqual([Some "r"; Some "s"], List.ofSeq seen))

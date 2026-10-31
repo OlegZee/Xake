@@ -202,11 +202,10 @@ FscRunOptions; Restore: Restore.Options }`.
 
 **Current behaviour (0.3).**
 
-- `Lock.underCi` decides whether the build runs under CI. It reads the build variable `CI`
-  (`on`/`true`/`yes`/`1` or `off`/`false`/`no`/`0`; empty or unset is off; any other value
-  fails). Since 0.11 (Xake 3.16) it does not read the environment variable `CI` that GitHub
-  Actions, GitLab CI and Azure Pipelines set: the script takes it with `var "CI" [Env "CI"]`.
-  Nothing reads `GITHUB_ACTIONS`. A script can read the flag with `let! ci =
+- `Lock.underCi` decides whether the build runs under CI. It reads the script variable `CI` first
+  (`on`/`true`/`yes`/`1` or `off`/`false`/`no`/`0`; any other value fails). When the variable is
+  not set, it reads the environment variable `CI`. GitHub Actions, GitLab CI and Azure Pipelines
+  set it. Nothing reads `GITHUB_ACTIONS`. A script can read the flag with `let! ci =
   Lock.underCi`.
 - `Lock.buildWith` is strict. `Lock.build`, `csc { lock }`, `fsc { lock }` and
   `csc { project; lock }` (`Described.buildCsc`) use the same rules:
@@ -223,14 +222,10 @@ FscRunOptions; Restore: Restore.Options }`.
 - `Locks.generate`, `Import.descriptions` and `Project.import` do not read `CI`. They write their
   files each time they run.
 - `HERMETIC=on` and `NUGET_FETCH` are independent of `CI` ([hermetic/hermetic-mode.md](hermetic/hermetic-mode.md)).
-- The variables the two libraries read are exported as schemas a script MAY import with
-  `varschema` (`DotNetVars.Default`, `HermeticVars.Default`); the libraries read them with
-  `Var.read<'t> "NAME"`, which trusts the script's declaration of the name and checks its type.
 
 **What to do on CI today** to never rewrite a lock and to fail on a mismatch:
 
-1. Declare `var "CI" [Env "CI"]` (or pass `-d CI=on`). The runner sets the environment
-   variable, and a missing lock then fails.
+1. Do not set `CI` yourself. The runner sets it, and a missing lock then fails.
 2. Do not use `nofailonerror` in a block that has `lock`.
 3. Do not run the targets that call `Import.descriptions`, `Project.import`, `Locks.generate` or
    `Lock.record` (for example `import` and `update-locks`).
@@ -290,7 +285,7 @@ tool dispatch.
 a parameter of the run and never enters a compilation's argument list (section 6).
 `CscSettingsType.Server` is `CompilerServer option`; `None` inherits. `CompilerServer.resolve`
 turns the option into a value with this precedence: the target's `noserver`/`keepalive`, the
-build variable `CSC_SERVER`, the build variable `XAKE_CSC_SERVER`, `Shared None`.
+script variable `CSC_SERVER`, the environment variable `XAKE_CSC_SERVER`, `Shared None`.
 
 ### Compiler selection
 
@@ -381,7 +376,7 @@ Who uses whom inside the hermetic package (names used in code, not comments):
 | Name | Kind | What it does |
 |---|---|---|
 | `CompilerServer` | union | `Shared of keepAlive: int option` or `InProcess` |
-| `CompilerServer.fromEnvironment ()` | function | obsolete (Xake 3.16): always `Shared None`; `resolve` reads `XAKE_CSC_SERVER` from the build variables |
+| `CompilerServer.fromEnvironment ()` | function | `InProcess` when `XAKE_CSC_SERVER` is `0`, `false`, `off` or `no`; else `Shared None` |
 | `CompilerServer.resolve setting` | recipe | the precedence above; reads `CSC_SERVER` with `getVar`, so it is a tracked dependency |
 | `CscSettingsType`, `CscSettings` | record, value | the settings, with `Toolset: string option` and `Server: CompilerServer option` |
 | `RunOptions` / `RunOptions.Default` | record | `FailOnError`, `CscPath`, `Server`, `Environment` |
@@ -428,7 +423,7 @@ plus `toolset`, `noserver`, `keepalive` and `resolve`, the marker `CscRequest`, 
 
 | Name | What it does |
 |---|---|
-| `nugetRoot ()` | `~/.nuget/packages` (no build context; the environment variable is not read) |
+| `nugetRoot ()` | the environment variable `NUGET_PACKAGES`, else `~/.nuget/packages` (no build context) |
 | `packageRoot ()` | recipe: the build's package folder -- the script variable `NUGET_PACKAGES` (relative to the project root, or absolute), else `nugetRoot ()` |
 | `fetchEnabled ()` | recipe: `false` when the script variable `NUGET_FETCH` is `off`/`false`/`no`/`0`; what `Restore.Options.Enabled = true` follows (`Restore.resolve`) |
 | `packageRootWithSource ()` | recipe: `packageRoot ()` and where it came from (`ScriptVariable`, `EnvironmentVariable`, `UserProfile`); only the script variable satisfies `HERMETIC=on` |
@@ -477,7 +472,7 @@ plus `toolset`, `noserver`, `keepalive` and `resolve`, the marker `CscRequest`, 
 | Name | Kind | What it does |
 |---|---|---|
 | `Options` / `Options.Default` | record | `PackageRoot: string option` (`None` = the build's folder, resolved where a build context exists), `Enabled: bool` (default `true` = follow `NUGET_FETCH`) |
-| `packageRoot options` | pure | the folder in effect (`None` = the machine's cache here) |
+| `packageRoot options` | pure | the folder in effect (`None` = the environment's here) |
 | `resolve options` | recipe | `PackageRoot = None` to `DotNetFwk.packageRoot ()`, `Enabled` and `DotNetFwk.fetchEnabled ()`; called by `ensure`, `Lock.compileWith`, `Lock.buildWith` |
 | `into dir` | recipe | options with the folder relative to the project root |
 | `Request`, `Missing` | records | what must exist (graph + paths); one missing package with its files |
@@ -523,7 +518,7 @@ plus `toolset`, `noserver`, `keepalive` and `resolve`, the marker `CscRequest`, 
 | `restoreRequest entries` | pure | every compiler, reference and analyzer path, plus the combined graph |
 | `restore options doc` | recipe | `Restore.ensure` over a whole lock; fails on a problem |
 | `isSdkCompiler path`, `withoutSdkCompilerHash entry` | reads the SDK root | whether a compiler lies under `$(DotnetRoot)/sdk/<v>/`; the entry with that compiler's hash cleared (`rehash` and every replay apply it) |
-| `underCi` | recipe | whether the build runs under CI: the build variable `CI` (section 2) |
+| `underCi` | recipe | whether the build runs under CI: the script variable `CI`, else the environment variable `CI` (section 2) |
 | `compileWith options entry`, `compile entry`, `compileFrom lockPath options entry` | recipes | the replay (section 2): prerequisites (`unmetPrerequisitesAt`: under the `$(DotnetRoot)` the lock is read against, a script's extra root of that name or this machine's), the `HERMETIC=on` gate (message 10), restore with `Restore.resolve`d options; `compile` resolves the server first; `compileFrom` names the lock in message 10 (`Locks.compileAs`) |
 | `recorded path unhashed entry` | recipe | the record step without the write: `needFiles`, prerequisites, the `HERMETIC=on` gate, `rehash`; the references in `unhashed` (project-reference outputs) stay without a hash (`Locks.generate`) |
 | `record path c` | recipe | `c: Compilation`; `needFiles` what it hashes, derive the prerequisites (warn without an exact pin), the `HERMETIC=on` gate (messages 2, 9), rehash, overwrite a one-entry lock; compiles nothing |
@@ -625,7 +620,7 @@ on every machine and a diff means a change of inputs.
 
 | Token | Root |
 |---|---|
-| `$(NuGetPackageRoot)` | inside a recipe the build's folder (`DotNetFwk.packageRoot ()`: the build variable `NUGET_PACKAGES`, else `.packages`); outside one `DotNetFwk.nugetRoot ()`; or a folder via `Roots.packageRootOverride` |
+| `$(NuGetPackageRoot)` | inside a recipe the build's folder (`DotNetFwk.packageRoot ()`: the script variable `NUGET_PACKAGES`, else the environment's); outside one `DotNetFwk.nugetRoot ()`; or a folder via `Roots.packageRootOverride` |
 | `$(ProjectRoot)` | the engine's `ExecOptions.ProjectRoot`, not the process's current directory |
 | `$(DotnetRoot)` | the SDK installation root, when found |
 | `$(Name)` (extra) | one per sibling repository, declared in `ImportOptions.Roots` |
@@ -887,7 +882,7 @@ parses alongside PE32.
 
 `Pack.zip output entries options` and `Pack.nupkg output nuspec files options` write the zip
 format by hand: entries sorted by path (ordinal), one fixed timestamp (`Options.Timestamp`:
-1980-01-01 in `Options.Default`, the build variable `SOURCE_DATE_EPOCH` in `Options.current ()`), no extra fields, no comments, "version made by" with no
+`SOURCE_DATE_EPOCH` or 1980-01-01), no extra fields, no comments, "version made by" with no
 host platform, UTF-8 names. `nupkg` adds the nuspec at the root, `[Content_Types].xml`,
 `_rels/.rels` and a `.psmdcp` whose GUID is derived from SHA-256 of (id, version, sorted file
 hashes) instead of a random one. `Pack.list` reads the central directory back (path, size,
@@ -947,8 +942,8 @@ Precedence (`CompilerServer.resolve`), first that is set wins:
 | # | Source | Values |
 |---|---|---|
 | 1 | the target's `noserver` / `keepalive n` | `Some InProcess` / `Some (Shared (Some n))` |
-| 2 | build variable `CSC_SERVER` | `on`, `off`, or seconds; case-insensitive; empty is unset; anything else fails the target; read with `Var.read`, so changing it rebuilds |
-| 3 | build variable `XAKE_CSC_SERVER` | `on`/`off` (`true`/`yes`/`1`, `false`/`no`/`0`); anything else fails |
+| 2 | script variable `CSC_SERVER` | `on`, `off`, or seconds; case-insensitive; anything else warns and means `on`; read with `getVar`, so changing it rebuilds |
+| 3 | env `XAKE_CSC_SERVER` | `0`, `false`, `off`, `no` turn it off |
 | 4 | default | `Shared None` (Roslyn's own keepalive, 600 seconds) |
 
 `Lock.build` and `Lock.compile` resolve the server with `CompilerServer.resolve None`;

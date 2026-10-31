@@ -102,13 +102,12 @@ module Locks =
             Packages = keptVersions refresh kept own @ flowing
             ByFramework = d.ByFramework |> List.map (fun (t, i) -> t, { i with Packages = [] }) }
 
-    /// The value of the build variable `LOCK_REFRESH` (read, and so a dependency, here); blank is
-    /// unset. The environment variable counts only through the script:
-    /// `var "LOCK_REFRESH" [Env "LOCK_REFRESH"]`.
-    let internal refreshValue =
+    /// The value of `LOCK_REFRESH`: the script variable, else the environment variable.
+    let private refreshValue =
         recipe {
-            let! refresh = Var.read<string> "LOCK_REFRESH"
-            return refresh |> Option.filter (fun s -> s.Trim () <> "")
+            let! refreshVar = getVar "LOCK_REFRESH"
+            let! refreshEnv = getEnv "LOCK_REFRESH"
+            return refreshVar |> Option.orElse refreshEnv |> Option.filter (fun s -> s.Trim () <> "")
         }
 
     /// The script's extra roots (`Roots.make`: `$(Name)`, a path relative to the project root
@@ -138,8 +137,8 @@ module Locks =
     /// with `config` (the SDK preset), `--deterministic+`, the tokenized `--pathmap`, and no
     /// `-o` (the output path is the build's);</item>
     /// <item>packages through `Described.restore` (msbuild restore). A version the current
-    /// lock holds is passed as exact, so it stays; the build variable
-    /// `LOCK_REFRESH=&lt;ids|*&gt;` lets the named packages resolve as declared again;</item>
+    /// lock holds is passed as exact, so it stays; the script variable (or environment
+    /// variable) `LOCK_REFRESH=&lt;ids|*&gt;` lets the named packages resolve as declared again;</item>
     /// <item>a project reference to B: B's configuration `refConfig` (this one, else Release,
     /// else Debug -- whichever B has a lock for at `lockOf B c`) and framework
     /// `nearestFramework`, recorded as B's output path `outOf cfgB fwkB B` + `/&lt;assembly&gt;.dll`
@@ -488,17 +487,6 @@ module Locks =
     /// again" -- the lock is msbuild's resolution of what those files said. With the variable
     /// `LOCK_STALE=warn` it is a warning instead, but never under CI (`Lock.underCi`).
     /// </summary>
-    /// Whether a stale lock is a warning: `LOCK_STALE=warn` outside CI. `fail`, unset, empty or
-    /// blank fail; any other value fails naming it (case-insensitive, trimmed).
-    let internal staleWarns (stale: string option) (ci: bool) =
-        match stale |> Option.map (fun v -> v.Trim ()) with
-        | None | Some "" -> false
-        | Some v ->
-            match v.ToLowerInvariant () with
-            | "warn" -> not ci
-            | "fail" -> false
-            | _ -> failwithf "LOCK_STALE='%s': expected fail or warn" v
-
     let private staleImports (lockPath: string) (entry: Lock.Entry) : Recipe<ExecContext, unit> =
         recipe {
             let imports = entry.Evaluation.Imports
@@ -507,12 +495,14 @@ module Locks =
             | [] -> ()
             | changed ->
                 let msg = staleMessage lockPath entry changed
-                let! stale = Var.read<string> "LOCK_STALE"
+                let! stale = getVar "LOCK_STALE"
                 let! ci = Lock.underCi
-                if staleWarns stale ci then do! trace Warning "%s" msg
-                else
+                match stale |> Option.map (fun v -> v.Trim().ToLowerInvariant ()) with
+                | Some "warn" when not ci -> do! trace Warning "%s" msg
+                | Some ("warn" | "fail") | None ->
                     do! trace Error "%s" msg
                     failwith msg
+                | Some other -> failwithf "LOCK_STALE='%s': expected fail or warn" other
         }
 
     /// `compile` for the assembly target (`.dll`, `.exe`): C# and F# alike.

@@ -12,3 +12,4 @@ banner (#101); CLI over the script's ops (#103); spec rev. 1-5 (archived).
 - [x] PR 2 spec for the import ([pr2-spec.md](pr2-spec.md)), conventions proposed (2026-10-30)
 - [x] PR 2 #112 (draft, stacked on #111, owner review; hermetic floor decision): optional import of library declarations (schema records, read by key and type); library readers without environment fallback (Xake.Dotnet, Xake.Hermetic.Dotnet), switch values, `.packages`
 - [x] Release notes (breaking: undeclared `Var` read, libraries no longer read the environment), docs -- PR 1 and PR 2 sections
+- [ ] Hermetic part of PR 2 (`feature/vars-hermetic`): readers CI/LOCK_REFRESH/LOCK_STALE/SOURCE_DATE_EPOCH, `HermeticVars`, L-3, tests 55-59/84, docs; after the Xake 4.0 release, floor 4.0 via `bump-base`

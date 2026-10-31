@@ -408,15 +408,15 @@ runner, which is the check that gates the compile. The nupkg itself is not re-ha
 
 | Field | Default | Meaning |
 |---|---|---|
-| `PackageRoot` | `None` | the package folder; `None` is the build's: the build variable `NUGET_PACKAGES`, else `.packages` under the project root |
-| `Enabled` | `true` | whether a missing package may be downloaded; `true` follows the build variable `NUGET_FETCH` (off when it says `off`), `false` is off regardless |
+| `PackageRoot` | `None` | the package folder; `None` is the build's: the script variable `NUGET_PACKAGES`, else the environment variable, else `~/.nuget/packages` |
+| `Enabled` | `true` | whether a missing package may be downloaded; `true` follows the script variable `NUGET_FETCH` (off when it says `off`), `false` is off regardless |
 
 Three ways to choose the folder:
 
 | How | Covers | Notes |
 |---|---|---|
-| `var "NUGET_PACKAGES" ".nuget/packages"` (or `-d NUGET_PACKAGES=<dir>`) | the build: `Lock.load`, every restore, `csc { lock }`, `fsc { lock }`, `Project.import`, the base's reference packs and toolset; the lock writes it as `$(NuGetPackageRoot)` | the recommended way; unset, the folder is `.packages` under the project root (Xake 3.16) |
-| `NUGET_PACKAGES=<dir>` in the environment | `dotnet fsi`'s own `#r "nuget:"`; the build only through `var "NUGET_PACKAGES" [Env "NUGET_PACKAGES"]` | Xake 3.16 no longer reads it by itself |
+| `var "NUGET_PACKAGES" ".nuget/packages"` (or `-d NUGET_PACKAGES=<dir>`) | the build: `Lock.load`, every restore, `csc { lock }`, `fsc { lock }`, `Project.import`, the base's reference packs and toolset; the lock writes it as `$(NuGetPackageRoot)` | the recommended way; the only one `HERMETIC=on` accepts |
+| `NUGET_PACKAGES=<dir>` in the environment | the same, plus `dotnet fsi`'s own `#r "nuget:"` | **(run)**; the script variable wins over it |
 | `Restore.into ".packages"` + `Lock.loadWith (Roots.packageRootOverride ...)` + `Lock.compileWith` | imported locks compiled through `compileWith` | the folder is relative to the project root; must appear in both places |
 
 `csc { ...; lock "p"; nofetch }` forbids downloads (`Enabled = false`; it was `norestore`
@@ -448,8 +448,8 @@ do! Lock.compileWith { Lock.Options.Default with Restore = options } entry
 ```
 
 `Lock.compileWith` with explicit options does not resolve the compiler server: it uses
-`RunOptions.Default`, whose `Server` is `Shared None`. `Lock.compile` resolves it from the build
-variables `CSC_SERVER`, then `XAKE_CSC_SERVER`.
+`RunOptions.Default`, whose `Server` follows `XAKE_CSC_SERVER` only. `Lock.compile` also reads
+the script variable `CSC_SERVER`.
 
 ## D. CI: GitHub Actions and GitLab CI
 
@@ -484,23 +484,10 @@ on a developer machine (build once, or run the target that calls Lock.record
 "locks/app.json", e.g. update-locks) and commit it.
 ```
 
-"Under CI" is `Lock.underCi`: the build variable `CI` (`-d CI=on|off`). Since 0.11 (Xake 3.16)
-the environment variable `CI` that GitHub Actions, GitLab CI and Azure Pipelines set counts only
-when the script says so, and the same holds for every variable below that a runner sets:
-
-```fsharp
-xakeScript {
-    var "CI" [Env "CI"]                              // the runner's CI flag
-    var "XAKE_CSC_SERVER" [Env "XAKE_CSC_SERVER"]    // the server switch of the YAML below
-    var "NUGET_PACKAGES" [Env "NUGET_PACKAGES"; Default ".nuget/packages"]
-    ...
-}
-```
-
-Or import the libraries' schemas and override the fields:
-`varschema { HermeticVars.Default with CI = Var.string() |> withDefault "off" }`. `-d CI=off`
-opts out (records as a developer machine would), and `nofailonerror` does not soften it. Off
-CI a missing lock is still recorded and compiled.
+"Under CI" is `Lock.underCi`: the script variable `CI` when set (`-d CI=on|off`), otherwise the
+environment variable `CI`, which GitHub Actions, GitLab CI and Azure Pipelines set. Nothing to
+configure on the runner; `-d CI=off` opts out (records as a developer machine would), and
+`nofailonerror` does not soften it. Off CI a missing lock is still recorded and compiled.
 
 Two more guards stay useful as extra safety:
 
@@ -541,9 +528,8 @@ By default `csc` goes through the Roslyn compiler server, which stays alive up t
 after the last compile ([../csc-server.md](../csc-server.md)). It does not change the output.
 On an ephemeral hosted runner it costs nothing. On a self-hosted runner or a GitLab shell
 executor the process outlives the job. Set `XAKE_CSC_SERVER=off` on CI unless you measured
-that the warm server matters. `XAKE_CSC_SERVER` is a build variable (`on`/`off`; the script
-takes the environment variable with `var "XAKE_CSC_SERVER" [Env "XAKE_CSC_SERVER"]`, or the
-runner passes `-d XAKE_CSC_SERVER=off`); `CSC_SERVER` (`-d CSC_SERVER:off`) wins over it.
+that the warm server matters. `XAKE_CSC_SERVER` is the environment variable, `0`, `false`,
+`off` or `no` turn it off; the script variable `CSC_SERVER` (`-d CSC_SERVER:off`) wins over it.
 
 ### The package cache
 
@@ -661,7 +647,7 @@ binary is the lock-built one. Byte identity needs the same checkout path (csc em
 source paths in the PDB) or a `/pathmap`. See [verify.md](verify.md).
 
 **Pack.** `Pack.nupkg` and `Pack.zip` write deterministic archives (sorted entries,
-1980-01-01, or the build variable `SOURCE_DATE_EPOCH` through `Pack.Options.current ()`, content-derived ids). See [pack.md](pack.md).
+`SOURCE_DATE_EPOCH` or 1980-01-01, content-derived ids). See [pack.md](pack.md).
 
 **Sign.** `sign {}` is a delegated rule with a pluggable signer; the package ships only
 `Sign.fakeSigner`. `Sign.verifySameImage` ties a signed file back to its input. See
@@ -721,7 +707,7 @@ What breaks offline:
 | `'<name>': the resolved compilation differs from the lock '<path>':` + diff lines | settings, files matched by a glob, the compiler or the SDK changed | review the diff; `update-locks` and commit, or revert the change |
 | `<path> is stale:` (your `check-locks`) | the same, found without compiling | the same |
 | `Neither rule nor file is found for '<root>/locks/<x>.json'` | the lock is not committed, or the path is wrong | record it locally (`build` or `update-locks`) and commit it |
-| `'<name>': the lock '<path>' is not there. Under CI a lock is never recorded: ...` | the build runs under CI (`-d CI=on`, or `var "CI" [Env "CI"]` and the runner's `CI`) and the lock is not committed | record the lock on a developer machine (`update-locks` or a first build) and commit it; `-d CI=off` forces the developer behaviour |
+| `'<name>': the lock '<path>' is not there. Under CI a lock is never recorded: ...` | the build runs under CI (env `CI`, or `-d CI=on`) and the lock is not committed | record the lock on a developer machine (`update-locks` or a first build) and commit it; `-d CI=off` forces the developer behaviour |
 | `('<name>') hash mismatch:` / `<path>: expected <a>, got <b>` | a file on disk is not the recorded one: a different package build, a corrupted cache, a rebuilt reference | delete that package directory and rebuild; for a reference your script builds, see the guide |
 | `... expected <sha256>, got missing` for many files | fetching off (`nofetch`), or the lock was read against another package folder than the one restored into | use one folder for `Lock.loadWith` and `Restore` (C), or `NUGET_PACKAGES` |
 | `('<name>') restoring the packages the lock names failed:` + `<id> <v>: not restored (expected it at '<dir>')` | the restore ran but did not deliver | check the feed in `nuget.config`; NuGet's output is in the log at verbose level |
@@ -750,8 +736,8 @@ More messages: [../hermetic-guide.md](../hermetic-guide.md#12-troubleshooting).
 
 What the product does not do yet, with the smallest change that would close each.
 
-1. *(done)* **A missing lock is recorded on CI.** Under CI (`Lock.underCi`: the build variable
-   `CI`; the environment's through `var "CI" [Env "CI"]`) `Lock.buildWith` -- and so `Lock.build` and
+1. *(done)* **A missing lock is recorded on CI.** Under CI (`Lock.underCi`: the script variable
+   `CI`, else the environment variable `CI`) `Lock.buildWith` -- and so `Lock.build` and
    `csc { lock }` -- fails on a missing lock naming it and "record it on a developer machine
    and commit it"; `-d CI=off` opts out (D). `check-locks` and the `git status` step remain as
    extra safety.

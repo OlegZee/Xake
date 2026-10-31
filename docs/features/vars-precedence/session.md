@@ -44,3 +44,10 @@ PR 1 done 2026-10-30 (#111): core + names + docs; deviations in `pr1-notes.md` (
 PR 2 done 2026-10-30 (#112, stacked on #111): library readers L-1..L-7, `Var.read`, schemas `DotNetVars.Default` / `HermeticVars.Default` (conventions proposed in `pr2-spec.md`). Hermetic floor `[3.16.0, 4.0)` breaks CI until Xake 3.16.0 is published: split the hermetic commits or release first. Follow-ups: `bump-base` sets env `LOCK_REFRESH` (no longer read); CI step for test 60.
 
 Next step: the owner reviews #111 and #112 and decides the hermetic floor path.
+
+2026-10-31: CI on #112 failed (src/hermetic compiles against the published Xake, no `Var.read`).
+Split without rewriting history: the full PR 2 state is kept on `feature/vars-hermetic` (be83c13,
+pushed); one commit on `feature/vars-libraries` takes the hermetic part out (src/hermetic back to
+dev, HermeticVarsTests, hermetic docs and 0.11 notes). The hermetic PR ships after the Xake
+release (4.0 planned), floor at that release. See pr2-notes.md.
+

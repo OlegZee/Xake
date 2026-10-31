@@ -50,7 +50,7 @@ open Xake.Hermetic.Dotnet
 | `Lock.rehash entry` | pure (reads disk) | fill every empty `Sha256` from what is on disk now |
 | `Lock.diff a b` | pure | the differences between two entries, `[]` = identical |
 | `Lock.diffText roots a b` | pure | `diff` with every path tokenized against `roots`, as `buildWith`/`verify` print it |
-| `Lock.underCi` | recipe | whether this build runs under CI (the build variable `CI`); under CI `buildWith` fails on a missing lock ([The CI flag](#the-ci-flag)) |
+| `Lock.underCi` | recipe | whether this build runs under CI (script variable `CI`, then the environment variable `CI`); under CI `buildWith` fails on a missing lock ([The CI flag](#the-ci-flag)) |
 | `Lock.mapPaths f entry` / `mapText f entry` | pure | rewrite paths / text of an entry |
 | `Lock.packagesOf cacheRoot assets` | pure | the package graph of an entry from a `Nuget.Assets` |
 | `Lock.restoreRequest entries` / `Lock.restore options doc` | pure / recipe | what a restore must provide for entries; populate the package folder from a whole lock ([restore.md](restore.md)) |
@@ -880,7 +880,7 @@ csc's compiler (the toolset replaces it: `CSC_TOOLSET`).
 
 | Where | Under `HERMETIC=on` |
 |---|---|
-| `Lock.record`, the recording branch of `Lock.build`/`buildWith` (`csc { lock }`, `fsc { lock }`) | the lock is not written when a path breaks the invariant (message 9, one line per path); the package folder is always the build's own (Xake 3.16), so the base's message 2 no longer arises here |
+| `Lock.record`, the recording branch of `Lock.build`/`buildWith` (`csc { lock }`, `fsc { lock }`) | the lock is not written when the package folder is not the script variable `NUGET_PACKAGES` (the base's message 2) or when a path breaks the invariant (message 9, one line per path) |
 | `Lock.compileWith`, `Lock.compile`, the replay in `buildWith` | after the prerequisite check, a lock that names a path outside the roots fails before any restore (message 10) |
 | `Project.import` | the SDK not pinned exactly is an error (message 11; a warning with the mode off); pinned but not the SDK msbuild ran is message 7; then the gate of `record` over every entry. Nothing is written when anything fails |
 
@@ -897,15 +897,14 @@ gate. With the mode off nothing changes: the locks, the warnings and the replay 
 only the variable `HERMETIC` is read (and so is a dependency).
 
 `Options.Default` follows the build: `Restore.Options.Default` (`PackageRoot = None`, `Enabled =
-true`) means the build's package folder (`DotNetFwk.packageRoot ()`, the build variable
-`NUGET_PACKAGES`, else `.packages`) and fetching unless `NUGET_FETCH=off` (`DotNetFwk.fetchEnabled ()`),
+true`) means the build's package folder (`DotNetFwk.packageRoot ()`, the script variable
+`NUGET_PACKAGES` first) and fetching unless `NUGET_FETCH=off` (`DotNetFwk.fetchEnabled ()`),
 applied by `Restore.resolve` in `Restore.ensure`, `Lock.compileWith` and `Lock.buildWith`.
 `Enabled = false` (`nofetch`) turns fetching off whatever `NUGET_FETCH` says. And the lock's
 roots inside a recipe (`Roots.current`, `currentWith`) put `$(NuGetPackageRoot)` at that same
 folder, so a lock recorded with `var "NUGET_PACKAGES" ".nuget/packages"` names
-`$(NuGetPackageRoot)/...`, not the absolute path. `Project.import` and `Import.record` hand the
-folder to msbuild as the environment variable `NUGET_PACKAGES` in every case, so the imported
-packages are there too, whatever the environment says.
+`$(NuGetPackageRoot)/...`, not the absolute path. `Project.import` hands the folder to msbuild
+as the environment variable `NUGET_PACKAGES`, so the imported packages are there too.
 
 A minimal hermetic script ([../hermetic-guide.md](../hermetic-guide.md#hermetic-mode)):
 
@@ -1574,11 +1573,9 @@ bool>`:
 
 | Source | Value |
 |---|---|
-| build variable `CI` (`-d CI=on`, `xakeScript { var "CI" "on" }`, `Vars`, or `var "CI" [Env "CI"]` to take what GitHub Actions, GitLab CI, Azure Pipelines and most others set) | `on`/`true`/`yes`/`1`: CI; `off`/`false`/`no`/`0`, empty: not CI (case-insensitive, trimmed); anything else fails |
-| unset | not CI |
-
-Since 0.11 (Xake 3.16) the environment variable `CI` is not read by itself: a script that ran
-under CI through it alone adds `var "CI" [Env "CI"]`.
+| script variable `CI` (`-d CI=on`, `xakeScript { var "CI" "on" }`, `Vars`), when set | `on`/`true`/`yes`/`1`: CI; `off`/`false`/`no`/`0`: not CI (case-insensitive); anything else fails |
+| otherwise the environment variable `CI` (set by GitHub Actions, GitLab CI, Azure Pipelines and most others) | non-empty and not `0`/`false`: CI |
+| neither | not CI |
 
 Same convention as `NETFX` and `CSC_SERVER`: `-d CI=off` builds as a developer machine would
 (records a missing lock) even on a runner, `-d CI=on` rehearses the CI behaviour locally. Reading
@@ -1615,8 +1612,8 @@ It was called `norestore` before 0.2; renamed with the base's `NUGET_FETCH` vari
 is the per-target form. Why after `lock`: `lock` turns the block's state from `CscSettingsType`
 into `CscLocked` (path, settings, fetch flag), and `nofetch` is an operation on that state.
 
-**The package folder is the build's** (the build variable `NUGET_PACKAGES`, else `.packages`
-under the project root), and fetching follows `NUGET_FETCH` unless
+**The package folder is the build's** (the script variable `NUGET_PACKAGES`, else the
+environment variable, else `~/.nuget/packages`), and fetching follows `NUGET_FETCH` unless
 `nofetch` turns it off; there is no
 per-target folder. `packageroot "<dir>"` after `lock` was removed in 0.2 (decided 2026-10-09: one
 package folder per build, and a per-target one makes no sense under `HERMETIC=on`). A script
@@ -1727,8 +1724,8 @@ What `Locks.generate lockOf outOf config descriptionPath` does for the descripti
   names only B.
 - **Packages** come from `Described.restore` (an msbuild restore of a synthesized project). A
   version the current lock's entry holds is passed as exact (`[v]`), so it stays when the
-  description floats (`8.0.*`) or a newer version appears. The build variable `LOCK_REFRESH`
-  (the environment's only through `var "LOCK_REFRESH" [Env "LOCK_REFRESH"]`) re-resolves the named ids as declared (`FSharp.Core`,
+  description floats (`8.0.*`) or a newer version appears. The script variable, else the
+  environment variable, `LOCK_REFRESH` re-resolves the named ids as declared (`FSharp.Core`,
   a comma/semicolon list, or `*` for all): `xake update-locks -d LOCK_REFRESH=FSharp.Core`.
   B's direct packages (from B's lock) flow into A's restore at B's locked version, as msbuild
   flows them through a project reference.

@@ -452,9 +452,9 @@ do! Lock.compileWith { Lock.Options.Default with Restore = options } entry
 The same folder has to appear in both places; otherwise `$(NuGetPackageRoot)` in the lock
 expands to the machine cache and the restore fills a folder nobody reads. `csc { lock }` and
 `fsc { lock }` have no folder of their own (`packageroot` was removed in 0.2): they use the
-build's package folder -- the build variable `NUGET_PACKAGES` (`var "NUGET_PACKAGES"
-".nuget/packages"`), else `.packages` under the project root -- which the lock then writes as
-`$(NuGetPackageRoot)`.
+build's package folder -- the script variable `NUGET_PACKAGES` (`var "NUGET_PACKAGES"
+".packages"`), else the environment variable, else `~/.nuget/packages` -- which the lock then
+writes as `$(NuGetPackageRoot)`.
 
 To forbid the network, turn fetching off: `-d NUGET_FETCH=off` for the whole build, or `nofetch`
 after `lock` in a `csc {}` / `fsc {}` block (it was `norestore` before 0.2). A missing package then fails the build before the compiler
@@ -494,7 +494,7 @@ The minimal script for a C# library (the values are examples; `NETCORE_REF_VERSI
 ```fsharp
 do xakeScript {
     var "HERMETIC" "on"                       // the gate (or -d HERMETIC=on)
-    var "NUGET_PACKAGES" ".nuget/packages"    // the build's own package folder (unset: .packages)
+    var "NUGET_PACKAGES" ".nuget/packages"    // the build's own package folder
     var "CSC_TOOLSET" "4.12.0"                // csc from Microsoft.Net.Compilers.Toolset
     var "NETCORE_REF_VERSION" "8.0.0"         // net8.0 references from the NuGet package
     "out/app.dll" ..> csc {
@@ -512,6 +512,7 @@ What changes under the mode:
 
 | Missing | Message |
 |---|---|
+| `NUGET_PACKAGES` as a script variable | `HERMETIC=on needs a package folder of the build's own: set the NUGET_PACKAGES script variable ...` |
 | `CSC_TOOLSET` | `the compiler <path> comes from the .NET SDK; set CSC_TOOLSET ...` |
 | `NETCORE_REF_VERSION` for a `netN.0` | `the reference assemblies for net8.0 come from <path> under the .NET SDK; add a 8.0 version to NETCORE_REF_VERSION ...` |
 | an exact SDK pin, for `fsc {}` and `Project.import` | `... pin it in global.json: { "sdk": { "version": "<v>", "rollForward": "disable" } }` |
@@ -520,8 +521,7 @@ What changes under the mode:
 F# (`fsc {}`) has no compiler package: pin the SDK exactly in `global.json` and set
 `FSHARP_CORE_VERSION` for a `netN.0` target; the lock records `{ "Kind": "dotnet-sdk",
 "Version": "<v>", ... }` and a machine without that SDK fails first, with the `dotnet-install`
-command. Put `HERMETIC=on` and `CI` together on the build server; `CI` counts only as a build
-variable (`-d CI=on`, or `var "CI" [Env "CI"]` to take the runner's). Details:
+command. Put `HERMETIC=on` and `CI` together on the build server. Details:
 [hermetic/hermetic-mode.md](hermetic/hermetic-mode.md), [hermetic/lock.md](hermetic/lock.md#hermetic-mode).
 
 ## 8. Verifying a shipped assembly
@@ -559,7 +559,7 @@ intermediate path and `-t:Rebuild`: csc embeds absolute source paths.
 ## 9. Packing and signing
 
 `Pack.nupkg` writes a nupkg whose bytes depend only on its inputs: sorted entries, one fixed
-timestamp (1980-01-01, or the build variable `SOURCE_DATE_EPOCH` through `Pack.Options.current ()`), and a content-derived GUID in the package
+timestamp (`SOURCE_DATE_EPOCH`, else 1980-01-01), and a content-derived GUID in the package
 metadata part instead of a random one (this was run):
 
 ```fsharp
@@ -620,23 +620,20 @@ tune it in one place, first match wins:
 | Where | Value |
 |---|---|
 | `noserver` or `keepalive <seconds>` in a `csc {}` block | this target only |
-| build variable `CSC_SERVER` | `on`, `off`, or keepalive seconds |
-| build variable `XAKE_CSC_SERVER` | `on` or `off` (`0`, `false`, `no` are off) |
+| script variable `CSC_SERVER` | `on`, `off`, or keepalive seconds |
+| environment variable `XAKE_CSC_SERVER` | `0`, `false`, `off` or `no` turn it off |
 | default | on |
 
 ```bash
 dotnet fsi build.fsx -- -- build -d CSC_SERVER:off
-dotnet fsi build.fsx -- -- build -d XAKE_CSC_SERVER=off
+XAKE_CSC_SERVER=0 dotnet fsi build.fsx -- -- build
 ```
-
-The environment variable `XAKE_CSC_SERVER` counts only when the script says so:
-`var "XAKE_CSC_SERVER" [Env "XAKE_CSC_SERVER"]` (Xake 3.16).
 
 **(untested)** for both command lines. Changing `CSC_SERVER` rebuilds the targets that read it.
 A leftover server after the build is normal; `dotnet build-server shutdown` stops the SDK's.
 Details: [csc-server.md](csc-server.md).
 
-To cap concurrent compilers, pass `-d CSC_JOBS:6` (`FSC_JOBS` for fsc)
+To cap concurrent compilers, pass `-d CSC_JOBS:6` (`FSC_JOBS` for fsc; env `XAKE_CSC_JOBS`)
 rather than wrapping the compile rule in `withResource`: the rule `need`s the referenced
 projects, and a `need` of a rule target while a resource is held fails (it could deadlock).
 

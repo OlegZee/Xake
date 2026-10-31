@@ -18,7 +18,7 @@ open Xake.Hermetic.Dotnet
 /// Every test that records a lock runs with the script variable `CI=off` (`Build`, `Run`),
 /// so the suite passes with `CI=true` in the environment (GitHub Actions). The environment
 /// variable is process-wide: the tests that set it hold this.
-module internal CscLockGate =
+module private CscLockGate =
     let gate = obj ()
 
 [<TestFixture>]
@@ -271,12 +271,12 @@ type ``Csc lock``() =
         Assert.That(File.Exists "LockN.dll", Is.False)
 
     [<Test; Category("Integration")>]
-    member x.``under CI (-d CI=true) a missing lock fails through csc { lock }``() =
+    member x.``under CI (environment variable) a missing lock fails through csc { lock }``() =
         let lockPath = x.Fresh "LockH"
 
         x.WithCi "true" (fun () ->
             let run () =
-                x.RunWith "lock-h" [ "CI", "true" ] (csc {
+                x.RunWith "lock-h" [] (csc {
                     src !!"LockH.cs"
                     out (File.make "LockH.dll")
                     target Library

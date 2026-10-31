@@ -1,5 +1,18 @@
 # vars-precedence: PR 2 (library readers, import) implementation notes
 
+**Split (2026-10-31).** The hermetic part of PR 2 moved to branch `feature/vars-hermetic` (it
+holds the full PR 2 state, be83c13): Xake.Hermetic.Dotnet readers (`CI`, `LOCK_REFRESH`,
+`LOCK_STALE`, `SOURCE_DATE_EPOCH`), `HermeticVars`, Import.fs/Project.fs per L-3, the floor, its
+tests (`HermeticVarsTests`, tests 55-59 and 84), the 0.11 release notes and the hermetic docs
+(`docs/hermetic/*`, hermetic-guide.md, hermetic-architecture.md). `src/hermetic` on dev builds
+against the published Xake, which has no `Var.read`; that part ships after the Xake release
+carrying PR 1 + PR 2 (the owner plans 4.0), with the floor at that release. `feature/vars-libraries`
+keeps the core (`Var.read`, `VarEvaluation`), the Xake.Dotnet readers L-1..L-7, `DotNetVars`,
+src/tests, the Xake docs and release notes, and the hermetic.tests changes the new Xake.Dotnet
+behaviour needs (`.packages` default, no `NUGET_PACKAGES` environment fallback, no message 2
+from the published hermetic's record gate): FromLockTests, HermeticLockTests, RunFolderTests.
+Below, the hermetic items describe `feature/vars-hermetic`.
+
 Branch `feature/vars-libraries` (on top of `feature/vars-core`, PR 1). Spec: spec.md rev. 6 §3.6,
 §7 item 2, §8.8-8.9 and test 60; [pr2-spec.md](pr2-spec.md) for the import (I-1..I-12, E-11,
 tests 69-84). Where the specs were ambiguous or did not fit the code, the reading closest to

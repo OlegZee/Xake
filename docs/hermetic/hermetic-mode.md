@@ -29,7 +29,7 @@ on, either alone, or neither.
 
 "Names" covers every path the compilation carries: compiler, sources, references, analyzers,
 resources, generated files, `/out:` and `/doc:`. `$(NuGetPackageRoot)` is the build's package
-folder (the build variable `NUGET_PACKAGES`, else `.packages` under the project root). Extra roots a script declares with `Roots.make`
+folder (the script variable `NUGET_PACKAGES`). Extra roots a script declares with `Roots.make`
 or `ImportOptions.Roots` (sibling checkouts) count as project roots.
 
 ## Prerequisites
@@ -89,14 +89,14 @@ accepted by its hash: the entry names it by a `pack:` identity with a `Sha256`.
 
 ## What `HERMETIC=on` requires
 
-`HERMETIC` is a build variable (`var "HERMETIC" "on"`, or `-d HERMETIC=on`), default off, read
-from the variable set (changing it reruns the compiles). Values as for `CI`: `on|true|yes|1`,
+`HERMETIC` is a script variable (`var "HERMETIC" "on"`, or `-d HERMETIC=on`), default off, read
+through `getVar` (changing it reruns the compiles). Values as for `CI`: `on|true|yes|1`,
 `off|false|no|0`, case-insensitive; anything else fails. There is no environment fallback: the
 content rule belongs to the build definition, not to the machine.
 
 | Concern | What makes it hermetic | If missing under `HERMETIC=on` |
 |---|---|---|
-| Package folder | the build variable `NUGET_PACKAGES`, or its default `.packages` (the folder to cache and ship) | always satisfied since Xake 3.16 (before: unset meant the machine's folder, and resolve failed asking for it) |
+| Package folder | script variable `NUGET_PACKAGES` (the folder to cache and ship) | resolve fails, asks for `NUGET_PACKAGES` |
 | csc compiler | `CSC_TOOLSET` (or `toolset` in the block) | resolve fails naming the SDK csc path |
 | fsc compiler | `global.json` exact pin; the SDK is the prerequisite (its identity: no hash of `fsc.dll`) | resolve fails naming the pin found |
 | `netN.0` references | a `NETCORE_REF_VERSION` entry for that major.minor (then always the NuGet `Microsoft.NETCore.App.Ref`) | resolve fails naming the `packs/` path and the version this SDK bundles |
@@ -121,7 +121,7 @@ A minimal script: [../hermetic-guide.md](../hermetic-guide.md#hermetic-mode).
 | # | Where | Message |
 |---|---|---|
 | 1 | variable | `HERMETIC='<x>': expected on or off` |
-| 2 | `HermeticMode.check` with `PackageRootDeclared = false` (no longer from `ofSettings`, `Lock.record`, `Project.import` since Xake 3.16: the folder is always the build's) | `'<name>': HERMETIC=on needs a package folder of the build's own: the build variable NUGET_PACKAGES names it (-d NUGET_PACKAGES=<dir>; unset, .packages under the project root)` |
+| 2 | `ofSettings`, `Lock.record`, `Lock.buildWith`, `Project.import` | `'<name>': HERMETIC=on needs a package folder of the build's own: set the NUGET_PACKAGES script variable (var "NUGET_PACKAGES" ".nuget/packages", or -d NUGET_PACKAGES=<dir>)` |
 | 3 | `Csc.ofSettings` | `'<name>': HERMETIC=on: the compiler <path> comes from the .NET SDK; set CSC_TOOLSET (or toolset in the csc block) to take csc from the Microsoft.Net.Compilers.Toolset package` |
 | 4 | `ofSettings` | `'<name>': HERMETIC=on: the reference assemblies for net10.0 come from <path> under the .NET SDK; add a 10.0 version to NETCORE_REF_VERSION (this SDK bundles 10.0.12)` |
 | 5 | `Fsc.ofSettings` | `'<name>': HERMETIC=on: the default FSharp.Core <path> comes from the .NET SDK; set FSHARP_CORE_VERSION to take the FSharp.Core package, or reference an FSharp.Core.dll` |

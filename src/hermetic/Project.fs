@@ -468,11 +468,11 @@ module Project =
             do! needFiles (Filelist (options.Projects |> List.map File.make))
             Directory.CreateDirectory (Path.GetDirectoryName (Path.GetFullPath options.Output)) |> ignore
 
-            // the build's package folder (the build variable `NUGET_PACKAGES`, else `.packages`):
-            // msbuild restores into it too (it only sees the environment, so it is passed in every
-            // case), so the lock's packages are under the `$(NuGetPackageRoot)` it is written against
-            let! packageRoot = DotNetFwk.packageRoot ()
-            let msbuildEnv = [ "NUGET_PACKAGES", packageRoot ]
+            // the build's package folder: with the script variable `NUGET_PACKAGES` set, msbuild
+            // restores into it too (it only sees the environment), so the lock's packages are
+            // under the `$(NuGetPackageRoot)` it is written against
+            let! packageRoot, packageSource = DotNetFwk.packageRootWithSource ()
+            let msbuildEnv = if packageSource = DotNetFwk.ScriptVariable then [ "NUGET_PACKAGES", packageRoot ] else []
 
             let msbuild = runMsbuild msbuildEnv
 

@@ -586,15 +586,20 @@ module Sbom =
             "Dependencies are the package's own nuspec-declared dependencies for this target framework (depth 1, ranges as declared). "
             + "Transitive dependencies are not enumerated: their resolution is the consuming product's responsibility."
 
-        /// An instant as `annotations[].timestamp` writes it (ISO 8601, seconds, UTC).
-        let internal timestampOf (stamp: DateTime) : string =
-            stamp.ToString ("yyyy-MM-dd'T'HH:mm:ss'Z'", Globalization.CultureInfo.InvariantCulture)
-
         /// The one wall-clock value the schema forces into the document
         /// (`annotations[].timestamp`), chosen the way `Pack` chooses zip entry times so it never
-        /// varies between two builds of the same commit: the DOS epoch `1980-01-01T00:00:00Z`.
-        /// A constant; `PackageScopeOptions.current ()` takes `SOURCE_DATE_EPOCH` of the build.
-        let timestamp () : string = timestampOf HermeticVarValues.epoch
+        /// varies between two builds of the same commit: `SOURCE_DATE_EPOCH` when set, else the
+        /// DOS epoch `1980-01-01T00:00:00Z`.
+        let timestamp () : string =
+            let epoch = DateTime (1980, 1, 1, 0, 0, 0, DateTimeKind.Utc)
+            let stamp =
+                match Environment.GetEnvironmentVariable "SOURCE_DATE_EPOCH" with
+                | null | "" -> epoch
+                | v ->
+                    match Int64.TryParse v with
+                    | true, seconds -> max epoch (DateTimeOffset.FromUnixTimeSeconds(seconds).UtcDateTime)
+                    | false, _ -> epoch
+            stamp.ToString ("yyyy-MM-dd'T'HH:mm:ss'Z'", Globalization.CultureInfo.InvariantCulture)
 
     /// The knobs of the package-scope rule (`forPackageScopedWith`, `checkPackageScope`):
     /// what counts as shipped content and as plumbing, how a declared dependency is classified,
@@ -633,8 +638,8 @@ module Sbom =
         KeepFormulation: bool
     } with
         /// The RFC's rules as read on 2026-09-23 (nuget-sbom.md "Package scope"), assembled
-        /// from `PackageScope`'s predicates. `AnnotationTimestamp` is the DOS epoch
-        /// (`PackageScope.timestamp`); a recipe takes `current ()`.
+        /// from `PackageScope`'s predicates. `AnnotationTimestamp` is read on each access
+        /// (`PackageScope.timestamp`, so `SOURCE_DATE_EPOCH` as it is then).
         static member Default : PackageScopeOptions =
             { IsPlumbing = PackageScope.plumbing
               IsShipped = PackageScope.shippedFor
@@ -648,16 +653,6 @@ module Sbom =
               BoundaryText = PackageScope.boundaryText
               AnnotationTimestamp = PackageScope.timestamp ()
               KeepFormulation = false }
-
-        /// `Default` with `AnnotationTimestamp` from the build variable `SOURCE_DATE_EPOCH`
-        /// (read, and so a dependency, here), as `Pack.Options.current` takes it; the DOS epoch
-        /// when it is unset, empty or not a number. The environment variable counts only through
-        /// the script: `var "SOURCE_DATE_EPOCH" [Env "SOURCE_DATE_EPOCH"]`.
-        static member current () : Recipe<ExecContext, PackageScopeOptions> =
-            recipe {
-                let! stamp = HermeticVarValues.readSourceDateEpoch
-                return { PackageScopeOptions.Default with AnnotationTimestamp = PackageScope.timestampOf stamp }
-            }
 
     /// The nupkg paths that are shipped content for `framework` under `options` -- tier 1's
     /// inventory, shared with `checkPackageScope` so producer and checker agree.

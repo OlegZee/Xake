@@ -1329,24 +1329,28 @@ module Lock =
         | Compilation.Fsc _ -> options.FscRun.FailOnError
 
     /// <summary>
-    /// Whether this build runs under CI: the build variable `CI` (read, and so a dependency,
-    /// here): `on`/`true`/`yes`/`1` is CI, `off`/`false`/`no`/`0`, empty or unset is not,
-    /// case-insensitive; anything else fails. Same convention as `HERMETIC` and `NUGET_FETCH`.
-    /// The environment variable `CI` that GitHub Actions, GitLab CI, Azure Pipelines and most
-    /// other services set counts only through the script: <c>var "CI" [Env "CI"]</c>, or
-    /// `-d CI=on`. Under CI, `buildWith` (and so `build` and `csc { lock }`) fails on a missing
-    /// lock instead of recording it.
+    /// Whether this build runs under CI, decided once per build: the script variable `CI`
+    /// when set (`on`/`true`/`yes`/`1` is CI, `off`/`false`/`no`/`0` is not, case-insensitive,
+    /// anything else fails), otherwise the environment variable `CI` that GitHub Actions,
+    /// GitLab CI, Azure Pipelines and most other services set (non-empty and not `0`/`false`
+    /// is CI). Same convention as `NETFX` and `CSC_SERVER`: `-d CI=off` or
+    /// <c>xakeScript { var "CI" "on" }</c> forces either way. Reading it (`getVar`, then
+    /// `getEnv`) makes it a tracked dependency of the target, so changing it reruns the target.
+    /// Under CI, `buildWith` (and so `build` and `csc { lock }`) fails on a missing lock
+    /// instead of recording it.
     /// </summary>
     let underCi : Recipe<ExecContext, bool> =
         recipe {
-            let! variable = Var.read<string> "CI"
-            match variable |> Option.map (fun v -> v.Trim ()) with
-            | None | Some "" -> return false
-            | Some v ->
-                match v.ToLowerInvariant () with
-                | "on" | "true" | "yes" | "1" -> return true
-                | "off" | "false" | "no" | "0" -> return false
-                | _ -> return failwithf "CI='%s': expected on or off" v
+            let! variable = getVar "CI"
+            match variable |> Option.map (fun v -> v.Trim().ToLowerInvariant ()) with
+            | Some ("on" | "true" | "yes" | "1") -> return true
+            | Some ("off" | "false" | "no" | "0") -> return false
+            | Some other -> return failwithf "CI='%s': expected on or off" other
+            | None ->
+                let! env = getEnv "CI"
+                match env |> Option.map (fun v -> v.Trim().ToLowerInvariant ()) with
+                | None | Some ("" | "0" | "false") -> return false
+                | Some _ -> return true
         }
 
     /// The extra roots that read a lock against the package folder the options restore into
@@ -1531,20 +1535,30 @@ module Lock =
     /// <summary>
     /// The record-time gate (`record`, the recording branch of `buildWith`, `Project.import`):
     /// under `HERMETIC=on`, every reason not to write the lock at `lockPath` with `entries`,
-    /// tokenized against `roots`: one line per offending path (message 9,
-    /// `hermeticViolations`). The package folder is always the build's own (the build variable
-    /// `NUGET_PACKAGES`, else `.packages`), so message 2 does not arise here. Empty, and reading
-    /// nothing but `HERMETIC`, with the mode off.
+    /// tokenized against `roots` -- the package folder not being the build's own (message 2,
+    /// `DotNetFwk.packageRootWithSource`), then one line per offending path (message 9,
+    /// `hermeticViolations`). Empty, and reading nothing but `HERMETIC`, with the mode off.
     /// </summary>
     let hermeticRecordGate (lockPath: string) roots (entries: Entry list) : Recipe<ExecContext, string list> =
         recipe {
             let! on = HermeticMode.enabled ()
             match on, entries with
             | false, _ | _, [] -> return []
-            | true, _ ->
+            | true, first :: _ ->
+                let! _, source = DotNetFwk.packageRootWithSource ()
+                let package =
+                    if source = DotNetFwk.ScriptVariable then []
+                    else
+                        // the base's own message 2, by asking its check with nothing but an
+                        // undeclared folder
+                        HermeticMode.check first.Name
+                            { ProjectRoots = []; PackageRoot = ""; PackageRootDeclared = false; DotnetRoot = None
+                              SdkPin = DotNetFwk.NoGlobalJson; SdkInstalled = (fun _ -> true); TargetingPackVersion = (fun _ -> None) }
+                            []
                 return
-                    [ for e in entries do
-                        for path in hermeticViolations roots e -> hermeticRecordMessage e.Name lockPath path ]
+                    package
+                    @ [ for e in entries do
+                          for path in hermeticViolations roots e -> hermeticRecordMessage e.Name lockPath path ]
         }
 
     /// <summary>
@@ -1868,8 +1882,8 @@ module Lock =
     ///     do! Lock.record "locks/app.json" (Lock.Compilation.Csc c) }
     /// </code>
     /// Nothing is compiled here. Under `HERMETIC=on` a lock naming a path outside
-    /// `$(ProjectRoot)` and `$(NuGetPackageRoot)` that no prerequisite covers is refused
-    /// (`hermeticRecordGate`).
+    /// `$(ProjectRoot)` and `$(NuGetPackageRoot)` that no prerequisite covers, or recorded
+    /// without the script variable `NUGET_PACKAGES`, is refused (`hermeticRecordGate`).
     /// </summary>
     let record (path: string) (c: Compilation) : Recipe<ExecContext, unit> =
         recipe {

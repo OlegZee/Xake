@@ -213,7 +213,7 @@ by name.
 ## Left open
 
 - **The package folder is one per build.** `csc { lock }` and `fsc { lock }` restore into the
-  build's folder (`NUGET_PACKAGES`, else `.packages` under the project root); the per-target `packageroot`
+  build's folder (`NUGET_PACKAGES`, else `~/.nuget/packages`); the per-target `packageroot`
   after `lock` was removed in 0.2. `Restore.into dir` with `Lock.loadWith
   (Roots.packageRootOverride dir)` stays, for a script that reads a lock against another
   folder. `Options.PackageRoot = None` is the base's `DotNetFwk.packageRoot ()` (the

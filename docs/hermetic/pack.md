@@ -19,8 +19,7 @@ this release rebuild to the same package" cannot be answered by comparing bytes.
 - `type Entry = { Path: string; Source: string }` -- `Path` inside the zip (forward slashes),
   `Source` the file on disk.
 - `type Options = { Timestamp: DateTime; Level: CompressionLevel }`; `Pack.Options.Default`
-  (not `Options.Default`), 1980-01-01; `Pack.Options.current ()`, a recipe, with the build's
-  `SOURCE_DATE_EPOCH` -- see below.
+  (not `Options.Default`) -- see `SOURCE_DATE_EPOCH` below.
 - `Pack.zip : output -> Entry list -> Options -> unit`
 - `Pack.nupkg : output -> nuspec: string -> files: Entry list -> Options -> unit` -- `nuspec`
   is the path of the `.nuspec` file, read for `id`/`version` and packed at the root.
@@ -69,8 +68,7 @@ Not covered: satellite assemblies (not built yet), symbols packages, a `<files>`
 - **Sorted entries** — every entry list is sorted by path (ordinal) before writing, so input
   order never affects output.
 - **Fixed timestamp** — every entry gets one DOS timestamp from `Options.Timestamp`:
-  `Options.Default` is 1980-01-01 (the DOS epoch); `Options.current ()` takes the build
-  variable `SOURCE_DATE_EPOCH` (unix seconds, the
+  `Options.Default` is 1980-01-01 (the DOS epoch), or `SOURCE_DATE_EPOCH` (unix seconds, the
   [reproducible-builds.org](https://reproducible-builds.org/specs/source-date-epoch/)
   convention) when set, clamped up to 1980 if earlier. File mtimes are never consulted.
 - **A content-derived psmdcp GUID** — `Guid(sha256(id, version, sorted "path:hash" pairs of
@@ -99,13 +97,9 @@ is the standard table-driven implementation, used both writing and reading.
 
 ## `SOURCE_DATE_EPOCH`
 
-A build variable since 0.11 (Xake 3.16). In a recipe, `let! options = Pack.Options.current ()`
-uses it (clamped to 1980; empty or not a number is the DOS epoch) instead of the DOS epoch, so a
-CI pipeline pinning it to the commit time gets that time baked into every entry without losing
-byte-identity across reruns of the same commit. `Pack.Options.Default` is the DOS epoch always
-(0.10 read the environment variable on each access). The environment variable counts only
-through the script: `var "SOURCE_DATE_EPOCH" [Env "SOURCE_DATE_EPOCH"]`, or
-`-d SOURCE_DATE_EPOCH=<seconds>`; the read records it as a dependency.
+When set, `Pack.Options.Default` uses it (clamped to 1980) instead of the DOS epoch, so a CI
+pipeline pinning it to the commit time gets that time baked into every entry without losing
+byte-identity across reruns of the same commit.
 
 ## What is not done
 

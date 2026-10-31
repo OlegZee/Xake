@@ -288,10 +288,8 @@ supplier/license/hash of that package, what our assembly directly used), never w
 | `formulation` | none -- compiler, SDK and analyzers are not what the customer receives |
 
 **Determinism, and the one timestamp the schema forces.** CycloneDX 1.6 requires
-`annotations[].timestamp`. It is set the way `Pack` sets zip entry times:
-`PackageScopeOptions.Default` has `1980-01-01T00:00:00Z` (`Sbom.PackageScope.timestamp`);
-`PackageScopeOptions.current ()`, a recipe, takes the build variable `SOURCE_DATE_EPOCH` when
-set (0.10 read the environment variable in `Default`). Everything else is as
+`annotations[].timestamp`. It is set the way `Pack` sets zip entry times: `SOURCE_DATE_EPOCH`
+when present, else `1980-01-01T00:00:00Z` (`Sbom.PackageScope.timestamp`). Everything else is as
 before: no `metadata.timestamp`, content-derived serial, every list sorted by ref -- two calls
 on the same nupkg and evidence render byte-identical.
 

@@ -485,6 +485,9 @@ let strings = resourceset {
 
 ### Script variables
 
+The full reference (the `XAKE__` environment source, errors, migration from 3.15) is
+[variables.md](variables.md); this section is the short form.
+
 | Variable | Effect |
 |----------|--------|
 | `NETFX` | Framework whose tools are used, overriding the target framework |
@@ -662,6 +665,8 @@ The run banner (at `Info`, in `build.log`) lists each variable once with its sou
 their command-line names, without evaluating anything.
 
 ### Secret variables
+
+See also [variables.md](variables.md#secrets).
 
 A token or license key must not end up in the build database (`.xake`) or the log. Mark the
 variable secret:

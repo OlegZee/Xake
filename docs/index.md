@@ -53,6 +53,7 @@ commit touching the file; lengths are approximate line counts. Index written 202
 | [cheatsheet.md](cheatsheet.md) | one-page syntax: entry point, `<==`/`<<<`, rules, variables (`var`, `varschema`, secrets) | writing or reading any build script | ~130 | 2026-10-06 | current |
 | [tasks.md](tasks.md) | reference of built-in tasks incl. the .NET ones | using a task or its settings | ~535 | 2026-10-11 | current |
 | [release-notes.md](release-notes.md) | what changed per `Xake` release; the `4.0.0 (unreleased)` section holds the variable rework and its migration lines | upgrading, writing a release | ~300 | 2026-10-31 | current |
+| [variables.md](variables.md) | working with variables: `var`, `varschema`, `XAKE__` environment source, secrets, library variables, errors, 3.15 -> 4.0 migration | declaring or reading build variables | ~330 | 2026-10-31 | current |
 | [captureOutput.md](captureOutput.md) | `captureOutput` op of `sh`: route output to file, log, handler | capturing shell output | ~85 | 2026-05-04 | current |
 
 ### .NET toolchain

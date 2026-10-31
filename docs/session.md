@@ -29,6 +29,15 @@ feature folder: [features/vars-precedence](features/vars-precedence/session.md).
   (`CI`, `LOCK_REFRESH`, `LOCK_STALE`, `SOURCE_DATE_EPOCH`). They read through `Var.read`; the
   optional import is `varschema DotNetVars.Default` / `HermeticVars.Default`. A CI that used the
   environment adds `var "NUGET_PACKAGES" [Env "NUGET_PACKAGES"]` and the like.
+- **`ExecOptions` split:** `Vars` holds script constants only, `CliVars` the `-d` pairs,
+  `VarDecls` the declarations, `VarDefinedBy` where each definition came from (for E-2);
+  `EngineOptions.Variables` is the evaluated set (`Map<string, VarEntry>`). User reference:
+  [variables.md](variables.md).
+- **Masking:** the launch collects the secret values (declared names, their env names) and every
+  logger Xake builds replaces those of 4+ characters with `***`; nothing outside the logger is
+  masked. The database keeps presence or a salted HMAC (`SecretDep`).
+- **Perf note:** `recordDependency` (`ScriptFuncs.fs`) dedups `Var`/`EnvVar`/`SecretDep` reads with
+  `List.contains` over the target's dependencies: O(deps) per read.
 - **Release state:** published are Xake 3.15.0 and Xake.Hermetic.Dotnet 0.10.0 (range
   `[3.14.0.45, 4.0)`). Until 4.0 the hermetic package builds on the in-repo Xake (project
   references; its nupkg depends on `Xake` at the build's version), `bump-base` and the CI job

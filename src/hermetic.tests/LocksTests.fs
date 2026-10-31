@@ -49,7 +49,7 @@ type ``Lock generation``() =
     let clean (names: string list) = for n in names do if Directory.Exists ("locks/" + n) then Directory.Delete ("locks/" + n, true)
 
     member private x.Run (label: string) (vars: (string * string) list) (targets: string list) (rs: Rule<ExecContext> list) =
-        xake {x.TestOptions with FileLog = label + ".log"; ThrowOnError = true; Vars = ("CI", "off") :: vars; FileLogLevel = Loud} {
+        xake {x.TestOptions with FileLog = label + ".log"; ThrowOnError = true; ScriptVars = ("CI", "off") :: vars; FileLogLevel = Loud} {
             want targets
             rules rs
         }

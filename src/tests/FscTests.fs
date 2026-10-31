@@ -391,7 +391,7 @@ type ``Fsc record tests``() =
     member private x.ResolveFsc (name: string) (vars: (string * string) list) (build: unit -> Recipe<ExecContext, Fsc>) =
         File.WriteAllText ("a.fs", "module A\nlet a = 1\n")
         let resolved = ref None
-        do xake {x.TestOptions with FileLog = sprintf "fsc-%s.log" name; ThrowOnError = true; Vars = vars} {
+        do xake {x.TestOptions with FileLog = sprintf "fsc-%s.log" name; ThrowOnError = true; ScriptVars = vars} {
             want ([name])
             rules [
                 name => recipe {
@@ -481,7 +481,7 @@ type ``Fsc record tests``() =
     [<Test; Category("Integration")>]
     member x.``fsc compiles for .NET against the FSharp.Core package when FSHARP_CORE_VERSION is set``() =
         try File.Delete "fcnet/hello.dll" with _ -> ()
-        do xake {x.TestOptions with FileLog="fsc-fcnet.log"; ThrowOnError = true; Vars = ["FSHARP_CORE_VERSION", DotNetFwk.fsharpCoreVersion]} {
+        do xake {x.TestOptions with FileLog="fsc-fcnet.log"; ThrowOnError = true; ScriptVars = ["FSHARP_CORE_VERSION", DotNetFwk.fsharpCoreVersion]} {
             want (["fcnet/hello.dll"])
             rules [
                 "fcnet/hello.dll" ..> recipe {

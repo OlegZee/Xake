@@ -11,7 +11,7 @@ open Xake.Hermetic.Dotnet
 /// `HERMETIC=on` on the lock side (hermetic-mode.md, messages 9-11): a lock is not written,
 /// and not replayed, when it names a path outside `$(ProjectRoot)` and `$(NuGetPackageRoot)`
 /// that no prerequisite covers; an import of a project whose SDK is not pinned exactly fails.
-/// Each test runs in a fresh project root of its own, with the variables passed as `Vars`
+/// Each test runs in a fresh project root of its own, with the variables passed as `ScriptVars`
 /// (and `CI=off`, so the suite passes with `CI=true` in the environment).
 [<TestFixture>]
 type ``Hermetic lock``() =
@@ -52,7 +52,7 @@ type ``Hermetic lock``() =
     /// Runs `body` as the rule `label` under `root` with `vars`; the failure text, if any.
     let run (options: ExecOptions) (root: string) (label: string) (vars: (string * string) list) (body: Recipe<ExecContext, unit>) =
         try
-            do xake {options with ProjectRoot = root; FileLog = root </> (label + ".log"); FileLogLevel = Loud; ThrowOnError = true; Vars = vars} {
+            do xake {options with ProjectRoot = root; FileLog = root </> (label + ".log"); FileLogLevel = Loud; ThrowOnError = true; ScriptVars = vars} {
                 want ([label])
                 rules [ label => body ]
             }

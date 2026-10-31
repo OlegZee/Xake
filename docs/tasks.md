@@ -597,7 +597,7 @@ The value of a name comes from the first of (first defined wins):
 
 1. the engine's per-demand `Demand(target, vars)` (engine mode only);
 2. `-d NAME=value` on the command line (the last `-d` of a name wins);
-3. the script's one value: `var "NAME" "value"` or an `ExecOptions.Vars` entry, unless the
+3. the script's one value: `var "NAME" "value"` or an `ExecOptions.ScriptVars` entry, unless the
    environment variable `XAKE__NAME` is present (it overrides the constant);
 4. the name's declaration: a `var` rule or a `varschema` field, its sources in list order, the
    implicit `XAKE__NAME` first unless the declaration names an environment variable itself.
@@ -628,7 +628,7 @@ Only declared names get one: a `XAKE__FOO` that no declaration or constant names
 keys of one implicit name (`a-b` and `A_B`) stop the run.
 
 A **name is defined once** in the script: two `var` ops of a name (either form), a `var` op and an
-`ExecOptions.Vars` entry, or a `varschema` field and either of them stop the run before any target
+`ExecOptions.ScriptVars` entry, or a `varschema` field and either of them stop the run before any target
 (`Variable 'N' is defined twice in the script: by A and by B; define it once`). `-d` and the
 engine's per-demand variables are not script definitions.
 

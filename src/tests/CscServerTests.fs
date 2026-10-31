@@ -105,7 +105,7 @@ type ``Csc compiler server``() =
 
         let build (label: string) (value: string) =
             xake {x.TestOptions with FileLog = label + ".log"; FileLogLevel = Verbosity.Diag; ThrowOnError = true
-                                     Vars = ["CSC_SERVER", value]} {
+                                     ScriptVars = ["CSC_SERVER", value]} {
                 want ([label])
                 rules [ label => recipe { do! Csc.compile inheriting } ]
             }

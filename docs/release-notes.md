@@ -31,7 +31,7 @@ Details: [tasks.md](tasks.md#script-variables).
   stops the run before any target (before: when a recipe read it). A `varschema` field's value is
   visible to `getVar` and in the banner. `--help` evaluates nothing.
 - **Precedence:** engine per-demand variables > `-d` (the last wins) > the script's one definition
-  of the name (`var` or `ExecOptions.Vars`) > the declaration's sources. A read records the final
+  of the name (`var` or `ExecOptions.ScriptVars`) > the declaration's sources. A read records the final
   value (`Var (N, value)`), not its source, so moving an equal value between the environment,
   `-d` and `var` no longer rebuilds.
 - **Breaking: a `Var.*` read in a recipe needs a declaration** of its key: a `varschema` field
@@ -45,8 +45,8 @@ Details: [tasks.md](tasks.md#script-variables).
   reads it (3.15 keyed it by `pkg`; a script reading `getVar "pkg"` changes). `-d p=v` for such
   a field stops the run (`-d p: the variable is set on the command line as pkg; use -d pkg=...`).
 - **Breaking: a name defined twice in the script stops the run**: two `var` ops, a `var` op and an
-  `ExecOptions.Vars` entry, a `varschema` field and a rule (before: the later `var` replaced the
-  earlier value, `var` won over `ExecOptions.Vars`).
+  `ExecOptions.ScriptVars` entry, a `varschema` field and a rule (before: the later `var` replaced the
+  earlier value, `var` won over `ExecOptions.ScriptVars`).
 - **Breaking: `-d` of a secret stops the run**, under its key, its command-line name or one of its
   environment names (3.15 warned for an argument secret); `-d` of a `Var.env` field stops the run
   (3.15 ignored it). `getVar`/`getEnv` of a secret return the value; masking applies to output.
@@ -60,7 +60,7 @@ Details: [tasks.md](tasks.md#script-variables).
   `Env "X"` / `envVar = "X"` replaces the implicit source; `Var.arg` has no environment source.
   Migration: keep a plain name with `envVar = "NAME"` / `Env "NAME"`, or export `XAKE__NAME`.
 - **Breaking: a constant is overridden by `XAKE__<NAME>`.** `var "N" "v"` and an
-  `ExecOptions.Vars` entry take `XAKE__N` when it is present (banner `env:XAKE__N`), else `v`;
+  `ExecOptions.ScriptVars` entry take `XAKE__N` when it is present (banner `env:XAKE__N`), else `v`;
   `-d` still wins. Names that nothing declares get no implicit source: `XAKE__*` variables are not
   scanned into the variable set. Two keys whose implicit names are equal (`a-b` and `A_B`,
   `fooBar` and `FOO_BAR`) stop the run: `Variables 'A' and 'B' both read the environment variable
@@ -68,6 +68,12 @@ Details: [tasks.md](tasks.md#script-variables).
 - **Secrets through `XAKE__`:** `var "T" [Secret]` reads `XAKE__T`, the normal way to pass a
   secret; `-d T=...` and `-d XAKE__T=...` stop the run ("set XAKE__T instead"). `--help` shows the
   environment name of every rule and field, implicit or explicit.
+- **New: `ExecOptions.IgnoreEnvironment`** (default `false`), for tests and for programs that
+  embed Xake: no declaration reads the environment at launch (neither `XAKE__<NAME>` nor an
+  explicit `Env`/`envVar`); values come from per-demand values, `-d` (unless
+  `IgnoreCommandLine`), the constant and the defaults. `getEnv` is not affected; the banner shows
+  `environment:  ignored (IgnoreEnvironment)`. No command-line flag; `xakeEngine` leaves it off.
+  See [variables.md](variables.md#pinning-values-tests-and-embedding).
 - **Engine:** `Demand(target, vars)` values now win over the script's values (they were shadowed);
   a per-demand value for a secret, an environment-only or a mistyped variable fails the demand
   before any target. `XakeEngine.Start` raises `XakeException` on a launch error.
@@ -79,8 +85,13 @@ Details: [tasks.md](tasks.md#script-variables).
   `EnvVar`) rebuilds once; a secret field's record moves from `SecretDep (env name, SecretEnv)` to
   `SecretDep (key, SecretArg)`, one rebuild. Repeated reads of a name in one recipe record one
   dependency. The database format is unchanged (0.6).
+- **Breaking: `ExecOptions.Vars` is renamed `ExecOptions.ScriptVars`** (the script's values: the
+  entries given to `xake`/`xakeArgs` and every `var "N" "v"`; `CliVars` holds `-d`). No alias:
+  `{ ExecOptions.Default with Vars = [...] }` becomes `{ ExecOptions.Default with ScriptVars = [...] }`.
+  `ExecContext.Vars` (what a recipe reads) keeps its name. The E-2 text names
+  `ExecOptions.ScriptVars`.
 - **API:** new `VarSource`, `VarOrigin`, `VarDecl`, `VarEntry`; new fields `ExecOptions.CliVars`
-  (the `-d` pairs; `-d` no longer goes into `ExecOptions.Vars`), `ExecOptions.VarDecls`,
+  (the `-d` pairs; `-d` no longer goes into `ExecOptions.ScriptVars`), `ExecOptions.VarDecls`,
   `ExecOptions.VarDefinedBy` (where each `var`/`varschema` definition came from, for the
   diagnostics) and `EngineOptions.Variables` (the variable set built at launch). Binary break for
   code that builds `ExecOptions`/`EngineOptions` with a full record expression (not `with`);

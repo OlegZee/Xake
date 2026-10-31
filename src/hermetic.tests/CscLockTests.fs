@@ -41,7 +41,7 @@ type ``Csc lock``() =
     /// Without a lock: `Csc.compile`. With one: `Lock.build`, through the same run options
     /// `csc { ...; lock }` uses (`Csc.runOptions`).
     member private x.Build (label: string) ((settings: CscSettingsType), (lockPath: string option)) =
-        xake {x.TestOptions with FileLog = label + ".log"; ThrowOnError = true; Vars = [ "CI", "off" ]} {
+        xake {x.TestOptions with FileLog = label + ".log"; ThrowOnError = true; ScriptVars = [ "CI", "off" ]} {
             want ([label])
             rules [
                 label => recipe {
@@ -60,7 +60,7 @@ type ``Csc lock``() =
 
     /// `Run` with explicit script variables (none: the environment variable `CI` decides).
     member private x.RunWith (label: string) (vars: (string * string) list) (body: Recipe<ExecContext, unit>) =
-        xake {x.TestOptions with FileLog = label + ".log"; ThrowOnError = true; Vars = vars; FileLogLevel = Loud} {
+        xake {x.TestOptions with FileLog = label + ".log"; ThrowOnError = true; ScriptVars = vars; FileLogLevel = Loud} {
             want ([label])
             rules [ label => body ]
         }

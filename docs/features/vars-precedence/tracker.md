@@ -25,3 +25,5 @@ Open follow-ups:
 - [ ] (optional) Measure launch evaluation, dev vs 4.0
 - [x] Rename `ExecOptions.Vars` to `ExecOptions.ScriptVars` (4.0, owner 2026-10-31)
 - [x] `ExecOptions.IgnoreEnvironment` (spec §3.12, Q-1..Q-5, tests 97-105)
+- [x] Secret masking performance measured (`perf-secrets.md`): about 1.1 ms per 10,000 lines with 5 secrets, not a concern
+- [ ] Check whether the file logger loses the tail of `build.log` when the process exits (seen once during the measurement)

@@ -44,6 +44,8 @@ feature folder: [features/vars-precedence](features/vars-precedence/session.md).
 - **Masking:** the launch collects the secret values (declared names, their env names) and every
   logger Xake builds replaces those of 4+ characters with `***`; nothing outside the logger is
   masked. The database keeps presence or a salted HMAC (`SecretDep`).
+- **Masking cost (measured 2026-10-31):** about 22 ns per secret per log line; 5 secrets is about
+  1.1 ms per 10,000 lines, negligible. See [features/vars-precedence/perf-secrets.md](features/vars-precedence/perf-secrets.md).
 - **Perf note:** `recordDependency` (`ScriptFuncs.fs`) dedups `Var`/`EnvVar`/`SecretDep` reads with
   `List.contains` over the target's dependencies: O(deps) per read.
 - **Release state:** published are Xake 3.15.0 and Xake.Hermetic.Dotnet 0.10.0 (range

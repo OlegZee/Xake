@@ -20,6 +20,10 @@ type ``Secret variables``() =
         setEnv name value
         try f () finally setEnv name null
 
+    /// A secret read needs its declaration (spec T-2): the variable goes into a schema, keyed by
+    /// its env name (each test has its own).
+    let named (sv: OptionalVar<string>) = {| Token = { sv with Name = sv.EnvName } |}
+
     /// options with a persistent database, log messages captured
     member x.Opts (logged: Collections.Generic.List<string>) =
         { x.TestOptions with
@@ -27,9 +31,11 @@ type ``Secret variables``() =
             CustomLogger = CustomLogger (fun _ -> true) (fun s -> lock logged (fun () -> logged.Add s)) }
 
     member x.Run (logged, sv: OptionalVar<string>, runs: int ref) =
-        do xake (x.Opts logged) {
+        let schema = named sv
+        do xakeArgs [] (x.Opts logged) {
+            varschema schema
             phony "main" (recipe {
-                let! _ = sv
+                let! _ = schema.Token
                 runs.Value <- runs.Value + 1
             })
         }
@@ -41,16 +47,17 @@ type ``Secret variables``() =
         let logged = Collections.Generic.List<string>()
         let value = "acme-token-recorded-7f3a"
         withEnv "ACME_API_TOKEN_REC" value (fun () ->
-            let sv = Var.secret<string>(envVar = "ACME_API_TOKEN_REC")
+            let schema = named (Var.secret<string>(envVar = "ACME_API_TOKEN_REC"))
             let deps = ref []
-            do xake (x.Opts logged) {
+            do xakeArgs [] (x.Opts logged) {
+                varschema schema
                 phony "main" (recipe {
-                    let! _ = sv
+                    let! _ = schema.Token
                     let! r = getResult()
                     deps.Value <- r.Depends
                 })
             }
-            Assert.That(deps.Value, Does.Contain(SecretDep ("ACME_API_TOKEN_REC", SecretEnv, SecretPresent)))
+            Assert.That(deps.Value, Does.Contain(SecretDep ("ACME_API_TOKEN_REC", SecretArg, SecretPresent)))
             Assert.IsFalse(deps.Value |> List.exists (function EnvVar _ -> true | _ -> false), "no EnvVar record")
             let bytes = File.ReadAllBytes ".xake"
             let text = Text.Encoding.UTF8.GetString bytes
@@ -124,7 +131,7 @@ type ``Secret variables``() =
         let logged = Collections.Generic.List<string>()
         let name = "ACME_API_TOKEN_OLD"
         let value = "old-clear-value-0001"
-        let schema = {| Token = Var.secret<string>(envVar = name) |}
+        let schema = named (Var.secret<string>(envVar = name))
         let old =
             { BuildLog.makeResult [PhonyAction "main"] with
                 Depends = [ EnvVar (name, Some value); EnvVar ("XAKE_UNRELATED_OLD", None) ] }
@@ -191,8 +198,10 @@ type ``Secret variables``() =
             x.Run (logged, sv, runs)
             setEnv name "dryrun-value-two-22"
             logged.Clear()
-            do xake { x.Opts logged with DryRun = true } {
-                phony "main" (recipe { let! _ = sv in () })
+            let schema = named sv
+            do xakeArgs [] { x.Opts logged with DryRun = true } {
+                varschema schema
+                phony "main" (recipe { let! _ = schema.Token in () })
             }
             Assert.That(logged, Has.Some.Contains(sprintf "Reason: Secret variable %s changed" name))
             Assert.That(logged, Has.None.Contains "dryrun-value")
@@ -213,13 +222,15 @@ type ``Secret variables``() =
             let stdout = Console.Out
             Console.SetOut out
             try
-                do xake { x.Opts logged with DumpDeps = true } {
-                    phony "main" (recipe { let! _ = sv in () })
+                let schema = named sv
+                do xakeArgs [] { x.Opts logged with DumpDeps = true } {
+                    varschema schema
+                    phony "main" (recipe { let! _ = schema.Token in () })
                 }
             finally
                 Console.SetOut stdout
             let text = out.ToString()
-            StringAssert.Contains(sprintf "Secret ENV Var: '%s' = set" name, text)
+            StringAssert.Contains(sprintf "Secret Script var: '%s' = set" name, text)
             StringAssert.DoesNotContain("dump-value-one-33", text)
         finally
             setEnv name null
@@ -230,10 +241,11 @@ type ``Secret variables``() =
         let name = "ACME_API_TOKEN_SHELL"
         let value = "shell-secret-value-4242"
         withEnv name value (fun () ->
-            let sv = Var.secret<string>(envVar = name) |> required
-            do xake { x.Opts logged with NoPersist = true } {
+            let schema = {| Token = { Var.secret<string>(envVar = name) with Name = Some name } |> required |}
+            do xakeArgs [] { x.Opts logged with NoPersist = true } {
+                varschema schema
                 phony "main" (recipe {
-                    let! token = sv
+                    let! token = schema.Token
                     do! sh "dotnet" { arg "--version"; envs [name, token] }
                 })
             }
@@ -245,11 +257,12 @@ type ``Secret variables``() =
     member x.``a conversion error does not show the value``() =
         let name = "ACME_PORT_SECRET"
         withEnv name "not-a-number-secret" (fun () ->
-            let sv = Var.secret<int>(envVar = name) |> required
+            let schema = {| Token = { Var.secret<int>(envVar = name) with Name = Some name } |> required |}
             let ex =
                 Assert.Throws<XakeException>(fun () ->
-                    do xake { x.TestOptions with ThrowOnError = true; FileLog = ""; NoPersist = true } {
-                        phony "main" (recipe { let! _ = sv in () })
+                    do xakeArgs [] { x.TestOptions with ThrowOnError = true; FileLog = ""; NoPersist = true } {
+                        varschema schema
+                        phony "main" (recipe { let! _ = schema.Token in () })
                     })
             StringAssert.Contains("secret variable", ex.Data0)
             StringAssert.DoesNotContain("not-a-number-secret", ex.Data0))
@@ -277,36 +290,29 @@ type ``Secret variables``() =
         StringAssert.DoesNotContain("given-on-cli-555", ex.Data0)
 
     [<Test>]
-    member x.``-d for an environment-only secret outside the schema is refused when it resolves``() =
+    member x.``an inline secret read outside the schema is not declared``() =   // spec T-4
         let sv = Var.secret<string>(envVar = "ACME_API_TOKEN_REFUSE2")
         let ex =
             Assert.Throws<XakeException>(fun () ->
                 do xakeArgs ["-d"; "ACME_API_TOKEN_REFUSE2=given-on-cli-666"] { x.TestOptions with ThrowOnError = true; FileLog = ""; NoPersist = true } {
                     phony "main" (recipe { let! _ = sv in () })
                 })
-        StringAssert.Contains("secret variables come from the environment", ex.Data0)
+        StringAssert.Contains("is read through Var but is not declared", ex.Data0)
+        StringAssert.DoesNotContain("given-on-cli-666", ex.Data0)
 
     [<Test>]
-    member x.``-d for an argument secret is accepted with a warning, recorded as a secret``() =
+    member x.``-d for an argument secret is refused``() =   // spec X-5: the 3.13 warning is an error now
         let logged = Collections.Generic.List<string>()
         let schema = {| licenseKey = Var.string(cliArg = "licenseKey", envVar = "LICENSE_KEY_ARG") |> secret |}
-        let got = ref None
-        let deps = ref []
-        do xakeArgs ["-d"; "licenseKey=cli-license-777"] { x.Opts logged with NoPersist = true } {
-            varschema schema
-            phony "main" (recipe {
-                let! v = schema.licenseKey
-                got.Value <- v
-                let! r = getResult()
-                deps.Value <- r.Depends
-                do! trace Info "the key is %A" v
-            })
-        }
-        Assert.AreEqual(Some "cli-license-777", got.Value)
-        Assert.That(logged, Has.Some.Contains "visible in the process list")
-        Assert.That(logged, Has.Some.Contains "the key is Some \"***\"")
+        let ex =
+            Assert.Throws<XakeException>(fun () ->
+                do xakeArgs ["-d"; "licenseKey=cli-license-777"] { x.Opts logged with NoPersist = true } {
+                    varschema schema
+                    phony "main" (recipe { let! _ = schema.licenseKey in () })
+                })
+        StringAssert.Contains("Variable 'licenseKey' is secret: secret variables come from the environment, set LICENSE_KEY_ARG instead of passing -d licenseKey=...", ex.Data0)
+        Assert.That(logged, Has.None.Contains "visible in the process list")
         Assert.That(logged, Has.None.Contains "cli-license-777")
-        Assert.That(deps.Value, Does.Contain(SecretDep ("licenseKey", SecretArg, SecretPresent)))
 
     [<Test>]
     member x.``--help shows the name and description, never a value or default``() =

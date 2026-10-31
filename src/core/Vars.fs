@@ -34,24 +34,6 @@ module Vars =
         /// The same variable with another secret mode (used by `secret` and `secretHashed`).
         member v.WithSecret(mode: SecretMode) : RequiredVar<'t> = { v with Secret = mode }
 
-    let private wrapConversionError<'t> (isSecret: bool) (name: string) (s: string) (ex: exn) : 't =
-        let targetType = typeof<'t>.FullName
-        let message =
-            if isSecret then
-                sprintf "Failed to convert the value of secret variable '%s' to type '%s'." name targetType
-            else
-                sprintf "Failed to convert value '%s' for variable '%s' to type '%s'." s name targetType
-        // the inner exception's message may quote the value too
-        raise (System.FormatException(message, if isSecret then null else ex))
-
-    let private convertTo<'t> (isSecret: bool) (name: string) (s: string) : 't =
-        try
-            System.Convert.ChangeType(s, typeof<'t>) :?> 't
-        with
-        | :? System.FormatException as ex -> wrapConversionError<'t> isSecret name s ex
-        | :? System.InvalidCastException as ex -> wrapConversionError<'t> isSecret name s ex
-        | :? System.OverflowException as ex -> wrapConversionError<'t> isSecret name s ex
-
     /// Converts a camelCase or PascalCase field name to UPPER_SNAKE_CASE env var name.
     let private toEnvName (fieldName: string) : string =
         System.Text.RegularExpressions.Regex.Replace(fieldName, "(?<=[a-z])(?=[A-Z])", "_").ToUpperInvariant()
@@ -107,51 +89,77 @@ module Vars =
     let withDefault (value: 't) (v: OptionalVar<'t>) : RequiredVar<'t> =
         { required v with DefaultValue = Some value }
 
-    let private resolveVar<'t> (fieldName: string) (name: string option) (cliArgName: string option) (envName: string option) (scope: LookupScope) (secret: SecretMode) : Recipe<ExecContext, string * 't option> =
+    /// The declaration a `Var.*` value stands for (its key: `name`, else the field name; its
+    /// command-line name: `cliArg`, else the key), with its env name: the sources are its env
+    /// name (unless argument-only) and its default, as a string.
+    let internal declare (fieldName: string) (name: string option) (cliArgName: string option) (envName: string option)
+                         (scope: LookupScope) (secret: SecretMode) (defaultValue: obj option) (isRequired: bool) (valueType: System.Type) =
         let resolvedName = defaultArg name fieldName
-        let resolvedCliName = defaultArg cliArgName resolvedName
         let resolvedEnvName = envName |> Option.defaultWith (fun () -> toEnvName resolvedName)
+        let decl : VarDecl =
+            { Key = resolvedName
+              CliName = defaultArg cliArgName resolvedName
+              Sources =
+                [ if scope <> ArgOnly then yield Env resolvedEnvName
+                  match defaultValue with
+                  | Some d -> yield Default (System.Convert.ToString(d, System.Globalization.CultureInfo.InvariantCulture))
+                  | None -> () ]
+              DefaultValue = defaultValue
+              Scope = scope
+              Required = isRequired && defaultValue.IsNone
+              Secret = secret
+              ValueType = valueType
+              DeclaredBy = VarEvaluation.fieldLabel fieldName }
+        decl, resolvedEnvName
+
+    /// A Var read: the value of the variable set under the read's key, through a stored
+    /// declaration equal to the read's; recorded by `getVar` (one `Var`, or a `SecretDep`).
+    /// The read's own sources are not consulted: the environment was read at launch.
+    let private readVar<'t> (declOf: unit -> VarDecl * string) : Recipe<ExecContext, 't option> =
         recipe {
-            if secret <> NotSecret then
-                if scope <> EnvOnly then Secrets.declare resolvedCliName secret
-                if scope <> ArgOnly then Secrets.declare resolvedEnvName secret
-                if scope = EnvOnly then
-                    let! ctx = getCtx()
-                    match [resolvedCliName; resolvedEnvName] |> List.tryFind (Util.getVar ctx.Vars >> Option.isSome) with
-                    | Some given ->
-                        Util.getVar ctx.Vars given |> Option.iter SecretMask.register
-                        failwith (Secrets.fromEnvOnly given resolvedEnvName)
-                    | None -> ()
-            let! cliVal = if scope = EnvOnly then recipe { return None } else getVar resolvedCliName
-            let! envVal =
-                match scope, cliVal with
-                | ArgOnly, _ | _, Some _ -> recipe { return None }
-                | _ -> getEnv resolvedEnvName
-            let reportName = if scope = EnvOnly then resolvedEnvName else resolvedCliName
-            return reportName, cliVal |> Option.orElse envVal |> Option.map (convertTo<'t> (secret <> NotSecret) reportName)
+            let! ctx = getCtx()
+            let decl, envName = declOf ()
+            let key = decl.Key
+            match ctx.Engine.Options.Variables |> Map.tryFind key with
+            | Some ({ Decl = Some stored } as entry) ->
+                match VarEvaluation.differences stored decl with
+                | [] ->
+                    let! value = getVar key
+                    return
+                        match value, stored.DefaultValue with
+                        | None, _ -> None
+                        | Some _, Some typed when value = entry.Value && entry.Origin = Some VarOrigin.Default -> Some (unbox<'t> typed)
+                        | Some v, _ ->
+                            match VarEvaluation.convertVar stored v with
+                            | Ok converted -> Some (unbox<'t> converted)
+                            | Result.Error e -> failwith e
+                | fields -> return failwith (VarEvaluation.readMismatch stored decl fields)
+            | _ -> return failwith (VarEvaluation.readUndeclared decl envName)
         }
 
     type RecipeBuilder with
 
         member _.Bind(v: OptionalVar<'t>, f: 't option -> Recipe<ExecContext,'r>) : Recipe<ExecContext,'r> =
-            A.bindF (recipe { let! _, value = resolveVar<'t> v.FieldName v.Name v.CliArgName v.EnvName v.Scope v.Secret in return value }) f
+            let declOf () = declare v.FieldName v.Name v.CliArgName v.EnvName v.Scope v.Secret None false typeof<'t>
+            A.bindF (readVar<'t> declOf) f
 
         member _.Bind(rv: RequiredVar<'t>, f: 't -> Recipe<ExecContext,'r>) : Recipe<ExecContext,'r> =
+            let declOf () = declare rv.FieldName rv.Name rv.CliArgName rv.EnvName rv.Scope rv.Secret (Option.map box rv.DefaultValue) true typeof<'t>
             A.bindF (recipe {
-                let! reportName, value = resolveVar<'t> rv.FieldName rv.Name rv.CliArgName rv.EnvName rv.Scope rv.Secret
+                let! value = readVar<'t> declOf
                 return
                     match value with
                     | Some v -> v
-                    | None ->
-                        match rv.DefaultValue with
-                        | Some d -> d
-                        | None -> failwithf "Required variable '%s' is not provided" reportName
+                    | None -> failwithf "Required variable '%s' is not provided" (fst (declOf ())).Key
             }) f
 
     open System.Reflection
 
     type RulesBuilder with
 
+        /// Imports the `Var.*` fields of a record as declarations (key, env name, scope, secret
+        /// mode, required flag, default, type) and for --help. The op sets each field's name and
+        /// records the declarations only: they are evaluated at launch.
         [<CustomOperation("varschema")>]
         member _.Vars(XakeScript (options, rules), schema: 'a) : XakeScript =
             let getOptionValue (v: obj) =
@@ -172,35 +180,32 @@ module Vars =
                             ty.GetProperty(propName).GetValue(value)
                             |> getOptionValue
                             |> Option.map (fun x -> x :?> string)
-                        let makeEntry isRequired defaultStr =
+                        let makeEntry isRequired (defaultValue: obj option) =
                             ty.GetProperty("FieldName").SetValue(value, p.Name)
-                            let effectiveName = getStringOption "Name" |> Option.defaultValue p.Name
-                            let effectiveCliName = getStringOption "CliArgName" |> Option.defaultValue effectiveName
                             let scope = ty.GetProperty("Scope").GetValue(value) :?> LookupScope
-                            let envVarName =
-                                match scope with
-                                | ArgOnly -> None
-                                | EnvOnly | ArgAndEnv ->
-                                    // Always show the env var name (explicit or auto-derived)
-                                    Some (getStringOption "EnvName" |> Option.defaultWith (fun () -> toEnvName effectiveName))
                             let innerTy = ty.GetGenericArguments().[0]
                             let secret = ty.GetProperty("Secret").GetValue(value) :?> SecretMode
-                            if scope <> EnvOnly then Secrets.declare effectiveCliName secret
-                            envVarName |> Option.iter (fun env -> Secrets.declare env secret)
-                            Some (effectiveCliName, {
+                            let decl, envName =
+                                declare p.Name (getStringOption "Name") (getStringOption "CliArgName") (getStringOption "EnvName")
+                                        scope secret defaultValue isRequired innerTy
+                            let defaultStr = defaultValue |> Option.map (sprintf "%A")
+                            Some (decl, (decl.CliName, {
                                 TypeName     = innerTy.Name.ToLowerInvariant()
-                                EnvVarName   = envVarName
+                                // Always show the env var name (explicit or auto-derived)
+                                EnvVarName   = if scope = ArgOnly then None else Some envName
                                 DefaultStr   = defaultStr
-                                IsRequired   = isRequired
+                                IsRequired   = defaultStr.IsNone && isRequired
                                 Description  = getStringOption "Description"
                                 Scope        = scope
                                 IsSecret     = (secret <> NotSecret)
-                            })
+                            }))
                         if isGenericOf typedefof<OptionalVar<_>> ty then
                             makeEntry false None
                         elif isGenericOf typedefof<RequiredVar<_>> ty then
-                            let defaultStr = ty.GetProperty("DefaultValue").GetValue(value) |> getOptionValue |> Option.map (sprintf "%A")
-                            makeEntry defaultStr.IsNone defaultStr
+                            makeEntry true (ty.GetProperty("DefaultValue").GetValue(value) |> getOptionValue)
                         else None)
                 |> Array.toList
-            XakeScript ({ options with VarSchema = options.VarSchema @ schemaEntries }, rules)
+            let decls = schemaEntries |> List.map fst
+            XakeScript ({ options with VarSchema = options.VarSchema @ List.map snd schemaEntries
+                                       VarDecls = options.VarDecls @ decls
+                                       VarDefinedBy = options.VarDefinedBy @ (decls |> List.map (fun d -> d.Key, d.DeclaredBy)) }, rules)

@@ -3,7 +3,7 @@
 open DependencyAnalysis
 
 /// Converts CLI ExecOptions into engine-level EngineOptions, constructing the logger.
-let toEngineOptions (opts: ExecOptions) (rules: Rules<ExecContext>) : EngineOptions =
+let toEngineOptions (opts: ExecOptions) (rules: Rules<ExecContext>) (variables: Map<string, VarEntry>) : EngineOptions =
     let logger = CombineLogger (ConsoleLogger opts.ConLogLevel) opts.CustomLogger
     let logger =
         match opts.FileLog, opts.FileLogLevel with
@@ -11,7 +11,8 @@ let toEngineOptions (opts: ExecOptions) (rules: Rules<ExecContext>) : EngineOpti
         | _, Silent -> logger
         | logFileName,level -> CombineLogger logger (FileLogger logFileName level)
     { ProjectRoot = opts.ProjectRoot; Threads = opts.Threads
-      Logger = MaskingLogger logger; Teardown = opts.Teardown; Rules = rules; RuleMatch = opts.RuleMatch }
+      Logger = MaskingLogger logger; Teardown = opts.Teardown; Rules = rules; RuleMatch = opts.RuleMatch
+      Variables = variables }
 
 /// Active pattern that classifies ExecOptions into Dump, Dryrun, or Run execution mode.
 let (|Dump|Dryrun|Run|) (opts:ExecOptions) =
@@ -20,40 +21,12 @@ let (|Dump|Dryrun|Run|) (opts:ExecOptions) =
     | _ when opts.DryRun -> Dryrun
     | _ -> Run
 
-/// Checks the script variables given by `-d` (or `var`) against the secret variables of the
-/// schema and registers the values of the secret ones for masking before anything is logged.
-/// Returns the errors (an environment-only secret given by `-d`) and the warnings (an
-/// argument secret given by `-d`: visible in the process list).
-let checkSecretVars (opts: ExecOptions) =
-    let given name = Util.getVar opts.Vars name
-    [ for (name, help) in opts.VarSchema do
-        if help.IsSecret then
-            match help.Scope with
-            | ArgOnly -> ()
-            | _ -> help.EnvVarName |> Option.bind Util.getEnvVar |> Option.iter SecretMask.register
-            match help.Scope with
-            | EnvOnly ->
-                let envName = help.EnvVarName |> Option.defaultValue name
-                match [name; envName] |> List.tryFind (given >> Option.isSome) with
-                | Some key ->
-                    given key |> Option.iter SecretMask.register
-                    yield Choice1Of2 (Secrets.fromEnvOnly key envName)
-                | None -> ()
-            | _ ->
-                match given name with
-                | Some value ->
-                    SecretMask.register value
-                    let env = help.EnvVarName |> Option.map (sprintf "; prefer the environment variable %s") |> Option.defaultValue ""
-                    yield Choice2Of2 (sprintf "Secret variable '%s' is given by -d: its value is visible in the process list and the shell history%s" name env)
-                | None -> () ]
-    |> List.partition (function Choice1Of2 _ -> true | _ -> false)
-    |> fun (errors, warnings) ->
-        errors |> List.map (function Choice1Of2 e -> e | Choice2Of2 e -> e),
-        warnings |> List.map (function Choice1Of2 w -> w | Choice2Of2 w -> w)
-
 /// Creates execution context from CLI ExecOptions, handling ResetDb and logger construction.
+/// This is the launch (run, dry-run, dump and engine `Start`): the variable set is built here,
+/// once, and the launch errors are returned with the context; the caller reports them.
 let createScriptContext (opts: ExecOptions) rules =
-    let engineOpts = toEngineOptions opts rules
+    let variables, launchErrors = VarEvaluation.launch opts
+    let engineOpts = toEngineOptions opts rules variables
     let db =
         if opts.NoPersist then
             Storage.noopDb ()
@@ -62,7 +35,8 @@ let createScriptContext (opts: ExecOptions) rules =
             if opts.ResetDb then
                 Storage.cleanupDb dbPath engineOpts.Logger
             Storage.openDb dbPath engineOpts.Logger
-    ExecCore.createContextCore engineOpts db opts.Vars opts.Progress
+    let ctx, finalize = ExecCore.createContextCore engineOpts db (VarEvaluation.flatVars variables) opts.Progress
+    ctx, finalize, launchErrors
 
 let runTeardownAsync (ctx: ExecContext) =
     async {
@@ -77,10 +51,9 @@ let runSetupAsync (ctx: ExecContext) (setup: string list) =
             do! ExecCore.demandTarget ctx targetName |> Async.Ignore
     }
 
-/// The compact run banner, one line per item in a stable order. Values of secret variables are
-/// shown as `***`. The sources of the variables are not tracked (`-d` and `var` end up in one
-/// list), so each is labelled `script/cli`.
-let bannerLines (options: ExecOptions) (targetLists: string list list) =
+/// The compact run banner, one line per item in a stable order. The variables are listed once
+/// each, sorted, with their source; values of secret variables are shown as `***`.
+let bannerLines (options: ExecOptions) (variables: Map<string, VarEntry>) (targetLists: string list list) =
     let version =
         let asm = typeof<ExecOptions>.Assembly
         match asm.GetCustomAttributes(typeof<System.Reflection.AssemblyInformationalVersionAttribute>, false) with
@@ -100,10 +73,7 @@ let bannerLines (options: ExecOptions) (targetLists: string list list) =
         match options.FileLog, options.FileLogLevel with
         | null,_ | "",_ | _, Silent -> "(off)"
         | name, level -> sprintf "%s (%A)" (System.IO.Path.GetFullPath(options.ProjectRoot </> name)) level
-    let vars =
-        options.Vars |> List.map (fun (name, value) ->
-            let shown = if Secrets.isSecret name || SecretMask.apply value <> value then "***" else value
-            sprintf "    %s=%s (script/cli)" name shown)
+    let vars = VarEvaluation.bannerLines variables
     [ yield sprintf "Xake %s" version
       yield sprintf "  mode:         %s" mode
       yield sprintf "  targets:      %s" targets
@@ -183,7 +153,7 @@ let dryRun (ctx: ExecContext) (setup: string list) (groups: string list list) =
 /// Main entry point for running a build script.
 /// Parses target lists, sets up cancellation handling, and dispatches to dump, dry-run, or full build mode.
 let runScript options rules =
-    let ctx, finalize = createScriptContext options rules
+    let ctx, finalize, launchErrors = createScriptContext options rules
     let logger = ctx.Logger
     let cts = new System.Threading.CancellationTokenSource()
 
@@ -204,9 +174,9 @@ let runScript options rules =
                 logger.Log Error "Force exiting build process...")
     System.Console.CancelKeyPress.AddHandler(handler)
 
-    let hideSecretDefaults = List.map (fun (name, help: VarHelp) -> name, if help.IsSecret then { help with DefaultStr = None } else help)
-    logger.Log Level.Debug "Options: %A" { options with Vars = []; VarSchema = hideSecretDefaults options.VarSchema }
-        // be careful with debug option as it may contain sensitive info like script variables
+    // the values and defaults of secret variables are hidden; the masking logger hides registered values
+    logger.Log Level.Debug "Options: %A" (VarEvaluation.maskOptions options)
+    logger.Log Level.Debug "Variables: %A" (VarEvaluation.maskVariables ctx.Options.Variables)
 
     let targetLists =
         options.Targets |>
@@ -218,13 +188,11 @@ let runScript options rules =
             tt |> List.map (fun (s: string) -> s.Split(';', '|') |> List.ofArray)
 
     let mutable exitCode = 0
-    let secretErrors, secretWarnings = checkSecretVars options
-    secretWarnings |> List.iter (logger.Log Warning "%s")
-    bannerLines options targetLists |> List.iter (logger.Log Info "%s")
+    bannerLines options ctx.Options.Variables targetLists |> List.iter (logger.Log Info "%s")
     try
         match options with
-        | _ when not secretErrors.IsEmpty ->
-            let errorText = secretErrors |> String.concat "\r\n"
+        | _ when not launchErrors.IsEmpty ->
+            let errorText = launchErrors |> String.concat "\r\n"
             do logger.Log Error "%s" errorText
             exitCode <- 2
             if options.ThrowOnError then raise (XakeException errorText)

@@ -30,6 +30,12 @@ PR 1 started 2026-10-29 by an implementer subagent: tests of spec §8.1-8.7 firs
 | PR | Branch | Worktree | State |
 |---|---|---|---|
 | #102 (draft) | `feature/vars-precedence` | `.claude/worktrees/feature+hermetic-windows` | spec, brief, archive |
+| PR 1 (not opened) | `feature/vars-core` | agent worktree (`.claude/worktrees/agent-…`) | in progress |
+| PR 2 | `feature/vars-libraries` (planned) | - | after PR 1 |
+
+Next step: review PR 1's report, push `feature/vars-core`, open the PR to dev; then PR 2. Proposed split (not yet approved): PR 1 core (`var`
+lists, `varschema` at launch, `Var` reads, second-definition errors, `?vars` on top, banner sources);
+PR 2 library readers (no env fallback, switches, `.packages`) in Xake.Dotnet and the hermetic package.
 | #111 (draft) | `feature/vars-core` | `.claude/worktrees/agent-acc07368580609689` | done: 523 tests green, 0 warnings; owner review |
 | #112 (draft, base `feature/vars-core`) | `feature/vars-libraries` | `.claude/worktrees/agent-afb9a9d9fb75e5c02` | done: 547 tests green; hermetic floor 3.16.0 needs a decision |
 

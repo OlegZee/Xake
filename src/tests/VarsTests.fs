@@ -3,16 +3,20 @@ module ``Vars feature``
 open NUnit.Framework
 open Xake
 
+// A Var read needs a declaration of its key (spec T-2..T-4): the reads below go through
+// `varschema` fields; inline reads are covered by VarsConformanceTests (E-7, E-8).
+
 let DebugOptions = { ExecOptions.Default with ThrowOnError = true; FileLog = ""; Nologo = true; NoPersist = true }
 
 [<Test>]
 let ``withDefault returns default when no CLI arg``() =
-    let myVar = Var.create(cliArg = "config") |> withDefault "Debug"
+    let vars = {| config = Var.create(cliArg = "config") |> withDefault "Debug" |}
     let result = ref ""
 
-    do xake DebugOptions {
+    do xakeArgs [] DebugOptions {
+        varschema vars
         phony "main" (recipe {
-            let! v = myVar
+            let! v = vars.config
             result := v
         })
     }
@@ -21,12 +25,13 @@ let ``withDefault returns default when no CLI arg``() =
 
 [<Test>]
 let ``withDefault with int returns typed default``() =
-    let myVar = Var.create<int>(cliArg = "count") |> withDefault 42
+    let vars = {| count = Var.create<int>(cliArg = "count") |> withDefault 42 |}
     let result = ref 0
 
-    do xake DebugOptions {
+    do xakeArgs [] DebugOptions {
+        varschema vars
         phony "main" (recipe {
-            let! v = myVar
+            let! v = vars.count
             result := v
         })
     }
@@ -37,16 +42,18 @@ let ``withDefault with int returns typed default``() =
 let ``envVar param resolves from environment variable``() =
     System.Environment.SetEnvironmentVariable("XAKE_TEST_VAR_ENV", "33")
     try
-        let myVar1 = Var.string(envVar = "XAKE_TEST_VAR_ENV") |> required
-        let myVar = Var.create<int>(envVar = "XAKE_TEST_VAR_ENV") |> required
-        myVar.FieldName <- "testVar"
+        let vars = {|
+            testVar = Var.create<int>(envVar = "XAKE_TEST_VAR_ENV") |> required
+            testVar1 = Var.string(envVar = "XAKE_TEST_VAR_ENV") |> required
+        |}
         let result = ref 0
         let result1 = ref ""
 
-        do xake DebugOptions {
+        do xakeArgs [] DebugOptions {
+            varschema vars
             phony "main" (recipe {
-                let! v = myVar
-                let! v1 = myVar1
+                let! v = vars.testVar
+                let! v1 = vars.testVar1
                 result := v
                 result1 := v1
             })
@@ -59,13 +66,13 @@ let ``envVar param resolves from environment variable``() =
 
 [<Test>]
 let ``envVar param withDefault returns typed default when neither CLI nor env is set``() =
-    let myVar = Var.create<int>(envVar = "XAKE_MISSING_VAR_99999") |> withDefault 42
-    myVar.FieldName <- "count"
+    let vars = {| count = Var.create<int>(envVar = "XAKE_MISSING_VAR_99999") |> withDefault 42 |}
     let result = ref 0
 
-    do xake DebugOptions {
+    do xakeArgs [] DebugOptions {
+        varschema vars
         phony "main" (recipe {
-            let! v = myVar
+            let! v = vars.count
             result := v
         })
     }
@@ -74,12 +81,13 @@ let ``envVar param withDefault returns typed default when neither CLI nor env is
 
 [<Test>]
 let ``CLI arg overrides default``() =
-    let myVar = Var.create(cliArg = "config") |> withDefault "Debug"
+    let vars = {| config = Var.create(cliArg = "config") |> withDefault "Debug" |}
     let result = ref ""
 
     do xakeArgs ["-d"; "config=Release"] DebugOptions {
+        varschema vars
         phony "main" (recipe {
-            let! v = myVar
+            let! v = vars.config
             result := v
         })
     }
@@ -90,12 +98,13 @@ let ``CLI arg overrides default``() =
 let ``CLI arg overrides env var``() =
     System.Environment.SetEnvironmentVariable("XAKE_TEST_CLI_WINS", "from-env")
     try
-        let myVar = Var.create(cliArg = "cliWins", envVar = "XAKE_TEST_CLI_WINS") |> required
+        let vars = {| cliWins = Var.create(cliArg = "cliWins", envVar = "XAKE_TEST_CLI_WINS") |> required |}
         let result = ref ""
 
         do xakeArgs ["-d"; "cliWins=from-cli"] DebugOptions {
+            varschema vars
             phony "main" (recipe {
-                let! v = myVar
+                let! v = vars.cliWins
                 result := v
             })
         }
@@ -105,40 +114,40 @@ let ``CLI arg overrides env var``() =
         System.Environment.SetEnvironmentVariable("XAKE_TEST_CLI_WINS", null)
 
 [<Test>]
-let ``required fails at execution time when not provided``() =
-    let myVar = Var.create(cliArg = "missingRequired") |> required
+let ``required fails at launch when not provided``() =
+    let vars = {| missingRequired = Var.create(cliArg = "missingRequired") |> required |}
+    let ran = ref false
 
-    Assert.Throws<XakeException>(fun () ->
-        xake DebugOptions {
-            phony "main" (recipe {
-                let! _ = myVar
-                ()
-            })
-        }
-    ) |> ignore
+    let ex =
+        Assert.Throws<XakeException>(fun () ->
+            xakeArgs [] DebugOptions {
+                varschema vars
+                phony "main" (recipe { ran := true })
+            }
+        )
+    StringAssert.Contains("Required variable 'missingRequired' is not provided", ex.Data0)
+    Assert.IsFalse(!ran, "no target runs")
 
 [<Test>]
 let ``envVar param required fails when value is absent``() =
-    let myVar = Var.create(envVar = "XAKE_MISSING_VAR_REQUIRED_99999") |> required
-    myVar.FieldName <- "requiredEnv"
+    let vars = {| requiredEnv = Var.create(envVar = "XAKE_MISSING_VAR_REQUIRED_99999") |> required |}
 
     Assert.Throws<XakeException>(fun () ->
-        xake DebugOptions {
-            phony "main" (recipe {
-                let! _ = myVar
-                ()
-            })
+        xakeArgs [] DebugOptions {
+            varschema vars
+            phony "main" (recipe { () })
         }
     ) |> ignore
 
 [<Test>]
 let ``cliArg param sets CLI arg name for lookup``() =
-    let myVar = Var.create(cliArg = "my-ext-name") |> withDefault "fallback"
+    let vars = {| myExt = Var.create(cliArg = "my-ext-name") |> withDefault "fallback" |}
     let result = ref ""
 
     do xakeArgs ["-d"; "my-ext-name=provided"] DebugOptions {
+        varschema vars
         phony "main" (recipe {
-            let! v = myVar
+            let! v = vars.myExt
             result := v
         })
     }
@@ -147,12 +156,13 @@ let ``cliArg param sets CLI arg name for lookup``() =
 
 [<Test>]
 let ``OptionalVar returns None when both CLI arg and env var are absent``() =
-    let myVar = Var.create(cliArg = "absentVar")
+    let vars = {| absentVar = Var.create(cliArg = "absentVar") |}
     let result = ref (Some "sentinel")
 
-    do xake DebugOptions {
+    do xakeArgs [] DebugOptions {
+        varschema vars
         phony "main" (recipe {
-            let! v = myVar
+            let! v = vars.absentVar
             result := v
         })
     }
@@ -160,28 +170,16 @@ let ``OptionalVar returns None when both CLI arg and env var are absent``() =
     Assert.AreEqual(None, !result)
 
 [<Test>]
-let ``RequiredVar throws when absent``() =
-    let myVar = Var.create(cliArg = "namedMissing") |> required
-
-    Assert.Throws<XakeException>(fun () ->
-        xake DebugOptions {
-            phony "main" (recipe {
-                let! _ = myVar
-                ()
-            })
-        }
-    ) |> ignore
-
-[<Test>]
 let ``auto-env: buildConfig resolves from BUILD_CONFIG env var derived from name``() =
     System.Environment.SetEnvironmentVariable("BUILD_CONFIG", "Release")
     try
-        let myVar = Var.create<string>(name = "buildConfig")
+        let vars = {| cfg = Var.create<string>(name = "buildConfig") |}
         let result = ref None
 
-        do xake DebugOptions {
+        do xakeArgs [] DebugOptions {
+            varschema vars
             phony "main" (recipe {
-                let! v = myVar
+                let! v = vars.cfg
                 result := v
             })
         }
@@ -191,50 +189,25 @@ let ``auto-env: buildConfig resolves from BUILD_CONFIG env var derived from name
         System.Environment.SetEnvironmentVariable("BUILD_CONFIG", null)
 
 [<Test>]
-let ``name param drives CLI lookup and env derivation``() =
-    System.Environment.SetEnvironmentVariable("BUILD_CONFIG", "Release")
-    try
-        let myVar = Var.create<string>(name = "buildConfig")
-        let fromEnv = ref None
-        let fromCli = ref None
-
-        do xake DebugOptions {
-            phony "main" (recipe {
-                let! v = myVar
-                fromEnv := v
-            })
-        }
-
-        do xakeArgs ["-d"; "buildConfig=Debug"] DebugOptions {
-            phony "main" (recipe {
-                let! v = myVar
-                fromCli := v
-            })
-        }
-
-        Assert.AreEqual(Some "Release", !fromEnv)
-        Assert.AreEqual(Some "Debug", !fromCli)
-    finally
-        System.Environment.SetEnvironmentVariable("BUILD_CONFIG", null)
-
-[<Test>]
 let ``name param derives env while cliArg overrides CLI lookup``() =
     System.Environment.SetEnvironmentVariable("LOGICAL_NAME", "from-env")
     try
-        let myVar = Var.create<string>(name = "logicalName", cliArg = "externalName")
+        let vars = {| logical = Var.create<string>(name = "logicalName", cliArg = "externalName") |}
         let fromEnv = ref None
         let fromCli = ref None
 
-        do xake DebugOptions {
+        do xakeArgs [] DebugOptions {
+            varschema vars
             phony "main" (recipe {
-                let! v = myVar
+                let! v = vars.logical
                 fromEnv := v
             })
         }
 
         do xakeArgs ["-d"; "externalName=from-cli"] DebugOptions {
+            varschema vars
             phony "main" (recipe {
-                let! v = myVar
+                let! v = vars.logical
                 fromCli := v
             })
         }
@@ -249,7 +222,7 @@ let ``vars sets FieldName from anonymous record property name``() =
     let vars = {| myConfig = Var.create() |> withDefault "Debug" |}
     let result = ref ""
 
-    do xake DebugOptions {
+    do xakeArgs [] DebugOptions {
         varschema vars
         phony "main" (recipe {
             let! v = vars.myConfig
@@ -264,10 +237,10 @@ let ``vars sets FieldName from anonymous record property name``() =
 let ``vars sets FieldName on multiple schema entries``() =
     let schema = {|
         buildConfig = Var.create() |> withDefault "Debug"
-        apiKey = Var.create() |> required
+        apiKey = Var.create() |> withDefault "none"
     |}
 
-    do xake DebugOptions {
+    do xakeArgs [] DebugOptions {
         varschema schema
         phony "main" (recipe { () })
     }
@@ -282,7 +255,7 @@ let ``two plain vars in schema each get their own FieldName``() =
         apiKey      = Var.create()
     |}
 
-    do xake DebugOptions {
+    do xakeArgs [] DebugOptions {
         varschema schema
         phony "main" (recipe { () })
     }
@@ -340,7 +313,7 @@ let ``varschema uses explicit name for derived CLI and env lookup``() =
         let fromEnv = ref None
         let fromCli = ref None
 
-        do xake DebugOptions {
+        do xakeArgs [] DebugOptions {
             varschema vars
             phony "main" (recipe {
                 let! v = vars.myAlias
@@ -395,11 +368,13 @@ let ``varschema mixes explicit cliArg names with implicit property names``() =
 [<Test>]
 let ``Var.create with name sets Name directly``() =
     let myVar = Var.create(name = "config") |> withDefault "Debug"
+    let vars = {| cfg = myVar |}
     let result = ref ""
 
-    do xake DebugOptions {
+    do xakeArgs [] DebugOptions {
+        varschema vars
         phony "main" (recipe {
-            let! v = myVar
+            let! v = vars.cfg
             result := v
         })
     }
@@ -411,13 +386,13 @@ let ``Var.create with name sets Name directly``() =
 let ``Var.create with envVar arg resolves from that env var``() =
     System.Environment.SetEnvironmentVariable("MY_CUSTOM_VAR", "from-env-custom")
     try
-        let myVar = Var.create(envVar = "MY_CUSTOM_VAR") |> required
-        myVar.FieldName <- "dummy"
+        let vars = {| dummy = Var.create(envVar = "MY_CUSTOM_VAR") |> required |}
         let result = ref ""
 
-        do xake DebugOptions {
+        do xakeArgs [] DebugOptions {
+            varschema vars
             phony "main" (recipe {
-                let! v = myVar
+                let! v = vars.dummy
                 result := v
             })
         }
@@ -434,12 +409,13 @@ let ``Var.create with cliArg and envVar args combines both``() =
 
 [<Test>]
 let ``Var.create int with cliArg resolves typed value from CLI``() =
-    let myVar = Var.create<int>(cliArg = "count") |> withDefault 0
+    let vars = {| count = Var.create<int>(cliArg = "count") |> withDefault 0 |}
     let result = ref 0
 
     do xakeArgs ["-d"; "count=7"] DebugOptions {
+        varschema vars
         phony "main" (recipe {
-            let! v = myVar
+            let! v = vars.count
             result := v
         })
     }
@@ -448,31 +424,29 @@ let ``Var.create int with cliArg resolves typed value from CLI``() =
 
 [<Test>]
 let ``Var dependency is recorded when resolving``() =
-    let myVar = Var.create(cliArg = "config") |> withDefault "Debug"
+    let vars = {| config = Var.create(cliArg = "config") |> withDefault "Debug" |}
     let capturedDepends = ref []
 
-    do xake DebugOptions {
+    do xakeArgs [] DebugOptions {
+        varschema vars
         phony "main" (recipe {
-            let! _ = myVar
+            let! _ = vars.config
             let! result = getResult()
             capturedDepends := result.Depends
         })
     }
 
-    let hasVarDep =
-        !capturedDepends |> List.exists (function
-            | Var ("config", _) -> true
-            | _ -> false)
-    Assert.IsTrue(hasVarDep, "Expected Var(\"config\", _) dependency to be recorded")
+    Assert.That(!capturedDepends, Does.Contain(Var ("config", Some "Debug")))
 
 [<Test>]
 let ``EnvVar dependency is NOT recorded when CLI var is set``() =
-    let myVar = Var.create(cliArg = "config", envVar = "MY_CONFIG")
+    let vars = {| config = Var.create(cliArg = "config", envVar = "MY_CONFIG") |}
     let capturedDepends = ref []
 
     do xakeArgs ["-d"; "config=Release"] DebugOptions {
+        varschema vars
         phony "main" (recipe {
-            let! _ = myVar
+            let! _ = vars.config
             let! result = getResult()
             capturedDepends := result.Depends
         })
@@ -485,35 +459,32 @@ let ``EnvVar dependency is NOT recorded when CLI var is set``() =
     Assert.IsFalse(hasEnvDep, "EnvVar dependency should not be recorded when CLI var is set")
 
 [<Test>]
-let ``EnvVar dependency IS recorded when CLI var is absent``() =
-    let myVar = Var.create(cliArg = "config", envVar = "MY_CONFIG")
+let ``a Var read records the value, not an EnvVar, when CLI var is absent``() =
+    let vars = {| config = Var.create(cliArg = "config", envVar = "MY_CONFIG") |}
     let capturedDepends = ref []
 
-    do xake DebugOptions {
+    do xakeArgs [] DebugOptions {
+        varschema vars
         phony "main" (recipe {
-            let! _ = myVar
+            let! _ = vars.config
             let! result = getResult()
             capturedDepends := result.Depends
         })
     }
 
-    let hasEnvDep =
-        !capturedDepends |> List.exists (function
-            | EnvVar ("MY_CONFIG", _) -> true
-            | _ -> false)
-    Assert.IsTrue(hasEnvDep, "EnvVar dependency should be recorded when CLI var is absent")
+    Assert.AreEqual([Var ("config", None)], !capturedDepends)
 
 [<Test>]
 let ``Var.env reads from env var``() =
     System.Environment.SetEnvironmentVariable("XAKE_SCOPE_ENV", "from-env")
     try
-        let myVar = Var.env(envVar = "XAKE_SCOPE_ENV") |> required
-        myVar.FieldName <- "scopeTest"
+        let vars = {| scopeTest = Var.env(envVar = "XAKE_SCOPE_ENV") |> required |}
         let result = ref ""
 
-        do xake DebugOptions {
+        do xakeArgs [] DebugOptions {
+            varschema vars
             phony "main" (recipe {
-                let! v = myVar
+                let! v = vars.scopeTest
                 result := v
             })
         }
@@ -523,34 +494,32 @@ let ``Var.env reads from env var``() =
         System.Environment.SetEnvironmentVariable("XAKE_SCOPE_ENV", null)
 
 [<Test>]
-let ``Var.env ignores CLI arg``() =
+let ``Var.env refuses a CLI arg``() =
     System.Environment.SetEnvironmentVariable("MY_TOKEN", "from-env")
     try
         let vars = {|
             myToken = Var.env()
         |}
-        let result = ref (Some "sentinel")
 
-        do xakeArgs ["-d"; "myToken=from-cli"] DebugOptions {
-            varschema vars
-            phony "main" (recipe {
-                let! v = vars.myToken
-                result := v
-            })
-        }
-
-        Assert.AreEqual(Some "from-env", !result)
+        let ex =
+            Assert.Throws<XakeException>(fun () ->
+                xakeArgs ["-d"; "myToken=from-cli"] DebugOptions {
+                    varschema vars
+                    phony "main" (recipe { let! _ = vars.myToken in () })
+                })
+        StringAssert.Contains("Variable 'myToken' comes only from the environment variable MY_TOKEN, not from -d myToken=...", ex.Data0)
     finally
         System.Environment.SetEnvironmentVariable("MY_TOKEN", null)
 
 [<Test>]
 let ``Var.arg reads from CLI arg``() =
-    let myVar = Var.arg<int>(cliArg = "count") |> withDefault 0
+    let vars = {| count = Var.arg<int>(cliArg = "count") |> withDefault 0 |}
     let result = ref 0
 
     do xakeArgs ["-d"; "count=7"] DebugOptions {
+        varschema vars
         phony "main" (recipe {
-            let! v = myVar
+            let! v = vars.count
             result := v
         })
     }
@@ -561,12 +530,13 @@ let ``Var.arg reads from CLI arg``() =
 let ``Var.arg ignores env var``() =
     System.Environment.SetEnvironmentVariable("EXT_MY_PATH", "system-path")
     try
-        let myVar = Var.arg(cliArg = "extMyPath") |> withDefault "default"
+        let vars = {| extMyPath = Var.arg(cliArg = "extMyPath") |> withDefault "default" |}
         let result = ref ""
 
-        do xake DebugOptions {
+        do xakeArgs [] DebugOptions {
+            varschema vars
             phony "main" (recipe {
-                let! v = myVar
+                let! v = vars.extMyPath
                 result := v
             })
         }
@@ -576,16 +546,24 @@ let ``Var.arg ignores env var``() =
         System.Environment.SetEnvironmentVariable("EXT_MY_PATH", null)
 
 [<Test>]
-let ``Var.string reads the -d value when the script also has var``() =
-    let myVar = Var.string(cliArg = "pinned") |> withDefault "default"
+let ``a field reads the -d value; a var op of its key is a second definition``() =
+    let vars = {| pinned = Var.string(cliArg = "pinned") |> withDefault "default" |}
     let result = ref ""
 
     do xakeArgs ["-d"; "pinned=from-cli"] DebugOptions {
-        var "pinned" "from-script"
+        varschema vars
         phony "main" (recipe {
-            let! v = myVar
+            let! v = vars.pinned
             result := v
         })
     }
 
     Assert.AreEqual("from-cli", !result)
+    let ex =
+        Assert.Throws<XakeException>(fun () ->
+            xakeArgs ["-d"; "pinned=from-cli"] DebugOptions {
+                var "pinned" "from-script"
+                varschema vars
+                phony "main" (recipe { () })
+            })
+    StringAssert.Contains("Variable 'pinned' is defined twice in the script", ex.Data0)

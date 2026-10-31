@@ -99,13 +99,21 @@ let vars = {|
 	key    = Var.env<string>(envVar = "LICENSE_KEY") |> secretHashed      // rebuild when it changes
 |}
 xake ExecOptions.Default {
-	varschema vars                                   // --help lists them
+	varschema vars                                   // declares them; --help lists them
+	var "VERSION" "1.0.0"                            // a constant; -d VERSION=... wins
+	var "PKGS" [Cli "pkgs"; Env "PKGS_DIR"; Default ".packages"]  // a rule: -d pkgs=..., else env, else default
 	phony "main" (recipe { let! token = vars.token in () })
 }
 ```
 
+Values are computed once at launch: `-d` > the script's `var`/`ExecOptions.Vars` > the
+declaration's sources. A name is defined once in the script (a second definition stops the run).
+A `Var` read (`let! x = vars.config`) needs a `varschema` field of its key; otherwise use
+`getVar "N"` (the variable set) or `getEnv "X"` (the environment). A field's key is its `name`,
+else the field name; `cliArg` is only its `-d` name.
+
 A secret: the database keeps whether it is set (`secret`) or a salted hash (`secretHashed`),
-never the value; every log masks it as `***`; `-d` is refused for `Var.secret`. See
+never the value; every log masks it as `***`; `-d` of a secret stops the run. See
 [tasks.md](tasks.md#secret-variables).
 
 ## Shell task

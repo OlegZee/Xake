@@ -22,8 +22,20 @@ module XakeScript =
         /// Targets to build: the default for `want`, which replaces it; command-line targets replace both
         Targets: string list
 
-        /// Global script variables
+        /// Global script variables: the script's values (a `var "N" "v"` op appends here).
+        /// A name defined twice in the script is an error at launch.
         Vars: (string * string) list
+
+        /// The `-d` values of the command line, the last `-d` first.
+        CliVars: (string * string) list
+
+        /// The variable declarations (`var "N" [...]` rules, `varschema` fields) in script order,
+        /// without values: they are evaluated at launch.
+        VarDecls: VarDecl list
+
+        /// Each definition made by a `var`/`varschema` op, in script order: the name and how it
+        /// was defined (`var "N" "..."`, `var "N" [...]`, `varschema field F`), for the diagnostics.
+        VarDefinedBy: (string * string) list
 
         /// Defines whether `run` should throw exception if script fails.
         /// Default is false which means to exit process with non-zero code.
@@ -79,6 +91,9 @@ module XakeScript =
             Targets = []
             ThrowOnError = false
             Vars = List<string*string>.Empty
+            CliVars = []
+            VarDecls = []
+            VarDefinedBy = []
             IgnoreCommandLine = false
             Nologo = false
             DbFileName = ".xake"

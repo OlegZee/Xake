@@ -23,7 +23,7 @@ let vars = {|
     // Xake.Hermetic.Dotnet is versioned on its own (0.x, may break): -d HermeticVersion=... or
     // $HERMETIC_VERSION. The default is the <Version> its project file carries.
     HermeticVersion = Var.create<string>(description = "Version number for the Xake.Hermetic.Dotnet package, e.g. 0.1.0") |> withDefault (projectVersion "src/hermetic/Xake.Hermetic.Dotnet.fsproj")
-    NUGET_KEY  = Var.env<string>(description = "API key for NuGet.org, required for pushing packages") |> withDefault ""
+    NUGET_KEY  = Var.env<string>(description = "API key for NuGet.org, required for pushing packages") |> withDefault "" |> secret
     TestFilter = Var.string(cliArg = "FILTER", envVar = "FILTER", description = "Runs only the tests whose name matches this regex, e.g. 'Rm'")
     // Xake.Hermetic.Dotnet builds on the *published* Xake package, restored from nuget.org.
     // Only to develop it against an unreleased base: pack src/dotnet into a folder at a version

@@ -5,6 +5,55 @@ open System.IO
 open Xake
 open Xake.Dotnet
 
+/// <summary>
+/// The build variables Xake.Hermetic.Dotnet reads, as a schema a script MAY import:
+/// <c>varschema HermeticVars.Default</c>, or with fields changed by copy-and-update, e.g.
+/// <c>varschema { HermeticVars.Default with CI = Var.string() |> withDefault "off" }</c> to take
+/// the environment variable `CI` too (what a CI service sets). Each field is named by its
+/// variable, is a string, takes `-d NAME=value` and no environment variable (the package reads
+/// none), and carries the package's fixed default where it has one. Without the import the
+/// package reads the same names with the same defaults. Xake.Dotnet's are `DotNetVars`.
+/// </summary>
+type HermeticVars = {
+    /// Whether the build runs under CI (a missing lock fails, `LOCK_STALE=warn` does not apply): on or off.
+    CI: RequiredVar<string>
+    /// The package ids a lock re-resolves (`*` every one), comma, semicolon or space separated.
+    LOCK_REFRESH: OptionalVar<string>
+    /// A stale lock: fail or warn.
+    LOCK_STALE: RequiredVar<string>
+    /// The timestamp of pack entries and SBOM annotations, unix seconds; unset, 1980-01-01.
+    SOURCE_DATE_EPOCH: OptionalVar<string>
+} with
+    static member Default : HermeticVars = {
+        CI = Var.arg<string>(description = "Whether the build runs under CI: on or off") |> withDefault "off"
+        LOCK_REFRESH = Var.arg<string>(description = "The package ids a lock re-resolves, * for every one")
+        LOCK_STALE = Var.arg<string>(description = "A stale lock: fail or warn") |> withDefault "fail"
+        SOURCE_DATE_EPOCH = Var.arg<string>(description = "The timestamp of pack entries and SBOM annotations, unix seconds; unset, 1980-01-01")
+    }
+
+/// Reading the variables of `HermeticVars` (the values parsed here; `Var.read` records them).
+module internal HermeticVarValues =
+
+    /// The DOS epoch, 1980-01-01: the oldest date a zip entry holds, and the timestamp when
+    /// `SOURCE_DATE_EPOCH` is unset, empty or not a number.
+    let epoch = System.DateTime (1980, 1, 1, 0, 0, 0, System.DateTimeKind.Utc)
+
+    /// A `SOURCE_DATE_EPOCH` value (unix seconds), clamped to `epoch`.
+    let sourceDateEpoch (value: string option) =
+        match value |> Option.map (fun v -> v.Trim ()) with
+        | None | Some "" -> epoch
+        | Some v ->
+            match System.Int64.TryParse v with
+            | true, seconds -> max epoch (System.DateTimeOffset.FromUnixTimeSeconds(seconds).UtcDateTime)
+            | false, _ -> epoch
+
+    /// `SOURCE_DATE_EPOCH` of the variable set (read, and so a dependency, here).
+    let readSourceDateEpoch : Recipe<ExecContext, System.DateTime> =
+        recipe {
+            let! value = Var.read<string> "SOURCE_DATE_EPOCH"
+            return sourceDateEpoch value
+        }
+
 /// The roots a kept evaluation and a lock file are written against: what a build links
 /// against sits under a package cache, a checkout and the SDK, and none of the three is in the
 /// same place on the next machine. A path under a root is written as `$(Token)/...` and
@@ -17,11 +66,11 @@ open Xake.Dotnet
 /// `builtin` / `make`.
 module Roots =
 
-    /// The machine's NuGet package cache: the *environment* variable `NUGET_PACKAGES`, else
-    /// `~/.nuget/packages` (`DotNetFwk.nugetRoot`). This is the package folder of the
-    /// context-free functions here (`builtin`, `make`), which have no build to read the script
+    /// The machine's NuGet package cache, `~/.nuget/packages` (`DotNetFwk.nugetRoot`; the
+    /// environment variable `NUGET_PACKAGES` is not read). This is the package folder of the
+    /// context-free functions here (`builtin`, `make`), which have no build to read the build
     /// variable from. A recipe takes the build's folder instead -- `current`/`currentWith`,
-    /// which follow `DotNetFwk.packageRoot ()`: the script variable `NUGET_PACKAGES` first --
+    /// which follow `DotNetFwk.packageRoot ()`: the build variable `NUGET_PACKAGES`, else `.packages` --
     /// so a lock recorded in a build with its own package folder tokenizes that folder as
     /// `$(NuGetPackageRoot)`.
     let nugetRoot () = DotNetFwk.nugetRoot ()
@@ -122,8 +171,8 @@ module Roots =
     let currentWith (extra: (string * string) list) : Recipe<ExecContext, (string * string) list> =
         recipe {
             let! options = getCtxOptions()
-            // the build's package folder (the script variable `NUGET_PACKAGES`, else the
-            // environment's), read -- and so a dependency -- here; an explicit override wins
+            // the build's package folder (the build variable `NUGET_PACKAGES`, else
+            // `.packages`), read -- and so a dependency -- here; an explicit override wins
             let! packageRoot = DotNetFwk.packageRoot ()
             let extra =
                 if extra |> List.exists (fst >> (=) nugetPackageRootToken) then extra
@@ -134,5 +183,5 @@ module Roots =
     /// The built-in roots for the project root this build runs with -- the engine's
     /// `ExecOptions.ProjectRoot`, not the process's current directory -- with
     /// `$(NuGetPackageRoot)` at the build's package folder (`DotNetFwk.packageRoot ()`: the
-    /// script variable `NUGET_PACKAGES`, else the environment's, else `~/.nuget/packages`).
+    /// build variable `NUGET_PACKAGES`, else `.packages` under the project root).
     let current : Recipe<ExecContext, (string * string) list> = currentWith []

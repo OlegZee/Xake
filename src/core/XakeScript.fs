@@ -22,9 +22,9 @@ module XakeScript =
         /// Targets to build: the default for `want`, which replaces it; command-line targets replace both
         Targets: string list
 
-        /// Global script variables: the script's values (a `var "N" "v"` op appends here).
+        /// The script's values: the entries given to `xake`/`xakeArgs` and every `var "N" "v"` op (appended); `CliVars` holds `-d`.
         /// A name defined twice in the script is an error at launch.
-        Vars: (string * string) list
+        ScriptVars: (string * string) list
 
         /// The `-d` values of the command line, the last `-d` first.
         CliVars: (string * string) list
@@ -43,6 +43,11 @@ module XakeScript =
 
         /// Ignores command line swithes
         IgnoreCommandLine: bool
+
+        /// No declaration reads the environment at launch (neither `XAKE__<NAME>` nor an explicit
+        /// `Env`/`envVar` source): for tests and for a program that embeds Xake. `getEnv` is not
+        /// affected. No command-line flag sets it.
+        IgnoreEnvironment: bool
 
         /// Disable logo message
         Nologo: bool
@@ -90,11 +95,12 @@ module XakeScript =
             FileLogLevel = Chatty
             Targets = []
             ThrowOnError = false
-            Vars = List<string*string>.Empty
+            ScriptVars = []
             CliVars = []
             VarDecls = []
             VarDefinedBy = []
             IgnoreCommandLine = false
+            IgnoreEnvironment = false
             Nologo = false
             DbFileName = ".xake"
             DryRun = false

@@ -353,7 +353,7 @@ type ``Import record``() =
         File.WriteAllText ("app/Data/t.txt", "t\n")
 
     member private x.Run (label: string) (rules': Rule<ExecContext> list) (targets: string list) =
-        xake {x.TestOptions with FileLog = label + ".log"; ThrowOnError = true; Vars = [ "CI", "off"; "CSC_SERVER", "off" ]; FileLogLevel = Loud} {
+        xake {x.TestOptions with FileLog = label + ".log"; ThrowOnError = true; ScriptVars = [ "CI", "off"; "CSC_SERVER", "off" ]; FileLogLevel = Loud} {
             want targets
             rules rules'
         }
@@ -522,8 +522,8 @@ module internal RecordKit =
 
     let run (options: ExecOptions) (label: string) (rules': Rule<ExecContext> list) (targets: string list) =
         // the defaults for the names the caller's options do not set: a name is defined once
-        let defaults = [ "CI", "off"; "CSC_SERVER", "off" ] |> List.filter (fun (name, _) -> not (List.exists (fst >> (=) name) options.Vars))
-        xake {options with FileLog = label + ".log"; ThrowOnError = true; Vars = options.Vars @ defaults; FileLogLevel = Loud} {
+        let defaults = [ "CI", "off"; "CSC_SERVER", "off" ] |> List.filter (fun (name, _) -> not (List.exists (fst >> (=) name) options.ScriptVars))
+        xake {options with FileLog = label + ".log"; ThrowOnError = true; ScriptVars = options.ScriptVars @ defaults; FileLogLevel = Loud} {
             want targets
             rules rules'
         }
@@ -807,7 +807,7 @@ type ``Import record project chain``() =
         let e2 = Assert.Catch(fun () -> RecordKit.run x.TestOptions "check" [ "check" => Locks.check locks ] [ "check" ])
         Assert.That(string e2, Does.Contain "/b/b.csproj' changed since the import")
         // a warning only, when asked for (not under CI)
-        RecordKit.build { x.TestOptions with Vars = [ "LOCK_STALE", "warn" ] } "build-stale-3" "Release"
+        RecordKit.build { x.TestOptions with ScriptVars = [ "LOCK_STALE", "warn" ] } "build-stale-3" "Release"
         Assert.That(File.ReadAllText "build-stale-3.log", Does.Contain "is stale")
         // imported again: the build is quiet
         RecordKit.import x.TestOptions "import-stale-2" RecordKit.recordDefault [ "a/a.csproj"; "b/b.csproj"; "c/c.csproj" ] |> ignore
@@ -1048,7 +1048,7 @@ type ``Compile under the compiler server``() =
         // this path, or another fixture's dying on its keepalive) rejects the compile, and the
         // client falls back to a csc process silently, where the analyzer does not crash
         RecordKit.runDotnet "." [ "build-server"; "shutdown"; "--vbcscompiler" ]
-        RecordKit.build { x.TestOptions with Vars = [ "CSC_SERVER", "on" ] } "build-crash" "Release"
+        RecordKit.build { x.TestOptions with ScriptVars = [ "CSC_SERVER", "on" ] } "build-crash" "Release"
         let log = File.ReadAllText "build-crash.log"
         Assert.That(log, Does.Contain "an analyzer crashed under the compiler server (AD0001): Crash.UnderServer (System.InvalidOperationException); compiling once more without the server")
         Assert.That(File.Exists "out/Release/net8.0/app/app.dll", Is.True)

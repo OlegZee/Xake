@@ -97,7 +97,7 @@ default, and the dependency of a read records the default (`Var (NUGET_FETCH, So
 of `Var (NUGET_FETCH, None)`): a target built before the import rebuilds once (K-5).
 
 **I-10 (definitions).** An imported field is a script definition of its key (S-4): importing a schema
-and also defining one of its keys (`var "CI" [Env "CI"]`, `var "CI" "on"`, `ExecOptions.Vars`, another
+and also defining one of its keys (`var "CI" [Env "CI"]`, `var "CI" "on"`, `ExecOptions.ScriptVars`, another
 schema with that key) fails the launch with E-2; importing the same schema twice does too. The
 remedy is to override the field instead.
 

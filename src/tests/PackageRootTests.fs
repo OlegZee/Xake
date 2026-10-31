@@ -33,7 +33,7 @@ type ``Package folder script variable``() =
         let resolved = ref None
 
         do xake {x.TestOptions with FileLog = "pkgroot-abs.log"; ThrowOnError = true
-                                    Vars = ["NUGET_PACKAGES", pkgs]} {
+                                    ScriptVars = ["NUGET_PACKAGES", pkgs]} {
             want (["PkgAbs.dll"; "pkgabs"])
             rules [
                 "PkgAbs.dll" ..> csc {
@@ -76,7 +76,7 @@ type ``Package folder script variable``() =
         let resolved = ref None
 
         do xake {x.TestOptions with FileLog = "pkgroot-rel.log"; ThrowOnError = true
-                                    Vars = ["NUGET_PACKAGES", "pkgs-rel"]} {
+                                    ScriptVars = ["NUGET_PACKAGES", "pkgs-rel"]} {
             want (["pkgrel"])
             rules [
                 "pkgrel" => recipe {
@@ -129,7 +129,7 @@ type ``Package folder script variable``() =
         let ex =
             Assert.Catch(fun () ->
                 do xake {x.TestOptions with FileLog = "pkgroot-off.log"; ThrowOnError = true
-                                            Vars = ["NUGET_PACKAGES", pkgs; "NUGET_FETCH", "off"]} {
+                                            ScriptVars = ["NUGET_PACKAGES", pkgs; "NUGET_FETCH", "off"]} {
                     want (["PkgOff.dll"])
                     rules [
                         "PkgOff.dll" ..> csc {
@@ -156,7 +156,7 @@ type ``Package folder script variable``() =
         File.WriteAllText ("PkgWarm.cs", "public class PkgWarm {}\n")
         let build name (vars: (string * string) list) =
             do xake {x.TestOptions with FileLog = "pkgroot-warm.log"; ThrowOnError = true
-                                        Vars = ["NUGET_PACKAGES", pkgs] @ vars} {
+                                        ScriptVars = ["NUGET_PACKAGES", pkgs] @ vars} {
                 want ([name])
                 rules [
                     name ..> csc {

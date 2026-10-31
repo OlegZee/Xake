@@ -49,7 +49,7 @@ type ``Toolset compiler``() =
         File.WriteAllText (srcFile, "public class VarToolset {}\n")
 
         do xake {x.TestOptions with FileLog="toolset-var.log"; FileLogLevel = Verbosity.Diag; ThrowOnError = true
-                                    Vars = ["CSC_TOOLSET", toolsetVersion]} {
+                                    ScriptVars = ["CSC_TOOLSET", toolsetVersion]} {
             want (["VarToolset.dll"])
 
             rules [
@@ -75,7 +75,7 @@ type ``Toolset compiler``() =
         let resolved = ref ""
 
         do xake {x.TestOptions with FileLog="toolset-block.log"; ThrowOnError = true
-                                    Vars = ["CSC_TOOLSET", toolsetVersion]} {
+                                    ScriptVars = ["CSC_TOOLSET", toolsetVersion]} {
             want (["blocktoolset"])
 
             rules [

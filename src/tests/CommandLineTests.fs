@@ -466,22 +466,22 @@ let ``var op without -d gives the script value``() =
     Assert.AreEqual(Some "script", !seen)
 
 [<Test>]
-let ``-d wins over ExecOptions Vars``() =
+let ``-d wins over ExecOptions ScriptVars``() =
     let seen = ref None
-    do xakeArgs ["-d"; "X=cli"] { quiet with Vars = ["X", "options"] } {
+    do xakeArgs ["-d"; "X=cli"] { quiet with ScriptVars = ["X", "options"] } {
         phony "main" (recipe { let! v = getVar "X" in seen := v })
     }
     Assert.AreEqual(Some "cli", !seen)
 
 [<Test>]
-let ``a var op and ExecOptions Vars of one name fail the launch``() =   // spec 8.1-4
+let ``a var op and ExecOptions ScriptVars of one name fail the launch``() =   // spec 8.1-4
     let ex =
         Assert.Throws<XakeException>(fun () ->
-            xakeArgs [] { quiet with Vars = ["X", "options"] } {
+            xakeArgs [] { quiet with ScriptVars = ["X", "options"] } {
                 var "X" "script"
                 phony "main" (recipe { () })
             })
-    StringAssert.Contains("Variable 'X' is defined twice in the script: by ExecOptions.Vars and by var \"X\" \"...\"; define it once", ex.Data0)
+    StringAssert.Contains("Variable 'X' is defined twice in the script: by ExecOptions.ScriptVars and by var \"X\" \"...\"; define it once", ex.Data0)
 
 [<Test>]
 let ``last -d of a duplicated name wins``() =
@@ -584,9 +584,9 @@ let ``vars mix per name: -d where given, var where not``() =
     Assert.AreEqual([Some "cli"; Some "script"; Some "cli"], !seen)
 
 [<Test>]
-let ``vars mix per name with ExecOptions Vars``() =
+let ``vars mix per name with ExecOptions ScriptVars``() =
     let seen = ref []
-    do xakeArgs ["-d"; "A=cli"; "-d"; "C=cli"] { quiet with Vars = ["D", "options"] } {
+    do xakeArgs ["-d"; "A=cli"; "-d"; "C=cli"] { quiet with ScriptVars = ["D", "options"] } {
         var "A" "script"
         var "B" "script"
         phony "main" (recipe {

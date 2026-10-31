@@ -409,7 +409,7 @@ let greet name = sprintf "Hello, %s" name
         let ex =
             Assert.Catch(fun () ->
                 do xake {x.TestOptions with FileLog="refpackbad.log"; ThrowOnError = true
-                                            Vars = ["NETSTANDARD_LIBRARY_VERSION", "0.0.1-xake-missing"]} {
+                                            ScriptVars = ["NETSTANDARD_LIBRARY_VERSION", "0.0.1-xake-missing"]} {
                     want (["refpackbad"])
                     rules [
                         "refpackbad" => recipe {
@@ -703,7 +703,7 @@ let greet name = sprintf "Hello, %s" name
             // a fresh database: the recipe must run, whatever an earlier run left behind
             try File.Delete (sprintf "pinned/pin-%s.exe" fwk) with _ -> ()
             try File.Delete x.TestOptions.DbFileName with _ -> ()
-            do xake {x.TestOptions with FileLog="csc-pinned.log"; ThrowOnError = true; Vars = vars} {
+            do xake {x.TestOptions with FileLog="csc-pinned.log"; ThrowOnError = true; ScriptVars = vars} {
                 want (["pinned"])
                 rules [
                     "pinned" => recipe {

@@ -146,7 +146,7 @@ type ``Csc fromlock``() =
 
             Assert.That(File.Exists scratchCscDll, Is.False, "the scratch NuGet cache already has the package -- test setup is wrong")
 
-            do xake {x.TestOptions with FileLog="csc-fromlock-restore.log"; ThrowOnError = true; Vars = [ "NUGET_PACKAGES", scratchNuget ]} {
+            do xake {x.TestOptions with FileLog="csc-fromlock-restore.log"; ThrowOnError = true; ScriptVars = [ "NUGET_PACKAGES", scratchNuget ]} {
                 want (["hello-restore"])
 
                 rules [

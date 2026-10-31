@@ -26,7 +26,7 @@ type VarOrigin =
     | Request
     /// `-d NAME=value`, with the name given (the external name of the variable)
     | Cli of string
-    /// an `ExecOptions.Vars` entry or a constant `var "N" "v"`
+    /// an `ExecOptions.ScriptVars` entry or a constant `var "N" "v"`
     | Script
     /// an `Env` source of the declaration
     | Env of string

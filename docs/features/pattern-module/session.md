@@ -10,7 +10,7 @@ then the typed layer (`Xake.Typed`) on top. Restart of `feature/typed-matches` (
 | PR | Branch | Worktree |
 |----|--------|----------|
 | — integration branch (target of every phase PR; merges to `dev` at the end) | `feature/patterns2` (cut from `dev` 2026-10-31) | — (no worktree; PR target only) |
-| — spec documents; first PR into `feature/patterns2` once the spec is approved | `feature/pattern-module` (rebased on `dev` 2026-10-31) | `.claude/worktrees/feature/pattern-module` |
+| — spec documents; first PR into `feature/patterns2` once the spec is approved | `feature/pattern-module` (rebased on `dev` 2026-10-31) | main checkout `/Users/olegz/projects/Xake` (the worktree was removed 2026-10-31; the branch was reset to `c65d764`) |
 | — frozen reference, **never merge** | `feature/typed-matches` | `.claude/worktrees/feature/typed-matches` |
 
 The frozen worktree has an uncommitted user edit to `experiments/08-consolidated/consumer/showcase.fsx`:

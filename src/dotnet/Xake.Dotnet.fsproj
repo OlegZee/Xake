@@ -7,6 +7,9 @@
          pulls its assembly into the same nupkg (see IncludeCoreOutput below), so both
          assemblies share one version and one publish. -->
     <PackageId>Xake</PackageId>
+    <!-- when Xake.Hermetic.Dotnet is packed (its HermeticVersion is its own), the version of
+         this project and so of the hermetic package's `Xake` dependency -->
+    <Version Condition="'$(XakePackageVersion)' != ''">$(XakePackageVersion)</Version>
     <TargetsForTfmSpecificBuildOutput>$(TargetsForTfmSpecificBuildOutput);IncludeCoreOutput</TargetsForTfmSpecificBuildOutput>
     <OutputType>Library</OutputType>
     <!-- The SDK would otherwise reference its own FSharp.Core, see the pin below. -->

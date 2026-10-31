@@ -108,7 +108,7 @@ type ``Lock generation``() =
         Assert.That(List.ofSeq ran |> List.sort, Is.EqualTo (names |> List.map (fun n -> n + "::Release") |> List.sort), "each lock once")
         let ranList = List.ofSeq ran
         Assert.That(List.findIndex ((=) "Xake::Release") ranList, Is.LessThan (List.findIndex ((=) "Xake.Dotnet::Release") ranList),
-                    "the referenced project first (Xake.Hermetic.Dotnet has no project reference, so its place is the scheduler's)")
+                    "the referenced project first")
 
         let locks = names |> List.map (fun n -> lockOf n "Release")
         let texts = locks |> List.map File.ReadAllText
@@ -131,8 +131,11 @@ type ``Lock generation``() =
             Assert.That(texts.[1], Does.Contain (sprintf "\"$(ProjectRoot)/out/Release/%s/Xake.dll\"" e.Framework))
             Assert.That(e.Evaluation.ProjectRefs, Is.EqualTo [ "Xake" ])
             Assert.That(e.Packages |> List.exists (fun p -> p.Id = "FSharp.Core" && p.Version = "8.0.100" && p.Direct), Is.True)
+        // until Xake 4.0 the hermetic project builds on the in-repo Xake: project references, no package
         let hermetic = Lock.parse (roots ()) texts.[2]
-        Assert.That(hermetic.Entries.Head.Packages |> List.exists (fun p -> p.Id = "Xake" && p.Direct), Is.True)
+        for e in hermetic.Entries do
+            Assert.That(e.Evaluation.ProjectRefs, Is.EqualTo [ "Xake"; "Xake.Dotnet" ])
+            Assert.That(e.Packages |> List.exists (fun p -> p.Id = "Xake"), Is.False)
 
         // an output left on disk by a build changes nothing; nothing is rewritten
         for fwk in [ "net462"; "netstandard2.0" ] do

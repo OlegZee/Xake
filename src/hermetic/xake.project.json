@@ -25,10 +25,8 @@
     "Pack.fs",
     "Sign.fs"
   ],
-  "packages": [
-    { "id": "Xake", "version": "[3.14.0.45, 4.0)" },
-    { "id": "FSharp.Core", "version": "8.0.100" }
-  ],
+  "projectRefs": ["Xake", "Xake.Dotnet"],
+  "packages": [{ "id": "FSharp.Core", "version": "8.0.100" }],
   "options": { "doc": true },
   "internalsVisibleTo": ["hermetic.tests"],
   "byFramework": { "net462": { "references": ["System.IO.Compression"] } },
@@ -42,6 +40,7 @@
     "projectUrl": "https://github.com/OlegZee/Xake",
     "repository": { "type": "git", "url": "https://github.com/OlegZee/Xake" },
     "icon": "../../Icon.png",
-    "readme": "readme.md"
+    "readme": "readme.md",
+    "bundle": ["Xake"]
   }
 }

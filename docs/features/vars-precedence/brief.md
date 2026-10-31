@@ -102,6 +102,14 @@ fixed in the PR 2 spec.
 
 Formalized in spec.md §3.11 (P-1..P-8), E-12, tests 85-96.
 
+## Ignoring the environment (owner, 2026-10-31)
+
+- New `ExecOptions.IgnoreEnvironment` (default `false`, next to `IgnoreCommandLine`) for tests and for embedding Xake in
+  a program: when `true`, no declaration reads the environment at launch (neither `XAKE__<NAME>` nor an explicit
+  `Env`/`envVar`); values come from `?vars`, `-d` (unless `IgnoreCommandLine`), the constant, `Default` / the typed
+  default; an environment-only secret is unset; E-12 is not checked; `getEnv` is unaffected; the banner shows it; no
+  CLI flag; `xakeEngine` keeps it `false`. Formalized in spec.md §3.12 (Q-1..Q-5), tests 97-105.
+
 ## Constraints
 
 - `ExecContext` and six records the hermetic package builds are frozen until 4.0 (release-process

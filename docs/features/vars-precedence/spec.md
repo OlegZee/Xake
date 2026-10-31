@@ -1,6 +1,6 @@
 # Spec: variable evaluation
 
-Status: rev. 6, amended 2026-10-29 (evaluation at launch; names), approved; amended 2026-10-31: implicit XAKE__ source (§3.11, P-1..P-8, E-12, tests 85-96); implemented in #111 (core) and #112 (libraries), merged, shipping as Xake 4.0 ("next minor" below reads 4.0; hermetic 0.11). It formalizes [brief.md](brief.md), whose decisions are final. It
+Status: rev. 6, amended 2026-10-29 (evaluation at launch; names), approved; amended 2026-10-31: implicit XAKE__ source (§3.11, P-1..P-8, E-12, tests 85-96); amended 2026-10-31: IgnoreEnvironment (§3.12, Q-1..Q-5, tests 97-105); implemented in #111 (core) and #112 (libraries), merged, shipping as Xake 4.0 ("next minor" below reads 4.0; hermetic 0.11). It formalizes [brief.md](brief.md), whose decisions are final. It
 replaces rev. 5 (git 7d11d56, see [archive](archive/README.md)) and revives S-1..S-4 of rev. 4
 (git 8b3ddc6); ids are kept where the rule is unchanged. Retired: rev. 5 Y-1..Y-3, X-6,
 W-3; rev. 4 S-5, K-2, K-3, W-1. File:line references are to this branch (dev, Xake 3.15.0). MUST, MUST NOT, SHOULD, MAY
@@ -327,6 +327,38 @@ env name of every rule and every non-`ArgOnly` field, implicit or explicit (B-2)
 read `XAKE__T`; `-d` of a secret stays an error (X-2), now E-1a under its key, its external name and `XAKE__T`
 (`set XAKE__T instead`). E-1b remains for a secret without an env source (an `ArgOnly` field).
 
+### 3.12 Ignoring the environment (amendment 2026-10-31)
+
+The owner's decision of 2026-10-31 ([brief.md](brief.md), "Ignoring the environment"): an option for tests and for a
+program that embeds Xake, so that no variable value can be changed from outside the program. With
+`IgnoreCommandLine` (layer 2) it pins the variable set to what the program states.
+
+**Q-1 (option).** `ExecOptions.IgnoreEnvironment : bool`, default `false`, next to `IgnoreCommandLine`. No command-line
+flag sets it (it is an embedding and test option); `ApplyCommandLine` keeps the value given in the options. `xake`,
+`xakeArgs` and `xakeEngine` leave it `false` (`xakeEngine` sets `IgnoreCommandLine` only).
+
+**Q-2 (no environment at launch).** When `IgnoreEnvironment` is `true`, launch reads no environment variable: every
+`Env` source of a declaration, the implicit `Env "XAKE__<NAME>"` (P-1) and an explicit `Env "X"` / `envVar = "X"`
+alike, and the implicit source of a constant or an `ExecOptions.Vars` entry (P-3), defines nothing, as if the variable
+were absent. The chain (V-2) is otherwise unchanged: request `?vars`, then `-d` (unless `IgnoreCommandLine`), then the
+constant value, then the declaration's remaining sources in order (`Default`, a field's typed default). A `required`
+declaration without such a value fails the launch with E-3. The declarations themselves do not change (their
+`Sources` keep the `Env` entries: T-1, `--help` B-2 and the secret name registration X-1 are as without the option).
+
+**Q-3 (secrets and environment-only variables).** A secret, or an `EnvOnly` field (`Var.env`), whose only source is the
+environment is then not set (banner `N (not set)`); that is no error by itself (`required` still applies, Q-2). The
+refusals stay: `-d` of a secret is E-1a/E-1b (X-2), `-d` of an `EnvOnly` field E-6 (S-5), and so are the `?vars`
+checks of G-4. The option does not turn an environment-only variable into a command-line one.
+
+**Q-4 (no collision check).** When `IgnoreEnvironment` is `true`, no implicit name is read, so P-5 is not checked:
+two keys of one implicit name are not E-12. E-2 (two definitions of one key) still applies.
+
+**Q-5 (shown; what it does not touch).** The banner prints, when the option is `true`, the line
+`  environment:  ignored (IgnoreEnvironment)` before the `vars:` section; no origin `env:<NAME>` then appears in it
+(B-1). Without the option the banner has no such line. `getEnv` in a recipe is not affected: it is an explicit, live
+read of the process environment (N-3), not a declaration source. Libraries read only the variable set (L-1) and are
+affected only through it; the environment of tool discovery (N-4) and of child processes is not affected.
+
 ## 4. Diagnostics
 
 Launch errors are collected, printed together at `Error`, and fail the run with exit code 2 before `setup` and any
@@ -573,6 +605,17 @@ runs. "The read fails": the launch succeeds, other targets run, the reading targ
 94. Given `var "R" [Default "d"]`, field `buildConfig = Var.string()`, field `E = Var.env<string>()`, field `A = Var.arg<string>()`; then `--help` lists `-d R=<value> [string], env: XAKE__R, default: d`, `-d buildConfig=<value> [string], env: XAKE__BUILD_CONFIG`, `$XAKE__E [string]` and `-d A=<value> [string]` without env (P-7, B-2).
 95. Given `var "X" [Default "d"]`; when a recipe reads `Var.string("X", envVar = "X") |> withDefault "d"`; then the read fails with E-7 `in sources` (P-2, P-6, T-1).
 96. Given `xakeEngine { var "V" "s" }` and env `XAKE__V=e` at `Start`; when `Demand("t", ["V","r"])`, then a plain `Demand("t")`; then `r`, then `e` (V-2, G-2, P-3).
+
+### 8.12 Ignoring the environment (amendment 2026-10-31)
+97. Given `IgnoreEnvironment = true`, env `XAKE__X=e`, `XAKE__Y=e`, `XAKE__Z=e`; and `var "X" "s"` (resp. `ExecOptions.Vars [Y,s]`, `var "Z" [Default "d"]`); then `X=s (script)` (resp. `Y=s (script)`, `Z=d (default)`) (Q-2, P-3).
+98. Given `IgnoreEnvironment = true`, env `A=a`; `var "X" [Env "A"; Default "d"]` (resp. field `Y = Var.string(envVar = "A") |> withDefault "d"`, field `N = Var.int() |> withDefault 5` with `XAKE__N=7`); then `X=d (default)` (resp. `Y=d (default)`, `let! n = schema.N` = `5`) (Q-2).
+99. Given `IgnoreEnvironment = true`, field `R = Var.string() |> required` and env `XAKE__R=r`; then launch fails with E-3 (Q-2, S-2).
+100. Given `IgnoreEnvironment = true`, `var "T" [Secret]` with env `XAKE__T=s` (resp. field `E = Var.env<string>()` with `XAKE__E=v`); then `T (not set)` (resp. `E (not set)`), no error, `s` in no log line; with `-d T=x` (resp. `-d E=x`), launch fails with E-1a (resp. E-6) (Q-3, X-2, S-5).
+101. Given `IgnoreEnvironment = true`, env `A=a` and `var "X" [Env "A"]`; when a recipe calls `getEnv "A"`; then `Some "a"`, recorded `EnvVar (A, Some "a")`, and `getVar "X"` = `None` (Q-5, N-3).
+102. Given `IgnoreEnvironment = true`, `IgnoreCommandLine = false`, env `XAKE__X=e`, `var "X" "s"` and `-d X=c`; then `X=c (cli)`; with also `IgnoreCommandLine = true`, `X=s (script)` (Q-2, V-2).
+103. Given `IgnoreEnvironment = true` and `var "a-b" []`, `var "A_B" [Default "x"]`; then no error (Q-4); with `var "X" "1"` and `var "X" []`, E-2 (R-4).
+104. Given `IgnoreEnvironment = true`, env `A=a` and `var "X" [Env "A"; Default "d"]`; then the banner has the line `  environment:  ignored (IgnoreEnvironment)` before `vars:` and no `env:` origin; with `IgnoreEnvironment = false`, no `environment:` line and `X=a (env:A)` (Q-5, B-1).
+105. Given `ExecOptions.Default` and `xakeEngine`; then `IgnoreEnvironment` is `false`; given a `RulesBuilder` engine with `IgnoreEnvironment = true`, `var "V" "s"` and env `XAKE__V=e` at `Start`; when `Demand("t", ["V","r"])`, then a plain `Demand("t")`; then `r`, then `s` (Q-1, Q-2, G-2).
 
 ## 9. Open points
 

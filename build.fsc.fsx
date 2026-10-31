@@ -31,7 +31,7 @@ let fingerprints = "xake.fingerprints"
 do xake { ExecOptions.Default with DbFileName = ".xake.fsc" } {
     filelog "build.log" Verbosity.Chatty
     varschema vars
-    var "NUGET_PACKAGES" ".packages"   // a default: -d NUGET_PACKAGES=<dir> overrides it
+    var "NUGET_PACKAGES" ".packages"   // a default: -d NUGET_PACKAGES=<dir> (from Xake 4.0 also $XAKE__NUGET_PACKAGES) overrides it
 
     rules [
         "main" <<< ["build"; "test"]

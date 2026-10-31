@@ -19,11 +19,13 @@ let projectVersion (path: string) =
     if m.Success then m.Groups.[1].Value.Trim() else "0.0.1"
 
 let vars = {|
-    Version    = Var.create<string>(description = "Version number for the Xake package, e.g. 1.2.3") |> withDefault "0.0.1"
+    // The env names are explicit: publish.yml exports VERSION / HERMETIC_VERSION, and from Xake 4.0
+    // a field without `envVar` reads XAKE__<NAME> (XAKE__VERSION) instead.
+    Version    = Var.create<string>(envVar = "VERSION", description = "Version number for the Xake package, e.g. 1.2.3") |> withDefault "0.0.1"
     // Xake.Hermetic.Dotnet is versioned on its own (0.x, may break): -d HermeticVersion=... or
     // $HERMETIC_VERSION. The default is the <Version> its project file carries.
-    HermeticVersion = Var.create<string>(description = "Version number for the Xake.Hermetic.Dotnet package, e.g. 0.1.0") |> withDefault (projectVersion "src/hermetic/Xake.Hermetic.Dotnet.fsproj")
-    NUGET_KEY  = Var.env<string>(description = "API key for NuGet.org, required for pushing packages") |> withDefault "" |> secret
+    HermeticVersion = Var.create<string>(envVar = "HERMETIC_VERSION", description = "Version number for the Xake.Hermetic.Dotnet package, e.g. 0.1.0") |> withDefault (projectVersion "src/hermetic/Xake.Hermetic.Dotnet.fsproj")
+    NUGET_KEY  = Var.env<string>(envVar = "NUGET_KEY", description = "API key for NuGet.org, required for pushing packages") |> withDefault "" |> secret
     TestFilter = Var.string(cliArg = "FILTER", envVar = "FILTER", description = "Runs only the tests whose name matches this regex, e.g. 'Rm'")
 |}
 

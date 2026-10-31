@@ -521,7 +521,9 @@ module internal RecordKit =
             File.WriteAllText (path, text)
 
     let run (options: ExecOptions) (label: string) (rules': Rule<ExecContext> list) (targets: string list) =
-        xake {options with FileLog = label + ".log"; ThrowOnError = true; Vars = options.Vars @ ([ "CI", "off"; "CSC_SERVER", "off" ] |> List.filter (fun (n, _) -> not (List.exists (fst >> (=) n) options.Vars))); FileLogLevel = Loud} {
+        // the defaults for the names the caller's options do not set: a name is defined once
+        let defaults = [ "CI", "off"; "CSC_SERVER", "off" ] |> List.filter (fun (name, _) -> not (List.exists (fst >> (=) name) options.Vars))
+        xake {options with FileLog = label + ".log"; ThrowOnError = true; Vars = options.Vars @ defaults; FileLogLevel = Loud} {
             want targets
             rules rules'
         }

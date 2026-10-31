@@ -123,7 +123,7 @@ module XakeScriptBuilder =
 
     let private ruleHelpLines (decls: VarDecl list) =
         [ for d in decls do
-            if d.DeclaredBy = VarDecl.ruleLabel d.Key then
+            if d.DeclaredBy = VarEvaluation.ruleLabel d.Key then
                 let envs = d.Sources |> List.choose (function Env e -> Some e | _ -> None)
                 let secret = if d.Secret <> NotSecret then " (secret)" else ""
                 let envStr = if envs.IsEmpty then "" else ", env: " + String.concat ", " envs
@@ -150,7 +150,7 @@ module XakeScriptBuilder =
                     | _ ->
                         // the command-line name, with the key of the variable when it differs
                         let key =
-                            decls |> List.tryPick (fun d -> if d.CliName = name && d.DeclaredBy <> VarDecl.ruleLabel d.Key then Some d.Key else None)
+                            decls |> List.tryPick (fun d -> if d.CliName = name && d.DeclaredBy <> VarEvaluation.ruleLabel d.Key then Some d.Key else None)
                         sprintf "  -d %s=<value> [%s]%s" name help.TypeName (key |> Option.map (keyNote name) |> Option.defaultValue "")
                 let required = if help.IsRequired then " (required)" else ""
                 let secret = if help.IsSecret then " (secret)" else ""
@@ -249,14 +249,14 @@ module XakeScriptBuilder =
         [<CustomOperation("var")>]
         member __.AddVar(XakeScript (options, rules), name: string, value: string) =
             XakeScript ({ options with Vars = options.Vars @ [name, value]
-                                       VarDefinedBy = options.VarDefinedBy @ [name, VarDecl.constantLabel name] }, rules)
+                                       VarDefinedBy = options.VarDefinedBy @ [name, VarEvaluation.constantLabel name] }, rules)
 
         /// A variable rule: at launch its sources are tried in list order (`Env "X"`, `Default "v"`),
         /// unless `-d` or a script value defines the name; `Secret`/`SecretHashed` make it a secret.
         /// The op only records the declaration.
         [<CustomOperation("var")>]
         member __.AddVar(XakeScript (options, rules), name: string, sources: VarSource list) =
-            let decl = VarDecl.ofRule name sources
+            let decl = VarEvaluation.ruleDecl name sources
             XakeScript ({ options with VarDecls = options.VarDecls @ [decl]
                                        VarDefinedBy = options.VarDefinedBy @ [name, decl.DeclaredBy] }, rules)
 
@@ -361,7 +361,7 @@ module XakeScriptBuilder =
         /// Starts a XakeEngine from raw EngineOptions without a script; `options.Variables` is
         /// used as given (empty by default: no declarations).
         static member Start(options: EngineOptions) =
-            let ctx, finalize = ExecCore.createContext options (ScriptRunner.flatVars options.Variables)
+            let ctx, finalize = ExecCore.createContext options (VarEvaluation.flatVars options.Variables)
             XakeEngine (ctx.Engine, ctx.Vars, ctx.ShowProgress, finalize)
 
         /// Builds a single target by name. Serializes concurrent requests for the same target:
@@ -370,7 +370,7 @@ module XakeScriptBuilder =
         /// mistyped variable fails the demand before any target runs.
         member this.Demand(targetName: string, ?vars: (string * string) list) : Task =
             if stopped then raise (System.InvalidOperationException "XakeEngine has been stopped")
-            match ScriptRunner.checkRequestVars engine.Options.Variables (defaultArg vars []) with
+            match VarEvaluation.checkRequestVars engine.Options.Variables (defaultArg vars []) with
             | [] -> this.DemandChecked(targetName, vars)
             | errors ->
                 let errorText = errors |> String.concat "\r\n"

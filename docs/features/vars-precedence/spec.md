@@ -1,6 +1,6 @@
 # Spec: variable evaluation
 
-Status: rev. 6, amended 2026-10-29 (evaluation at launch; names), approved. It formalizes [brief.md](brief.md), whose decisions are final. It
+Status: rev. 6, amended 2026-10-29 (evaluation at launch; names), approved; implemented in #111 (core) and #112 (libraries), merged, shipping as Xake 4.0 ("next minor" below reads 4.0; hermetic 0.11). It formalizes [brief.md](brief.md), whose decisions are final. It
 replaces rev. 5 (git 7d11d56, see [archive](archive/README.md)) and revives S-1..S-4 of rev. 4
 (git 8b3ddc6); ids are kept where the rule is unchanged. Retired: rev. 5 Y-1..Y-3, X-6,
 W-3; rev. 4 S-5, K-2, K-3, W-1. File:line references are to this branch (dev, Xake 3.15.0). MUST, MUST NOT, SHOULD, MAY

@@ -14,7 +14,7 @@ feature folder: [features/vars-precedence](features/vars-precedence/session.md).
   (`var "N" [Cli ..; Env ..; Default ..]` or a `varschema` field), first defined in list order.
   A name defined twice in the script is a launch error.
 - **Keys vs `-d` names:** the key is the internal name (a field's `name`, else the field name; the
-  `var` rule's name); `cliArg` / `Cli` is only the `-d` name. `-d` of a non-key name, of a
+  `var` rule's name); `cliArg` / `Cli` is only the `-d` name. `-d` of a key whose command-line name differs, of a
   secret or of a `Var.env` field stops the run.
 - **A `Var` read** (`let! x = vars.f`) returns the stored value of an equal declaration; no
   declaration or a different one is an error (E-7/E-8). It records `Var (N, value)`, never its

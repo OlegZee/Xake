@@ -1,6 +1,6 @@
 # Spec: PR 2 — library readers and the import of library declarations
 
-Status: draft for the owner's review (2026-10-30). It completes spec.md rev. 6 §3.6 (L-1..L-7) and
+Status: implemented in #112 (merged); the proposed conventions still await the owner's review (2026-10-30). It completes spec.md rev. 6 §3.6 (L-1..L-7) and
 §3.10 (the import outline) for PR 2; the decisions of [brief.md](brief.md) ("Libraries", "Import
 of library declarations") are final. MUST, MUST NOT, SHOULD, MAY are normative.
 

@@ -1,7 +1,7 @@
 # vars-precedence: brief
 
 The decisions in force (owner, 2026-10-28..29). Do not re-litigate. The spec ([spec.md](spec.md))
-formalizes them; rejected designs and their reasons are in [archive/](archive/README.md).
+formalizes them (implemented in #111 and #112, shipping as Xake 4.0); rejected designs and their reasons are in [archive/](archive/README.md).
 
 ## Principle
 

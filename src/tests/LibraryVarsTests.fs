@@ -281,12 +281,12 @@ type ``Library vars conformance (spec section 8-8, PR 2 spec)``() =
     [<Test>]
     member x.``pr2-78 an overridden field brings the environment in``() =
         let m = full "m78-pkgs"
-        withEnv ["NUGET_PACKAGES", m] (fun () ->
+        withEnv ["XAKE__NUGET_PACKAGES", m] (fun () ->
             let schema = { DotNetVars.Default with NUGET_PACKAGES = Var.string() |> withDefault ".packages" }
             let ops (s: XakeScript) = (xakeArgs [] (x.Opts (List<string>()))).Vars(s, schema)
             let root, deps, logged = x.Read [] ops (DotNetFwk.packageRoot ())
             Assert.AreEqual(m, root)
-            Assert.That(bannerVars logged, Does.Contain (sprintf "NUGET_PACKAGES=%s (env:NUGET_PACKAGES)" m))
+            Assert.That(bannerVars logged, Does.Contain (sprintf "NUGET_PACKAGES=%s (env:XAKE__NUGET_PACKAGES)" m))
             Assert.That(deps, Does.Contain(Var ("NUGET_PACKAGES", Some m))))
 
     [<Test>]

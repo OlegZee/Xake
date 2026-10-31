@@ -92,6 +92,8 @@ absent), `let! all = getRuleMatches ()` (a map). Also `getVar`, `getEnv`, `getCt
 
 ## Script variables
 
+Full reference: [variables.md](variables.md).
+
 ```fsharp
 let vars = {|
 	config = Var.string(cliArg = "config") |> withDefault "Debug"          // -d config=Release

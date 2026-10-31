@@ -44,6 +44,11 @@ module XakeScript =
         /// Ignores command line swithes
         IgnoreCommandLine: bool
 
+        /// No declaration reads the environment at launch (neither `XAKE__<NAME>` nor an explicit
+        /// `Env`/`envVar` source): for tests and for a program that embeds Xake. `getEnv` is not
+        /// affected. No command-line flag sets it.
+        IgnoreEnvironment: bool
+
         /// Disable logo message
         Nologo: bool
 
@@ -95,6 +100,7 @@ module XakeScript =
             VarDecls = []
             VarDefinedBy = []
             IgnoreCommandLine = false
+            IgnoreEnvironment = false
             Nologo = false
             DbFileName = ".xake"
             DryRun = false

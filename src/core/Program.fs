@@ -24,5 +24,7 @@ module Main =
     let xakeScript =
         xake ExecOptions.Default
 
+    /// The engine builder: no command line, no database, silent. `IgnoreEnvironment` stays false:
+    /// declarations read the environment at `Start` unless the options given say otherwise.
     let xakeEngine =
         RulesBuilder { ExecOptions.Default with IgnoreCommandLine = true; NoPersist = true; ConLogLevel = Silent; FileLogLevel = Silent; Progress = false }

@@ -85,6 +85,7 @@ let bannerLines (options: ExecOptions) (variables: Map<string, VarEntry>) (targe
       yield sprintf "  file log:     %s" fileLog
       yield sprintf "  setup:        %s" (list options.Setup)
       yield sprintf "  teardown:     %s" (list options.Teardown)
+      if options.IgnoreEnvironment then yield "  environment:  ignored (IgnoreEnvironment)"
       if List.isEmpty vars then yield "  vars:         (none)"
       else
         yield "  vars:"

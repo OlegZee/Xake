@@ -71,7 +71,7 @@ let private isSecretEntry (name: string) (entry: VarEntry) =
     Secrets.isSecret name || entry.Decl |> Option.exists isSecretDecl
 
 /// Builds the variable set at launch: evaluates every declaration once (the environment is
-/// read here and nowhere else), overlays `-d` and the script's values (first defined wins:
+/// read here and nowhere else, and not at all with `IgnoreEnvironment`), overlays `-d` and the script's values (first defined wins:
 /// `-d` > the script's value > the declaration's sources), and checks second definitions,
 /// secrets, scopes, required fields and typed values. Secret names are declared and their
 /// values registered for masking before anything is logged. Returns the set and the errors.
@@ -86,6 +86,8 @@ let launch (opts: ExecOptions) : Map<string, VarEntry> * string list =
         if Secrets.isSecret name then SecretMask.register value
 
     let errors = ResizeArray<string>()
+    // the environment of the declarations; none with IgnoreEnvironment (Q-2)
+    let readEnv name = if opts.IgnoreEnvironment then None else Util.getEnvVar name
     let given name = Util.getVar opts.CliVars name |> Option.isSome
 
     // one script definition per key: the ExecOptions.Vars entries first, then the ops in script order
@@ -107,7 +109,8 @@ let launch (opts: ExecOptions) : Map<string, VarEntry> * string list =
         match Map.tryFind key declared with
         | Some d -> envNames d = [implicitEnvName key]
         | None -> true                          // a constant or an ExecOptions.Vars entry
-    optionKeys @ (opts.VarDefinedBy |> List.map fst)
+    // with IgnoreEnvironment no implicit name is read: no collision check (Q-4)
+    (if opts.IgnoreEnvironment then [] else optionKeys @ (opts.VarDefinedBy |> List.map fst))
     |> List.distinct
     |> List.filter readsImplicit
     |> List.groupBy implicitEnvName
@@ -136,7 +139,7 @@ let launch (opts: ExecOptions) : Map<string, VarEntry> * string list =
 
     let ownValue (d: VarDecl) =
         d.Sources |> List.tryPick (function
-            | Env e -> Util.getEnvVar e |> Option.map (fun v -> v, VarOrigin.Env e)
+            | Env e -> readEnv e |> Option.map (fun v -> v, VarOrigin.Env e)
             | Default v -> Some (v, VarOrigin.Default)
             | Cli _ | Secret | SecretHashed -> None)
     // a -d name is a key unless it is the command-line name of a declaration, or the refused key of one
@@ -160,7 +163,7 @@ let launch (opts: ExecOptions) : Map<string, VarEntry> * string list =
                     | Some v, _ ->
                         // a constant reads its implicit env name first (P-3)
                         let env = implicitEnvName key
-                        match Util.getEnvVar env with
+                        match readEnv env with
                         | Some e -> Some (e, VarOrigin.Env env)
                         | None -> Some (v, VarOrigin.Script)
                     | None, Some d -> ownValue d

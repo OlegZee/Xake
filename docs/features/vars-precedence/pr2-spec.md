@@ -85,8 +85,9 @@ has a one-line description for `--help`.
 **I-8 (the import is an option).** A script imports a schema with `varschema DotNetVars.Default`,
 and changes fields with copy-and-update:
 `varschema { DotNetVars.Default with NUGET_PACKAGES = Var.string() |> withDefault ".packages" }`
-(the environment variable `NUGET_PACKAGES` now feeds it, S-1: an `ArgAndEnv` field without
-`envVar` reads the env name derived from its key, which is the key). Nothing is imported
+(the environment variable `XAKE__NUGET_PACKAGES` now feeds it, S-1: an `ArgAndEnv` field without
+`envVar` reads the implicit env name of its key, spec.md P-6; amended 2026-10-31, rev. 6 read `NUGET_PACKAGES`;
+`Var.string(envVar = "NUGET_PACKAGES")` keeps the plain name). Nothing is imported
 automatically: no assembly scanning, no import by opening a namespace or calling a library function.
 
 **I-9 (importing changes no value).** Importing a schema without overriding a field changes no value a
@@ -135,10 +136,10 @@ One line each: given / when / then (rules). Numbered after spec.md §8 (1-68).
 ### 4.2 Schemas and import
 76. Given the record `DotNetVars.Default` (resp. `HermeticVars.Default`); then its fields are exactly those of I-5, each argument-only, of type `string`, with no `name`/`cliArg`/`envVar`, the defaults of I-7 (I-5, I-6, I-7).
 77. Given `varschema DotNetVars.Default`, nothing set; then a csc target resolves the package folder `<root>/.packages`, fetching on, hermetic off, the compiler server — the values without the import; the banner shows `NUGET_FETCH=on (default)` (I-8, I-9).
-78. Given `varschema { DotNetVars.Default with NUGET_PACKAGES = Var.string() |> withDefault ".packages" }` and env `NUGET_PACKAGES=/m`; then the package folder is `/m`, banner `NUGET_PACKAGES=/m (env:NUGET_PACKAGES)` (I-8).
+78. Given `varschema { DotNetVars.Default with NUGET_PACKAGES = Var.string() |> withDefault ".packages" }` and env `XAKE__NUGET_PACKAGES=/m`; then the package folder is `/m`, banner `NUGET_PACKAGES=/m (env:XAKE__NUGET_PACKAGES)` (I-8, P-6; amended 2026-10-31).
 79. Given `varschema { DotNetVars.Default with CSC_JOBS = Var.string(envVar = "XAKE_CSC_JOBS") }` and env `XAKE_CSC_JOBS=2`; then the csc limit is 2, no dependency recorded (I-4, I-8).
 80. Given `varschema DotNetVars.Default` and `var "NUGET_FETCH" "off"` (resp. `varschema DotNetVars.Default` twice); then the launch fails with E-2 naming `varschema field NUGET_FETCH` (I-10).
 81. Given `varschema DotNetVars.Default` and `-d NUGET_FETCH=bogus`; then the launch succeeds and the reading target fails with E-5 `NUGET_FETCH='bogus': expected on or off` (I-6, L-6).
 82. Given `varschema {| HERMETIC = Var.bool() |}` and `-d HERMETIC=true`; when a csc target reads `HERMETIC`; then it fails with E-11 (I-3, I-11).
 83. Given `--help` with `varschema DotNetVars.Default`; then `-d NUGET_PACKAGES=<value> [string]` with the default `.packages` is listed and no env name (I-6, B-2).
-84. Given `varschema { HermeticVars.Default with CI = Var.string() |> withDefault "off" }` and env `CI=true`; then `underCi` = true; without the override, false (I-8, L-2).
+84. Given `varschema { HermeticVars.Default with CI = Var.string() |> withDefault "off" }` and env `XAKE__CI=true`; then `underCi` = true; without the override, false (I-8, L-2, P-6; amended 2026-10-31).

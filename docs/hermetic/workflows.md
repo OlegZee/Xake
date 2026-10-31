@@ -498,7 +498,7 @@ xakeScript {
 ```
 
 Or import the libraries' schemas and override the fields:
-`varschema { HermeticVars.Default with CI = Var.string() |> withDefault "off" }`. `-d CI=off`
+`varschema { HermeticVars.Default with CI = Var.string(envVar = "CI") |> withDefault "off" }`. `-d CI=off`
 opts out (records as a developer machine would), and `nofailonerror` does not soften it. Off
 CI a missing lock is still recorded and compiled.
 

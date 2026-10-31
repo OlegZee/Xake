@@ -34,6 +34,7 @@ PR 1 started 2026-10-29 by an implementer subagent: tests of spec §8.1-8.7 firs
 | #102 | `feature/vars-precedence` | spec rev. 6, brief, archive | merged |
 | #111 | `feature/vars-core` | core: names, `var` sources, launch evaluation, Var reads by declaration, errors, banner | merged (c0889d3) |
 | #112 | `feature/vars-libraries` | library readers without environment, `Var.read`, `DotNetVars.Default` / `HermeticVars.Default`; hermetic on the in-repo Xake | merged (a3bd326) |
+| - | `feature/vars-env-prefix` | implicit `XAKE__<NAME>` source (spec §3.11, P-1..P-8, E-12, tests 85-96), on top of docs PR #113 | local, not pushed |
 
 Implemented as specified; deviations are in [pr1-notes.md](pr1-notes.md) and
 [pr2-notes.md](pr2-notes.md). The work ships as **Xake 4.0** (breaking; owner), together with
@@ -54,6 +55,34 @@ part of PR 2 is back on #112 without a floor; `feature/vars-hermetic` is obsolet
 it). CI: `hermetic-compat` dropped, `bump-base` disabled, `hermetic-v*` paused until 4.0
 (docs/features/release-process/session.md).
 
+
+## 2026-10-31: environment prefix (branch `feature/vars-env-prefix`)
+
+Owner's decisions in [brief.md](brief.md) "Environment prefix"; spec amended (§3.11, E-12, tests
+85-96; amended tests 10, 14, 21, 22, 27, 30, 35 and pr2 78, 84). Implemented in
+`VarEvaluation.fs` (`implicitEnvName`, `ruleDecl` prepends the implicit `Env`, constants read
+`XAKE__N` at layer 3, collision check) and `Vars.fs` (`declare` derives `XAKE__` names).
+Readings taken by the implementer, for the owner:
+
+- **Constants and `ExecOptions.Vars`** (decision 3 and its assumption): `XAKE__N` overrides the
+  value only; a constant is still not a declaration for a Var read (E-8), is not listed in
+  `--help`, and has no secret mode (P-3).
+- **Collision (P-5)** counts declarations that read their implicit name (incl. constants and
+  `ExecOptions.Vars` entries); a rule whose explicit `Env` equals the implicit name of its own key
+  counts as implicit; explicit names and `Var.arg` fields take no part.
+- **Invalid characters**: anything other than `A-Z`, `0-9`, `_` after UPPER_SNAKE becomes `_`
+  (non-ASCII letters too). `toEnvName` only splits a lower-case letter followed by an upper-case
+  one: `vc91Config` gives `VC91CONFIG` (a digit before the capital does not split), as in 3.15.
+- **Secret rules** without an explicit `Env` now get E-1a (`set XAKE__T instead`) for `-d`,
+  where rev. 6 gave E-1b; E-1b remains for `Var.arg ... |> secret`.
+- **Sweep:** `build.fsx` `Version`/`HermeticVersion`/`NUGET_KEY` got explicit `envVar`
+  (`VERSION`, `HERMETIC_VERSION`, `NUGET_KEY`): publish.yml exports `VERSION` /
+  `HERMETIC_VERSION`, and build.fsx bootstraps on Xake 3.15.0, which does not know the prefix;
+  explicit names work on both. Workflows unchanged. `build.fsc.fsx` `Version`/`HermeticVersion`
+  left derived (nobody sets them from the environment; from 4.0 `XAKE__VERSION`), its
+  `NUGET_PACKAGES` constant comment notes `XAKE__NUGET_PACKAGES`. `DotNetVars`/`HermeticVars`
+  fields stay `Var.arg` (env-less, decision 5); their doc examples now use `envVar = "NUGET_PACKAGES"` /
+  `envVar = "CI"`.
 
 ## Leftovers
 

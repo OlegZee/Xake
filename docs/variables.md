@@ -88,15 +88,16 @@ A declaration has three names:
 - the **environment name**: `envVar` / `Env "X"`, else the implicit name below.
 
 With `p = Var.string(cliArg = "pkg")`, `-d pkg=v` sets the variable `p` and `getVar "p"` reads
-it; `-d p=v` stops the run (E-9). A key with two command-line names (a rule and a field of one
-key that disagree) is E-10.
+it; `-d p=v` stops the run (E-9). A rule with two `Cli` sources (`var "P" [Cli "a"; Cli "b"]`)
+is E-10; a rule and a field of one key are a second definition (E-2).
 
 ## The environment source `XAKE__<KEY>`
 
 Every declaration that names no environment variable of its own reads the environment variable
 `XAKE__<KEY>` first, before its `Default`. The name is the key in UPPER_SNAKE: a `_` between a
 lower-case and an upper-case letter, then upper case, and every character other than `A-Z`,
-`0-9` and `_` replaced by `_`.
+`0-9` and `_` replaced by `_`. Only a lower-case letter followed by a capital splits (the 3.15
+rule): `config2Path` gives `XAKE__CONFIG2PATH`, not `XAKE__CONFIG2_PATH`.
 
 | Declaration | Reads |
 |---|---|
@@ -111,15 +112,16 @@ lower-case and an upper-case letter, then upper case, and every character other 
 Rules of the prefix:
 
 - **Only declared names get one.** Xake does not scan the environment for `XAKE__*`: an
-  `XAKE__Z` that no declaration or constant names is not in the variable set. `getVar` of an
-  undeclared name finds only `-d` and engine values.
+  `XAKE__Z` that no declaration or constant names is not in the variable set. `getVar` of a
+  name that nothing in the script defines finds only `-d` and engine values.
 - **A constant stays a constant** for everything else: it is not a declaration for a `Var` read,
   `--help` does not list it, it is not a secret. The environment only overrides its value.
 - **Collisions are errors.** Two keys with the same implicit name (`a-b` and `A_B`, `fooBar` and
-  `FOO_BAR`) stop the run (E-12). Declarations with an explicit env name or no env source take
-  no part.
-- **Secrets travel this way.** `var "T" [Secret]` reads `XAKE__T`; passing it with `-d` is an
-  error.
+  `FOO_BAR`, a constant `x` and a rule `X`) stop the run (E-12); constants and `ExecOptions.Vars`
+  entries count. Declarations with an explicit env name or no env source (`Var.arg`) take no
+  part, except a rule whose explicit `Env` is its own implicit name.
+- **Secrets travel this way.** `var "T" [Secret]` reads `XAKE__T`; `-d T=...` and
+  `-d XAKE__T=...` are E-1a ("set XAKE__T instead").
 - The banner shows the source as `env:XAKE__<KEY>`; `--help` shows the environment name of
   every rule and field, implicit or explicit.
 
@@ -201,8 +203,9 @@ also for a plain `getEnv`.
 
 - **Where the value comes from.** Only its own sources: `XAKE__<KEY>` (the normal way) or an
   explicit `Env`. `-d` of a secret, under its key, command-line name or any env name, stops the
-  run (E-1a: "set XAKE__T instead of passing -d"); a script constant or a per-demand value of a
-  secret name is E-1b.
+  run (E-1a: "set XAKE__T instead of passing -d"; E-1b for a secret with no env source, i.e.
+  `Var.arg ... |> secret`); a per-demand value of a secret name is E-1b; a script constant or
+  `ExecOptions.Vars` entry of a secret name is a second definition (E-2).
 - **Masking.** Every logger Xake creates (console, `filelog`, `CustomLogger`, a custom `ILogger`
   given in the options) replaces each secret value of **4 or more characters** with `***`: the
   banner, the Debug dump, change reasons, `--dryrun`, `--dump`, tool output, errors. A value
@@ -281,7 +284,7 @@ Launch errors are collected, printed together at `Error`, and fail the run (exit
 | Id | Text | What to do |
 |---|---|---|
 | E-1a | `Variable 'N' is secret: secret variables come from the environment, set ENV instead of passing -d N=...` | pass it as `XAKE__<KEY>` or its `Env` |
-| E-1b | `Variable 'N' is secret: its value comes only from its declaration's sources, not from WHERE` | remove the constant, `-d` or per-demand value |
+| E-1b | `Variable 'N' is secret: its value comes only from its declaration's sources, not from WHERE` | remove the `-d` (secret without env source) or per-demand value |
 | E-2 | `Variable 'N' is defined twice in the script: by A and by B; define it once` | keep one definition |
 | E-3 | `Required variable 'N' is not provided` | pass it or give a default |
 | E-4 | `Failed to convert value 'v' for variable 'N' to type 'T'.` | fix the value |

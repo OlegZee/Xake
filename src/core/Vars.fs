@@ -34,14 +34,10 @@ module Vars =
         /// The same variable with another secret mode (used by `secret` and `secretHashed`).
         member v.WithSecret(mode: SecretMode) : RequiredVar<'t> = { v with Secret = mode }
 
-    /// Converts a camelCase or PascalCase field name to UPPER_SNAKE_CASE env var name.
-    let private toEnvName (fieldName: string) : string =
-        System.Text.RegularExpressions.Regex.Replace(fieldName, "(?<=[a-z])(?=[A-Z])", "_").ToUpperInvariant()
-
     /// Factory with optional named parameters.
     [<AbstractClass; Sealed>]
     type Var private () =
-        /// Resolves from CLI arg first, then env var (default).
+        /// Resolves from CLI arg first, then env var (`envVar`, else `XAKE__<NAME>` of its key).
         static member create<'t>(?name: string, ?cliArg: string, ?envVar: string, ?description: string) : OptionalVar<'t> =
             { FieldName = ""; Name = name; CliArgName = cliArg; EnvName = envVar; Description = description; Scope = ArgAndEnv; Secret = NotSecret }
 
@@ -54,7 +50,7 @@ module Vars =
         static member bool(?name: string, ?cliArg: string, ?envVar: string, ?description: string) : OptionalVar<bool> =
             Var.create(?name = name, ?cliArg = cliArg, ?envVar = envVar, ?description = description)
 
-        /// Resolves from environment variable only; CLI args are never checked.
+        /// Resolves from environment variable only (`envVar`, else `XAKE__<NAME>`); CLI args are never checked.
         static member env<'t>(?envVar: string, ?description: string) : OptionalVar<'t> =
             { Var.create(?envVar = envVar, ?description = description) with Scope = EnvOnly }
 
@@ -62,7 +58,7 @@ module Vars =
         static member arg<'t>(?cliArg: string, ?description: string) : OptionalVar<'t> =
             { Var.create(?cliArg = cliArg, ?description = description) with Scope = ArgOnly }
 
-        /// A secret read from the environment only: the database keeps whether it is set, never
+        /// A secret read from the environment only (`envVar`, else `XAKE__<NAME>`): the database keeps whether it is set, never
         /// the value; the value is masked in all output; `-d NAME=value` is refused.
         /// Pipe it to `secretHashed` to rebuild when the value changes.
         static member secret<'t>(?envVar: string, ?description: string) : OptionalVar<'t> =
@@ -113,12 +109,13 @@ module Vars =
         { required v with DefaultValue = Some value }
 
     /// The declaration a `Var.*` value stands for (its key: `name`, else the field name; its
-    /// command-line name: `cliArg`, else the key), with its env name: the sources are its env
-    /// name (unless argument-only) and its default, as a string.
+    /// command-line name: `cliArg`, else the key), with its env name (`envVar`, else the implicit
+    /// `XAKE__<NAME>` of its key): the sources are its env name (unless argument-only) and its
+    /// default, as a string.
     let internal declare (fieldName: string) (name: string option) (cliArgName: string option) (envName: string option)
                          (scope: LookupScope) (secret: SecretMode) (defaultValue: obj option) (isRequired: bool) (valueType: System.Type) =
         let resolvedName = defaultArg name fieldName
-        let resolvedEnvName = envName |> Option.defaultWith (fun () -> toEnvName resolvedName)
+        let resolvedEnvName = envName |> Option.defaultWith (fun () -> VarEvaluation.implicitEnvName resolvedName)
         let decl : VarDecl =
             { Key = resolvedName
               CliName = defaultArg cliArgName resolvedName

@@ -170,8 +170,8 @@ let ``OptionalVar returns None when both CLI arg and env var are absent``() =
     Assert.AreEqual(None, !result)
 
 [<Test>]
-let ``auto-env: buildConfig resolves from BUILD_CONFIG env var derived from name``() =
-    System.Environment.SetEnvironmentVariable("BUILD_CONFIG", "Release")
+let ``auto-env: buildConfig resolves from XAKE__BUILD_CONFIG env var derived from name``() =
+    System.Environment.SetEnvironmentVariable("XAKE__BUILD_CONFIG", "Release")
     try
         let vars = {| cfg = Var.create<string>(name = "buildConfig") |}
         let result = ref None
@@ -186,11 +186,11 @@ let ``auto-env: buildConfig resolves from BUILD_CONFIG env var derived from name
 
         Assert.AreEqual(Some "Release", !result)
     finally
-        System.Environment.SetEnvironmentVariable("BUILD_CONFIG", null)
+        System.Environment.SetEnvironmentVariable("XAKE__BUILD_CONFIG", null)
 
 [<Test>]
 let ``name param derives env while cliArg overrides CLI lookup``() =
-    System.Environment.SetEnvironmentVariable("LOGICAL_NAME", "from-env")
+    System.Environment.SetEnvironmentVariable("XAKE__LOGICAL_NAME", "from-env")
     try
         let vars = {| logical = Var.create<string>(name = "logicalName", cliArg = "externalName") |}
         let fromEnv = ref None
@@ -215,7 +215,7 @@ let ``name param derives env while cliArg overrides CLI lookup``() =
         Assert.AreEqual(Some "from-env", !fromEnv)
         Assert.AreEqual(Some "from-cli", !fromCli)
     finally
-        System.Environment.SetEnvironmentVariable("LOGICAL_NAME", null)
+        System.Environment.SetEnvironmentVariable("XAKE__LOGICAL_NAME", null)
 
 [<Test>]
 let ``vars sets FieldName from anonymous record property name``() =
@@ -305,7 +305,7 @@ let ``varschema preserves explicit cliArg for lookup and FieldName``() =
 
 [<Test>]
 let ``varschema uses explicit name for derived CLI and env lookup``() =
-    System.Environment.SetEnvironmentVariable("BUILD_CONFIG", "Release")
+    System.Environment.SetEnvironmentVariable("XAKE__BUILD_CONFIG", "Release")
     try
         let vars = {|
             myAlias = Var.create<string>(name = "buildConfig")
@@ -333,7 +333,7 @@ let ``varschema uses explicit name for derived CLI and env lookup``() =
         Assert.AreEqual(Some "Debug", !fromCli)
         Assert.AreEqual("myAlias", vars.myAlias.FieldName)
     finally
-        System.Environment.SetEnvironmentVariable("BUILD_CONFIG", null)
+        System.Environment.SetEnvironmentVariable("XAKE__BUILD_CONFIG", null)
 
 [<Test>]
 let ``varschema mixes explicit cliArg names with implicit property names``() =
@@ -495,7 +495,7 @@ let ``Var.env reads from env var``() =
 
 [<Test>]
 let ``Var.env refuses a CLI arg``() =
-    System.Environment.SetEnvironmentVariable("MY_TOKEN", "from-env")
+    System.Environment.SetEnvironmentVariable("XAKE__MY_TOKEN", "from-env")
     try
         let vars = {|
             myToken = Var.env()
@@ -507,9 +507,9 @@ let ``Var.env refuses a CLI arg``() =
                     varschema vars
                     phony "main" (recipe { let! _ = vars.myToken in () })
                 })
-        StringAssert.Contains("Variable 'myToken' comes only from the environment variable MY_TOKEN, not from -d myToken=...", ex.Data0)
+        StringAssert.Contains("Variable 'myToken' comes only from the environment variable XAKE__MY_TOKEN, not from -d myToken=...", ex.Data0)
     finally
-        System.Environment.SetEnvironmentVariable("MY_TOKEN", null)
+        System.Environment.SetEnvironmentVariable("XAKE__MY_TOKEN", null)
 
 [<Test>]
 let ``Var.arg reads from CLI arg``() =
@@ -528,7 +528,7 @@ let ``Var.arg reads from CLI arg``() =
 
 [<Test>]
 let ``Var.arg ignores env var``() =
-    System.Environment.SetEnvironmentVariable("EXT_MY_PATH", "system-path")
+    System.Environment.SetEnvironmentVariable("XAKE__EXT_MY_PATH", "system-path")
     try
         let vars = {| extMyPath = Var.arg(cliArg = "extMyPath") |> withDefault "default" |}
         let result = ref ""
@@ -543,7 +543,7 @@ let ``Var.arg ignores env var``() =
 
         Assert.AreEqual("default", !result)
     finally
-        System.Environment.SetEnvironmentVariable("EXT_MY_PATH", null)
+        System.Environment.SetEnvironmentVariable("XAKE__EXT_MY_PATH", null)
 
 [<Test>]
 let ``a field reads the -d value; a var op of its key is a second definition``() =

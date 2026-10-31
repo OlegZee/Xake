@@ -14,7 +14,10 @@ Migration, in short: a CI that put `NUGET_PACKAGES`, `XAKE_CSC_SERVER`, `XAKE_CS
 `XAKE_FSC_JOBS` in the environment adds `var "NUGET_PACKAGES" [Env "NUGET_PACKAGES"]` (and the
 like, see below) or passes `-d`; a recipe that reads `Var.*` declares the key in `varschema`; a
 script that reads `getVar "pkg"` for a field with `cliArg = "pkg"` reads the field's own key;
-a name defined twice in a script is removed; credentials are not passed with `-d`.
+a name defined twice in a script is removed; credentials are not passed with `-d`; a field
+without `envVar` that was set from the environment under its plain name gets `envVar = "NAME"`
+(or the environment variable is renamed to `XAKE__NAME`), and a CI that happens to export
+`XAKE__<NAME>` for a constant `var` checks that it means it.
 
 **Variables are evaluated once, before the build, by declarations the script states.**
 Details: [tasks.md](tasks.md#script-variables).
@@ -47,7 +50,24 @@ Details: [tasks.md](tasks.md#script-variables).
 - **Breaking: `-d` of a secret stops the run**, under its key, its command-line name or one of its
   environment names (3.15 warned for an argument secret); `-d` of a `Var.env` field stops the run
   (3.15 ignored it). `getVar`/`getEnv` of a secret return the value; masking applies to output.
-  Mark credential fields secret: `build.fsx` now has `NUGET_KEY = Var.env ... |> secret`.
+  Mark credential fields secret: `build.fsx` now has `NUGET_KEY = Var.env(envVar = "NUGET_KEY") |> secret`.
+- **Breaking: an implicit `XAKE__<NAME>` environment source.** Every declaration without an
+  explicit environment name reads `XAKE__<NAME>` first, `NAME` being its key in UPPER_SNAKE
+  (`buildConfig` -> `XAKE__BUILD_CONFIG`, `netfx-target` -> `XAKE__NETFX_TARGET`): a `var` rule
+  without an `Env` source (`var "N" [Default "d"]` reads `XAKE__N`, then the default), a
+  `Var.string`/`int`/`bool`/`create`/`env`/`secret` field without `envVar`. The 3.15 derived name
+  without the prefix (`BUILD_CONFIG`) is no longer read, with no compatibility path. An explicit
+  `Env "X"` / `envVar = "X"` replaces the implicit source; `Var.arg` has no environment source.
+  Migration: keep a plain name with `envVar = "NAME"` / `Env "NAME"`, or export `XAKE__NAME`.
+- **Breaking: a constant is overridden by `XAKE__<NAME>`.** `var "N" "v"` and an
+  `ExecOptions.Vars` entry take `XAKE__N` when it is present (banner `env:XAKE__N`), else `v`;
+  `-d` still wins. Names that nothing declares get no implicit source: `XAKE__*` variables are not
+  scanned into the variable set. Two keys whose implicit names are equal (`a-b` and `A_B`,
+  `fooBar` and `FOO_BAR`) stop the run: `Variables 'A' and 'B' both read the environment variable
+  XAKE__N; rename one, or give one an explicit Env source`.
+- **Secrets through `XAKE__`:** `var "T" [Secret]` reads `XAKE__T`, the normal way to pass a
+  secret; `-d T=...` and `-d XAKE__T=...` stop the run ("set XAKE__T instead"). `--help` shows the
+  environment name of every rule and field, implicit or explicit.
 - **Engine:** `Demand(target, vars)` values now win over the script's values (they were shadowed);
   a per-demand value for a secret, an environment-only or a mistyped variable fails the demand
   before any target. `XakeEngine.Start` raises `XakeException` on a launch error.
@@ -93,8 +113,8 @@ Details: [tasks.md](tasks.md#script-variables).
 - **`DotNetVars.Default`**: the variables Xake.Dotnet reads, as an optional schema
   (`NUGET_PACKAGES`, `NUGET_FETCH`, `HERMETIC`, `CSC_SERVER`, `XAKE_CSC_SERVER`, `CSC_JOBS`,
   `FSC_JOBS`; strings, `-d` only, the library's defaults). `varschema DotNetVars.Default` lists them
-  in `--help` and the banner; `{ DotNetVars.Default with NUGET_PACKAGES = Var.string() |> withDefault ".packages" }`
-  also takes the environment. Importing changes no value; a target built before the import
+  in `--help` and the banner; `{ DotNetVars.Default with NUGET_PACKAGES = Var.string(envVar = "NUGET_PACKAGES") |> withDefault ".packages" }`
+  also takes the environment (without `envVar`, `XAKE__NUGET_PACKAGES`). Importing changes no value; a target built before the import
   rebuilds once (its dependency records the default).
 
 ## 3.15.0 (2026-10-29)

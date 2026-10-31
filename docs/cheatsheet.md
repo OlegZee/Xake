@@ -102,8 +102,9 @@ let vars = {|
 |}
 xake ExecOptions.Default {
 	varschema vars                                   // declares them; --help lists them
-	var "VERSION" "1.0.0"                            // a constant; -d VERSION=... wins
+	var "VERSION" "1.0.0"                            // a constant; $XAKE__VERSION, then -d VERSION=... win
 	var "PKGS" [Cli "pkgs"; Env "PKGS_DIR"; Default ".packages"]  // a rule: -d pkgs=..., else env, else default
+	var "OUT" [Default "bin"]                        // no Env: reads $XAKE__OUT, else "bin"
 	phony "main" (recipe { let! token = vars.token in () })
 }
 ```
@@ -112,7 +113,9 @@ Values are computed once at launch: `-d` > the script's `var`/`ExecOptions.Vars`
 declaration's sources. A name is defined once in the script (a second definition stops the run).
 A `Var` read (`let! x = vars.config`) needs a `varschema` field of its key; otherwise use
 `getVar "N"` (the variable set) or `getEnv "X"` (the environment). A field's key is its `name`,
-else the field name; `cliArg` is only its `-d` name.
+else the field name; `cliArg` is only its `-d` name. A declaration without an explicit `Env` /
+`envVar` reads `XAKE__<KEY in UPPER_SNAKE>` first (`buildConfig` -> `XAKE__BUILD_CONFIG`), and
+`XAKE__<NAME>` overrides a constant `var`; `Var.arg` reads no environment.
 
 Libraries (Xake.Dotnet, Xake.Hermetic.Dotnet) read only this variable set, never the environment:
 `var "NUGET_PACKAGES" [Env "NUGET_PACKAGES"]` takes it; `varschema DotNetVars.Default` lists what they

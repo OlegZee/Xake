@@ -19,8 +19,8 @@
   variable says otherwise); the lock gate no longer reports message 2.
 - **`HermeticVars.Default`**: the variables the package reads, as an optional schema for
   `varschema` (`CI`, `LOCK_REFRESH`, `LOCK_STALE`, `SOURCE_DATE_EPOCH`), e.g.
-  `varschema { HermeticVars.Default with CI = Var.string() |> withDefault "off" }` to take the
-  runner's `CI`.
+  `varschema { HermeticVars.Default with CI = Var.string(envVar = "CI") |> withDefault "off" }` to take the
+  runner's `CI` (without `envVar` the field reads `XAKE__CI`, Xake 4.0).
 
 ## 0.10.0 (2026-10-29)
 

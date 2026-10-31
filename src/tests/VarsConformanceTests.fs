@@ -248,14 +248,14 @@ type ``Vars conformance (spec section 8)``() =
 
     [<Test>]
     member x.``8.2-10 a field's env name derives from its key``() =
-        withEnv ["BUILD_CONFIG", "r"] (fun () ->
+        withEnv ["XAKE__BUILD_CONFIG", "r"] (fun () ->
             let logged = List<string>()
             let schema = {| buildConfig = Var.string() |}
             do xakeArgs [] (x.Opts logged) {
                 varschema schema
                 phony "main" (recipe { return () })
             }
-            Assert.That(bannerVars logged, Does.Contain "buildConfig=r (env:BUILD_CONFIG)"))
+            Assert.That(bannerVars logged, Does.Contain "buildConfig=r (env:XAKE__BUILD_CONFIG)"))
 
     [<Test>]
     member x.``8.2-11 an ArgOnly field takes no environment value``() =
@@ -316,7 +316,7 @@ type ``Vars conformance (spec section 8)``() =
             seen.Value
         let expected = "Failed to convert value 'x' for variable 'VC14N' to type 'System.Int32'."
         StringAssert.Contains(expected, fails (fun () -> run ["-d"; "VC14N=x"] |> ignore))
-        withEnv ["VC14N", "x"] (fun () ->
+        withEnv ["XAKE__VC14N", "x"] (fun () ->
             StringAssert.Contains(expected, fails (fun () -> run [] |> ignore))
             Assert.AreEqual(Some 4, run ["-d"; "VC14N=4"]))
 
@@ -419,7 +419,7 @@ type ``Vars conformance (spec section 8)``() =
         let seen = ref ""
         let deps = ref []
         do xakeArgs [] (x.Opts logged) {
-            var "VC21X" [Env "VC21X"; Default "d"]
+            var "VC21X" [Default "d"]
             phony "main" (recipe {
                 let! v = Var.string "VC21X" |> withDefault "d"
                 let! r = getResult()
@@ -431,7 +431,7 @@ type ``Vars conformance (spec section 8)``() =
         let text =
             fails (fun () ->
                 do xakeArgs [] (x.Opts logged) {
-                    var "VC21X" [Env "VC21X"; Default "d"]
+                    var "VC21X" [Default "d"]
                     phony "main" (recipe { let! _ = Var.string "VC21X" in () })
                 })
         StringAssert.Contains("by var \"VC21X\" [...] in sources:", text)
@@ -440,7 +440,7 @@ type ``Vars conformance (spec section 8)``() =
     member x.``8.3-22 a Var read without a declaration fails``() =
         let logged = List<string>()
         let readString = recipe { let! _ = Var.string "VC22Y" in () }
-        let expected = "Variable 'VC22Y' is read through Var but is not declared: declare it in varschema, or use getVar \"VC22Y\" or getEnv \"VC22Y\""
+        let expected = "Variable 'VC22Y' is read through Var but is not declared: declare it in varschema, or use getVar \"VC22Y\" or getEnv \"XAKE__VC22Y\""
         StringAssert.Contains(expected, fails (fun () -> do xakeArgs ["-d"; "VC22Y=1"] (x.Opts logged) { phony "main" readString }))
         StringAssert.Contains(expected, fails (fun () -> do xakeArgs [] (x.Opts logged) { var "VC22Y" "1"; phony "main" readString }))
         StringAssert.Contains(expected, fails (fun () -> do xakeArgs [] { x.Opts logged with Vars = ["VC22Y", "1"] } { phony "main" readString }))
@@ -578,7 +578,7 @@ type ``Vars conformance (spec section 8)``() =
         StringAssert.DoesNotContain("vc26-given-env-name", text + log)
 
     [<Test>]
-    member x.``8.5-27 -d of a secret without an Env source fails the launch``() =
+    member x.``8.5-27 -d of a secret rule without an explicit Env names its XAKE__ source``() =
         let logged = List<string>()
         let text =
             fails (fun () ->
@@ -586,7 +586,7 @@ type ``Vars conformance (spec section 8)``() =
                     var "VC27T" [Secret; Default "x"]
                     phony "main" (recipe { return () })
                 })
-        StringAssert.Contains("Variable 'VC27T' is secret: its value comes only from its declaration's sources, not from -d VC27T=...", text)
+        StringAssert.Contains("Variable 'VC27T' is secret: secret variables come from the environment, set XAKE__VC27T instead of passing -d VC27T=...", text)
         StringAssert.DoesNotContain("vc27-given-on-cli", text + allText logged)
 
     [<Test>]
@@ -632,7 +632,7 @@ type ``Vars conformance (spec section 8)``() =
                     varschema schema
                     phony "main" (recipe { return () })
                 })
-        StringAssert.Contains("Variable 'VC30T' is secret: secret variables come from the environment, set VC30T instead of passing -d VC30T=...", text)
+        StringAssert.Contains("Variable 'VC30T' is secret: secret variables come from the environment, set XAKE__VC30T instead of passing -d VC30T=...", text)
         Assert.That(logged, Has.None.Contains "[WARN]")
 
     [<Test>]
@@ -726,7 +726,7 @@ type ``Vars conformance (spec section 8)``() =
 
     [<Test>]
     member x.``8.5-35 a bad typed secret fails the launch without its value``() =
-        withEnv ["VC35T", "vc35-not-a-number"] (fun () ->
+        withEnv ["XAKE__VC35T", "vc35-not-a-number"] (fun () ->
             let logged = List<string>()
             let schema = {| VC35T = Var.int() |> secret |}
             let text =
@@ -842,7 +842,7 @@ type ``Vars conformance (spec section 8)``() =
                 "Variable 'VC41T' is secret: its value comes only from its declaration's sources, not from the ?vars of Demand",
                 demandFails (eng.Demand("t", ["VC41T", "vc41-request-secret"])))
             StringAssert.Contains(
-                "Variable 'VC41E' comes only from the environment variable VC41E, not from the ?vars of Demand",
+                "Variable 'VC41E' comes only from the environment variable XAKE__VC41E, not from the ?vars of Demand",
                 demandFails (eng.Demand("t", ["VC41E", "x"])))
             StringAssert.Contains(
                 "Failed to convert value 'x' for variable 'VC41N' to type 'System.Int32'.",
@@ -1019,3 +1019,199 @@ type ``Vars conformance (spec section 8)``() =
         let lines = XakeScriptBuilder.formatHelp o
         Assert.That(lines, Has.Some.Contains("-d vc68pkg=<value>").And.Contains("(key VC68P)"))
         Assert.That(lines, Has.Some.Contains("-d vc68r=<value>").And.Contains("(key VC68R)").And.Contains("env: VC68_E"))
+
+    // --- 8.11 Environment prefix (amendment 2026-10-31) ---
+
+    [<Test>]
+    member x.``8.11-85 a declaration reads XAKE__ NAME first``() =
+        let run withDefault =
+            let logged = List<string>()
+            if withDefault then
+                do xakeArgs [] (x.Opts logged) { var "VC85X" [Default "d"]; phony "main" (recipe { return () }) }
+            else
+                do xakeArgs [] (x.Opts logged) { var "VC85X" []; phony "main" (recipe { return () }) }
+            bannerVars logged
+        withEnv ["XAKE__VC85X", "e"] (fun () ->
+            Assert.That(run true, Does.Contain "VC85X=e (env:XAKE__VC85X)")
+            Assert.That(run false, Does.Contain "VC85X=e (env:XAKE__VC85X)"))
+        Assert.That(run true, Does.Contain "VC85X=d (default)")
+        Assert.That(run false, Does.Contain "VC85X (not set)")
+
+    [<Test>]
+    member x.``8.11-86 the implicit name is the key in UPPER_SNAKE, invalid characters as _``() =
+        withEnv ["XAKE__CONFIG_VC86", "r"; "XAKE__VC86_NETFX_TARGET_V2", "s"] (fun () ->
+            let seen = ref []
+            do xakeArgs [] (x.Opts (List<string>())) {
+                var "configVc86" [Default "d"]
+                var "vc86-netfx-target.v2" []
+                phony "main" (recipe {
+                    let! a = getVar "configVc86"
+                    let! b = getVar "vc86-netfx-target.v2"
+                    seen.Value <- [a; b] })
+            }
+            Assert.AreEqual([Some "r"; Some "s"], seen.Value))
+
+    [<Test>]
+    member x.``8.11-87 an explicit Env replaces the implicit source``() =
+        withEnv ["XAKE__VC87X", "e"; "XAKE__VC87Y", "e"] (fun () ->
+            let logged = List<string>()
+            let schema = {| VC87Y = Var.string(envVar = "VC87_A") |> withDefault "d" |}
+            do xakeArgs [] (x.Opts logged) {
+                var "VC87X" [Env "VC87_A"; Default "d"]
+                varschema schema
+                phony "main" (recipe { return () })
+            }
+            Assert.That(bannerVars logged, Does.Contain "VC87X=d (default)")
+            Assert.That(bannerVars logged, Does.Contain "VC87Y=d (default)"))
+
+    [<Test>]
+    member x.``8.11-88 XAKE__ NAME overrides a constant, -d overrides both``() =
+        let run args withOptions =
+            let logged = List<string>()
+            let seen = ref None
+            if withOptions then
+                do xakeArgs args { x.Opts logged with Vars = ["VC88X", "s"] } {
+                    phony "main" (recipe { let! v = getVar "VC88X" in seen.Value <- v })
+                }
+            else
+                do xakeArgs args (x.Opts logged) {
+                    var "VC88X" "s"
+                    phony "main" (recipe { let! v = getVar "VC88X" in seen.Value <- v })
+                }
+            seen.Value, bannerVars logged
+        for withOptions in [false; true] do
+            withEnv ["XAKE__VC88X", "e"] (fun () ->
+                let v, banner = run [] withOptions
+                Assert.AreEqual(Some "e", v)
+                Assert.That(banner, Does.Contain "VC88X=e (env:XAKE__VC88X)")
+                let v, banner = run ["-d"; "VC88X=c"] withOptions
+                Assert.AreEqual(Some "c", v)
+                Assert.That(banner, Does.Contain "VC88X=c (cli)"))
+            let v, banner = run [] withOptions
+            Assert.AreEqual(Some "s", v)
+            Assert.That(banner, Does.Contain "VC88X=s (script)")
+
+    [<Test>]
+    member x.``8.11-89 a constant is not a declaration for a Var read or --help``() =
+        withEnv ["XAKE__VC89Y", "2"] (fun () ->
+            let text =
+                fails (fun () ->
+                    do xakeArgs [] (x.Opts (List<string>())) {
+                        var "VC89Y" "1"
+                        phony "main" (recipe { let! _ = Var.string "VC89Y" in () })
+                    })
+            StringAssert.Contains("Variable 'VC89Y' is read through Var but is not declared", text))
+        let b = RulesBuilder(ExecOptions.Default)
+        let (XakeScript (o, _)) = b.AddVar(b.Zero(), "VC89Y", "1")
+        Assert.That(XakeScriptBuilder.formatHelp o, Has.None.Contains "VC89Y")
+
+    [<Test>]
+    member x.``8.11-90 an undeclared XAKE__ variable is not in the set``() =
+        withEnv ["XAKE__VC90Z", "1"] (fun () ->
+            let run args =
+                let logged = List<string>()
+                let seen = ref None
+                do xakeArgs args (x.Opts logged) {
+                    phony "main" (recipe { let! z = getVar "VC90Z" in seen.Value <- z })
+                }
+                seen.Value, bannerVars logged
+            let v, banner = run []
+            Assert.AreEqual(None, v)
+            Assert.That(banner, Has.None.Contains "VC90Z")
+            let v, banner = run ["-d"; "VC90Z=2"]
+            Assert.AreEqual(Some "2", v)
+            Assert.That(banner, Does.Contain "VC90Z=2 (cli)"))
+
+    [<Test>]
+    member x.``8.11-91 a field's derived env name carries the prefix, Var.arg has none``() =
+        withEnv ["CONFIG_VC91", "r"; "XAKE__VC91E", "v"; "XAKE__VC91A", "v"] (fun () ->
+            let logged = List<string>()
+            let schema = {| configVc91 = Var.string(); VC91E = Var.env<string>(); VC91A = Var.arg<string>() |}
+            do xakeArgs [] (x.Opts logged) {
+                varschema schema
+                phony "main" (recipe { return () })
+            }
+            let banner = bannerVars logged
+            Assert.That(banner, Does.Contain "configVc91 (not set)")
+            Assert.That(banner, Does.Contain "VC91E=v (env:XAKE__VC91E)")
+            Assert.That(banner, Does.Contain "VC91A (not set)"))
+        withEnv ["XAKE__CONFIG_VC91", "r"] (fun () ->
+            let logged = List<string>()
+            do xakeArgs [] (x.Opts logged) {
+                varschema {| configVc91 = Var.string() |}
+                phony "main" (recipe { return () })
+            }
+            Assert.That(bannerVars logged, Does.Contain "configVc91=r (env:XAKE__CONFIG_VC91)"))
+
+    [<Test>]
+    member x.``8.11-92 two keys of one implicit name fail the launch``() =
+        let e12 a b env = sprintf "Variables '%s' and '%s' both read the environment variable %s; rename one, or give one an explicit Env source" a b env
+        let main = recipe { return () }
+        let o () = x.Opts (List<string>())
+        StringAssert.Contains(e12 "vc92-a" "VC92_A" "XAKE__VC92_A",
+            fails (fun () -> do xakeArgs [] (o ()) { var "vc92-a" []; var "VC92_A" [Default "x"]; phony "main" main }))
+        StringAssert.Contains(e12 "fooVc92" "FOO_VC92" "XAKE__FOO_VC92",
+            fails (fun () -> do xakeArgs [] (o ()) { varschema {| fooVc92 = Var.string() |}; var "FOO_VC92" []; phony "main" main }))
+        StringAssert.Contains(e12 "vc92x" "VC92X" "XAKE__VC92X",
+            fails (fun () -> do xakeArgs [] (o ()) { var "vc92x" "1"; var "VC92X" []; phony "main" main }))
+        // an explicit or no env name takes no part
+        do xakeArgs [] (o ()) { var "vc92-b" [Env "VC92_ENV"]; var "VC92_B" []; phony "main" main }
+        do xakeArgs [] (o ()) { varschema {| barVc92 = Var.arg<string>() |}; var "BAR_VC92" []; phony "main" main }
+
+    [<Test>]
+    member x.``8.11-93 a secret rule takes XAKE__ NAME, -d of it fails``() =
+        withEnv ["XAKE__VC93T", "vc93-secret-env"] (fun () ->
+            let logged = List<string>()
+            do xakeArgs [] (x.Opts logged) {
+                var "VC93T" [Secret; Default "x"]
+                phony "main" (recipe { return () })
+            }
+            Assert.That(bannerVars logged, Does.Contain "VC93T=*** (env:XAKE__VC93T)")
+            StringAssert.DoesNotContain("vc93-secret-env", allText logged))
+        for given in ["XAKE__VC93T"; "VC93T"] do
+            let logged = List<string>()
+            let text =
+                fails (fun () ->
+                    do xakeArgs ["-d"; given + "=vc93-secret-given"] (x.Opts logged) {
+                        var "VC93T" [Secret; Default "x"]
+                        phony "main" (recipe { return () })
+                    })
+            StringAssert.Contains(sprintf "Variable '%s' is secret: secret variables come from the environment, set XAKE__VC93T instead of passing -d %s=..." given given, text)
+            StringAssert.DoesNotContain("vc93-secret-given", text + allText logged)
+
+    [<Test>]
+    member x.``8.11-94 --help shows the implicit env names``() =
+        let b = RulesBuilder(ExecOptions.Default)
+        let schema = {| configVc94 = Var.string(); VC94E = Var.env<string>(); VC94A = Var.arg<string>() |}
+        let (XakeScript (o, _)) = b.AddVar(b.Vars(b.Zero(), schema), "VC94R", [Default "d"])
+        let lines = XakeScriptBuilder.formatHelp o
+        Assert.That(lines, Does.Contain "  -d VC94R=<value> [string], env: XAKE__VC94R, default: d")
+        Assert.That(lines, Does.Contain "  -d configVc94=<value> [string], env: XAKE__CONFIG_VC94")
+        Assert.That(lines, Does.Contain "  $XAKE__VC94E [string]")
+        Assert.That(lines, Does.Contain "  -d VC94A=<value> [string]")
+
+    [<Test>]
+    member x.``8.11-95 an inline read with an explicit env name differs from the implicit one``() =
+        let text =
+            fails (fun () ->
+                do xakeArgs [] (x.Opts (List<string>())) {
+                    var "VC95X" [Default "d"]
+                    phony "main" (recipe { let! _ = Var.string("VC95X", envVar = "VC95X") |> withDefault "d" in () })
+                })
+        StringAssert.Contains("by var \"VC95X\" [...] in sources:", text)
+
+    [<Test>]
+    member x.``8.11-96 per-demand vars win over XAKE__ NAME, which wins over the constant``() =
+        withEnv ["XAKE__VC96V", "e"] (fun () ->
+            let seen = List<string option>()
+            let eng =
+                xakeEngine {
+                    var "VC96V" "s"
+                    phony "t" (recipe { let! v = getVar "VC96V" in lock seen (fun () -> seen.Add v) })
+                    start
+                }
+            try
+                eng.Demand("t", ["VC96V", "r"]).Wait()
+                eng.Demand("t").Wait()
+            finally eng.StopAsync().Wait()
+            Assert.AreEqual([Some "r"; Some "e"], List.ofSeq seen))

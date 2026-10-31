@@ -25,7 +25,8 @@ brief.md was taken; each point is listed here for the owner.
   `SOURCE_DATE_EPOCH`.
 - **Fields named by their keys verbatim** (`NUGET_PACKAGES`, not `NugetPackages`): the key is the
   field name with no `name` to repeat, so a copy-and-update override `NUGET_PACKAGES = Var.string()`
-  keeps the key and derives the env name `NUGET_PACKAGES` by itself. All fields are `string`,
+  keeps the key and derives the env name `NUGET_PACKAGES` by itself (since the 2026-10-31
+  prefix amendment: `XAKE__NUGET_PACKAGES`; `envVar = "NUGET_PACKAGES"` keeps the plain name). All fields are `string`,
   `Var.arg` (no `Env` source, L-1), `withDefault` the library's constant default where it has one
   (`.packages`, `on`, `off`, `on`, `off`, `fail`); the switches are parsed at the read, so an
   invalid switch is E-5 at the read with or without the import.

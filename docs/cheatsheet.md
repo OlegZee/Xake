@@ -112,6 +112,10 @@ A `Var` read (`let! x = vars.config`) needs a `varschema` field of its key; othe
 `getVar "N"` (the variable set) or `getEnv "X"` (the environment). A field's key is its `name`,
 else the field name; `cliArg` is only its `-d` name.
 
+Libraries (Xake.Dotnet, Xake.Hermetic.Dotnet) read only this variable set, never the environment:
+`var "NUGET_PACKAGES" [Env "NUGET_PACKAGES"]` takes it; `varschema DotNetVars.Default` lists what they
+read ([tasks.md](tasks.md#script-variables)).
+
 A secret: the database keeps whether it is set (`secret`) or a salted hash (`secretHashed`),
 never the value; every log masks it as `***`; `-d` of a secret stops the run. See
 [tasks.md](tasks.md#secret-variables).

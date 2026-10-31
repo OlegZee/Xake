@@ -93,3 +93,14 @@ Readings taken by the implementer, for the owner:
   has no CI job.
 - Optional: measure the launch-evaluation cost, dev vs 4.0.
 - Done 2026-10-31 (feature/vars-ignore-env): `ExecOptions.Vars` renamed to `ScriptVars`; `ExecOptions.IgnoreEnvironment` added (spec §3.12).
+
+## 2026-10-31: secret masking cost (closed)
+
+Measured on Apple M5 Pro, .NET SDK 10.0.403, Release (`perf-secrets.md`, scripts in `perf/`).
+Five secrets of 24-40 chars cost about 1.1 ms of CPU per 10,000 log lines (115 ns/line vs 3.7
+ns/line without secrets; about 22 ns per secret per line, almost all in `Contains`; matches add
+nothing measurable). End to end (10,000 lines to a file log) the difference is inside noise: about
+0.3% of the file-logging time, about 0.1% of the run. Conclusion: masking cost is not a concern; no
+optimisation needed. Side finding, not investigated: in one run without waiting for the logger,
+`build.log` had 3,445 of about 10,050 lines at exit (the file logger posts to a MailboxProcessor;
+the tail may be lost when the process exits).

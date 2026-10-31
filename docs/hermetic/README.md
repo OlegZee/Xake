@@ -1,5 +1,27 @@
 # Xake.Hermetic.Dotnet
 
+## 0.11.0 (unreleased)
+
+- **Ships together with Xake 4.0.** Until then the package builds on the in-repo Xake (project
+  references; owner, 2026-10-31) and depends on package `Xake` at the version it was built with;
+  it reads its variables with `Var.read` and the remedies below (`var "CI" [Env "CI"]`) use the
+  `var` source lists, both new in that Xake. 0.10.0 keeps its range `[3.14.0.45, 4.0)`.
+- **Breaking: no environment fallback.** `CI`, `LOCK_REFRESH` and `SOURCE_DATE_EPOCH` are read from
+  the build variables only (0.10 read the environment variable when the script variable was unset,
+  `SOURCE_DATE_EPOCH` from the environment only). On CI add `var "CI" [Env "CI"]` (and the like),
+  or pass `-d CI=on`. An empty `CI` is off; `CI` and `LOCK_STALE` keep their strict values (any
+  other value fails), an empty `LOCK_STALE` is `fail`.
+- `Pack.Options.Default` and `Sbom.PackageScopeOptions.Default` are the 1980 epoch always; the
+  recipes `Pack.Options.current ()` and `Sbom.PackageScopeOptions.current ()` take the build
+  variable `SOURCE_DATE_EPOCH`.
+- `Import.record` and `Project.import` hand the build's package folder to msbuild as
+  `NUGET_PACKAGES` in every case (the folder is `<project root>/.packages` unless the build
+  variable says otherwise); the lock gate no longer reports message 2.
+- **`HermeticVars.Default`**: the variables the package reads, as an optional schema for
+  `varschema` (`CI`, `LOCK_REFRESH`, `LOCK_STALE`, `SOURCE_DATE_EPOCH`), e.g.
+  `varschema { HermeticVars.Default with CI = Var.string() |> withDefault "off" }` to take the
+  runner's `CI`.
+
 ## 0.10.0 (2026-10-29)
 
 - Depends on `Xake [3.14.0.45, 4.0)` (was `[3.14.0.45, 3.15)`): a new Xake minor no longer needs

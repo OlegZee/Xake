@@ -12,7 +12,8 @@
 // machine, and a neighbour starting it, loading it or letting its keepalive expire makes a
 // client fall back to a plain csc, which fails a test that asserts the server. They sit in the
 // `Server = true` jobs, run one after another in list order; every other job runs with
-// XAKE_CSC_SERVER=off (csc in-process), so it never touches the server.
+// XAKE_CSC_SERVER=off (csc in-process), so it never touches the server; XakeTestBase passes the
+// environment variable to the test scripts as -d (Xake.Dotnet reads build variables only).
 
 type Slice =
     /// these fixture classes (full names, namespace included)

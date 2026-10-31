@@ -68,6 +68,29 @@ module Vars =
         static member secret<'t>(?envVar: string, ?description: string) : OptionalVar<'t> =
             { Var.env<'t>(?envVar = envVar, ?description = description) with Secret = SecretPresence }
 
+        /// <summary>
+        /// The read a library uses for a build variable it may export in a schema: the value of
+        /// `key` in the variable set, by key and type. When the key is declared (a `varschema`
+        /// field or a `var "N" [...]` rule, the library's exported field or the script's own),
+        /// that declaration is trusted as it is -- its sources, default and scope are the
+        /// script's business -- and only its type must be `'t`; a field's typed default comes
+        /// back typed. Undeclared, it is `getVar key`, the value converted to `'t`. Records what
+        /// `getVar` records (one `Var`, or a `SecretDep` for a secret), never reads the
+        /// environment; `None` when the key has no value: the library applies its own default.
+        /// </summary>
+        static member read<'t>(key: string) : Recipe<ExecContext, 't option> =
+            recipe {
+                let! ctx = getCtx()
+                let entry = ctx.Engine.Options.Variables |> Map.tryFind key
+                match VarEvaluation.keyedTypeMismatch key typeof<'t> entry with
+                | Some e -> failwith e
+                | None -> ()
+                let! value = getVar key
+                match VarEvaluation.keyedValue key typeof<'t> entry value with
+                | Ok v -> return Option.map unbox<'t> v
+                | Result.Error e -> return failwith e
+            }
+
     /// Marks a variable secret: the database keeps only whether it is set (a changed value
     /// rebuilds nothing, unset/set does), the value is masked (`***`) in all output and
     /// `--help` shows no default. Works on any var, before or after `required`/`withDefault`.

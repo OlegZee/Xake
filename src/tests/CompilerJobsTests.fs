@@ -64,13 +64,13 @@ type ``Compiler jobs``() =
         }
 
     [<Test>]
-    member _.``jobsLimit: the script variable, then the environment variable, then unlimited``() =
+    member _.``jobsLimit: the build variable, else unlimited; the environment is not read``() =
         let env = "XAKE_TEST_JOBS_" + System.Guid.NewGuid().ToString("N")
         let names = "TEST_JOBS", env
         try
             Assert.That(CompilerRunner.jobsLimit [] names, Is.EqualTo ((None: int option), (None: (string * string) option)))
             System.Environment.SetEnvironmentVariable (env, "3")
-            Assert.That(fst (CompilerRunner.jobsLimit [] names), Is.EqualTo (Some 3))
+            Assert.That(fst (CompilerRunner.jobsLimit [] names), Is.EqualTo (None: int option))
             Assert.That(fst (CompilerRunner.jobsLimit ["TEST_JOBS", "2"] names), Is.EqualTo (Some 2))
             Assert.That(fst (CompilerRunner.jobsLimit ["TEST_JOBS", "0"] names), Is.EqualTo (None: int option))
             Assert.That(fst (CompilerRunner.jobsLimit ["TEST_JOBS", " "] names), Is.EqualTo (None: int option))
@@ -106,7 +106,7 @@ type ``Compiler jobs``() =
         Assert.That(launches().Length, Is.EqualTo 2, "a different CSC_JOBS rebuilt the targets")
 
     [<Test>]
-    member x.``XAKE_FSC_JOBS limits fsc when FSC_JOBS is unset``() =
+    member x.``XAKE_FSC_JOBS limits fsc through a var rule``() =
         if Env.isWindows then Assert.Ignore "a shell script stands in for the compiler"
         let fake, launches = fakeCompiler "fsc-env"
         let fsharpCore = System.Reflection.Assembly.GetAssembly(typeof<option<int>>).Location
@@ -115,6 +115,7 @@ type ``Compiler jobs``() =
         System.Environment.SetEnvironmentVariable ("XAKE_FSC_JOBS", "1")
         try
             xake {x.TestOptions with FileLog = "fsc-env.log"; FileLogLevel = Verbosity.Diag; ThrowOnError = true; Threads = 4} {
+                var "FSC_JOBS" [Env "XAKE_FSC_JOBS"]
                 want ["main"]
                 rules [
                     "main" => recipe { do! need [ for i in 1..3 -> sprintf "fj%d.dll" i ] }

@@ -16,6 +16,20 @@ and [tracker.md](tracker.md).
   NuGet HTTP cache kept listing 3.14.0.45 as the newest for up to 30 minutes (restore NU1102);
   `bump-base` clears that cache when the floor changes.
 
+## 2026-10-31: the hermetic package builds on the in-repo Xake until 4.0
+
+Owner's decision: until the 4.0 release `Xake.Hermetic.Dotnet` builds against the in-repo Xake
+(ProjectReferences to `src/core`, private, and `src/dotnet`), not the published package; at 4.0
+`Xake.Dotnet` and the hermetic package are split out of `Xake` together (decision D). Done in #112
+(`feature/vars-libraries`): the Xake range and `XakeVersion` are gone from the fsproj; `dotnet pack`
+makes the `Xake` dependency the build's Xake version (`-p:XakePackageVersion`, build.fsx passes
+`-d Version`; the hermetic version is `-p:HermeticVersion`); `bump-base` is disabled; CI's
+`hermetic-compat` job is dropped (`build`'s `test` runs the hermetic tests on the commit's Xake);
+`publish.yml` refuses `hermetic-v*` until 4.0; the next hermetic release ships with Xake 4.0. The
+published 0.10's range `[3.14.0.45, 4.0)` stays as it is. Importer gap: `Import.descriptions`
+reads the private `src/core` reference as `package.bundle: ["Xake"]` in
+`src/hermetic/xake.project.json`; only `dotnet pack` packs today, so nothing acts on it.
+
 **Next step**: none in this folder until D0 (vars variant 3 and the pattern module on `dev`);
 then D1, the design note for moving `Xake.Dotnet` out of the `Xake` package.
 

@@ -188,6 +188,30 @@ let readUndeclared (read: VarDecl) (envName: string) =
     let shown = if read.Key = "" then read.CliName else read.Key
     sprintf "Variable '%s' is read through Var but is not declared: declare it in varschema, or use getVar \"%s\"%s" shown shown getEnvHint
 
+/// `Var.read` (pr2-spec I-3): the error when the stored declaration of `key` has a type other
+/// than the read's (E-11); `None` when there is none or it has the read's type.
+let keyedTypeMismatch (key: string) (readType: System.Type) (entry: VarEntry option) =
+    match entry with
+    | Some { Decl = Some stored } when stored.ValueType <> readType ->
+        Some (sprintf "Variable '%s' is read as '%s' but is declared by %s as '%s': declare it as '%s'"
+                      key readType.FullName stored.DeclaredBy stored.ValueType.FullName readType.FullName)
+    | _ -> None
+
+/// `Var.read` (pr2-spec I-1): the typed value of `key`, given its value in the set (`getVar`) and
+/// its entry. Declared: the stored declaration is trusted -- its typed default when the value is
+/// its own default, else the value converted with it. Undeclared: the value converted to the
+/// read's type (E-4 on failure).
+let keyedValue (key: string) (readType: System.Type) (entry: VarEntry option) (value: string option) : Result<obj option, string> =
+    match value, entry with
+    | None, _ -> Ok None
+    | Some v, Some ({ Decl = Some stored } as e) ->
+        match stored.DefaultValue with
+        | Some typed when value = e.Value && e.Origin = Some VarOrigin.Default -> Ok (Some typed)
+        | _ -> convertVar stored v |> Result.map Some
+    | Some v, _ ->
+        let decl = { ruleDecl key [] with ValueType = readType; Secret = if Secrets.isSecret key then SecretPresence else NotSecret }
+        convertVar decl v |> Result.map Some
+
 let private originText (key: string) = function
     | VarOrigin.Request -> "request"
     | VarOrigin.Cli ext -> if ext = key then "cli" else "cli:" + ext

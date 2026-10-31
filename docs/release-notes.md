@@ -55,6 +55,37 @@ Details: [tasks.md](tasks.md#script-variables).
   code that builds `ExecOptions`/`EngineOptions` with a full record expression (not `with`);
   `ExecContext` and the records Xake.Hermetic.Dotnet builds are unchanged.
 
+Library readers (Xake.Dotnet) and the optional import of library declarations:
+
+- **Breaking: Xake.Dotnet reads its build variables only from the variable set**, never from
+  the environment. `NUGET_PACKAGES`, `XAKE_CSC_SERVER`, `XAKE_CSC_JOBS`, `XAKE_FSC_JOBS` set
+  only in the environment are ignored; a CI that relied on one adds a declaration, e.g.
+  `var "NUGET_PACKAGES" [Env "NUGET_PACKAGES"]`, `var "XAKE_CSC_SERVER" [Env "XAKE_CSC_SERVER"]`,
+  `var "CSC_JOBS" [Env "XAKE_CSC_JOBS"]`, or passes `-d`.
+- **Breaking: the package folder defaults to `<project root>/.packages`** (was the environment
+  variable `NUGET_PACKAGES`, else `~/.nuget/packages`). It is always the build's own:
+  `packageRootWithSource` returns `ScriptVariable` for it, so `HERMETIC=on` accepts it without a
+  `NUGET_PACKAGES` variable; `PackageRootSource.EnvironmentVariable`/`UserProfile` are
+  `[<Obsolete>]`. A child `dotnet restore` gets the folder as `NUGET_PACKAGES`. The context-free
+  `DotNetFwk.nugetRoot ()` is `~/.nuget/packages` and reads no environment.
+- **Breaking: strict switches.** `NUGET_FETCH`, `XAKE_CSC_SERVER` (`on`/`off`, `true`/`false`,
+  `yes`/`no`, `1`/`0`) and `CSC_SERVER` (`on`, `off`, keepalive seconds) fail the reading target
+  on any other value (`CSC_SERVER='bogus': expected on, off or a number of seconds`; 3.15 warned
+  or took it as on). An empty value is the default (`-d NUGET_FETCH=` is on).
+- `RunOptions.Default.Server` is `Shared None` and reads nothing; `CompilerServer.fromEnvironment`
+  is `[<Obsolete>]` and returns `Shared None`. A recipe resolves the server from `CSC_SERVER`,
+  then `XAKE_CSC_SERVER` (`CompilerServer.resolve`).
+- **`Var.read<'t> "NAME"`**: the read for a library. A declared name is read through the
+  script's declaration, whatever its sources and default, only its type checked
+  (`Variable 'N' is read as 'T' but is declared by ... as 'U'`); an undeclared one is `getVar`.
+  No environment read, the dependency `getVar` records.
+- **`DotNetVars.Default`**: the variables Xake.Dotnet reads, as an optional schema
+  (`NUGET_PACKAGES`, `NUGET_FETCH`, `HERMETIC`, `CSC_SERVER`, `XAKE_CSC_SERVER`, `CSC_JOBS`,
+  `FSC_JOBS`; strings, `-d` only, the library's defaults). `varschema DotNetVars.Default` lists them
+  in `--help` and the banner; `{ DotNetVars.Default with NUGET_PACKAGES = Var.string() |> withDefault ".packages" }`
+  also takes the environment. Importing changes no value; a target built before the import
+  rebuilds once (its dependency records the default).
+
 ## 3.15.0 (2026-10-29)
 
 - **The published version is the tag.** `v3.15.0` goes to nuget.org as `3.15.0`, no longer with

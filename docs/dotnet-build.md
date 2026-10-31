@@ -288,10 +288,12 @@ script variable of the same name says otherwise.
 The packages Xake restores or reads itself -- reference packs, the `toolset` compiler, `fsc`'s
 default `FSharp.Core` -- live in one folder, `DotNetFwk.packageRoot ()` inside a recipe:
 
-1. the script variable `NUGET_PACKAGES` (relative to the project root, or absolute), read and
-   recorded as a dependency by every compile that resolves a framework;
-2. else the environment variable `NUGET_PACKAGES`;
-3. else `~/.nuget/packages`.
+1. the build variable `NUGET_PACKAGES` (relative to the project root, or absolute; blank is
+   unset), read and recorded as a dependency by every compile that resolves a framework;
+2. else `.packages` under the project root.
+
+The environment variable `NUGET_PACKAGES` is not read (Xake 3.16): a CI that relied on it adds
+`var "NUGET_PACKAGES" [Env "NUGET_PACKAGES"]` to the script, or passes `-d NUGET_PACKAGES=<dir>`.
 
 `DotNetFwk.restorePackage None` and `downloadPackages None` use that folder and pass it to the
 child `dotnet restore` as the environment variable `NUGET_PACKAGES`; `Some dir` names a folder
@@ -299,18 +301,35 @@ explicitly (`Restore.into` in Xake.Hermetic.Dotnet; `csc { lock }` and `fsc { lo
 build's folder, there is no per-target one).
 `resolveFramework` reads its reference packs from it and memoizes per folder. The functions with
 no build context -- `DotNetFwk.nugetRoot`, `normalizedPackageRoot None`, `locateFramework`,
-`locateFrameworkIn`, `locateFrameworkWith` -- see only the environment.
+`locateFrameworkIn`, `locateFrameworkWith` -- use the machine's cache, `~/.nuget/packages`.
 
-**Turning fetching off.** The script variable `NUGET_FETCH=off` (`-d NUGET_FETCH:off`, e.g.
+**Turning fetching off.** The build variable `NUGET_FETCH=off` (`-d NUGET_FETCH:off`, e.g.
 on CI with a warm cache) stops every download into the package folder: `restorePackage` and
 `downloadPackages` start no `dotnet restore`, and a package that is not there fails the build
 before the compiler runs, naming the package id and version and saying fetching is off. Values
-`off`, `false`, `no`, `0` turn it off; anything else, or unset, leaves it on.
+`off`, `false`, `no`, `0` turn it off, `on`, `true`, `yes`, `1` on; unset or empty leaves it on;
+anything else fails the target (`NUGET_FETCH='x': expected on or off`).
 `DotNetFwk.fetchEnabled ()` is the decision as a recipe (what `Restore.Options.Enabled = true`
 of Xake.Hermetic.Dotnet follows); `nofetch` after `lock` is the per-target form.
 
 `#r "nuget: ..."` in the build script is restored by `dotnet fsi` before Xake runs; only the
 environment variable reaches it.
+
+The variables Xake.Dotnet reads are also exported as a schema a script MAY import, to list them
+in `--help` and the banner and to feed them from the environment by copy-and-update (an option,
+not needed for the defaults):
+
+```fsharp
+xakeScript {
+    varschema { DotNetVars.Default with NUGET_PACKAGES = Var.string() |> withDefault ".packages" }   // + env NUGET_PACKAGES
+}
+```
+
+`DotNetVars.Default` has `NUGET_PACKAGES`, `NUGET_FETCH`, `HERMETIC`, `CSC_SERVER`,
+`XAKE_CSC_SERVER`, `CSC_JOBS`, `FSC_JOBS`: string fields named by the variable, `-d` only, with the
+library's defaults. The library reads them with `Var.read<'t> "NAME"`, which trusts whatever
+declaration the script gave the name and checks only its type.
+
 
 ## Hermetic mode
 
@@ -328,17 +347,17 @@ compilation together, one line each, the compiler first, then the references, th
 a pure gate: it never changes where an input resolves from. Every fix is a variable, a pin, or a
 default that already comes from a package.
 
-`HERMETIC` is read with `getVar` (changing it reruns the compiles); values as for `CI`:
+`HERMETIC` is read from the variable set (changing it reruns the compiles); values as for `CI`:
 `on|true|yes|1`, `off|false|no|0`, case-insensitive; default off; anything else fails with
 `HERMETIC='<x>': expected on or off`. There is no environment fallback: the rule belongs to the
 build definition, not to the machine. It is independent of `CI` (which is about whether a lock
 may be recorded) and of `NUGET_FETCH` (`HERMETIC=on` with `NUGET_FETCH=off` and a warm package
 folder is the offline build).
 
-**Package folder.** Only the script variable `NUGET_PACKAGES` makes the package folder the
-build's own; the environment variable (or `~/.nuget/packages`) does not satisfy the mode, since
-the folder is then a property of the machine. `DotNetFwk.packageRootWithSource ()` returns the
-folder with where it came from.
+**Package folder.** The package folder is always the build's own: the build variable
+`NUGET_PACKAGES`, or its default `.packages` under the project root (Xake 3.16; before, an unset
+variable meant the machine's folder, which the mode refused). `DotNetFwk.packageRootWithSource ()`
+returns the folder with `ScriptVariable` in both cases.
 
 **Prerequisites.** A prerequisite is an input the environment must provide, which no restore
 step fetches, checked up front. There is exactly one kind: the **.NET SDK at an exact version**
@@ -371,7 +390,7 @@ A hermetic setup for a csc build on SDK 10.0.x, and the extra pin an fsc build n
 ```fsharp
 xakeScript {
     var "HERMETIC" "on"
-    var "NUGET_PACKAGES" ".nuget/packages"
+    var "NUGET_PACKAGES" ".nuget/packages"   // optional: unset, it is .packages
     var "CSC_TOOLSET" "4.12.0"
     var "NETCORE_REF_VERSION" "10.0.12"
     var "FSHARP_CORE_VERSION" "8.0.100"   // fsc for net10.0

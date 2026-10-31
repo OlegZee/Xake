@@ -48,9 +48,9 @@ module Restore =
     type Options = {
         /// The package folder: `None` is the build's package folder, resolved where a build
         /// context exists (`resolve`, which `ensure`, `Lock.compileWith` and `Lock.buildWith`
-        /// call): `DotNetFwk.packageRoot ()`, the script variable `NUGET_PACKAGES`, else the
-        /// environment variable, else `~/.nuget/packages`. The context-free functions below
-        /// (`missing`, `verify`, `checkPresent`) read `None` as the environment's folder only
+        /// call): `DotNetFwk.packageRoot ()`, the build variable `NUGET_PACKAGES`, else
+        /// `.packages` under the project root. The context-free functions below (`missing`,
+        /// `verify`, `checkPresent`) read `None` as the machine's cache, `~/.nuget/packages`
         /// (`Roots.nugetRoot ()`); pass them resolved options. `Some dir` is a folder of the
         /// caller's choosing -- what a build agent points at `.packages/` so it can cache that
         /// one directory. The
@@ -63,7 +63,7 @@ module Restore =
         PackageRoot: string option
         /// Whether a package the lock names but the folder does not have may be downloaded.
         /// Default `true`, which means "follow the build": fetching then happens unless the
-        /// script variable `NUGET_FETCH` turns it off (`DotNetFwk.fetchEnabled ()`, applied by
+        /// build variable `NUGET_FETCH` turns it off (`DotNetFwk.fetchEnabled ()`, applied by
         /// `resolve` where a build context exists); `false` turns it off whatever
         /// `NUGET_FETCH` says. Restoring
         /// cannot change *what* gets compiled -- the lock fixes the version, and the per-file
@@ -78,14 +78,14 @@ module Restore =
         }
 
     /// The package folder in effect, normalized the way `Roots` writes paths. Context-free:
-    /// `PackageRoot = None` is the environment's folder here; `resolve` first for the build's.
+    /// `PackageRoot = None` is the machine's cache here; `resolve` first for the build's.
     let packageRoot (options: Options) =
         DotNetFwk.normalizedPackageRoot options.PackageRoot
 
     /// <summary>
     /// The options as this build applies them: `PackageRoot = None` becomes the build's
-    /// package folder (`DotNetFwk.packageRoot ()`, the script variable `NUGET_PACKAGES`
-    /// first), and `Enabled` is turned off when the script variable `NUGET_FETCH` turns
+    /// package folder (`DotNetFwk.packageRoot ()`, the build variable `NUGET_PACKAGES`, else
+    /// `.packages`), and `Enabled` is turned off when the build variable `NUGET_FETCH` turns
     /// fetching off (`DotNetFwk.fetchEnabled ()`). Both variables are read, and so are
     /// dependencies, here. Idempotent. `Options.Default` therefore means "the build's folder,
     /// fetching as `NUGET_FETCH` says".

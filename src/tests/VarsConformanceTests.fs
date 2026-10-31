@@ -47,10 +47,11 @@ type ``Vars conformance (spec section 8)``() =
 
     let e2 name a b = sprintf "Variable '%s' is defined twice in the script: by %s and by %s; define it once" name a b
 
-    /// options without a database, every log line captured
+    /// options without a database and without the test runner's `-d` (`XakeTestBase`), every log
+    /// line captured
     member x.Opts (logged: List<string>) =
         { x.TestOptions with
-            ThrowOnError = true; FileLog = ""; ConLogLevel = Silent; NoPersist = true; Nologo = true
+            ThrowOnError = true; FileLog = ""; ConLogLevel = Silent; NoPersist = true; Nologo = true; CliVars = []
             CustomLogger = CustomLogger (fun _ -> true) (fun s -> lock logged (fun () -> logged.Add s)) }
 
     /// options with a persistent database (deleted before each test)

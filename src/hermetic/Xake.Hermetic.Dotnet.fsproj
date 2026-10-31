@@ -5,10 +5,12 @@
     <RootNamespace>Xake.Hermetic.Dotnet</RootNamespace>
 
     <!-- Versioned independently of Xake (extraction-plan.md §4): 0.x is a preview and may
-         break. Same mechanism as src/dotnet: the build script and CI override it with
-         /p:Version=...; this is the value a plain `dotnet pack` produces. -->
+         break. The build script and CI set it with -p:HermeticVersion=... (not /p:Version: a
+         global Version would also become the version of the referenced src/dotnet, and so of
+         the `Xake` dependency); this is the value a plain `dotnet pack` produces. -->
     <PackageId>Xake.Hermetic.Dotnet</PackageId>
     <Version>0.9.0</Version>
+    <Version Condition="'$(HermeticVersion)' != ''">$(HermeticVersion)</Version>
     <OutputType>Library</OutputType>
     <!-- The SDK would otherwise reference its own FSharp.Core, see the pin below. -->
     <DisableImplicitFSharpCoreReference>true</DisableImplicitFSharpCoreReference>
@@ -63,22 +65,16 @@
     <Compile Include="Sign.fs" />
   </ItemGroup>
 
-  <!-- Built on the published package, not on src/dotnet and src/core: the `Xake` package
-       carries both Xake.dll and Xake.Dotnet.dll, and the range is what the nuspec dependency
-       says. The floor is the oldest Xake this package runs on (a version that is on nuget.org,
-       or NuGet warns NU1603); it moves only when the package needs what a release brings.
-       The upper bound is 4.0: until then the records this package builds do not grow
-       (docs/devprocess.md, "The records the hermetic package builds"; RecordShapeTests).
-       Which Xake brought what: docs/hermetic/README.md.
-
-       XakeVersion is overridable for CI (-p:XakeVersion=[3.999.0-dev] with a local feed, or
-       [<newest published>]), so the tests run against an unreleased base or the newest release
-       (build.fsx XAKE_VERSION / NUGET_SOURCE, .github/workflows/build.yml `hermetic-compat`). -->
-  <PropertyGroup>
-    <XakeVersion Condition="'$(XakeVersion)' == ''">[3.14.0.45, 4.0)</XakeVersion>
-  </PropertyGroup>
+  <!-- Built on the in-repo Xake (src/dotnet, which carries src/core) until Xake 4.0, when
+       Xake.Dotnet and this package leave the `Xake` package together (owner, 2026-10-31;
+       docs/features/release-process). `dotnet pack` turns the src/dotnet reference into a
+       dependency on package `Xake` (its PackageId), version >= src/dotnet's version in this
+       build: -p:XakePackageVersion=... (build.fsx passes its Version), else src/dotnet's
+       default. Xake.dll ships inside package `Xake`, so src/core is a private reference. The
+       published 0.10 keeps its range [3.14.0.45, 4.0). -->
   <ItemGroup>
-    <PackageReference Include="Xake" Version="$(XakeVersion)" />
+    <ProjectReference Include="..\core\Xake.fsproj" PrivateAssets="all" />
+    <ProjectReference Include="..\dotnet\Xake.Dotnet.fsproj" />
   </ItemGroup>
 
   <!-- Test assemblies only; no other package sees these internals. hermetic.tests tests the

@@ -1034,8 +1034,8 @@ module CscDescribedBuilder =
 /// <code>
 /// csc { src !!"*.cs"; out (File.make "app.dll"); lock "locks/app.json"; nofetch }
 /// </code>
-/// The packages are read from and restored into the build's package folder (the script
-/// variable `NUGET_PACKAGES`, else the environment variable, else `~/.nuget/packages`), and
+/// The packages are read from and restored into the build's package folder (the build
+/// variable `NUGET_PACKAGES`, else `.packages` under the project root), and
 /// fetched unless `NUGET_FETCH` (or `nofetch`) turns fetching off; there is no per-target
 /// folder (`packageroot` was removed in 0.2). A script that reads a lock against another
 /// folder uses `Lock.loadWith (Roots.packageRootOverride dir)` and `Restore.into dir`.

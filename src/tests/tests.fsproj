@@ -47,6 +47,7 @@
     <Compile Include="FscTests.fs" />
     <Compile Include="PathSpacesTests.fs" />
     <Compile Include="HermeticModeTests.fs" />
+    <Compile Include="LibraryVarsTests.fs" />
     <Compile Include="DescriptionTests.fs" />
     <Compile Include="ProjectPlanTests.fs" />
     <Compile Include="RecordShapeTests.fs" />

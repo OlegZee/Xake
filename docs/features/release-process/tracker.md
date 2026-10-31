@@ -17,3 +17,4 @@ Decided 2026-10-29: A, B, E now; then D (after vars and patterns). See [review.m
 | D1 | design note for the split: package layout, meta-package or 4.0, `pexecSync`/`memoize` public, tests and CI moves | after D0 |
 | D2 | `Xake.Dotnet` and hermetic on the final vars and pattern APIs | after D0 |
 | D3 | the split itself | after D1, D2 |
+| D-pre | until 4.0 the hermetic package builds on the in-repo Xake (owner, 2026-10-31): project references, dependency = the build's Xake version, `bump-base` and `hermetic-compat` retired, `hermetic-v*` paused; the published 0.10 range stays | done in #112 |

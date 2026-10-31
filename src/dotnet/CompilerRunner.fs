@@ -77,8 +77,8 @@ module internal CompilerRunner =
         FailOnError: bool
         /// Classifies a line of compiler output by log level
         Diagnostics: string -> Level
-        /// (script variable, environment variable) holding the limit on concurrent launches of
-        /// this compiler: `CSC_JOBS`/`XAKE_CSC_JOBS`, `FSC_JOBS`/`XAKE_FSC_JOBS`
+        /// (build variable, its 3.15 environment variable, no longer read) holding the limit on
+        /// concurrent launches of this compiler: `CSC_JOBS`/`XAKE_CSC_JOBS`, `FSC_JOBS`/`XAKE_FSC_JOBS`
         Jobs: string * string
         /// A resource the script supplies and the units one launch takes (`RunOptions.Throttle`,
         /// `FscRunOptions.Throttle`): when set, the launch acquires it instead of the budget of
@@ -131,24 +131,19 @@ module internal CompilerRunner =
             | true, n when n > 0 -> Ok (Some n)
             | _ -> Result.Error value
 
-    /// The limit on concurrent launches in effect: the script variable, then the environment
-    /// variable, then unlimited (`None`), with the name and the value when it is not a
+    /// The limit on concurrent launches in effect: the build variable (from the context's
+    /// variables), then unlimited (`None`), with the name and the value when it is not a
     /// non-negative integer. Read from the variables directly, not with `getVar`: the
-    /// concurrency changes no output, so it is not a dependency of the target.
-    let jobsLimit (vars: (string * string) list) (variable: string, envVariable: string) =
-        let source =
-            match vars |> List.tryPick (fun (name, value) -> if name = variable then Some value else None) with
-            | Some value -> Some (variable, value)
-            | None ->
-                match System.Environment.GetEnvironmentVariable envVariable with
-                | null -> None
-                | value -> Some (envVariable, value)
-        match source with
+    /// concurrency changes no output, so it is not a dependency of the target. The second name
+    /// (`XAKE_CSC_JOBS`, `XAKE_FSC_JOBS`) is not read: the environment counts only through the
+    /// script, e.g. <c>var "CSC_JOBS" [Env "XAKE_CSC_JOBS"]</c>.
+    let jobsLimit (vars: (string * string) list) (variable: string, _envVariable: string) =
+        match vars |> List.tryPick (fun (name, value) -> if name = variable then Some value else None) with
         | None -> None, None
-        | Some (name, value) ->
+        | Some value ->
             match parseJobs value with
             | Ok limit -> limit, None
-            | Result.Error bad -> None, Some (name, bad)
+            | Result.Error bad -> None, Some (variable, bad)
 
     type private Budget = { Resource: Resource; mutable Limit: int }
 

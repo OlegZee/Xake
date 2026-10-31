@@ -31,7 +31,7 @@ PR 1 started 2026-10-29 by an implementer subagent: tests of spec §8.1-8.7 firs
 |---|---|---|---|
 | #102 (draft) | `feature/vars-precedence` | `.claude/worktrees/feature+hermetic-windows` | spec, brief, archive |
 | PR 1 (not opened) | `feature/vars-core` | agent worktree (`.claude/worktrees/agent-…`) | in progress |
-| PR 2 | `feature/vars-libraries` (planned) | - | after PR 1 |
+| PR 2 (not opened) | `feature/vars-libraries` (on `feature/vars-core`) | agent worktree (`.claude/worktrees/agent-…`) | implemented 2026-10-30, owner review |
 
 Next step: review PR 1's report, push `feature/vars-core`, open the PR to dev; then PR 2. Proposed split (not yet approved): PR 1 core (`var`
 lists, `varschema` at launch, `Var` reads, second-definition errors, `?vars` on top, banner sources);
@@ -44,3 +44,16 @@ PR 1 done 2026-10-30 (#111): core + names + docs; deviations in `pr1-notes.md` (
 PR 2 done 2026-10-30 (#112, stacked on #111): library readers L-1..L-7, `Var.read`, schemas `DotNetVars.Default` / `HermeticVars.Default` (conventions proposed in `pr2-spec.md`). Hermetic floor `[3.16.0, 4.0)` breaks CI until Xake 3.16.0 is published: split the hermetic commits or release first. Follow-ups: `bump-base` sets env `LOCK_REFRESH` (no longer read); CI step for test 60.
 
 Next step: the owner reviews #111 and #112 and decides the hermetic floor path.
+
+2026-10-31: CI on #112 failed (src/hermetic compiles against the published Xake, no `Var.read`).
+Split without rewriting history: the full PR 2 state is kept on `feature/vars-hermetic` (be83c13,
+pushed); one commit on `feature/vars-libraries` takes the hermetic part out (src/hermetic back to
+dev, HermeticVarsTests, hermetic docs and 0.11 notes). The hermetic PR ships after the Xake
+release (4.0 planned), floor at that release. See pr2-notes.md.
+
+2026-10-31, later: owner's decision -- until Xake 4.0 the hermetic package builds on the in-repo
+Xake. The split is reverted (54b4837), src/hermetic references src/core/src/dotnet, the hermetic
+part of PR 2 is back on #112 without a floor; `feature/vars-hermetic` is obsolete (owner may delete
+it). CI: `hermetic-compat` dropped, `bump-base` disabled, `hermetic-v*` paused until 4.0
+(docs/features/release-process/session.md).
+

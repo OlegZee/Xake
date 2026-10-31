@@ -29,27 +29,26 @@ module Pack =
 
     type Options = {
         /// entry timestamps (zip DOS time, 2-second resolution); default 1980-01-01 00:00:00 --
-        /// or from SOURCE_DATE_EPOCH when set
+        /// `current ()` takes SOURCE_DATE_EPOCH of the build
         Timestamp: DateTime
         /// compression level
         Level: CompressionLevel
     } with
         /// Optimal compression, and a timestamp of 1980-01-01 (the DOS epoch, and the oldest
-        /// date the zip format can represent) unless `SOURCE_DATE_EPOCH` (unix seconds,
-        /// https://reproducible-builds.org/specs/source-date-epoch/) names a later one -- read
-        /// on each access.
+        /// date the zip format can represent). A constant: it reads no variable and no
+        /// environment; a recipe takes `current ()`.
         static member Default : Options =
-            let epoch = DateTime (1980, 1, 1, 0, 0, 0, DateTimeKind.Utc)
-            let fromEnv =
-                match Environment.GetEnvironmentVariable "SOURCE_DATE_EPOCH" with
-                | null | "" -> None
-                | v ->
-                    match Int64.TryParse v with
-                    | true, seconds ->
-                        let dt = DateTimeOffset.FromUnixTimeSeconds(seconds).UtcDateTime
-                        Some (if dt < epoch then epoch else dt)
-                    | false, _ -> None
-            { Timestamp = fromEnv |> Option.defaultValue epoch; Level = CompressionLevel.Optimal }
+            { Timestamp = HermeticVarValues.epoch; Level = CompressionLevel.Optimal }
+
+        /// `Default` with the timestamp of the build variable `SOURCE_DATE_EPOCH` (unix seconds,
+        /// https://reproducible-builds.org/specs/source-date-epoch/; read, and so a dependency,
+        /// here; clamped to 1980), the DOS epoch when it is unset, empty or not a number. The
+        /// environment variable counts only through the script: `var "SOURCE_DATE_EPOCH" [Env "SOURCE_DATE_EPOCH"]`.
+        static member current () : Xake.DomainTypes.Recipe<Xake.ExecContext, Options> =
+            Xake.Builder.recipe {
+                let! timestamp = HermeticVarValues.readSourceDateEpoch
+                return { Options.Default with Timestamp = timestamp }
+            }
 
     // ---- CRC-32 (ISO 3309 / zip's polynomial), a table-driven implementation: ZipArchiveEntry
     // does not expose Crc32 on netstandard2.0/net462 (see the module comment), so both the

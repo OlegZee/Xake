@@ -127,6 +127,6 @@ type ``Import record on package compiler and analyzers``() =
         if Directory.Exists installed then
             Assert.Inconclusive (sprintf "this .NET has the targeting pack %s under packs/: the import hashed those files, not the package's" version)
         // the package folder holds the pack; the .NET root of the build has none
-        let packageFolder = Restore.packageRoot Restore.Options.Default
+        let packageFolder = fst (x.BuildPackageRoot x.TestOptions)
         Assert.That(File.Exists (Path.Combine (packageFolder, "microsoft.netcore.app.ref", version, "ref", "net6.0", "System.Runtime.dll")))
         x.BuildCompare "ref" [ "net6.0" ]

@@ -38,9 +38,12 @@
     <Compile Include="SdkFreeImportTests.fs" />
     <Compile Include="AppTests.fs" />
     <Compile Include="RunFolderTests.fs" />
+    <Compile Include="HermeticVarsTests.fs" />
   </ItemGroup>
   <ItemGroup>
-    <!-- The `Xake` package (engine and Xake.Dotnet) flows in through this reference. -->
+    <!-- The in-repo Xake (engine and Xake.Dotnet), as src/hermetic builds on it until 4.0. -->
+    <ProjectReference Include="..\core\Xake.fsproj" />
+    <ProjectReference Include="..\dotnet\Xake.Dotnet.fsproj" />
     <ProjectReference Include="..\hermetic\Xake.Hermetic.Dotnet.fsproj" />
   </ItemGroup>
   <ItemGroup>

@@ -29,12 +29,10 @@ touched, so it is not re-litigated:
   Developing against unreleased libraries: a temporary `#r` on dlls (or a `#i` local feed);
   see docs/devprocess.md, "Bootstrapping note". `samples/gettingstarted.fsx` references the
   published package (`#r "nuget: Xake"`) and is checked against it after each release.
-- `src/hermetic` builds on the *published* `Xake` (`XakeVersion` in its fsproj, `[<floor>, 4.0)`
-  since #108), not on `src/core`/`src/dotnet`. The floor must exist on nuget.org or NuGet warns
-  NU1603; `build.fsc.fsx bump-base` moves it. Working against an unreleased base: pack it as
-  `3.999.0-dev` and pass `-d XAKE_VERSION=[3.999.0-dev] -d NUGET_SOURCE=<folder>` (CI
-  `hermetic-compat`; docs/devprocess.md); delete `~/.nuget/packages/xake/3.999.0-dev` before
-  packing a changed base again.
+- `src/hermetic` builds on the in-repo `src/core`/`src/dotnet` (ProjectReferences) until Xake
+  4.0 (owner, 2026-10-31; before: the published `Xake` with a range, #108..#109). Its nupkg
+  depends on package `Xake` at the build's Xake version (`-p:XakePackageVersion`, build.fsx);
+  `bump-base` and CI `hermetic-compat` are gone; the next hermetic release ships with Xake 4.0.
 - **The supported floor is .NET 8**, enforced in three places (`global.json`, the tests TFM, the
   CI matrix) and by an explicit `FSharp.Core` 8.0.100 pin with
   `DisableImplicitFSharpCoreReference`. Without the pin the SDK's own FSharp.Core lands in the

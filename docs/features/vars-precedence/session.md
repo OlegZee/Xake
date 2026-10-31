@@ -51,3 +51,9 @@ pushed); one commit on `feature/vars-libraries` takes the hermetic part out (src
 dev, HermeticVarsTests, hermetic docs and 0.11 notes). The hermetic PR ships after the Xake
 release (4.0 planned), floor at that release. See pr2-notes.md.
 
+2026-10-31, later: owner's decision -- until Xake 4.0 the hermetic package builds on the in-repo
+Xake. The split is reverted (54b4837), src/hermetic references src/core/src/dotnet, the hermetic
+part of PR 2 is back on #112 without a floor; `feature/vars-hermetic` is obsolete (owner may delete
+it). CI: `hermetic-compat` dropped, `bump-base` disabled, `hermetic-v*` paused until 4.0
+(docs/features/release-process/session.md).
+

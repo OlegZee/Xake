@@ -1,17 +1,10 @@
 # vars-precedence: PR 2 (library readers, import) implementation notes
 
-**Split (2026-10-31).** The hermetic part of PR 2 moved to branch `feature/vars-hermetic` (it
-holds the full PR 2 state, be83c13): Xake.Hermetic.Dotnet readers (`CI`, `LOCK_REFRESH`,
-`LOCK_STALE`, `SOURCE_DATE_EPOCH`), `HermeticVars`, Import.fs/Project.fs per L-3, the floor, its
-tests (`HermeticVarsTests`, tests 55-59 and 84), the 0.11 release notes and the hermetic docs
-(`docs/hermetic/*`, hermetic-guide.md, hermetic-architecture.md). `src/hermetic` on dev builds
-against the published Xake, which has no `Var.read`; that part ships after the Xake release
-carrying PR 1 + PR 2 (the owner plans 4.0), with the floor at that release. `feature/vars-libraries`
-keeps the core (`Var.read`, `VarEvaluation`), the Xake.Dotnet readers L-1..L-7, `DotNetVars`,
-src/tests, the Xake docs and release notes, and the hermetic.tests changes the new Xake.Dotnet
-behaviour needs (`.packages` default, no `NUGET_PACKAGES` environment fallback, no message 2
-from the published hermetic's record gate): FromLockTests, HermeticLockTests, RunFolderTests.
-Below, the hermetic items describe `feature/vars-hermetic`.
+**In-repo hermetic build (2026-10-31).** After a short split (389fc6a, reverted by 54b4837;
+`feature/vars-hermetic` keeps that state and may be deleted), the owner decided that until Xake
+4.0 Xake.Hermetic.Dotnet builds on the in-repo Xake (project references), so PR 2's hermetic part
+is back on this branch without a Xake floor. Package dependency: `Xake` at the build's Xake
+version (`-p:XakePackageVersion`); see docs/features/release-process/session.md.
 
 Branch `feature/vars-libraries` (on top of `feature/vars-core`, PR 1). Spec: spec.md rev. 6 §3.6,
 §7 item 2, §8.8-8.9 and test 60; [pr2-spec.md](pr2-spec.md) for the import (I-1..I-12, E-11,
@@ -86,29 +79,31 @@ brief.md was taken; each point is listed here for the owner.
 
 ## Not done / follow-ups
 
-- **The hermetic floor is `[3.16.0, 4.0)` by hand** (commit "build(hermetic): Xake floor
-  3.16.0"): `bump-base` refuses a version nuget.org does not have. Until Xake 3.16.0 is
-  published, the default restore of src/hermetic fails (NU1102), so CI's `build` job and the
-  `hermetic-compat` "newest published" step fail on this branch, and `build-fsc` fails
-  (`src/hermetic/xake.project.json` and `locks/Xake.Hermetic.Dotnet/Release.json` still hold
-  Xake 3.14.0.45, which has no `Var.read`; the fingerprint of the changed fsproj is stale).
-  Same for the hermetic test "Xake's three projects build from their generated locks". Options:
-  (a) split the hermetic commits into a PR merged after the Xake 3.16.0 release, then
-  `build.fsc.fsx bump-base -d XAKE_FLOOR=3.16.0` re-imports and re-locks; (b) merge as is and
-  release Xake first. Locally everything was built and tested with
-  `-d XAKE_VERSION=[3.999.0-vars2] -d NUGET_SOURCE=/tmp/xake-vars2-feed` (a pack of this branch).
-- **`build.fsc.fsx bump-base`** sets the environment variable `LOCK_REFRESH=Xake` inside the
-  recipe; on hermetic 0.11 that is no longer read (and V-3 reads the environment at launch only).
-  When `build.fsc.fsx` bootstraps on 0.11, `bump-base` needs another way (e.g. `Locks` taking the
-  refresh list as a parameter, or running the lock rule with `-d LOCK_REFRESH=Xake`).
+- **Hermetic floor**: not applicable any more (in-repo build until 4.0). `src/hermetic/xake.project.json`
+  re-imported (`projectRefs: ["Xake", "Xake.Dotnet"]`), its lock regenerated and the fsc
+  compiler lines pinned back to SDK 10.0.402 by hand (this machine has 10.0.403), fingerprints
+  updated; `build.fsc.fsx check` passes. Importer gap: the private `src/core` reference is
+  imported as `package.bundle: ["Xake"]` (`Import.fs` reads `PrivateAssets=all` as "bundled");
+  nothing consumes `bundle` today (`dotnet pack` packs), but a description-driven pack would
+  bundle Xake.dll into the hermetic package. A metadata to tell "private because another package
+  carries it" from "bundled" is what is missing.
+- **CI failures of run 41184485642 (hermetic-compat)**: "a console app: the SDK's apphost..."
+  (AppTests) and "a targeting pack is taken from the package folder when packs/ lacks it"
+  (SdkFreeImportTests) looked for package files in the machine cache (`~/.nuget/packages`, or the
+  environment's `NUGET_PACKAGES`); with L-4 the build's package folder is `<root>/.packages`. On
+  this machine the files were in the machine cache from earlier builds, on a fresh runner they
+  were not. The workflows set no `NUGET_PACKAGES`. Fix in the tests: they ask Xake.Dotnet for the
+  folder (`XakeTestBase.BuildPackageRoot`), as do RunFolderTests.
+- **`build.fsc.fsx bump-base`** is disabled until 4.0 (no floor). Its old body set the
+  environment variable `LOCK_REFRESH=Xake`, which the new hermetic package no longer reads; a
+  revived command passes `-d LOCK_REFRESH=...` instead.
 - **Test 60** (published hermetic 0.10 on this branch's Xake): run locally with
   [test60-published-hermetic.fsx](test60-published-hermetic.fsx) (edit the `#i` feed path):
   Xake.Hermetic.Dotnet 0.10.0 from nuget.org, Xake 3.999.0-vars2, `NUGET_PACKAGES` set only in
   the environment, `HERMETIC=on`: the csc lock records, the toolset is restored into
   `<root>/.packages`, the lock names `$(NuGetPackageRoot)`, the environment's folder is untouched.
-  PASS. `RecordShapeTests` pass unchanged. CI does not cover it today: `hermetic-compat` runs the
-  *current* hermetic sources against the base, not the published binary. Proposed CI step: pack
-  the base as 3.999.0-dev (as `hermetic-compat` does) and run this script against it.
+  PASS. `RecordShapeTests` pass unchanged. CI does not cover it (`hermetic-compat` is dropped);
+  a CI step would pack the base at a prerelease version and run this script against it.
 - `src/tests` build warnings MSB3825/MSB3568 come from `~testout~/resx-typed/*.resx` left by
   an earlier test run (the tests project globs them); a clean checkout builds with 0 warnings.
 - Flaky once under `build.fsx test` (passed alone and in the full direct run): hermetic

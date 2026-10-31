@@ -1,7 +1,7 @@
 # Tracker: pattern module
 
 - [x] Starting documents: brief, kickoff, session, tracker
-- [ ] Phase 1: spec draft (`spec.md`) by an opus agent from the brief and the frozen branch
+- [x] Phase 1: spec draft (`spec.md`, 1272 lines) by an opus agent from the brief and the frozen branch (2026-10-26)
 - [ ] Phase 1: spec review with the user, open items 1-15 of the brief decided
 - [ ] Phase 1: user approves the spec
 - [ ] Phase 2: conformance vectors (table-driven, glob-style cases, on-disk corpus), failing/skipped

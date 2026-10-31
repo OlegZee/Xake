@@ -144,3 +144,16 @@ fixes how much breaks. 3.12.0 is released (tag `v3.12.0`); nothing of this featu
 14. Named group details: allowed names, group content (`*`, `**`, classes, braces inside),
     duplicate names, repeated use in multi-output patterns.
 15. Version number (f) and the deprecation calendar for `\` separators.
+
+## Decisions from the spec review (2026-10-27 onwards)
+
+- **D1 (2026-10-27, revised 2026-10-31): Standard only, in 4.0.** `dev` is already the 4.0 line
+  (variable model PRs #111-#115 landed after the spec draft), so the module ships its Standard
+  semantics directly with no Compat level, no `XAKE_PATTERNS` switch and no intermediate 3.x
+  release of the module. What remains of Compat: warnings on legacy masks (`[(]`, `sub[1]`, `\`
+  separators) that name the old meaning and the replacement, and a behaviour-change list for the
+  4.0 release notes. The 2026-10-27 answer (Compat now, Standard in 4.0) was given before the
+  `dev` state was checked and is superseded.
+- **D2 (2026-10-31): integration branch `feature/patterns2`**, cut from `dev`. Every phase PR of
+  this feature targets it (squash); it merges to `dev` when the typed layer and docs are in.
+  Closes the open item tm 45 for this feature.

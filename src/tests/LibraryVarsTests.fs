@@ -223,7 +223,7 @@ type ``Library vars conformance (spec section 8-8, PR 2 spec)``() =
 
     [<Test>]
     member x.``pr2-74 Var.read of a secret records presence``() =
-        withEnv ["VL74T", "s3cr3t-value"] (fun () ->
+        withEnv ["XAKE__VL74T", "s3cr3t-value"] (fun () ->
             let schema = {| VL74T = Var.string() |> secret |}
             let ops (s: XakeScript) = (xakeArgs [] (x.Opts (List<string>()))).Vars(s, schema)
             let v, deps, _ = x.Read [] ops (Var.read<string> "VL74T")

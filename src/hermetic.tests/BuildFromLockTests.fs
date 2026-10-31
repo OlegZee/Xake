@@ -66,7 +66,7 @@ type ``Building from Xake-generated locks``() =
     member private x.ScriptWith (extra: Rule<ExecContext> list) (label: string) (vars: (string * string) list) (descriptions: Fileset) (cfg: string) =
         let versionArgs = vars |> List.filter isVersionVar |> List.collect (fun (name, value) -> [ "-d"; name + "=" + value ])
         let vars = vars |> List.filter (isVersionVar >> not)
-        xakeArgs versionArgs {x.TestOptions with FileLog = label + ".log"; ThrowOnError = true; Vars = ("CI", "off") :: vars; FileLogLevel = Loud} {
+        xakeArgs versionArgs {x.TestOptions with FileLog = label + ".log"; ThrowOnError = true; ScriptVars = ("CI", "off") :: vars; FileLogLevel = Loud} {
             varschema versionSchema
             want [ "build" ]
             rules extra
@@ -86,7 +86,7 @@ type ``Building from Xake-generated locks``() =
     /// the `name::cfg` of each lock rule run.
     member private x.Generate (label: string) (descriptionOf: string -> string) (projects: string list) (configs: string list) =
         let ran = ResizeArray ()
-        xake {x.TestOptions with FileLog = label + ".log"; ThrowOnError = true; Vars = [ "CI", "off" ]; FileLogLevel = Loud} {
+        xake {x.TestOptions with FileLog = label + ".log"; ThrowOnError = true; ScriptVars = [ "CI", "off" ]; FileLogLevel = Loud} {
             want [ "update-locks" ]
             rules [ LockRule.lockRule lockOf outOf descriptionOf id ran; LockRule.updateLocks configs projects ]
         }
@@ -267,7 +267,7 @@ type ``Building from Xake-generated locks``() =
 
     /// The dll rule's body given as `compile lockPath fwk`, wanting `goal`.
     member private x.BuildWith (compile: string -> string -> Recipe<ExecContext, unit>) (label: string) (vars: (string * string) list) (goal: string) =
-        xake {x.TestOptions with FileLog = label + ".log"; ThrowOnError = true; Vars = ("CI", "off") :: vars; FileLogLevel = Loud} {
+        xake {x.TestOptions with FileLog = label + ".log"; ThrowOnError = true; ScriptVars = ("CI", "off") :: vars; FileLogLevel = Loud} {
             varschema versionSchema
             want [ goal ]
             rules [
@@ -425,7 +425,7 @@ type ``Building from Xake-generated locks``() =
             let! name = getRuleMatch "name"
             do! Locks.doc Locks.Settings.Default (lockOf name cfg) fwk }
         let build label (goal: string) =
-            xake {x.TestOptions with FileLog = label + ".log"; ThrowOnError = true; Vars = [ "CI", "off" ]; FileLogLevel = Loud} {
+            xake {x.TestOptions with FileLog = label + ".log"; ThrowOnError = true; ScriptVars = [ "CI", "off" ]; FileLogLevel = Loud} {
                 want [ goal ]
                 rules [
                     target "out/(cfg:*)/(fwk:*)/(name:*).dll" { do! compile }
@@ -450,7 +450,7 @@ type ``Building from Xake-generated locks``() =
         fixture ()
         x.Generate "generate-output" fixtureOf [ "B" ] [ "Release" ] |> ignore
         let build label (goal: string) =
-            xake {x.TestOptions with FileLog = label + ".log"; ThrowOnError = true; Vars = [ "CI", "off" ]; FileLogLevel = Loud} {
+            xake {x.TestOptions with FileLog = label + ".log"; ThrowOnError = true; ScriptVars = [ "CI", "off" ]; FileLogLevel = Loud} {
                 want [ goal ]
                 rules [
                     target "out/(cfg:*)/(fwk:*)/(name:*).(ext:*)" {
@@ -514,7 +514,7 @@ type ``Building from Xake-generated locks``() =
               Options = Description.Options.Default; InternalsVisibleTo = []; AssemblyAttributes = []; ByFramework = []; Package = None }
         Description.write (root </> "desc/P" </> Description.FileName) d |> ignore
         let run (label: string) (goal: string) (rs: Rule<ExecContext> list) =
-            xake {x.TestOptions with ProjectRoot = root; DbFileName = root </> ".xake"; FileLog = root </> (label + ".log"); ThrowOnError = true; Vars = [ "CI", "off" ]; FileLogLevel = Loud} {
+            xake {x.TestOptions with ProjectRoot = root; DbFileName = root </> ".xake"; FileLog = root </> (label + ".log"); ThrowOnError = true; ScriptVars = [ "CI", "off" ]; FileLogLevel = Loud} {
                 varschema versionSchema
                 want [ goal ]
                 rules rs
@@ -559,7 +559,7 @@ type ``Building from Xake-generated locks``() =
         Description.write (a </> "root/desc/P" </> Description.FileName) d |> ignore
         let descriptionOf (_: string) = "desc/P/" + Description.FileName
         let run (root: string) (label: string) (goal: string) (rs: Rule<ExecContext> list) =
-            xake {x.TestOptions with ProjectRoot = root; DbFileName = root </> ".xake"; FileLog = root </> (label + ".log"); ThrowOnError = true; Vars = [ "CI", "off" ]; FileLogLevel = Loud} {
+            xake {x.TestOptions with ProjectRoot = root; DbFileName = root </> ".xake"; FileLog = root </> (label + ".log"); ThrowOnError = true; ScriptVars = [ "CI", "off" ]; FileLogLevel = Loud} {
                 want [ goal ]
                 rules rs
             }
@@ -645,7 +645,7 @@ type ``Building from Xake-generated locks``() =
             write "Cs" Description.CSharp [ "*.cs" ]
             root
         let run (root: string) (label: string) (vars: (string * string) list) (goal: string) =
-            xake {x.TestOptions with ProjectRoot = root; DbFileName = root </> ".xake"; FileLog = root </> (label + ".log"); ThrowOnError = true; Vars = ("CI", "off") :: vars; FileLogLevel = Loud} {
+            xake {x.TestOptions with ProjectRoot = root; DbFileName = root </> ".xake"; FileLog = root </> (label + ".log"); ThrowOnError = true; ScriptVars = ("CI", "off") :: vars; FileLogLevel = Loud} {
                 want [ goal ]
                 rules [
                     LockRule.lockRule lockOf outOf fixtureOf id (ResizeArray ())

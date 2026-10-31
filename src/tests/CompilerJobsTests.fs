@@ -48,7 +48,7 @@ type ``Compiler jobs``() =
             if not (File.Exists source) then File.WriteAllText (source, sprintf "class C%d {}\n" i)
         // one target needing all of them, so they are built in parallel (the targets of
         // `want` are built one after another)
-        xake {x.TestOptions with FileLog = label + ".log"; FileLogLevel = Verbosity.Diag; ThrowOnError = true; Threads = 4; Vars = vars} {
+        xake {x.TestOptions with FileLog = label + ".log"; FileLogLevel = Verbosity.Diag; ThrowOnError = true; Threads = 4; ScriptVars = vars} {
             want ["main"]
             rules [
                 "main" => recipe { do! need [ for i in 1..count -> sprintf "%s%d.dll" label i ] }

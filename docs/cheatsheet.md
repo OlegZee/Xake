@@ -109,7 +109,7 @@ xake ExecOptions.Default {
 }
 ```
 
-Values are computed once at launch: `-d` > the script's `var`/`ExecOptions.Vars` > the
+Values are computed once at launch: `-d` > the script's `var`/`ExecOptions.ScriptVars` > the
 declaration's sources. A name is defined once in the script (a second definition stops the run).
 A `Var` read (`let! x = vars.config`) needs a `varschema` field of its key; otherwise use
 `getVar "N"` (the variable set) or `getEnv "X"` (the environment). A field's key is its `name`,
@@ -199,11 +199,12 @@ Variable:
 dotnet fsi build.fsx -- -- build -d Version=1.2.3
 ```
 
-The command line wins over the script: `-d` beats `var` (and `ExecOptions.Vars`), `-ll` beats
+The command line wins over the script: `-d` beats `var` (and `ExecOptions.ScriptVars`), `-ll` beats
 `consolelog`, `-fl` and `-fll` each beat their half of `filelog`, `-r` beats `rootdir`, and targets
 named on the command line beat `want` (always: there is no hard override; `want` itself beats
 `ExecOptions.Targets`). The script ops act as defaults. `IgnoreCommandLine = true` skips the
-command line.
+command line; `IgnoreEnvironment = true` stops declarations from reading the environment
+(tests, embedding; see [variables.md](variables.md#pinning-values-tests-and-embedding)).
 
 Dry run:
 

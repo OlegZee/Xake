@@ -53,7 +53,7 @@ type ``Hermetic mode``() =
     let run (options: ExecOptions) (root: string) (name: string) (vars: (string * string) list) (build: unit -> Recipe<ExecContext, 'T>) =
         let resolved = ref None
         try
-            do xake {options with ProjectRoot = root; FileLog = root </> (name + ".log"); ThrowOnError = true; Vars = vars} {
+            do xake {options with ProjectRoot = root; FileLog = root </> (name + ".log"); ThrowOnError = true; ScriptVars = vars} {
                 want ([name])
                 rules [
                     name => recipe {

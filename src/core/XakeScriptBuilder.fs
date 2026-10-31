@@ -248,7 +248,7 @@ module XakeScriptBuilder =
         /// A script value of a variable (`-d` and the engine's per-demand vars win over it).
         [<CustomOperation("var")>]
         member __.AddVar(XakeScript (options, rules), name: string, value: string) =
-            XakeScript ({ options with Vars = options.Vars @ [name, value]
+            XakeScript ({ options with ScriptVars = options.ScriptVars @ [name, value]
                                        VarDefinedBy = options.VarDefinedBy @ [name, VarEvaluation.constantLabel name] }, rules)
 
         /// A variable rule: at launch its sources are tried in list order (`Env "X"`, `Default "v"`),

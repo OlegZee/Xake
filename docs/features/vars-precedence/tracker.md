@@ -23,4 +23,5 @@ Open follow-ups:
 - [ ] The importer reads `PrivateAssets=all` as "bundled" (`package.bundle`)
 - [ ] Test 60 (published hermetic against the new Xake) has no CI job
 - [ ] (optional) Measure launch evaluation, dev vs 4.0
-- [ ] (idea) Rename `ExecOptions.Vars` in 4.0 (it holds script constants only)
+- [x] Rename `ExecOptions.Vars` to `ExecOptions.ScriptVars` (4.0, owner 2026-10-31)
+- [x] `ExecOptions.IgnoreEnvironment` (spec §3.12, Q-1..Q-5, tests 97-105)

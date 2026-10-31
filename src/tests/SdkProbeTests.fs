@@ -47,7 +47,7 @@ type ``SDK probe``() =
         // the machine's package cache, which has the reference pack: a probe root pins an older
         // SDK, whose restore of it into a fresh folder need not run on this machine
         do xake {options with ProjectRoot = root; FileLog = root </> "probe.log"; FileLogLevel = Verbosity.Diag; ThrowOnError = true
-                              Vars = ["NUGET_PACKAGES", DotNetFwk.nugetRoot ()]} {
+                              ScriptVars = ["NUGET_PACKAGES", DotNetFwk.nugetRoot ()]} {
             want (["probe"])
             rules [
                 "probe" => recipe {

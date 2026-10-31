@@ -113,7 +113,7 @@ module ScriptFuncs =
 
     /// <summary>
     /// Gets the script (options) variable value and records it as a dependency. 
-    /// See `ExecOptions.Vars` for available variables.
+    /// It reads the variable set built at launch (`-d`, `ExecOptions.ScriptVars`, the declarations).
     /// If the variable changes, targets depending on it will be rebuilt.
     /// </summary>
     /// <param name="variableName">Name of the script variable to retrieve</param>

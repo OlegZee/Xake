@@ -324,10 +324,7 @@ type ``Import record applications``() =
         // package folder's copy, and its SBOM row has the package's Sha512
         let pack = Text.RegularExpressions.Regex.Match (lock, "\"Id\": \"pack:microsoft\\.netcore\\.app\\.ref/([^/]+)/ref/net8\\.0/Microsoft\\.CSharp\\.dll\", \"Sha256\": \"([0-9a-f]+)\"")
         Assert.That(pack.Success, lock)
-        let packages =
-            match Environment.GetEnvironmentVariable "NUGET_PACKAGES" with
-            | null | "" -> Path.Combine (Environment.GetFolderPath Environment.SpecialFolder.UserProfile, ".nuget", "packages")
-            | p -> p
+        let packages = fst (x.BuildPackageRoot x.TestOptions)
         let packageCopy = Path.Combine (packages, "microsoft.netcore.app.ref", pack.Groups.[1].Value, "ref", "net8.0", "Microsoft.CSharp.dll")
         Assert.That(Xake.Dotnet.Hash.sha256 packageCopy, Is.EqualTo pack.Groups.[2].Value)
         Assert.That(lock, Does.Match "(?i)\\{ \"Id\": \"microsoft\\.netcore\\.app\\.ref\", \"Version\": \"[^\"]+\", \"Sha512\": \"[^\"]+\"")
@@ -398,7 +395,7 @@ type ``Import record applications``() =
         Assert.That(File.ReadAllText (ours </> "ridapp.deps.json"), Is.EqualTo (File.ReadAllText (theirs </> "ridapp.deps.json")))
         // the apphost from the pinned template: the SDK's HostWriter when it loads here (then as
         // msbuild's), else the template with the application's name and no resources
-        let packages = match Environment.GetEnvironmentVariable "NUGET_PACKAGES" with null | "" -> Environment.GetFolderPath Environment.SpecialFolder.UserProfile </> ".nuget/packages" | p -> p
+        let packages = fst (x.BuildPackageRoot x.TestOptions)
         let template =
             let id = Text.RegularExpressions.Regex.Match(lock, "\"Id\": \"pack:([^\"]+apphost\\.exe)\"").Groups.[1].Value
             File.ReadAllBytes (packages </> id)

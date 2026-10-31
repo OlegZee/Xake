@@ -105,12 +105,14 @@ type ``Hermetic lock``() =
         Assert.That(text, Does.Contain (sprintf "'B': HERMETIC=on: refusing to write the lock 'locks/b.json': %s is outside $(ProjectRoot) and $(NuGetPackageRoot), and no prerequisite covers it" tokenized))
         Assert.That(File.Exists (root </> "locks/b.json"), Is.False, "a refused lock must not be written")
 
-        // without the build variable NUGET_PACKAGES the package folder is the build's .packages:
-        // no message 2 (the refusal names only the paths outside the roots)
+        // without the variable NUGET_PACKAGES: from Xake 3.16 the package folder is the build's
+        // .packages and there is no message 2; with an older Xake it is the machine's, refused
         let text =
             run x.TestOptions root "record2" (without [ "NUGET_PACKAGES" ] (hermeticVars root)) (Lock.record "locks/b.json" (Lock.Compilation.Csc c))
             |> fails
-        Assert.That(text, Does.Not.Contain "needs a package folder of the build's own")
+        match snd (x.BuildPackageRoot { x.TestOptions with ProjectRoot = root }) with
+        | DotNetFwk.ScriptVariable -> Assert.That(text, Does.Not.Contain "needs a package folder of the build's own")
+        | _ -> Assert.That(text, Does.Contain "'B': HERMETIC=on needs a package folder of the build's own: set the NUGET_PACKAGES script variable")
 
         // with the mode off the same compilation records, as before
         run x.TestOptions root "record3" (("HERMETIC", "off") :: without [ "HERMETIC" ] (hermeticVars root)) (Lock.record "locks/b.json" (Lock.Compilation.Csc c))

@@ -304,9 +304,6 @@ type ``Run folders``() =
         |> Array.filter (fun f -> not (Path.GetFileName(f).StartsWith ".xake-run"))
         |> Array.map (fun f -> Path.GetRelativePath(dir, f).Replace ('\\', '/')) |> Array.sort |> List.ofArray
 
-    /// the build's package folder (`.packages` under the project root, Xake.Dotnet's default)
-    let packages () = Path.GetFullPath ".packages"
-
     let mutable prepared = false
 
     member private x.Prepare () =
@@ -353,8 +350,8 @@ type ``Run folders``() =
         // hard links where the file system has them: the package's and the output's files
         let id = RunFolder.fileId
         if (id "run/Release/net8.0/console/console.dll").IsSome then
-            Assert.That(id "run/Release/net8.0/console/Newtonsoft.Json.dll", Is.EqualTo (id (packages () </> "newtonsoft.json/13.0.3/lib/net6.0/Newtonsoft.Json.dll")))
-            Assert.That(id "run/Release/net8.0/console2/Newtonsoft.Json.dll", Is.EqualTo (id (packages () </> "newtonsoft.json/12.0.3/lib/netstandard2.0/Newtonsoft.Json.dll")))
+            Assert.That(id "run/Release/net8.0/console/Newtonsoft.Json.dll", Is.EqualTo (id (fst (x.BuildPackageRoot x.TestOptions) </> "newtonsoft.json/13.0.3/lib/net6.0/Newtonsoft.Json.dll")))
+            Assert.That(id "run/Release/net8.0/console2/Newtonsoft.Json.dll", Is.EqualTo (id (fst (x.BuildPackageRoot x.TestOptions) </> "newtonsoft.json/12.0.3/lib/netstandard2.0/Newtonsoft.Json.dll")))
             Assert.That(id "run/Release/net8.0/tests/Lib.Core.dll", Is.EqualTo (id "out/Release/net8.0/Lib.Core.dll"))
             Assert.That(id "run/Release/net8.0/console/data/input.txt", Is.EqualTo (id "console/data/input.txt"))
             let manifest = File.ReadAllText "run/Release/net8.0/console/.xake-run.txt"

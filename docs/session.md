@@ -1,5 +1,47 @@
 # Session notes
 
+## State of `dev`: the 4.0 line (2026-10-31)
+
+`dev` carries the variable rework (#111, #112) and is the line of **Xake 4.0**, a breaking release
+(owner; not 3.16). Release notes: [release-notes.md](release-notes.md), "4.0.0 (unreleased)". The
+feature folder: [features/vars-precedence](features/vars-precedence/session.md).
+
+- **Variables are evaluated once at launch**, in `ScriptRunner.createScriptContext`
+  (`src/core/VarEvaluation.fs`; the types and the pure parts are in `src/core/Vars.fs`): Run,
+  `--dryrun`, `--dump` and engine `start`; `--help` evaluates nothing. A recipe only reads.
+- **The chain:** engine per-demand `?vars` > `-d` (the last wins) > the script's one definition
+  (`var "N" "v"` or `ExecOptions.Vars`, script constants only) > the declaration's sources
+  (`var "N" [Cli ..; Env ..; Default ..]` or a `varschema` field), first defined in list order.
+  A name defined twice in the script is a launch error.
+- **Keys vs `-d` names:** the key is the internal name (a field's `name`, else the field name; the
+  `var` rule's name); `cliArg` / `Cli` is only the `-d` name. `-d` of a non-key name, of a
+  secret or of a `Var.env` field stops the run.
+- **A `Var` read** (`let! x = vars.f`) returns the stored value of an equal declaration; no
+  declaration or a different one is an error (E-7/E-8). It records `Var (N, value)`, never its
+  source, so moving an equal value between environment, `-d` and `var` does not rebuild.
+  `getVar` reads the set, `getEnv` the environment (recorded as `EnvVar`).
+- **Secrets:** `Secret` records only whether the value is set, `SecretHashed` a salted hash
+  (`SecretDep (key, SecretArg)`); logs, the banner and the debug dump show `***`; `getVar` of a
+  secret returns the real value. The banner lists each variable once with its source.
+- **Libraries read only the variable set**, never the environment: Xake.Dotnet
+  (`NUGET_PACKAGES`, default `<project root>/.packages`; `NUGET_FETCH`, `CSC_SERVER`,
+  `XAKE_CSC_SERVER`, `CSC_JOBS`, `FSC_JOBS`; strict switch values) and Xake.Hermetic.Dotnet
+  (`CI`, `LOCK_REFRESH`, `LOCK_STALE`, `SOURCE_DATE_EPOCH`). They read through `Var.read`; the
+  optional import is `varschema DotNetVars.Default` / `HermeticVars.Default`. A CI that used the
+  environment adds `var "NUGET_PACKAGES" [Env "NUGET_PACKAGES"]` and the like.
+- **Release state:** published are Xake 3.15.0 and Xake.Hermetic.Dotnet 0.10.0 (range
+  `[3.14.0.45, 4.0)`). Until 4.0 the hermetic package builds on the in-repo Xake (project
+  references; its nupkg depends on `Xake` at the build's version), `bump-base` and the CI job
+  `hermetic-compat` are gone, `publish.yml` refuses `hermetic-v*`. At 4.0 hermetic 0.11 ships
+  with Xake, and `Xake.Dotnet` and the hermetic package are split out together (release-process
+  decision D). Records frozen until 4.0 (`RecordShapeTests`) may change in 4.0.
+- Traps: a local `.xake` from before the rework makes the hermetic `test-build` misbehave (the
+  dependency records of Var reads and secrets changed): use `--resetdb`. The SDK pin is
+  10.0.402 in the locks and `build.yml`; another SDK needs `update-locks`. .NET removes an
+  environment variable set to `""` in-process, so a test cannot make an "empty value" through
+  the environment on Unix (pass it with `-d N=`). The importer reads `PrivateAssets=all` as
+  "bundled" (`package.bundle: ["Xake"]` in `src/hermetic/xake.project.json`).
+
 ## Release prep (branch `feature/rulesless-syntax`)
 
 Preparing the first release that ships `Xake.Dotnet` inside the `Xake` package. What was
@@ -162,19 +204,18 @@ Scripts' own `shell { args }` stay raw.
 
 ```bash
 dotnet build src/core -c Release && dotnet build src/dotnet -c Release   # both TFMs, 0 warnings
-dotnet restore src/hermetic.tests                                        # Xake 3.13.0.43 from nuget.org, no NU1603
+dotnet restore src/hermetic.tests                                        # builds on the in-repo Xake (until 4.0), no NU1603
 dotnet build src/hermetic -c Release --no-restore                        # Xake.Hermetic.Dotnet, both TFMs, 0 warnings
-dotnet test src/tests -c Release                                         # 258 passed, 1 skipped
-dotnet test src/hermetic.tests -c Release --no-restore                   # 118 passed
+dotnet test src/tests -c Release                                         # all green (547 tests at the vars rework)
+dotnet test src/hermetic.tests -c Release --no-restore
 dotnet test src/tests --filter 'Category=Integration'                    # real csc and fsc runs
 dotnet test src/hermetic.tests --filter 'Category=Integration'
 dotnet fsi build.fsx -- -- build test pack                               # self-hosting: 3 libraries, both test projects, both packages
 dotnet fsi samples/fullframework.fsx                                     # end-to-end csc
 ```
 
-Test counts are "258 + 118" as of the build-scripts PR; tests move between the two projects, so
-the split shifts. `pack` writes `out/pkg/Xake/` and `out/pkg/Xake.Hermetic.Dotnet/` (independent:
-the hermetic pack restores `Xake` from nuget.org; `pack-hermetic` packs only that one) and fails
+Tests move between the two projects, so the split shifts. `pack` writes `out/pkg/Xake/` and `out/pkg/Xake.Hermetic.Dotnet/` (independent:
+the hermetic pack builds on the in-repo `Xake` and depends on package `Xake` at the build's version; `pack-hermetic` packs only that one) and fails
 if the hermetic nuspec has no `Xake` dependency or names `Xake.Dotnet` (docs/devprocess.md).
 
 `samples/*.fsx` reference `out/netstandard2.0/*.dll`, so run the self-hosting build first.
@@ -198,14 +239,14 @@ data, no msbuild for them. `build.fsx` stays the build of record (packages, rele
   version: a removed SDK patch needs `update-locks` and the matching pin in `build.yml`.
 - Trap: adding a source file to a project needs `import` AND `update-locks` (the lock lists the
   sources); CI `build-fsc` failed on #95 with FS0039 when only `import` ran.
-- Bootstrap: `#r "nuget: Xake, 3.13.0.43"` and `#r "nuget: Xake.Hermetic.Dotnet, 0.8.0.44"`, no
+- Bootstrap: `#r "nuget: Xake, 3.15.0"` and `#r "nuget: Xake.Hermetic.Dotnet, 0.10.0"` (the first lines), no
   `build.fsx` run first. Its `clean` removes `out/Release` only (`out/netstandard2.0` is
   `build.fsx`'s).
 - Own database `.xake.fsc` (`xake { ExecOptions.Default with DbFileName = ... }`): the scripts no
   longer share a bootstrap, and their phony targets (`build`, `test`, `clean`) share names.
 - The locks name the SDK's `fsc.dll` by path with an empty `Sha256`: the SDK version is its
-  identity (prerequisite `dotnet-sdk` 10.0.401, hermetic 0.3). The committed locks hold for SDK
-  10.0.401 on any OS/architecture; the CI job `build-fsc` runs on ubuntu-latest. Another SDK
+  identity (prerequisite `dotnet-sdk` 10.0.402, pinned in `build.yml`). The committed locks hold for SDK
+  10.0.402 on any OS/architecture; the CI job `build-fsc` runs on ubuntu-latest. Another SDK
   needs `update-locks`.
 - `HERMETIC=on` is not set: it needs an exact SDK pin in `global.json` (`rollForward: disable`),
   which the repository does not have (CI matrix 8.0/10.0). Open question.

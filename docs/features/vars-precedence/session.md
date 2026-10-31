@@ -96,7 +96,7 @@ Readings taken by the implementer, for the owner:
 
 ## 2026-10-31: secret masking cost (closed)
 
-Measured on Apple M5 Pro, .NET SDK 10.0.403, Release (`perf-secrets.md`, scripts in `perf/`).
+Measured on Apple M5 Pro, .NET SDK 10.0.403, Release (method and results in `perf-secrets.md`).
 Five secrets of 24-40 chars cost about 1.1 ms of CPU per 10,000 log lines (115 ns/line vs 3.7
 ns/line without secrets; about 22 ns per secret per line, almost all in `Contains`; matches add
 nothing measurable). End to end (10,000 lines to a file log) the difference is inside noise: about

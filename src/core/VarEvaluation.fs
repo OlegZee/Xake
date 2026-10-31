@@ -8,9 +8,21 @@ let constantLabel (name: string) = sprintf "var \"%s\" \"...\"" name
 let ruleLabel (name: string) = sprintf "var \"%s\" [...]" name
 let fieldLabel (field: string) = sprintf "varschema field %s" field
 
+/// A key in UPPER_SNAKE: `_` between a lower-case letter and an upper-case one, then upper case
+/// (`buildConfig` -> `BUILD_CONFIG`).
+let toEnvName (key: string) : string =
+    System.Text.RegularExpressions.Regex.Replace(key, "(?<=[a-z])(?=[A-Z])", "_").ToUpperInvariant()
+
+/// The implicit environment name of a key (spec P-1): `XAKE__` + the key in UPPER_SNAKE, every
+/// character other than `A`-`Z`, `0`-`9` and `_` replaced by `_` (`netfx-target` -> `XAKE__NETFX_TARGET`).
+let implicitEnvName (key: string) : string =
+    let valid (c: char) = (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c = '_'
+    "XAKE__" + System.String(toEnvName key |> Seq.map (fun c -> if valid c then c else '_') |> Array.ofSeq)
+
 /// The declaration of a `var "N" [sources]` rule: a string in both scopes, never required;
 /// the secret markers set its mode (`SecretHashed` wins), `Cli` its external name; markers
-/// are not kept as sources.
+/// are not kept as sources. A list without an `Env` source gets the implicit `Env "XAKE__<NAME>"`
+/// first (spec P-1, P-2).
 let ruleDecl (name: string) (sources: VarSource list) =
     let cliNames = sources |> List.choose (function Cli ext -> Some ext | _ -> None)
     let sources' =
@@ -18,6 +30,9 @@ let ruleDecl (name: string) (sources: VarSource list) =
             | Env _ | Default _ -> true
             | Cli _ -> cliNames.Length > 1      // kept for the launch error (two command-line names)
             | Secret | SecretHashed -> false)
+    let sources' =
+        if sources' |> List.exists (function Env _ -> true | _ -> false) then sources'
+        else Env (implicitEnvName name) :: sources'
     { Key = name
       CliName = cliNames |> List.tryHead |> Option.defaultValue name
       Sources = sources'
@@ -83,6 +98,24 @@ let launch (opts: ExecOptions) : Map<string, VarEntry> * string list =
         | a :: b :: _ -> errors.Add (sprintf "Variable '%s' is defined twice in the script: by %s and by %s; define it once" key a b)
         | _ -> ()
 
+    let declared = decls |> List.rev |> List.map (fun d -> d.Key, d) |> Map.ofList     // the first declaration of a key
+
+    // different keys of one implicit env name (P-5): constants and declarations that read their implicit name
+    let constantOps = opts.VarDefinedBy |> List.filter (fun (k, label) -> label = constantLabel k) |> List.map fst
+    let optionKeys = opts.Vars |> List.map fst |> List.filter (fun k -> not (List.contains k constantOps))
+    let readsImplicit key =
+        match Map.tryFind key declared with
+        | Some d -> envNames d = [implicitEnvName key]
+        | None -> true                          // a constant or an ExecOptions.Vars entry
+    optionKeys @ (opts.VarDefinedBy |> List.map fst)
+    |> List.distinct
+    |> List.filter readsImplicit
+    |> List.groupBy implicitEnvName
+    |> List.iter (fun (env, keys) ->
+        match keys with
+        | a :: b :: _ -> errors.Add (sprintf "Variables '%s' and '%s' both read the environment variable %s; rename one, or give one an explicit Env source" a b env)
+        | _ -> ())
+
     for d in decls do
         // one command-line name per rule
         match d.Sources |> List.choose (function Cli ext -> Some ext | _ -> None) with
@@ -101,7 +134,6 @@ let launch (opts: ExecOptions) : Map<string, VarEntry> * string list =
         elif d.CliName <> d.Key && given d.Key then
             errors.Add (sprintf "-d %s: the variable is set on the command line as %s; use -d %s=..." d.Key d.CliName d.CliName)
 
-    let declared = decls |> List.rev |> List.map (fun d -> d.Key, d) |> Map.ofList     // the first declaration of a key
     let ownValue (d: VarDecl) =
         d.Sources |> List.tryPick (function
             | Env e -> Util.getEnvVar e |> Option.map (fun v -> v, VarOrigin.Env e)
@@ -125,7 +157,12 @@ let launch (opts: ExecOptions) : Map<string, VarEntry> * string list =
                 | _, Some v -> Some (v, VarOrigin.Cli cliName)
                 | _, None ->
                     match Util.getVar opts.Vars key, decl with
-                    | Some v, _ -> Some (v, VarOrigin.Script)
+                    | Some v, _ ->
+                        // a constant reads its implicit env name first (P-3)
+                        let env = implicitEnvName key
+                        match Util.getEnvVar env with
+                        | Some e -> Some (e, VarOrigin.Env env)
+                        | None -> Some (v, VarOrigin.Script)
                     | None, Some d -> ownValue d
                     | None, None -> None
             match decl, value with

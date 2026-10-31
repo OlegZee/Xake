@@ -96,7 +96,7 @@ content rule belongs to the build definition, not to the machine.
 
 | Concern | What makes it hermetic | If missing under `HERMETIC=on` |
 |---|---|---|
-| Package folder | the build variable `NUGET_PACKAGES`, or its default `.packages` (the folder to cache and ship) | always satisfied since Xake 3.16 (before: unset meant the machine's folder, and resolve failed asking for it) |
+| Package folder | the build variable `NUGET_PACKAGES`, or its default `.packages` (the folder to cache and ship) | always satisfied since Xake 4.0 (before: unset meant the machine's folder, and resolve failed asking for it) |
 | csc compiler | `CSC_TOOLSET` (or `toolset` in the block) | resolve fails naming the SDK csc path |
 | fsc compiler | `global.json` exact pin; the SDK is the prerequisite (its identity: no hash of `fsc.dll`) | resolve fails naming the pin found |
 | `netN.0` references | a `NETCORE_REF_VERSION` entry for that major.minor (then always the NuGet `Microsoft.NETCore.App.Ref`) | resolve fails naming the `packs/` path and the version this SDK bundles |
@@ -121,7 +121,7 @@ A minimal script: [../hermetic-guide.md](../hermetic-guide.md#hermetic-mode).
 | # | Where | Message |
 |---|---|---|
 | 1 | variable | `HERMETIC='<x>': expected on or off` |
-| 2 | `HermeticMode.check` with `PackageRootDeclared = false` (no longer from `ofSettings`, `Lock.record`, `Project.import` since Xake 3.16: the folder is always the build's) | `'<name>': HERMETIC=on needs a package folder of the build's own: the build variable NUGET_PACKAGES names it (-d NUGET_PACKAGES=<dir>; unset, .packages under the project root)` |
+| 2 | `HermeticMode.check` with `PackageRootDeclared = false` (no longer from `ofSettings`, `Lock.record`, `Project.import` since Xake 4.0: the folder is always the build's) | `'<name>': HERMETIC=on needs a package folder of the build's own: the build variable NUGET_PACKAGES names it (-d NUGET_PACKAGES=<dir>; unset, .packages under the project root)` |
 | 3 | `Csc.ofSettings` | `'<name>': HERMETIC=on: the compiler <path> comes from the .NET SDK; set CSC_TOOLSET (or toolset in the csc block) to take csc from the Microsoft.Net.Compilers.Toolset package` |
 | 4 | `ofSettings` | `'<name>': HERMETIC=on: the reference assemblies for net10.0 come from <path> under the .NET SDK; add a 10.0 version to NETCORE_REF_VERSION (this SDK bundles 10.0.12)` |
 | 5 | `Fsc.ofSettings` | `'<name>': HERMETIC=on: the default FSharp.Core <path> comes from the .NET SDK; set FSHARP_CORE_VERSION to take the FSharp.Core package, or reference an FSharp.Core.dll` |

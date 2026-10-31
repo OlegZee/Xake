@@ -8,8 +8,8 @@ open Xake.Dotnet
 /// <summary>
 /// The build variables Xake.Hermetic.Dotnet reads, as a schema a script MAY import:
 /// <c>varschema HermeticVars.Default</c>, or with fields changed by copy-and-update, e.g.
-/// <c>varschema { HermeticVars.Default with CI = Var.string() |> withDefault "off" }</c> to take
-/// the environment variable `CI` too (what a CI service sets). Each field is named by its
+/// <c>varschema { HermeticVars.Default with CI = Var.string(envVar = "CI") |> withDefault "off" }</c> to take
+/// the environment variable `CI` too (what a CI service sets; without `envVar`, `XAKE__CI`). Each field is named by its
 /// variable, is a string, takes `-d NAME=value` and no environment variable (the package reads
 /// none), and carries the package's fixed default where it has one. Without the import the
 /// package reads the same names with the same defaults. Xake.Dotnet's are `DotNetVars`.

@@ -485,6 +485,9 @@ let strings = resourceset {
 
 ### Script variables
 
+The full reference (the `XAKE__` environment source, errors, migration from 3.15) is
+[variables.md](variables.md); this section is the short form.
+
 | Variable | Effect |
 |----------|--------|
 | `NETFX` | Framework whose tools are used, overriding the target framework |
@@ -525,7 +528,7 @@ the reference packs (`NETStandard.Library` for netstandard2.0,
 2. else `.packages` under the project root.
 
 The child `dotnet restore` gets the folder as its environment variable `NUGET_PACKAGES`, so NuGet
-puts the packages there. The environment variable is not read by Xake itself (3.16); to take it,
+puts the packages there. The environment variable is not read by Xake itself (4.0); to take it,
 `var "NUGET_PACKAGES" [Env "NUGET_PACKAGES"]`.
 
 `csc { ...; lock "app.json" }` and `fsc { lock }` (Xake.Hermetic.Dotnet) use the same folder
@@ -549,7 +552,7 @@ not needed for the defaults):
 
 ```fsharp
 xakeScript {
-    varschema { DotNetVars.Default with NUGET_PACKAGES = Var.string() |> withDefault ".packages" }   // + env NUGET_PACKAGES
+    varschema { DotNetVars.Default with NUGET_PACKAGES = Var.string(envVar = "NUGET_PACKAGES") |> withDefault ".packages" }   // + env NUGET_PACKAGES (without envVar: XAKE__NUGET_PACKAGES)
 }
 ```
 
@@ -594,8 +597,10 @@ The value of a name comes from the first of (first defined wins):
 
 1. the engine's per-demand `Demand(target, vars)` (engine mode only);
 2. `-d NAME=value` on the command line (the last `-d` of a name wins);
-3. the script's one value: `var "NAME" "value"` or an `ExecOptions.Vars` entry;
-4. the name's declaration: a `var` rule or a `varschema` field, its sources in list order.
+3. the script's one value: `var "NAME" "value"` or an `ExecOptions.Vars` entry, unless the
+   environment variable `XAKE__NAME` is present (it overrides the constant);
+4. the name's declaration: a `var` rule or a `varschema` field, its sources in list order, the
+   implicit `XAKE__NAME` first unless the declaration names an environment variable itself.
 
 A **`var` rule** declares where a value comes from:
 
@@ -614,6 +619,14 @@ included), `Default "v"` always. `Cli "ext"` gives the name another command-line
 and `SecretHashed` make it a secret. These markers define nothing and may stand anywhere in the
 list. A rule with no defining source leaves the name unset (`getVar` returns `None`).
 
+**The implicit environment source.** A declaration that names no environment variable reads
+`XAKE__<NAME>` first, `NAME` being its key in UPPER_SNAKE with any character other than a letter,
+digit or `_` replaced by `_`: `var "CONFIG" [Default "Debug"]` takes `XAKE__CONFIG`, then
+`Debug`; `var "netfx-target" []` takes `XAKE__NETFX_TARGET`; a constant `var "VERSION" "1.0"` is
+overridden by `XAKE__VERSION`. An explicit `Env "X"` (or `envVar = "X"` on a field) replaces it.
+Only declared names get one: a `XAKE__FOO` that no declaration or constant names is ignored. Two
+keys of one implicit name (`a-b` and `A_B`) stop the run.
+
 A **name is defined once** in the script: two `var` ops of a name (either form), a `var` op and an
 `ExecOptions.Vars` entry, or a `varschema` field and either of them stop the run before any target
 (`Variable 'N' is defined twice in the script: by A and by B; define it once`). `-d` and the
@@ -625,7 +638,7 @@ plus its type, `required` flag and secret mode:
 
 ```fsharp
 let vars = {|
-    config = Var.string(cliArg = "config") |> withDefault "Debug"   // -d config=..., env CONFIG
+    config = Var.string(cliArg = "config") |> withDefault "Debug"   // -d config=..., env XAKE__CONFIG
     jobs   = Var.int(envVar = "XAKE_JOBS")                          // 't option
     feed   = Var.env<string>(envVar = "PACKAGE_FEED") |> required   // environment only
 |}
@@ -645,7 +658,8 @@ xake ExecOptions.Default {
   else the field name. Its **command-line name** is `cliArg`, else the key: with
   `p = Var.string(cliArg = "pkg")`, `-d pkg=v` sets `p`, and `-d p=v` stops the run
   (`-d p: the variable is set on the command line as pkg; use -d pkg=...`). The environment name
-  is `envVar`, else the key in UPPER_SNAKE_CASE (`buildConfig` -> `BUILD_CONFIG`).
+  is `envVar`, else `XAKE__` + the key in UPPER_SNAKE_CASE (`buildConfig` ->
+  `XAKE__BUILD_CONFIG`; 3.15 read `BUILD_CONFIG`). `Var.arg` reads no environment variable.
 - A `required` field without a value, or a value that does not convert to the field's type,
   stops the run before any target. `withDefault` gives a value instead; a typed default is
   returned as is.
@@ -657,11 +671,15 @@ xake ExecOptions.Default {
   `getVar "N"` and the environment, live, with `getEnv "X"` (recorded as `EnvVar`).
 
 The run banner (at `Info`, in `build.log`) lists each variable once with its source: `cli` (or
-`cli:<name>` when given under another command-line name), `script`, `env:<NAME>`, `default`, or
+`cli:<name>` when given under another command-line name), `script`, `env:<NAME>` (e.g.
+`env:XAKE__CONFIG`), `default`, or
 `(not set)`; secrets as `***`. `--help` lists the `varschema` fields and the `var` rules, with
-their command-line names, without evaluating anything.
+their command-line names and environment names (implicit or explicit), without evaluating
+anything.
 
 ### Secret variables
+
+See also [variables.md](variables.md#secrets).
 
 A token or license key must not end up in the build database (`.xake`) or the log. Mark the
 variable secret:
@@ -672,6 +690,7 @@ let vars = {|
     LicenseKey   = Var.string(cliArg = "licenseKey", envVar = "LICENSE_KEY") |> secret
 |}
 // or as a rule: var "ACME_API_TOKEN" [Secret; Env "ACME_API_TOKEN"]
+// or with the implicit source: var "TOKEN" [Secret] reads XAKE__TOKEN
 ```
 
 - `Var.secret<'t>(envVar = ...)` reads the environment only; `|> secret` works on any var

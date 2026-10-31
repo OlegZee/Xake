@@ -7,9 +7,9 @@ commit touching the file; lengths are approximate line counts. Index written 202
 
 - Xake is an F# build tool in the spirit of Shake: build scripts are F# (`xakeScript { }`,
   `recipe { }`), with dependency tracking, incremental rebuilds and parallel execution.
-- Package `Xake` (3.13.0.43 on nuget.org) carries the engine (`src/core`) and the .NET tasks
+- Package `Xake` (3.15.0 on nuget.org; `dev` is the 4.0 line) carries the engine (`src/core`) and the .NET tasks
   `csc`, `fsc`, `msbuild`, `resgen` (`src/dotnet`, namespace `Xake.Dotnet`).
-- Package `Xake.Hermetic.Dotnet` (0.8.0.44, preview, `src/hermetic`) adds the lock: a JSON file
+- Package `Xake.Hermetic.Dotnet` (0.10.0 on nuget.org, preview, `src/hermetic`; builds on the in-repo Xake until 4.0, 0.11 ships with it) adds the lock: a JSON file
   in git recording what the compiler is handed plus SHA-256 of every outside input; also
   restore, SBOM, verify, deterministic pack, signing skeleton.
 - Xake builds itself: `build.fsx` (msbuild-based, build of record) and `build.fsc.fsx` (fsc from
@@ -24,6 +24,9 @@ commit touching the file; lengths are approximate line counts. Index written 202
 | Base docs | this page, below | engine, tasks, .NET toolchain, process, roadmap, cross-feature session notes |
 | Hermetic product docs | [hermetic/index.md](hermetic/index.md) | user-facing reference of `Xake.Hermetic.Dotnet`: lock, restore, SBOM, verify, pack, signing, mode, workflows |
 | Feature working notes | [features/hermetic-build/index.md](features/hermetic-build/index.md) | session log, tracker, brief, design notes, experiments, proving scripts of `feature/hermetic-build` |
+| Variables (4.0) | [features/vars-precedence/session.md](features/vars-precedence/session.md) | declarations evaluated at launch, `var` rules, `Var.read`, library variable sets: spec, briefs, PR notes; implemented in #111 and #112 (user reference: [tasks.md](tasks.md#script-variables)) |
+| Release process | [features/release-process/session.md](features/release-process/session.md) | versioning, the published version is the tag, hermetic on the in-repo Xake until 4.0, the split of `Xake.Dotnet` (D) at 4.0 |
+| Rule specificity | [features/rule-specificity/session.md](features/rule-specificity/session.md) | rule-matching working notes |
 | Windows findings | [features/hermetic-windows/brief.md](features/hermetic-windows/brief.md) | closed 2026-10-27 (#93-#97, Xake 3.13.0, Xake.Hermetic.Dotnet 0.8.0): the seven remarks from the Windows run of the consumer solution (2026-10-26), analyses, brief with the owner's decision list, PR split; branch `feature/hermetic-windows` |
 
 ## Key cross-cutting pages
@@ -47,8 +50,10 @@ commit touching the file; lengths are approximate line counts. Index written 202
 | File | What it is | Read when | Lines | Date | Status |
 |---|---|---|---|---|---|
 | [overview.md](overview.md) | short intro: minimal script, how to run, baseline | first contact with Xake | ~100 | 2026-09-05 | current |
-| [cheatsheet.md](cheatsheet.md) | one-page syntax: entry point, `<==`/`<<<`, rules, vars | writing or reading any build script | ~130 | 2026-10-06 | current |
+| [cheatsheet.md](cheatsheet.md) | one-page syntax: entry point, `<==`/`<<<`, rules, variables (`var`, `varschema`, secrets) | writing or reading any build script | ~130 | 2026-10-06 | current |
 | [tasks.md](tasks.md) | reference of built-in tasks incl. the .NET ones | using a task or its settings | ~535 | 2026-10-11 | current |
+| [release-notes.md](release-notes.md) | what changed per `Xake` release; the `4.0.0 (unreleased)` section holds the variable rework and its migration lines | upgrading, writing a release | ~300 | 2026-10-31 | current |
+| [variables.md](variables.md) | working with variables: `var`, `varschema`, `XAKE__` environment source, secrets, library variables, errors, 3.15 -> 4.0 migration | declaring or reading build variables | ~330 | 2026-10-31 | current |
 | [captureOutput.md](captureOutput.md) | `captureOutput` op of `sh`: route output to file, log, handler | capturing shell output | ~85 | 2026-05-04 | current |
 
 ### .NET toolchain
@@ -57,7 +62,7 @@ commit touching the file; lengths are approximate line counts. Index written 202
 |---|---|---|---|---|---|
 | [dotnet-build.md](dotnet-build.md) | toolchain discovery, host vs target runtime, `NETFX`/`NETFX-TARGET`, providers | touching `DotNetFwk.fs` or targeting net4x / netN.0 | ~465 | 2026-10-11 | current |
 | [csc-syntax.md](csc-syntax.md) | `csc {}` in detail: composed mode, `Csc` record, `resolve`, `Csc.run` | working on csc/fsc settings or the runner | ~280 | 2026-10-10 | current |
-| [csc-server.md](csc-server.md) | `csc` through the Roslyn compiler server: `/shared`, `CSC_SERVER`, `XAKE_CSC_SERVER`; `CSC_JOBS`/`FSC_JOBS` | compile speed or CI server switch | ~155 | 2026-09-30 | current |
+| [csc-server.md](csc-server.md) | `csc` through the Roslyn compiler server: `/shared`, `CSC_SERVER`, `XAKE_CSC_SERVER` (build variables, not the environment); `CSC_JOBS`/`FSC_JOBS` | compile speed or CI server switch | ~155 | 2026-09-30 | current |
 
 ### Engine
 

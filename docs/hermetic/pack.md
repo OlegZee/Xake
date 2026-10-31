@@ -99,7 +99,7 @@ is the standard table-driven implementation, used both writing and reading.
 
 ## `SOURCE_DATE_EPOCH`
 
-A build variable since 0.11 (Xake 3.16). In a recipe, `let! options = Pack.Options.current ()`
+A build variable since 0.11 (Xake 4.0). In a recipe, `let! options = Pack.Options.current ()`
 uses it (clamped to 1980; empty or not a number is the DOS epoch) instead of the DOS epoch, so a
 CI pipeline pinning it to the commit time gets that time baked into every entry without losing
 byte-identity across reruns of the same commit. `Pack.Options.Default` is the DOS epoch always

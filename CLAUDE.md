@@ -52,7 +52,7 @@ Requires .NET SDK 8.0+ (see `global.json`).
 - **Target**: What a rule produces — either a `FileTarget` (file path) or `PhonyAction` (named action)
 - **Rule**: Maps a target pattern to a Recipe. Types: `FileRule`, `MultiFileRule`, `PhonyRule`, `FileConditionRule`
 - **Recipe**: Async-like computation expression (`recipe { ... }`) that builds a target and tracks dependencies
-- **Dependency**: Tracked inputs — `FileDep`, `ArtifactDep2` (dependee target + change stamp; `ArtifactDep` only in old databases), `EnvVar`, `Var`, `AlwaysRerun`, `GetFiles`
+- **Dependency**: Tracked inputs — `FileDep`, `ArtifactDep2` (dependee target + change stamp; `ArtifactDep` only in old databases), `EnvVar`, `Var` (final value of a variable, by declaration), `SecretDep`, `AlwaysRerun`, `GetFiles`
 
 ### Execution Flow
 
@@ -75,6 +75,8 @@ WorkerPool (parallel execution) → Rule matching & Recipe execution → Databas
 | `src/core/RecipeBuilder.fs` | `recipe` computation expression builder |
 | `src/core/Fileset.fs` | Ant-style file pattern matching with named capture groups |
 | `src/core/Types.fs` | Domain types (Target, Rule, Recipe, Dependency, BuildResult) |
+| `src/core/Vars.fs` | The script-facing variable API: `Var.string/int/bool/env/secret/read`, `withDefault`/`required`/`secret`, the `var`/`varschema` builder ops and the declaration reads |
+| `src/core/VarEvaluation.fs` | Launch-time evaluation of declarations (`VarDecl`) into the variable set: chain, conversion, errors, secrets, banner sources |
 
 ### Project Layout
 

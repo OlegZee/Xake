@@ -204,7 +204,7 @@ FscRunOptions; Restore: Restore.Options }`.
 
 - `Lock.underCi` decides whether the build runs under CI. It reads the build variable `CI`
   (`on`/`true`/`yes`/`1` or `off`/`false`/`no`/`0`; empty or unset is off; any other value
-  fails). Since 0.11 (Xake 3.16) it does not read the environment variable `CI` that GitHub
+  fails). Since 0.11 (Xake 4.0) it does not read the environment variable `CI` that GitHub
   Actions, GitLab CI and Azure Pipelines set: the script takes it with `var "CI" [Env "CI"]`.
   Nothing reads `GITHUB_ACTIONS`. A script can read the flag with `let! ci =
   Lock.underCi`.
@@ -381,7 +381,7 @@ Who uses whom inside the hermetic package (names used in code, not comments):
 | Name | Kind | What it does |
 |---|---|---|
 | `CompilerServer` | union | `Shared of keepAlive: int option` or `InProcess` |
-| `CompilerServer.fromEnvironment ()` | function | obsolete (Xake 3.16): always `Shared None`; `resolve` reads `XAKE_CSC_SERVER` from the build variables |
+| `CompilerServer.fromEnvironment ()` | function | obsolete (Xake 4.0): always `Shared None`; `resolve` reads `XAKE_CSC_SERVER` from the build variables |
 | `CompilerServer.resolve setting` | recipe | the precedence above; reads `CSC_SERVER` with `getVar`, so it is a tracked dependency |
 | `CscSettingsType`, `CscSettings` | record, value | the settings, with `Toolset: string option` and `Server: CompilerServer option` |
 | `RunOptions` / `RunOptions.Default` | record | `FailOnError`, `CscPath`, `Server`, `Environment` |
@@ -1038,7 +1038,7 @@ run: base 258 passed and 1 skipped, hermetic 118 passed, 0 warnings in both libr
 |---|---|
 | The F# compiler is the SDK's | done in Xake 3.5 / hermetic 0.2: `Fsc.run` shares the runner with `Csc.run`, F# entries are in the lock, `Project.import` reads an fsproj, `Fsproj` is gone. What remains: no package carries a current F# compiler, so an F# lock names `<sdk>/FSharp/fsc.dll` and is reproducible only under an exact SDK pin. Since 0.3 that compiler has no hash in the lock: the SDK version identifies it, so one lock builds on every OS and architecture that has that SDK; `FscArgs` does not treat `--embed:` as a path switch, so an imported fsproj keeps msbuild's relative `--embed:obj/...` values (they resolve against the entry's `Directory`, and the output is byte-identical) |
 | The net462 resx path | `Impl.compileResx` has two bodies on purpose: net462 uses `ResXResourceReader` (typed values, file refs), netstandard2.0 uses `Resx.compile`, which reads plain string values only and throws on typed entries. The runner calls `Resx.compile` for a missing `.resources`. No byte-identity claim is made for net462 |
-| The published base as a dependency | `src/hermetic` takes `Xake` as a PackageReference `[3.7.0.26, 3.8)`, so it compiles against the assemblies on nuget.org, not the `src/core`/`src/dotnet` of the same checkout, and the nuspec range is the reference's own (no pack-time rewriting). The lower bound must be a version that exists: the release run number makes 3.7.0 `3.7.0.26`, and `[3.7.0, 3.8)` warns NU1603 on every restore. The upper bound is the next minor: the `Csc`/`Fsc` records gain fields in base minors, and F# records are not binary-compatible across that (3.6 added `RuntimeConfig`), so each base minor gets a release of this package. A change the hermetic package needs from the base is released first; until then it is developed against a locally packed base passed as an extra restore source (`NUGET_SOURCE`) |
+| The base as a dependency | until Xake 4.0 `src/hermetic` builds on the in-repo `src/core`/`src/dotnet` (ProjectReferences; `Xake.dll` ships inside package `Xake`), and its nupkg depends on package `Xake` at the version of the same build (`-p:XakePackageVersion`), so a hermetic release goes out together with a Xake release (0.11 with Xake 4.0). 0.10 and older are on the published base with a range: `Xake [3.7.0.26, 3.8)` for 0.3, `[3.14.0.45, 4.0)` for 0.10; F# records are not binary-compatible when a base minor adds a field (`Csc`/`Fsc` gained fields in 3.x minors, 3.6 added `RuntimeConfig`), which is why the records the package builds do not grow until 4.0 (docs/devprocess.md) |
 | The fsx bootstrap | on this branch `build.fsx` bootstraps from `#r "nuget: Xake, 3.4.0.21"`, and `build.fsc.fsx` from that and `#r "nuget: Xake.Hermetic.Dotnet, 0.1.0.22"` (exact published versions); `build.fsx` stays on the base package only. #50 reworks `build.fsc.fsx` to `#r` the released 3.7 and 0.3 packages and to build from descriptions and locks. A fix in `src/hermetic` reaches `build.fsc.fsx` only after a release and a bump, or through a temporary `#r` on a copy of the built dlls (docs/devprocess.md) |
 | The target framework of a composed block | `Csc.ofSettings` takes `targetfwk`, else the script variable `NETFX-TARGET`, else the .NET of the SDK the build runs on. It fails only when none of them gives a framework (the Windows `csc.rsp` fallback is gone). An unknown .NET Framework moniker fails with "not a known .NET Framework profile" |
 | A locally built reference in `csc { lock }` | `Csc.run` checks hashes after `needFiles (CscArgs.inputs args)`, so a reference another rule of the script produces is rebuilt first and the check sees the bytes the compiler reads. If such a reference was recorded with a hash (`Lock.record` after it exists), any change to it is then a hash mismatch on the next build that rebuilds it. The imported-lock pattern avoids it by mapping project references (which drops the hash) and `need`ing them first |
@@ -1067,9 +1067,9 @@ run: base 258 passed and 1 skipped, hermetic 118 passed, 0 warnings in both libr
 | First version | 3.4.0 | 0.1.0 |
 | Version source | `/p:Version` from `build.fsx` or CI (`VERSION`) | fsproj `<Version>0.3.0</Version>` (this PR), overridden by `HERMETIC_VERSION` |
 | Tag | `v<X.Y.Z>` | `hermetic-v<X.Y.Z>` |
-| Dependencies | FSharp.Core; Microsoft.Win32.Registry on netstandard2.0 | `Xake [3.7.0.26, 3.8)` (PackageReference on the published package), FSharp.Core |
+| Dependencies | FSharp.Core; Microsoft.Win32.Registry on netstandard2.0 | package `Xake` (0.11: at the version of the build it was packed with, from the in-repo projects; 0.10: `[3.14.0.45, 4.0)`), FSharp.Core |
 
-The versions are independent. `Xake` stays semantic-versioned 3.x. `Xake.Hermetic.Dotnet` starts
+The versions are independent (until Xake 4.0, where the hermetic package ships with the base, 0.11 with 4.0). `Xake` is semantic-versioned. `Xake.Hermetic.Dotnet` starts
 at 0.1.0, a preview: its API may break while it is 0.x. The range is one base minor:
 `[3.7.0.26, 3.8)` for 0.3. The lower bound is the exact published 3.7.0, and the upper bound is
 the next minor, because F# records are not binary-compatible when a base minor adds a field

@@ -415,8 +415,8 @@ Three ways to choose the folder:
 
 | How | Covers | Notes |
 |---|---|---|
-| `var "NUGET_PACKAGES" ".nuget/packages"` (or `-d NUGET_PACKAGES=<dir>`) | the build: `Lock.load`, every restore, `csc { lock }`, `fsc { lock }`, `Project.import`, the base's reference packs and toolset; the lock writes it as `$(NuGetPackageRoot)` | the recommended way; unset, the folder is `.packages` under the project root (Xake 3.16) |
-| `NUGET_PACKAGES=<dir>` in the environment | `dotnet fsi`'s own `#r "nuget:"`; the build only through `var "NUGET_PACKAGES" [Env "NUGET_PACKAGES"]` | Xake 3.16 no longer reads it by itself |
+| `var "NUGET_PACKAGES" ".nuget/packages"` (or `-d NUGET_PACKAGES=<dir>`) | the build: `Lock.load`, every restore, `csc { lock }`, `fsc { lock }`, `Project.import`, the base's reference packs and toolset; the lock writes it as `$(NuGetPackageRoot)` | the recommended way; unset, the folder is `.packages` under the project root (Xake 4.0) |
+| `NUGET_PACKAGES=<dir>` in the environment | `dotnet fsi`'s own `#r "nuget:"`; the build only through `var "NUGET_PACKAGES" [Env "NUGET_PACKAGES"]` | Xake 4.0 no longer reads it by itself |
 | `Restore.into ".packages"` + `Lock.loadWith (Roots.packageRootOverride ...)` + `Lock.compileWith` | imported locks compiled through `compileWith` | the folder is relative to the project root; must appear in both places |
 
 `csc { ...; lock "p"; nofetch }` forbids downloads (`Enabled = false`; it was `norestore`
@@ -484,7 +484,7 @@ on a developer machine (build once, or run the target that calls Lock.record
 "locks/app.json", e.g. update-locks) and commit it.
 ```
 
-"Under CI" is `Lock.underCi`: the build variable `CI` (`-d CI=on|off`). Since 0.11 (Xake 3.16)
+"Under CI" is `Lock.underCi`: the build variable `CI` (`-d CI=on|off`). Since 0.11 (Xake 4.0)
 the environment variable `CI` that GitHub Actions, GitLab CI and Azure Pipelines set counts only
 when the script says so, and the same holds for every variable below that a runner sets:
 
@@ -498,7 +498,7 @@ xakeScript {
 ```
 
 Or import the libraries' schemas and override the fields:
-`varschema { HermeticVars.Default with CI = Var.string() |> withDefault "off" }`. `-d CI=off`
+`varschema { HermeticVars.Default with CI = Var.string(envVar = "CI") |> withDefault "off" }`. `-d CI=off`
 opts out (records as a developer machine would), and `nofailonerror` does not soften it. Off
 CI a missing lock is still recorded and compiled.
 

@@ -98,7 +98,7 @@ Two NuGet packages, **versioned and released independently**:
 
 | Package | Packed from | Contains | Version |
 |---|---|---|---|
-| `Xake` | `src/dotnet` | `Xake.dll` (engine) and `Xake.Dotnet.dll` (.NET tasks) | semver 3.x, `-d Version=` / `$VERSION` |
+| `Xake` | `src/dotnet` | `Xake.dll` (engine) and `Xake.Dotnet.dll` (.NET tasks) | semver (3.x; 4.0 is next on `dev`), `-d Version=` / `$VERSION` |
 | `Xake.Hermetic.Dotnet` | `src/hermetic` | `Xake.Hermetic.Dotnet.dll` (locks, restore, SBOM, verify, pack, sign) | 0.x, `-d HermeticVersion=` / `$HERMETIC_VERSION`; default is the `<Version>` in its fsproj |
 
 `Xake` is packed from the leaf project `src/dotnet`, which references the core and pulls its
@@ -195,8 +195,8 @@ valid on the whole supported range.
 Releases are published by CI, not from a workstation. The
 [`publish.yml`](../.github/workflows/publish.yml) workflow triggers on a tag, picks the package
 by the tag's prefix, runs `build test pack` for `v*` (both packages; the hermetic one is not
-pushed) or `build test pack-hermetic` for `hermetic-v*` (the base is not packed: the hermetic
-package builds on the `Xake` already on nuget.org), and pushes **only the tagged package** to
+pushed) or `build test pack-hermetic` for `hermetic-v*` (refused until Xake 4.0: the hermetic
+package builds on the in-repo `Xake`, so it goes out together with it), and pushes **only the tagged package** to
 nuget.org with the `NUGET_API_KEY` repository secret:
 
 | Tag | Publishes | Version variable |
@@ -216,11 +216,11 @@ git tag vX.Y.Z                 # or: git tag hermetic-v0.A.B
 git push origin master --tags
 ```
 
-A release of both is two tags and two workflow runs, **base first**: tag `vX.Y.Z`, wait for
-`Xake X.Y.Z` to be on nuget.org, raise the `Xake` floor in
-`src/hermetic/Xake.Hermetic.Dotnet.fsproj` to that exact published version (if the hermetic
-package needs it; see the lower-bound rule above), merge, then tag `hermetic-v0.A.B`. If the
-floor is not on nuget.org yet, the hermetic release fails at restore, before anything is pushed.
+Until Xake 4.0 only `v*` tags publish. The hermetic package (0.11) ships together with Xake 4.0,
+built on the same checkout, depending on package `Xake` at the version of that build; how it is
+tagged and published once `Xake.Dotnet` and the hermetic package are split out of this
+repository (release-process decision D) is settled with that split
+([features/release-process](features/release-process/session.md)).
 
 **The published version is the tag**, exactly: `v3.15.0` publishes `3.15.0`, `hermetic-v0.10.0`
 publishes `0.10.0` (up to 3.14.0 / 0.9.0 the run number was appended: `3.14.0.45`, `0.9.0.46`;

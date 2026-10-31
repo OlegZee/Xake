@@ -119,7 +119,7 @@ type ``Hermetic vars conformance (spec section 8-9)``() =
     [<Test>]
     member x.``pr2-84 HermeticVars imported, CI overridden to take the environment``() =
         let import schema (s: XakeScript) = x.Builder.Vars(s, schema)
-        withEnv ["CI", "true"] (fun () ->
+        withEnv ["XAKE__CI", "true"] (fun () ->
             let schema = { HermeticVars.Default with CI = Var.string() |> withDefault "off" }
             Assert.AreEqual(true, fst (x.Read [] (import schema) Lock.underCi))
             Assert.AreEqual(false, fst (x.Read [] (import HermeticVars.Default) Lock.underCi)))

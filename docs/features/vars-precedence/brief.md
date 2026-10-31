@@ -1,7 +1,7 @@
 # vars-precedence: brief
 
 The decisions in force (owner, 2026-10-28..29). Do not re-litigate. The spec ([spec.md](spec.md))
-formalizes them; rejected designs and their reasons are in [archive/](archive/README.md).
+formalizes them (implemented in #111 and #112, shipping as Xake 4.0); rejected designs and their reasons are in [archive/](archive/README.md).
 
 ## Principle
 
@@ -41,7 +41,7 @@ over ops (#103). To do: per-demand `?vars` on top (today below the script's valu
 - **The external name** is what `-d` uses: `cliArg` of a field, or a `Cli "ext"` source in a list
   (at most one), else the key. `-d ext=v` sets the key's value; `-d key=v` for a declaration whose
   external name differs is an error at launch. The environment name is unchanged (explicit `envVar`,
-  else derived from the internal name).
+  else derived from the internal name; with the 2026-10-31 prefix, `XAKE__` + the derived name).
 - Breaking: in 3.15 a field with `cliArg` was keyed by `cliArg`.
 
 ## Import of library declarations (owner, 2026-10-29: an option; PR 2)
@@ -79,6 +79,28 @@ fixed in the PR 2 spec.
 - The banner lists each name once with its real source: `cli`, `request`, `script`, `env:<NAME>`,
   `default`; secrets as `***`. `--help` lists `varschema` fields and `var [...]` rules.
 - The debug dump of options shows the variables with secrets masked.
+
+## Environment prefix (owner, 2026-10-31)
+
+1. Every declaration has an implicit environment source `Env "XAKE__<NAME>"`, where `NAME` is the declaration's key
+   converted to UPPER_SNAKE by the rule `Var` used before (`toEnvName`), with characters invalid in an environment
+   variable name replaced by `_`. It is the first source, before `Default` / the constant value.
+2. An explicit `Env "X"` in a rule, or `envVar = "X"` on a `Var.*` field, replaces the implicit source (`XAKE__` is
+   then not read).
+3. A constant `var "N" "v"` is a declaration too: `XAKE__N` overrides its value (in effect the rule
+   `[Env "XAKE__N"; Default "v"]`). Initial `ExecOptions.Vars` entries given to `xake`/`xakeArgs` are treated as
+   constants (the implementer's assumption, see the spec, P-3).
+4. Strict: a name without a declaration gets no implicit source; `XAKE__*` variables are not scanned into the set.
+5. `Var.*`: the derived env name changes from `toEnvName key` to `XAKE__` + that, with no compatibility path (4.0 is
+   breaking). `Var.arg` (argument-only) has no env source. `Var.env` / `Var.secret` without `envVar` read
+   `XAKE__<NAME>`.
+6. Two declarations whose implicit env names collide (different keys, the same `XAKE__` name: case or `-`/`_`
+   differences) are a launch error with an exact message.
+7. The chain is unchanged: `?vars` > `-d` > the declaration's sources in order (implicit or explicit `Env` first,
+   then `Default` / the constant). Secrets: `XAKE__` is the normal way to pass a secret (`-d` of a secret stays an
+   error). Banner origin `env:XAKE__N`. `--help` shows the env name, implicit or explicit.
+
+Formalized in spec.md §3.11 (P-1..P-8), E-12, tests 85-96.
 
 ## Constraints
 

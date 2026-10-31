@@ -880,7 +880,7 @@ csc's compiler (the toolset replaces it: `CSC_TOOLSET`).
 
 | Where | Under `HERMETIC=on` |
 |---|---|
-| `Lock.record`, the recording branch of `Lock.build`/`buildWith` (`csc { lock }`, `fsc { lock }`) | the lock is not written when a path breaks the invariant (message 9, one line per path); the package folder is always the build's own (Xake 3.16), so the base's message 2 no longer arises here |
+| `Lock.record`, the recording branch of `Lock.build`/`buildWith` (`csc { lock }`, `fsc { lock }`) | the lock is not written when a path breaks the invariant (message 9, one line per path); the package folder is always the build's own (Xake 4.0), so the base's message 2 no longer arises here |
 | `Lock.compileWith`, `Lock.compile`, the replay in `buildWith` | after the prerequisite check, a lock that names a path outside the roots fails before any restore (message 10) |
 | `Project.import` | the SDK not pinned exactly is an error (message 11; a warning with the mode off); pinned but not the SDK msbuild ran is message 7; then the gate of `record` over every entry. Nothing is written when anything fails |
 
@@ -1577,12 +1577,12 @@ bool>`:
 | build variable `CI` (`-d CI=on`, `xakeScript { var "CI" "on" }`, `Vars`, or `var "CI" [Env "CI"]` to take what GitHub Actions, GitLab CI, Azure Pipelines and most others set) | `on`/`true`/`yes`/`1`: CI; `off`/`false`/`no`/`0`, empty: not CI (case-insensitive, trimmed); anything else fails |
 | unset | not CI |
 
-Since 0.11 (Xake 3.16) the environment variable `CI` is not read by itself: a script that ran
+Since 0.11 (Xake 4.0) the environment variable `CI` is not read by itself: a script that ran
 under CI through it alone adds `var "CI" [Env "CI"]`.
 
 Same convention as `NETFX` and `CSC_SERVER`: `-d CI=off` builds as a developer machine would
 (records a missing lock) even on a runner, `-d CI=on` rehearses the CI behaviour locally. Reading
-the flag (`getVar`, then `getEnv`) makes it a tracked dependency of the target, so flipping it
+the flag (`getVar`; the environment is not read) makes it a tracked dependency of the target, so flipping it
 reruns the target.
 
 `Lock.buildWith` reads the flag itself, so `Lock.build`, `csc { lock }` and every script calling
@@ -1644,7 +1644,7 @@ second build leaves the lock byte-identical, an added source fails with the diff
 overwrites and the next build passes, a reference tampered after recording fails the hash check,
 and `Lock.verify` reports the difference without writing or compiling; under CI (script
 variable) a missing lock fails with the message above and nothing is recorded or compiled,
-`FailOnError = false` does not help, the environment variable `CI=true` fails it through
+`FailOnError = false` does not help, `CI=true` in the environment alone is ignored (it records), `var "CI" [Env "CI"]` makes it fail through
 `csc { lock }`, `-d CI=off` with `CI=true` in the environment records, not under CI records,
 drift under CI fails as before, an unrecognized `CI` value fails; drift messages and `verify`
 lines carry `$(ProjectRoot)`, not the absolute root; `verify` on a missing lock; `nofetch` turns

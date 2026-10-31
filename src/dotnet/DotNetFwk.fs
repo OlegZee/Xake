@@ -8,8 +8,8 @@ open System.IO
 /// <summary>
 /// The build variables Xake.Dotnet reads, as a schema a script MAY import:
 /// <c>varschema DotNetVars.Default</c>, or with fields changed by copy-and-update, e.g.
-/// <c>varschema { DotNetVars.Default with NUGET_PACKAGES = Var.string() |> withDefault ".packages" }</c>
-/// to take the environment variable `NUGET_PACKAGES` too. Each field is named by its variable,
+/// <c>varschema { DotNetVars.Default with NUGET_PACKAGES = Var.string(envVar = "NUGET_PACKAGES") |> withDefault ".packages" }</c>
+/// to take the environment variable `NUGET_PACKAGES` too (without `envVar`, `XAKE__NUGET_PACKAGES`). Each field is named by its variable,
 /// is a string, takes `-d NAME=value` and no environment variable (the library reads none), and
 /// carries the library's fixed default where it has one. Without the import the library reads
 /// the same names with the same defaults; importing shows them in `--help` and the banner.

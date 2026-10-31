@@ -630,7 +630,7 @@ dotnet fsi build.fsx -- -- build -d XAKE_CSC_SERVER=off
 ```
 
 The environment variable `XAKE_CSC_SERVER` counts only when the script says so:
-`var "XAKE_CSC_SERVER" [Env "XAKE_CSC_SERVER"]` (Xake 3.16).
+`var "XAKE_CSC_SERVER" [Env "XAKE_CSC_SERVER"]` (Xake 4.0).
 
 **(untested)** for both command lines. Changing `CSC_SERVER` rebuilds the targets that read it.
 A leftover server after the build is normal; `dotnet build-server shutdown` stops the SDK's.

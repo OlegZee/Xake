@@ -218,7 +218,7 @@ existing decision (no hooks on `Csc.run`) stands.
 
 **The limit.** Build variable `CSC_JOBS` (positive integer; unset, empty or `0` =
 unlimited), then unlimited. (Until Xake 3.15 the environment variable `XAKE_CSC_JOBS` came
-second; since 3.16 it counts only through the script: `var "CSC_JOBS" [Env "XAKE_CSC_JOBS"]`.) A value that is not a non-negative integer is traced as a
+second; since 4.0 it counts only through the script: `var "CSC_JOBS" [Env "XAKE_CSC_JOBS"]`.) A value that is not a non-negative integer is traced as a
 warning and taken as unlimited. One difference from `CSC_SERVER`, deliberate: the value is
 read from `ctx.Vars` **without** `getVar`, so it is **not** recorded as a dependency.
 Concurrency does not change any output; changing `-d CSC_JOBS=4` must not rebuild the

@@ -3,7 +3,15 @@
 Working state of the release-process work on `dev`; each implementation PR updates this file
 and [tracker.md](tracker.md).
 
-## Where things stand (2026-10-29)
+## Where things stand (2026-10-31)
+
+The vars rework (#111, #112, merged) is a breaking release and ships as **Xake 4.0**, not 3.16.
+Until then the hermetic package builds on the in-repo Xake (section below); hermetic 0.11 ships
+with 4.0, and D (`Xake.Dotnet` and the hermetic package out of the `Xake` package) comes with
+4.0. D0 is met on the vars side (variant 3 is on `dev`); the pattern module is the remaining
+prerequisite. Release notes: `docs/release-notes.md`, "4.0.0 (unreleased)".
+
+## Earlier (2026-10-29)
 
 - [review.md](review.md): the release procedure, its causes, the release history 3.4..3.14 and
   options A-E. Decided (§6): A, B, E now; then D, after the vars (variant 3) and pattern module
@@ -30,10 +38,10 @@ published 0.10's range `[3.14.0.45, 4.0)` stays as it is. Importer gap: `Import.
 reads the private `src/core` reference as `package.bundle: ["Xake"]` in
 `src/hermetic/xake.project.json`; only `dotnet pack` packs today, so nothing acts on it.
 
-**Next step**: none in this folder until D0 (vars variant 3 and the pattern module on `dev`);
-then D1, the design note for moving `Xake.Dotnet` out of the `Xake` package.
+**Next step**: none in this folder until D0 (the pattern module on `dev`; vars variant 3 is
+there); then D1, the design note for moving `Xake.Dotnet` out of the `Xake` package.
 
 | PR | Branch | Worktree | Status |
 |---|---|---|---|
-| #104..#109 | — | — | merged; #109's worktree `.claude/worktrees/pr/bump-base` to remove |
+| #104..#109, #111, #112 | — | — | merged; #109's worktree `.claude/worktrees/pr/bump-base` to remove |
 | bootstrap 3.15.0 / 0.10.0 | `pr/bootstrap-315-0100` | `.claude/worktrees/pr/bootstrap-315-0100` | draft |

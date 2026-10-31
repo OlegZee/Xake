@@ -1,6 +1,6 @@
 # Spec: variable evaluation
 
-Status: rev. 6, amended 2026-10-29 (evaluation at launch; names), approved. It formalizes [brief.md](brief.md), whose decisions are final. It
+Status: rev. 6, amended 2026-10-29 (evaluation at launch; names), approved; amended 2026-10-31: implicit XAKE__ source (§3.11, P-1..P-8, E-12, tests 85-96); implemented in #111 (core) and #112 (libraries), merged, shipping as Xake 4.0 ("next minor" below reads 4.0; hermetic 0.11). It formalizes [brief.md](brief.md), whose decisions are final. It
 replaces rev. 5 (git 7d11d56, see [archive](archive/README.md)) and revives S-1..S-4 of rev. 4
 (git 8b3ddc6); ids are kept where the rule is unchanged. Retired: rev. 5 Y-1..Y-3, X-6,
 W-3; rev. 4 S-5, K-2, K-3, W-1. File:line references are to this branch (dev, Xake 3.15.0). MUST, MUST NOT, SHOULD, MAY
@@ -29,13 +29,14 @@ banner, `--help`, the debug options dump, engine mode, and how Xake.Dotnet and X
   entries and constant `var "N" "v"` ops (script).
 - **Declaration**: a `var "N" [sources]` op (a **rule**) or a `Var.*` field of a `varschema` op (a **field**). An op only
   records it in `ExecOptions.VarDecls`, without a value; nothing is evaluated when the op is applied.
-- **Source**: `Env "X"` (environment variable `X`) or `Default "v"` (the constant `v`). The markers `Secret` and
+- **Source**: `Env "X"` (environment variable `X`) or `Default "v"` (the constant `v`); a declaration without an
+  explicit `Env` has the implicit source `Env "XAKE__<NAME>"` first (P-1). The markers `Secret` and
   `SecretHashed` are list elements that define nothing; they set the secret mode. `Cli "ext"` is a marker too: it
   names the external name (R-5).
 - **Script definition**: an `ExecOptions.Vars` entry, a constant `var` op, a rule or a field; each names one key.
 - **Key** of a `Var.*` value: `Name`, else `FieldName`, verbatim (3.13 keyed by `CliArgName` first, `resolvedCliName`,
   `Vars.fs:111-112`; changed, A-1, §6.1). **External name**: `CliArgName` of a field, or the `Cli "ext"` source of a rule or
-  field list, else the key; it is what `-d` uses (A-2). **Env name**: `EnvName`, else `toEnvName (Name, else FieldName)` (`Vars.fs:56-57,113`). `varschema`
+  field list, else the key; it is what `-d` uses (A-2). **Env name**: `EnvName`, else the implicit name `XAKE__` + `toEnvName key` (P-1, P-6; rev. 6: `toEnvName (Name, else FieldName)` without the prefix). `varschema`
   sets `FieldName` by reflection (`Vars.fs:176`); keys are always compared resolved, never by reference.
 - **Var read**: `let! x = v` in a recipe for an `OptionalVar`/`RequiredVar` `v`, a field of the schema or an inline value
   (the `Bind` overloads, `Vars.fs:136-149`).
@@ -60,8 +61,10 @@ during the run; in engine mode it lives as long as the engine, with a per-demand
 **V-2 (chain, first defined wins).** For a key `N` the value comes from the first layer that defines `N`:
 1. request: the engine's `?vars` of the demand, the last pair for `N` wins;
 2. cli: `-d N=v` (`N` the external name, A-2, set on the key), the last `-d` of it wins;
-3. script: the `ExecOptions.Vars` entry or the constant `var "N" "v"` (at most one script definition, R-4);
-4. the declaration of `N` (at most one, R-4): its sources in list order.
+3. script: the `ExecOptions.Vars` entry or the constant `var "N" "v"` (at most one script definition, R-4), whose
+   implicit source `XAKE__<NAME>` comes before the constant value (P-3);
+4. the declaration of `N` (at most one, R-4): its sources in list order, the implicit `Env "XAKE__<NAME>"` first unless
+   the declaration names an `Env` itself (P-1, P-2).
 Layers 1-2 do not apply to a declaration that refuses them (S-5, X-2): that is an error, never a silent skip.
 
 **V-3 (environment read once).** Each `Env "X"` source of a declaration is read once, at launch (R-3, S-6). Changes of
@@ -77,9 +80,10 @@ string values; readers do (L-7). Only a field's type conversion interprets (S-3)
 ### 3.2 `var` with a source list
 
 **R-1.** `var "N" "v"` keeps its meaning: a script value, layer 3.
-**R-2.** `var "N" [sources]` is a rule for `N`, layer 4: `Env "X"` and `Default "v"` tried in list order. `Secret` makes
+**R-2.** `var "N" [sources]` is a rule for `N`, layer 4: `Env "X"` and `Default "v"` tried in list order; with no
+`Env` in the list, the implicit `Env "XAKE__<NAME>"` is tried first (P-1). `Secret` makes
 `N` a presence secret, `SecretHashed` an HMAC secret (the 3.13 modes); a marker may stand anywhere in the list; with both,
-`SecretHashed` wins (3.13 `Secrets.declare`). An empty list is allowed and defines nothing.
+`SecretHashed` wins (3.13 `Secrets.declare`). An empty list is allowed: it has only the implicit source (P-1).
 
 **R-5 (`Cli` marker).** A list MAY hold `Cli "ext"`, at most one per rule, else the launch fails (E-10); its position in the list is irrelevant and it defines no value. `-d` is always the top layer (V-2) whatever the position of `Cli`.
 
@@ -97,7 +101,7 @@ entry and a `var` op of either form, two `ExecOptions.Vars` entries, and every p
 
 **S-1 (import).** `varschema` imports each `Var.*` field completely: key, env name, scope, secret mode, required flag,
 default, type. A field is the rule `var KEY [sources]` with the sources
-- `Env E` (E its env name) unless the scope is `ArgOnly`;
+- `Env E` (E its env name: `envVar`, else the implicit `XAKE__<NAME>`, P-6) unless the scope is `ArgOnly`;
 - then `Default d` when it has `withDefault x`, `d` = `Convert.ToString(x, CultureInfo.InvariantCulture)`;
 - `Secret`/`SecretHashed` per its secret mode.
 So `Var.string(envVar = "X") |> withDefault "d"` as field `N` gives the value, origin and dependency of
@@ -280,6 +284,49 @@ The option, as decided in brief.md; rules and tests are written in the PR 2 spec
   fixed in the PR 2 spec.
 - No auto-import: no assembly scanning.
 
+### 3.11 Environment prefix (amendment 2026-10-31)
+
+The owner's decisions of 2026-10-31 ([brief.md](brief.md), "Environment prefix"). They change the env name of a
+declaration without an explicit one and give constants an environment source; the chain (V-2) is unchanged.
+
+**P-1 (implicit source).** The implicit env name of a key is `XAKE__` + `NAME`, where `NAME` is the key converted to
+UPPER_SNAKE by the rule `Var` used in 3.15 (`toEnvName`: `_` between a lower-case letter and an upper-case one, then upper
+case), with every character other than `A`-`Z`, `0`-`9` and `_` replaced by `_` (`buildConfig` -> `XAKE__BUILD_CONFIG`,
+`netfx-target.v2` -> `XAKE__NETFX_TARGET_V2`). Every declaration has the source `Env "XAKE__<NAME>"`, first, before its
+`Default`: `var "N" [Default "d"]` is evaluated as `var "N" [Env "XAKE__N"; Default "d"]`, `var "N" []` as
+`var "N" [Env "XAKE__N"]`. The implicit source is part of the declaration (`VarDecl.Sources`, T-1, `--help`, X-1).
+
+**P-2 (explicit replaces).** A rule with an `Env` source in its list, a field with `envVar`, has no implicit source:
+`XAKE__<NAME>` is then not read. An `ArgOnly` field (`Var.arg`) has no env source at all, implicit or explicit.
+
+**P-3 (constants).** A constant `var "N" "v"` and an `ExecOptions.Vars` entry (the options given to `xake`/`xakeArgs`) take
+their value, at layer 3, from `XAKE__<NAME>` when it is present (origin `env:XAKE__<NAME>`), else from `v` (origin
+`script`): in effect the rule `[Env "XAKE__N"; Default "v"]`. The constant stays what it was for everything else: it is
+not a declaration for a Var read (T-4: E-8), `--help` does not list it (B-2), and it is not a secret.
+
+**P-4 (strict).** A name without a declaration (an undeclared `-d` name, a `?vars` pair, a `getVar` of a name nothing
+defines) has no implicit source. Xake does not scan the environment for `XAKE__*`: an `XAKE__Z` whose key no declaration
+or constant names is not in the variable set.
+
+**P-5 (collisions).** Two declarations of different keys (rules, fields, constants, `ExecOptions.Vars` entries) whose
+implicit env names are equal fail the launch with E-12, one error per env name, naming the first two keys in script
+order (`ExecOptions.Vars` first): `a-b` and `A_B`, `fooBar` and `FOO_BAR`. A declaration whose env name is explicit
+(P-2) or that has none (`ArgOnly`) takes no part; a rule whose explicit `Env` is the implicit name of its own key counts
+as implicit. Two definitions of the same key are E-2, not E-12.
+
+**P-6 (`Var.*` env name).** A field's env name is `envVar`, else the implicit name of its key (P-1): the 3.15 and rev. 6
+derived name `toEnvName key` (without the prefix) is gone, with no compatibility path (Xake 4.0). `Var.env()` and
+`Var.secret()` without `envVar` read `XAKE__<NAME>`. An inline `Var.*` value derives the same name, so a read through
+`Var.string "X" |> withDefault "d"` equals `var "X" [Default "d"]` (T-1).
+
+**P-7 (shown).** The banner origin of a value from the implicit source is `env:XAKE__<NAME>` (B-1). `--help` shows the
+env name of every rule and every non-`ArgOnly` field, implicit or explicit (B-2); the header of an `EnvOnly` field is
+`$XAKE__<NAME>`. E-1a, E-6 and E-8 name the implicit name where it is the env name.
+
+**P-8 (secrets).** `XAKE__<NAME>` is the normal way to pass a secret: `var "T" [Secret]` and `var "T" [Secret; Default "x"]`
+read `XAKE__T`; `-d` of a secret stays an error (X-2), now E-1a under its key, its external name and `XAKE__T`
+(`set XAKE__T instead`). E-1b remains for a secret without an env source (an `ArgOnly` field).
+
 ## 4. Diagnostics
 
 Launch errors are collected, printed together at `Error`, and fail the run with exit code 2 before `setup` and any
@@ -309,6 +356,7 @@ they fail `Start` or the demand (G-4). No diagnostic prints a secret's value or 
   `or use getVar "N"`.
 - **E-9** (A-2) `-d KEY: the variable is set on the command line as EXT; use -d EXT=...`
 - **E-10** (R-5, A-2) `Variable 'N' has more than one command-line name: A and B`
+- **E-12** (P-5) `Variables 'A' and 'B' both read the environment variable XAKE__N; rename one, or give one an explicit Env source`
 - **C-1** A `Var` change reason stays `Global script variable N was changed 'a'->'b'` (`DependencyAnalysis.fs:101`);
   secrets keep the 3.13 masked reasons.
 
@@ -377,6 +425,11 @@ compiles on SDK 10 (owner's check). Where things live (no field on `ExecContext`
   read now records `Var (N, Some v)`); a secret field's record moves from `SecretDep (E, SecretEnv, _)` to
   `SecretDep (N, SecretArg, _)`, one rebuild. `--resetdb` forces a clean state.
 
+- **Environment prefix (P-1..P-8, Xake 4.0):** a declaration without an explicit env name reads `XAKE__<NAME>`, not
+  the 3.15 derived `<NAME>`: `Var.string()` field `buildConfig` reads `XAKE__BUILD_CONFIG`, `Var.env "NUGET_KEY"`-style
+  fields read `XAKE__NUGET_KEY`. Keep an old name with `envVar = "NAME"` or `Env "NAME"`. A constant `var "N" "v"` and an
+  `ExecOptions.Vars` entry are overridden by `XAKE__N`. Two keys that map to the same `XAKE__` name fail the launch.
+
 ### 6.2 Release note (next minor of Xake; next minor of Xake.Hermetic.Dotnet)
 
 > **Variables are evaluated once, before the build, by declarations the script states.**
@@ -431,11 +484,11 @@ runs. "The read fails": the launch succeeds, other targets run, the reading targ
 
 ### 8.2 `varschema`
 9. Given `varschema {| X = Var.string(envVar = "A") |> withDefault "d" |}`; then test 1 gives the same values and banner lines (S-1, V-1, B-1).
-10. Given field `buildConfig = Var.string()`, env `BUILD_CONFIG=r`; then `buildConfig=r (env:BUILD_CONFIG)` (S-1, §2 key).
+10. Given field `buildConfig = Var.string()`, env `XAKE__BUILD_CONFIG=r`; then `buildConfig=r (env:XAKE__BUILD_CONFIG)` (S-1, §2 key, P-6; amended 2026-10-31).
 11. Given field `X = Var.arg()`, env `X=e`; then `X (not set)`; with `-d X=c`, `c (cli)` (S-1, S-5).
 12. Given field `N = Var.int() |> withDefault 5`, nothing set; then `let! n = schema.N` = `5`, `getVar "N"` = `Some "5"`, banner `N=5 (default)` (S-1, S-3, T-2, K-1).
 13. Given field `R = Var.string() |> required`, `R` unset; then launch fails with E-3 (S-2).
-14. Given field `N = Var.int()` and `-d N=x` (resp. env `N=x`); then launch fails with E-4; with env `N=x` and `-d N=4`, no error and `4` (S-3).
+14. Given field `N = Var.int()` and `-d N=x` (resp. env `XAKE__N=x`); then launch fails with E-4; with env `XAKE__N=x` and `-d N=4`, no error and `4` (S-3; env name amended 2026-10-31).
 15. Given field `X` and `var "X" [Default "d"]` (resp. `var "X" "s"`, `ExecOptions.Vars [X,s]`, a field of key `X` in a second `varschema`); then launch fails with E-2 naming `varschema field X` (S-4).
 16. Given field `X = Var.env(envVar = "A")` and `-d X=c`; then launch fails with E-6 `not from -d X=...`; with `-d A=c`, no error and `X` from env `A` (S-5).
 17. Given `--help`, an unset `required` field, `-d N=x` for a `Var.int` field and a `var "X" [Env "A"]` with `A=a`; then help is printed, exit 0, no error, no value of `A` shown, nothing evaluated (B-2).
@@ -444,8 +497,8 @@ runs. "The read fails": the launch succeeds, other targets run, the reading targ
 18. Given field `X = Var.string(envVar = "A")`, `A=v`; when a recipe reads `let! x = schema.X`; then `Some "v"`, recorded `Var (X, Some "v")`, no `EnvVar` (T-2, K-5); given field `X = Var.string() |> withDefault "d"`; when a recipe reads the inline `Var.string "X" |> withDefault "d"`; then `d` (T-1 on the resolved key, not the reference).
 19. Given field `X = Var.string(envVar = "A")`; when an inline `Var.string("X", envVar = "B")` is read; then the read fails with E-7 `in sources` (T-3).
 20. Given field `N = Var.int()` read as `Var.string "N"` (resp. field `R = Var.string() |> required` read as `Var.string "R"`, resp. field `T = Var.string() |> secretHashed` read as `Var.string "T" |> secret`); then E-7 `in type` (resp. `in required`, `in secret mode`) (T-3).
-21. Given `var "X" [Env "X"; Default "d"]`; when a recipe reads `Var.string "X" |> withDefault "d"` (resp. `Var.string "X"`); then `d`, recorded `Var (X, Some "d")` (resp. E-7 `by var "X" [...] in sources`) (T-1, T-2, T-3).
-22. Given only `-d Y=1` (resp. `var "Y" "1"`, `ExecOptions.Vars [Y,1]`, nothing); when a recipe reads `Var.string "Y"`; then the read fails with E-8 `... or use getVar "Y" or getEnv "Y"`; for `Var.arg "Y"` the text ends at `getVar "Y"` (T-4).
+21. Given `var "X" [Default "d"]` (its implicit source `Env "XAKE__X"`); when a recipe reads `Var.string "X" |> withDefault "d"` (resp. `Var.string "X"`); then `d`, recorded `Var (X, Some "d")` (resp. E-7 `by var "X" [...] in sources`) (T-1, T-2, T-3, P-6; amended 2026-10-31: rev. 6 had `[Env "X"; Default "d"]`).
+22. Given only `-d Y=1` (resp. `var "Y" "1"`, `ExecOptions.Vars [Y,1]`, nothing); when a recipe reads `Var.string "Y"`; then the read fails with E-8 `... or use getVar "Y" or getEnv "XAKE__Y"` (amended 2026-10-31); for `Var.arg "Y"` the text ends at `getVar "Y"` (T-4).
 23. Given env `X=a` and no definition of `X`; then `getVar "X"` = `None` and `getEnv "X"` = `Some "a"`, recorded `EnvVar (X, Some "a")`, checked live (K-1, K-6); a recipe reading `getVar "X"` twice and `let! x = schema.X` records one `Var (X, _)` (K-4).
 
 ### 8.4 Dependencies
@@ -454,15 +507,15 @@ runs. "The read fails": the launch succeeds, other targets run, the reading targ
 
 ### 8.5 Secrets
 26. Given `var "T" [Secret; Env "A"]` and `-d T=s` (resp. `-d A=s`); then launch fails with E-1a, `GIVEN` = `T` (resp. `A`), `ENV` = `A`, `s` masked in all output (X-2).
-27. Given `var "T" [Secret; Default "x"]` and `-d T=s`; then launch fails with E-1b `-d T=...` (X-2).
+27. Given `var "T" [Secret; Default "x"]` and `-d T=s`; then launch fails with E-1a, `ENV` = `XAKE__T` (X-2, P-8; amended 2026-10-31: rev. 6 had E-1b, the rule had no env source).
 28. Given `var "T" [Secret; Env "A"]` and `var "T" "s"` (resp. `ExecOptions.Vars [T,s]`); then E-2, `s` masked (X-2, R-4).
 29. Given field `T = Var.secret(envVar = "A")` and `-d T=s` (resp. `-d A=s`); then launch fails with E-1a (X-2, S-5).
-30. Given field `T = Var.string() |> secret` and `-d T=s`; then launch fails with E-1a, `ENV` = `T`, no warning (X-2, X-5).
+30. Given field `T = Var.string() |> secret` and `-d T=s`; then launch fails with E-1a, `ENV` = `XAKE__T`, no warning (X-2, X-5, P-6; amended 2026-10-31).
 31. Given `var "T" [Secret; Env "A"]` (resp. field `T = Var.secret(envVar = "A")`), `A=s`; then banner `T=*** (env:A)`, `s` in no log line, a read records `SecretDep (T, SecretArg, SecretPresent)` (X-1, X-3, X-4, T-2).
 32. Given `[SecretHashed; Env "A"]` and a changed `A`; then rebuilt with the masked reason; with `[Secret; Env "A"]` up to date; with `A` unset, rebuilt (X-4).
 33. Given `[Secret; SecretHashed; Env "A"]`; then the mode is HMAC (R-2); given `var "T" [Secret; Default "x"]`, `--help` lists `T` with `(secret)` and no default (X-3, B-2).
 34. Given `var "T" [Secret; Env "A"]`, `A=s`; when a recipe calls `getVar "T"` and `getEnv "A"`; then both return `s`, `s` in no log line, `SecretDep` recorded for each (X-7, X-4).
-35. Given field `T = Var.int() |> secret` and env `T=x`; then launch fails with the secret E-4 text, `x` printed nowhere (S-3, X-3).
+35. Given field `T = Var.int() |> secret` and env `XAKE__T=x` (amended 2026-10-31); then launch fails with the secret E-4 text, `x` printed nowhere (S-3, X-3).
 
 ### 8.6 Banner, help, debug dump
 36. Given `-d A=1 -d X=1 -d X=2`, `var "B" "2"`, `var "C" [Env "E"]` with `E=3`, field `D = Var.int() |> withDefault 4`, `var "F" [Env "G"]` with `G` unset; then the vars section is exactly `A=1 (cli)`, `B=2 (script)`, `C=3 (env:E)`, `D=4 (default)`, `F (not set)`, `X=2 (cli)` (B-1).
@@ -506,6 +559,20 @@ runs. "The read fails": the launch succeeds, other targets run, the reading targ
 66. Given `var "T" [Secret; Env "A"; Cli "tok"]` and `-d tok=s` (resp. `-d T=s`, resp. `-d A=s`); then launch fails with E-1a each time, `s` masked (A-4, X-2).
 67. Given field `X = Var.string(cliArg = "a")` read inline as `Var.string("X", cliArg = "b")`; then the read fails with E-7 (external name differs) (T-1, T-3).
 68. Given `--help` with field `P` (`cliArg = "pkg"`) and `var "R" [Cli "r"; Env "E"]`; then `-d pkg=<value>` with `(key P)` and `-d r=<value>` with `(key R)` are listed (B-2, A-3).
+
+### 8.11 Environment prefix (amendment 2026-10-31)
+85. Given `var "X" [Default "d"]` (resp. `var "X" []`) and env `XAKE__X=e`; then `X=e (env:XAKE__X)`; with `XAKE__X` unset, `X=d (default)` (resp. `X (not set)`) (P-1, R-2, B-1).
+86. Given `var "buildConfig" [Default "d"]` (resp. `var "netfx-target.v2" []`) and env `XAKE__BUILD_CONFIG=r` (resp. `XAKE__NETFX_TARGET_V2=r`); then `getVar` of the key = `Some "r"` (P-1).
+87. Given `var "X" [Env "A"; Default "d"]` (resp. field `X = Var.string(envVar = "A") |> withDefault "d"`), `A` unset, `XAKE__X=e`; then `X=d (default)` (P-2).
+88. Given `var "X" "s"` (resp. `ExecOptions.Vars [X,s]`) and env `XAKE__X=e`; then `X=e (env:XAKE__X)`; with `XAKE__X` unset, `X=s (script)`; with `-d X=c`, `X=c (cli)` (P-3, V-2).
+89. Given `var "Y" "1"` and env `XAKE__Y=2`; when a recipe reads `Var.string "Y"`; then the read fails with E-8; `--help` does not list `Y` (P-3, T-4, B-2).
+90. Given env `XAKE__Z=1` and nothing that names `Z`; then `getVar "Z"` = `None` and the banner has no `Z`; with `-d Z=2`, `Z=2 (cli)` (P-4).
+91. Given field `buildConfig = Var.string()` and env `BUILD_CONFIG=r` only; then `buildConfig (not set)`; field `E = Var.env<string>()` with `XAKE__E=v`, `E=v (env:XAKE__E)`; field `A = Var.arg<string>()` with `XAKE__A=v`, `A (not set)` (P-6, P-2, S-1).
+92. Given `var "a-b" []` and `var "A_B" [Default "x"]` (resp. field `fooBar = Var.string()` and `var "FOO_BAR" []`, resp. `var "x" "1"` and `var "X" []`); then launch fails with E-12 `Variables 'a-b' and 'A_B' both read the environment variable XAKE__A_B; ...` (resp. `fooBar`/`FOO_BAR`, `x`/`X`); given `var "a-b" [Env "A"]` and `var "A_B" []` (resp. field `fooBar = Var.arg<string>()` and `var "FOO_BAR" []`), no error (P-5).
+93. Given `var "T" [Secret; Default "x"]` and env `XAKE__T=s`; then banner `T=*** (env:XAKE__T)`, `s` in no log line; with `-d XAKE__T=s` (resp. `-d T=s`), launch fails with E-1a `set XAKE__T instead` (P-8, X-2).
+94. Given `var "R" [Default "d"]`, field `buildConfig = Var.string()`, field `E = Var.env<string>()`, field `A = Var.arg<string>()`; then `--help` lists `-d R=<value> [string], env: XAKE__R, default: d`, `-d buildConfig=<value> [string], env: XAKE__BUILD_CONFIG`, `$XAKE__E [string]` and `-d A=<value> [string]` without env (P-7, B-2).
+95. Given `var "X" [Default "d"]`; when a recipe reads `Var.string("X", envVar = "X") |> withDefault "d"`; then the read fails with E-7 `in sources` (P-2, P-6, T-1).
+96. Given `xakeEngine { var "V" "s" }` and env `XAKE__V=e` at `Start`; when `Demand("t", ["V","r"])`, then a plain `Demand("t")`; then `r`, then `e` (V-2, G-2, P-3).
 
 ## 9. Open points
 

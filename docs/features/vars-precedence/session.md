@@ -1,6 +1,6 @@
 # vars-precedence: session
 
-Branch `feature/vars-precedence`, draft PR #102, worktree `.claude/worktrees/feature+hermetic-windows`.
+Branch `feature/vars-precedence`, PR #102 (spec), merged. Final state below.
 dev merged in on 2026-10-29 (d27bb0a: Xake 3.15.0, hermetic 0.10.0 with range to 4.0, records frozen
 until 4.0).
 
@@ -27,23 +27,21 @@ when the op is applied; ops only record declarations; `--help` evaluates nothing
 PR split approved (PR 1 core, PR 2 library readers); archive shortened to one README.
 PR 1 started 2026-10-29 by an implementer subagent: tests of spec §8.1-8.7 first, then the core.
 
-| PR | Branch | Worktree | State |
+## Final state (2026-10-31): all merged
+
+| PR | Branch | What | State |
 |---|---|---|---|
-| #102 (draft) | `feature/vars-precedence` | `.claude/worktrees/feature+hermetic-windows` | spec, brief, archive |
-| PR 1 (not opened) | `feature/vars-core` | agent worktree (`.claude/worktrees/agent-…`) | in progress |
-| PR 2 (not opened) | `feature/vars-libraries` (on `feature/vars-core`) | agent worktree (`.claude/worktrees/agent-…`) | implemented 2026-10-30, owner review |
+| #102 | `feature/vars-precedence` | spec rev. 6, brief, archive | merged |
+| #111 | `feature/vars-core` | core: names, `var` sources, launch evaluation, Var reads by declaration, errors, banner | merged (c0889d3) |
+| #112 | `feature/vars-libraries` | library readers without environment, `Var.read`, `DotNetVars.Default` / `HermeticVars.Default`; hermetic on the in-repo Xake | merged (a3bd326) |
+| - | `feature/vars-env-prefix` | implicit `XAKE__<NAME>` source (spec §3.11, P-1..P-8, E-12, tests 85-96), on top of docs PR #113 | local, not pushed |
 
-Next step: review PR 1's report, push `feature/vars-core`, open the PR to dev; then PR 2. Proposed split (not yet approved): PR 1 core (`var`
-lists, `varschema` at launch, `Var` reads, second-definition errors, `?vars` on top, banner sources);
-PR 2 library readers (no env fallback, switches, `.packages`) in Xake.Dotnet and the hermetic package.
-| #111 (draft) | `feature/vars-core` | `.claude/worktrees/agent-acc07368580609689` | done: 523 tests green, 0 warnings; owner review |
-| #112 (draft, base `feature/vars-core`) | `feature/vars-libraries` | `.claude/worktrees/agent-afb9a9d9fb75e5c02` | done: 547 tests green; hermetic floor 3.16.0 needs a decision |
+Implemented as specified; deviations are in [pr1-notes.md](pr1-notes.md) and
+[pr2-notes.md](pr2-notes.md). The work ships as **Xake 4.0** (breaking; owner), together with
+hermetic 0.11; at 4.0 `Xake.Dotnet` and the hermetic package are split out (release-process
+decision D). Release notes: `docs/release-notes.md`, "4.0.0 (unreleased)".
 
-PR 1 done 2026-10-30 (#111): core + names + docs; deviations in `pr1-notes.md` (on that branch), e.g. an extra `ExecOptions.VarDefinedBy` field for E-2. PR 2 started from `feature/vars-core`: first `pr2-spec.md` (import conventions, proposed), then L-1..L-7.
-
-PR 2 done 2026-10-30 (#112, stacked on #111): library readers L-1..L-7, `Var.read`, schemas `DotNetVars.Default` / `HermeticVars.Default` (conventions proposed in `pr2-spec.md`). Hermetic floor `[3.16.0, 4.0)` breaks CI until Xake 3.16.0 is published: split the hermetic commits or release first. Follow-ups: `bump-base` sets env `LOCK_REFRESH` (no longer read); CI step for test 60.
-
-Next step: the owner reviews #111 and #112 and decides the hermetic floor path.
+History of the PR 2 split (kept for the trail):
 
 2026-10-31: CI on #112 failed (src/hermetic compiles against the published Xake, no `Var.read`).
 Split without rewriting history: the full PR 2 state is kept on `feature/vars-hermetic` (be83c13,
@@ -57,3 +55,41 @@ part of PR 2 is back on #112 without a floor; `feature/vars-hermetic` is obsolet
 it). CI: `hermetic-compat` dropped, `bump-base` disabled, `hermetic-v*` paused until 4.0
 (docs/features/release-process/session.md).
 
+
+## 2026-10-31: environment prefix (branch `feature/vars-env-prefix`)
+
+Owner's decisions in [brief.md](brief.md) "Environment prefix"; spec amended (§3.11, E-12, tests
+85-96; amended tests 10, 14, 21, 22, 27, 30, 35 and pr2 78, 84). Implemented in
+`VarEvaluation.fs` (`implicitEnvName`, `ruleDecl` prepends the implicit `Env`, constants read
+`XAKE__N` at layer 3, collision check) and `Vars.fs` (`declare` derives `XAKE__` names).
+Readings taken by the implementer, for the owner:
+
+- **Constants and `ExecOptions.Vars`** (decision 3 and its assumption): `XAKE__N` overrides the
+  value only; a constant is still not a declaration for a Var read (E-8), is not listed in
+  `--help`, and has no secret mode (P-3).
+- **Collision (P-5)** counts declarations that read their implicit name (incl. constants and
+  `ExecOptions.Vars` entries); a rule whose explicit `Env` equals the implicit name of its own key
+  counts as implicit; explicit names and `Var.arg` fields take no part.
+- **Invalid characters**: anything other than `A-Z`, `0-9`, `_` after UPPER_SNAKE becomes `_`
+  (non-ASCII letters too). `toEnvName` only splits a lower-case letter followed by an upper-case
+  one: `vc91Config` gives `VC91CONFIG` (a digit before the capital does not split), as in 3.15.
+- **Secret rules** without an explicit `Env` now get E-1a (`set XAKE__T instead`) for `-d`,
+  where rev. 6 gave E-1b; E-1b remains for `Var.arg ... |> secret`.
+- **Sweep:** `build.fsx` `Version`/`HermeticVersion`/`NUGET_KEY` got explicit `envVar`
+  (`VERSION`, `HERMETIC_VERSION`, `NUGET_KEY`): publish.yml exports `VERSION` /
+  `HERMETIC_VERSION`, and build.fsx bootstraps on Xake 3.15.0, which does not know the prefix;
+  explicit names work on both. Workflows unchanged. `build.fsc.fsx` `Version`/`HermeticVersion`
+  left derived (nobody sets them from the environment; from 4.0 `XAKE__VERSION`), its
+  `NUGET_PACKAGES` constant comment notes `XAKE__NUGET_PACKAGES`. `DotNetVars`/`HermeticVars`
+  fields stay `Var.arg` (env-less, decision 5); their doc examples now use `envVar = "NUGET_PACKAGES"` /
+  `envVar = "CI"`.
+
+## Leftovers
+
+- The owner has not yet reviewed the import conventions proposed in [pr2-spec.md](pr2-spec.md)
+  (`Var.read`, `DotNetVars`/`HermeticVars`, fields named by key, string-typed, `-d` only).
+- The importer reads `PrivateAssets=all` as "bundled" (`package.bundle: ["Xake"]`).
+- Test 60 (the published hermetic package against the new Xake, `test60-published-hermetic.fsx`)
+  has no CI job.
+- Optional: measure the launch-evaluation cost, dev vs 4.0.
+- Idea for 4.0: rename `ExecOptions.Vars` (script constants only) to say so.

@@ -292,7 +292,7 @@ default `FSharp.Core` -- live in one folder, `DotNetFwk.packageRoot ()` inside a
    unset), read and recorded as a dependency by every compile that resolves a framework;
 2. else `.packages` under the project root.
 
-The environment variable `NUGET_PACKAGES` is not read (Xake 3.16): a CI that relied on it adds
+The environment variable `NUGET_PACKAGES` is not read (Xake 4.0): a CI that relied on it adds
 `var "NUGET_PACKAGES" [Env "NUGET_PACKAGES"]` to the script, or passes `-d NUGET_PACKAGES=<dir>`.
 
 `DotNetFwk.restorePackage None` and `downloadPackages None` use that folder and pass it to the
@@ -355,7 +355,7 @@ may be recorded) and of `NUGET_FETCH` (`HERMETIC=on` with `NUGET_FETCH=off` and 
 folder is the offline build).
 
 **Package folder.** The package folder is always the build's own: the build variable
-`NUGET_PACKAGES`, or its default `.packages` under the project root (Xake 3.16; before, an unset
+`NUGET_PACKAGES`, or its default `.packages` under the project root (Xake 4.0; before, an unset
 variable meant the machine's folder, which the mode refused). `DotNetFwk.packageRootWithSource ()`
 returns the folder with `ScriptVariable` in both cases.
 

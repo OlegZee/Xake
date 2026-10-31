@@ -25,7 +25,7 @@ Opt-out, most specific first: `noserver` (or `keepalive <s>`) in `csc {}` /
 `Server = Some InProcess` on `CscSettingsType`; the build variable `CSC_SERVER` (`on`, `off`, or
 a number of keepalive seconds; set in `xakeScript { var ... }` or with `-d`) for the whole script;
 then the build variable `XAKE_CSC_SERVER` (`on`/`off`; `0`, `false`, `no` are off) -- the CI
-switch. Both are build variables only (Xake 3.16): an invalid value fails the compiling target
+switch. Both are build variables only (Xake 4.0): an invalid value fails the compiling target
 (`CSC_SERVER='bogus': expected on, off or a number of seconds`), an empty one is unset, and the
 environment counts only through the script:
 
@@ -50,7 +50,7 @@ budget (fsc has no server and runs the whole compiler per process). Lookup, firs
 | build variable `CSC_JOBS` / `FSC_JOBS` (`-d`, or `var` in `xakeScript`) | a positive integer; `0` or empty is unlimited |
 | default | unlimited |
 
-The environment variables `XAKE_CSC_JOBS` / `XAKE_FSC_JOBS` are no longer read (Xake 3.16); a
+The environment variables `XAKE_CSC_JOBS` / `XAKE_FSC_JOBS` are no longer read (Xake 4.0); a
 script that wants them says so: `var "CSC_JOBS" [Env "XAKE_CSC_JOBS"]`.
 
 A value that is not a non-negative integer is traced as a warning and taken as unlimited.

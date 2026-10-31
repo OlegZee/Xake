@@ -525,7 +525,7 @@ the reference packs (`NETStandard.Library` for netstandard2.0,
 2. else `.packages` under the project root.
 
 The child `dotnet restore` gets the folder as its environment variable `NUGET_PACKAGES`, so NuGet
-puts the packages there. The environment variable is not read by Xake itself (3.16); to take it,
+puts the packages there. The environment variable is not read by Xake itself (4.0); to take it,
 `var "NUGET_PACKAGES" [Env "NUGET_PACKAGES"]`.
 
 `csc { ...; lock "app.json" }` and `fsc { lock }` (Xake.Hermetic.Dotnet) use the same folder

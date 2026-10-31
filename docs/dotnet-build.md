@@ -321,7 +321,7 @@ not needed for the defaults):
 
 ```fsharp
 xakeScript {
-    varschema { DotNetVars.Default with NUGET_PACKAGES = Var.string() |> withDefault ".packages" }   // + env NUGET_PACKAGES
+    varschema { DotNetVars.Default with NUGET_PACKAGES = Var.string(envVar = "NUGET_PACKAGES") |> withDefault ".packages" }   // + env NUGET_PACKAGES (without envVar: XAKE__NUGET_PACKAGES)
 }
 ```
 

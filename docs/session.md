@@ -13,6 +13,14 @@ feature folder: [features/vars-precedence](features/vars-precedence/session.md).
   (`var "N" "v"` or `ExecOptions.Vars`, script constants only) > the declaration's sources
   (`var "N" [Cli ..; Env ..; Default ..]` or a `varschema` field), first defined in list order.
   A name defined twice in the script is a launch error.
+- **Environment prefix (2026-10-31):** every declaration without an explicit `Env` / `envVar`
+  reads `XAKE__<NAME>` first (`VarEvaluation.implicitEnvName`: the key in UPPER_SNAKE, characters
+  other than `A-Z0-9_` as `_`); a constant `var "N" "v"` / `ExecOptions.Vars` entry is
+  overridden by `XAKE__N` (origin `env:XAKE__N`, still no declaration for a Var read); `Var.arg`
+  has no env source; undeclared names get none (no `XAKE__*` scan); two keys of one implicit name
+  are a launch error (E-12). The 3.15 derived name without the prefix is gone. `build.fsx` names
+  `VERSION`, `HERMETIC_VERSION`, `NUGET_KEY` with explicit `envVar` (publish.yml exports them,
+  and the bootstrap is still 3.15.0).
 - **Keys vs `-d` names:** the key is the internal name (a field's `name`, else the field name; the
   `var` rule's name); `cliArg` / `Cli` is only the `-d` name. `-d` of a key whose command-line name differs, of a
   secret or of a `Var.env` field stops the run.

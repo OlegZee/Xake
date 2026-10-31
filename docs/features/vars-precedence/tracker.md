@@ -14,6 +14,8 @@ banner (#101); CLI over the script's ops (#103); spec rev. 1-5 (archived).
 - [x] Release notes (breaking: undeclared `Var` read, libraries no longer read the environment), docs -- PR 1 and PR 2 sections
 - [x] Hermetic part of PR 2 back in #112 (in-repo hermetic build until 4.0, owner 2026-10-31); `feature/vars-hermetic` obsolete
 - [x] #102, #111, #112 merged; the rework ships as Xake 4.0 (owner, 2026-10-31)
+- [x] Environment prefix (owner, 2026-10-31): spec §3.11 P-1..P-8, E-12, tests 85-96; implicit `XAKE__<NAME>` source, constants overridable, collisions; repo sweep (build.fsx explicit envVar); docs — branch `feature/vars-env-prefix`, not pushed
+- [ ] Owner review of the prefix readings (constants not declarations for reads/--help; collision scope) — see session.md
 
 Open follow-ups:
 

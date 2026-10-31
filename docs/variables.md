@@ -260,6 +260,35 @@ To take a value from the environment under its own name, declare it explicitly
 [dotnet-build.md](dotnet-build.md#where-packages-go), [csc-server.md](csc-server.md) and
 [hermetic/](hermetic/index.md).
 
+## Pinning values: tests and embedding
+
+A test, or a program that embeds Xake, may want variable values that nothing outside the
+program can change. Two `ExecOptions` flags close the outside layers; neither has a
+command-line flag (they are set in code):
+
+- `IgnoreCommandLine = true` skips the command line: no `-d`, no options, no targets from it.
+  `xakeEngine` sets it.
+- `IgnoreEnvironment = true` (default `false`) stops every declaration from reading the
+  environment at launch: neither `XAKE__<KEY>` nor an explicit `Env "X"` / `envVar = "X"`. A
+  value then comes from the per-demand values, `-d` (unless `IgnoreCommandLine`), the constant,
+  then `Default` / the typed default; a `required` declaration without one stops the run (E-3).
+  A secret or `Var.env` field that only the environment could set is unset (no error by itself;
+  `-d` of it still stops the run). The collision check E-12 is skipped. `getEnv` in a recipe
+  still reads the environment: it is an explicit read, not a declaration source. The banner
+  shows `environment:  ignored (IgnoreEnvironment)` and no `env:` origin. `xakeEngine` leaves it
+  `false`.
+
+```fsharp
+do xakeArgs [] { ExecOptions.Default with IgnoreCommandLine = true; IgnoreEnvironment = true } {
+    var "CONFIG" [Env "BUILD_CONFIG"; Default "Release"]   // always "Release"
+    ...
+}
+```
+
+Per-demand values of an engine (`Demand(target, ["N", "v"])`) still win over everything: they
+are the program's own input. A single field can also be closed to the environment on its own:
+`Var.arg` has no environment source at all (only `-d` and its default).
+
 ## For tool authors
 
 | Member | Holds |
@@ -268,6 +297,7 @@ To take a value from the environment under its own name, declare it explicitly
 | `ExecOptions.CliVars` | the `-d` pairs (they no longer go into `Vars`) |
 | `ExecOptions.VarDecls` | the declarations (`VarDecl`: key, command-line name, sources, default, scope, required, secret mode, type, declared-by) |
 | `ExecOptions.VarDefinedBy` | where each `var`/`varschema` definition came from, for E-2 |
+| `ExecOptions.IgnoreEnvironment` | `true`: no declaration reads the environment at launch (see above) |
 | `EngineOptions.Variables` | the variable set built at launch: `Map<string, VarEntry>` (value, `VarOrigin`, declaration) |
 | `ExecContext.Vars` | the `(name, value)` pairs a recipe reads |
 

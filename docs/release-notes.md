@@ -68,6 +68,12 @@ Details: [tasks.md](tasks.md#script-variables).
 - **Secrets through `XAKE__`:** `var "T" [Secret]` reads `XAKE__T`, the normal way to pass a
   secret; `-d T=...` and `-d XAKE__T=...` stop the run ("set XAKE__T instead"). `--help` shows the
   environment name of every rule and field, implicit or explicit.
+- **New: `ExecOptions.IgnoreEnvironment`** (default `false`), for tests and for programs that
+  embed Xake: no declaration reads the environment at launch (neither `XAKE__<NAME>` nor an
+  explicit `Env`/`envVar`); values come from per-demand values, `-d` (unless
+  `IgnoreCommandLine`), the constant and the defaults. `getEnv` is not affected; the banner shows
+  `environment:  ignored (IgnoreEnvironment)`. No command-line flag; `xakeEngine` leaves it off.
+  See [variables.md](variables.md#pinning-values-tests-and-embedding).
 - **Engine:** `Demand(target, vars)` values now win over the script's values (they were shadowed);
   a per-demand value for a secret, an environment-only or a mistyped variable fails the demand
   before any target. `XakeEngine.Start` raises `XakeException` on a launch error.

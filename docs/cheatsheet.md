@@ -203,7 +203,8 @@ The command line wins over the script: `-d` beats `var` (and `ExecOptions.Vars`)
 `consolelog`, `-fl` and `-fll` each beat their half of `filelog`, `-r` beats `rootdir`, and targets
 named on the command line beat `want` (always: there is no hard override; `want` itself beats
 `ExecOptions.Targets`). The script ops act as defaults. `IgnoreCommandLine = true` skips the
-command line.
+command line; `IgnoreEnvironment = true` stops declarations from reading the environment
+(tests, embedding; see [variables.md](variables.md#pinning-values-tests-and-embedding)).
 
 Dry run:
 

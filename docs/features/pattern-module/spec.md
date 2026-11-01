@@ -1,5 +1,14 @@
 # Spec: the pattern module (complete, pending approval)
 
+> Revision 2026-11-01 (Windows measurements pinned): the "Still unmeasured (Windows)" list of 6.4 is
+> replaced by the facts measured on Windows 11 ARM64, NTFS, .NET 10, Xake 3.15.0 from nuget
+> (`measurements-windows.md`, produced by `measure-windows.fsx`); 6.5, 9.5, 10.1, 5.2 (the `\`
+> notes) and section 13 (C10 rewritten, S5, new records C14-C16) carry the facts. Per D30 only
+> measured facts changed; no decision changed. **Nothing is unmeasured except what 6.4 lists
+> under "Still unmeasured"** (file and directory symlinks and symlink cycles: the script lacked the
+> privilege to create them; the .NET Framework 3-letter extension rule; an unreadable directory
+> on Windows; cloud-sync placeholders; mixed-case NTFS order).
+>
 > Revision 2026-11-01 (Phase-2 measurements, macOS): every "pinned in / measured in Phase 2" item
 > is replaced by the measured fact and a reference to `measurements-engine.md` (3.x pattern
 > engine) or `measurements-dotnet.md` (.NET directory enumeration), both run on macOS. No
@@ -534,6 +543,11 @@ correctly. Signal: an error code, a warning code with its trigger (7.3), or "rel
 
 Notes:
 
+- `\` in 3.x (measured on Windows, `measurements-windows.md` §W1, §W2): in a mask, a rule and a `</>`-built mask
+  `\` is a separator, every one of them equal to the `/` spelling (`src\*.cs`, `src\(name:*).cs`
+  against `src\a.cs` or `src/a.cs`); the group text in `matchGroups` is reported with `/`. The two
+  `\` rows above (`\` + other char: XP110; `\` + reserved char: escape) change this; the vectors pin
+  the Windows facts as 3.x results for all `\` rows, tagged "Windows measured; macOS by source".
 - The prototype (#90) already read `[c]` in includes as the character `c` (`sub[1]/*.c` found
   `sub1`). That is now simply the 4.0 meaning, announced by XP106 (13, C1).
 - Rows with a parse-time warning have a 4.0 spelling that never warns (`/`, `\(`, `c`, `*`,
@@ -811,7 +825,9 @@ The .NET listing (`Directory.EnumerateFiles/Directories(dir, filter)`) knows onl
 with Win32 quirks (`*.*` = `*`; `?` can match zero characters before `.` or the end; on .NET
 Framework a 3-letter extension also matches longer ones, `*.rdl` finds `c.rdlx`; on macOS the
 listing is case-insensitive by platform default, even on a case-sensitive volume). Measured
-on macOS (`measurements-dotnet.md` §1–2); the Windows items are listed below. Therefore:
+on macOS (`measurements-dotnet.md` §1–2) and on Windows (`measurements-windows.md`, below).
+The 3-letter extension rule was **not** reproduced on .NET 10 (below); it stays documented for
+.NET Framework only. Therefore:
 
 - the module's matcher decides every name; the OS filter is only a **pre-filter** that may return
   a superset;
@@ -831,14 +847,79 @@ patterns matched only files literally named so. The search pattern is case-insen
 `PlatformDefault` even on a case-sensitive APFS volume; only `MatchCasing.CaseSensitive` is exact (§2,
 §3). All of it fits the rule above: the OS filter is a superset pre-filter and the module decides.
 
-**Still unmeasured (Windows)** — unverified documentation, not measurements; the wording of 6.4
-and section 3 items 15–16 holds for macOS only:
+**Measured (Windows 11 ARM64, NTFS, .NET 10.0.13, Xake 3.15.0 from nuget, 2026-11-01).** Case ids refer
+to `measurements-windows.md`; the legacy `Directory.EnumerateFiles(dir, pattern)` overloads are the
+Win32 match type here too.
 
-- the Win32 kernel semantics of `?` (docs: `file.??t` matches `file.t`, `file.at`, `file.txt`) and of
-  `*.*` (docs: matches every file in Win32 mode);
-- the DOS wildcard mapping of `"` `<` `>` (docs: wildcards in Win32 mode; on macOS they are literal);
-- junctions, volume mount points and cloud-sync placeholders under `**` (6.5);
-- 8.3 short names, and the .NET Framework 3-letter extension rule (`*.rdl` finds `.rdlx`).
+- `?` at the end of a name matches zero characters: `b?` finds `b`, `q.c?` finds `q.c`, and `a.cs?`
+  finds `a.cs` and `a.csx` (measurements-windows.md §D1, §D1b). Same as macOS; the Simple match type needs one
+  character (`b?` finds nothing, §D1b, §D2).
+- `*.*` matches dotless names in Win32 mode (`b` listed); the Simple match type needs a dot (`b`
+  absent) (§D1, §D2). Same as macOS.
+- The 3-letter extension rule did **not** reproduce: `*.cs` does not list `a.csx`, `*.c` lists
+  nothing, and `*.c?` lists `a.cs` but not `a.csx` (§D1). Documented behaviour of .NET Framework only; **still
+  unmeasured on .NET Framework** (the script ran on .NET 10; Xake's net462 build was not run).
+- `"`, `<`, `>` are DOS wildcards in Win32 mode, unlike macOS: `<` and `>` as patterns listed the
+  dotless one-character `b` and no name with a dot, and `*"*` listed `b` and `q.c`; the Simple
+  match type lists nothing for any of them. `"` alone listed nothing. These characters cannot occur
+  in Windows file names (creating them fails, §D1b), so a pre-filter that contained them could
+  only return a different set, never find them literally: the safe-set rule above stays and is
+  now justified on Windows (§D1, §D1b).
+- `[`, `{` and `(` are literal: `x[1].cs`, `x{1}.cs`, `(x).cs` are found by their own spelling, the
+  pattern `[` finds nothing (§D1). There are no classes in the OS pattern.
+- `MatchCasing`: `PlatformDefault` and `CaseInsensitive` fold case (`A.CS` finds `a.cs`, `*.CS` finds
+  every `.cs` name); `CaseSensitive` folds nothing (`*.CS`, `A.CS` find nothing). `MatchType`
+  changes only `*.*`, `?`, `<`, `>`, `"` as above (§D2). Same as macOS apart from the DOS wildcards.
+- The volume is case-insensitive (`File.Exists("A.CS")` true). `Directory.GetFiles(dir, "A.CS")` returns the
+  **on-disk** spelling `a.cs`; `FileInfo(dir/A.CS).Name` keeps the requested spelling `A.CS` (§D3). Same as
+  macOS, so D25 (a probed segment keeps the mask's spelling) is unaffected.
+- **Junctions** are followed by the legacy `AllDirectories` overload and by `EnumerationOptions` with
+  default `AttributesToSkip` (`link\x.cs` and `real\x.cs` both listed); `AttributesToSkip =
+  ReparsePoint` skips them. A junction has `FileAttributes.Directory | ReparsePoint` and a
+  `LinkTarget` (§D4b). Directory and file **symlinks** could not be created without the
+  privilege (see below).
+- **A junction cycle does not end by itself in useful time**: with a junction pointing at the root,
+  `AllDirectories` produced 10 000 entries (the harness cap) at depth 5001 in 0.5 s and was still
+  going (§D4d); unlike macOS, which stops at the 32-link ELOOP limit (6.5). The cycle is cut only by
+  `AttributesToSkip = ReparsePoint` (2 entries). A module that skips every `ReparsePoint` directory
+  under `**` (D17) therefore needs no cycle detection on Windows either. The natural end of an
+  unbounded recursion (path length limit) was not measured.
+- **Order**: on NTFS the listing came back in name order (`a a10 a2 b c` for files created
+  `c a b a2 a10`), the same on every call and for `GetFiles`, `EnumerateFiles` and `cmd dir /b` (§D5).
+  Only lower-case ASCII names were tried; mixed-case and non-ASCII order is not measured.
+- **Hidden**: a name starting with a dot has attribute `Archive` only, not `Hidden`, on Windows
+  (§D6). The legacy overloads return both `.hidden.cs` and a file with `FileAttributes.Hidden`;
+  default `EnumerationOptions()` (`Hidden | System`) skips only the attribute-hidden file and **returns**
+  the dotfile; `AttributesToSkip = None` returns both. This is the opposite of macOS, where default
+  options skip dotfiles (6.7, 9.5).
+- **8.3 short names**: neither the legacy overload nor `MatchType=Simple` matches the short name of
+  `LongFileName.cs` (`LONGFI~1.cs`, `*~1*` list nothing), while `File.Exists(dir/LONGFI~1.CS)` is true: the short
+  name resolves as a path but is not a listing pattern (§D9). Enumerated names are always long
+  names. `fsutil 8dot3name query` was denied, so whether 8.3 generation is on for the volume is not
+  recorded.
+- **Unicode** (§D7): NFC and NFD spellings are two distinct files on NTFS (APFS collapses them); each
+  spelling as a pattern finds its own file, `File.Exists` is true for both. Consistent with D27 (no
+  normalization); a Windows tree can hold both.
+
+All of it fits the rule above: the OS filter is a superset pre-filter and the module decides. **No
+case was found where the OS filter returned less than the module would** (checked: `?`, `*.*`, `[`,
+`{`, `(`, case, hidden, short names, Unicode). The one effect that would reduce the result is
+`EnumerationOptions` with default `AttributesToSkip`, which drops attribute-hidden files on Windows
+and dotfiles on macOS; the walker must not use it (9.5).
+
+**Still unmeasured (Windows)**, with the reason:
+
+- **Directory and file symlinks**: `mklink /D`, `mklink` and the API all failed with "a required
+  privilege is not held by the client" (the script ran without administrator rights or
+  Developer Mode), so measurements-windows.md §D4a, §D4c and the symlink parts of §E4 have no data: whether
+  the walker follows a symlink to a directory, a file symlink's attributes (`ReparsePoint`,
+  `LinkTarget`), a symlink cycle and how it ends. The junction results above are the only
+  Windows link data.
+- the 3-letter extension rule on .NET Framework (net462 build not run);
+- an unreadable directory (§D8 skipped: needs an ACL change);
+- volume mount points and cloud-sync placeholders under `**` (6.5);
+- the 3.x engine on a Windows junction **cycle** (§E4 created no cycle); only the .NET level is
+  measured (§D4d).
 
 ### 6.5 Symlinks
 
@@ -858,10 +939,15 @@ and section 3 items 15–16 holds for macOS only:
   §4). `FileAttributes.ReparsePoint` is set for directory and file symlinks, so a link is
   recognised by attribute on netstandard2.0/net462, which lack `LinkTarget`; the walker tests the
   attribute of each subdirectory (9.5). A file symlink is a file and is listed.
-- **Unverified (Windows)**: whether junctions, volume mount points and cloud-sync placeholders
-  (folders that carry `ReparsePoint` without being symlinks) are skipped by that same attribute
-  test, or should be told apart. Until measured, the wording of this section and of section 3
-  item 26 is final for symlinks only (6.4, "Still unmeasured").
+- **Measured on Windows** (`measurements-windows.md` §D4b, §D4d, §E4): a junction carries
+  `FileAttributes.Directory | ReparsePoint` and a `LinkTarget`, so the attribute test of 9.5 finds
+  it; the 3.x scan follows it under `**` and `*/` (`jct\x.cs` and `real\x.cs` both listed). A
+  junction cycle is **not** stopped by the OS (10 000 entries at depth 5001 within 0.5 s, then the
+  harness cap): skipping `ReparsePoint` directories under `**` is what ends it, so D17 needs no
+  cycle detection on Windows. Whether a directory symlink behaves the same could not be measured
+  (no privilege, 6.4 "Still unmeasured"); `ReparsePoint` is set for it by the platform contract,
+  as on macOS, but that is not a measurement. Volume mount points and cloud-sync placeholders
+  stay unmeasured.
 
 ### 6.6 Ordering, duplicates, determinism
 
@@ -1202,8 +1288,9 @@ only; Core targets netstandard2.0). An own matcher stays possible later behind t
 
 ### 9.5 Implementation notes from the measurements
 
-Non-normative. Measured on macOS (APFS, .NET SDK 10), `measurements-dotnet.md` unless stated.
-Windows items are not measured (6.4).
+Non-normative. Measured on macOS (APFS, .NET SDK 10), `measurements-dotnet.md` unless stated;
+the Windows facts (NTFS, .NET 10, `measurements-windows.md`) are in the last bullets of this list
+and in 6.4.
 
 - **Hidden files** (§6). .NET reports a leading-dot name on macOS as `FileAttributes.Hidden`
   (name-derived, no BSD flag), so `EnumerationOptions()` with its default `AttributesToSkip`
@@ -1225,13 +1312,38 @@ Windows items are not measured (6.4).
 - **Unicode** (§7). NFC and NFD spellings collapse to one file on APFS (the first spelling is
   kept); `File.Exists` finds it in either form; the enumeration pattern does not normalize (the NFD
   pattern matched nothing). Consistent with D27.
-- **Search patterns with `"`, `<`, `>`** matched only literal names on macOS (§1); the Windows DOS
-  mapping is unverified, so the safe-set rule of 6.4 stays.
+- **Search patterns with `"`, `<`, `>`** matched only literal names on macOS (§1); on Windows they
+  are DOS wildcards in Win32 mode (`measurements-windows.md` §D1, §D1b), so the safe-set rule of 6.4
+  stays, now measured on both OSes.
 - **Case of the disk spelling** (§3). `GetFiles(dir, "A.CS")` returns the on-disk `a.cs`, and
   `FileInfo(...).Name` keeps the requested spelling: the walker takes names from the listing only
   where it intends to (D25 keeps the mask's spelling for probed segments).
 - **Symlink cycles** (§4). A direct call on a path past 32 levels throws `IOException` (ELOOP);
   under the legacy recursion it is swallowed. Skipping links under `**` makes this irrelevant.
+- **Windows: links by attribute** (`measurements-windows.md` §D4b). A junction has `Directory |
+  ReparsePoint` and `LinkTarget`; with the legacy `AllDirectories` overload and with default
+  `EnumerationOptions` it is followed, so the walker tests `FileAttributes.ReparsePoint` on each
+  subdirectory itself (as on macOS). The same attribute test skips junctions and, expected, directory
+  symlinks (not measured, no privilege). A file with `ReparsePoint` is not a directory and is
+  listed (file symlinks unmeasured).
+- **Windows: cycles** (§D4d). A junction cycle is not stopped by the OS (10 000 entries, depth 5001, 0.5 s,
+  then the cap); the attribute test is the only protection, so it must run before descending, not
+  after listing. Counting depth or entries is not needed with it.
+- **Windows: order** (§D5). NTFS lists in name order (lower-case ASCII names measured), but the
+  ordinal sort of D17 is still applied; mixed-case order is not measured.
+- **Windows: Hidden** (§D6). A dotfile is not `Hidden` on NTFS (attribute `Archive`), an attribute-hidden file is. Legacy
+  overloads return both; default `EnumerationOptions` skip only the attribute-hidden file; so the
+  rule of the first bullet (legacy overloads or `AttributesToSkip = 0`) is right on both OSes, and a
+  file with the `Hidden` attribute is listed like any other name (the module has no rule about
+  that attribute).
+- **Windows: the pre-filter is still a superset** (§D1-§D3, §D9). No pattern in the safe set returned less than the
+  module would: `?` and `*.*` match more, not fewer, in Win32 mode; classes, `{`, `(`, `[` are literal and sent as
+  `"*"`; case folds; 8.3 short names are never listing matches, so no name is missed through them.
+  The 3-letter extension rule is absent on .NET 10 (more matches would only have been a superset).
+  If a future runtime returned fewer names than the module for a safe-set pattern, the "superset
+  pre-filter" rule of 6.4 would break; none was found.
+- **Windows: Unicode** (§D7). NFC and NFD are two files on NTFS; the walker lists both, the matcher compares
+  code units (D27).
 
 ## 10. Deprecation calendar, version, conformance corpus
 
@@ -1251,6 +1363,15 @@ D22: `\` as a separator warns in 4.0 and is removed in 5.0.
 | evidence warnings XP104, XP113, XP114, XP119 and parse warnings XP112, XP117 | — | warn | removed; the 4.0 meaning stays |
 | XP120 (absolute exclude that removes nothing) | — | warn | warn (not a legacy warning) |
 | the 3.x clauses in error reasons (7.2) | — | present | may be dropped |
+
+**Measured on Windows (D22 rationale).** In 3.x on Windows `\` and `/` are interchangeable separators in
+masks and rules (`measurements-windows.md` §W1, §W2): `!! "src\\*.cs"` lists `src\a.cs` and
+`src\b.cs` exactly as `!! "src/*.cs"`, `Path.parse "src\\*.cs"` gives `[Directory "src"; FileMask
+"*.cs"]`, the mask built with `"src" </> "*.cs"` lists the same files, and the rule `src\(name:*).cs`
+matches both `src\a.cs` and `src/a.cs` with `name = a`. `Path.parse` and `matchGroups` replace `\` with `/`
+unconditionally in the source (`Path.fs`), so the same result is expected on macOS; it was not measured
+there. This is the calendar's premise: `</>` output on Windows contains `\`, and a `\` that stopped
+being a separator would change `src\*.cs` silently. D22 is unchanged.
 
 Paths read from disk keep being normalized (`\` → `/`) in every release (tm 56). `</>` is not
 changed (tm 57). `unparse`/`escape`/`escapePath` move from `[*]`, `[?]`, `[\\]` to `\*`, `\?`,
@@ -1781,8 +1902,8 @@ every OS and match only on Windows (4.2, item 34); `\,` directly inside braces i
 
 ## 13. Conflicts and findings (record)
 
-Each finding is resolved by a decision or by a Phase-2 measurement (macOS, 2026-11-01); the Windows
-items listed in 6.4 stay unmeasured.
+Each finding is resolved by a decision or by a Phase-2 measurement (macOS and Windows, 2026-11-01);
+only the items listed under "Still unmeasured" in 6.4 stay open.
 
 - **C1 — `[c]` in includes is a plain 4.0 change.** #90 already reads `[c]` as `c` in includes
   (`sub[1]/*.c` finds `sub1`, test "an unescaped sub[1] is the [c] form"); 3.x reads the literal
@@ -1815,15 +1936,21 @@ items listed in 6.4 stay unmeasured.
 - **C9 — observed, out of scope.** `File.fs` `compareNames` passes `ignoreCase = Env.isUnix`
   (case-insensitive on Unix, sensitive on Windows), the inverse of every other comparer; worth a
   separate issue.
-- **C10 — measured on macOS (D17): OS listing quirks.** The legacy listing overloads match
-  `*.*` to a dotless name and a trailing `?` to zero characters; the search pattern is
-  case-insensitive on macOS by platform default; symlinks are followed under `AllDirectories`
-  (`measurements-dotnet.md` §1–4, 6.4). The .NET Framework 3-letter extension rule and the
-  Windows behaviour are unverified.
+- **C10 — measured on macOS and Windows (D17): OS listing quirks.** Both OSes: the legacy
+  overloads match `*.*` to a dotless name and a trailing `?` to zero characters; `[ ( {` are literal;
+  the search pattern is case-insensitive by platform default (`CaseSensitive` is exact);
+  `GetFiles` returns the on-disk spelling; links are detected by `ReparsePoint`. Differences:
+  `"` `<` `>` are DOS wildcards on Windows and literal on macOS; macOS follows symlinks and stops a
+  cycle at ELOOP (depth 32), Windows follows junctions and a junction cycle runs on (10 000 entries,
+  depth 5001); default `EnumerationOptions` skip dotfiles on macOS but attribute-hidden files on
+  Windows; NFC/NFD are one file on APFS, two on NTFS; NTFS lists in name order, APFS in `readdir`
+  order (`measurements-dotnet.md` §1–6, `measurements-windows.md`, 6.4). The 3-letter extension rule
+  was not reproduced on .NET 10 (unmeasured on .NET Framework).
 - **S5 — measured on macOS (D17): what counts as a link.** Symlinks carry `ReparsePoint` and are
-  detected by attribute, since netstandard2.0/net462 lack `LinkTarget` (6.5, 9.5). Whether `**`
-  should skip Windows junctions, volume mount points and cloud-sync placeholders (`ReparsePoint`
-  without a symlink) is unverified.
+  detected by attribute, since netstandard2.0/net462 lack `LinkTarget` (6.5, 9.5). Windows
+  junctions carry `Directory | ReparsePoint` and are followed by the 3.x scan, so the same attribute
+  test skips them (`measurements-windows.md` §D4b, §D4d); a junction cycle is not stopped by the OS.
+  Windows symlinks, volume mount points and cloud-sync placeholders are unmeasured (6.4).
 - **C11 — resolved (D23):** a named group in a mask (XP008) and an unclosed group in a string
   rule (XP006) are errors in 4.0; XP111 dropped (12, C11).
 - **C12 — a 3.x bug, recorded (not a decision).** `Path.matches "(apl:*/*)/x"` throws
@@ -1835,3 +1962,44 @@ items listed in 6.4 stay unmeasured.
   scan differ on `a//b`, `.`, `..`, `**/x.dll`, `(path:bin/**)/file.o` and case on macOS
   (`measurements-engine.md` §1, §3, §7, §9, §10). The conformance vectors tag each such case with
   the matcher that produced the 3.x result.
+- **C14 — 3.x engine results on macOS and Windows compared (record).** Sources: `measurements-engine.md`
+  (macOS, `Path`/`Fileset` of 3.x) against `measurements-windows.md` §E1–§E10 (Windows, Xake 3.15.0 from nuget;
+  the macOS run of `measure-windows.fsx` itself is not recorded). Windows prints `\` in scan results; every
+  comparison below normalizes it to `/`.
+  - **Agree (one 3.x result, pin it in the vectors):** E1 `a//b` (parse collapses, `matchGroups` raw text),
+    E3 `.` dropped and `..` a `Parent` token, with `Path.matches`/scan disagreeing, E5 duplicates kept, E6
+    trailing `/` in an exclude, E7 `**` zero directories in `matches` and scan but not in `matchGroups`,
+    `dir/**` lists directories, E8 dotfiles not skipped, E10 `matchGroups` captures, `matches`
+    throws `RegexParseException` for `(apl:*/*)/x` (same message).
+  - **Differ by OS:**
+    - E2 `!! ""` lists `""` on macOS and `"."` on Windows. The harness prints Windows paths with
+      `Path.GetRelativePath(root, full)`, which returns `"."` for the root itself, so this is probably the
+      harness, not the engine; both stated, the engine fact is "the base directory itself, one entry".
+      The vector pins the entry as the base directory and does not pin its printed spelling.
+    - E9 `matchGroups "src/*.cs"` against `Src/a.cs`: **None on macOS**, **a match on Windows**
+      (`matchGroups` is case-sensitive only when `Env.isUnix`, Path.fs:264); `Path.matches` is true on
+      both. The vector pins the `Path.matches` and scan results as OS-independent and carries the
+      `matchGroups` result with an OS tag (4.0 makes one matcher per-OS, 5.4).
+    - E4 symlinks: macOS follows a directory symlink under `**`/`*/` and lists a file symlink; Windows
+      measured a junction (followed under `**` and `*/`, `jct\x.cs`) and could not create symlinks. Cycle:
+      macOS terminates (engine run: 16 entries, deepest 17 `loop/` segments; .NET level: 95 entries, depth 33,
+      ELOOP at 32 links); Windows created no cycle in the engine run (E4loop: 1 entry, no symlink) and
+      at the .NET level a junction cycle does not terminate (10 000 entries, depth 5001). The two
+      macOS numbers differ because the engine run was capped by its own recursion, the .NET run by
+      ELOOP; neither is a conformance fact. The vectors pin only that the 4.0 scan skips a link under
+      `**` and terminates (6.5), with 3.x results as OS-tagged notes.
+    - E9 scan spelling: both return the spelling of the mask (`src\A.cs` for `src/*.cs` on `Src/A.cs`);
+      agree.
+  - **`\` (W1, W2, Windows):** in 3.x `\` is a separator in masks (`src\*.cs` = `src/*.cs`), rules
+    (`src\(name:*).cs` matches `src\a.cs` and `src/a.cs`, groups reported with `/`) and `</>`-built masks
+    (5.2, 10.1). macOS: not measured, same by source.
+  - **For the vectors:** pin the OS-independent column; mark with an OS tag `[windows]` or `[macos]` only
+    E4 (links), the E2 spelling and the E9 `matchGroups` case result.
+- **C15 — a 3.x scan on Windows lists junction targets twice (record).** `**/*.cs` on `real/x.cs` plus a
+  junction `jct -> real` lists `jct\x.cs` and `real\x.cs`; in 4.0 `**` skips `jct` (D17) and lists only
+  `real/x.cs`. Section 3 item 26 already names junctions, so its wording is confirmed by the measurement
+  (`measurements-windows.md` §E4).
+- **C16 — default `EnumerationOptions` differ by OS (record).** The default `AttributesToSkip`
+  (`Hidden | System`) drops dotfiles on macOS and attribute-hidden files on Windows; a dotfile is listed on
+  Windows. Walker rule (9.5): never rely on them. Open question for the user, not decided here: a file with
+  the Windows `Hidden` attribute is listed like any other name (matches 5.3, where only the name counts).

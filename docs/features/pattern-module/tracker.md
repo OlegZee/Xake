@@ -6,7 +6,7 @@
 - [x] Phase 1: spec revised for D3-D23 and the glob critique (2026-11-01)
 - [x] Phase 1: user approves the spec (2026-11-01, D30)
 - [x] Phase 2: measurements on macOS (`measurements-engine.md`, `measurements-dotnet.md`, 2026-11-01); Windows-only cases (Win32 `?`, DOS wildcard mapping, junctions) still unmeasured
-- [ ] Windows measurements: `measure-windows.fsx` written and run on macOS; user runs it on Windows; results pinned
+- [x] Windows measurements: `measure-windows.fsx` run on Windows 11 ARM64 by the user; results in `measurements-windows.md`, pinned in the spec (2026-11-01); symlinks (no privilege), .NET Framework, unreadable directory stay unmeasured (6.4)
 - [ ] PR 1 (docs): spec, decisions, measurements — branch `feature/pattern-module` → `feature/patterns2`
 - [ ] PR 2 (parser): parse/error/unparse/escape/specificity vectors (ignored) — agent launched 2026-11-01, branch `feature/pattern-parser`
 - [ ] PR 2 (parser): user approves the vectors; `PatternAst.fs` parser passes them

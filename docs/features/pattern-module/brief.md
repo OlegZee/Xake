@@ -326,3 +326,6 @@ fixes how much breaks. 3.12.0 is released (tag `v3.12.0`); nothing of this featu
   gap: `Mask.tryParse`/`Mask.parse` take no role; role-dependent warnings (XP105/XP106/XP117)
   come from `Mask.warnings : MaskRole -> Ast -> PatternWarning list` (pure) and `Mask.check :
   MaskRole -> string -> unit` logs them (8.2 to be aligned in PR 2).
+- **D35 (2026-11-01): D34 confirmed by the user, plus the three remaining notes:** `.` alone is
+  XP018 (P-065); XP019 in nested braces is reported at the inner `{` (P-222); the XP016 reason
+  quotes the literal sample `//server/share` (M-018). D34 is no longer provisional.

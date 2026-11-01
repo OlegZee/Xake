@@ -359,3 +359,12 @@ fixes how much breaks. 3.12.0 is released (tag `v3.12.0`); nothing of this featu
   an empty result is explainable. Shim contract: one ordered `(MaskRole * string)` list (an
   exclude applies to the includes before it, spec 6.3); the D25 trap is on `SRC/*.cs` and the
   volume decides, not the mode (explicit `SRC/a.cs` is listed in every mode).
+- **D40 (2026-11-01, PROVISIONAL by the orchestrator; the user confirms or reverses):** three
+  readings the walker needed beyond the spec text. (1) A literal segment is probed only while
+  the walker has not listed its directory; inside a directory that is listed anyway (after `**`,
+  `*`, braces) the literal is matched against the listing and takes the disk's spelling (6.3,
+  vectors SC-227/228). (2) XP120 does not fire for an absolute exclude whose literal prefix lies
+  above the base (`/**/obj/` can remove files below the base). (3) A `P/**` exclude prunes a
+  directory only once a found file is known to match it, so the XP113 evidence equals the
+  unpruned result (SC-122). Vectors SC-214/229 were corrected on their own terms (`*.cs` matches
+  `B.cs` ordinally; `lib/` does not exclude `Lib` in Unix mode).

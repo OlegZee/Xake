@@ -12,7 +12,9 @@
 - [x] PR 2 (parser): #118 merged 2026-11-01 (D34/D35/D36)
 - [x] PR 2 (parser): `src/core/PatternAst.fs` passes all 453 vectors; 8 vectors aligned with D34 / spec 5.7 (separate commit); API notes in spec 8.4 (2026-11-01)
 - [x] PR 3 (matcher): 449 vectors (RM/MM/FO/FM/MO/RS), ignored fixture, 10 live table checks — branch `feature/pattern-matcher`, worktree `.claude/worktrees/feature/pattern-matcher` (2026-11-01); 9 SPEC? notes to decide
-- [ ] PR 3 (matcher): user decides the SPEC? notes; regex-backed matcher passes the vectors; PR
+- [x] PR 3 (matcher): SPEC? notes decided (D37); 3 vectors aligned with D37 (RM-078, RM-082, RM-104), RM-261 literal fixed (lone surrogates)
+- [x] PR 3 (matcher): `src/core/PatternMatch.fs` (regex from the AST, cached) + `format`/`formatMatches`/`checkOutputs` pass all 449 vectors; API notes in spec 8.5 (2026-11-01)
+- [ ] PR 3 (matcher): PR into `feature/patterns2`
 - [ ] PR 4 (scanner): fixture-tree vectors; walker
 - [ ] Phase 4: migrate rule matching and `Fileset` onto the module; compat corpus green; PR
 - [ ] Phase 4: release notes for behaviour changes and warnings

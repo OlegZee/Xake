@@ -570,8 +570,8 @@ let scanVectors : ScanVector list = [
     lock "SC-272" "6.6" (i1 "*/*.cs") (okl [ "ok/f.cs" ] [ Unreadable "locked" ]) "changed in 4.0 (item 28)"
     lock "SC-273" "6.6" (i1 "locked/*.cs") (okl [] [ Unreadable "locked" ]) "changed in 4.0 (item 28): the probe succeeds, the listing fails"
     lock "SC-274" "6.6" (i1 "locked/g.cs") (ok [ "locked/g.cs" ]) "unchanged: an explicit name needs no listing"
-    lock "SC-275" "6.6" (i1 "locked/sub/*.cs") (ok [])
-        "SPEC? the probe of 'locked/sub' fails for lack of search permission and is read as absent, without a log note (nothing was listed)"
+    lock "SC-275" "6.6" (i1 "locked/sub/*.cs") (okl [] [ Unreadable "locked" ])
+        "D39: the probe of 'locked/sub' fails for lack of search permission on 'locked': absent, and 'locked' is logged as unreadable so that the empty result is explainable"
     lock "SC-276" "6.6" [ inc "**/*.cs"; inc "*/*.cs" ] (okl [ "top.cs"; "ok/f.cs" ] [ Unreadable "locked" ]) "6.6: reported once per directory"
     lock "SC-277" "6.6" (i1 "*/") (ok [ "locked"; "ok" ]) "6.6: the parent is readable, the directory is listed"
     lock "SC-278" "6.6" (i1 "**/") (okl [ "locked"; "ok" ] [ Unreadable "locked" ])

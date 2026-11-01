@@ -508,7 +508,7 @@ let scanVectors : ScanVector list = [
     caseW "SC-211" "5.4" (i1 "*.cs") (ok [ "x.CS"; "y.cs" ]) "unchanged on Windows"
     caseU "SC-212" "5.4" (i1 "*.CS") (ok [ "x.CS" ]) "changed in 4.0 on macOS (item 25)"
     caseW "SC-213" "5.4" (i1 "*.CS") (ok [ "x.CS"; "y.cs" ]) "unchanged on Windows"
-    caseU "SC-214" "5.4" (i1 "**/*.cs") (ok [ "y.cs"; "src/a.cs" ]) "changed in 4.0 on macOS (item 25)"
+    caseU "SC-214" "5.4" (i1 "**/*.cs") (ok [ "y.cs"; "Lib/B.cs"; "src/a.cs" ]) "changed in 4.0 on macOS (item 25): x.CS no longer listed; 'B.cs' ends in '.cs' and matches in every mode"
     caseW "SC-215" "5.4" (i1 "**/*.cs") (ok [ "x.CS"; "y.cs"; "Lib/B.cs"; "src/a.cs" ]) "unchanged on Windows"
     caseU "SC-216" "5.4" (i1 "SRC/*.cs") (ok [ "SRC/a.cs" ])
         "D25: the macOS trap; the probe of 'SRC' succeeds on a case-insensitive volume and keeps the mask's spelling; 3.x the same (measurements-engine §9, measurements-windows E9: SRC/a.cs)"
@@ -527,7 +527,7 @@ let scanVectors : ScanVector list = [
     caseW "SC-226" "5.4" (i1 "[a-z].cs") (ok [ "x.CS"; "y.cs" ]) "D11: on Windows '[a-z]' matches upper case too"
     caseU "SC-227" "5.4" (i1 "**/b.cs") (ok []) "D11"
     caseW "SC-228" "5.4" (i1 "**/b.cs") (ok [ "Lib/B.cs" ]) "D11: a listed name keeps the disk's spelling"
-    caseU "SC-229" "5.4" (ie "**/*.cs" "lib/") (ok [ "y.cs"; "src/a.cs" ]) "D11: the ordinal exclude does not match 'Lib'"
+    caseU "SC-229" "5.4" (ie "**/*.cs" "lib/") (ok [ "y.cs"; "Lib/B.cs"; "src/a.cs" ]) "D11: the ordinal exclude does not match 'Lib', so Lib/B.cs stays"
     caseW "SC-230" "5.4" (ie "**/*.cs" "lib/") (ok [ "x.CS"; "y.cs"; "src/a.cs" ]) "D11: the Windows exclude prunes 'Lib'"
     caseW "SC-231" "5.4" (i1 "lib/*.cs") (ok [ "lib/B.cs" ])
         "D25: the probed segment keeps the mask's spelling, the listed name the disk's (measurements-engine §9: src/*.cs over Src/A.cs gave src/A.cs)"

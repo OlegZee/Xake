@@ -1,5 +1,14 @@
 # Spec: the pattern module (complete, pending approval)
 
+> Revision 2026-11-01 (Phase-2 measurements, macOS): every "pinned in / measured in Phase 2" item
+> is replaced by the measured fact and a reference to `measurements-engine.md` (3.x pattern
+> engine) or `measurements-dotnet.md` (.NET directory enumeration), both run on macOS. No
+> decision changed. Added: 6.7 and 9.5 (implementation notes from the measurements), the
+> "Still unmeasured (Windows)" list (6.4), behaviour-change additions in section 3 (items 12, 21,
+> 23, 25, 26, 34, 35) and the records C12, C13 (section 13). **Windows items stay open and are
+> marked unverified documentation**: Win32 kernel `?` and `*.*`, the DOS wildcard mapping of
+> `"` `<` `>`, junctions and mount points under `**`, 8.3 names (6.4).
+>
 > Revision 2026-11-01 (final pass): decisions D24–D29 applied; the spec is complete pending
 > approval. The choices derived in the first pass are decided (D24: `(` in a mask, `MaskRole`,
 > XP120 after 5.0, behaviour change 33, separator collapsing, UNC roots, XP017). Documented
@@ -136,7 +145,11 @@ One line per change: 3.x meaning → 4.0 meaning [signal]. "Rule" covers every r
     [XP117, parse time].
 12. `**/` and `/**/` in a rule: one or more directories → zero or more; a rule like `**/*.dll`
     now also matches `a.dll` at the root (a rule `*.dll`, if present, still wins: 5.8); write
-    `*/**/*.dll` to require one or more directories [XP119 on evidence].
+    `*/**/*.dll` to require one or more directories [XP119 on evidence]. Measured: in 3.x the
+    rule matcher (`matchGroups`) refuses `x.dll` for `**/x.dll`, while `Path.matches` and the scan
+    already accept zero directories (`measurements-engine.md` §7); likewise
+    `(path:bin/**)/file.o` captured `bin/x/y` (no trailing `/`) and did not match `bin/file.o`,
+    and `Path.matches` refused `bin/x/y/file.o` that `matchGroups` captured (§10).
 13. Segment-local `**` (`a**b`) in a rule: crosses `/` → stays within a segment, like `*`; its
     specificity becomes that of `*` [XP112, parse time].
 14. A mask ending in `/**`: an include listed the directories below, an exclude matched nothing
@@ -145,7 +158,9 @@ One line per change: 3.x meaning → 4.0 meaning [signal]. "Rule" covers every r
     evidence].
 16. Other OS-listing quirks in includes: `?` matching zero characters before `.` and, on .NET
     Framework, `*.rdl` finding `.rdlx` → gone; the module decides every name [release note;
-    the quirks are measured in Phase 2 before the note is final, 6.4].
+    measured on macOS: the legacy listing overloads match `b?` to `b` and `*.*` to the dotless
+    `b`, `measurements-dotnet.md` §1; the .NET Framework 3-letter extension rule and the Windows
+    kernel behaviour are unverified, 6.4].
 17. A named group in a mask: an include read it as literal text, an exclude wildcard segment as
     its body → an error [XP008].
 18. A group name starting with a digit, `(1:*)`: a group colliding with the positional `"1"` →
@@ -154,23 +169,39 @@ One line per change: 3.x meaning → 4.0 meaning [signal]. "Rule" covers every r
     captured, the last won → an error [XP015].
 20. An unclosed `(name:` in a string rule: ran to the end of the pattern silently → an error
     [XP006].
-21. `..` after a wildcard: dropped in masks, a literal in rules → an error; `.` after a
-    wildcard likewise (its exact 3.x result per context pinned in Phase 2) [XP012, D29].
+21. `..` after a wildcard: in masks a parent step the scan applies (`src/*/../x.cs` lists
+    `src/x.cs`), in rules a segment `Path.matches` never satisfies, so rule and mask disagree
+    (`measurements-engine.md` §3) → an error; `.` after a wildcard: dropped by the parser, so
+    `Path.matches` and the scan accept `src/*/./x.cs` while `matchGroups` returns no match
+    (§3) → an error likewise [XP012, D29].
 22. A trailing `/` in a rule pattern: matched nothing → an error [XP011].
-23. A trailing `/` in an exclude: ignored (`-- "obj/"` read as `obj`, which removed only a file
-    named `obj`) → matches the directory `obj` only, and every file below it is removed (an
-    excluded directory is not entered, 6.2) [release note].
+23. A trailing `/` in an exclude: ignored (the parser dropped it, `-- "obj/"` read as `obj`, a
+    file-name exclude anchored at the base directory) → matches the directory `obj` only, and
+    every file below it is removed (an excluded directory is not entered, 6.2) [release note].
+    Measured: in 3.x `-- "obj/"`, `-- "obj"` and `-- "obj/**"` all removed **nothing** (neither
+    `obj/a.o` nor `other/obj`); only `-- "obj/**/*"` and `-- "**/obj/*"` removed `obj/a.o`
+    (`measurements-engine.md` §6). So 4.0 pruning by `obj/` is a real change, not a
+    clarification; it, like `dir/**` (item 14), changes what a fileset returns without any
+    spelling change.
 24. `/` inside a class (`[a/b]`), `[z-a]`, `[[:alpha:]]`: split into segments in masks, regex
     meaning or a crash in rules → an error [XP010]; `[]` without a later `]` → an error
     [XP002].
 25. Case: a literal exclude segment was case-insensitive on every OS, and wildcard include
     segments followed the .NET listing (insensitive on macOS) → one comparer everywhere, ordinal
-    on Linux and macOS, ignore-case on Windows [release note].
+    on Linux and macOS, ignore-case on Windows [release note]. Measured on macOS: 3.x had two
+    comparers in the rule path, `Path.matches` insensitive and `matchGroups` sensitive
+    (`src/*.cs` matched `Src/a.cs` in the first only), D11 unifies them
+    (`measurements-engine.md` §9).
 26. `**` in includes followed directory symlinks and junctions → does not follow symlinks;
-    whether junctions, mount points and cloud-sync placeholders count as links is measured in
-    Phase 2 (6.5); each skipped link is logged once at Message level (D29) [release note].
+    each skipped link is logged once at Message level (D29) [release note]. Measured on macOS:
+    3.x follows directory symlinks under `**` and `*/`, lists file symlinks as files, and a
+    symlink cycle ends only at the OS limit (ELOOP, depth 32; `measurements-engine.md` §4,
+    `measurements-dotnet.md` §4). Whether Windows junctions, mount points and cloud-sync
+    placeholders count as links is unverified (6.4, 6.5).
 27. Fileset results: file-system enumeration order, duplicates kept → ordinal order per
-    directory, duplicates removed [release note; C5].
+    directory, duplicates removed [release note; C5]. Measured: 3.x keeps duplicates
+    (`measurements-engine.md` §5) and the order is the raw APFS `readdir` order, stable but not
+    alphabetical (`measurements-dotnet.md` §5).
 28. An unreadable directory met in a scan: `UnauthorizedAccessException` ended the build →
     skipped with a build-log warning [release note].
 29. The project root is a literal in rule matching: a root containing `( ) [ ] { } |`
@@ -184,11 +215,13 @@ One line per change: 3.x meaning → 4.0 meaning [signal]. "Rule" covers every r
 33. Rule specificity: a `/` next to `**` counted as a literal character → counts 0 (D5, D24); a
     globstar rule can lose a tie it won in 3.x, e.g. `*/?.dll` now beats `**/x.dll` for
     `a/x.dll` [release note].
-34. Repeated separators inside a pattern (`a//b`, `a\\b`): an empty segment (exact 3.x result
-    per context to be pinned in Phase 2) → one separator; a leading `//` or `\\` followed by two
+34. Repeated separators inside a pattern (`a//b`, `a\\b`): collapsed by the parser, so `Path.matches`
+    and the scan treat `a//b` as `a/b`, while `matchGroups` compares the raw text and returns no
+    match for `a/b` (`measurements-engine.md` §1) → one separator in every context; a leading `//` or `\\` followed by two
     names is a UNC root (4.2; D24) [release note].
-35. An empty pattern `""`, as a rule or a mask: exact 3.x result per context pinned in Phase 2
-    → an error [XP018, D29].
+35. An empty pattern `""`, as a rule or a mask: no error; it parses to an empty mask that
+    matches only the empty path, and `!! ""` lists the base directory itself as one entry
+    (`!! "" + "*.cs"` lists it too; `measurements-engine.md` §2) → an error [XP018, D29].
 36. Braces that end the pattern with an alternative ending in a separator (`{a/,b}`): literal
     text → an error; write `{a,b}/` [XP019, D29].
 
@@ -364,7 +397,8 @@ Syntactic decisions:
   pattern the separator is an ordinary one (`{a/,b}c` = `a/c` or `bc`).
 - `.` and `..` segments are resolved in the **literal prefix** (the segments before the first
   non-literal element), as `Path.normalizeLiteralPrefix` does in 3.x. After a wildcard, `..` and
-  `.` are errors (XP012, D29; 3.x dropped `..` silently in masks).
+  `.` are errors (XP012, D29; 3.x applied `..` as a parent step in masks and dropped `.`,
+  `measurements-engine.md` §3).
 - **Constraint on a future extglob** (D28; brief a reserves `( | )` for it; C6): `(name:` is a
   group wherever it appears, also after `*` or `?`: `*(name:x)` and `?(name:x)` are valid 4.0
   rule syntax (a wildcard, then a group) and keep that reading. Nothing reserves `*(` or `?(`.
@@ -480,18 +514,19 @@ correctly. Signal: an error code, a warning code with its trigger (7.3), or "rel
 | `{a,b}` | literal text | alternation | XP104 on evidence (masks); release note |
 | `{x}` | literal text | error | XP005 |
 | `**/b`, `a/**/b` in a rule | 1+ directories (regex `(.*)/`) | 0+ (`*/**/b` for 1+) | XP119 on evidence |
-| `a/**` at the end | rule: 1+ characters below `a`; include: the **directories** below `a` (and `a`); exclude: no file | every file below `a` (rule: unchanged in practice) | XP113 on evidence (masks) |
+| `a/**` at the end | rule: 1+ characters below `a`; include: the **directories** below `a` (and `a`); exclude: no file (removed nothing, `measurements-engine.md` §6, §7) | every file below `a` (rule: unchanged in practice) | XP113 on evidence (masks) |
 | `a**b` (segment-local) | rule: crosses `/` (regex `(.*)`); masks: like `*` | like `*` | XP112 at parse (rule) |
 | `*.*` as an include segment | **any name** (OS listing rule) | needs a `.` | XP114 on evidence |
 | `(name:body)` in a mask | include: literal text (finds nothing with a wildcard); exclude wildcard segment: `body`; exclude literal segment: literal | error | XP008 |
 | unclosed `(name:` | string rule: runs to the end, silently | error | XP006 |
 | group name `(1:*)` | a group named `1`, colliding with positional `1` | error | XP007 |
 | repeated name `(n:*)/(n:*)` | both capture; the **last** value wins, values may differ | error | XP015 |
-| `..` after a wildcard | rule: literal (no file has it); masks: dropped | error | XP012 |
-| `.` after a wildcard | per context, pinned in Phase 2 | error | XP012 |
-| empty pattern `""` | per context, pinned in Phase 2 | error | XP018 |
+| `..` after a wildcard | rule: `Path.matches` never satisfies it; masks: applied by the scan as a parent step (`src/*/../x.cs` lists `src/x.cs`), so the two disagree (`measurements-engine.md` §3) | error | XP012 |
+| `.` after a wildcard | rule: `Path.matches` true (the parser drops `.`), `matchGroups` no match; masks: dropped, the scan lists `src/d/x.cs` for `src/*/./x.cs` (§3) | error | XP012 |
+| empty pattern `""` | rule: `Path.matches` only the empty path; mask: parses to an empty mask, `!! ""` lists the base directory itself (§2) | error | XP018 |
+| `a//b` | `Path.matches` and the scan: as `a/b`; `matchGroups`: no match for `a/b` (raw text, §1) | one separator | release note |
 | `{a/,b}` ending the pattern | literal text | error | XP019 |
-| trailing `/` | rule: matches nothing; include: directories only; exclude: ignored (`obj/` = `obj`) | rule: error; mask: a directory (include: unchanged; exclude: the directory, so everything below it) | XP011 (rule); release note (exclude) |
+| trailing `/` | rule: matches nothing; include: directories only; exclude: ignored (`obj/` = `obj`, a base-directory file name; it removed nothing, nor did `obj/**`, §6) | rule: error; mask: a directory (include: unchanged; exclude: the directory, so everything below it) | XP011 (rule); release note (exclude) |
 | `/` in a class, `[z-a]`, `[[:` | masks: split at `/` or literal; rule: regex meaning or a crash | error | XP010 |
 | `[]` (no later `]`) | rule: a crash; masks: literal | error | XP002 |
 | case of a literal segment | rule: per OS; include: as the file system resolves it; exclude: **always insensitive** | per OS (5.4) | release note |
@@ -514,7 +549,9 @@ is 3.x behaviour (Ant, `.gitignore`, Rust `globset`); it differs from picomatch 
 (`dot: false`) and POSIX `FNM_PERIOD`. Ant matches dotfiles too but ships default excludes
 (`**/.git/**`, `**/.svn/**`, ...); that is the precedent for a later `dot`/default-excludes
 fileset option, which is not part of the module (C10). The directory entries `.` and `..` are
-never produced by a listing.
+never produced by a listing. Measured: 3.x already matched dot-prefixed directories under `*/`
+and `**` in both `Path.matches` and the scan (`measurements-engine.md` §8); the only 4.0 risk is
+the OS listing, whose default options skip them (9.5).
 
 ### 5.4 Case sensitivity
 
@@ -538,6 +575,10 @@ never produced by a listing.
   (`café*`), while a literal probe finds the file (the file system normalizes; example 23).
 - **Known limit: one character is one code unit** (D26): `?` and a class match one UTF-16 code
   unit, so a character outside the Basic Multilingual Plane needs `??` (5.9, example 23).
+- Measured on macOS (3.x): `Path.matches` is case-insensitive, `matchGroups` is case-sensitive
+  (two comparers; D11 unifies them), and the scan returns the mask's spelling, not the disk's
+  (`src/*.cs` over `Src/A.cs` returns `src/A.cs`; a literal `SRC/a.cs` is returned as typed),
+  which confirms D25 (`measurements-engine.md` §9).
 - 4.0 changes from 3.x (release notes, section 3 item 25): on macOS a wildcard include becomes
   case sensitive (`!! "*.CS"` no longer finds `a.cs`); on Linux and macOS a literal exclude
   segment becomes case sensitive (`-- "Bin/**/*"` no longer removes `bin/...`). No warning
@@ -571,7 +612,9 @@ Formatting (5.7) is the inverse: a globstar slot with value `""` drops one adjac
 one directory (`**/mlib.dll` did not match `mlib.dll` at the root: `PathTests` pins it; XP119
 on evidence; `*/**/mlib.dll` keeps the 3.x meaning); segment-local `a**b` in a rule crossed `/`
 (XP112); in an include `a/**` listed directories, in an exclude it matched nothing
-(`FilesetTests` pins it; XP113 on evidence).
+(`FilesetTests` pins it; XP113 on evidence). Measured (`measurements-engine.md` §7, §10): as an
+include `dir/**` listed the directories `dir` and `dir/sub`; `(path:bin/**)/file.o` captured `bin/x/y`
+without a trailing `/` and did not match `bin/file.o`.
 
 ### 5.6 Named groups and captures
 
@@ -701,7 +744,8 @@ differently (D9):
   `/`, it matches directories, and an excluded directory is **not entered**: every file and
   directory below it is removed (and pruned from later walking, 6.3 step 3). "Everything below"
   is a consequence of not entering the directory, not a separate meaning. `-- "obj/"` removes
-  `obj/x.dll` and `obj/a/b.cs`; `-- "obj"` removes only a file named `obj` (as in 3.x).
+  `obj/x.dll` and `obj/a/b.cs`; `-- "obj"` removes only a file named `obj` at the base directory (as in 3.x, where `-- "obj/"`
+  and `-- "obj/**"` also removed nothing; `measurements-engine.md` §6).
 
 **Literal segments and explicit names** (D13). A mask segment without any non-literal element
 is a **probe**, not a listing:
@@ -766,7 +810,8 @@ An include is walked from its anchor (base dir, or the root of an absolute mask)
 The .NET listing (`Directory.EnumerateFiles/Directories(dir, filter)`) knows only `*` and `?`,
 with Win32 quirks (`*.*` = `*`; `?` can match zero characters before `.` or the end; on .NET
 Framework a 3-letter extension also matches longer ones, `*.rdl` finds `c.rdlx`; on macOS the
-listing is case-insensitive on the default volume). Therefore:
+listing is case-insensitive by platform default, even on a case-sensitive volume). Measured
+on macOS (`measurements-dotnet.md` §1–2); the Windows items are listed below. Therefore:
 
 - the module's matcher decides every name; the OS filter is only a **pre-filter** that may return
   a superset;
@@ -778,10 +823,22 @@ listing is case-insensitive on the default volume). Therefore:
   on evidence). The `cp` task's `Dir` mode, which used `dirMask </> "**/*.*"`, builds
   `dirMask + "/**/*"` (with `/`, as the prototype did).
 
-**To be measured in Phase 2** (D17, C10): the quirks above are asserted from .NET documentation
-and source knowledge, not measured (`?` matching zero characters, `*.*`, the .NET Framework
-3-letter extension rule, the macOS case-insensitive listing, symlink following under
-`AllDirectories`). Phase 2 measures them before the release notes state them.
+**Measured (macOS, D17, C10).** The legacy `Directory.Enumerate*` overloads behave as the Win32
+match type: `*.*` returned the dotless name `b`, a trailing `?` matched zero characters (`b?` →
+`b`, `q.c?` → `q.c`), while the Simple match type needs one character and a dot for `*.*`
+(`measurements-dotnet.md` §1). `[ ( {` and `x[1].cs` are literal (no classes). `"`, `<`, `>` as
+patterns matched only files literally named so. The search pattern is case-insensitive under
+`PlatformDefault` even on a case-sensitive APFS volume; only `MatchCasing.CaseSensitive` is exact (§2,
+§3). All of it fits the rule above: the OS filter is a superset pre-filter and the module decides.
+
+**Still unmeasured (Windows)** — unverified documentation, not measurements; the wording of 6.4
+and section 3 items 15–16 holds for macOS only:
+
+- the Win32 kernel semantics of `?` (docs: `file.??t` matches `file.t`, `file.at`, `file.txt`) and of
+  `*.*` (docs: matches every file in Win32 mode);
+- the DOS wildcard mapping of `"` `<` `>` (docs: wildcards in Win32 mode; on macOS they are literal);
+- junctions, volume mount points and cloud-sync placeholders under `**` (6.5);
+- 8.3 short names, and the .NET Framework 3-letter extension rule (`*.rdl` finds `.rdlx`).
 
 ### 6.5 Symlinks
 
@@ -795,12 +852,16 @@ and source knowledge, not measured (`?` matching zero characters, `*.*`, the .NE
 - A directory skipped under `**` because it is a link is **logged once** per directory in the
   build log, at level **Message** (D29), as an unreadable directory is reported once (6.6, at
   level Warning): the skip is the documented behaviour, not a problem.
-- **To be measured in Phase 2** (D17, S5): whether Windows junctions, volume mount points and
-  cloud-sync placeholders (folders that carry `ReparsePoint` without being symlinks) are treated
-  as links, and how a link is recognised on netstandard2.0/net462 (which lack `LinkTarget`;
-  whether to detect it at run time through `LinkTarget` on .NET 6+ is part of the same
-  measurement, D29). The wording of this section and of section 3 item 26 is final only after
-  that measurement.
+- **Measured on macOS** (D17, S5, D29): 3.x follows directory symlinks under `**` and `*/` and lists
+  file symlinks as files; a cycle ends at the OS symlink limit (ELOOP, depth 32), which the
+  recursive enumeration swallows silently (`measurements-engine.md` §4, `measurements-dotnet.md`
+  §4). `FileAttributes.ReparsePoint` is set for directory and file symlinks, so a link is
+  recognised by attribute on netstandard2.0/net462, which lack `LinkTarget`; the walker tests the
+  attribute of each subdirectory (9.5). A file symlink is a file and is listed.
+- **Unverified (Windows)**: whether junctions, volume mount points and cloud-sync placeholders
+  (folders that carry `ReparsePoint` without being symlinks) are skipped by that same attribute
+  test, or should be told apart. Until measured, the wording of this section and of section 3
+  item 26 is final for symlinks only (6.4, "Still unmeasured").
 
 ### 6.6 Ordering, duplicates, determinism
 
@@ -808,7 +869,9 @@ and source knowledge, not measured (`?` matching zero characters, `*.*`, the .NE
   (`StringComparer.Ordinal`, on every OS), files of a directory before its subdirectories
   (pre-order, as `find`). The include's results come out in that order; includes are
   concatenated in declaration order. In 3.x the order is whatever the file system enumerates
-  (alphabetical on NTFS, hash order on ext4), which matters for F# compile order.
+  (alphabetical on NTFS, hash order on ext4), which matters for F# compile order. Measured on APFS: raw `readdir` order, stable across runs
+  but neither alphabetical nor creation order (`measurements-dotnet.md` §5), so the ordinal sort is
+  required.
 - Duplicates (the same full path from two includes, or `**/**`) are kept once, at the first
   occurrence, compared with the OS comparer (5.4). 3.x keeps them twice (13, C5: the
   `FilesetTests` case titled "removes duplicates" asserts 2 and is rewritten, D17).
@@ -818,6 +881,12 @@ and source knowledge, not measured (`?` matching zero characters, `*.*`, the .NE
 - An unreadable directory met during a walk is skipped and reported once per directory as a
   build-log warning (in 3.x an `UnauthorizedAccessException` ends the build). A missing base
   directory gives an empty list (`failonempty` turns it into an error).
+
+### 6.7 Implementation notes from the measurements
+
+Non-normative; the full list is 9.5. The three that bear on the scanning rules: the walker must not
+use the default `EnumerationOptions` (they skip dotfiles, D10); a link is detected by
+`FileAttributes.ReparsePoint` (6.5); an unreadable directory is caught per directory (6.6).
 
 ## 7. Error and warning model
 
@@ -884,7 +953,7 @@ XP109, XP115, XP118 folded into the errors below in the 2026-10-26 draft; XP111 
 | XP009 | 5.0 | `\` at the end, or before a character that is not escapable | `'\x' escapes nothing; use '/' as the separator, '\\' for a backslash` |
 | XP010 | 4.0 | a `/` inside a class, `[z-a]`, a class starting with `[:` | `invalid character class '[...]': <detail>` (details: `a class never matches '/'`, `the range 'z-a' is reversed`, `POSIX class names '[:...:]' are reserved`) |
 | XP011 | 4.0 | a rule pattern ending in a separator | `a rule pattern names a file or a phony target and cannot end with '/' (in Xake 3.x it matched nothing)` |
-| XP012 | 4.0 | `.` or `..` as a segment after a wildcard (D29 for `.`) | `'..' is allowed only before the first wildcard (Xake 3.x ignored it in masks)`; for `.`: `'.' is allowed only before the first wildcard; remove the segment` |
+| XP012 | 4.0 | `.` or `..` as a segment after a wildcard (D29 for `.`) | `'..' is allowed only before the first wildcard (Xake 3.x applied it as a parent step in masks and never matched it in rules)`; for `.`: `'.' is allowed only before the first wildcard; remove the segment` |
 | XP013 | 4.0 | multi-output rule, outputs with different named groups | prototype text: `output "<p>" has groups [..], the first output [..] (missing [..], extra [..]); every output needs the same named groups, or the others cannot be named from a match` |
 | XP014 | 4.0 | a class or braces outside a group in a pattern that must be formatted (multi-output, `format`) | `'{dll,pdb}' cannot be filled in from a match; put it in a named group: (ext:{dll,pdb})` |
 | XP015 | 4.0 | a group name that appears more than once in a pattern, also across brace alternatives (D4) | `the group name 'p' appears 2 times; a name may appear once per pattern (Xake 3.x let each occurrence capture and the last one win); rename one occurrence, or put one group around the braces: (x:{a,b})` |
@@ -1130,6 +1199,39 @@ regex where the AST makes it trivial:
 
 Rejected for now (D18): an own matcher; no cache; always `Compiled`; `NonBacktracking` (.NET 7+
 only; Core targets netstandard2.0). An own matcher stays possible later behind the same AST.
+
+### 9.5 Implementation notes from the measurements
+
+Non-normative. Measured on macOS (APFS, .NET SDK 10), `measurements-dotnet.md` unless stated.
+Windows items are not measured (6.4).
+
+- **Hidden files** (§6). .NET reports a leading-dot name on macOS as `FileAttributes.Hidden`
+  (name-derived, no BSD flag), so `EnumerationOptions()` with its default `AttributesToSkip`
+  (`Hidden | System`) skips dotfiles. The legacy overloads return them. To honour D10 the walker
+  uses the legacy overloads or sets `AttributesToSkip = 0`.
+- **API availability.** `EnumerationOptions`, `MatchCasing`, `LinkTarget` and `IgnoreInaccessible`
+  do not exist on netstandard2.0/net462 (Core's targets); only the legacy `Directory.Enumerate*`
+  overloads and `FileSystemInfo.Attributes` are available. Links are therefore detected by
+  attribute: `ReparsePoint` is set for directory and file symlinks on macOS (§4).
+- **Inaccessible directories** (§8). The legacy `AllDirectories` overload throws
+  `UnauthorizedAccessException` at enumeration time, possibly after partial results. The walker is
+  depth first and catches the exception per directory (6.6), never relying on all-or-nothing.
+- **The OS filter is a superset pre-filter, the module decides** (6.4). Measured reasons: the
+  search pattern is case-insensitive by platform default even on a case-sensitive volume (§2, §3);
+  `*.*` does not match dotless names outside Win32 mode (§1); Win32 `b?` matched `b`, a zero-character
+  `?` (§1); `[ ( {` are literal.
+- **Order** (§5). Enumeration order is raw `readdir` order, stable but not alphabetical, so the ordinal
+  sort of D17 is required.
+- **Unicode** (§7). NFC and NFD spellings collapse to one file on APFS (the first spelling is
+  kept); `File.Exists` finds it in either form; the enumeration pattern does not normalize (the NFD
+  pattern matched nothing). Consistent with D27.
+- **Search patterns with `"`, `<`, `>`** matched only literal names on macOS (§1); the Windows DOS
+  mapping is unverified, so the safe-set rule of 6.4 stays.
+- **Case of the disk spelling** (§3). `GetFiles(dir, "A.CS")` returns the on-disk `a.cs`, and
+  `FileInfo(...).Name` keeps the requested spelling: the walker takes names from the listing only
+  where it intends to (D25 keeps the mask's spelling for probed segments).
+- **Symlink cycles** (§4). A direct call on a path past 32 levels throws `IOException` (ELOOP);
+  under the legacy recursion it is swallowed. Skipping links under `**` makes this irrelevant.
 
 ## 10. Deprecation calendar, version, conformance corpus
 
@@ -1514,7 +1616,9 @@ Depends: 8 (all), 6.1, 10.2.
 **Decision (D17, 2026-11-01).** Depth-first walker driven by the AST (probes, listings as a
 superset pre-filter, `**` recursion, brace union, pruning, ordinal order, dedup, unreadable
 directories skipped with a warning, evidence checks); symlinks not followed under `**`;
-junctions/mount points/cloud placeholders (S5) and the OS-listing quirks (C10) measured in Phase 2.
+links detected by attribute and the OS-listing quirks (C10) measured on macOS in Phase 2
+(`measurements-dotnet.md`); junctions/mount points/cloud placeholders (S5) and the Windows listing
+semantics stay unverified (6.4).
 
 Alternatives considered:
 - Keep `SearchOption.AllDirectories` for `**` and filter afterwards (3.x): simple, but lists
@@ -1670,14 +1774,15 @@ every OS and match only on Windows (4.2, item 34); `\,` directly inside braces i
 6. C8, `.` as a segment after a wildcard: an error, as `..` (D29; XP012, 4.2, item 21).
 7. S5, a directory skipped by `**` because it is a link: logged once at Message level (D29;
    6.5, item 26).
-8. S5, detecting links through `LinkTarget`: part of the Phase-2 measurement, not in the spec
-   (D29; 6.5).
+8. S5, detecting links through `LinkTarget`: not available on Core's targets; links are detected by
+   `FileAttributes.ReparsePoint`, measured on macOS (D29; 6.5, 9.5).
 9. `{a/,b}` as the last element: an error; `{a,b}/` covers the honest case (D29; XP019, 4.2,
    item 36).
 
 ## 13. Conflicts and findings (record)
 
-Each finding is resolved by a decision or scheduled for a Phase-2 measurement; none is open.
+Each finding is resolved by a decision or by a Phase-2 measurement (macOS, 2026-11-01); the Windows
+items listed in 6.4 stay unmeasured.
 
 - **C1 — `[c]` in includes is a plain 4.0 change.** #90 already reads `[c]` as `c` in includes
   (`sub[1]/*.c` finds `sub1`, test "an unescaped sub[1] is the [c] form"); 3.x reads the literal
@@ -1693,6 +1798,8 @@ Each finding is resolved by a decision or scheduled for a Phase-2 measurement; n
   accept zero. One matcher makes rules accept zero too; signalled by XP119 when a rule match
   takes zero directories, by section 3 item 12, and the `*/**/` idiom keeps the 3.x meaning.
   With D5 the rule-selection effect is limited: `*.dll` still beats `**/*.dll` (example 9).
+  Measured: in 3.x only `matchGroups` (the rule matcher) needs the directory; `Path.matches` and the
+  scan accept zero (`measurements-engine.md` §7).
 - **C5 — a test whose title and assertion disagree.** `FilesetTests` "exec function removes
   duplicates from result" asserts the duplicate count is 2. The spec removes duplicates (6.6);
   the test is rewritten (D17).
@@ -1708,13 +1815,23 @@ Each finding is resolved by a decision or scheduled for a Phase-2 measurement; n
 - **C9 — observed, out of scope.** `File.fs` `compareNames` passes `ignoreCase = Env.isUnix`
   (case-insensitive on Unix, sensitive on Windows), the inverse of every other comparer; worth a
   separate issue.
-- **C10 — to be measured in Phase 2 (D17): OS listing quirks** are asserted from .NET
-  documentation and source knowledge, not measured here (`?` matching zero characters, `*.*`, the
-  .NET Framework 3-letter extension rule, macOS case-insensitive listing, symlink following
-  under `AllDirectories`). Phase 2 measures them before the release notes state them (6.4).
-- **S5 — to be measured in Phase 2 (D17): what counts as a link.** "Reparse point" is wider than
-  "symlink" on Windows: junctions, volume mount points and cloud-sync placeholders carry
-  `ReparsePoint`. Whether `**` skips them, and how a link is recognised on netstandard2.0/net462,
-  is measured before the wording of 6.5 and section 3 item 26 is final.
+- **C10 — measured on macOS (D17): OS listing quirks.** The legacy listing overloads match
+  `*.*` to a dotless name and a trailing `?` to zero characters; the search pattern is
+  case-insensitive on macOS by platform default; symlinks are followed under `AllDirectories`
+  (`measurements-dotnet.md` §1–4, 6.4). The .NET Framework 3-letter extension rule and the
+  Windows behaviour are unverified.
+- **S5 — measured on macOS (D17): what counts as a link.** Symlinks carry `ReparsePoint` and are
+  detected by attribute, since netstandard2.0/net462 lack `LinkTarget` (6.5, 9.5). Whether `**`
+  should skip Windows junctions, volume mount points and cloud-sync placeholders (`ReparsePoint`
+  without a symlink) is unverified.
 - **C11 — resolved (D23):** a named group in a mask (XP008) and an unclosed group in a string
   rule (XP006) are errors in 4.0; XP111 dropped (12, C11).
+- **C12 — a 3.x bug, recorded (not a decision).** `Path.matches "(apl:*/*)/x"` throws
+  `RegexParseException` (`^([^/\\]*))$`, too many `)`), while `matchGroups` captures
+  `apl = "a/b"`: a named group whose body holds `/` breaks one of the two matchers. In 4.0 there is
+  one matcher (9.2); whether a group body may hold `/` is decided by 4.2, not by this record
+  (`measurements-engine.md` §10).
+- **C13 — 3.x has several matchers that disagree, recorded.** `Path.matches`, `matchGroups` and the
+  scan differ on `a//b`, `.`, `..`, `**/x.dll`, `(path:bin/**)/file.o` and case on macOS
+  (`measurements-engine.md` §1, §3, §7, §9, §10). The conformance vectors tag each such case with
+  the matcher that produced the 3.x result.

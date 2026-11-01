@@ -2,7 +2,8 @@
 
 - [x] Starting documents: brief, kickoff, session, tracker
 - [x] Phase 1: spec draft (`spec.md`, 1272 lines) by an opus agent from the brief and the frozen branch (2026-10-26)
-- [ ] Phase 1: spec review with the user, open items 1-15 of the brief decided
+- [x] Phase 1: spec review with the user, open items 1-15 of the brief decided (2026-11-01, D1-D23)
+- [x] Phase 1: spec revised for D3-D23 and the glob critique (2026-11-01)
 - [ ] Phase 1: user approves the spec
 - [ ] Phase 2: conformance vectors (table-driven, glob-style cases, on-disk corpus), failing/skipped
 - [ ] Phase 2: user approves the vectors

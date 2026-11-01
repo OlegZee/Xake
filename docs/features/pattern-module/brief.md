@@ -294,3 +294,14 @@ fixes how much breaks. 3.12.0 is released (tag `v3.12.0`); nothing of this featu
   an error (`{a,b}/` covers the honest case).
 - **D30 (2026-11-01): `spec.md` approved by the user** (Phase 1 exit). Later changes to the
   spec need a decision entry here.
+- **D31 (2026-11-01): staged implementation, four PRs into `feature/patterns2`.** PR 1 docs
+  (spec, decisions, measurements; this branch). PR 2 grammar and parser: parse/error/`unparse`/
+  `escape`/`escapePath`/`groupNames`/`specificity` vectors first (own commit, reviewed on the
+  PR), then `PatternAst.fs`; the engine does not use it yet. PR 3 matcher: match/capture/`format`
+  vectors (with 3.x results from the measurements), then the regex-backed matcher. PR 4 scanner:
+  fixture-tree vectors, then the walker. Phase 4 (engine migration) follows. Vectors are
+  table-driven NUnit tests, ignored until their stage's code lands.
+- Open: whether `-- "obj/"` (3.x: removed nothing; 4.0: prunes the directory) needs an evidence
+  warning or only a release-notes entry (orchestrator's recommendation: release notes only).
+- Windows measurements: a standalone `measure-windows.fsx` (Xake 3.15.0 from nuget.org) run by
+  the user on a Windows machine without git; results come back as `measurements-windows.md`.

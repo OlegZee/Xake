@@ -329,3 +329,7 @@ fixes how much breaks. 3.12.0 is released (tag `v3.12.0`); nothing of this featu
 - **D35 (2026-11-01): D34 confirmed by the user, plus the three remaining notes:** `.` alone is
   XP018 (P-065); XP019 in nested braces is reported at the inner `{` (P-222); the XP016 reason
   quotes the literal sample `//server/share` (M-018). D34 is no longer provisional.
+- **D36 (2026-11-01): the UNC root stays as specified** (`root = unc | drive sep | sep`; XP016
+  for a non-literal server or share; matches nothing on Unix). 3.x had no UNC notion and read
+  `\\server\share` as `/server/share` after collapsing. Rejected: an error on a leading `//`
+  ("mount the share"); silent collapsing.

@@ -246,3 +246,9 @@ let matchMask (windows: bool) (baseDir: string) (mask: string) (path: string) (i
     match get PatternContext.Mask mask baseDir windows with
     | None -> false
     | Some c -> c.IsDirectory = isDirectory && c.Regex.IsMatch(normalize windows path)
+
+/// `matchMask` with the cache lookup done once: the walker's per-entry test (PatternScan).
+let maskMatcher (windows: bool) (baseDir: string) (mask: string) : string -> bool -> bool =
+    match get PatternContext.Mask mask baseDir windows with
+    | None -> fun _ _ -> false
+    | Some c -> fun path isDirectory -> c.IsDirectory = isDirectory && c.Regex.IsMatch(normalize windows path)

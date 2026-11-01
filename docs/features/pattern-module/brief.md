@@ -343,3 +343,28 @@ fixes how much breaks. 3.12.0 is released (tag `v3.12.0`); nothing of this featu
   `\` on the path side is a separator only in Windows mode; an empty globstar group at an edge
   (`(p:**)/b`, `p = ""`) drops one `/` in `format` like a bare globstar; `[x]` in a multi-output
   rule is a class and XP014 at creation (4.0 behaviour change; `lib\[x\].dll` or `libx.dll`).
+- **D38 (2026-11-01): no cuts from the complexity critique.** Groups spanning segment
+  boundaries are needed; nested groups stay (unused, harmless, no measurable cost). The critique
+  stays in the folder as input for 5.0 planning (migration debt: legacy warnings, `\` hybrid).
+- **D39 (2026-11-01): the scanner vectors' SPEC? notes.** Accepted as read: explicit names are
+  listed whether they are files, directories, absent, or under a missing base (D13); `**/` does
+  not yield the base itself; a brace union holding `/` comes out in tree order; duplicates are
+  removed with the mode's comparer (Windows: `b` = `B`); a directory link under `**/` is neither
+  entered nor yielded; a pruned directory is not read, so nothing below it is logged; `**/`
+  yields an unreadable directory and warns when it cannot list it; XP113 only when the pruning
+  would have removed something; XP104 also for excludes and only on a whole name equal to the
+  literal text; no XP104 for `sub[1]` (XP106 at parse); no XP120 for a relative `../` exclude;
+  no XP114 for `a*.*`; an absolute include's anchor is its literal prefix. One change: an
+  unreadable literal prefix (probe) counts as absent AND is logged as `Unreadable` (SC-275), so
+  an empty result is explainable. Shim contract: one ordered `(MaskRole * string)` list (an
+  exclude applies to the includes before it, spec 6.3); the D25 trap is on `SRC/*.cs` and the
+  volume decides, not the mode (explicit `SRC/a.cs` is listed in every mode).
+- **D40 (2026-11-01, PROVISIONAL by the orchestrator; the user confirms or reverses):** three
+  readings the walker needed beyond the spec text. (1) A literal segment is probed only while
+  the walker has not listed its directory; inside a directory that is listed anyway (after `**`,
+  `*`, braces) the literal is matched against the listing and takes the disk's spelling (6.3,
+  vectors SC-227/228). (2) XP120 does not fire for an absolute exclude whose literal prefix lies
+  above the base (`/**/obj/` can remove files below the base). (3) A `P/**` exclude prunes a
+  directory only once a found file is known to match it, so the XP113 evidence equals the
+  unpruned result (SC-122). Vectors SC-214/229 were corrected on their own terms (`*.cs` matches
+  `B.cs` ordinally; `lib/` does not exclude `Lib` in Unix mode).

@@ -754,6 +754,12 @@ module Warnings =
         if not (List.isEmpty issues) && seen.TryAdd(usage + "\n" + pattern, true) then
             emit (format usage pattern issues)
 
+    /// An evidence or evaluation warning (XP104, XP113, XP114, XP119, XP120): one more line for
+    /// the key (use, pattern), at most once per code (7.3).
+    let internal reportEvidence (usage: string) (pattern: string) (issue: Issue) =
+        if seen.TryAdd(usage + "\n" + pattern + "\n" + issue.Code, true) then
+            emit (format usage pattern [ issue ])
+
 // =================================================================================================
 // Parsing entry points (spec 8.2, D9, D34)
 // =================================================================================================

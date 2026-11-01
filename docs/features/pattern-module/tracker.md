@@ -5,7 +5,7 @@
 - [x] Phase 1: spec review with the user, open items 1-15 of the brief decided (2026-11-01, D1-D23)
 - [x] Phase 1: spec revised for D3-D23 and the glob critique (2026-11-01)
 - [x] Phase 1: user approves the spec (2026-11-01, D30)
-- [ ] Phase 2: measurements (D17 symlinks/junctions, OS listing quirks; 3.x results of `a//b`, `""`, `.` after a wildcard) — haiku agents launched 2026-11-01
+- [x] Phase 2: measurements on macOS (`measurements-engine.md`, `measurements-dotnet.md`, 2026-11-01); Windows-only cases (Win32 `?`, DOS wildcard mapping, junctions) still unmeasured
 - [ ] Phase 2: conformance vectors (table-driven, glob-style cases, on-disk corpus), failing/skipped
 - [ ] Phase 2: user approves the vectors
 - [ ] Phase 3: module implementation (one AST, one matcher) passing the vectors; PR to `dev`

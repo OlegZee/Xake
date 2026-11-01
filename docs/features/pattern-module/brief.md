@@ -157,3 +157,48 @@ fixes how much breaks. 3.12.0 is released (tag `v3.12.0`); nothing of this featu
 - **D2 (2026-10-31): integration branch `feature/patterns2`**, cut from `dev`. Every phase PR of
   this feature targets it (squash); it merges to `dev` when the typed layer and docs are in.
   Closes the open item tm 45 for this feature.
+- **D3 (2026-11-01): the regex-equivalent table is an implementation detail.** It moves out of
+  the semantics section into a "Matcher implementation" section; the requirements are the
+  semantics tables and the conformance vectors, not a regex encoding. (Critique M1/M2 are then
+  implementation notes, not spec defects.)
+- **D4 (2026-11-01): a repeated group name is an error** (critique S2). Backreference semantics
+  were never intended; `{(x:a)-1,(x:b)-2}` and `(x:*)/(x:*)` are both rejected at parse time.
+- **D5 (2026-11-01): specificity must not count the `/` next to `**`** (critique S7). `*.dll`
+  is more specific than `**/*.dll` for a root file; the specificity rule is fixed in the spec.
+- **D6 (2026-11-01): a leading `/` stays absolute** (critique S1). The difference from gitignore
+  goes into the list of deliberate deviations; an exclude whose absolute root lies outside the
+  fileset base gets a warning (it can never remove anything). Rejected: gitignore-style anchoring
+  (indistinguishable from an absolute path on Unix; masks are anchored at the base anyway).
+- **D7 (2026-11-01): `(` stays reserved (tm 60); add `escapePath`** (critique S3). `escapePath`
+  normalizes `\` to `/` and escapes every pattern metacharacter; the XP003 text for masks points
+  to it. Rejected: reading `(` without `name:` as a literal (one more lexer rule to explain).
+- **D8 (2026-11-01): open item 1 accepted as recommended.** One grammar, two contexts (a mask is
+  a rule pattern without named groups; a group in a mask is parsed, then rejected); `(name:` is
+  one lexical token; `{x}` without a top-level comma is an error, not a literal.
+- **D9 (2026-11-01): open item 2: one meaning per element, two contexts.** Contexts are `Rule`
+  and `Mask` only. One parser implementation with a context argument and two public entry points
+  (`Rule.parse`, `Mask.parse`); the context changes exactly two things: in `Mask` the lexer does
+  not produce the `(name:` token (so `(` is XP003 at once), in `Rule` a trailing `/` is XP011.
+  One AST, one matcher. The trailing `/` means "matches a directory" in every mask; include vs
+  exclude differ only in the scanner (an include yields the matched directories, an excluded
+  directory is not entered, so "everything below" is a consequence, not a separate meaning).
+  Semantics tables get two columns (rule, mask). The 3.x exclude behaviour (`obj/` read as
+  `obj`) becomes a release-notes entry. Rejected: two independent parsers (the 3.x drift came
+  from separate encodings); parse-then-validate (errors should arise where the problem is).
+- **D10 (2026-11-01): open item 3 accepted.** A leading `.` is not special: `*`, `?`, `**` and
+  classes match it (Ant, gitignore, globset, 3.x). Hidden folders are excluded explicitly and
+  pruned by the walker. Rejected: picomatch-style dot handling; a `dot` fileset option (possible
+  later, not part of the module).
+- **D11 (2026-11-01): open item 4 accepted.** One comparer everywhere: ordinal on Linux/macOS,
+  ignore-case on Windows, as `File` equality and rule matching today; classes follow it. The two
+  3.x quirks (case-insensitive literal excludes on every OS; case-insensitive wildcard includes on
+  macOS via the .NET listing) are release-note entries without a warning. Rejected: macOS
+  insensitive; an evidence warning; a `caseSensitive` option (possible later in `ExecOptions`);
+  per-directory detection.
+- **D12 (2026-11-01): open item 5 accepted, with one addition.** `**` is zero or more whole
+  segments everywhere; captures have no edge `/`; `a/**` excludes `a` itself; `a**b` = `a*b`
+  (XP112); rule `**/` zero segments is a 4.0 change signalled by XP119 on evidence; mask
+  `dir/**` by XP113. Addition: the spec must document the "one or more segments" idiom
+  `*/**/file.o` (with capture: `(path:*/**)/file.o`) in the semantics section, in a worked
+  example and in the XP119 text, because the 3.x "one or more" rule came from a real case and
+  users need the replacement spelled out.

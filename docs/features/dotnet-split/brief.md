@@ -293,6 +293,11 @@ from it. If S5 slips, S1-S4 still pay off: the seam is gone and the new repo is 
   `RequireQualifiedAccess`; Xake previews `v4.0.0-preview.N` on nuget.org; the fsc/locks
   self-build moves to the new repo; unlist the 1.1.x betas after 4.0.0; a windows-latest CI leg;
   test project `src/dotnet.tests`; the hermetic feature folders stay in Xake as the record.
-- **Question 5 reopened by the owner: one package instead of two.** `Xake.Dotnet` and the
-  hermetic library ship in ONE nupkg (id `Xake.Dotnet`), one version line, one tag prefix.
-  Pitfall analysis pending; recorded here once decided.
+- **S-D2 (2026-11-01): one package.** `Xake.Dotnet` and the hermetic library ship in ONE nupkg
+  (id `Xake.Dotnet`, two assemblies, `open Xake.Hermetic.Dotnet` unchanged), one version line
+  starting at 4.0.0, one tag prefix `v*`. Consequences: the hermetic 0.x line ends at 0.10.0 and
+  the id `Xake.Hermetic.Dotnet` is deprecated/unlisted on nuget.org pointing to `Xake.Dotnet`;
+  release-process rule B (frozen records across the package boundary) is void; `pack-hermetic`,
+  the hermetic nuspec check and the second bootstrap `#r` go away; the hermetic part is marked
+  "API may change" in the readme until it settles. Rationale: hermetic has no external package
+  dependencies, and 12/12 hermetic releases were paired with Xake anyway.

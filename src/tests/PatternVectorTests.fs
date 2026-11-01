@@ -5,87 +5,13 @@ open NUnit.Framework
 
 open PatternVectors
 
-/// The pattern module's public API as spec 8.2 states it (`Xake.PatternAst`), as a stand-in until
-/// the parser lands in PR 2. Every function raises NotImplementedException; the types are the
-/// spec's, so `Shape.render` below works unchanged against the real module: replace this module
-/// with `Xake.PatternAst` and delete the stubs.
-module PatternModuleUnderTest =
+// The module under test (spec 8.2). Opened after PatternVectors so that `unparse`, `escape`, ...
+// name the module's functions, not the vector tables (those are written `PatternVectors.unparse`).
+open Xake.PatternAst
 
-    // ---- AST (4.4)
-    type ClassItem =
-        | One of char
-        | Range of char * char
-
-    type Token =
-        | Lit of string
-        | Sep
-        | Star
-        | AnyChar
-        | Globstar
-        | DoubleStar
-        | Class of negated: bool * items: ClassItem list
-        | Alt of Token list list
-        | Group of name: string * body: Token list
-
-    [<RequireQualifiedAccess>]
-    type PatternContext = Rule | Mask
-
-    [<RequireQualifiedAccess>]
-    type MaskRole = Include | Exclude
-
-    type Issue = { Code: string; Text: string }
-
-    type PatternError =
-        { Pattern: string
-          Context: PatternContext
-          Position: int option
-          Code: string
-          Reason: string }
-        /// The message format of spec 7.2.
-        override e.ToString() =
-            let ctx = match e.Context with PatternContext.Rule -> "rule" | PatternContext.Mask -> "mask"
-            let at = match e.Position with Some n -> sprintf " at character %d" n | None -> ""
-            sprintf "Invalid pattern '%s' (%s)%s: %s [%s]" e.Pattern ctx at e.Reason e.Code
-
-    exception PatternException of string
-
-    let private notImplemented () : 'a =
-        raise (NotImplementedException "pattern module: PR 2 implementation")
-
-    // ---- parsing (D9)
-    module Rule =
-        let parse (_pattern: string) : Token list = notImplemented ()
-        let tryParse (_pattern: string) : Result<Token list * Issue list, PatternError> = notImplemented ()
-        let check (_pattern: string) : unit = notImplemented ()
-
-    module Mask =
-        let parse (_pattern: string) : Token list = notImplemented ()
-        let tryParse (_pattern: string) : Result<Token list * Issue list, PatternError> = notImplemented ()
-        let check (_role: MaskRole) (_pattern: string) : unit = notImplemented ()
-
-    let unparse (_tokens: Token list) : string = notImplemented ()
-    let escape (_s: string) : string = notImplemented ()
-    let escapePath (_p: string) : string = notImplemented ()
-    let reservedChars : string = "()[]{}|"
-
-    // ---- reading the AST
-    let groupNames (_tokens: Token list) : string list = notImplemented ()
-    let wildcards (_tokens: Token list) : (Token * int) list = notImplemented ()
-    let specificity (_tokens: Token list) : int * int * int = notImplemented ()
-
-    // ---- generation (5.7; vectors in PR 3)
-    let format (_named: string -> string) (_positional: int -> string) (_tokens: Token list) : string = notImplemented ()
-    let formatMatches (_matches: Map<string, string>) (_pattern: string) : string = notImplemented ()
-    let glob (_named: string -> string option) (_positional: int -> string option) (_tokens: Token list) : string = notImplemented ()
-
-    /// Not part of the spec's API: the parse-time warning parts of a mask for a role. The spec has
-    /// `Mask.tryParse : string -> Result<Token list * Issue list, _>` without a role, while XP105,
-    /// XP106 and XP117 depend on it (7.3; `Mask.check` takes the role but returns unit). PR 2
-    /// decides how the role reaches the issues; this adapter is where the tests get them.
-    module Adapter =
-        let maskIssues (_role: MaskRole) (_pattern: string) : Issue list = notImplemented ()
-
-open PatternModuleUnderTest
+/// The parse-time warning parts of a mask for a role: `Mask.warnings` (D34, implemented form).
+module Adapter =
+    let maskIssues (role: MaskRole) (pattern: string) : Issue list = Mask.warnings role pattern
 
 /// The textual rendering of a `Token list` described at the top of PatternVectors.fs, and its
 /// reader (used only to check that the expected shapes in the tables are well formed).
@@ -236,7 +162,6 @@ module private Drive =
 
 /// The parser-stage conformance vectors (spec sections 4, 5.8, 7, 8; brief D31, PR 2).
 [<TestFixture>]
-[<Ignore("pattern module: vectors only until the parser lands (PR 2)")>]
 type ``Pattern module conformance: parser (PR 2)``() =
 
     static member ParseCases = Drive.cases PatternVectors.parse (fun v -> v.Id)

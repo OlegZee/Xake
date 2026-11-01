@@ -346,3 +346,16 @@ fixes how much breaks. 3.12.0 is released (tag `v3.12.0`); nothing of this featu
 - **D38 (2026-11-01): no cuts from the complexity critique.** Groups spanning segment
   boundaries are needed; nested groups stay (unused, harmless, no measurable cost). The critique
   stays in the folder as input for 5.0 planning (migration debt: legacy warnings, `\` hybrid).
+- **D39 (2026-11-01): the scanner vectors' SPEC? notes.** Accepted as read: explicit names are
+  listed whether they are files, directories, absent, or under a missing base (D13); `**/` does
+  not yield the base itself; a brace union holding `/` comes out in tree order; duplicates are
+  removed with the mode's comparer (Windows: `b` = `B`); a directory link under `**/` is neither
+  entered nor yielded; a pruned directory is not read, so nothing below it is logged; `**/`
+  yields an unreadable directory and warns when it cannot list it; XP113 only when the pruning
+  would have removed something; XP104 also for excludes and only on a whole name equal to the
+  literal text; no XP104 for `sub[1]` (XP106 at parse); no XP120 for a relative `../` exclude;
+  no XP114 for `a*.*`; an absolute include's anchor is its literal prefix. One change: an
+  unreadable literal prefix (probe) counts as absent AND is logged as `Unreadable` (SC-275), so
+  an empty result is explainable. Shim contract: one ordered `(MaskRole * string)` list (an
+  exclude applies to the includes before it, spec 6.3); the D25 trap is on `SRC/*.cs` and the
+  volume decides, not the mode (explicit `SRC/a.cs` is listed in every mode).

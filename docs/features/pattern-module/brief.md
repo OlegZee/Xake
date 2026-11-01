@@ -343,3 +343,6 @@ fixes how much breaks. 3.12.0 is released (tag `v3.12.0`); nothing of this featu
   `\` on the path side is a separator only in Windows mode; an empty globstar group at an edge
   (`(p:**)/b`, `p = ""`) drops one `/` in `format` like a bare globstar; `[x]` in a multi-output
   rule is a class and XP014 at creation (4.0 behaviour change; `lib\[x\].dll` or `libx.dll`).
+- **D38 (2026-11-01): no cuts from the complexity critique.** Groups spanning segment
+  boundaries are needed; nested groups stay (unused, harmless, no measurable cost). The critique
+  stays in the folder as input for 5.0 planning (migration debt: legacy warnings, `\` hybrid).

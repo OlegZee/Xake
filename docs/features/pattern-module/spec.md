@@ -565,7 +565,10 @@ is 3.x behaviour (Ant, `.gitignore`, Rust `globset`); it differs from picomatch 
 fileset option, which is not part of the module (C10). The directory entries `.` and `..` are
 never produced by a listing. Measured: 3.x already matched dot-prefixed directories under `*/`
 and `**` in both `Path.matches` and the scan (`measurements-engine.md` §8); the only 4.0 risk is
-the OS listing, whose default options skip them (9.5).
+the OS listing, whose default options skip them (9.5). File-system attributes are not pattern
+semantics (D33): a file with the Windows `Hidden`, `System` or any other attribute matches like
+any other name, and the walker never filters a listing by attribute (the `ReparsePoint` check of
+6.5 decides only whether to descend, not whether a name is listed).
 
 ### 5.4 Case sensitivity
 
@@ -2001,5 +2004,5 @@ only the items listed under "Still unmeasured" in 6.4 stay open.
   (`measurements-windows.md` §E4).
 - **C16 — default `EnumerationOptions` differ by OS (record).** The default `AttributesToSkip`
   (`Hidden | System`) drops dotfiles on macOS and attribute-hidden files on Windows; a dotfile is listed on
-  Windows. Walker rule (9.5): never rely on them. Open question for the user, not decided here: a file with
-  the Windows `Hidden` attribute is listed like any other name (matches 5.3, where only the name counts).
+  Windows. Walker rule (9.5): never rely on them. Decided (D33): a file with the Windows `Hidden` attribute
+  is listed like any other name; attributes are not pattern semantics (5.3).

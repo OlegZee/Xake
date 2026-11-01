@@ -301,7 +301,10 @@ fixes how much breaks. 3.12.0 is released (tag `v3.12.0`); nothing of this featu
   vectors (with 3.x results from the measurements), then the regex-backed matcher. PR 4 scanner:
   fixture-tree vectors, then the walker. Phase 4 (engine migration) follows. Vectors are
   table-driven NUnit tests, ignored until their stage's code lands.
-- Open: whether `-- "obj/"` (3.x: removed nothing; 4.0: prunes the directory) needs an evidence
-  warning or only a release-notes entry (orchestrator's recommendation: release notes only).
+- **D32 (2026-11-01): `-- "obj/"` is a release-notes entry only**, no warning (3.x removed
+  nothing; 4.0 prunes the directory, which is what the author meant).
+- **D33 (2026-11-01): file-system attributes are not pattern semantics.** A file with the
+  Windows `Hidden` (or any other) attribute matches like any other name (C16); one sentence in
+  5.3. The walker never uses attribute-based filtering of the listing.
 - Windows measurements: a standalone `measure-windows.fsx` (Xake 3.15.0 from nuget.org) run by
   the user on a Windows machine without git; results come back as `measurements-windows.md`.

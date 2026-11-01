@@ -1188,6 +1188,27 @@ public `toRegex`, a replacement of `FilesetElement`.
 - `Fileset` construction calls `PatternAst.Mask.check MaskRole.Include|Exclude`; `toFileList` walks with
   the module (6) and runs the XP120 check.
 
+### 8.4 PR 2 API notes (the implemented form of D34)
+
+What `src/core/PatternAst.fs` implements in PR 2, where it differs from 8.2:
+
+- `Mask.warnings : MaskRole -> string -> Issue list` (pure): every parse-time warning part of a
+  mask for its role (XP105, XP106, XP110, XP117), empty for an invalid mask. It takes the
+  **pattern text**, not the token list as D34 wrote (`MaskRole -> Ast -> PatternWarning list`):
+  `[!a]` and `[^a]` parse to the same `Class`, and whether a `Sep` came from `\`, are not in the
+  AST (4.4), so XP117 and XP110 cannot be computed from tokens. The part type is `Issue`.
+- `Mask.tryParse` returns only the role-independent parts (XP110); `Rule.tryParse` returns every
+  rule part (XP105, XP110, XP112, XP117). `Mask.check role` reports `Mask.warnings role`.
+- `Rule.check` / `Mask.check` report once per (use, text) through `Warnings` (internal `attach`,
+  `report`, `format`); the line format is 7.3's, the codes joined with `", "`.
+- Parse-level reading added with D34: a non-negated one-character class of `*`, `?`, `,` or `\`
+  (`[*] [?] [,] [\\]`) is the escape idiom and parses to literal text (`a[*]b` is `Lit "a*b"`), as
+  5.7 requires (`parse (escape s)` is `[Lit s]`); every other `[c]` is `Class (false, [One c])`
+  (4.4). 4.4 and 5.7 contradicted each other for these four characters.
+- Not in PR 2: `format`, `formatMatches`, `glob` (their vectors come with the matcher, PR 3).
+- `PatternException` overrides `Message` with the error text. The engine's internal
+  `Path.PatternAst` is untouched until Phase 4.
+
 ## 9. Matcher implementation (non-normative)
 
 ### 9.1 Status

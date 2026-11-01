@@ -1,5 +1,15 @@
-# Spec: the pattern module (draft for review)
+# Spec: the pattern module (complete, pending approval)
 
+> Revision 2026-11-01 (final pass): decisions D24–D29 applied; the spec is complete pending
+> approval. The choices derived in the first pass are decided (D24: `(` in a mask, `MaskRole`,
+> XP120 after 5.0, behaviour change 33, separator collapsing, UNC roots, XP017). Documented
+> limits: a probed literal keeps the mask's spelling (D25), `?` and classes match one UTF-16 code
+> unit (D26), no Unicode normalization (D27) (5.4, 5.9). `(name:` is a group wherever it appears,
+> a constraint on any future extglob (D28, 4.2). New errors: the empty pattern (XP018), `.` after
+> a wildcard (XP012, as `..`), a brace alternative ending in a separator at the end of the
+> pattern (XP019); a symlink skipped under `**` is logged at Message level (D29, 6.5). The
+> review's deferred suggestions are resolved (section 12, "Resolved suggestions").
+>
 > Revision 2026-11-01: decisions D3–D23 applied (brief, "Decisions from the spec review") and the
 > findings of the glob-conformance review (`critique-glob.md`: M1–M3, S1–S7, I1–I9, the "consider"
 > items) addressed. Main changes: the regex translation is non-normative (section 9); two
@@ -9,16 +19,16 @@
 > `escapePath` added; specificity no longer counts the `/` next to `**`; the open items are
 > decided (section 12).
 >
-> Revision 2026-10-31: decision D1 applied: Standard semantics only, shipped in Xake 4.0. The
-> Compat level, `XAKE_PATTERNS` and the 3.13 release are removed; legacy inputs warn or fail
-> naming their 3.x meaning (sections 2, 3, 7).
+> Revision 2026-10-31: decision D1 applied: one semantics only, shipped in Xake 4.0. The
+> second semantics level, its environment switch and the intermediate 3.x release are removed;
+> legacy inputs warn or fail naming their 3.x meaning (sections 2, 3, 7).
 
-Status: **draft**, written 2026-10-26 from `brief.md` (sections a–f are decisions and are not
+Status: **complete, pending approval** (2026-11-01). Written 2026-10-26 from `brief.md` (sections a–f are decisions and are not
 reopened here), the frozen prototype `feature/typed-matches` (`src/core/{PatternAst,Path,Fileset}.fs`,
 `src/tests/{EscapingTests,EscapingDiskTests,PatternAstTests}.fs`, `escaping-today.md`) and the
 engine on `dev` (`src/core/Path.fs`, `Fileset.fs`, `ExecCore.fs`); revised 2026-10-31 for D1 and
-2026-11-01 for D3–D23. The 15 "Open for design" items of the brief and C11 are decided; section
-12 records each decision and the alternatives considered.
+2026-11-01 for D3–D29. The 15 "Open for design" items of the brief, C11 and the review's deferred
+suggestions are decided; section 12 records each decision and the alternatives considered.
 
 **What is normative.** The requirements are the grammar (section 4), the semantics tables
 (section 5) and the conformance vectors (Phase 2), together with the scanning rules (6), the
@@ -75,15 +85,15 @@ Goals, in priority order:
 ## 2. Semantics and migration
 
 The module has **one semantics**, the one of section 5, and it ships directly in **Xake 4.0**
-(D1). There is no Compat level, no `XAKE_PATTERNS` switch and no intermediate 3.x release of the
-module; `dev` is already the 4.0 line (the variable-model PRs #111–#115), so breaking changes are
+(D1). There is no second semantics level, no switch between meanings and no intermediate 3.x
+release of the module; `dev` is already the 4.0 line (the variable-model PRs #111–#115), so breaking changes are
 allowed.
 
 What softens the break:
 
 - **Errors that teach.** Inputs that 4.0 rejects (`( ) |` outside a named group, a named group
-  in a mask, a repeated group name, `{x}`, a group name starting with a digit, `..` after a
-  wildcard, ...) fail with a `PatternException` whose reason names what the spelling meant in
+  in a mask, a repeated group name, `{x}`, a group name starting with a digit, `.` or `..`
+  after a wildcard, an empty pattern, ...) fail with a `PatternException` whose reason names what the spelling meant in
   3.x and what to write instead (7.2).
 - **Warnings on legacy inputs.** Inputs that 4.0 accepts with a *different* meaning, or that are
   deprecated, warn once per pattern in the build log (7.3). A warning is keyed to the legacy
@@ -96,7 +106,7 @@ What softens the break:
 - **A behaviour-change list** for the 4.0 release notes (section 3), one line per change.
 - **All legacy warnings stop at 5.0** (section 10): what still warns in 4.0 becomes either the
   plain 4.0/5.0 meaning without a message, or an error. The one non-legacy warning, XP120 (an
-  absolute exclude that can remove nothing, D6), stays.
+  absolute exclude that can remove nothing, D6), stays after 5.0 (D24).
 
 ## 3. 4.0 behaviour changes (release notes)
 
@@ -144,7 +154,8 @@ One line per change: 3.x meaning → 4.0 meaning [signal]. "Rule" covers every r
     captured, the last won → an error [XP015].
 20. An unclosed `(name:` in a string rule: ran to the end of the pattern silently → an error
     [XP006].
-21. `..` after a wildcard: dropped in masks, a literal in rules → an error [XP012].
+21. `..` after a wildcard: dropped in masks, a literal in rules → an error; `.` after a
+    wildcard likewise (its exact 3.x result per context pinned in Phase 2) [XP012, D29].
 22. A trailing `/` in a rule pattern: matched nothing → an error [XP011].
 23. A trailing `/` in an exclude: ignored (`-- "obj/"` read as `obj`, which removed only a file
     named `obj`) → matches the directory `obj` only, and every file below it is removed (an
@@ -157,7 +168,7 @@ One line per change: 3.x meaning → 4.0 meaning [signal]. "Rule" covers every r
     on Linux and macOS, ignore-case on Windows [release note].
 26. `**` in includes followed directory symlinks and junctions → does not follow symlinks;
     whether junctions, mount points and cloud-sync placeholders count as links is measured in
-    Phase 2 (6.5) [release note].
+    Phase 2 (6.5); each skipped link is logged once at Message level (D29) [release note].
 27. Fileset results: file-system enumeration order, duplicates kept → ordinal order per
     directory, duplicates removed [release note; C5].
 28. An unreadable directory met in a scan: `UnauthorizedAccessException` ended the build →
@@ -170,12 +181,16 @@ One line per change: 3.x meaning → 4.0 meaning [signal]. "Rule" covers every r
     `out/net8.0/.xml` → an error when the rule is created [XP013, tm 50].
 32. A class or braces outside a named group in a multi-output pattern or in `format`: printed as
     source text → an error [XP014].
-33. Rule specificity: a `/` next to `**` counted as a literal character → counts 0 (D5); a
+33. Rule specificity: a `/` next to `**` counted as a literal character → counts 0 (D5, D24); a
     globstar rule can lose a tie it won in 3.x, e.g. `*/?.dll` now beats `**/x.dll` for
     `a/x.dll` [release note].
 34. Repeated separators inside a pattern (`a//b`, `a\\b`): an empty segment (exact 3.x result
     per context to be pinned in Phase 2) → one separator; a leading `//` or `\\` followed by two
-    names is a UNC root (4.2) [release note].
+    names is a UNC root (4.2; D24) [release note].
+35. An empty pattern `""`, as a rule or a mask: exact 3.x result per context pinned in Phase 2
+    → an error [XP018, D29].
+36. Braces that end the pattern with an alternative ending in a separator (`{a/,b}`): literal
+    text → an error; write `{a,b}/` [XP019, D29].
 
 ## 4. Grammar
 
@@ -282,8 +297,9 @@ Lexical decisions:
 
 ```ebnf
 (* syntactic; [ ] optional, { } repetition; two start symbols *)
-rule         = [ root ] , r_body ;                  (* the last token must not be a separator: XP011 *)
-mask         = [ root ] , m_body , [ dir_mark ] ;
+rule         = [ root ] , r_body ;                  (* the last token must not be a separator: XP011;
+                                                       not empty: XP018 *)
+mask         = [ root ] , m_body , [ dir_mark ] ;   (* not empty: XP018 *)
 dir_mark     = sep ;                                (* a trailing separator: the mask matches directories (5.1) *)
 
 r_body       = { r_element } ;
@@ -300,7 +316,9 @@ drive        = letter , ":" ;                        (* recognised only at the v
 literal      = ( char | escape ) , { char | escape } ;
 
 braces       = lbrace , alternative , comma , alternative , { comma , alternative } , rbrace ;
-alternative  = { element } ;                        (* may be empty; may contain separators and nested braces *)
+alternative  = { element } ;                        (* may be empty; may contain separators and nested braces;
+                                                       in braces that end the pattern it must not end
+                                                       with a separator: XP019 *)
 
 group        = group_open , group_body , rparen ;   (* Rule only; an unclosed group is XP006 *)
 group_body   = { r_element } ;                      (* any element, nested groups included *)
@@ -314,7 +332,9 @@ Syntactic decisions:
 - **One grammar, two contexts** (D8, D9). In `Mask` context there is no `group_open` token,
   so a `(` is an `lparen` and is rejected at once. The error code names what the user most
   likely meant: XP008 when the text at the `(` reads `name:` (a named group, which exists only
-  in rule patterns, D23), XP003 otherwise. Either way the mask is rejected at the `(`.
+  in rule patterns, D23), XP003 otherwise (D24). Either way the mask is rejected at the `(`.
+- **The empty pattern** `""` is an error in both contexts (XP018, D29): it names no file, and
+  "the anchor itself" is better written as the anchor's path.
 - **Braces need a top-level comma.** `{a,b}` is an alternation; `{x}` (no comma) is an error
   (XP005), which keeps `{1..3}` ranges open for later. Bash and picomatch read `{x}` as a
   literal, `globset` and Java's `PathMatcher` as the single alternative `x`; Xake rejects it to
@@ -326,8 +346,8 @@ Syntactic decisions:
   group is an error (XP006) in every rule pattern, string or typed (D23).
 - **A repeated group name is an error** (XP015, D4): a name may appear at most once in a
   pattern, also across brace alternatives (`{(x:a)-1,(x:b)-2}` and `(x:*)/(x:*)` are both
-  rejected). There are no backreferences.
-- **Root** (S6): a leading `/` or `X:/` (also `\`, `X:\`, which warn XP110) makes the pattern
+  rejected). Two captures are never required to hold equal text.
+- **Root** (S6, D24): a leading `/` or `X:/` (also `\`, `X:\`, which warn XP110) makes the pattern
   absolute; a leading `//server/share` or `\\server\share` (exactly two separators, then two
   literal segments) is a **UNC root**, absolute as well; a non-literal server or share is
   XP016. UNC roots are meaningful on Windows; on Linux and macOS no normalized disk path starts
@@ -335,16 +355,21 @@ Syntactic decisions:
   the base directory as in `.gitignore` (D6, 5.9). A pattern is otherwise relative to its
   anchor: the project root for rule patterns (phony patterns: the empty root), the fileset base
   directory for masks.
-- **Repeated separators** (S6): after the root, a run of separators is one separator (`a//b` =
+- **Repeated separators** (S6, D24): after the root, a run of separators is one separator (`a//b` =
   `a/b`, `a\\b` = `a/b` with XP110); three or more leading separators are one `/`. A trailing
   run is one trailing separator.
+- **A separator at the end of a brace alternative** is an error when the braces end the pattern
+  (`{a/,b}`, also nested: `x/{a,{b/,c}}`): a directory mark would apply to one alternative only
+  (XP019, D29). Write `{a,b}/` when every alternative is a directory, or two patterns. Inside a
+  pattern the separator is an ordinary one (`{a/,b}c` = `a/c` or `bc`).
 - `.` and `..` segments are resolved in the **literal prefix** (the segments before the first
-  non-literal element), as `Path.normalizeLiteralPrefix` does in 3.x. After a wildcard, `..` is
-  an error (XP012; 3.x dropped it silently in masks).
-- **Room for extglob** (brief a reserves `( | )` for it; C6): a future extglob must keep
-  `(name:` as a group. `*(`, `?(`, `+(`, `@(`, `!(` followed by a non-group `(` are already
-  XP003; `*(name:x)` and `?(name:x)` are valid 4.0 rule syntax (a wildcard, then a group) and
-  would have to keep that reading.
+  non-literal element), as `Path.normalizeLiteralPrefix` does in 3.x. After a wildcard, `..` and
+  `.` are errors (XP012, D29; 3.x dropped `..` silently in masks).
+- **Constraint on a future extglob** (D28; brief a reserves `( | )` for it; C6): `(name:` is a
+  group wherever it appears, also after `*` or `?`: `*(name:x)` and `?(name:x)` are valid 4.0
+  rule syntax (a wildcard, then a group) and keep that reading. Nothing reserves `*(` or `?(`.
+  A future extglob may use only `@(`, `+(`, `!(` (followed by a non-group `(`, they are XP003
+  today, as are `*(` and `?(` followed by a non-group `(`).
 
 ### 4.3 Position rule for `**`
 
@@ -391,7 +416,7 @@ One meaning per element; the two columns are the two contexts (D9). Include and 
 columns: they use the same mask meaning, and differ only in the scanner (6.2).
 
 "One character" is one UTF-16 code unit (a .NET `char`), as in 3.x: a character outside the
-Basic Multilingual Plane (an emoji) needs `??` (C2).
+Basic Multilingual Plane (an emoji) needs `??` (C2, D26; a deliberate difference, 5.9).
 
 | element | rule | mask |
 |---|---|---|
@@ -411,6 +436,9 @@ Basic Multilingual Plane (an emoji) needs `??` (C2).
 | `/` | separator; a run of separators is one (4.2) | same |
 | `\` before a non-reserved character | separator, deprecated (XP110) | same |
 | trailing `/` | error XP011 (a rule names a file or a phony name) | matches a **directory** only, never a file |
+| `{a/,b}` ending the pattern | error XP019 | error XP019 (write `{a,b}/`) |
+| `.` or `..` segment after a wildcard | error XP012 | error XP012 |
+| empty pattern `""` | error XP018 | error XP018 |
 | leading `/`, `X:/`, `//server/share` | absolute: the project root is not joined | absolute: the base dir is not joined |
 | anchoring | whole target path, joined to the project root (phony: to `""`) | whole path, joined to the base dir |
 
@@ -460,6 +488,9 @@ correctly. Signal: an error code, a warning code with its trigger (7.3), or "rel
 | group name `(1:*)` | a group named `1`, colliding with positional `1` | error | XP007 |
 | repeated name `(n:*)/(n:*)` | both capture; the **last** value wins, values may differ | error | XP015 |
 | `..` after a wildcard | rule: literal (no file has it); masks: dropped | error | XP012 |
+| `.` after a wildcard | per context, pinned in Phase 2 | error | XP012 |
+| empty pattern `""` | per context, pinned in Phase 2 | error | XP018 |
+| `{a/,b}` ending the pattern | literal text | error | XP019 |
 | trailing `/` | rule: matches nothing; include: directories only; exclude: ignored (`obj/` = `obj`) | rule: error; mask: a directory (include: unchanged; exclude: the directory, so everything below it) | XP011 (rule); release note (exclude) |
 | `/` in a class, `[z-a]`, `[[:` | masks: split at `/` or literal; rule: regex meaning or a crash | error | XP010 |
 | `[]` (no later `]`) | rule: a crash; masks: literal | error | XP002 |
@@ -493,12 +524,20 @@ never produced by a listing.
   `Q`. The implementation must agree with this comparer in every code path (9.3).
 - A literal segment of an include is a probe of the file system (6.2): on a case-insensitive
   file system (Windows, default macOS) it finds the file whatever the case, and the result keeps
-  the mask's spelling. This is a property of the file system, not of the matcher. Trap (C5): on
-  default macOS `!! "SRC/a.cs"` yields `SRC/a.cs`, which a later ordinal exclude `src/**` or a
-  rule `src/*.cs` does not match, although it is the same file (example 15).
-- Unicode normalization is not done (C3): on macOS a name stored in NFD and a pattern literal in
-  NFC compare unequal in a wildcard segment (`café*`), while a literal probe finds the file
-  (the file system normalizes). No mainstream globber normalizes either; a known limit.
+  the mask's spelling (D25). This is a property of the file system, not of the matcher.
+- **Determinism principle** (D25): the result of a scan depends on the mask text and the list of
+  files, not on how the volume stores the case of names. The module never substitutes the disk's
+  spelling for a probed segment; an option to take the disk spelling may come later without a
+  grammar change.
+- **Known limit: the probe spelling trap** (D25, C5). On default macOS `!! "SRC/a.cs"` yields
+  `SRC/a.cs`, which a later ordinal exclude `src/**` or a rule `src/*.cs` does not match,
+  although it is the same file (example 15). Write masks in the disk's spelling.
+- **Known limit: no Unicode normalization** (D27, C3). Names and pattern literals compare by
+  UTF-16 code units, without NFC/NFD normalization, as every mainstream globber does. On macOS a
+  name stored in NFD and a pattern literal in NFC compare unequal in a wildcard segment
+  (`café*`), while a literal probe finds the file (the file system normalizes; example 23).
+- **Known limit: one character is one code unit** (D26): `?` and a class match one UTF-16 code
+  unit, so a character outside the Basic Multilingual Plane needs `??` (5.9, example 23).
 - 4.0 changes from 3.x (release notes, section 3 item 25): on macOS a wildcard include becomes
   case sensitive (`!! "*.CS"` no longer finds `a.cs`); on Linux and macOS a literal exclude
   segment becomes case sensitive (`-- "Bin/**/*"` no longer removes `bin/...`). No warning
@@ -632,6 +671,7 @@ mainstream reading (POSIX, bash `globstar`, `.gitignore`, picomatch, `globset`).
 | A mask without non-literal elements is listed even if absent (D13) | MSFG, Ant, fast-glob: existing files only | `needFiles` builds missing files (6.2) |
 | Case per OS (D11) | MSFG: insensitive everywhere; picomatch/`globset`: sensitive, with an option | same comparer as `File` equality and rule matching |
 | Braces in every context | not in `.gitignore`, MSFG, Ant | brief a |
+| `?` and a class match one UTF-16 code unit (D26): `😀.txt` needs `??.txt`, `?.txt` does not match it | picomatch (`u` flag), `globset`, bash in a UTF-8 locale: one code point | .NET strings are UTF-16, as in 3.x; a scalar-value matcher can come later without breaking any mask that has no surrogate pairs |
 | `**` does not follow symlinks (D17) | fast-glob, Ant, MSFG follow; bash ≥ 4.3, ripgrep, Java `Files.walk` do not | no cycle detection needed |
 
 ## 6. Fileset scanning
@@ -675,8 +715,8 @@ is a **probe**, not a listing:
   through `need` instead of filesets.
 - Otherwise a literal directory segment is kept if `Directory.Exists`, a literal last segment if
   `File.Exists` (or `Directory.Exists` for a trailing `/`). No listing is done, so a literal
-  segment costs one `stat`, and the path keeps the mask's spelling, not the disk's (5.4, trap
-  C5).
+  segment costs one `stat`, and the path keeps the mask's spelling, not the disk's (5.4, D25,
+  trap C5).
 - Braces count as non-literal: `src/{a,b}.cs` lists only the existing ones. Brace expansion in
   the bash sense (both names listed regardless) is not done.
 
@@ -752,10 +792,15 @@ and source knowledge, not measured (`?` matching zero characters, `*.*`, the .NE
   be reached explicitly (`node_modules/x/**`). 3.x followed them (`SearchOption.AllDirectories`;
   section 3 item 26). Consequence, as in bash ≥ 4.3: `**/*.cs` can find fewer files than
   `*/*.cs` when a directory is a link.
+- A directory skipped under `**` because it is a link is **logged once** per directory in the
+  build log, at level **Message** (D29), as an unreadable directory is reported once (6.6, at
+  level Warning): the skip is the documented behaviour, not a problem.
 - **To be measured in Phase 2** (D17, S5): whether Windows junctions, volume mount points and
   cloud-sync placeholders (folders that carry `ReparsePoint` without being symlinks) are treated
-  as links, and how a link is recognised on netstandard2.0/net462 (which lack `LinkTarget`). The
-  wording of this section and of section 3 item 26 is final only after that measurement.
+  as links, and how a link is recognised on netstandard2.0/net462 (which lack `LinkTarget`;
+  whether to detect it at run time through `LinkTarget` on .NET 6+ is part of the same
+  measurement, D29). The wording of this section and of section 3 item 26 is final only after
+  that measurement.
 
 ### 6.6 Ordering, duplicates, determinism
 
@@ -791,7 +836,7 @@ and source knowledge, not measured (`?` matching zero characters, `*.*`, the .NE
 - **Warnings** (7.3): a legacy input that 4.0 accepts with a different meaning, or that is
   deprecated. Never an exception, never a change of what is matched. Removed in 5.0 (10.1).
   The one exception is XP120 (D6), which flags a mask that can never have an effect; it is not
-  a legacy warning and stays after 5.0.
+  a legacy warning and stays after 5.0 (D24).
 
 ### 7.2 Exceptions and errors
 
@@ -825,7 +870,7 @@ Invalid pattern '<text>' (<rule|mask>) at character <n>: <reason> [<code>]
 is what the prototype's tests assert. Codes `XP0nn` are errors, `XP1nn` warnings; the numbers of
 earlier drafts are kept and retired codes are not reused (retired: XP001, XP101, XP103, XP108,
 XP109, XP115, XP118 folded into the errors below in the 2026-10-26 draft; XP111 and XP116 dropped
-2026-11-01 by D23 and D4).
+2026-11-01 by D23 and D4). XP018 and XP019 were added 2026-11-01 by D29.
 
 | code | from | condition | reason text |
 |---|---|---|---|
@@ -839,12 +884,14 @@ XP109, XP115, XP118 folded into the errors below in the 2026-10-26 draft; XP111 
 | XP009 | 5.0 | `\` at the end, or before a character that is not escapable | `'\x' escapes nothing; use '/' as the separator, '\\' for a backslash` |
 | XP010 | 4.0 | a `/` inside a class, `[z-a]`, a class starting with `[:` | `invalid character class '[...]': <detail>` (details: `a class never matches '/'`, `the range 'z-a' is reversed`, `POSIX class names '[:...:]' are reserved`) |
 | XP011 | 4.0 | a rule pattern ending in a separator | `a rule pattern names a file or a phony target and cannot end with '/' (in Xake 3.x it matched nothing)` |
-| XP012 | 4.0 | `..` after a wildcard | `'..' is allowed only before the first wildcard (Xake 3.x ignored it in masks)` |
+| XP012 | 4.0 | `.` or `..` as a segment after a wildcard (D29 for `.`) | `'..' is allowed only before the first wildcard (Xake 3.x ignored it in masks)`; for `.`: `'.' is allowed only before the first wildcard; remove the segment` |
 | XP013 | 4.0 | multi-output rule, outputs with different named groups | prototype text: `output "<p>" has groups [..], the first output [..] (missing [..], extra [..]); every output needs the same named groups, or the others cannot be named from a match` |
 | XP014 | 4.0 | a class or braces outside a group in a pattern that must be formatted (multi-output, `format`) | `'{dll,pdb}' cannot be filled in from a match; put it in a named group: (ext:{dll,pdb})` |
 | XP015 | 4.0 | a group name that appears more than once in a pattern, also across brace alternatives (D4) | `the group name 'p' appears 2 times; a name may appear once per pattern (Xake 3.x let each occurrence capture and the last one win); rename one occurrence, or put one group around the braces: (x:{a,b})` |
 | XP016 | 4.0 | a UNC root whose server or share is not a literal | `a UNC root '//server/share' needs a literal server and share name` |
-| XP017 | 4.0 | `\,` directly inside braces | `'\,' is not an escaped comma in Xake 4.0 (Xake 3.x: a path separator, then ','); write [,] for a literal comma` |
+| XP017 | 4.0 | `\,` directly inside braces (D24) | `'\,' is not an escaped comma in Xake 4.0 (Xake 3.x: a path separator, then ','); write [,] for a literal comma` |
+| XP018 | 4.0 | an empty pattern `""`, rule or mask (D29) | `an empty pattern names nothing; write the file or directory path, or '*' for the files of the base directory` |
+| XP019 | 4.0 | braces that end the pattern with an alternative ending in a separator, `{a/,b}` (D29) | `'{a/,b}' ends with '/' in one alternative only; write {a,b}/ when every alternative is a directory, or two patterns` |
 
 ### 7.3 Warnings on legacy inputs
 
@@ -892,7 +939,8 @@ Rules:
   with `</>` on Windows contains `\` and **does** warn XP110 (tm 57, by design); `escapePath`
   output never warns.
 - No warning for the case changes (5.4), the dropped OS-listing quirks, symlinks, ordering and
-  duplicates: release notes only (section 3).
+  duplicates: release notes only (section 3). A link skipped under `**` is a Message, not a
+  warning (6.5).
 - **All legacy warnings (XP104–XP119) are removed in 5.0** (10.1); XP120 stays.
 
 ## 8. Public API
@@ -923,7 +971,7 @@ type Token =
     | Alt of Token list list
     | Group of name: string * body: Token list
 [<RequireQualifiedAccess>] type PatternContext = Rule | Mask
-[<RequireQualifiedAccess>] type MaskRole = Include | Exclude   // selects the 3.x meaning a warning names (7.3)
+[<RequireQualifiedAccess>] type MaskRole = Include | Exclude   // selects the 3.x meaning a warning names (7.3; D24)
 type Issue = { Code: string; Text: string }          // one parse-time warning part (7.3)
 type PatternError = { Pattern: string; Context: PatternContext; Position: int option; Code: string; Reason: string }
 exception PatternException of string
@@ -958,7 +1006,7 @@ module Warnings =
     val internal attach : (string -> unit) -> System.IDisposable
 ```
 
-`Rule.parse` replaces the prototype's `parse : string -> Token list` and the draft's `parseIn`.
+`Rule.parse` replaces the prototype's `parse : string -> Token list`.
 The module `Rule` and the case `PatternContext.Rule` do not clash because `PatternContext` is
 `RequireQualifiedAccess`; inside `Xake` the name `Rule` also denotes the engine's rule type,
 so scripts write `PatternAst.Rule.parse`.
@@ -1083,7 +1131,7 @@ regex where the AST makes it trivial:
 Rejected for now (D18): an own matcher; no cache; always `Compiled`; `NonBacktracking` (.NET 7+
 only; Core targets netstandard2.0). An own matcher stays possible later behind the same AST.
 
-## 10. Deprecation calendar, version, compat corpus
+## 10. Deprecation calendar, version, conformance corpus
 
 ### 10.1 Calendar
 
@@ -1113,7 +1161,7 @@ line on `dev` (D1), through the integration branch `feature/patterns2` (D2), nex
 variable model. No 3.x release carries any of it. The hermetic package's Xake range must admit
 4.0 (C8).
 
-### 10.3 Compat corpus (what pins behaviour)
+### 10.3 Conformance corpus (what pins behaviour)
 
 D19: Phase 2 turns these into conformance vectors, each tagged **unchanged** (same result in 3.x
 and 4.0) or **changed in 4.0** (the 4.0 result, the 3.x result, the expected error/warning code
@@ -1149,7 +1197,9 @@ and the release-notes entry, section 3). Changed vectors are rewritten, never de
   that ships the module (C3).
 - **Glob-style vectors** added in Phase 2 from the critique: the element table of
   `critique-glob.md` section 1, the class-mode cases (`[\-a]`, `[]a]`, `{[,],x}`, `[a-z-0]`),
-  `//`, UNC roots, `\,` in braces, and `escapePath @"C:\Program Files (x86)\Tool"`.
+  `//`, UNC roots, `\,` in braces, `escapePath @"C:\Program Files (x86)\Tool"`, and the D29
+  errors and limits: `""` (XP018), `*/./x` (XP012), `{a/,b}` (XP019), `x/{a/,b}c` (valid), a
+  symlinked directory under `**` (skipped, one Message), `??` against a non-BMP name (D26).
 
 ## 11. Worked examples
 
@@ -1232,7 +1282,7 @@ the old result where it differs.
     (3.x: also `dir2/...`, literal exclude segments ignored case). macOS `!! "*.CS"` does not find
     `a.cs` (3.x: found it, as the .NET listing does). No warning; section 3 item 25. Trap on
     default macOS: `!! "SRC/a.cs" -- "src/**"` keeps `SRC/a.cs` (the probe keeps the mask's
-    spelling, the exclude compares ordinally; 5.4, C5).
+    spelling, the exclude compares ordinally; a known limit, 5.4, D25, C5).
 
 16. **From a rule pattern to a mask.** `PatternAst.Rule.parse "src/(lib:*)/(name:*).cs" |>
     PatternAst.glob (function "lib" -> Some "core" | _ -> None) (fun _ -> None)` = `src/core/*.cs`;
@@ -1271,6 +1321,14 @@ the old result where it differs.
     `-- "bin/**"`. `!! "/opt/lib/*.so" -- "/opt/lib/libx.so"` → no warning (the exclude lies
     below the anchor of an earlier include).
 
+23. **Edge errors and limits** (D26, D27, D29). `!! ""` and rule `""` → XP018. `!! "src/*/./a.cs"`
+    → XP012 at the `.` (write `src/*/a.cs`). `!! "src/{a/,b}"` → XP019 (write `!! "src/a/" ++
+    "src/b"`, or `src/{a,b}/` if `b` is a directory too); `!! "src/{a/,b}x.cs"` is valid
+    (`src/a/x.cs` or `src/bx.cs`). A file `😀.txt` (one character, two UTF-16 code units):
+    `!! "?.txt"` does not find it, `!! "??.txt"` does. On macOS a file `café.txt` stored in NFD:
+    `!! "café.txt"` (NFC literal) finds it through the probe, spelled as in the mask; `!!
+    "café*"` does not (the wildcard segment compares code units); `!! "caf*"` does.
+
 ## 12. Open items (brief "Open for design" 1–15, C11): decisions
 
 Each entry records the decision (brief, "Decisions from the spec review") in one line, the
@@ -1292,7 +1350,7 @@ Alternatives considered:
   `{1..3}` ambiguous later; rejected (XP005, whose text names the 3.x literal reading).
 - Make `\` a full escape already in 4.0 (`\*` = literal `*`): see item 15.
 
-Depends: 4 (all), 7.2 (XP002–XP017), 8.2 (`Rule.tryParse`, `Mask.tryParse`, `Token`).
+Depends: 4 (all), 7.2 (XP002–XP019), 8.2 (`Rule.tryParse`, `Mask.tryParse`, `Token`).
 
 ### 2. Semantics table: rule vs mask, per element
 
@@ -1492,7 +1550,7 @@ Alternatives considered:
 
 Depends: 9 (all), 6.4, 8.2 (nothing regex-shaped is public).
 
-### 12. Compat corpus
+### 12. Conformance corpus
 
 **Decision (D19, 2026-11-01).** The engine pattern tests, the prototype's escaping and AST tests,
 every pattern in `samples/*.fsx` (not `samples/Research`), `build.fsx`, `build.fsc.fsx`, fenced
@@ -1588,28 +1646,38 @@ Alternatives considered:
 
 Depends: 4.2, 5.1, 5.2, 7.2 (XP006, XP008), 10.1, section 3 items 17 and 20, 11 example 18.
 
-### Deferred suggestions
+### Derived choices and resolved suggestions (D24–D29)
 
-From the glob-conformance review, not applied because they would change or add behaviour; one
-line each, for the user to decide later:
+**Derived choices (D24, 2026-11-01)**, made while applying D3–D23 and now decided: `(` in a mask
+is XP008 when followed by `name:`, XP003 otherwise (4.2); `MaskRole = Include | Exclude` on
+`Mask.check`, so that XP105/XP106 and the warning key know the role, while errors print
+`(rule|mask)` (7.2, 7.3, 8.2); XP120 is not a legacy warning and stays after 5.0 (7.1, 10.1); D5
+can change rule selection (section 3 item 33); repeated separators collapse, UNC roots parse on
+every OS and match only on Windows (4.2, item 34); `\,` directly inside braces is XP017 (4.1).
 
-1. C2: make `?` and a class match one Unicode scalar value (a surrogate pair) instead of one
-   UTF-16 code unit.
-2. C3: normalize names and pattern literals to NFC on macOS before comparing.
-3. C5: take the disk spelling for probed literal segments on case-insensitive volumes (one
-   listing per probed directory) instead of the mask's spelling.
-4. C6: reserve `*(` and `?(` followed by a group now, so a future extglob can claim them.
-5. C8: define the empty pattern `""` (rule and mask): an error, or "the anchor itself".
-6. C8: define `.` as a segment after a wildcard: removed, a literal, or an error like `..`
-   (XP012).
-7. S5: report a directory skipped by `**` because it is a link once in the build log, as for
-   unreadable directories.
-8. S5: detect links at run time via `LinkTarget` (reflection on .NET 6+) so that only real
-   links are skipped (depends on the Phase-2 measurement).
-9. Grammar edge: a separator ending an alternative of braces that end the pattern
-   (`{a/,b}` as the last element): a directory mark for that alternative only, or an error.
+**Resolved suggestions** of the glob-conformance review (previously deferred), one line each:
 
-## 13. Conflicts and findings that need the user's attention
+1. C2, `?` and classes match one UTF-16 code unit, not a scalar value: kept and documented
+   (D26; 5.1, 5.4, 5.9, example 23). A scalar-value matcher can come later without breaking any
+   mask that has no surrogate pairs.
+2. C3, Unicode normalization on macOS: not done, a known limit (D27; 5.4, example 23).
+3. C5, disk spelling for probed literal segments: not taken; a probed segment keeps the mask's
+   spelling, the trap is a known limit, and the scan result depends on the mask text and the
+   file list only (D25; 5.4, 6.2, example 15). A disk-spelling option may come later.
+4. C6, reserving `*(` and `?(` for extglob: not reserved; `(name:` is a group wherever it
+   appears, and a future extglob may use only `@(`, `+(`, `!(` (D28; 4.2).
+5. C8, the empty pattern `""`: an error in both contexts (D29; XP018, 4.2, item 35).
+6. C8, `.` as a segment after a wildcard: an error, as `..` (D29; XP012, 4.2, item 21).
+7. S5, a directory skipped by `**` because it is a link: logged once at Message level (D29;
+   6.5, item 26).
+8. S5, detecting links through `LinkTarget`: part of the Phase-2 measurement, not in the spec
+   (D29; 6.5).
+9. `{a/,b}` as the last element: an error; `{a,b}/` covers the honest case (D29; XP019, 4.2,
+   item 36).
+
+## 13. Conflicts and findings (record)
+
+Each finding is resolved by a decision or scheduled for a Phase-2 measurement; none is open.
 
 - **C1 — `[c]` in includes is a plain 4.0 change.** #90 already reads `[c]` as `c` in includes
   (`sub[1]/*.c` finds `sub1`, test "an unescaped sub[1] is the [c] form"); 3.x reads the literal

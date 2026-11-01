@@ -23,7 +23,13 @@ leave it alone.
 - 2026-10-26: folder created with `brief.md`, `kickoff.md`,
   `session.md`, `tracker.md`. Nothing else done: no spec, no tests, no code.
 
+- 2026-11-01: spec review done. Decisions D1-D29 in `brief.md`; `spec.md` (1720 lines) revised
+  for all of them plus the glob critique (`critique-glob.md`); explicit-name rule traced in
+  `explicit-name-history.md` and kept (D13). Spec status: complete, pending the user's approval.
+  Integration branch `feature/patterns2` created locally from `dev` (push is the user's).
+
 ## Next step
 
-Fresh orchestrator session reads `kickoff.md` and launches the Phase-1 spec agent (opus) producing
-`docs/features/pattern-module/spec.md`; then the question-by-question review with the user.
+The user approves `spec.md` (Phase 1 exit). Then: ask how Phase 2 (conformance vectors) is
+sliced into PRs against `feature/patterns2`; the Phase-2 measurements (D17: symlinks/junctions,
+OS-listing quirks; 3.x results of `a//b`, `""`, `.` after a wildcard) go first, haiku agents.

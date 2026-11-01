@@ -29,6 +29,8 @@
 /// Literal text is one `Lit` per maximal run of literal characters between other tokens (escapes
 /// resolved): `a\(b` is `'a(b'`, `lib[x].dll` is `'lib' [x] '.dll'` (spec 5.7: `parse (escape s)`
 /// is `[Lit s]` per segment).
+/// The one-character classes `[*] [?] [,] [\\]` are the 4.0 escape idiom and parse to literal
+/// text (`a[*]b` is `'a*b'`; D34), every other `[c]` is a `Class`.
 ///
 /// ## Conventions
 ///
@@ -130,7 +132,7 @@ let parse : ParseVector list = [
     r  "P-034" "4.2" "a///b" (ok "'a' / 'b'") [] "item 34: a run of separators is one"
     mi "P-035" "4.2" "a//" (ok "'a' /") [] "item 34: a trailing run is one trailing separator"
     mi "P-036" "4.2" "///a" (ok "/ 'a'") [] "4.2: three or more leading separators are one '/'"
-    mi "P-037" "4.2" "//a" (ok "/ 'a'") [] "SPEC? two leading separators followed by one name only: no UNC root (needs server and share); read here as collapsed to '/'"
+    mi "P-037" "4.2" "//a" (ok "/ 'a'") [] "D34: two leading separators followed by one name only: no UNC root (needs server and share); read here as collapsed to '/'"
     r  "P-038" "4.2" "/a/b" (ok "/ 'a' / 'b'") [] "unchanged; a leading '/' is absolute (D6)"
     me "P-039" "5.9" "/bin/**" (ok "/ 'bin' / **") [] "unchanged parse; example 22: the file-system root, not the base dir (gitignore); XP120 at evaluation, not at parse"
     mi "P-040" "4.2" "/opt/lib/*.so" (ok "/ 'opt' / 'lib' / * '.so'") [] "unchanged; example 22"
@@ -141,11 +143,11 @@ let parse : ParseVector list = [
     mi "P-045" "4.2" "//server/share/*.dll" (ok "/ / 'server' / 'share' / * '.dll'") [] "UNC root (S6, D24); parses on every OS"
     mi "P-046" "4.2" @"\\server\share\*.dll" (ok "/ / 'server' / 'share' / * '.dll'") ["XP110"] "UNC root with '\\' separators (D24)"
     r  "P-047" "4.2" "//server/share" (ok "/ / 'server' / 'share'") [] "UNC root alone"
-    mi "P-048" "4.2" "//*/share/x" (err "XP016" 3) [] "non-literal server; SPEC? position: first non-literal element of the root"
-    mi "P-049" "4.2" "//server/*/x" (err "XP016" 10) [] "non-literal share; SPEC? position as P-048"
+    mi "P-048" "4.2" "//*/share/x" (err "XP016" 3) [] "non-literal server; D34: position: first non-literal element of the root"
+    mi "P-049" "4.2" "//server/*/x" (err "XP016" 10) [] "non-literal share; D34: position as P-048"
     mi "P-050" "4.2" "//server/{a,b}/x" (err "XP016" 10) [] "braces are not a literal share"
-    mi "P-051" "4.2" "/" (ok "/") [] "SPEC? a mask that is only a root: accepted here (the root directory); the spec states neither"
-    r  "P-052" "4.2" "/" (err "XP011" 1) [] "SPEC? a rule that is only a root: read here as ending in a separator (XP011), not as empty (XP018)"
+    mi "P-051" "4.2" "/" (ok "/") [] "D34: a mask that is only a root: accepted here (the root directory); the spec states neither"
+    r  "P-052" "4.2" "/" (err "XP011" 1) [] "D34: a rule that is only a root: read here as ending in a separator (XP011), not as empty (XP018)"
 
     // ---- 4.2: empty, '.', '..' --------------------------------------------------------------------
     r  "P-053" "4.2" "" (errNoPos "XP018") [] "changed in 4.0 (item 35): 3.x Path.matches only the empty path (measurements-engine 2)"
@@ -157,11 +159,11 @@ let parse : ParseVector list = [
     r  "P-059" "4.2" @"c:/abc/../def\a.c" (ok "'c:' / 'def' / 'a.c'") ["XP110"] "unchanged meaning; PathTests.MaskTests (now warns XP110)"
     r  "P-060" "4.2" @"c:\abc\def\..\..\*.c" (ok "'c:' / * '.c'") ["XP110"] "unchanged meaning; PathTests.MaskWithParent"
     r  "P-061" "4.2" @"c:\abc\..\*.c" (ok "'c:' / * '.c'") ["XP110"] "unchanged meaning; PathTests.MaskWithParent"
-    r  "P-062" "4.2" @"c:\abc\..\..\*.c" (ok "'c:' / '..' / * '.c'") ["XP110"] "SPEC? a '..' that climbs above the root is kept as Lit '..'; 3.x matched nothing (PathTests.MaskWithParent)"
-    r  "P-063" "4.2" "../subd1/a.ss" (ok "'..' / 'subd1' / 'a.ss'") [] "SPEC? a leading '..' cannot be resolved in the pattern and is kept as Lit '..' (3.x: Parent; PathTests.MaskTests3)"
-    mi "P-064" "4.2" "../jparsec/src/main/**/*.java" (ok "'..' / 'jparsec' / 'src' / 'main' / ** / * '.java'") [] "SPEC? as P-063; FilesetTests"
+    r  "P-062" "4.2" @"c:\abc\..\..\*.c" (ok "'c:' / '..' / * '.c'") ["XP110"] "D34: a '..' that climbs above the root is kept as Lit '..'; 3.x matched nothing (PathTests.MaskWithParent)"
+    r  "P-063" "4.2" "../subd1/a.ss" (ok "'..' / 'subd1' / 'a.ss'") [] "D34: a leading '..' cannot be resolved in the pattern and is kept as Lit '..' (3.x: Parent; PathTests.MaskTests3)"
+    mi "P-064" "4.2" "../jparsec/src/main/**/*.java" (ok "'..' / 'jparsec' / 'src' / 'main' / ** / * '.java'") [] "D34: as P-063; FilesetTests"
     mi "P-065" "4.2" "." (errNoPos "XP018") [] "SPEC? '.' alone resolves to nothing; read here as the empty pattern (3.x: not measured)"
-    mi "P-066" "4.2" ".." (ok "'..'") [] "SPEC? '..' alone, as P-063 (3.x: not measured)"
+    mi "P-066" "4.2" ".." (ok "'..'") [] "D34: '..' alone, as P-063 (3.x: not measured)"
     mi "P-067" "4.2" "src/*/../x.cs" (err "XP012" 7) [] "changed in 4.0 (item 21): 3.x scan listed src/x.cs, Path.matches never matched (measurements-engine 3)"
     mi "P-068" "4.2" "src/*/./x.cs" (err "XP012" 7) [] "changed in 4.0 (item 21, D29): 3.x dropped '.', scan listed src/d/x.cs (measurements-engine 3)"
     r  "P-069" "4.2" "src/*/./x.cs" (err "XP012" 7) [] "changed in 4.0 (item 21): 3.x Path.matches true, matchGroups no match"
@@ -219,7 +221,7 @@ let parse : ParseVector list = [
     r  "P-115" "4.3" "a/**/b" (ok "'a' / ** / 'b'") [] "parse unchanged; example 9"
     r  "P-116" "4.3" "**/mlib.dll" (ok "** / 'mlib.dll'") [] "changed in 4.0 at match level (item 12): 3.x rule did not match c:/mlib.dll (PathTests.RecurseInRule)"
     r  "P-117" "4.3" "**/*.dll" (ok "** / * '.dll'") [] "example 9; XP119 on evidence only"
-    r  "P-118" "5.5" "**/**/b" (ok "** / ** / 'b'") [] "SPEC? adjacent globstars: kept as two Globstar tokens (5.5 says they match as one; whether the parser collapses them is not stated)"
+    r  "P-118" "5.5" "**/**/b" (ok "** / 'b'") [] "D34: adjacent globstars collapse to one in the AST (unparse gives '**/b')"
     r  "P-119" "4.3" "a**b" (ok "'a' **~ 'b'") ["XP112"] "changed in 4.0 (item 13): 3.x crossed '/'"
     mi "P-120" "4.3" "a**b" (ok "'a' **~ 'b'") [] "unchanged: masks read it as '*' in 3.x too; XP112 is rule-only"
     r  "P-121" "4.3" "**.cs" (ok "**~ '.cs'") ["XP112"] "item 13"
@@ -240,7 +242,7 @@ let parse : ParseVector list = [
     r  "P-136" "4.3" "src/**/bin/*.o" (ok "'src' / ** / 'bin' / * '.o'") [] "PatternAstTests corpus"
     mi "P-137" "4.3" "dir/**" (ok "'dir' / **") [] "changed in 4.0 at scan level (item 14): 3.x listed the directories; XP113 on evidence only"
     me "P-138" "4.3" "dir/**" (ok "'dir' / **") [] "changed in 4.0 at scan level (item 14): 3.x removed nothing (FilesetTests); XP113 on evidence"
-    r  "P-139" "4.3" "src/{**,lib}/*.cs" (ok "'src' / {** , 'lib'} / * '.cs'") [] "SPEC? '**' as a whole brace alternative between separators: read as a globstar; 4.3 names only group delimiters as transparent"
+    r  "P-139" "4.3" "src/{**,lib}/*.cs" (ok "'src' / {** , 'lib'} / * '.cs'") [] "D34: '**' as a whole brace alternative between separators: read as a globstar; 4.3 names only group delimiters as transparent"
 
     // ---- 4.1 class mode ---------------------------------------------------------------------------
     r  "P-140" "4.1" "a[bc]d.txt" (ok "'a' [b c] 'd.txt'") [] "unchanged (3.x rule: a regex class); prototype EscapingTests"
@@ -258,11 +260,11 @@ let parse : ParseVector list = [
     me "P-152" "7.3" "sub[1]/*.c" (ok "'sub' [1] / * '.c'") ["XP106"] "changed in 4.0 (item 9): exclude literal segment"
     me "P-153" "7.3" "a[1]*.c" (ok "'a' [1] * '.c'") ["XP105"] "unchanged (item 10): exclude wildcard segment"
     mi "P-154" "7.3" "a[1]*.c" (ok "'a' [1] * '.c'") ["XP106"] "changed in 4.0 (item 9): include"
-    r  "P-155" "4.1" "a[*]b" (ok "'a' [*] 'b'") [] "the 4.0 literal '*': no XP105 for '* ? , \\'"
-    r  "P-156" "4.1" "a[?]b" (ok "'a' [?] 'b'") [] "the 4.0 literal '?'"
-    r  "P-157" "4.1" "a[,]b" (ok "'a' [,] 'b'") [] "the 4.0 literal ','"
-    r  "P-158" "4.1" @"a[\\]b" (ok @"'a' [\\] 'b'") [] "the 4.0 literal '\\'"
-    mi "P-159" "7.3" "a[*]b" (ok "'a' [*] 'b'") [] "SPEC? XP106 lists no exclusion for '* ? , \\', but escapePath emits '[*]' and 'escapePath output never warns' (7.3); read here as no warning"
+    r  "P-155" "4.1" "a[*]b" (ok "'a*b'") [] "the 4.0 literal '*' parses to a literal (spec 5.7: parse (escape s) is [Lit s]; D34: the escape idiom); no XP105 for '* ? , \\'"
+    r  "P-156" "4.1" "a[?]b" (ok "'a?b'") [] "the 4.0 literal '?' (spec 5.7: parse (escape s) is [Lit s]; D34: the escape idiom)"
+    r  "P-157" "4.1" "a[,]b" (ok "'a,b'") [] "the 4.0 literal ',' (spec 5.7: parse (escape s) is [Lit s]; D34: the escape idiom)"
+    r  "P-158" "4.1" @"a[\\]b" (ok @"'a\\b'") [] "the 4.0 literal '\\' (spec 5.7: parse (escape s) is [Lit s]; D34: the escape idiom)"
+    mi "P-159" "7.3" "a[*]b" (ok "'a*b'") [] "D34: the escape idiom never warns XP106 (escapePath emits '[*]', 7.3); a literal as P-155"
     r  "P-160" "4.1" @"[\-a]" (ok @"[\- a]") [] "critique class mode: '\\-' is a literal '-'"
     r  "P-161" "4.1" "[]a]" (ok @"[\] a]") [] "I4: ']' right after '[' is a literal"
     r  "P-162" "4.1" "[!]a]" (ok @"[^\] a]") ["XP117"] "I4: ']' right after '[!' is a literal"
@@ -284,7 +286,7 @@ let parse : ParseVector list = [
     r  "P-178" "4.1" "[^]" (err "XP002" 1) [] "I4"
     mi "P-179" "4.1" "[abc" (err "XP002" 1) [] "5.9: unclosed '[' is an error (POSIX, bash: literal)"
     r  "P-180" "4.1" @"a[\]" (err "XP002" 2) [] "'\\]' is an escaped item, so the class is not closed"
-    r  "P-181" "4.1" "[a/b]" (err "XP010" 1) [] "changed in 4.0 (item 24): 3.x regex meaning; SPEC? class errors positioned at the '['"
+    r  "P-181" "4.1" "[a/b]" (err "XP010" 1) [] "changed in 4.0 (item 24): 3.x regex meaning; D34: class errors positioned at the '['"
     mi "P-182" "4.1" "[a/b]" (err "XP010" 1) [] "changed in 4.0 (item 24): 3.x split into segments in masks"
     r  "P-183" "4.1" @"[a\/b]" (err "XP010" 1) [] "4.1: '\\/' inside a class is XP010"
     r  "P-184" "4.1" "x[/]" (err "XP010" 2) [] "item 24"
@@ -307,7 +309,7 @@ let parse : ParseVector list = [
     mi "P-199" "4.2" "{a,b}/" (ok "{'a' , 'b'} /") [] "D29: the honest spelling of a directory alternation"
     r  "P-200" "4.1" "{a,(n:b),c}" (ok "{'a' , (n: 'b') , 'c'}") [] "I5"
     r  "P-201" "4.1" "{(n:b,c),d}" (ok "{(n: 'b,c') , 'd'}") [] "I5: the comma inside the group is a char"
-    r  "P-202" "4.1" "{[,],x}" (ok "{[,] , 'x'}") [] "a ',' in a class is plain; no XP105"
+    r  "P-202" "4.1" "{[,],x}" (ok "{',' , 'x'}") [] "a ',' in a class is plain; no XP105; a literal as P-157"
     r  "P-203" "4.2" "{*,abc}.cs" (ok "{* , 'abc'} '.cs'") [] "wildcards in alternatives"
     r  "P-204" "4.2" "{a,b}{c,d}" (ok "{'a' , 'b'} {'c' , 'd'}") [] "adjacent braces"
     r  "P-205" "4.1" @"{(n:a\,b),c}" (ok "{(n: 'a' / ',b') , 'c'}") ["XP110"] "inside a group in braces ',' is a char, so '\\,' is a separator then ','"
@@ -372,7 +374,7 @@ let parse : ParseVector list = [
     mi "P-262" "5.9" "@(a|b)" (err "XP003" 2) [] "picomatch extglob"
     r  "P-263" "4.2" "out/(cfg:*" (err "XP006" 5) [] "changed in 4.0 (item 20): 3.x ran to the end silently"
     r  "P-264" "4.2" "out/(cfg:*)/(fwk:*/(name:*).dll" (err "XP006" 13) [] "changed in 4.0 (item 20); prototype PatternAstTests (UnclosedGroup fwk)"
-    r  "P-265" "4.1" "(1:*)" (err "XP007" 1) [] "changed in 4.0 (item 18): 3.x collided with the positional '1'; SPEC? position at the '(' rather than the digit"
+    r  "P-265" "4.1" "(1:*)" (err "XP007" 1) [] "changed in 4.0 (item 18): 3.x collided with the positional '1'; D34: position at the '(' rather than the digit"
     r  "P-266" "4.1" "out/(2x:*)" (err "XP007" 5) [] "item 18"
     r  "P-267" "4.2" "src/(p:*)/(p:*).fsproj" (err "XP015" 11) [] "changed in 4.0 (item 19): 3.x the last value won; example 13; position: the second occurrence"
     r  "P-268" "4.2" "{(x:a)-1,(x:b)-2}" (err "XP015" 10) [] "changed in 4.0 (item 19): across alternatives (D4)"
@@ -388,7 +390,7 @@ let parse : ParseVector list = [
     mi "P-278" "4.2" "a|b.txt" (err "XP003" 2) [] "changed in 4.0 (item 3): 3.x literal in an include"
     me "P-279" "4.2" "b|a1*.txt" (err "XP003" 2) [] "changed in 4.0 (item 3): 3.x alternation in an exclude wildcard segment (prototype EscapingTests)"
     mi "P-280" "4.2" "a)b" (err "XP003" 2) [] "changed in 4.0 (item 5)"
-    mi "P-281" "4.2" "(1:*)" (err "XP003" 1) [] "SPEC? in a mask '(1:' does not read 'name:' (a digit cannot start a name), so XP003 per D24 rather than XP007 or XP008"
+    mi "P-281" "4.2" "(1:*)" (err "XP003" 1) [] "D34: in a mask '(1:' does not read 'name:' (a digit cannot start a name), so XP003 per D24 rather than XP007 or XP008"
     mi "P-282" "4.2" @"C:\Program Files (x86)\Tool\*.dll" (err "XP003" 18) [] "changed in 4.0: example 19 (3.x read the parentheses literally)"
     mi "P-283" "5.7" @"C:/Program Files \(x86\)/Tool/*.dll" (ok "'C:' / 'Program Files (x86)' / 'Tool' / * '.dll'") [] "example 19: escapePath output, no warning"
 
@@ -419,7 +421,7 @@ let messages : MessageVector list = [
         "7.2 XP003, mask text"
     msg "M-003" Ctx.Rule "signed/(name:*).(ext:dll|exe|nupkg)"
         "Invalid pattern 'signed/(name:*).(ext:dll|exe|nupkg)' (rule) at character 25: '(ext:dll|exe|nupkg)': '|' is reserved (Xake 3.x: a regex alternation); write (ext:{dll,exe,nupkg}) [XP003]"
-        "example 8; SPEC? position: the '|' (25) or the group's '(' (17)"
+        "example 8; D34: the position is the '|' itself (25), not the group's '(' (17)"
     msg "M-004" Ctx.Rule "a[b.txt"
         @"Invalid pattern 'a[b.txt' (rule) at character 2: an unescaped '[' has no matching ']' (Xake 3.x read it as a literal in masks and failed in rules); write \[ for a literal '[' [XP002]"
         "7.2 XP002"
@@ -544,11 +546,11 @@ let unparse : UnparseVector list = [
     ush "U-008" "'a' **~ 'b'" "a**b" "a segment-local double star is kept for unparse (4.4)"
     ush "U-009" "{'a' , 'b'} '.c'" "{a,b}.c" "braces"
     ush "U-010" "[a-z] '.c'" "[a-z].c" "a class"
-    ush "U-011" "[^a] '.c'" "[^a].c" "SPEC? a negated class unparses as '[^...]' (the spelling that never warns, 5.2 notes) rather than '[!...]'"
+    ush "U-011" "[^a] '.c'" "[^a].c" "D34: a negated class unparses as '[^...]' (the spelling that never warns, 5.2 notes) rather than '[!...]'"
     ush "U-012" "'C:' / 'x'" "C:/x" "a drive root"
     ush "U-013" "/ / 'srv' / 'sh' / *" "//srv/sh/*" "a UNC root"
     ush "U-014" "'a,b'" "a,b" "',' outside braces needs no escape"
-    ush "U-015" "{'a,b' , 'c'}" "{a[,]b,c}" "SPEC? a ',' in a literal inside braces must be written '[,]'; 5.7 does not list ','"
+    ush "U-015" "{'a,b' , 'c'}" "{a[,]b,c}" "D34: a ',' in a literal inside braces must be written '[,]'; 5.7 does not list ','"
     ush "U-016" "'a' /" "a/" "a mask's directory mark"
     ush "U-017" "(n: <>)" "(n:)" "an empty group body"
     ush "U-018" "{<> , 'x'}" "{,x}" "an empty alternative"
@@ -601,7 +603,7 @@ let escape : EscapeVector list = [
     esc "X-013" "a(b" @"a\(b" "example 16: a bound value"
     esc "X-014" "{7}" @"\{7\}" "prototype PatternAstTests (glob)"
     esc "X-015" "!#.,;" "!#.,;" "no other character is special"
-    esc "X-016" "" "" "SPEC? the empty string escapes to itself (it is not parsed)"
+    esc "X-016" "" "" "D34: the empty string escapes to itself (it is not parsed)"
 ]
 
 let escapePath : EscapeVector list = [
@@ -615,7 +617,7 @@ let escapePath : EscapeVector list = [
     esc "Y-008" @"rel\dir\a.cs" "rel/dir/a.cs" "every '\\' is a separator"
     esc "Y-009" "/tmp/a,b" "/tmp/a,b" "',' outside braces is a char"
     esc "Y-010" "/tmp/xake-root-(a)[b]{c}|d" @"/tmp/xake-root-\(a\)\[b\]\{c\}\|d" "prototype EscapingTests root names"
-    esc "Y-011" @"C:\a\" @"C:/a/" "SPEC? a trailing separator is kept (a directory mask)"
+    esc "Y-011" @"C:\a\" @"C:/a/" "D34: a trailing separator is kept (a directory mask)"
 ]
 
 // =================================================================================================
@@ -663,7 +665,7 @@ let wildcards : WildcardsVector list = [
     wc "W-009" "*/(a:*)/*" "* 1; * 3" "5.6"
     wc "W-010" "(pat:**/*).dll" "" "example 3: all inside a group"
     wc "W-011" "a/?/*/**" "? 1; * 2; ** 3" "every wildcard kind"
-    wc "W-012" "{a,*}x?" "* 1; ? 2" "SPEC? wildcards inside braces are numbered (5.6), but whether 'wildcards' lists them as top-level is not stated"
+    wc "W-012" "{a,*}x?" "* 1; ? 2" "D34: wildcards inside braces are numbered (5.6), but whether 'wildcards' lists them as top-level is not stated"
 ]
 
 // =================================================================================================
@@ -696,10 +698,10 @@ let specificity : SpecificityVector list = [
     sp "S-015" "[abc].x" (2, 0, -1) "5.8: a class weighs as '?'"
     sp "S-016" "//srv/sh/*.c" (11, 0, -2) "a UNC root: two Sep, the server and share literals"
     sp "S-017" "C:/a/*.c" (7, 0, -2) "a drive root: Lit 'C:' and Sep"
-    sp "S-018" "(p:**)/b" (1, -1, 0) "SPEC? a Sep next to a group whose body ends in a Globstar counts 0 (group delimiters transparent, as in 4.3)"
+    sp "S-018" "(p:**)/b" (1, -1, 0) "D34: a Sep next to a group whose body ends in a Globstar counts 0 (group delimiters transparent, as in 4.3)"
     sp "S-019" @"a\(b" (3, 0, 0) "an escaped character is one literal character"
     sp "S-020" "clean::(b:*)::(cfg:*)" (9, 0, -4) "unchanged; RuleSpecificityTests phony patterns"
-    sp "S-021" "**/**/b" (1, -2, 0) "SPEC? follows P-118 (two Globstar tokens kept)"
+    sp "S-021" "**/**/b" (1, -1, 0) "D34: follows P-118 (adjacent globstars collapse to one)"
     sp "S-022" "lib[x].dll" (7, 0, -1) "changed in 4.0: 3.x (10, 0, 0) read '[x]' as three literal characters; the prototype read it as the literal 'x' (8, 0, 0)"
     sp "S-023" "a/**/b" (2, -1, 0) "D5"
     sp "S-024" "*/**/file.o" (6, -1, -2) "D5: both separators touch the globstar"
@@ -734,7 +736,7 @@ let specificityComparisons : SpecificityComparison list = [
     ties  "C-012" "?.c" "[ab].c" "5.8"
     ties  "C-013" "{a,b}.c" "a.c" "5.8: least specific alternative"
     beats "C-014" "{a,bcd}.c" "*.c" "5.8"
-    ties  "C-015" "(p:**)/b" "**/b" "SPEC? see S-018"
+    ties  "C-015" "(p:**)/b" "**/b" "D34: see S-018"
     beats "C-016" "**/file.o" "*/**/file.o" "5.8: same literals and globstars, fewer wildcards"
     beats "C-017" "a/*/b" "a/**/b" "5.8"
     beats "C-018" "src/**/bin/*.o" "src/**/*.o" "5.8"

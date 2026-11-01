@@ -38,8 +38,13 @@ module PatternScannerUnderTest =
           Log: ScanLog list }
 
     let scan (windows: bool) (baseDir: string) (fileset: (MaskRole * string) list) : ScanResult =
-        ignore (windows, baseDir, fileset)
-        raise (NotImplementedException "pattern module PR 4: the walker has not landed")
+        let r = Xake.PatternScan.scan windows baseDir fileset
+        { Files = r.Files
+          Warnings = r.Warnings |> List.map (fun w -> w.Code, w.Use, w.Pattern)
+          Log =
+            r.Notes |> List.map (function
+                | Xake.PatternScan.LinkSkipped d -> LinkSkipped d
+                | Xake.PatternScan.Unreadable d -> Unreadable d) }
 
 module private ScanDrive =
 
@@ -187,7 +192,7 @@ module private ScanDrive =
 module P = PatternScannerUnderTest
 
 /// The scanner-stage conformance vectors (spec 6, 7.3, 11; brief D31, PR 4).
-[<TestFixture; Ignore("pattern module: vectors only until the walker lands (PR 4)")>]
+[<TestFixture>]
 type ``Pattern module conformance: scanner (PR 4)``() =
 
     let roots = ResizeArray<string>()
@@ -223,10 +228,15 @@ type ``Pattern module conformance: scanner (PR 4)``() =
                 | None -> Assert.Fail(sprintf "%s: expected %s" label code)
             | Lists (files, warnings, log) ->
                 let r = P.scan windows baseDir fileset
-                Assert.AreEqual(files, r.Files |> List.map (ScanDrive.relative root baseDir), label)
+                let shown expected actual = sprintf "\n  expected: %A\n  actual:   %A" expected actual
+                let actualFiles = r.Files |> List.map (ScanDrive.relative root baseDir)
+                Assert.AreEqual(files, actualFiles, label + shown files actualFiles)
                 let expectedWarnings = warnings |> List.map (fun (c, u, p) -> c, u, ScanDrive.substitute root p) |> List.sort
-                Assert.AreEqual(expectedWarnings, List.sort r.Warnings, label + " (warnings)")
-                Assert.AreEqual(List.sort log, r.Log |> List.map (ScanDrive.relativeLog root baseDir) |> List.sort, label + " (log)")
+                let actualWarnings = List.sort r.Warnings
+                Assert.AreEqual(expectedWarnings, actualWarnings, label + " (warnings)" + shown expectedWarnings actualWarnings)
+                let expectedLog = List.sort log
+                let actualLog = r.Log |> List.map (ScanDrive.relativeLog root baseDir) |> List.sort
+                Assert.AreEqual(expectedLog, actualLog, label + " (log)" + shown expectedLog actualLog)
 
 /// Checks of the scanner tables themselves (not of the walker): ids, trees, that every mask
 /// parses with the PR 2 parser, the order and uniqueness of the expected paths, and coverage.

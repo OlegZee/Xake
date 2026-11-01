@@ -333,3 +333,13 @@ fixes how much breaks. 3.12.0 is released (tag `v3.12.0`); nothing of this featu
   for a non-literal server or share; matches nothing on Unix). 3.x had no UNC notion and read
   `\\server\share` as `/server/share` after collapsing. Rejected: an error on a leading `//`
   ("mount the share"); silent collapsing.
+- **D37 (2026-11-01): the matcher vectors' SPEC? notes.** XP119 does not fire when the globstar
+  is preceded by a `*` segment (the D12 idiom `*/**/b`: 3.x needed two directories, 4.0 one;
+  the warning must not recommend its own trigger) nor for a globstar inside braces (3.x read the
+  braces literally and matched nothing). Accepted as read by the vectors: `**/**/b` has one
+  capture after the D34 collapse (spec 5.5 to be corrected); a named group in an unmatched brace
+  alternative is present with `""`; the matcher compares the target path as given (`..` not
+  resolved, doubled `/` not collapsed: paths are normalized by `File.make` before matching);
+  `\` on the path side is a separator only in Windows mode; an empty globstar group at an edge
+  (`(p:**)/b`, `p = ""`) drops one `/` in `format` like a bare globstar; `[x]` in a multi-output
+  rule is a class and XP014 at creation (4.0 behaviour change; `lib\[x\].dll` or `libx.dll`).

@@ -614,7 +614,7 @@ Both contexts unless stated:
 | `a/**/` (mask) | `a` and every directory below it | files | — |
 | `*/**/b` | `x/b`, `x/y/b` (one or more directories, 5.1) | `b` | `""`, `y` |
 | `a**b` | as `a*b` (one segment) | `a/x/b` | as `*` |
-| `**/**/b` | as `**/b` (adjacent globstars collapse) | — | first `**` takes the path, second `""` |
+| `**/**/b` | as `**/b` (adjacent globstars collapse to one in the AST, D34) | — | one capture, as for `**/b`: `""`, `x`, `x/y` (D37) |
 | `(p:**)/b` | `b`, `x/b` | — | `p` = `""`, `x` |
 | `(path:bin/**)/file.o` | `bin/file.o`, `bin/x/y/file.o` | — | `path` = `bin`, `bin/x/y` (no trailing `/`) |
 | `(path:*/**)/file.o` | `a/file.o`, `a/b/file.o` | `file.o` | `path` = `a`, `a/b` |
@@ -1208,6 +1208,44 @@ What `src/core/PatternAst.fs` implements in PR 2, where it differs from 8.2:
 - Not in PR 2: `format`, `formatMatches`, `glob` (their vectors come with the matcher, PR 3).
 - `PatternException` overrides `Message` with the error text. The engine's internal
   `Path.PatternAst` is untouched until Phase 4.
+
+### 8.5 PR 3 API notes (the implemented matcher)
+
+What PR 3 implements (`src/core/PatternAst.fs`, new internal `src/core/PatternMatch.fs`):
+
+```fsharp
+// Xake.PatternAst (public, 8.2)
+val format        : named: (string -> string) -> positional: (int -> string) -> Token list -> string
+val formatMatches : Map<string, string> -> string -> string
+val internal checkOutputs : string list -> unit      // multi-output check: XP014, then XP013
+
+// Xake.PatternMatch (internal)
+type RuleMatch = { Captures: Map<string, string>; Evidence: string list }
+val matchRule  : windows: bool -> root: string -> pattern: string -> target: string -> RuleMatch option
+val matchMask  : windows: bool -> baseDir: string -> mask: string -> path: string -> isDirectory: bool -> bool
+val regexText  : PatternContext -> text: string -> anchor: string -> windows: bool -> string option
+```
+
+- `windows` is the comparer of D11 made explicit (ignore-case with `CultureInvariant`, `\` in a
+  path is a separator); the Phase-4 adapters pass `not Env.isUnix`. `Path.matchGroups` and
+  `Path.matches` are unchanged until Phase 4.
+- `Captures` holds every named group (`""` when it took no part, D37), every positional number
+  at any depth and `"0"` (the path, `\` turned into `/` in Windows mode). `Evidence` is
+  `["XP119"]` when a globstar before a separator took zero directories, except after a `*`
+  segment or inside braces (D37); reporting it once per pattern is the engine's (Phase 4).
+- `checkOutputs` is the `checkSameGroups` of 8.2 (XP013 compares name sets); the XP014 text
+  suggests `(name:...)`.
+- Differences from the 9.2 table: a globstar is `(.+)` and owns one adjacent separator,
+  `(?:/(.+))?` or `(?:(.+)/)?`, also when it is the whole body of a group or a whole brace
+  alternative (the owning wrapper then sits outside the group or the braces, 9.3); a globstar
+  ending a file pattern keeps its separator mandatory (`a/**` does not match `a`), ending a
+  directory mask it is optional (`a/**/` matches `a`); class items are emitted as `\uXXXX`;
+  the end anchor is `\z` (`$` would accept a trailing newline); `ExplicitCapture`, with the
+  regex group names generated (`w1`, `g1`, ...), so user names never reach the regex.
+- Cache: one `ConcurrentDictionary` keyed by (context, text, anchor, windows); rule patterns are
+  `Compiled`, masks interpreted (PR 4 decides for the walker). No fast paths yet. Measured:
+  the 236 rule vectors in both modes, 100 passes (47 200 matches): 57 ms cached, after a
+  169 ms first pass that compiles.
 
 ## 9. Matcher implementation (non-normative)
 

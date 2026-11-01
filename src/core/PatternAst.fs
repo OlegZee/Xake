@@ -866,3 +866,101 @@ let rec specificity (tokens: Token list) : int * int * int =
             weight <- weight - c
         | FNode (Group _) | FOpen | FClose -> ()
     lit, -globstars, -weight
+
+// =================================================================================================
+// Generation (spec 5.5, 5.7)
+// =================================================================================================
+
+/// A globstar, or a group whose body is one: the slot whose empty value drops a '/' (5.5, D37).
+let rec private globstarSlot (t: Token) =
+    match t with
+    | Globstar -> true
+    | Group (_, [ x ]) -> globstarSlot x
+    | _ -> false
+
+type private Piece =
+    | Text of string
+    | Slash
+    | EmptySlot
+
+/// XP014: a class or braces outside a group cannot be filled in from a match (5.7).
+let private unformattable (text: string) (tokens: Token list) =
+    match tokens |> List.tryFind (function Class _ | Alt _ -> true | _ -> false) with
+    | Some bad ->
+        let t = unparse [ bad ]
+        let reason = sprintf "'%s' cannot be filled in from a match; put it in a named group: (name:%s)" t t
+        Some { Pattern = text; Context = PatternContext.Rule; Position = None; Code = "XP014"; Reason = reason }
+    | None -> None
+
+let private formatText (text: string) (named: string -> string) (positional: int -> string) (tokens: Token list) =
+    match unformattable text tokens with
+    | Some e -> raiseError e
+    | None ->
+        let mutable k = 0
+        let pieces =
+            [| for t in tokens do
+                 match t with
+                 | Lit s -> yield Text s
+                 | Sep -> yield Slash
+                 | Star | AnyChar | DoubleStar | Globstar ->
+                     k <- k + 1
+                     let v = positional k
+                     yield (if v = "" && t = Globstar then EmptySlot else Text v)
+                 | Group (name, _) ->
+                     let v = named name
+                     yield (if v = "" && globstarSlot t then EmptySlot else Text v)
+                 | Class _ | Alt _ -> () |]
+        // an empty globstar slot drops one adjacent '/', the one after it first (5.5)
+        let dropped = Array.create pieces.Length false
+        for i in 0 .. pieces.Length - 1 do
+            if pieces.[i] = EmptySlot then
+                if i + 1 < pieces.Length && pieces.[i + 1] = Slash && not dropped.[i + 1] then dropped.[i + 1] <- true
+                elif i > 0 && pieces.[i - 1] = Slash && not dropped.[i - 1] then dropped.[i - 1] <- true
+        let sb = StringBuilder()
+        pieces |> Array.iteri (fun i p ->
+            if not dropped.[i] then
+                match p with
+                | Text s -> sb.Append(s) |> ignore
+                | Slash -> sb.Append('/') |> ignore
+                | EmptySlot -> ())
+        sb.ToString()
+
+/// Fills a pattern in (5.7): a named group becomes `named name`, the i-th top-level bare wildcard
+/// (1-based, wildcards inside groups do not count) `positional i`; literals print with escapes
+/// resolved, `Sep` as '/'. A globstar slot (or a group around one) with the value "" drops one
+/// adjacent '/'. Raises PatternException (XP014) for a class or braces outside a group.
+let format (named: string -> string) (positional: int -> string) (tokens: Token list) : string =
+    formatText (unparse tokens) named positional tokens
+
+/// `format` fed from a rule match (5.7; replaces ExecCore.applyWildcards): named groups by name,
+/// the i-th top-level bare wildcard by its positional number in `pattern` (`wildcards`). A missing
+/// key gives "". Raises PatternException for an invalid pattern and for XP014.
+let formatMatches (matches: Map<string, string>) (pattern: string) : string =
+    let tokens = Rule.parse pattern
+    let numbers = wildcards tokens |> List.map snd |> Array.ofList
+    let get (key: string) = match Map.tryFind key matches with Some v -> v | None -> ""
+    let positional i = if i >= 1 && i <= numbers.Length then get (string numbers.[i - 1]) else ""
+    formatText pattern get positional tokens
+
+/// The check made when a multi-output rule (`*..>`, `targets`) is created (5.6): every output
+/// parses, has no class or braces outside a group (XP014) and the same set of named groups as the
+/// first output (XP013). Raises PatternException.
+let internal checkOutputs (patterns: string list) : unit =
+    let parsed = patterns |> List.map (fun p -> p, Rule.parse p)
+    for p, tokens in parsed do
+        match unformattable p tokens with
+        | Some e -> raiseError e
+        | None -> ()
+    match parsed with
+    | [] -> ()
+    | (_, first) :: rest ->
+        let firstSet = groupNames first |> Set.ofList
+        let show (s: string seq) = "[" + String.Join(", ", s) + "]"
+        for p, tokens in rest do
+            let names = groupNames tokens
+            let set = Set.ofList names
+            if set <> firstSet then
+                let reason =
+                    sprintf "output \"%s\" has groups %s, the first output %s (missing %s, extra %s); every output needs the same named groups, or the others cannot be named from a match"
+                        p (show names) (show (groupNames first)) (show (firstSet - set)) (show (set - firstSet))
+                raiseError { Pattern = p; Context = PatternContext.Rule; Position = None; Code = "XP013"; Reason = reason }

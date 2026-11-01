@@ -10,8 +10,9 @@ then the typed layer (`Xake.Typed`) on top. Restart of `feature/typed-matches` (
 | PR | Branch | Worktree |
 |----|--------|----------|
 | — integration branch (target of every phase PR; merges to `dev` at the end) | `feature/patterns2` (cut from `dev` 2026-10-31, pushed 2026-11-01) | — (no worktree; PR target only) |
-| PR 2 (parser): 453 vectors + `PatternAst.fs` parser; D34 provisional, spec 4.4/5.7 conflict resolved toward 5.7 | `feature/pattern-parser` (from `feature/pattern-module`) | `.claude/worktrees/feature/pattern-parser` |
-| [#117](https://github.com/OlegZee/Xake/pull/117) PR 1 (docs): spec approved (D30), measurements pinned | `feature/pattern-module` (rebased on `dev` 2026-10-31) | main checkout `/Users/olegz/projects/Xake` (the worktree was removed 2026-10-31; the branch was reset to `c65d764`) |
+| [#118](https://github.com/OlegZee/Xake/pull/118) merged: PR 2 parser (453 vectors, `PatternAst.fs`) | `feature/pattern-parser` (from `feature/pattern-module`) | `.claude/worktrees/feature/pattern-parser` |
+| [#119](https://github.com/OlegZee/Xake/pull/119) PR 3 (matcher): 449 vectors, `PatternMatch.fs`, fsc locks refreshed | `feature/pattern-matcher` | `.claude/worktrees/feature/pattern-matcher` |
+| [#117](https://github.com/OlegZee/Xake/pull/117) merged: PR 1 docs | `feature/pattern-module` (rebased on `dev` 2026-10-31) | main checkout `/Users/olegz/projects/Xake` (the worktree was removed 2026-10-31; the branch was reset to `c65d764`) |
 | — frozen reference, **never merge** | `feature/typed-matches` | `.claude/worktrees/feature/typed-matches` |
 
 The frozen worktree has an uncommitted user edit to `experiments/08-consolidated/consumer/showcase.fsx`:

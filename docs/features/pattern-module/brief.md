@@ -308,3 +308,21 @@ fixes how much breaks. 3.12.0 is released (tag `v3.12.0`); nothing of this featu
   5.3. The walker never uses attribute-based filtering of the listing.
 - Windows measurements: a standalone `measure-windows.fsx` (Xake 3.15.0 from nuget.org) run by
   the user on a Windows machine without git; results come back as `measurements-windows.md`.
+- **D34 (2026-11-01, PROVISIONAL by the orchestrator; the user confirms or reverses):** answers to
+  the 23 "SPEC?" notes of the parser vectors, chosen to follow the spec's intent and the simplest
+  reading. Semantics: `..` is a literal segment only in the literal prefix (before the first
+  wildcard; `../lib/*.dll` is valid, `..` alone and `..` above a root are kept literal and fail
+  at scan time), after a wildcard it is XP012 as specified. Mask `/` (root only) is accepted;
+  rule `/` is XP011; `//a` collapses to `/a` (D24). Consecutive globstars `**/**/b` collapse to
+  one in the AST (unparse gives `**/b`). A `**` that is a whole brace alternative between
+  separators is a globstar (transparency, as for groups). A one-character class holding only a
+  metacharacter (`[*] [?] [,] [\\]`) is the escape idiom (D22) and never warns XP106. `wildcards`
+  lists wildcards inside braces too, in document order. A separator next to a group ending in a
+  globstar counts 0 in specificity (D5 through group transparency). Conventions: an error's
+  position is the start of the offending construct (`[` for a class, `(` for a group, `{` for
+  braces, the `|` itself for a stray `|`, the `(` for XP007 and XP003 on `(1:*)`); XP016 at the
+  first non-literal element. Unparse/escape: a negated class prints `[^…]`, a `,` inside a
+  braced literal prints `[,]`, `escape ""` = `""`, `escapePath` keeps a trailing separator. API
+  gap: `Mask.tryParse`/`Mask.parse` take no role; role-dependent warnings (XP105/XP106/XP117)
+  come from `Mask.warnings : MaskRole -> Ast -> PatternWarning list` (pure) and `Mask.check :
+  MaskRole -> string -> unit` logs them (8.2 to be aligned in PR 2).

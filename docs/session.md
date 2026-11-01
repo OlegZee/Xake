@@ -56,7 +56,7 @@ feature folder: [features/vars-precedence](features/vars-precedence/session.md).
   decision D). Records frozen until 4.0 (`RecordShapeTests`) may change in 4.0.
 - Traps: a local `.xake` from before the rework makes the hermetic `test-build` misbehave (the
   dependency records of Var reads and secrets changed): use `--resetdb`. The SDK pin is
-  10.0.402 in the locks and `build.yml`; another SDK needs `update-locks`. .NET removes an
+  10.0.403 in the locks and `build.yml`; another SDK needs `update-locks`. .NET removes an
   environment variable set to `""` in-process, so a test cannot make an "empty value" through
   the environment on Unix (pass it with `-d N=`). The importer reads `PrivateAssets=all` as
   "bundled" (`package.bundle: ["Xake"]` in `src/hermetic/xake.project.json`).
@@ -264,8 +264,8 @@ data, no msbuild for them. `build.fsx` stays the build of record (packages, rele
 - Own database `.xake.fsc` (`xake { ExecOptions.Default with DbFileName = ... }`): the scripts no
   longer share a bootstrap, and their phony targets (`build`, `test`, `clean`) share names.
 - The locks name the SDK's `fsc.dll` by path with an empty `Sha256`: the SDK version is its
-  identity (prerequisite `dotnet-sdk` 10.0.402, pinned in `build.yml`). The committed locks hold for SDK
-  10.0.402 on any OS/architecture; the CI job `build-fsc` runs on ubuntu-latest. Another SDK
+  identity (prerequisite `dotnet-sdk` 10.0.403, pinned in `build.yml`). The committed locks hold for SDK
+  10.0.403 on any OS/architecture; the CI job `build-fsc` runs on ubuntu-latest. Another SDK
   needs `update-locks`.
 - `HERMETIC=on` is not set: it needs an exact SDK pin in `global.json` (`rollForward: disable`),
   which the repository does not have (CI matrix 8.0/10.0). Open question.

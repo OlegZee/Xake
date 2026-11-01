@@ -292,3 +292,5 @@ fixes how much breaks. 3.12.0 is released (tag `v3.12.0`); nothing of this featu
   is a symlink: logged once at Message level, as unreadable directories are. `LinkTarget`
   detection: deferred to the Phase-2 measurement, not in the spec. `{a/,b}` ending a pattern:
   an error (`{a,b}/` covers the honest case).
+- **D30 (2026-11-01): `spec.md` approved by the user** (Phase 1 exit). Later changes to the
+  spec need a decision entry here.

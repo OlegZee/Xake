@@ -11,6 +11,7 @@
     "Pickler.fs",
     "Env.fs",
     "PatternAst.fs",
+    "PatternMatch.fs",
     "Path.fs",
     "PathExt.fs",
     "File.fsi",

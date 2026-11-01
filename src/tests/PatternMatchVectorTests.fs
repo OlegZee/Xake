@@ -7,8 +7,8 @@ open PatternMatchVectors
 open Xake.PatternAst
 
 /// The matcher contract for PR 3 (spec 8.1-8.3, 9; brief D16, D18, D31). This module is the
-/// stand-in the conformance tables drive until the matcher lands; PR 3 replaces each body with a
-/// call into the module and keeps the signatures:
+/// shim the conformance tables drive; each body calls into the module (`Xake.PatternMatch` for
+/// matching, `Xake.PatternAst` for generation):
 ///
 /// - `matchRule windows root pattern target : RuleMatch option` -- the matcher behind
 ///   `Path.matchGroups pattern root target` (8.3: its public signature does not change; it becomes
@@ -36,28 +36,21 @@ module PatternMatcherUnderTest =
         { Captures: Map<string, string>
           Evidence: string list }
 
-    let private pending (what: string) : 'a =
-        raise (NotImplementedException(sprintf "pattern module PR 3: %s is not implemented yet" what))
-
     let matchRule (windows: bool) (root: string) (pattern: string) (target: string) : RuleMatch option =
-        ignore (windows, root, pattern, target)
-        pending "matchRule"
+        Xake.PatternMatch.matchRule windows root pattern target
+        |> Option.map (fun r -> { Captures = r.Captures; Evidence = r.Evidence })
 
     let matchMask (windows: bool) (baseDir: string) (mask: string) (path: string) (isDirectory: bool) : bool =
-        ignore (windows, baseDir, mask, path, isDirectory)
-        pending "matchMask"
+        Xake.PatternMatch.matchMask windows baseDir mask path isDirectory
 
     let format (named: string -> string) (positional: int -> string) (tokens: Token list) : string =
-        ignore (named, positional, tokens)
-        pending "format"
+        Xake.PatternAst.format named positional tokens
 
     let formatMatches (matches: Map<string, string>) (pattern: string) : string =
-        ignore (matches, pattern)
-        pending "formatMatches"
+        Xake.PatternAst.formatMatches matches pattern
 
     let checkOutputs (patterns: string list) : unit =
-        ignore patterns
-        pending "checkOutputs"
+        Xake.PatternAst.checkOutputs patterns
 
 module private MatchDrive =
     let modes = function
@@ -110,7 +103,6 @@ module M = PatternMatcherUnderTest
 
 /// The matcher-stage conformance vectors (spec 5, 7.3 XP119, 8, 9, 11; brief D31, PR 3).
 [<TestFixture>]
-[<Ignore("pattern module: vectors only until the matcher lands (PR 3)")>]
 type ``Pattern module conformance: matcher (PR 3)``() =
 
     static member RuleCases = MatchDrive.cases ruleMatches (fun v -> v.Id)

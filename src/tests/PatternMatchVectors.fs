@@ -172,12 +172,12 @@ let ruleMatches : RuleVector list = [
     ra "RM-075" "5.5" "a/**" "a" no [] "unchanged: 'a/**' excludes 'a' itself (picomatch: matches 'a')"
     ra "RM-076" "5.5" "**" "a/b/c" (m [ "1", "a/b/c" ]) [] "unchanged"
     ra "RM-077" "5.5" "**" "f" (m [ "1", "f" ]) [] "unchanged"
-    ra "RM-078" "5.1" "*/**/b" "x/b" (m [ "1", "x"; "2", "" ]) xp119
-        "SPEC? D12 idiom: 3.x needed two directories here (regex ([^/]*)/(.*)/b), so XP119's literal trigger fires on the very spelling its text recommends; read here as warning"
+    ra "RM-078" "5.1" "*/**/b" "x/b" (m [ "1", "x"; "2", "" ]) []
+        "D37: no XP119 after a '*' segment (the D12 idiom; 3.x needed two directories here, regex ([^/]*)/(.*)/b, and the warning must not recommend its own trigger)"
     ra "RM-079" "5.5" "*/**/b" "x/y/b" (m [ "1", "x"; "2", "y" ]) [] "unchanged; 5.5 table"
     ra "RM-080" "5.5" "*/**/b" "b" no [] "unchanged; 5.5 table"
     ra "RM-081" "11" "*/**/file.o" "a/b/c/file.o" (m [ "1", "a"; "2", "b/c" ]) [] "unchanged; example 20"
-    ra "RM-082" "11" "(path:*/**)/file.o" "a/file.o" (m [ "path", "a"; "1", "a"; "2", "" ]) xp119 "SPEC? as RM-078 (example 20: the idiom with a capture)"
+    ra "RM-082" "11" "(path:*/**)/file.o" "a/file.o" (m [ "path", "a"; "1", "a"; "2", "" ]) [] "D37: as RM-078, no XP119 (example 20: the idiom with a capture)"
     ra "RM-083" "11" "(path:*/**)/file.o" "a/b/file.o" (m [ "path", "a/b"; "1", "a"; "2", "b" ]) [] "unchanged; example 20"
     ra "RM-084" "11" "(path:*/**)/file.o" "file.o" no [] "unchanged; example 20"
     ra "RM-085" "5.5" "(p:**)/b" "b" (m [ "p", ""; "1", "" ]) xp119 "changed in 4.0 (item 12); 9.3 globstar first in a group"
@@ -200,8 +200,8 @@ let ruleMatches : RuleVector list = [
     ra "RM-101" "11" "(pat:**/*).dll" "a.dll" (m [ "pat", "a"; "1", ""; "2", "a" ]) xp119 "changed in 4.0 (item 12): 3.x no match"
     ra "RM-102" "4.3" "src/{**,lib}/*.cs" "src/lib/x.cs" (m [ "1", "lib"; "2", "x" ]) [] "changed in 4.0 (item 6): 3.x literal braces, no match; D34: '**' alone in an alternative is a globstar; the first alternative wins (leftmost)"
     ra "RM-103" "4.3" "src/{**,lib}/*.cs" "src/a/b/x.cs" (m [ "1", "a/b"; "2", "x" ]) [] "changed in 4.0 (item 6)"
-    ra "RM-104" "4.3" "src/{**,lib}/*.cs" "src/x.cs" (m [ "1", ""; "2", "x" ]) xp119
-        "SPEC? XP119 for a globstar inside braces: 3.x read the braces literally and matched nothing anyway, so the warning text is moot; read here as the literal trigger"
+    ra "RM-104" "4.3" "src/{**,lib}/*.cs" "src/x.cs" (m [ "1", ""; "2", "x" ]) []
+        "D37: no XP119 for a globstar inside braces (3.x read the braces literally and matched nothing)"
     ra "RM-105" "5.5" "**/obj/**" "a/obj/b/c" (m [ "1", "a"; "2", "b/c" ]) [] "unchanged"
     ra "RM-106" "5.5" "**/obj/**" "obj/x" (m [ "1", ""; "2", "x" ]) xp119 "changed in 4.0 (item 12)"
 
@@ -354,7 +354,7 @@ let ruleMatches : RuleVector list = [
 
     // ---- Unicode (D26, D27) ------------------------------------------------------------------------
     ra "RM-260" "5.9" "?.txt" "\U0001F600.txt" no [] "D26: '?' is one UTF-16 code unit"
-    ra "RM-261" "5.9" "??.txt" "\U0001F600.txt" (m [ "1", "\uD83D"; "2", "\uDE00" ]) [] "D26: two code units, one per '?'"
+    ra "RM-261" "5.9" "??.txt" "\U0001F600.txt" (m [ "1", string (char 0xD83D); "2", string (char 0xDE00) ]) [] "D26: two code units, one per '?' (built from char: F# turns a lone-surrogate escape \\uD83D in a literal into U+FFFD)"
     ra "RM-262" "5.4" "caf\u00E9*" "cafe\u0301.txt" no [] "D27: no normalization; an NFC literal against an NFD name"
     ra "RM-263" "5.4" "caf*" "cafe\u0301.txt" (m [ "1", "e\u0301.txt" ]) [] "D27"
     ra "RM-264" "5.6" "(\u00E9:*).x" "a.x" (m [ "\u00E9", "a"; "1", "a" ]) [] "D21: a Unicode group name"

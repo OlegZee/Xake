@@ -202,3 +202,68 @@ fixes how much breaks. 3.12.0 is released (tag `v3.12.0`); nothing of this featu
   `*/**/file.o` (with capture: `(path:*/**)/file.o`) in the semantics section, in a worked
   example and in the XP119 text, because the 3.x "one or more" rule came from a real case and
   users need the replacement spelled out.
+- **D13 (2026-11-01): open item 6 accepted; the explicit-name rule stays.** A mask with no
+  non-literal element is listed even if absent (load-bearing: hermetic `Locks.fs` build-from-lock,
+  the compiler tasks' `Ref` filesets, four tests; see `explicit-name-history.md`). Literal
+  prefixes are probed, not listed; braces are matched against listings. Two follow-ups: document
+  the rule in `docs/overview.md` (Phase 5 docs), and revisit it after 4.0 once the compiler tasks
+  and hermetic demand generated files through `need` instead of filesets.
+- **D14 (2026-11-01): open item 7 accepted.** Classes and braces ship in 4.0 in every context.
+  Legacy readings are signalled: XP104 on evidence (an entry literally named `[abc]`/`{a,b}`),
+  XP105/XP106 at parse for `[c]`, XP117 for `[!a]` in rules, XP005 error for `{x}`, XP003 error
+  for `( ) |` outside a group (with the braces hint). Rejected: parse-time warning on every
+  class/brace in masks; classes and braces only in 5.0; braces only inside groups.
+- **D15 (2026-11-01): open item 8 accepted.** Errors: `PatternException of string` at parse
+  time, message `Invalid pattern '<text>' (<context>) at character <n>: <reason> [XPnnn]`, the
+  reason naming the 3.x meaning; `tryParse` returns `PatternError`; the engine rethrows as
+  `XakeException` inside a build. Warnings: legacy input only, level Warning (closes C2), codes
+  XP1nn, keyed by (context, pattern text), at parse when a warning-free 4.0 spelling exists and
+  on evidence otherwise, buffered until a log attaches, all removed in 5.0.
+- **D16 (2026-11-01): open item 9 accepted.** Public module `Xake.PatternAst` (own file, not
+  auto-opened): AST types, `PatternException`/`PatternError`, parsing as `Rule.parse`/`Mask.parse`
+  (+ `tryParse`, `check`) per D9 instead of `parseIn`, `unparse`/`escape`/`escapePath` (D7),
+  `groupNames`/`wildcards`/`specificity`, `format`/`formatMatches`/`glob`. Matcher and regex
+  translation internal; `Path.matchGroups`/`Path.matches`/`Fileset` signatures unchanged;
+  `Includes of PathMask` kept in 4.0 (C8). Rejected: a new module name; a public compiled
+  pattern type (possible in a 4.x minor); public `toRegex`; replacing `FilesetElement` now.
+- **D17 (2026-11-01): open item 10 accepted, with two Phase-2 measurements.** Depth-first walker
+  driven by the AST: literal prefix probed, one-segment patterns against a listing (OS filter is
+  a superset pre-filter only), `**` recursion, brace-with-`/` as a union, pruning of directories
+  covered by a later exclude, ordinal order per directory, duplicates removed, unreadable
+  directories skipped with a warning, evidence checks on the walk. Symlinks are not followed
+  under `**`; whether junctions, mount points and cloud-sync placeholders count (critique S5) and
+  the OS-listing quirks (C10: Win32 `?`/`*.*`, macOS case) are measured in Phase 2 before the
+  spec wording is final. Rejected: `AllDirectories` + filter (3.x); one whole-path regex after a
+  full listing; symlink following with cycle detection; unsorted; keeping duplicates (C5 test
+  to be rewritten).
+- **D18 (2026-11-01): open item 11 accepted as the Phase-3 starting point** (implementation
+  detail per D3, revisable on measurement). Regex from the AST, cached by (context, text, anchor,
+  case), `Compiled` for rule/exclude patterns, interpreted for walker/one-off matchers, fast paths
+  for literal, `*`, `*.ext`; measured with the `FilesetTests` benchmark. Rejected for now: an own
+  matcher; no cache; always `Compiled`; `NonBacktracking`.
+- **D19 (2026-11-01): open item 12 accepted.** Conformance corpus = engine pattern tests
+  (`PathTests`, `FilesetTests`, `XakeScriptTests` group/multi-target, `RuleMatchTests`,
+  `RuleSpecificityTests`, `ParentDirTargetTests`, `PatternAstTests`), the prototype's escaping
+  and AST tests (C2 adjusted, 4.0 warnings added), every pattern in `samples/*.fsx` (not
+  `samples/Research`), `build.fsx`, `build.fsc.fsx`, fenced F# blocks in `docs/*.md`, and
+  hermetic's direct uses. Vectors tagged unchanged / changed-in-4.0 with the 3.x result and the
+  release-notes entry; changed vectors are rewritten, never deleted.
+- **D20 (2026-11-01): open item 13 accepted.** `[c]` is the character `c` everywhere. XP105 at
+  parse where 3.x meant `c` too (rules, exclude wildcard segments; suggests `\(` or plain `c`,
+  tm 55); XP106 at parse where 3.x read the literal text (includes, exclude literal segments;
+  names the 3.x reading, suggests `\[1\]` or `1`). Both stop in 5.0. Rejected: XP106 on evidence
+  only; an error for `[c]` in masks; tree-dependent auto-detection.
+- **D21 (2026-11-01): open item 14 accepted with D4 applied.** Names: Unicode letter or `_`,
+  then letters/digits/`_`; leading digit is XP007. Body: any element incl. `/`, `**`, classes,
+  braces, nested groups. A repeated name is an error (D4; XP116 dropped). Multi-output rules:
+  the same name set in every output (XP013); positional pairing of bare wildcards stays.
+  Positional numbers, the `"0"` key (C7) and greedy capture values stay as in 3.x. Rejected:
+  leading digit as a warning; ASCII-only names; no `/`/`**` inside groups.
+- **D22 (2026-11-01): open item 15 accepted.** Version 4.0.0 (closes brief f). `\` as a
+  separator: warn in 4.0 (XP110 at parse), remove in 5.0 (then `\` escapes `* ? , ! ^ - \` and
+  any other `\x` is XP009). In 4.0 `\` before a reserved character is an escape (tm 55); literal
+  `*`, `?`, `,`, `\` are written as one-character classes. Rejected: removal in 4.0; the
+  "no `/` in the text" heuristic; picomatch-style `\x` = `x` in 5.0.
+- **D23 (2026-11-01): C11 option B.** A named group in a mask and an unclosed group in a string
+  rule are both errors in 4.0 (XP008 / XP006); tm 58 and tm 61 are superseded. XP111 is dropped.
+  Consistent with D9: the mask lexer has no `(name:` token, so `(` in a mask is XP003 directly.

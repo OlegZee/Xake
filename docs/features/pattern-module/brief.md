@@ -267,3 +267,28 @@ fixes how much breaks. 3.12.0 is released (tag `v3.12.0`); nothing of this featu
 - **D23 (2026-11-01): C11 option B.** A named group in a mask and an unclosed group in a string
   rule are both errors in 4.0 (XP008 / XP006); tm 58 and tm 61 are superseded. XP111 is dropped.
   Consistent with D9: the mask lexer has no `(name:` token, so `(` in a mask is XP003 directly.
+- **D24 (2026-11-01): the spec agent's derived choices accepted.** `(` in a mask: XP008 when
+  followed by `name:`, XP003 otherwise. `MaskRole = Include | Exclude` on `Mask.check` so that
+  XP105/XP106 and the warning key (role, text) know the role; errors print `(rule|mask)`. XP120
+  (absolute exclude outside the base) is not a legacy warning and stays after 5.0. D5 can change
+  rule selection (behaviour change 33). S6: repeated separators collapse; UNC roots parse on
+  every OS and match only on Windows; `\,` inside braces is XP017.
+- **D25 (2026-11-01): deferred 3 (probe spelling on case-insensitive volumes): document only.**
+  A probed literal segment keeps the mask's spelling; the macOS trap (`SRC/a.cs` found by the
+  probe, then missed by an ordinal exclude or rule) is documented next to the case example. The
+  scan result must depend on the mask text and the file list, not on how the volume stores case.
+  A disk-spelling option may come later without a grammar change.
+- **D26 (2026-11-01): deferred 1 (`?` and classes match one UTF-16 code unit).** Documented in
+  the deliberate-differences list with the `??` example; a scalar-value matcher can come later
+  without breaking any mask that has no surrogate pairs.
+- **D27 (2026-11-01): deferred 2 (Unicode normalization on macOS): document only.** No NFC/NFD
+  normalization; names compare by code units, as every mainstream globber does. Listed as a
+  known limit next to the case example.
+- **D28 (2026-11-01): deferred 4 (extglob room): no reservation of `*(` / `?(`.** `(name:` is a
+  group wherever it appears; a future extglob may use only `@(`, `+(`, `!(` (already XP003).
+  Recorded as a constraint in the grammar section.
+- **D29 (2026-11-01): deferred 5–9.** Empty pattern `""`: an error in both contexts. `.` as a
+  segment after a wildcard: an error (as `..`, XP012). A directory skipped under `**` because it
+  is a symlink: logged once at Message level, as unreadable directories are. `LinkTarget`
+  detection: deferred to the Phase-2 measurement, not in the spec. `{a/,b}` ending a pattern:
+  an error (`{a,b}/` covers the honest case).

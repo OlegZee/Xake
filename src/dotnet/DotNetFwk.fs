@@ -1073,8 +1073,20 @@ module DotNetFwk =
                 | None, err -> failwith err
                 | Some f,_ -> f
 
-    let private locateFrameworkMemo =
-        CommonLib.memoize (fun (packageRoot: string, projectRoot: string, versions: ReferencePackVersions, fwk: string option) ->
+    /// `compute key`, once per key for the life of `cache`, the `sdkProbes` pattern. A failed
+    /// computation is not kept: the next call with that key runs it again.
+    let private cached (cache: System.Collections.Concurrent.ConcurrentDictionary<'k, Lazy<'v>>) (key: 'k) (compute: 'k -> 'v) : 'v =
+        let entry = cache.GetOrAdd(key, fun k -> lazy (compute k))
+        try entry.Value
+        with _ ->
+            (cache :> System.Collections.Generic.ICollection<_>).Remove(System.Collections.Generic.KeyValuePair(key, entry)) |> ignore
+            reraise ()
+
+    let private frameworks =
+        System.Collections.Concurrent.ConcurrentDictionary<string * string * ReferencePackVersions * string option, Lazy<FrameworkInfo>>()
+
+    let private locateFrameworkMemo key =
+        cached frameworks key (fun (packageRoot, projectRoot, versions, fwk) ->
             impl.locateFramework packageRoot projectRoot versions fwk)
 
     /// <summary>
@@ -1372,5 +1384,6 @@ module DotNetFwk =
                         None
             )
             |> function | Some x -> x | None -> file
-            
-        CommonLib.memoize lookupFile
+
+        let files = System.Collections.Concurrent.ConcurrentDictionary<string, Lazy<string>>()
+        fun file -> cached files file lookupFile

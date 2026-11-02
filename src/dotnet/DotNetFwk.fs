@@ -1,7 +1,6 @@
 ﻿namespace Xake.Dotnet
 
 open Xake
-open Xake.ProcessExec
 open Xake.Tasks
 open System.IO
 
@@ -50,7 +49,7 @@ module internal PkgConfig =
         // stdout only -- a diagnostic on stderr must not become the value
         let takeFirst s = if Option.isNone outp.Value then outp.Value <- Some s
         try
-            pexecSync takeFirst ignore "pkg-config" (args |> String.concat " ") [] None |> ignore
+            ProcessExec.pexecSync takeFirst ignore "pkg-config" (args |> String.concat " ") [] None |> ignore
             outp.Value |> Option.defaultValue ""
         with _ ->
             ""
@@ -58,7 +57,7 @@ module internal PkgConfig =
     /// Runs pkg-config and returns true when it succeeds.
     let private pkgConfigBool args =
         try
-            0 = pexecSync ignore ignore "pkg-config" (args |> String.concat " ") [] None
+            0 = ProcessExec.pexecSync ignore ignore "pkg-config" (args |> String.concat " ") [] None
         with _ ->
             false
 
@@ -415,7 +414,7 @@ module DotNetFwk =
             let diagnostics = Tool.DiagnosticLog Level.Verbose
             let classify line = diagnostics.Level line |> ignore
             let exitCode =
-                try pexecSync classify classify "dotnet" args [ "NUGET_PACKAGES", root ] (Some dir)
+                try ProcessExec.pexecSync classify classify "dotnet" args [ "NUGET_PACKAGES", root ] (Some dir)
                 with _ -> -1
             if exitCode <> 0 then
                 failwith (restoreFailure root exitCode project [ packageId, version ] + diagnostics.Summary)
@@ -480,7 +479,7 @@ module DotNetFwk =
                 let onErr (line: string) = lock allOutput (fun () -> allOutput.Add line)
                 let workDir = if Directory.Exists projectRoot then Some projectRoot else None
                 let exitCode =
-                    try pexecSync onOut onErr host "--version" [] workDir
+                    try ProcessExec.pexecSync onOut onErr host "--version" [] workDir
                     with _ -> -1
                 let newestName = newest |> Option.map Path.GetFileName |> Option.defaultValue "none"
                 let printed =
@@ -735,7 +734,7 @@ module DotNetFwk =
             let path = Path.GetTempPath() </> (sprintf "xake-%s-%x%s" name (hash (host + args) &&& 0xffffff) ext)
             File.WriteAllText (path, text)
             if not Env.isWindows then
-                pexecSync ignore ignore "chmod" (sprintf "+x \"%s\"" path) [] None |> ignore
+                ProcessExec.pexecSync ignore ignore "chmod" (sprintf "+x \"%s\"" path) [] None |> ignore
             path
 
         /// The compilers always come from the SDK; only the reference assemblies differ

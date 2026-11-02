@@ -1,5 +1,8 @@
-// common tasks
-module internal Xake.ProcessExec
+/// Low-level process plumbing: start an external process, stream its output, return the exit
+/// code. Public for task libraries (Xake.Dotnet uses `pexecSync` for tool probing outside
+/// recipes); build scripts use the `shell`/`sh` tasks instead. Stable within 4.x.
+[<RequireQualifiedAccess>]
+module Xake.ProcessExec
 
 open System.Diagnostics
 open System.Threading.Tasks

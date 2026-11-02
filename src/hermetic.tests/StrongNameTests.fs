@@ -37,7 +37,7 @@ type ``Strong name``() =
             sprintf "\"%s\" /nologo /noconfig /nostdlib+ /target:library /deterministic+ /keyfile:\"%s\" /reference:\"%s\" /out:\"%s\" \"%s\""
                 cscDll snkPath netstandardDll outDll src
 
-        // a plain Process rather than the engine's ProcessExec, which is internal to Xake
+        // a plain Process: the fixture needs no engine plumbing
         let psi = Diagnostics.ProcessStartInfo ("dotnet", args, WorkingDirectory = dir, UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true)
         // no msbuild node left holding the redirected output (ReadToEnd would wait for it)
         psi.Environment.["MSBUILDDISABLENODEREUSE"] <- "1"

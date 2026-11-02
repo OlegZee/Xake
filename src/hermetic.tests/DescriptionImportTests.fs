@@ -68,7 +68,7 @@ type ``Description import``() =
             Assert.That(core.Sources, Is.EqualTo compileItems)
             Assert.That(core.Sources |> List.take 3, Is.EqualTo [ "Prelude.fs"; "Logging.fs"; "Pickler.fs" ])
             Assert.That(core.Sources, Does.Contain "Tasks/Cp.fs")
-            Assert.That(core.InternalsVisibleTo |> List.map (fun f -> f.Name), Is.EqualTo [ "Xake.Dotnet"; "tests" ])
+            Assert.That(core.InternalsVisibleTo |> List.map (fun f -> f.Name), Is.EqualTo [ "tests" ])
             Assert.That(core.Package, Is.EqualTo None, "IsPackable is false")
             Assert.That(dotnet.Name, Is.EqualTo "Xake.Dotnet")
             Assert.That(dotnet.Sources |> List.head, Is.EqualTo "Tool.fs")

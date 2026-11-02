@@ -12,6 +12,7 @@ package for the repository `OlegZee/Xake.Dotnet`, shipped there as ONE package `
 | PR | Repo | Branch | Worktree | Status |
 |----|------|--------|----------|--------|
 | — D1 design note | Xake | `feature/dotnet-split` (from `dev`) | `.claude/worktrees/feature/dotnet-split` | brief revised for one package, not pushed |
+| — S1 seam | Xake | `feature/dotnet-seam (#122)` (from `dev`) | `.claude/worktrees/feature/dotnet-seam` | #122 open, CI running |
 
 ## State
 
@@ -30,7 +31,22 @@ package for the repository `OlegZee/Xake.Dotnet`, shipped there as ONE package `
   sequencing S1-S9, risks; §11 is now a "Decided" list with one small open point (breaking
   changes of the hermetic part under one version line).
 
+- 2026-11-02: S1 on `feature/dotnet-seam`. `ProcessExec` public (`RequireQualifiedAccess`,
+  names kept); `hasRule : string -> Recipe<ExecContext, bool>` in `ScriptFuncs` (resolved like
+  `need`, records no dependency), `CompilerRunner` uses it; `DotNetFwk` caches with
+  `ConcurrentDictionary<_, Lazy<_>>` (a failed computation is dropped, as with `memoize`; lookups
+  for different keys are no longer serialized by one lock); IVT `Xake.Dotnet` removed, no other
+  internal was in use (src/dotnet and src/hermetic build both TFMs with 0 warnings); hermetic
+  `Lock.fs` on `ExecContext.withLogger` (B4). The core description and the hermetic.tests fixture
+  lose `Xake.Dotnet` from `internalsVisibleTo`.
+- Open in S1: the fsc locks are not refreshed. `update-locks -d LOCK_REFRESH=Xake` on this machine
+  (only SDK 10.0.403 installed) moves the compiler in all locks from 10.0.402 to 10.0.403, while
+  `build.yml` pins 10.0.402; reverted. Without the refresh `build.fsc.fsx check` fails (the core
+  description and the `Xake` lock changed with the IVT). Needs either a machine with SDK 10.0.402
+  or a decision to move the pin to 10.0.403 (locks + `build.yml` in the same PR).
+
 ## Next step
 
-The note is revised for one package; the next step is the owner's approval of the note. Then S1,
-the seam PR on `dev` (branch `feature/dotnet-seam`), independent of the pattern module.
+S1: refresh the fsc locks (`import`, `update-locks -d LOCK_REFRESH=Xake`, `build check -d NUGET_FETCH=on`)
+the pin moved to 10.0.403 in #122 (as on feature/patterns2); PR #122 open against `dev`, CI running.
+After the merge: S3 (`v4.0.0-preview.1`).

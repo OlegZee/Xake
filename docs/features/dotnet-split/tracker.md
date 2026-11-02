@@ -7,7 +7,7 @@ rows: D1 = this brief, D2 = S5, D3 = S6-S8.
 |---|---|---|
 | D1 | design note: seam, one-package layout, versioning, build/CI, old repo, sequencing | revised (S-D1, S-D2 applied); owner approval open |
 | A0 | owner approves the revised note | open |
-| S1 | Xake: `ProcessExec` public, `hasRule`, `memoize` -> local cache, IVT `Xake.Dotnet` removed, hermetic `Lock.fs:1584` -> `withLogger` (B4) | not started; waits for A0; can merge before the pattern module |
+| S1 | Xake: `ProcessExec` public, `hasRule`, `memoize` -> local cache, IVT `Xake.Dotnet` removed, hermetic `Lock.fs:1584` -> `withLogger` (B4) | #122 open 2026-11-02; fsc locks refreshed, SDK pin 10.0.403 |
 | S2 | Xake.Dotnet: tag `legacy-1.x`, delete `feature/refactoring-core` (owner) | not started |
 | S3 | Xake: tag `v4.0.0-preview.1` | waits for S1 |
 | S4 | Xake.Dotnet: scaffold + rehearsal history import, one-package `build.fsx`, testjobs, workflows (incl. windows leg) on the preview | waits for S3 |

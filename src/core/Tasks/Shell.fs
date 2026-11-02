@@ -2,7 +2,6 @@
 
 open Xake
 open Xake.Env
-open Xake.ProcessExec
 
 [<AutoOpen>]
 module ShellImpl =
@@ -120,7 +119,7 @@ module ShellImpl =
 
         let! exitCode = async {
             try
-                return! pexec handleStd handleErr cmd args opts.EnvVars opts.WorkingDir
+                return! ProcessExec.pexec handleStd handleErr cmd args opts.EnvVars opts.WorkingDir
             finally
                 for _, _, d in sinks do d |> Option.iter (fun dispose -> dispose ())
         }

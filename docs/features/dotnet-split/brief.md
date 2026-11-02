@@ -305,14 +305,7 @@ Decided (details in "Decisions" below):
   tag prefix `v*`; `Xake.Hermetic.Dotnet` ends at 0.10.0, deprecated and unlisted; rule B void;
   hermetic marked "API may change".
 
-Still open:
-
-1. **Breaking changes in the hermetic part under one version line** (§5): proposed as a minor
-   bump with a release-notes line, since the part is marked "API may change". Alternative:
-   treat them as majors like the rest (no exception). Needs one word from the owner; nothing in the
-   sequencing waits for it.
-
-The remaining step is the owner's approval of the note, then S1.
+Nothing is open: S-D3 closed the last question. The note was approved by merging #121; S1 is #122.
 
 ## Decisions (2026-11-01 onwards)
 
@@ -329,3 +322,6 @@ The remaining step is the owner's approval of the note, then S1.
   the hermetic nuspec check and the second bootstrap `#r` go away; the hermetic part is marked
   "API may change" in the readme until it settles. Rationale: hermetic has no external package
   dependencies, and 12/12 hermetic releases were paired with Xake anyway.
+- **S-D3 (2026-11-02): breaking changes in the hermetic part are a minor bump** with a
+  release-notes line while the part is marked "API may change"; once that mark is removed (first
+  stable hermetic API), they are majors like the rest of the package.

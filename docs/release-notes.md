@@ -128,6 +128,14 @@ Details: [tasks.md](tasks.md#script-variables).
   also takes the environment (without `envVar`, `XAKE__NUGET_PACKAGES`). Importing changes no value; a target built before the import
   rebuilds once (its dependency records the default).
 
+**Public seam for task libraries** (Xake.Dotnet uses public engine API only; no
+`InternalsVisibleTo` to it):
+
+- **New: `hasRule : string -> Recipe<ExecContext, bool>`**: whether a rule of the script would
+  build a target (the name resolved as `need` resolves it), without building it.
+- **`Xake.ProcessExec` is public** (`RequireQualifiedAccess`): `pexec`, `pexecSync`,
+  `drainTimeoutMs`, low-level process plumbing for libraries; scripts use `shell`/`sh`.
+
 ## 3.15.0 (2026-10-29)
 
 - **The published version is the tag.** `v3.15.0` goes to nuget.org as `3.15.0`, no longer with

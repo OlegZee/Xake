@@ -83,7 +83,7 @@ module Sign =
     /// the script's. Keeping it in the settings is what lets the executor derive the input the
     /// same way the body would -- it needs it *before* any body runs, to compute the identity.
     type Settings = {
-        /// rule mask for the signed output, e.g. `"signed/(name:*).(ext:dll|exe|nupkg)"`
+        /// rule mask for the signed output, e.g. `"signed/(name:*).(ext:{dll,exe,nupkg})"`
         Target: string
         /// signed target path -> the file to sign
         Input: string -> string

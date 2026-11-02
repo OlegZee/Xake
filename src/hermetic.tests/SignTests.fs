@@ -42,7 +42,7 @@ type ``Sign delegated``() =
     /// `runScript` states the same values through `sign {}`.
     let settings =
         { Sign.Settings.Default with
-            Target = "signed/(name:*).(ext:dll|exe|nupkg)"
+            Target = "signed/(name:*).(ext:{dll,exe,nupkg})"
             Input = fun t -> Path.Combine (outDir, Path.GetFileName t)
             Certificate = Sign.Thumbprint "cc4967777c49a3ff"
             TimestampServer = Some "http://timestamp.invalid/rfc3161"
@@ -95,7 +95,7 @@ type ``Sign delegated``() =
         RulesBuilder options {
             rules [
                 sign {
-                    target "signed/(name:*).(ext:dll|exe|nupkg)"
+                    target "signed/(name:*).(ext:{dll,exe,nupkg})"
                     input (fun t -> Path.Combine (outDir, Path.GetFileName t))
                     certificate (Sign.Thumbprint "cc4967777c49a3ff")
                     timestamp "http://timestamp.invalid/rfc3161"

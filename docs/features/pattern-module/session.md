@@ -38,6 +38,9 @@ leave it alone.
 
 ## Next step
 
+Fresh session: read `next-session.md` in this folder (hand-off of 2026-11-03).
+
+
 Phase 4a: #123 open; the owner confirms D43 and reviews. Then Phase 4b (Fileset scanning on `PatternScan`), launched after #123 merges.
 (`--repo OlegZee/Xake`). Then Phase 4b (D42): `Fileset` scanning on `PatternScan`, delete the
 3.x part matcher, hermetic's direct mask uses, the mask items of the release notes.

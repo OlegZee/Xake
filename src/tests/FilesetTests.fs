@@ -261,3 +261,18 @@ let ``benchmark: '**/*.cs' with dot-folder, bin and obj excludes``() =
         time "**/*.cs !**/.*/**/*" (!! "**/*.cs" -- "**/.*/**/*")
         time "**/*.cs !bin/**/* !obj/**/*" (!! "**/*.cs" -- "bin/**/*" -- "obj/**/*")
         time "**/*.cs !**/.*/**/* !bin !obj" (!! "**/*.cs" -- "**/.*/**/*" -- "bin/**/*" -- "obj/**/*")
+        // the pattern module's walker (PR 4) on the same filesets
+        let walk name (fileset: (Xake.PatternAst.MaskRole * string) list) =
+            let scan () = Xake.PatternScan.scan (OperatingSystem.IsWindows()) root fileset
+            scan () |> ignore // warm-up
+            let sw = Diagnostics.Stopwatch.StartNew ()
+            let runs = 5
+            let mutable count = 0
+            for _ in 1 .. runs do count <- (scan ()).Files.Length
+            TestContext.Progress.WriteLine (sprintf "walker %-33s %5d files  %8.1f ms/expansion" name count (sw.Elapsed.TotalMilliseconds / float runs))
+        let inc m = Xake.PatternAst.MaskRole.Include, m
+        let exc m = Xake.PatternAst.MaskRole.Exclude, m
+        walk "**/*.cs" [ inc "**/*.cs" ]
+        walk "**/*.cs !**/.*/**/*" [ inc "**/*.cs"; exc "**/.*/**/*" ]
+        walk "**/*.cs !bin/**/* !obj/**/*" [ inc "**/*.cs"; exc "bin/**/*"; exc "obj/**/*" ]
+        walk "**/*.cs !**/.*/**/* !bin !obj" [ inc "**/*.cs"; exc "**/.*/**/*"; exc "bin/**/*"; exc "obj/**/*" ]

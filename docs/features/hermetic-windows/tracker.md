@@ -24,6 +24,7 @@ One line per item.
 - [x] PR5 satellites: deferred, S71 stays closed (roadmap)
 - [x] bootstrap bump build.fsx / build.fsc.fsx to 3.13.0.43 / 0.8.0.44
 - [x] Delivered: #93, #94, #95, #96, #97; releases v3.13.0 (3.13.0.43), hermetic-v0.8.0 (0.8.0.44); series closed 2026-10-27
+- [x] Windows CI leg (#120): the 7 first-run failures fixed test-side (CRLF fixtures, native separators, async file log, hard-coded log path); none excluded
 - Backlog (roadmap, "Backlog from the Windows findings"):
   - [ ] `Import.RecordOptions.Environment` / `Project.ImportOptions.Environment`
   - [ ] Floor check through the SDK probe + `MSBuild.deps.json` (`sdkDir` public in the core)

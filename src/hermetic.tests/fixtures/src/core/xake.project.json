@@ -12,6 +12,7 @@
     "Env.fs",
     "PatternAst.fs",
     "PatternMatch.fs",
+    "PatternScan.fs",
     "Path.fs",
     "PathExt.fs",
     "File.fsi",

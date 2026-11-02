@@ -20,6 +20,9 @@ type ``Composed compilation from a description``() =
         Directory.CreateDirectory (Path.GetDirectoryName (Path.GetFullPath path)) |> ignore
         File.WriteAllText (path, text)
 
+    /// A path with `/` separators: the composed paths are native (`\` on Windows).
+    let slash (path: string) = path.Replace ('\\', '/')
+
     let runDotnet (workDir: string) (args: string list) =
         let psi = ProcessStartInfo ("dotnet")
         // no msbuild node left holding the redirected output (ReadToEnd would wait for it)
@@ -259,7 +262,7 @@ app.Run();
                 }
             ]
         }
-        Assert.That(resolved.Value.Value.Args |> List.exists (fun a -> a.EndsWith "out/core/Core.dll"), Is.True)
+        Assert.That(resolved.Value.Value.Args |> List.exists (fun a -> (slash a).EndsWith "out/core/Core.dll"), Is.True)
 
     [<Test>]
     member x.``a culture-specific resource and a language mismatch are rejected``() =
@@ -357,18 +360,18 @@ app.Run();
         Assert.That(d, Does.Contain "/deterministic+")
         Assert.That(d, Does.Contain "/langversion:9.0")
         Assert.That(d, Does.Contain "/nowarn:1701,1702,CS0168")
-        Assert.That(d |> List.exists (fun a -> a.StartsWith "/doc:" && a.EndsWith "out/ovr/Ovr.xml"), Is.True)
+        Assert.That(d |> List.exists (fun a -> a.StartsWith "/doc:" && (slash a).EndsWith "out/ovr/Ovr.xml"), Is.True)
         Assert.That(d |> List.exists (fun a -> a.StartsWith "/reference:" && a.EndsWith "System.Net.Http.dll"), Is.True)
-        Assert.That(d |> List.exists (fun a -> a.StartsWith "/reference:" && a.EndsWith "ovr/Vendor/Vendor.dll"), Is.True)
-        Assert.That(described.Value.Value.Sources |> List.exists (fun s -> s.EndsWith "ovr/A.cs"), Is.True)
-        Assert.That(described.Value.Value.Directory.TrimEnd('/'), Does.EndWith "ovr")
+        Assert.That(d |> List.exists (fun a -> a.StartsWith "/reference:" && (slash a).EndsWith "ovr/Vendor/Vendor.dll"), Is.True)
+        Assert.That(described.Value.Value.Sources |> List.exists (fun s -> (slash s).EndsWith "ovr/A.cs"), Is.True)
+        Assert.That((slash described.Value.Value.Directory).TrimEnd('/'), Does.EndWith "ovr")
 
         let o = overridden.Value.Value
         Assert.That(o.Args, Does.Contain "/target:library")
         Assert.That(o.Args |> List.exists (fun a -> a.Contains "FROM_DESCRIPTION"), Is.False)
         Assert.That(o.Args |> List.exists (fun a -> a.StartsWith "/define:" && a.Contains "FROM_BLOCK" && a.Contains "NETSTANDARD"), Is.True)
-        Assert.That(o.Sources |> List.exists (fun s -> s.EndsWith "ovr/Other.cs"), Is.True)
-        Assert.That(o.Sources |> List.exists (fun s -> s.EndsWith "ovr/A.cs"), Is.False)
+        Assert.That(o.Sources |> List.exists (fun s -> (slash s).EndsWith "ovr/Other.cs"), Is.True)
+        Assert.That(o.Sources |> List.exists (fun s -> (slash s).EndsWith "ovr/A.cs"), Is.False)
         // the block's switches come after the description's: the compiler takes the last one
         let index (a: string) = o.Args |> List.findIndex ((=) a)
         Assert.That(index "/langversion:latest", Is.GreaterThan (index "/langversion:9.0"))

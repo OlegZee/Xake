@@ -28,6 +28,18 @@ type ``Csc compiler server``() =
             Server = Some server
     }
 
+    /// The file log of a run once it holds the traced command line: the file logger appends
+    /// asynchronously after the run returns (Windows refuses a read while it appends).
+    let tracedLog (label: string) =
+        let read () = try Some (File.ReadAllText (label + ".log")) with :? IOException -> None
+        let deadline = System.DateTime.Now.AddSeconds 10.0
+        let rec poll () =
+            match read () with
+            | Some text when text.Contains "/deterministic" -> text
+            | _ when System.DateTime.Now < deadline -> System.Threading.Thread.Sleep 50; poll ()
+            | other -> defaultArg other ""
+        poll ()
+
     member private x.Build (label: string) (settings: CscSettingsType) =
         xake {x.TestOptions with FileLog = label + ".log"; FileLogLevel = Verbosity.Diag; ThrowOnError = true} {
             want ([label])
@@ -52,8 +64,8 @@ type ``Csc compiler server``() =
 
         // the switch went to the compiler in one run and not the other (the command line is
         // traced at Debug)
-        let inprocLog = File.ReadAllText "server-inproc.log"
-        let sharedLog = File.ReadAllText "server-shared.log"
+        let inprocLog = tracedLog "server-inproc"
+        let sharedLog = tracedLog "server-shared"
         Assert.That(sharedLog, Does.Contain "/shared", "the shared run did not pass /shared")
         Assert.That(sharedLog, Does.Contain "/keepalive:120")
         Assert.That(inprocLog, Does.Not.Contain "/shared", "the in-process run passed /shared")
@@ -112,10 +124,10 @@ type ``Csc compiler server``() =
 
         build "server-var-off" "off"
         Assert.That(File.Exists "ServerVar.dll", Is.True, "csc did not produce ServerVar.dll")
-        Assert.That(File.ReadAllText "server-var-off.log", Does.Not.Contain "/shared", "CSC_SERVER=off still passed /shared")
+        Assert.That(tracedLog "server-var-off", Does.Not.Contain "/shared", "CSC_SERVER=off still passed /shared")
 
         build "server-var-on" "90"
-        let onLog = File.ReadAllText "server-var-on.log"
+        let onLog = tracedLog "server-var-on"
         Assert.That(onLog, Does.Contain "/shared", "CSC_SERVER=90 did not pass /shared")
         Assert.That(onLog, Does.Contain "/keepalive:90")
 

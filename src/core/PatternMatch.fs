@@ -154,8 +154,8 @@ type private Compiled =
       Groups: (string * int) list
       Xp119: int list }
 
-/// '\' in a path is a separator in Windows mode only (D37).
-let private normalize (windows: bool) (path: string) = if windows then path.Replace('\\', '/') else path
+/// '\' in a path is a separator in Windows mode only (D37); the walker's `/` spelling of a path.
+let normalize (windows: bool) (path: string) = if windows then path.Replace('\\', '/') else path
 
 let private isAbsolute (tokens: Token list) =
     match tokens with
@@ -246,3 +246,9 @@ let matchMask (windows: bool) (baseDir: string) (mask: string) (path: string) (i
     match get PatternContext.Mask mask baseDir windows with
     | None -> false
     | Some c -> c.IsDirectory = isDirectory && c.Regex.IsMatch(normalize windows path)
+
+/// `matchMask` with the cache lookup done once: the walker's per-entry test (PatternScan).
+let maskMatcher (windows: bool) (baseDir: string) (mask: string) : string -> bool -> bool =
+    match get PatternContext.Mask mask baseDir windows with
+    | None -> fun _ _ -> false
+    | Some c -> fun path isDirectory -> c.IsDirectory = isDirectory && c.Regex.IsMatch(normalize windows path)

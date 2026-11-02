@@ -31,7 +31,7 @@ type ``Testing Rm``() =
     member x.``Rm deletes files by mask``() =
 
         do xake x.TestOptions {
-            filelog "c:\\!\\logggg" Diag
+            filelog "rm-mask.log" Diag
             rules [
                 "main" => action {
                     do! need ["samplefile"; "samplefile1"]

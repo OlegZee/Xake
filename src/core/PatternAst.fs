@@ -52,6 +52,12 @@ type PatternContext = Rule | Mask
 [<RequireQualifiedAccess>]
 type MaskRole = Include | Exclude
 
+/// The use of a mask role as the warning registry keys it (7.3): "include" | "exclude".
+let roleUsage (role: MaskRole) : string =
+    match role with
+    | MaskRole.Include -> "include"
+    | MaskRole.Exclude -> "exclude"
+
 /// One parse-time warning part (spec 7.3).
 type Issue = { Code: string; Text: string }
 
@@ -754,6 +760,12 @@ module Warnings =
         if not (List.isEmpty issues) && seen.TryAdd(usage + "\n" + pattern, true) then
             emit (format usage pattern issues)
 
+    /// An evidence or evaluation warning (XP104, XP113, XP114, XP119, XP120): one more line for
+    /// the key (use, pattern), at most once per code (7.3).
+    let internal reportEvidence (usage: string) (pattern: string) (issue: Issue) =
+        if seen.TryAdd(usage + "\n" + pattern + "\n" + issue.Code, true) then
+            emit (format usage pattern [ issue ])
+
 // =================================================================================================
 // Parsing entry points (spec 8.2, D9, D34)
 // =================================================================================================
@@ -802,8 +814,7 @@ module Mask =
     let check (role: MaskRole) (pattern: string) : unit =
         match parseIn PatternContext.Mask pattern with
         | Result.Ok _ ->
-            let usage = match role with MaskRole.Include -> "include" | MaskRole.Exclude -> "exclude"
-            Warnings.report usage pattern (warnings role pattern)
+            Warnings.report (roleUsage role) pattern (warnings role pattern)
         | Result.Error e -> raiseError e
 
 // =================================================================================================

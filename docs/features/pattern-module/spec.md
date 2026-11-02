@@ -798,7 +798,10 @@ An include is walked from its anchor (base dir, or the root of an absolute mask)
 1. The **literal prefix** (segments before the first non-literal one, `.`/`..` resolved) is
    joined without listing.
 2. For each following segment:
-   - literal: probe (6.2);
+   - literal: probe (6.2), unless the directory is listed anyway for another continuation (a
+     globstar or a wildcard segment applying there): then the literal is matched against that
+     listing with the comparer and takes the disk's spelling (`**/b.cs` in Unix mode does not
+     find `Lib/B.cs` on a case-insensitive volume; vectors SC-227, SC-228; 8.6);
    - one-segment pattern (`*`, `?`, class, literal parts, braces without `/`): list the
      directory (subdirectories for a middle segment, files for the last one, subdirectories for
      a last segment followed by the trailing `/`), and keep the names the segment's matcher
@@ -819,7 +822,8 @@ An include is walked from its anchor (base dir, or the root of an absolute mask)
 5. **Evidence checks** for the legacy warnings (7.3) piggyback on the walk and cost nothing when
    the mask has no legacy-sensitive spelling: XP104 (a listed entry's name equals the literal
    reading of a `[...]`/`{...}` segment), XP113 (a `dir/**` include yields a result, or a
-   `dir/**` exclude removes one), XP114 (a `*.*` segment rejects a listed name without `.`).
+   `dir/**` exclude removes one or prunes a directory an earlier include would enter and that
+   is non-empty for it, D41), XP114 (a `*.*` segment rejects a listed name without `.`).
    XP120 is checked once per fileset evaluation (6.2).
 
 ### 6.4 The OS listing's role
@@ -969,7 +973,8 @@ and dotfiles on macOS; the walker must not use it (9.5).
   never triggers a rebuild.
 - An unreadable directory met during a walk is skipped and reported once per directory as a
   build-log warning (in 3.x an `UnauthorizedAccessException` ends the build). A missing base
-  directory gives an empty list (`failonempty` turns it into an error).
+  directory gives an empty list (`failonempty` turns it into an error); so does a base that is a
+  file (vector SC-025), with no warning.
 
 ### 6.7 Implementation notes from the measurements
 
@@ -1076,7 +1081,7 @@ names the 3.x meaning and the replacement.
 | XP106 | `[c]` where 3.x read literal text (include, exclude literal segment) | parse | `'[1]' matches the single character '1' from Xake 4.0; Xake 3.x read the literal text '[1]'; write \[1\] for the brackets, or 1 for the character` |
 | XP110 | `\` used as a separator | parse | `'\' as a path separator is deprecated and is only an escape from Xake 5.0; use '/'` |
 | XP112 | rule: segment-local `**` | parse | `'a**b' matches within one segment from Xake 4.0, like 'a*b'; in Xake 3.x it crossed '/'; write '*' for one segment, or '/**/' between segments for any depth` |
-| XP113 | mask ending in `/**` | evidence: an include yields a result, an exclude removes a file | `'dir/**' is every file below 'dir' from Xake 4.0; in Xake 3.x an include listed the directories below 'dir' and an exclude matched nothing; write 'dir/**/' for the directories` |
+| XP113 | mask ending in `/**` | evidence: an include yields a result, an exclude removes a file or prunes a directory non-empty for an earlier include (D41) | `'dir/**' is every file below 'dir' from Xake 4.0; in Xake 3.x an include listed the directories below 'dir' and an exclude matched nothing; write 'dir/**/' for the directories` |
 | XP114 | include: `*.*` segment | evidence: a listed name without `.` is rejected | `'*.*' needs a '.' in the name from Xake 4.0; Xake 3.x also listed '<name>'; write '*' for every name` |
 | XP117 | `[!a]` in a rule or an exclude wildcard segment | parse | `'[!a]' is a negated class (any character but 'a') from Xake 4.0; in Xake 3.x it was a class of '!' and 'a'; write [^a] for "not a" (same meaning in 3.x and 4.0), or [a!] for the 3.x meaning` |
 | XP119 | rule: a globstar before a separator | evidence: a rule match where it took zero directories | `'**/' matched zero directories for '<target>'; in Xake 3.x '**/' in a rule needed at least one directory, so this rule did not match it; to require one or more directories write '*/**/' (with a capture: '(path:*/**)/')` |
@@ -1246,6 +1251,85 @@ val regexText  : PatternContext -> text: string -> anchor: string -> windows: bo
   `Compiled`, masks interpreted (PR 4 decides for the walker). No fast paths yet. Measured:
   the 236 rule vectors in both modes, 100 passes (47 200 matches): 57 ms cached, after a
   169 ms first pass that compiles.
+
+### 8.6 PR 4 API notes (the implemented walker)
+
+What PR 4 implements (new internal `src/core/PatternScan.fs`, after `PatternMatch.fs`); the
+engine's `Fileset` keeps its 3.x scanner until Phase 4 (D31):
+
+```fsharp
+// Xake.PatternScan (internal)
+type ScanNote    = LinkSkipped of dir: string | Unreadable of dir: string
+type ScanWarning = { Code: string; Use: string; Pattern: string; Text: string }
+type ScanResult  = { Files: string list; Warnings: ScanWarning list; Notes: ScanNote list }
+val scan           : windows: bool -> baseDir: string -> fileset: (MaskRole * string) list -> ScanResult
+val reportWarnings : ScanResult -> unit
+
+// Xake.PatternMatch (internal), added
+val maskMatcher : windows: bool -> baseDir: string -> mask: string -> (string -> bool -> bool)
+// Xake.PatternAst.Warnings (internal), added
+val reportEvidence : usage: string -> pattern: string -> Issue -> unit
+```
+
+- `scan` evaluates the ordered elements as `toFileList` will (6.3) and raises
+  `PatternException` when a mask does not parse (every mask is parsed before the walk). `Files`
+  are full paths: the base directory as passed (or the absolute mask's root), probed segments in
+  the mask's spelling, listed names in the disk's, joined with the OS separator; a directory
+  (trailing-`/` include) has no trailing separator. `Warnings` and `Notes` are those of this one
+  evaluation (once per (code, use, pattern), once per directory). `reportWarnings` sends the
+  warnings through the process-wide registry of 7.3 (`reportEvidence`: key (use, pattern),
+  once per code); logging the notes (Message for `LinkSkipped`, Warning for `Unreadable`) is the
+  engine's, in Phase 4. Phase 4 passes `windows = not Env.isUnix`.
+- The walk: the mask's root is split off, braces holding `/` or a globstar are expanded, and the
+  alternatives are walked together from their anchor as a set of continuations (the remaining
+  segments, interned), so one directory is read once and the union comes out in tree order
+  (SC-044). A globstar adds the rest of the mask at its own directory; ending a file mask it is
+  `*` here and `**` below (5.5).
+- **Probe or listing** (reading of 6.3 step 2 forced by SC-227/SC-228): a directory is listed
+  when any continuation at it has a wildcard or globstar head; every head there, literal ones
+  included, is then decided by the matcher against the listing, so a literal after `**` takes
+  the comparer and the disk's spelling (`**/b.cs` does not find `Lib/B.cs` in Unix mode on a
+  case-insensitive volume, and finds it spelled `B.cs` in Windows mode). A directory whose
+  continuations all have literal heads is not listed: each literal is probed (`File.Exists` for a
+  last file segment, `Directory.Exists` otherwise) and keeps the mask's spelling (D25).
+- Listing: `DirectoryInfo.EnumerateFileSystemInfos(filter)` (legacy overload, dotfiles
+  included, no attribute filtering, D10, D33), sorted with `String.CompareOrdinal`, files of a
+  directory before its subdirectories. The filter is the segment itself only when it is the
+  only head at the directory and holds just `*`, `?` and ASCII letters, digits, `. _ - +` and
+  space, and not `*.*` (XP114 needs the dotless names); `"*"` otherwise, and always `"*"` in
+  Windows mode on a Unix host (a case-sensitive OS filter is not a superset there).
+- Links: a subdirectory with `FileAttributes.ReparsePoint` is not entered by globstar
+  recursion (`LinkSkipped` once per directory); a one-segment pattern or a literal enters it.
+- Unreadable: `UnauthorizedAccessException`, `IOException` or `SecurityException` from a listing
+  logs the directory (`DirectoryNotFoundException`, or any `IOException` for a path that is not
+  a directory, such as a base that is a file, is silent: an empty list, SC-025); a
+  probe that answers false is checked with `File.GetAttributes`, and an
+  `UnauthorizedAccessException` logs the directory being probed in (D39, SC-275: `locked`).
+- Pruning (6.3 step 3): `P/` prunes for every include; `P/**` and `P/**/*` prune for file
+  includes only (a directory result is not removed by a file mask). Every one prunes
+  unconditionally (D41, reversing the gated reading of D40.3); when several cover a directory,
+  the first in fileset order is the one that prunes. A `P/**` exclude's XP113 is derived, not
+  gated: it warns when it removes a found file, or when it prunes a directory the include would
+  enter and one listing of that directory (not logged, not recursive) shows an entry the
+  include's continuations there accept: a file a head matches, or a subdirectory a head
+  matches or a globstar would enter (SC-122: `dir` holds `sub`; SC-159: the code review's
+  `[**/*.cs; -**/*.cs; **/*.txt; -obj/**]`, where a gate set by the first include hid the
+  evidence for the third). No listing is made once the exclude has warned.
+- Evidence (7.3): XP104 when a listed name equals the 3.x literal reading of a wildcard-free
+  segment holding a class (other than a one-character class) or braces (both `[^` and `[!`
+  spellings of a negated class), and for an exclude when a found path has such a segment
+  (relative to the base); XP113 when a `dir/**` include yields a file or a `dir/**` exclude
+  removes one; XP114 when a `*.*` segment rejects a listed name without `.`; XP120 when an
+  absolute exclude's literal prefix is neither below nor above the base directory and every
+  earlier include's literal prefix (an exclude whose prefix contains the base, `/**/obj/`, can
+  remove files, so "above" counts as overlap; the 6.2 wording names "below" only).
+- Matching a segment uses `maskMatcher windows "" <segment text>` (the cached, interpreted
+  regex of PR 3); a literal segment met in a listing is compared with the mode's comparer
+  (ordinal or ordinal-ignore-case, D11), no regex. Evidence texts are formatted only for the
+  first warning of a (code, use, pattern). Measured with the `FilesetTests` benchmark (1360
+  files, macOS, after the D41 changes): `**/*.cs` 4.1-4.5 ms (3.x) vs 4.6-5.0 ms (walker); with
+  `**/.*/**/*`, `bin/**/*`, `obj/**/*` excludes 13.0-14.1 ms vs 5.6-6.0 ms (pruning). No fast
+  paths.
 
 ## 9. Matcher implementation (non-normative)
 

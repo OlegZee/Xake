@@ -15,7 +15,9 @@
 - [x] PR 3 (matcher): SPEC? notes decided (D37); 3 vectors aligned with D37 (RM-078, RM-082, RM-104), RM-261 literal fixed (lone surrogates)
 - [x] PR 3 (matcher): `src/core/PatternMatch.fs` (regex from the AST, cached) + `format`/`formatMatches`/`checkOutputs` pass all 449 vectors; API notes in spec 8.5 (2026-11-01)
 - [ ] PR 3 (matcher): #119 open 2026-11-01 (`feature/pattern-matcher` → `feature/patterns2`); fsc descriptions/locks refreshed, SDK pin 10.0.403
-- [ ] PR 4 (scanner): fixture-tree vectors; walker
+- [x] PR 4 (scanner): fixture-tree vectors (308, 15 trees; D39 decides their SPEC? notes)
+- [x] PR 4 (scanner): `src/core/PatternScan.fs` walker passes every scanner vector (9 ignored for host needs on macOS); SC-275 aligned with D39, SC-214/SC-229 corrected (B.cs matches *.cs); API notes in spec 8.6; fsc descriptions/locks refreshed (2026-11-01)
+- [x] PR 4 (scanner): #120 code review fixes (2026-11-02): unconditional `P/**` pruning per D41, XP113 derived from the prune (one listing); base-is-a-file silent; literal segments by comparer; lazy evidence texts; shared `roleUsage`/`normalize`; SC-122 aligned with D41, SC-025 and SC-159 (tree T-PRUNE) added; spec 6.3/6.6/7.3/8.6
 - [ ] Phase 4: migrate rule matching and `Fileset` onto the module; compat corpus green; PR
 - [ ] Phase 4: release notes for behaviour changes and warnings
 - [ ] Phase 5: port the typed layer (#91, `Xake.Typed`); PR

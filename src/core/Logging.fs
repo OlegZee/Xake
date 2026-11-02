@@ -82,15 +82,37 @@ module SecretMask =
         if current.Length = 0 || isNull text then text
         else current |> Array.fold (fun (t: string) v -> if t.Contains v then t.Replace(v, Mask) else t) text
 
+type private FileLogMsg =
+    | Line of string
+    | FlushFile of AsyncReplyChannel<unit>
+
+/// Process-wide registry of live file-logger agents, keyed by full file name.
+/// A logger created for a file replaces the previous entry for that name.
+let private fileLoggers = System.Collections.Concurrent.ConcurrentDictionary<string, MailboxProcessor<FileLogMsg>>()
+
+let private fullName (name: string) =
+    try System.IO.Path.GetFullPath name with _ -> name
+
 let private createFileLogger fileName = 
     MailboxProcessor.Start(fun mbox -> 
         let rec loop() = 
             async { 
                 let! msg = mbox.Receive()
-                System.IO.File.AppendAllLines(fileName, [ msg ])
+                match msg with
+                | Line line ->
+                    try System.IO.File.AppendAllLines(fileName, [ line ]) with _ -> ()
+                | FlushFile ch -> ch.Reply()
                 return! loop()
             }
         loop())
+
+let private flushAgent timeoutMs (agent: MailboxProcessor<FileLogMsg>) =
+    try agent.PostAndTryAsyncReply (FlushFile, timeoutMs) |> Async.RunSynchronously |> ignore
+    with _ -> ()
+
+/// Waits (bounded) until every file logger has written the lines posted so far.
+let private flushFileLoggers () =
+    for agent in fileLoggers.Values |> Seq.toArray do flushAgent 2000 agent
 
 /// <summary>
 /// Creates a custom logger.
@@ -113,15 +135,26 @@ let CustomLogger filter writeFn =
 /// <param name="maxLevel"></param>
 let FileLogger name maxLevel = 
     let filterLevels = logFilter maxLevel
-    System.IO.File.Delete name
+    let key = fullName name
+    match fileLoggers.TryGetValue key with
+    | true, previous -> flushAgent 2000 previous
+    | _ -> ()
+    let rec tryDelete attempt =
+        try System.IO.File.Delete name
+        with :? System.IO.IOException when attempt < 5 ->
+            System.Threading.Thread.Sleep 50
+            tryDelete (attempt + 1)
+    // on persistent failure fall through: appending to the old file is better than failing the build
+    try tryDelete 0 with _ -> ()
     let logger = createFileLogger name
+    fileLoggers.[key] <- logger
     { new ILogger with
           member __.Log level format = 
               let write = 
                   match Set.contains level filterLevels with
                   | true -> 
                       SecretMask.apply >> sprintf "[%s] [%A] %s" (LevelToString level) 
-                          System.DateTime.Now >> logger.Post
+                          System.DateTime.Now >> Line >> logger.Post
                   | false -> ignore
               Printf.kprintf write format }
 
@@ -328,6 +361,7 @@ let FlushLogs () =
     try
         ConsoleSink.po.PostAndTryAsyncReply (ConsoleSink.Flush, 200) |> Async.RunSynchronously |> ignore
     with _ -> ()
+    flushFileLoggers ()
 
 /// Draws a progress bar to console log.
 let WriteConsoleProgress =

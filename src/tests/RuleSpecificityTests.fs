@@ -152,9 +152,9 @@ type RulePatternTests() =
 
     [<Test>]
     member x.``a rule built from the DU cases is checked when yielded``() =
-        throwsCode "XP003" (yielded x (FileRule ("{x", noop))) |> ignore
+        throwsCode "XP004" (yielded x (FileRule ("{x", noop))) |> ignore
         // the `rules` operation goes through the same check
-        throwsCode "XP003" (fun () -> box (xake x.TestOptions { rules [ FileRule ("{x", noop) ] })) |> ignore
+        throwsCode "XP004" (fun () -> box (xake x.TestOptions { rules [ FileRule ("{x", noop) ] })) |> ignore
 
     [<Test>]
     member x.``a regex alternation in a group points to braces``() =

@@ -368,3 +368,9 @@ fixes how much breaks. 3.12.0 is released (tag `v3.12.0`); nothing of this featu
   directory only once a found file is known to match it, so the XP113 evidence equals the
   unpruned result (SC-122). Vectors SC-214/229 were corrected on their own terms (`*.cs` matches
   `B.cs` ordinally; `lib/` does not exclude `Lib` in Unix mode).
+- **D41 (2026-11-02): D40 confirmed except (3), which is reversed.** A `P/**` exclude prunes
+  the directory unconditionally, like `P/**/*`; XP113 is derived from whether the exclude
+  removed a found file or pruned a directory the include had entered and that was non-empty for
+  it (one listing of the pruned directory), not from a gated prune state (code review of #120:
+  the shared gate silently dropped files across includes). D40 (1) literal-after-listing and
+  (2) no XP120 above the base stand.

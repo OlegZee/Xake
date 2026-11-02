@@ -242,7 +242,6 @@ module ScriptFuncs =
     /// <param name="targets">List of target names to demand</param>
     /// <returns>Phony rule that demands the specified targets</returns>
     let (<==) name targets =
-        checkRulePattern name
         PhonyRule (name, recipe {
             do! need targets
             do! alwaysRerun()   // always check demanded dependencies. Otherwise it wan't check any target is available
@@ -263,7 +262,6 @@ module ScriptFuncs =
     /// <param name="targets">List of target names to build sequentially</param>
     /// <returns>Phony rule that builds targets in sequence</returns>
     let (<<<) name targets =
-        checkRulePattern name
         PhonyRule (name, recipe {
             do! needSequentially targets
             do! alwaysRerun()

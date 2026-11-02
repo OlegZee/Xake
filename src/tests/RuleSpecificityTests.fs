@@ -136,32 +136,41 @@ type RulePatternTests() =
         StringAssert.Contains(code, e.Message)
         e.Message
 
-    [<Test>]
-    member _.``an invalid rule pattern fails when the rule is created``() =
-        // section 3 item 18: a group name starting with a digit
-        throwsCode "XP007" (fun () -> box ("src/(1:*).cs" ..> recipe { return () })) |> ignore
-        // item 22: a trailing '/'
-        throwsCode "XP011" (fun () -> box ("out/" ..> recipe { return () })) |> ignore
-        // item 3: '|' outside a group, phony too
-        throwsCode "XP003" (fun () -> box ("a|b" => recipe { return () })) |> ignore
-        throwsCode "XP003" (fun () -> box (target "x/(y" { return () })) |> ignore
-        throwsCode "XP003" (fun () -> box (command "cmd(1)" { return () })) |> ignore
+    // the check sits in XakeScriptBuilder.Yield: a rule is validated when it enters a script
+    let yielded (x: XakeTestBase) (rule: ExecContext Rule) () = box (xake x.TestOptions { yield rule })
 
     [<Test>]
-    member _.``a regex alternation in a group points to braces``() =
+    member x.``an invalid rule pattern fails when the rule enters the script``() =
+        // section 3 item 18: a group name starting with a digit
+        throwsCode "XP007" (yielded x ("src/(1:*).cs" ..> recipe { return () })) |> ignore
+        // item 22: a trailing '/'
+        throwsCode "XP011" (yielded x ("out/" ..> recipe { return () })) |> ignore
+        // item 3: '|' outside a group, phony too
+        throwsCode "XP003" (yielded x ("a|b" => recipe { return () })) |> ignore
+        throwsCode "XP003" (yielded x (target "x/(y" { return () })) |> ignore
+        throwsCode "XP003" (yielded x (command "cmd(1)" { return () })) |> ignore
+
+    [<Test>]
+    member x.``a rule built from the DU cases is checked when yielded``() =
+        throwsCode "XP003" (yielded x (FileRule ("{x", noop))) |> ignore
+        // the `rules` operation goes through the same check
+        throwsCode "XP003" (fun () -> box (xake x.TestOptions { rules [ FileRule ("{x", noop) ] })) |> ignore
+
+    [<Test>]
+    member x.``a regex alternation in a group points to braces``() =
         // item 4 (C3): the hermetic signing pattern of 3.x
-        let msg = throwsCode "XP003" (fun () -> box ("signed/(name:*).(ext:dll|exe|nupkg)" ..> recipe { return () }))
+        let msg = throwsCode "XP003" (yielded x ("signed/(name:*).(ext:dll|exe|nupkg)" ..> recipe { return () }))
         StringAssert.Contains("(ext:{dll,exe,nupkg})", msg)
         // ... and the 4.0 spelling is accepted
         "signed/(name:*).(ext:{dll,exe,nupkg})" ..> recipe { return () } |> ignore
 
     [<Test>]
-    member _.``multi-output rules check their named groups when created``() =
+    member x.``multi-output rules check their named groups when they enter the script``() =
         // item 31: outputs with different named groups (XP013)
-        throwsCode "XP013" (fun () -> box (["out/(cfg:*)/(name:*).dll"; "out/(cfg:*)/x.xml"] *..> recipe { return () })) |> ignore
-        throwsCode "XP013" (fun () -> box (targets ["out/(cfg:*)/(name:*).dll"; "out/(name:*).xml"] { return () })) |> ignore
+        throwsCode "XP013" (yielded x (["out/(cfg:*)/(name:*).dll"; "out/(cfg:*)/x.xml"] *..> recipe { return () })) |> ignore
+        throwsCode "XP013" (yielded x (targets ["out/(cfg:*)/(name:*).dll"; "out/(name:*).xml"] { return () })) |> ignore
         // item 32: braces outside a group cannot be named from a match (XP014)
-        throwsCode "XP014" (fun () -> box (["out/(name:*).{dll,pdb}"; "out/(name:*).xml"] *..> recipe { return () })) |> ignore
+        throwsCode "XP014" (yielded x (["out/(name:*).{dll,pdb}"; "out/(name:*).xml"] *..> recipe { return () })) |> ignore
         // positional bare wildcards pair by position (unchanged)
         ["dd/*.dll"; "dd/*.xml"] *..> recipe { return () } |> ignore
 

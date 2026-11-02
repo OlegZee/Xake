@@ -119,33 +119,16 @@ module XakeScript =
     /// Creates the rule for specified file pattern.
     let ( ..?> ) fn fnRule = FileConditionRule (fn, fnRule)
 
-    /// Parses a rule pattern when the rule is created (spec 7.1): raises
-    /// `PatternAst.PatternException` for an invalid pattern, logs its legacy-syntax warnings once.
-    let internal checkRulePattern (pattern: string) = PatternAst.Rule.check pattern
-
-    /// The check of a multi-output rule (spec 5.6): every output parses, and all of them have the
-    /// same named groups and nothing that cannot be filled in from a match (XP013, XP014).
-    let internal checkRuleOutputs (patterns: string list) =
-        patterns |> List.iter checkRulePattern
-        PatternAst.checkOutputs patterns
-
     /// Creates a file rule that maps a pattern to a recipe.
-    /// Raises PatternAst.PatternException for an invalid pattern.
     let ( ..> ) pattern actionBody =
-        checkRulePattern pattern
         FileRule (pattern, actionBody)
 
     /// Creates a multi-file rule from a sequence of patterns and a shared recipe.
-    /// Raises PatternAst.PatternException for an invalid pattern or outputs whose named groups differ.
     let ( *..> ) (patterns: #seq<string>) actionBody =
-        let patterns = patterns |> List.ofSeq
-        checkRuleOutputs patterns
-        MultiFileRule (patterns, actionBody)
+        MultiFileRule (patterns |> List.ofSeq, actionBody)
 
     /// Creates phony action (check if I can unify the operator name)
-    /// Raises PatternAst.PatternException for an invalid pattern.
     let (=>) name action =
-        checkRulePattern name
         PhonyRule (name, action)
 
     open WorkerPool

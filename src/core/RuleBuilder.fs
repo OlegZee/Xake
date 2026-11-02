@@ -7,10 +7,6 @@ module RuleBuilder =
 
     type RuleBuilder(ruleType: string, name: string, ?patterns: string list) =
         inherit RecipeBuilder()
-        // the patterns are parsed when the rule is created (spec 7.1)
-        do match ruleType, patterns with
-           | "targets", Some ps -> checkRuleOutputs ps
-           | _ -> checkRulePattern name
         member __.Run(expr: Recipe<ExecContext, unit>) =
             match ruleType with
             | "command" -> PhonyRule (name, recipe {

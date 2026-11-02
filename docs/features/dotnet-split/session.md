@@ -12,7 +12,7 @@ package for the repository `OlegZee/Xake.Dotnet`, shipped there as ONE package `
 | PR | Repo | Branch | Worktree | Status |
 |----|------|--------|----------|--------|
 | — D1 design note | Xake | `feature/dotnet-split` (from `dev`) | `.claude/worktrees/feature/dotnet-split` | brief revised for one package, not pushed |
-| — S1 seam | Xake | `feature/dotnet-seam (#122)` (from `dev`) | agent worktree | committed, not pushed |
+| — S1 seam | Xake | `feature/dotnet-seam (#122)` (from `dev`) | `.claude/worktrees/feature/dotnet-seam` | #122 open, CI running |
 
 ## State
 
@@ -48,5 +48,5 @@ package for the repository `OlegZee/Xake.Dotnet`, shipped there as ONE package `
 ## Next step
 
 S1: refresh the fsc locks (`import`, `update-locks -d LOCK_REFRESH=Xake`, `build check -d NUGET_FETCH=on`)
-on SDK 10.0.402, or decide the pin move; then push `feature/dotnet-seam` and open the PR to `dev`.
+the pin moved to 10.0.403 in #122 (as on feature/patterns2); PR #122 open against `dev`, CI running.
 After the merge: S3 (`v4.0.0-preview.1`).

@@ -154,8 +154,8 @@ type private Compiled =
       Groups: (string * int) list
       Xp119: int list }
 
-/// '\' in a path is a separator in Windows mode only (D37).
-let private normalize (windows: bool) (path: string) = if windows then path.Replace('\\', '/') else path
+/// '\' in a path is a separator in Windows mode only (D37); the walker's `/` spelling of a path.
+let normalize (windows: bool) (path: string) = if windows then path.Replace('\\', '/') else path
 
 let private isAbsolute (tokens: Token list) =
     match tokens with

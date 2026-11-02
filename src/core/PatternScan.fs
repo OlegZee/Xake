@@ -63,9 +63,7 @@ let private osSep = Path.DirectorySeparatorChar
 [<Struct>]
 type private Loc = { Os: string; Norm: string }
 
-let private toNorm (p: string) = if hostWindows then p.Replace('\\', '/') else p
-
-let private loc (os: string) = { Os = os; Norm = toNorm os }
+let private loc (os: string) = { Os = os; Norm = normalize hostWindows os }
 
 let private join (d: Loc) (name: string) =
     let endsWithSep (s: string) = s.Length > 0 && (s.[s.Length - 1] = '/' || s.[s.Length - 1] = osSep)
@@ -240,7 +238,10 @@ let private readings (tokens: Token list) : string list =
 let private segment (windows: bool) (tokens: Token list) : Seg =
     let matcher (text: string) = let m = maskMatcher windows "" text in fun (name: string) -> m name false
     match tokens with
-    | [ Lit s ] -> SLit (s, matcher (escape s))
+    | [ Lit s ] ->
+        // a literal is compared with the mode's comparer (D11), no regex
+        let kind = if windows then StringComparison.OrdinalIgnoreCase else StringComparison.Ordinal
+        SLit (s, fun name -> String.Equals(s, name, kind))
     | [ Globstar ] -> SGlob
     | _ ->
         let text = unparse tokens
@@ -298,8 +299,6 @@ type private Element =
       Body: Token list
       DirMode: bool }
 
-let private useName = function MaskRole.Include -> "include" | MaskRole.Exclude -> "exclude"
-
 /// `dir/**` as a file mask (XP113).
 let private endsInGlobstar (e: Element) =
     not e.DirMode && (match List.rev e.Tokens with Globstar :: Sep :: _ -> true | _ -> false)
@@ -326,21 +325,20 @@ let scan (windows: bool) (baseDir: string) (fileset: (MaskRole * string) list) :
             notes.Add(if link then LinkSkipped d.Os else Unreadable d.Os)
     let warnings = ResizeArray<ScanWarning>()
     let warned = HashSet<string>()
-    let warn (code: string) (e: Element) (text: string) =
-        let usage = useName e.Role
-        if warned.Add(code + "\n" + usage + "\n" + e.Text) then
-            warnings.Add { Code = code; Use = usage; Pattern = e.Text; Text = text }
+    let warnKey (code: string) (e: Element) = code + "\n" + roleUsage e.Role + "\n" + e.Text
+    /// The text is formatted only for the first warning of the key.
+    let warn (code: string) (e: Element) (text: unit -> string) =
+        if warned.Add(warnKey code e) then
+            warnings.Add { Code = code; Use = roleUsage e.Role; Pattern = e.Text; Text = text () }
 
     let isUnder (x: string) (y: string) =
         x.Equals(y, cmpKind) || x.StartsWith(y.TrimEnd '/' + "/", cmpKind)
 
     /// The matcher of an exclude, anchored at the base directory (6.3 step 4).
     let excludeMatchers = elements |> Array.map (fun e -> lazy (maskMatcher windows baseD.Norm e.Text))
-    /// XP113 candidates prune only once they are known to remove a file (6.3: the evidence
-    /// follows the unpruned result).
-    let observed = Array.create elements.Length false
 
-    /// Pruning (6.3 step 3): `P/` for every include; `P/**` and `P/**/*` for file includes.
+    /// Pruning (6.3 step 3): `P/` for every include; `P/**` and `P/**/*` for file includes, in
+    /// fileset order; the flag marks a `P/**` exclude, whose pruning is XP113 evidence (D41).
     let prunesAfter (k: int) (dirInclude: bool) =
         [ for j in k + 1 .. elements.Length - 1 do
             let e = elements.[j]
@@ -364,19 +362,23 @@ let scan (windows: bool) (baseDir: string) (fileset: (MaskRole * string) list) :
         | :? UnauthorizedAccessException -> true
         | _ -> false
 
+    let isLinkInfo (i: FileSystemInfo) = (i.Attributes &&& FileAttributes.ReparsePoint) = FileAttributes.ReparsePoint
+
     let listing (d: Loc) (filter: string) : (List<string> * List<struct (string * bool)>) option =
         try
             let files = List<string>()
             let dirs = List<struct (string * bool)>()
             for e in DirectoryInfo(d.Os).EnumerateFileSystemInfos(filter) do
                 match e with
-                | :? DirectoryInfo -> dirs.Add(struct (e.Name, (e.Attributes &&& FileAttributes.ReparsePoint) = FileAttributes.ReparsePoint))
+                | :? DirectoryInfo -> dirs.Add(struct (e.Name, isLinkInfo e))
                 | _ -> files.Add e.Name
             files.Sort(StringComparer.Ordinal)
             dirs.Sort(fun x y -> let struct (a, _) = x in let struct (b, _) = y in String.CompareOrdinal(a, b))
             Some (files, dirs)
         with
         | :? DirectoryNotFoundException -> None
+        // a missing directory or a file (ENOTDIR is a plain IOException on Unix) is silent (6.6)
+        | :? IOException when not (Directory.Exists d.Os) -> None
         | :? UnauthorizedAccessException
         | :? IOException
         | :? Security.SecurityException ->
@@ -387,14 +389,9 @@ let scan (windows: bool) (baseDir: string) (fileset: (MaskRole * string) list) :
     let walk (k: int) (e: Element) : ResizeArray<Item> =
         let found = ResizeArray<Item>()
         let prunes = prunesAfter k e.DirMode
-        let candidates = prunes |> List.filter (fun (_, gated, _) -> gated) |> List.map (fun (j, _, _) -> j)
-        let isPruned (d: Loc) =
-            prunes |> List.exists (fun (j, gated, m) -> (not gated || observed.[j]) && m d.Norm true)
-        let emit (d: Loc) (isDir: bool) =
-            found.Add { Path = d.Os; Norm = d.Norm; IsDir = isDir }
-            if not isDir then
-                for j in candidates do
-                    if not observed.[j] && excludeMatchers.[j].Value d.Norm false then observed.[j] <- true
+        /// the first later exclude that covers the directory: the one that would remove its files
+        let pruning (d: Loc) = prunes |> List.tryFind (fun (_, _, m) -> m d.Norm true)
+        let emit (d: Loc) (isDir: bool) = found.Add { Path = d.Os; Norm = d.Norm; IsDir = isDir }
 
         // ---- the continuations of every brace alternative, interned
         let nodes = List<Node>()
@@ -444,13 +441,14 @@ let scan (windows: bool) (baseDir: string) (fileset: (MaskRole * string) list) :
         let evidence (i: int) (name: string) =
             match nodes.[i].Head with
             | SPat p ->
-                if p.StarDotStar && name.IndexOf '.' < 0 then warn "XP114" e (Texts.xp114 name)
+                if p.StarDotStar && name.IndexOf '.' < 0 then warn "XP114" e (fun () -> Texts.xp114 name)
                 for r in p.Readings do
-                    if String.Equals(r, name, cmpKind) then warn "XP104" e (Texts.xp104 p.Construct r name)
+                    if String.Equals(r, name, cmpKind) then warn "XP104" e (fun () -> Texts.xp104 p.Construct r name)
             | _ -> ()
 
-        let rec visit (d: Loc) (depth: int) (start: seq<int>) =
-            // closure: a globstar also applies the rest of the mask here (zero segments)
+        /// The continuations at a directory: a globstar also applies the rest of the mask there
+        /// (zero segments).
+        let closure (start: seq<int>) =
             let set = List<int>()
             let seen = HashSet<int>()
             for i in start do if seen.Add i then set.Add i
@@ -462,7 +460,34 @@ let scan (windows: bool) (baseDir: string) (fileset: (MaskRole * string) list) :
                     | SGlob -> let z = zero i in if seen.Add z then set.Add z
                     | _ -> ()
                 n <- n + 1
-            if e.DirMode && depth > 0 && seen.Contains 0 then emit d true
+            set
+
+        /// D41: a `P/**` exclude prunes unconditionally; its XP113 evidence is a pruned directory
+        /// that is non-empty for this include, read with one listing (a file a head matches, or a
+        /// subdirectory the walk would enter). Not logged: a pruned directory is not walked (D39).
+        let prunedEvidence (j: int) (sub: Loc) (start: seq<int>) =
+            let x = elements.[j]
+            if not (warned.Contains(warnKey "XP113" x)) then
+                let active = closure start |> Seq.filter (fun i -> i <> 0) |> Array.ofSeq
+                let nonEmpty =
+                    try
+                        DirectoryInfo(sub.Os).EnumerateFileSystemInfos()
+                        |> Seq.exists (fun entry ->
+                            match entry with
+                            | :? DirectoryInfo ->
+                                active |> Array.exists (fun i ->
+                                    not (isFileHead i)
+                                    && (match nodes.[i].Head with SGlob -> not (isLinkInfo entry) | _ -> headMatches i entry.Name))
+                            | _ -> active |> Array.exists (fun i -> isFileHead i && headMatches i entry.Name))
+                    with
+                    | :? UnauthorizedAccessException
+                    | :? IOException
+                    | :? Security.SecurityException -> false
+                if nonEmpty then warn "XP113" x (fun () -> Texts.xp113 x.Text)
+
+        let rec visit (d: Loc) (depth: int) (start: seq<int>) =
+            let set = closure start
+            if e.DirMode && depth > 0 && set.Contains 0 then emit d true
             let active = set |> Seq.filter (fun i -> i <> 0) |> Array.ofSeq
             if active.Length > 0 then
                 let needsListing = active |> Array.exists (fun i -> match nodes.[i].Head with SLit _ -> false | _ -> true)
@@ -498,14 +523,14 @@ let scan (windows: bool) (baseDir: string) (fileset: (MaskRole * string) list) :
                                 if headMatches i name then next.Add nodes.[i].Next
                         if next.Count > 0 || globs.Length > 0 then
                             let sub = join d name
-                            if not (isPruned sub) then
-                                if isLink then
-                                    // globstar recursion does not enter a link (6.5, D17)
-                                    if globs.Length > 0 then note true sub
-                                    if next.Count > 0 then visit sub (depth + 1) next
-                                else
-                                    next.AddRange globs
-                                    visit sub (depth + 1) next
+                            // globstar recursion does not enter a link (6.5, D17)
+                            if not isLink then next.AddRange globs
+                            match pruning sub with
+                            | Some (j, true, _) -> if next.Count > 0 then prunedEvidence j sub next
+                            | Some _ -> ()
+                            | None ->
+                                if isLink && globs.Length > 0 then note true sub
+                                if next.Count > 0 then visit sub (depth + 1) next
 
         and probed (d: Loc) (depth: int) (active: int[]) =
             let litOf (i: int) = match nodes.[i].Head with SLit (s, _) -> s | _ -> ""
@@ -530,7 +555,10 @@ let scan (windows: bool) (baseDir: string) (fileset: (MaskRole * string) list) :
             order.Sort(fun a b -> String.CompareOrdinal(a, b))
             for name in order do
                 let sub = join d name
-                if not (isPruned sub) then
+                match pruning sub with
+                | Some (j, true, _) -> prunedEvidence j sub dirs.[name]
+                | Some _ -> ()
+                | None ->
                     if Directory.Exists sub.Os then visit sub (depth + 1) dirs.[name]
                     elif deniedProbe sub.Os then note false d
 
@@ -545,22 +573,22 @@ let scan (windows: bool) (baseDir: string) (fileset: (MaskRole * string) list) :
         let e = elements.[k]
         match e.Role with
         | MaskRole.Include ->
+            let prefix, _ = literalPrefix baseD e.Root (segmentsOf e.Body)
             let found =
                 if not (hasWildcard e.Body) then
                     // an explicit name is listed whether or not it exists (6.2, D13)
-                    let d, _ = literalPrefix baseD e.Root (segmentsOf e.Body)
-                    ResizeArray [ { Path = d.Os; Norm = d.Norm; IsDir = e.DirMode } ]
+                    ResizeArray [ { Path = prefix.Os; Norm = prefix.Norm; IsDir = e.DirMode } ]
                 else walk k e
-            if endsInGlobstar e && found |> Seq.exists (fun i -> not i.IsDir) then warn "XP113" e (Texts.xp113 e.Text)
+            if endsInGlobstar e && found |> Seq.exists (fun i -> not i.IsDir) then warn "XP113" e (fun () -> Texts.xp113 e.Text)
             for item in found do
                 if present.Add item.Norm then results.Add item
-            anchors.Add((fst (literalPrefix baseD e.Root (segmentsOf e.Body))).Norm)
+            anchors.Add prefix.Norm
         | MaskRole.Exclude ->
             // XP120: an absolute exclude outside the base and every earlier include's anchor (D6, D39)
             if e.Root <> Relative then
                 let prefix = (fst (literalPrefix baseD e.Root (segmentsOf e.Body))).Norm
                 if not (anchors |> Seq.exists (fun a -> isUnder prefix a || isUnder a prefix)) then
-                    warn "XP120" e (Texts.xp120 baseDir)
+                    warn "XP120" e (fun () -> Texts.xp120 baseDir)
             // XP104: a found path has a segment named as the 3.x literal reading
             let rs = segmentsOf e.Body |> List.collect readings
             if not rs.IsEmpty then
@@ -571,7 +599,7 @@ let scan (windows: bool) (baseDir: string) (fileset: (MaskRole * string) list) :
                         for r in rs do
                             if String.Equals(r, s, cmpKind) then
                                 let construct = segmentsOf e.Body |> List.tryPick (fun seg -> if List.contains r (readings seg) then List.tryFind (function Class _ | Alt _ -> true | _ -> false) seg else None)
-                                warn "XP104" e (Texts.xp104 construct r s)
+                                warn "XP104" e (fun () -> Texts.xp104 construct r s)
             let m = excludeMatchers.[k].Value
             let dirVerdicts = Dictionary<string, bool>()
             let dirMatches (p: string) =
@@ -594,7 +622,7 @@ let scan (windows: bool) (baseDir: string) (fileset: (MaskRole * string) list) :
                 else not item.IsDir && m item.Norm false
             let kept = results |> Seq.filter (removes >> not) |> Array.ofSeq
             if kept.Length < results.Count then
-                if endsInGlobstar e then warn "XP113" e (Texts.xp113 e.Text)
+                if endsInGlobstar e then warn "XP113" e (fun () -> Texts.xp113 e.Text)
                 results.Clear()
                 results.AddRange kept
                 present.Clear()

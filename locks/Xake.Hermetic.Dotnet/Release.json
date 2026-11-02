@@ -83,7 +83,7 @@
         }
       },
       "Dependencies": {
-        "Compiler": { "Tool": "fsc", "Path": "$(DotnetRoot)/sdk/10.0.402/FSharp/fsc.dll", "Sha256": "", "Version": "15.2.402-servicing.26505.111" },
+        "Compiler": { "Tool": "fsc", "Path": "$(DotnetRoot)/sdk/10.0.403/FSharp/fsc.dll", "Sha256": "", "Version": "15.2.403-servicing.26523.112" },
         "References": [
           { "Path": "$(ProjectRoot)/out/Release/net462/Xake.dll", "Sha256": "" },
           { "Path": "$(ProjectRoot)/out/Release/net462/Xake.Dotnet.dll", "Sha256": "" },
@@ -198,7 +198,7 @@
         }
       },
       "Dependencies": {
-        "Compiler": { "Tool": "fsc", "Path": "$(DotnetRoot)/sdk/10.0.402/FSharp/fsc.dll", "Sha256": "", "Version": "15.2.402-servicing.26505.111" },
+        "Compiler": { "Tool": "fsc", "Path": "$(DotnetRoot)/sdk/10.0.403/FSharp/fsc.dll", "Sha256": "", "Version": "15.2.403-servicing.26523.112" },
         "References": [
           { "Path": "$(ProjectRoot)/out/Release/netstandard2.0/Xake.dll", "Sha256": "" },
           { "Path": "$(ProjectRoot)/out/Release/netstandard2.0/Xake.Dotnet.dll", "Sha256": "" },

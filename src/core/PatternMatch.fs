@@ -1,8 +1,8 @@
 /// The matcher stage of the pattern module (docs/features/pattern-module/spec.md sections 5, 7.3
 /// and 9; decisions D11, D12, D18, D34, D37 in brief.md): a pattern parsed by `PatternAst` is
 /// translated to a .NET regex, cached per (context, text, anchor, case mode), and matched against
-/// one path. Internal: the engine keeps using `Path.matchGroups` / `Path.matches` until Phase 4,
-/// when they become adapters over `matchRule` / `matchMask`. The regex is an implementation detail
+/// one path. Internal: `Path.matchGroups` / `Path.matches` are the public adapters over
+/// `matchRule` / `matchMask` (Phase 4a, D42). The regex is an implementation detail
 /// (D3); nothing here is public.
 module internal Xake.PatternMatch
 

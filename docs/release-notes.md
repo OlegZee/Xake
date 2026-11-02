@@ -128,6 +128,58 @@ Details: [tasks.md](tasks.md#script-variables).
   also takes the environment (without `envVar`, `XAKE__NUGET_PACKAGES`). Importing changes no value; a target built before the import
   rebuilds once (its dependency records the default).
 
+### Patterns: rule matching on the pattern module
+
+Rule patterns (`..>`, `*..>`, `=>`, `<==`, `<<<`, `target`, `targets`, `command`) are parsed and
+matched by the new pattern module (`Xake.PatternAst`; spec:
+`docs/features/pattern-module/spec.md`). Fileset scanning (`!!`, `ls`, `++`, `--`) moves in a
+later change of this release; its items are added then. Numbers in brackets are the items of
+spec section 3.
+
+- **Errors when the rule is created.** An invalid rule pattern raises `PatternException` when the
+  script creates the rule (`Invalid pattern '<text>' (rule) at character <n>: <reason> [XPnnn]`,
+  the reason naming the 3.x meaning and the 4.0 spelling); a rule built from the `Rule` cases
+  directly fails the build with the same message the first time it is matched.
+- **Warnings** on legacy spellings go to the build log at level Warning, once per pattern
+  (`Pattern '<text>' (rule): ... [XPnnn]`); those raised while the script loads are delivered when
+  the build starts.
+- **Breaking: `|` inside a named group** (`(ext:dll|exe|nupkg)`, a regex alternation in 3.x) is an
+  error that gives the 4.0 spelling `(ext:{dll,exe,nupkg})` [4, XP003]. `(`, `)` and `|` outside a
+  named group (3.x: a regex group or alternation) are errors [3, XP003]; a lone `(`/`)` or an
+  unbalanced `[` raise `PatternException` instead of `RegexParseException` [5].
+- **Breaking: `**/` takes zero or more directories in a rule** (3.x: one or more): `**/*.dll` now
+  also matches `a.dll` at the root (a rule `*.dll`, if present, still wins). A match that took zero
+  directories logs XP119 once per pattern; write `*/**/*.dll` (with a capture `(path:*/**)/`) to
+  require a directory [12].
+- **Breaking: braces are an alternation** in rules, `{a,b}` (3.x: literal text); `{x}` without a
+  comma is an error [6, 7, XP005]. Classes `[abc]`, `[a-z]`, `[^a]` keep their 3.x meaning; `[!a]`
+  is now a negated class [11, XP117]; `[c]` is still the character `c`, deprecated in favour of
+  `\c` or `c` [10, XP105].
+- **`\`**: before `( ) [ ] { } |` it is an escape (`src\(x\)` names `src(x)`) [1]; before any
+  other character it is still a separator, deprecated (XP110), an escape from 5.0 [2]. On the
+  target side `\` is a separator on Windows only.
+- **Breaking: errors for 3.x spellings that meant nothing or something unintended:** a group
+  name starting with a digit `(1:*)` [18, XP007]; a repeated group name `(p:*)/(p:*)` (3.x: the
+  last value won) [19, XP015]; an unclosed `(name:` [20, XP006]; `.` or `..` after a wildcard
+  [21, XP012]; a trailing `/` [22, XP011]; `/` inside a class, `[z-a]`, `[[:` [24, XP010]; an empty
+  pattern [35, XP018]; `{a/,b}` ending the pattern [36, XP019].
+- **Segment-local `**`** (`a**b`) stays within one segment, like `*` (3.x: crossed `/`) [13, XP112].
+- **Multi-output rules** (`*..>`, `targets`) check their outputs when created: every output has
+  the same named groups [31, XP013] and no class or braces outside a group [32, XP014]. Output
+  names are formatted from the match by the module (`PatternAst.formatMatches`): an empty group
+  value no longer leaves `(lib:)` in a name and a `)` in a value no longer breaks it [30].
+- **Rule selection:** a `/` next to `**` no longer counts as a literal in specificity, so a
+  globstar rule can lose a tie it won in 3.x (`*/?.dll` now beats `**/x.dll` for `a/x.dll`) [33].
+- **Fixes:** a project root holding `( ) [ ] { } |` matches literally [29]; `a//b` in a pattern
+  is one separator [34]; case follows one comparer per OS, ordinal on Linux and macOS,
+  ignore-case on Windows (3.x `Path.matches` ignored case everywhere) [25].
+- **API:** `Path.matchGroups` keeps its signature and keys (named groups, positional `"1"`,
+  `"2"`, ... of every wildcard at any depth, `"0"` the whole path); `getRuleMatch` is unchanged.
+  `Path.matches` keeps its signature and uses the module's mask semantics (an invalid mask raises
+  `PatternException`; `.`/`..` in the file path are resolved). `Path.specificity` is
+  `PatternAst.specificity`. `Path.matchesPattern` with `PathMask` is unchanged until the scanner
+  moves.
+
 ## 3.15.0 (2026-10-29)
 
 - **The published version is the tag.** `v3.15.0` goes to nuget.org as `3.15.0`, no longer with

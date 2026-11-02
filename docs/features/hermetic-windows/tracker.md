@@ -33,3 +33,5 @@ One line per item.
   - [ ] Build log defects (flush on exit, name clash, relative name, hard-coded "See build.log")
   - [ ] Satellite assemblies (S71)
   - [ ] Consumer validation on Windows
+- [ ] Tests that run scripts without `FileLog` share the bin `build.log` and race on Windows (`FileLogger` deletes a file another test's logger still holds): `CommandLineTests` fixed in #123; candidates still sharing it: CommandTests, DescriptionTests, FileTasksCopy, FileTasksRm, FlatScriptTests, FileTasksTests, ParentDirTargetTests, ProjectPlanTests, RuleSpecificityTests, StaleArtifactDepTests. Either isolate each, or make `FileLogger` tolerate a locked previous log (retry / FileShare). Related: "log not flushed at exit".
+- [x] Log not flushed at exit: `FlushLogs` now flushes every file logger (bounded 2 s) after the console sink; `FileLogger` flushes the previous logger of the same file and retries the delete on `IOException` (PR #123). This mostly mitigates the shared-`build.log` item above (isolation still cleaner).

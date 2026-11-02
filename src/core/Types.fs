@@ -120,6 +120,21 @@ module DomainTypes =
     /// A list of build rules.
     type 'ctx Rules = Rules of 'ctx Rule list
 
+    module Rule =
+        /// Checks the patterns of a rule (spec 7.1): every pattern parses (legacy-syntax warnings are
+        /// logged once), and the outputs of a multi-output rule have the same named groups and nothing
+        /// that cannot be filled in from a match (XP013, XP014). A condition rule has no pattern.
+        /// Raises `PatternAst.PatternException`; it is applied where every rule enters a script
+        /// (`XakeScriptBuilder`), whichever way the rule was built.
+        let rec validate (rule: 'ctx Rule) : unit =
+            match rule with
+            | FileRule (pattern, _) | PhonyRule (pattern, _) -> PatternAst.Rule.check pattern
+            | MultiFileRule (patterns, _) ->
+                patterns |> List.iter PatternAst.Rule.check
+                PatternAst.checkOutputs patterns
+            | FileConditionRule _ -> ()
+            | DelegatedRule (inner, _) -> validate inner
+
     /// How to pick among the rules that match a target.
     type RuleMatchMode =
         /// The most specific matching rule wins; ties fall back to last declared (default).

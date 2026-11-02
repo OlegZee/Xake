@@ -822,7 +822,8 @@ An include is walked from its anchor (base dir, or the root of an absolute mask)
 5. **Evidence checks** for the legacy warnings (7.3) piggyback on the walk and cost nothing when
    the mask has no legacy-sensitive spelling: XP104 (a listed entry's name equals the literal
    reading of a `[...]`/`{...}` segment), XP113 (a `dir/**` include yields a result, or a
-   `dir/**` exclude removes one), XP114 (a `*.*` segment rejects a listed name without `.`).
+   `dir/**` exclude removes one or prunes a directory an earlier include would enter and that
+   is non-empty for it, D41), XP114 (a `*.*` segment rejects a listed name without `.`).
    XP120 is checked once per fileset evaluation (6.2).
 
 ### 6.4 The OS listing's role
@@ -972,7 +973,8 @@ and dotfiles on macOS; the walker must not use it (9.5).
   never triggers a rebuild.
 - An unreadable directory met during a walk is skipped and reported once per directory as a
   build-log warning (in 3.x an `UnauthorizedAccessException` ends the build). A missing base
-  directory gives an empty list (`failonempty` turns it into an error).
+  directory gives an empty list (`failonempty` turns it into an error); so does a base that is a
+  file (vector SC-025), with no warning.
 
 ### 6.7 Implementation notes from the measurements
 
@@ -1079,7 +1081,7 @@ names the 3.x meaning and the replacement.
 | XP106 | `[c]` where 3.x read literal text (include, exclude literal segment) | parse | `'[1]' matches the single character '1' from Xake 4.0; Xake 3.x read the literal text '[1]'; write \[1\] for the brackets, or 1 for the character` |
 | XP110 | `\` used as a separator | parse | `'\' as a path separator is deprecated and is only an escape from Xake 5.0; use '/'` |
 | XP112 | rule: segment-local `**` | parse | `'a**b' matches within one segment from Xake 4.0, like 'a*b'; in Xake 3.x it crossed '/'; write '*' for one segment, or '/**/' between segments for any depth` |
-| XP113 | mask ending in `/**` | evidence: an include yields a result, an exclude removes a file | `'dir/**' is every file below 'dir' from Xake 4.0; in Xake 3.x an include listed the directories below 'dir' and an exclude matched nothing; write 'dir/**/' for the directories` |
+| XP113 | mask ending in `/**` | evidence: an include yields a result, an exclude removes a file or prunes a directory non-empty for an earlier include (D41) | `'dir/**' is every file below 'dir' from Xake 4.0; in Xake 3.x an include listed the directories below 'dir' and an exclude matched nothing; write 'dir/**/' for the directories` |
 | XP114 | include: `*.*` segment | evidence: a listed name without `.` is rejected | `'*.*' needs a '.' in the name from Xake 4.0; Xake 3.x also listed '<name>'; write '*' for every name` |
 | XP117 | `[!a]` in a rule or an exclude wildcard segment | parse | `'[!a]' is a negated class (any character but 'a') from Xake 4.0; in Xake 3.x it was a class of '!' and 'a'; write [^a] for "not a" (same meaning in 3.x and 4.0), or [a!] for the 3.x meaning` |
 | XP119 | rule: a globstar before a separator | evidence: a rule match where it took zero directories | `'**/' matched zero directories for '<target>'; in Xake 3.x '**/' in a rule needed at least one directory, so this rule did not match it; to require one or more directories write '*/**/' (with a capture: '(path:*/**)/')` |
@@ -1299,13 +1301,20 @@ val reportEvidence : usage: string -> pattern: string -> Issue -> unit
 - Links: a subdirectory with `FileAttributes.ReparsePoint` is not entered by globstar
   recursion (`LinkSkipped` once per directory); a one-segment pattern or a literal enters it.
 - Unreadable: `UnauthorizedAccessException`, `IOException` or `SecurityException` from a listing
-  logs the directory (`DirectoryNotFoundException` is silent: a missing base is an empty list); a
+  logs the directory (`DirectoryNotFoundException`, or any `IOException` for a path that is not
+  a directory, such as a base that is a file, is silent: an empty list, SC-025); a
   probe that answers false is checked with `File.GetAttributes`, and an
   `UnauthorizedAccessException` logs the directory being probed in (D39, SC-275: `locked`).
 - Pruning (6.3 step 3): `P/` prunes for every include; `P/**` and `P/**/*` prune for file
-  includes only (a directory result is not removed by a file mask). A `P/**` exclude prunes only
-  once a found file is known to match it, so that its XP113 follows the unpruned result
-  (SC-122: no warning when the pruned directory holds nothing the include would find).
+  includes only (a directory result is not removed by a file mask). Every one prunes
+  unconditionally (D41, reversing the gated reading of D40.3); when several cover a directory,
+  the first in fileset order is the one that prunes. A `P/**` exclude's XP113 is derived, not
+  gated: it warns when it removes a found file, or when it prunes a directory the include would
+  enter and one listing of that directory (not logged, not recursive) shows an entry the
+  include's continuations there accept: a file a head matches, or a subdirectory a head
+  matches or a globstar would enter (SC-122: `dir` holds `sub`; SC-159: the code review's
+  `[**/*.cs; -**/*.cs; **/*.txt; -obj/**]`, where a gate set by the first include hid the
+  evidence for the third). No listing is made once the exclude has warned.
 - Evidence (7.3): XP104 when a listed name equals the 3.x literal reading of a wildcard-free
   segment holding a class (other than a one-character class) or braces (both `[^` and `[!`
   spellings of a negated class), and for an exclude when a found path has such a segment
@@ -1315,9 +1324,12 @@ val reportEvidence : usage: string -> pattern: string -> Issue -> unit
   earlier include's literal prefix (an exclude whose prefix contains the base, `/**/obj/`, can
   remove files, so "above" counts as overlap; the 6.2 wording names "below" only).
 - Matching a segment uses `maskMatcher windows "" <segment text>` (the cached, interpreted
-  regex of PR 3; a literal segment through `escape`). Measured with the `FilesetTests`
-  benchmark (1360 files, macOS): `**/*.cs` 4.1 ms (3.x) vs 4.2 ms (walker); with
-  `**/.*/**/*`, `bin/**/*`, `obj/**/*` excludes 12.0 ms vs 5.5 ms (pruning). No fast paths.
+  regex of PR 3); a literal segment met in a listing is compared with the mode's comparer
+  (ordinal or ordinal-ignore-case, D11), no regex. Evidence texts are formatted only for the
+  first warning of a (code, use, pattern). Measured with the `FilesetTests` benchmark (1360
+  files, macOS, after the D41 changes): `**/*.cs` 4.1-4.5 ms (3.x) vs 4.6-5.0 ms (walker); with
+  `**/.*/**/*`, `bin/**/*`, `obj/**/*` excludes 13.0-14.1 ms vs 5.6-6.0 ms (pruning). No fast
+  paths.
 
 ## 9. Matcher implementation (non-normative)
 

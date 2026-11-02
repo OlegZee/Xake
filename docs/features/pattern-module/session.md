@@ -11,6 +11,7 @@ then the typed layer (`Xake.Typed`) on top. Restart of `feature/typed-matches` (
 |----|--------|----------|
 | — integration branch (target of every phase PR; merges to `dev` at the end) | `feature/patterns2` (cut from `dev` 2026-10-31, pushed 2026-11-01) | — (no worktree; PR target only) |
 | [#118](https://github.com/OlegZee/Xake/pull/118) merged: PR 2 parser (453 vectors, `PatternAst.fs`) | `feature/pattern-parser` (from `feature/pattern-module`) | `.claude/worktrees/feature/pattern-parser` |
+| Phase 4a (rules, D42): not opened yet | `feature/pattern-rules` (from `feature/patterns2` at `c4891a8`) | `.claude/worktrees/agent-a60e5a1f62eb2eea3` |
 | [#120](https://github.com/OlegZee/Xake/pull/120) PR 4 (scanner): 308 vectors, `PatternScan.fs` walker; D38, D39, D40 (provisional) | `feature/pattern-scanner` | `.claude/worktrees/feature/pattern-scanner` |
 | [#119](https://github.com/OlegZee/Xake/pull/119) merged: PR 3 matcher | `feature/pattern-matcher` | `.claude/worktrees/feature/pattern-matcher` |
 | [#117](https://github.com/OlegZee/Xake/pull/117) merged: PR 1 docs | `feature/pattern-module` (rebased on `dev` 2026-10-31) | main checkout `/Users/olegz/projects/Xake` (the worktree was removed 2026-10-31; the branch was reset to `c65d764`) |
@@ -31,8 +32,12 @@ leave it alone.
   `explicit-name-history.md` and kept (D13). Spec status: complete, pending the user's approval.
   Integration branch `feature/patterns2` created locally from `dev` (push is the user's).
 
+- 2026-11-02: Phase 4 split in two PRs (D42). Phase 4a done on `feature/pattern-rules`: rule
+  matching on the module, creation-time checks, XP119, release notes (rules). Fileset scanning
+  (4b) still runs the 3.x part matcher (`Path.LegacyMask`, `matchesPattern`).
+
 ## Next step
 
-The user approves `spec.md` (Phase 1 exit). Then: ask how Phase 2 (conformance vectors) is
-sliced into PRs against `feature/patterns2`; the Phase-2 measurements (D17: symlinks/junctions,
-OS-listing quirks; 3.x results of `a//b`, `""`, `.` after a wildcard) go first, haiku agents.
+Phase 4a: the owner pushes `feature/pattern-rules` and opens the PR to `feature/patterns2`
+(`--repo OlegZee/Xake`). Then Phase 4b (D42): `Fileset` scanning on `PatternScan`, delete the
+3.x part matcher, hermetic's direct mask uses, the mask items of the release notes.

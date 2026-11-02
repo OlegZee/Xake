@@ -19,7 +19,7 @@
 - [x] PR 4 (scanner): `src/core/PatternScan.fs` walker passes every scanner vector (9 ignored for host needs on macOS); SC-275 aligned with D39, SC-214/SC-229 corrected (B.cs matches *.cs); API notes in spec 8.6; fsc descriptions/locks refreshed (2026-11-01)
 - [x] PR 4 (scanner): #120 code review fixes (2026-11-02): unconditional `P/**` pruning per D41, XP113 derived from the prune (one listing); base-is-a-file silent; literal segments by comparer; lazy evidence texts; shared `roleUsage`/`normalize`; SC-122 aligned with D41, SC-025 and SC-159 (tree T-PRUNE) added; spec 6.3/6.6/7.3/8.6
 - [x] Phase 4a (D42): rule matching on the module (`Path.matchGroups`/`matches`/`specificity` adapters over `PatternMatch`, `Rule.check`/`checkOutputs` at rule creation, `formatMatches` for multi-output names, XP119 when a rule is selected, warnings attached to the build log); compat corpus fixed (`(ext:dll|exe|nupkg)` → braces in `Sign.fs`, `SignTests.fs`, `docs/hermetic/signing.md`); `PathTests` and the specificity golden test rewritten for 4.0; release notes (rules) in `docs/release-notes.md` (2026-11-02, branch `feature/pattern-rules`)
-- [ ] Phase 4a: #123 open 2026-11-02 (`feature/pattern-rules` → `feature/patterns2`); D43 provisional, review pending
+- [ ] Phase 4a: #123 open 2026-11-02 (`feature/pattern-rules` → `feature/patterns2`); D43 confirmed 2026-11-03, review pending
 - [ ] Phase 4b (D42): `Fileset` scanning on `PatternScan`; delete `Path.LegacyMask`/`matchImpl`; hermetic's direct `Path.parse`/`matchesPattern` uses; mask items of the release notes; PR
 - [ ] Phase 5: port the typed layer (#91, `Xake.Typed`); PR
 - [ ] Phase 5: docs (#92: typed-targets guide, overview, cheatsheet); `=>` to `Command` announcement; PR

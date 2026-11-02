@@ -137,7 +137,7 @@ type RulePatternTests() =
         e.Message
 
     // the check sits in XakeScriptBuilder.Yield: a rule is validated when it enters a script
-    let yielded (x: XakeTestBase) (rule: ExecContext Rule) () = box (xake x.TestOptions { yield rule })
+    let yielded (x: XakeTestBase) (r: ExecContext Rule) () = box (xake x.TestOptions { yield r })
 
     [<Test>]
     member x.``an invalid rule pattern fails when the rule enters the script``() =

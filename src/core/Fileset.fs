@@ -54,65 +54,38 @@ module private Impl =
         ScanFiles = fun mask dir -> Directory.EnumerateFiles(dir, mask)
     }
 
-    /// <summary>
-    ///  Changes current directory
-    /// </summary>
-    /// <param name="fs">File system implementation</param>
-    /// <param name="startIn">Starting path</param>
-    /// <param name="path">target path</param>
-    let cd (fs:FileSystemType) startIn (Path.PathMask path) =
-        // TODO check path exists after each step
-        let applyPart (path:string) = function
-        | CurrentDir  -> path
-        | Disk d      -> fs.GetDisk d
-        | FsRoot      -> path |> fs.GetDirRoot
-        | Parent      -> path |> fs.GetParent
-        | Directory d -> Path.Combine(path, d)
-        | _ -> failwith "ChDir could only contain disk or directory names"
-        in
-        (startIn, path) ||> List.fold applyPart
-
-    let listFiles (fs:FileSystemType) startIn (Path.PathMask pat) =
-
-        // The pattern without mask become "explicit" file reference which is always included in resulting file list, regardless file presence. See impl notes for details.
-        let isExplicitRule = pat |> List.exists (function | DirectoryMask _ | FileMask _ | Recurse -> true | _ -> false) |> not
-        let filterDir = if isExplicitRule then id else Seq.filter Directory.Exists
-        let filterFile = if isExplicitRule then id else Seq.filter File.Exists
-
-        // Recursively applies the pattern rules to every item is start list
-        let applyPart (paths: seq<string>) :_ -> seq<string> = function
-        | Disk d          -> fs.GetDisk d |> Seq.singleton
-        | FsRoot          -> paths |> Seq.map fs.GetDirRoot
-        | CurrentDir      -> paths
-        | Parent          -> paths |> Seq.map fs.GetParent
-        | Recurse         -> paths |> Seq.collect fs.AllDirs |> Seq.append paths
-        | DirectoryMask mask -> paths |> Seq.collect (fs.ScanDirs mask)
-        | Directory d     -> paths |> Seq.map (fun dir -> Path.Combine(dir, d)) |> filterDir
-        | FileMask mask   -> paths |> Seq.collect (fs.ScanFiles mask)
-        | FileName f      -> paths |> Seq.map (fun dir -> Path.Combine(dir, f)) |> filterFile
-        in
-        (startIn, pat) ||> List.fold applyPart
-
     let ifNone = Option.fold (fun _ -> id)
 
+    /// The mask of an element as the pattern module reads it, with its role (spec 6.1, 8.3).
+    let element = function
+        | Includes pat -> PatternAst.MaskRole.Include, Path.maskText pat
+        | Excludes pat -> PatternAst.MaskRole.Exclude, Path.maskText pat
+
+    /// Evaluates the ordered elements from `baseDir` with the pattern module's walker (spec 6.3)
+    /// and reports its warnings and notes to the build log (7.3, 6.5, 6.6). Raises
+    /// `PatternAst.PatternException` for an invalid mask.
+    let walk (baseDir: string) (elements: (PatternAst.MaskRole * string) list) =
+        let result = PatternScan.scan (not Env.isUnix) baseDir elements
+        PatternScan.reportWarnings result
+        result.Files
+
     /// Implementation of fileset execute
-    /// "Materializes" fileset to a filelist
-    let scan fileSystem root (Fileset (options,filesetItems)) =
+    /// "Materializes" fileset to a filelist: the base directory (or `root`), the elements in
+    /// declaration order (an exclude removes from the includes before it), files in ordinal
+    /// order per directory, duplicates removed (spec 6.3, 6.6).
+    let scan root (Fileset (options,filesetItems)) =
+        let baseDir = options.BaseDir |> ifNone root
+        filesetItems |> List.map element |> walk baseDir |> List.map File.make |> Filelist
 
-        let startDirPat = options.BaseDir |> ifNone root |> Path.parseDir
-        let startDir = startDirPat |> cd fileSystem "."
+    /// An include or exclude element of a mask, checked when it is built (spec 7.1, 8.3): raises
+    /// `PatternAst.PatternException` for an invalid mask, reports its parse-time warnings once.
+    let includes (mask: FilePattern) =
+        PatternAst.Mask.check PatternAst.MaskRole.Include mask
+        Includes (Path.parse mask)
 
-        // TODO check performance, build function
-        let includes src = [startDir] |> (listFiles fileSystem) >> Seq.append src
-        let excludes src pat =
-            let matchFile = Path.join startDirPat pat |> Path.matchesPattern in
-            src |> Seq.filter (matchFile >> not)
-
-        let folditem i = function
-            | Includes pat -> includes i pat
-            | Excludes pat -> excludes i pat
-
-        filesetItems |> Seq.ofList |> Seq.fold folditem Seq.empty<string> |> Seq.map File.make |> List.ofSeq |> Filelist
+    let excludes (mask: FilePattern) =
+        PatternAst.Mask.check PatternAst.MaskRole.Exclude mask
+        Excludes (Path.parse mask)
 
     // combines two fileset options
     let combineOptions (o1:FilesetOptions) (o2:FilesetOptions) =
@@ -129,9 +102,9 @@ module private Impl =
 
     // Combines result of reading file to a fileset
     let combineWithFile map (file:FileInfo) (Fileset (opts,fs)) =
-        let elements = File.ReadAllLines file.FullName |> Array.toList |> List.map map in
+        // blank lines are skipped (an empty mask is an error, XP018)
+        let elements = File.ReadAllLines file.FullName |> Array.toList |> List.filter (System.String.IsNullOrWhiteSpace >> not) |> List.map map in
         Fileset (opts, fs @ elements)
-        // TODO filter comments, empty lines? |> Array.filter
 
     let changeBasedir dir (Fileset (opts,ps)) =   Fileset ({opts with BaseDir = Some dir}, ps)
     let changeFailonEmpty f (Fileset (opts,ps)) = Fileset ({opts with FailOnEmpty = f}, ps)
@@ -172,9 +145,7 @@ let filelistPickler = PicklerImpl.filelist
 /// </summary>
 /// <param name="filePattern"></param>
 let ls (filePattern:FilePattern) =
-    // TODO Path.parse is expected to handle trailing slash character
-    let parse = match filePattern.EndsWith ("/") || filePattern.EndsWith ("\\") with | true -> Path.parseDir | _-> Path.parse
-    Fileset (DefaultOptions, [filePattern |> parse |> Includes])
+    Fileset (DefaultOptions, [Impl.includes filePattern])
 
 /// <summary>
 /// Create a file set for specific file mask. The same as "ls"
@@ -198,23 +169,28 @@ let parseDirMask = Path.parseDir
 [<System.Obsolete("Use Path.matches instead")>]
 let matches = Path.matches
 
-/// The real file system adapter used by default.
+/// The real file system adapter. Unused since 4.0: fileset scanning reads the file system
+/// through the pattern module's walker.
+[<System.Obsolete("Unused since Xake 4.0: fileset scanning reads the file system directly")>]
 let FileSystem = Impl.FileSystem
 
 /// <summary>
 /// "Materializes" fileset to a filelist
 /// </summary>
-let toFileList = Impl.scan Impl.FileSystem
+let toFileList = Impl.scan
 
 /// <summary>
 /// "Materializes" file mask to a list of files/paths
 /// </summary>
-let listByMask (root:string) = Impl.listFiles Impl.FileSystem [root]
+let listByMask (root:string) (mask: Path.PathMask) : string seq =
+    Impl.walk root [ PatternAst.MaskRole.Include, Path.maskText mask ] |> Seq.ofList
 
 /// <summary>
-/// The same as toFileList but allows to provide file system adapter
+/// The same as toFileList. The file system adapter is ignored since Xake 4.0 (the pattern
+/// module's walker reads the file system).
 /// </summary>
-let toFileList1 = Impl.scan
+[<System.Obsolete("The file system adapter is ignored since Xake 4.0; use toFileList")>]
+let toFileList1 (_: FileSystemType) root fileset = Impl.scan root fileset
 
 /// Describes how a file list changed: an item was added or removed.
 type ListDiffType<'a> = | Added of 'a | Removed of 'a
@@ -252,11 +228,11 @@ type Fileset with
 
     /// Adds includes pattern to a fileset.
     static member (++) ((Fileset (opts,pts)), includes) :Fileset =
-        Fileset (opts, pts @ [includes |> Path.parse |> Includes])
+        Fileset (opts, pts @ [Impl.includes includes])
 
     /// Adds excludes pattern to a fileset.
     static member (--) (Fileset (opts,pts), excludes): Fileset =
-        Fileset (opts, pts @ [excludes |> Path.parse |> Excludes])
+        Fileset (opts, pts @ [Impl.excludes excludes])
 end
 
 /// Computation expression builder for constructing Fileset values.
@@ -284,10 +260,10 @@ type FilesetBuilder() =
     member __.ExcludesIf(fs:Fileset, pattern) = fs -? pattern
 
     [<CustomOperation("includefile")>]
-    member __.IncludeFile(fs, file)  = (fs,file) ||> combineWithFile (Path.parse >> Includes)
+    member __.IncludeFile(fs, file)  = (file, fs) ||> combineWithFile Impl.includes
 
     [<CustomOperation("excludefile")>]
-    member __.ExcludeFile(fs,file)    = (fs,file) ||> combineWithFile (Path.parse >> Excludes)
+    member __.ExcludeFile(fs,file)    = (file, fs) ||> combineWithFile Impl.excludes
 
     member __.Yield(())    = Empty
     member __.Return(pattern:FilePattern) = Empty ++ pattern

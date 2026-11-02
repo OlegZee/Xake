@@ -1,4 +1,4 @@
-namespace Xake.Tasks
+﻿namespace Xake.Tasks
 
 open Xake
 open System.IO
@@ -92,7 +92,9 @@ module CpImpl =
                     !!fileMask, true
                 | Dir dirMask ->
                     ctx.Logger.Log Level.Message "[copy] %A" dirMask
-                    !!(dirMask </> "**/*.*"), args.flatten
+                    // every file below the directory (spec 6.4: '*.*' needs a '.' in 4.0)
+                    let dir = dirMask.TrimEnd('/', '\\')
+                    !!(if dir = "" then "**/*" else dir + "/**/*"), args.flatten
 
             let getRelativePath =
                 if flatten then Xake.File.getFileName

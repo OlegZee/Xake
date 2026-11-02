@@ -357,9 +357,9 @@ module Lock =
         let remaining = System.Collections.Generic.HashSet<string> (files)
         [ for m in masks do
             if not (m.StartsWith "!") then
-                let pattern = Xake.Path.parse (if m.EndsWith "**" then m + "/*" else m)
+                let covers = Xake.Path.matches m ""
                 let named =
-                    files |> List.filter (fun f -> remaining.Contains f && Xake.Path.matchesPattern pattern f)
+                    files |> List.filter (fun f -> remaining.Contains f && covers f)
                     |> List.distinct |> List.sortWith (fun a b -> System.String.Compare (a, b, System.StringComparison.OrdinalIgnoreCase))
                 for f in named do
                     remaining.Remove f |> ignore

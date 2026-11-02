@@ -1,4 +1,4 @@
-namespace Xake.Hermetic.Dotnet
+﻿namespace Xake.Hermetic.Dotnet
 
 open System.IO
 
@@ -426,13 +426,10 @@ module Locks =
     /// <summary>
     /// The version for a project from the script's `versions` (Ant-style mask -> version
     /// variable): the first mask matching `projectPath` (relative to the project root, '/'),
-    /// `None` when none does. A mask ending in `**` covers every file below its folder.
+    /// `None` when none does. A mask ending in `**` covers every file below its folder (D12).
     /// </summary>
     let versionFor (versions: (string * 'v) list) (projectPath: string) : 'v option =
-        let covers (mask: string) =
-            let mask = normal mask
-            let mask = if mask.EndsWith "**" then mask + "/*" else mask
-            Path.matchesPattern (Path.parse mask) (normal projectPath)
+        let covers (mask: string) = Path.matches (normal mask) "" (normal projectPath)
         versions |> List.tryFind (fst >> covers) |> Option.map snd
 
     /// The files an entry's import read (`Evaluation.Imports`: the project file,

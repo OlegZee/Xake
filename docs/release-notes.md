@@ -132,9 +132,8 @@ Details: [tasks.md](tasks.md#script-variables).
 
 Rule patterns (`..>`, `*..>`, `=>`, `<==`, `<<<`, `target`, `targets`, `command`) are parsed and
 matched by the new pattern module (`Xake.PatternAst`; spec:
-`docs/features/pattern-module/spec.md`). Fileset scanning (`!!`, `ls`, `++`, `--`) moves in a
-later change of this release; its items are added then. Numbers in brackets are the items of
-spec section 3.
+`docs/features/pattern-module/spec.md`). Fileset scanning follows in the next section. Numbers
+in brackets are the items of spec section 3.
 
 - **Errors when the rule is created.** An invalid rule pattern raises `PatternException` when the
   script creates the rule (`Invalid pattern '<text>' (rule) at character <n>: <reason> [XPnnn]`,
@@ -177,8 +176,65 @@ spec section 3.
   `"2"`, ... of every wildcard at any depth, `"0"` the whole path); `getRuleMatch` is unchanged.
   `Path.matches` keeps its signature and uses the module's mask semantics (an invalid mask raises
   `PatternException`; `.`/`..` in the file path are resolved). `Path.specificity` is
-  `PatternAst.specificity`. `Path.matchesPattern` with `PathMask` is unchanged until the scanner
-  moves.
+  `PatternAst.specificity`. `Path.matchesPattern` is removed with the 3.x part matcher (see the
+  next section).
+
+### Patterns: fileset scanning on the pattern module
+
+Masks (`!!`, `ls`, `++`, `--`, the `fileset { }` operations, `includefile`/`excludefile`) are
+parsed and scanned by the pattern module: one walker, the same grammar as rules (classes,
+braces, `\` escapes), the 3.x part matcher is gone. Numbers in brackets are the items of spec
+section 3.
+
+- **Errors when the fileset is built.** An invalid mask raises `PatternException` where the mask
+  is added (`Invalid pattern '<text>' (mask) at character <n>: <reason> [XPnnn]`), usually when the
+  script loads; a mask built directly as `Includes (Path.parse m)` fails when the fileset is
+  evaluated. `(`, `)`, `|` [3, XP003], a named group [17, XP008], `{x}` [7, XP005], an
+  unbalanced `[` [5, XP002], `/` inside a class [24, XP010], `.`/`..` after a wildcard [21, XP012]
+  and an empty mask [35, XP018] are errors (3.x: literal text or a silent parent step). Write
+  `\(` for a literal `(`; `PatternAst.escapePath` turns a real path into a mask. `includefile`
+  skips blank lines.
+- **Warnings** on legacy spellings go to the build log at level Warning, once per mask and use
+  (`Pattern '<text>' (include): ... [XPnnn]`); some only when the scan sees the evidence (an
+  entry named like the 3.x literal reading of `[ab]`/`{a,b}` [XP104], a `dir/**` that finds
+  something [XP113], a `*.*` that rejects a dotless name [XP114], an absolute exclude outside the
+  fileset [XP120]).
+- **Breaking: classes and braces are wildcards in masks** (3.x: literal text): `src/{a,b}.cs`,
+  `[abc]`, `[a-z]`, `[^a]` [6, 8; XP104 on evidence]; `[c]` in an include is the character `c`,
+  so `sub[1]/*.c` finds `sub1` [9, XP106]; `[!a]` in an exclude wildcard segment is a negated
+  class [11, XP117].
+- **Breaking: `dir/**` is every file below `dir`** (3.x: an include listed the directories below,
+  an exclude matched nothing); write `dir/**/` for the directories [14, XP113]. `dir/**/*` keeps
+  its meaning.
+- **Breaking: a trailing `/` names directories in every mask**, including `++`, `--` and the
+  builder (3.x dropped it there): `-- "obj/"` removes every file below `obj` and the scan does not
+  enter it (3.x: removed nothing); `-- "obj"` removes only a file named `obj` [23].
+- **Breaking: `*.*` needs a `.` in the name** (3.x: any name, the Win32 listing rule) [15, XP114];
+  the other OS-listing quirks are gone: `?` never matches zero characters, and `*.rdl` no longer
+  finds `.rdlx` on .NET Framework [16]. The `cp` task's directory mode scans `dir/**/*` (3.x:
+  `dir/**/*.*`, whose OS listing took dotless names too), so it still copies every file.
+- **Breaking: case follows one comparer per OS**, ordinal on Linux and macOS, ignore-case on
+  Windows: a literal exclude segment is no longer case-insensitive everywhere, and a wildcard
+  include no longer ignores case on macOS through the .NET listing [25]. A literal segment
+  (`SRC/a.cs`) is probed and keeps the mask's spelling, whatever the volume stores.
+- **Breaking: `**` does not follow directory symlinks and junctions** (3.x followed them, a cycle
+  ended only at the OS limit); each link skipped is logged once at level Message. A link is still
+  entered by a literal or a one-segment pattern (`node_modules/x/**`, `*/`) [26].
+- **Breaking: results are ordered and duplicate-free**: within a directory, entries in ordinal
+  order, files before subdirectories; includes in declaration order; a file found twice is kept
+  once, at its first place (3.x: file-system order, duplicates kept) [27].
+- **An unreadable directory** is skipped and logged once as a warning (3.x: the build failed with
+  `UnauthorizedAccessException`) [28].
+- **Unchanged:** an exclude applies to the includes before it; a mask without any wildcard is an
+  explicit name, listed whether or not the file exists (D13); `\` before a non-reserved character
+  is still a separator, deprecated [2, XP110]; `a//b` is one separator [34].
+- **API:** `Fileset`, `FilesetElement` (`Includes of PathMask`), the operators and the builder keep
+  their shapes. `Path.parse`/`parseDir` split as the lexer does (not inside `[...]`/`{...}`, not at
+  an escaping `\`) and keep the segment text; `Path.parse` keeps a trailing separator as a
+  directory mask; `Path.maskText` gives the text back. `Path.matchesPattern` is removed: use
+  `Path.matches mask root path`. `toFileList1` and `FileSystem` are obsolete: the file-system
+  adapter is ignored (the walker reads the file system). The `fileset { includefile ... }` and
+  `excludefile` operations work (their arguments were swapped).
 
 ## 3.15.0 (2026-10-29)
 

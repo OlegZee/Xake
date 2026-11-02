@@ -5,25 +5,12 @@ open NUnit.Framework
 
 open Xake
 
-/// Golden tests for the pattern AST (PR "B"): the regex generated from the AST, and the specificity
-/// read off it, must match the previous string-substitution implementation byte-for-byte. The
-/// reference functions below are verbatim copies of the code the AST replaced.
+/// Golden test for the pattern AST (PR "B"): the specificity read off it must match the previous
+/// regex tokenizer, except for the patterns 4.0 reads differently (pinned below). The reference
+/// function is a verbatim copy of the code the AST replaced. (The regex golden test went with the
+/// 3.x part matcher in Phase 4b.)
 [<TestFixture>]
 type PatternAstTests() =
-
-    // --- reference: the former maskToRegex body (string substitution) -------------------------
-    static let oldMap =
-        dict [ "**", "(.*)"
-               "*", """([^/\\]*)"""
-               "?", "([^/\\\\])"
-               ".", "\\."; "$", "\\$"; "^", "\\^"; "[", "\\["; "]", "\\]"
-               "+", "\\+"; "!", "\\!"; "=", "\\="; "{", "\\{"; "}", "\\}" ]
-    static let oldRepl (m: Match) =
-        match m.Groups.["tag"] with
-        | t when not t.Success -> (match oldMap.TryGetValue m.Value with | true, v -> v | _ -> m.Value)
-        | t -> "(?<" + t.Value + ">"
-    static let oldRegex (pattern: string) =
-        "^" + Regex.Replace(pattern.Replace('\\', '/'), @"\((?'tag'\w+?)\:|\*\*|([*.?$^+!={}])", oldRepl) + "$"
 
     // --- reference: the former specificity (regex tokenizer over the same grammar) ------------
     static let oldTokenRegex = Regex(@"(?<dstar>\*\*)|(?<group>\(\w+?\:)|(?<star>\*)|(?<q>\?)|(?<close>\))")
@@ -63,11 +50,6 @@ type PatternAstTests() =
           "a***b",          (2, 0, -4) ]  // item 13: segment-local '**' is '*' (XP112) (3.x: (2, -1, -2))
     // item 7: '{1}' without a comma is XP005; item 3: '(' outside a group is XP003
     static let specificityErrors = [ "x.y+z!=w{1}$^", "XP005"; "fun(ction).o", "XP003" ]
-
-    [<Test>]
-    member _.``AST regex matches the former substitution byte for byte``() =
-        for p in corpus do
-            Assert.AreEqual(oldRegex p, (Path.matchImpl.maskToRegex p).ToString(), sprintf "regex for '%s'" p)
 
     [<Test>]
     member _.``AST specificity matches the former tokenizer``() =

@@ -11,6 +11,7 @@ then the typed layer (`Xake.Typed`) on top. Restart of `feature/typed-matches` (
 |----|--------|----------|
 | — integration branch (target of every phase PR; merges to `dev` at the end) | `feature/patterns2` (cut from `dev` 2026-10-31, pushed 2026-11-01) | — (no worktree; PR target only) |
 | [#118](https://github.com/OlegZee/Xake/pull/118) merged: PR 2 parser (453 vectors, `PatternAst.fs`) | `feature/pattern-parser` (from `feature/pattern-module`) | `.claude/worktrees/feature/pattern-parser` |
+| PR pending: Phase 4b (Fileset scanning, D42) | `feature/pattern-fileset` | `.claude/worktrees/feature/pattern-fileset` (after the move) |
 | [#123](https://github.com/OlegZee/Xake/pull/123) Phase 4a (rules, D42): open, D43 confirmed 2026-11-03 | `feature/pattern-rules` | `.claude/worktrees/feature/pattern-rules` |
 | [#120](https://github.com/OlegZee/Xake/pull/120) PR 4 (scanner): 308 vectors, `PatternScan.fs` walker; D38, D39, D40 (provisional) | `feature/pattern-scanner` | `.claude/worktrees/feature/pattern-scanner` |
 | [#119](https://github.com/OlegZee/Xake/pull/119) merged: PR 3 matcher | `feature/pattern-matcher` | `.claude/worktrees/feature/pattern-matcher` |
@@ -35,6 +36,11 @@ leave it alone.
 - 2026-11-02: Phase 4 split in two PRs (D42). Phase 4a done on `feature/pattern-rules`: rule
   matching on the module, creation-time checks, XP119, release notes (rules). Fileset scanning
   (4b) still runs the 3.x part matcher (`Path.LegacyMask`, `matchesPattern`).
+
+- 2026-11-03: Phase 4b done on `feature/pattern-fileset` (PR pending): `Fileset` scanning on
+  `PatternScan`, the 3.x part matcher deleted, hermetic's mask uses on `Path.matches`, release
+  notes (masks). The import still writes msbuild `dir/**` as `dir/**/*` (same files in 4.0, no
+  XP113 noise, lock text unchanged); open questions in the PR description.
 
 ## Next step
 

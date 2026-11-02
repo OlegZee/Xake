@@ -1,4 +1,4 @@
-namespace Xake.Hermetic.Dotnet
+﻿namespace Xake.Hermetic.Dotnet
 
 open System
 open System.IO
@@ -196,7 +196,13 @@ module Import =
     /// The C# sources as Xake masks: msbuild's default glob and its excludes (those that can
     /// match a `.cs` file), then the `Compile` elements of the repository files in import order;
     /// a `!` marks an exclude, applied in order. msbuild's `dir/**` (every file below) is
-    /// written as Xake's `dir/**/*`.
+    /// written `dir/**/*` (`xakeMask`).
+    /// An msbuild mask as a Xake mask: msbuild's `dir/**` (every file below) as `dir/**/*`.
+    /// Since Xake 4.0 both spellings name the same files (D12); the import keeps `dir/**/*` so
+    /// that recorded masks keep their 3.x text and a scan of them never reports the XP113
+    /// legacy warning, which is about Xake 3.x scripts, not msbuild masks.
+    let private xakeMask (m: string) = if m.EndsWith "**" then m + "/*" else m
+
     let internal csharpMasks (d: Dump) (xmlFiles: (string * XDocument) list) (dropped: string -> unit) =
         let projectDir = slash (prop d "MSBuildProjectDirectory")
         // the folder of a repository file, from its base URI (`XDocument.Load` with `SetBaseUri`)
@@ -251,7 +257,7 @@ module Import =
                                 else yield slash mask ]
             if masks.IsEmpty then Set.empty
             else
-                let elements = masks |> List.map (fun m -> Includes (Path.parse (if m.EndsWith "**" then m + "/*" else m)))
+                let elements = masks |> List.map (xakeMask >> Path.parse >> Includes)
                 let (Filelist files) = Fileset ({ Xake.Fileset.DefaultOptions with BaseDir = Some projectDir }, elements) |> Fileset.toFileList projectDir
                 files |> List.map (fun f -> slash f.FullName) |> Set.ofList
         let defaults =
@@ -312,9 +318,7 @@ module Import =
                                         | fs -> yield! fs
                                     | None -> dropped (sprintf "%s: Compile %s=\"%s\" (a property the import does not know)" file name mask)
                                 else yield prefix + slash mask ]
-        // msbuild's `dir/**` is every file below; Xake's is the directories, files are `dir/**/*`
-        let xake (m: string) = if m.EndsWith "**" then m + "/*" else m
-        defaults @ explicit |> List.map xake
+        defaults @ explicit |> List.map xakeMask
 
     /// Expands masks as `csharpMasks` writes them, against `dir`, in order.
     let internal expandMasks (dir: string) (masks: string list) =

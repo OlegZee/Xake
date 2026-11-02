@@ -121,10 +121,8 @@ touched, so it is not re-litigated:
 the engine. It has now been reworked to reuse the engine's APIs and match its style. What is
 worth knowing before touching it again:
 
-- **`src/dotnet` no longer contains engine code.** Its `ProcessExec.fs` and `CommonLib.fs`
-  copies are gone; it uses the engine's via `InternalsVisibleTo("Xake.Dotnet")` declared in
-  `src/core/Xake.fsproj`. If assembly signing is ever added, that attribute needs the public
-  key or Xake.Dotnet silently loses access to the internals.
+- **`src/dotnet` no longer contains engine code**, and uses public engine API only (S1 of the
+  dotnet split): `ProcessExec` (public, `RequireQualifiedAccess`) and `hasRule`; no IVT to it.
 - **`pexecSync` exists for `DotNetFwk` only.** Framework and tool probing happens in plain
   memoized functions with no async context; everything inside a recipe uses the `shell`/`sh`
   task. `Async.RunSynchronously` is safe there (recipes run via `Async.StartAsTask` with no

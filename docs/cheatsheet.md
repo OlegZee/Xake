@@ -89,6 +89,8 @@ recipe {
 Capture groups of the rule's pattern (file or phony): `let! name = getRuleMatch "name"` (`""` when
 absent), `let! all = getRuleMatches ()` (a map). Also `getVar`, `getEnv`, `getCtxOptions`,
 `getTargetFile` (file rules only), `getTargetFullName`, `alwaysRerun ()`.
+`let! known = hasRule "out/a.dll"`: whether a rule would build a target (resolved as `need`
+resolves it), without building it.
 
 ## Script variables
 

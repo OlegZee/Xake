@@ -575,6 +575,7 @@ Common helpers used inside `recipe`:
 - `getCtxOptions`
 - `getTargetFile`
 - `getTargetFullName`
+- `hasRule` (whether a rule would build a target, without building it)
 
 Example:
 

@@ -12,7 +12,7 @@ package for the repository `OlegZee/Xake.Dotnet`, shipped there as ONE package `
 | PR | Repo | Branch | Worktree | Status |
 |----|------|--------|----------|--------|
 | — D1 design note | Xake | `feature/dotnet-split` (from `dev`) | `.claude/worktrees/feature/dotnet-split` | brief revised for one package, not pushed |
-| — S1 seam | Xake | `feature/dotnet-seam` (from `dev`) | agent worktree | committed, not pushed |
+| — S1 seam | Xake | `feature/dotnet-seam (#122)` (from `dev`) | agent worktree | committed, not pushed |
 
 ## State
 

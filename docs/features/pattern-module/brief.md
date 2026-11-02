@@ -380,3 +380,10 @@ fixes how much breaks. 3.12.0 is released (tag `v3.12.0`); nothing of this featu
   `Fileset` scanning onto `PatternScan` and deletes the 3.x part matcher (`Path.LegacyMask`,
   `matchImpl`, `matchesPattern` over `PathMask`), which `Fileset` and hermetic's lock masks still
   use until then.
+- **D43 (2026-11-02, PROVISIONAL by the orchestrator; the user confirms or reverses):** three
+  readings Phase 4a needed. (1) `x/..` in a rule pattern's literal prefix collapses before
+  matching (`a/../mid/(name:*).txt` matches the normalised `mid/x.txt`, `ParentDirTargetTests`);
+  D34 keeps `..` literal otherwise. (2) Spec 7.1's `phony` function does not exist; the
+  creation-time check applies to `<==` and `<<<`. (3) An empty signing target (`Sign.Settings`)
+  is XP018 at rule creation (3.x silently matched nothing). Also: `applyWildcards`,
+  `wildcardsRegex`, `patternTagRegex` deleted (spec 8.3) rather than wrapped.

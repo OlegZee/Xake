@@ -1,4 +1,4 @@
-namespace Tests
+﻿namespace Tests
 
 open System.Text.RegularExpressions
 open NUnit.Framework
@@ -52,6 +52,18 @@ type PatternAstTests() =
           "clean::(b:*)::(cfg:*)"
           "a***b"; "a?*b"; "(x:**)" ]
 
+    // Rewritten for 4.0 (Phase 4a): `Path.specificity` is `PatternAst.specificity` of the pattern
+    // module (spec 5.8). Patterns whose 4.0 reading is unchanged score as the 3.x tokenizer did;
+    // the others are pinned below with the spec section-3 item that changes them.
+    static let specificityChanged =
+        [ "a/**/x.dll",     (6, -1, 0)    // item 33 (D5): a '/' next to '**' counts 0 (3.x: 8)
+          "**/*.cs",        (3, -1, -2)   // item 33 (3.x: 4)
+          "src/**/bin/*.o", (9, -1, -2)   // item 33 (3.x: 11)
+          "lib[x].dll",     (7, 0, -1)    // item 10: '[x]' is the class of 'x' (XP105), weight 1 (3.x: 10 literals)
+          "a***b",          (2, 0, -4) ]  // item 13: segment-local '**' is '*' (XP112) (3.x: (2, -1, -2))
+    // item 7: '{1}' without a comma is XP005; item 3: '(' outside a group is XP003
+    static let specificityErrors = [ "x.y+z!=w{1}$^", "XP005"; "fun(ction).o", "XP003" ]
+
     [<Test>]
     member _.``AST regex matches the former substitution byte for byte``() =
         for p in corpus do
@@ -59,10 +71,12 @@ type PatternAstTests() =
 
     [<Test>]
     member _.``AST specificity matches the former tokenizer``() =
-        // Excludes `fun(ction).o`: the old tokenizer stripped a top-level literal ')' as "structure"
-        // (while keeping the '('), so a pattern with parentheses that are not a group scored one
-        // literal short. The AST counts both as the literal characters they are. No real rule
-        // pattern has unpaired/non-group parentheses, and specificity is only ever compared, so this
-        // is a harmless, more-correct divergence rather than a behavior change.
-        for p in corpus |> List.filter ((<>) "fun(ction).o") do
+        let changed = specificityChanged |> List.map fst
+        let errors = specificityErrors |> List.map fst
+        for p in corpus |> List.filter (fun p -> not (List.contains p changed || List.contains p errors)) do
             Assert.AreEqual(oldSpecificity p, Path.specificity p, sprintf "specificity for '%s'" p)
+        for p, expected in specificityChanged do
+            Assert.AreEqual(expected, Path.specificity p, sprintf "4.0 specificity for '%s'" p)
+        for p, code in specificityErrors do
+            let e = Assert.Throws<PatternAst.PatternException>(fun () -> Path.specificity p |> ignore)
+            StringAssert.Contains(code, e.Message, p)

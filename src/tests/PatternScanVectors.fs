@@ -134,6 +134,9 @@ let trees : Tree list = [
     tree "T-OBJ"
         [ "obj/x.dll"; "obj/a/y.cs"; "obj/a.o"; "src/obj"; "src/a.cs"; "other/obj"; "other/keep.o"; "k.o" ]
         "trailing '/' in excludes (measurements-engine §6 tree c6, example 21)"
+    tree "T-PRUNE"
+        [ "obj/a.cs"; "obj/b.txt"; "src/c.cs"; "src/d.txt" ]
+        "a P/** exclude pruning for several includes (D41; code review of #120)"
     tree "T-DOT"
         [ "a/b.cs"; "a/.git/x.cs"; ".hidden/y.cs"; "a/b/.vs/deep/z.cs"; "top.cs"
           "dir/c.cs"; "dir/sub/d.cs"; "Dir2/e.cs"; "a.b/f.cs"; ".gitignore"; "a/.env" ]
@@ -208,6 +211,7 @@ let private basicU = sc "T-BASIC" Os.Unix
 let private basicW = sc "T-BASIC" Os.Windows
 let private dirs = sc "T-DIRS" Os.Any
 let private obj = sc "T-OBJ" Os.Any
+let private prune = sc "T-PRUNE" Os.Any
 let private dot = sc "T-DOT" Os.Any
 let private dotU = sc "T-DOT" Os.Unix
 let private dotW = sc "T-DOT" Os.Windows
@@ -276,6 +280,7 @@ let scanVectors : ScanVector list = [
     basic "SC-014" "6.6" (i1 "**/*.cs") (ok []) "unchanged: a missing base directory gives an empty list (6.6)" |> at Missing
     basic "SC-015" "6.6" (i1 "a.cs") (ok [ "a.cs" ])
         "SPEC? a missing base directory and an explicit name: read as listed (D13 lists it whether or not it exists; 6.6 'empty list' read as about listings)" |> at Missing
+    basic "SC-025" "6.6" (i1 "**/*.cs") (ok []) "6.6: a base that is a file lists nothing and logs nothing, as a missing base (ENOTDIR is not Unreadable; code review of #120)" |> at (At "a.cs")
 
     // ---- T-BASIC: directories (trailing '/' in an include, D9) ------------------------------------
     basic "SC-016" "6.2" (i1 "*/") (ok [ "docs"; "empty"; "lib"; "src"; "test" ]) "unchanged; FilesetTests 'could search and return directories'"
@@ -410,8 +415,8 @@ let scanVectors : ScanVector list = [
     dirs "SC-120" "5.5" (ie "**/*" "dir/**") (okw [ "x.dll"; "a/x.dll"; "src/other.fs"; "src/hermetic/a.fs"; "src/hermetic/sub/b.fs" ] [ we "XP113" "dir/**" ])
         "changed in 4.0 (item 14): example 10; 3.x removed nothing (FilesetTests)"
     dirs "SC-121" "7.3" (ie "**/*" "dir/sub/deep/**") (ok dirsAll) "7.3: the exclude removes no file, no XP113"
-    dirs "SC-122" "7.3" (ie "**/*.fs" "dir/**") (ok [ "src/other.fs"; "src/hermetic/a.fs"; "src/hermetic/sub/b.fs" ])
-        "SPEC? the walker may prune 'dir' for the later 'dir/**' without reading it; read as no XP113 because no file the include would find is removed (6.3: pruning is an optimisation only, the evidence follows the unpruned result)"
+    dirs "SC-122" "7.3" (ie "**/*.fs" "dir/**") (okw [ "src/other.fs"; "src/hermetic/a.fs"; "src/hermetic/sub/b.fs" ] [ we "XP113" "dir/**" ])
+        "D41: 'dir/**' prunes 'dir' unconditionally; one listing of 'dir' shows 'sub', which the include would enter, so the pruning is XP113 evidence (the gated reading of D40.3, no warning, is reversed)"
     dirs "SC-123" "7.3" (ie "dir/**" "dir/sub/**") (okw [ "dir/a" ] [ wi "XP113" "dir/**"; we "XP113" "dir/sub/**" ])
         "7.3: the key is (use, text); both uses warn"
     dirs "SC-124" "5.5" (i1 "a/**") (okw [ "a/x.dll" ] [ wi "XP113" "a/**" ]) "changed in 4.0 (item 14)"
@@ -447,6 +452,8 @@ let scanVectors : ScanVector list = [
     obj "SC-157" "6.2" (ie "obj/**/*" "obj/") (ok []) "D9"
     obj "SC-158" "6.3" [ inc "**/*"; exc "obj/"; inc "obj/a/*" ] (ok (objNoObj @ [ "obj/a/y.cs" ]))
         "6.3: a later include walks a directory an earlier exclude pruned"
+    prune "SC-159" "6.3" [ inc "**/*.cs"; exc "**/*.cs"; inc "**/*.txt"; exc "obj/**" ] (okw [ "src/d.txt" ] [ we "XP113" "obj/**" ])
+        "D41 (regression, code review of #120): the third include finds 'obj/b.txt' (pruned for the fourth element, unconditionally), the fourth removes it and is XP113 evidence; the gated prune let the first include's 'obj/a.cs' decide for the third"
 
     // ---- T-DOT: dotfiles and the '**/.*/**' idiom (5.3, D10) ----------------------------------------------
     dot "SC-160" "5.3" (i1 "**/*.cs") (ok dotCs) "unchanged: D10 (measurements-engine §8, measurements-windows E8); order changed (item 27)"

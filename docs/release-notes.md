@@ -1,148 +1,149 @@
 # Release notes: `Xake`
 
-The `Xake` package (engine and `Xake.Dotnet`). Xake.Hermetic.Dotnet has its own notes
-([hermetic/README.md](hermetic/README.md)).
+The `Xake` package: the engine (up to 3.15 it also carried `Xake.Dotnet`). Xake.Hermetic.Dotnet
+has its own notes ([hermetic/README.md](hermetic/README.md)).
 
 ## 4.0.0 (unreleased)
 
-A breaking release: variables are evaluated at launch by declarations, and Xake.Dotnet reads
-only the variable set. Xake.Hermetic.Dotnet builds against the in-repo Xake until 4.0 and
-ships its next release (0.11) together with it; at 4.0 `Xake.Dotnet` and the hermetic package
-are split out of this repository (release-process decision D).
+A breaking release: rule patterns and file masks follow one grammar (the pattern module, spec:
+`docs/features/pattern-module/spec.md`), variables are evaluated at launch by declarations the
+script states, and the `Xake` package is the engine alone. `Xake.Dotnet` and the hermetic
+library leave this repository and ship together as the package `Xake.Dotnet` 4.0.0 from its own
+repository (dotnet-split S-D2); the `Xake.Hermetic.Dotnet` line ends at 0.10.0.
 
-Migration, in short: a CI that put `NUGET_PACKAGES`, `XAKE_CSC_SERVER`, `XAKE_CSC_JOBS` or
-`XAKE_FSC_JOBS` in the environment adds `var "NUGET_PACKAGES" [Env "NUGET_PACKAGES"]` (and the
-like, see below) or passes `-d`; a recipe that reads `Var.*` declares the key in `varschema`; a
-script that reads `getVar "pkg"` for a field with `cliArg = "pkg"` reads the field's own key;
-a name defined twice in a script is removed; credentials are not passed with `-d`; a field
-without `envVar` that was set from the environment under its plain name gets `envVar = "NAME"`
-(or the environment variable is renamed to `XAKE__NAME`), and a CI that happens to export
-`XAKE__<NAME>` for a constant `var` checks that it means it.
+This section lists the breaking changes, the new features and the fixes, then the migration and
+an announcement; the sections after it describe each area in full.
 
-**Breaking (package, from `4.0.0-preview.2`): the `Xake` package no longer carries
-`Xake.Dotnet.dll`** (nor its `.xml`, nor its dependencies `System.Resources.Extensions` and
-`Microsoft.Win32.Registry`): it is the engine alone, packed from `src/core`. Xake.Dotnet ships
-from its own repository as the package `Xake.Dotnet`; a script that uses `open Xake.Dotnet`
-(`csc`, `fsc`, `msbuild`, `resgen`, ...) adds `#r "nuget: Xake.Dotnet"`. The 3.x `Xake.Dotnet`
-line is not republished from this repository.
+### Breaking changes
 
-**Variables are evaluated once, before the build, by declarations the script states.**
-Details: [tasks.md](tasks.md#script-variables).
+**Packages**
 
-- **New: `var "N" [sources]`.** `var "N" [Env "X"; Default "v"]` takes the first defined source
-  in list order; `Cli "ext"` sets the name's command-line name (`-d ext=...`); `Secret` /
-  `SecretHashed` make it a secret. `var "N" "v"` keeps its meaning (a script value).
-- **Evaluation at launch.** `var` rules and `varschema` fields are evaluated once, before `setup`
-  and the first target (run, `--dryrun`, `--dump`, engine `start`): the environment is read
-  there, and a missing `required` value or a value that does not convert to the field's type
-  stops the run before any target (before: when a recipe read it). A `varschema` field's value is
-  visible to `getVar` and in the banner. `--help` evaluates nothing.
-- **Precedence:** engine per-demand variables > `-d` (the last wins) > the script's one definition
-  of the name (`var` or `ExecOptions.ScriptVars`) > the declaration's sources. A read records the final
-  value (`Var (N, value)`), not its source, so moving an equal value between the environment,
-  `-d` and `var` no longer rebuilds.
-- **Breaking: a `Var.*` read in a recipe needs a declaration** of its key: a `varschema` field
-  (or an equal `var [...]` rule). Without one the reading target fails ("... is read through Var
-  but is not declared: declare it in varschema, or use getVar ..."); with a different one (another
-  env name, default, type, required flag, secret mode or command-line name) it fails too. A Var
-  read no longer reads the environment and no longer records `EnvVar`; use `getVar` for script
-  values and `getEnv` for the environment.
-- **Breaking: the key of a field is its `name`, else its field name.** `cliArg` is only its
-  command-line name: with `p = Var.string(cliArg = "pkg")`, `-d pkg=v` sets `p` and `getVar "p"`
-  reads it (3.15 keyed it by `pkg`; a script reading `getVar "pkg"` changes). `-d p=v` for such
-  a field stops the run (`-d p: the variable is set on the command line as pkg; use -d pkg=...`).
-- **Breaking: a name defined twice in the script stops the run**: two `var` ops, a `var` op and an
-  `ExecOptions.ScriptVars` entry, a `varschema` field and a rule (before: the later `var` replaced the
-  earlier value, `var` won over `ExecOptions.ScriptVars`).
-- **Breaking: `-d` of a secret stops the run**, under its key, its command-line name or one of its
-  environment names (3.15 warned for an argument secret); `-d` of a `Var.env` field stops the run
-  (3.15 ignored it). `getVar`/`getEnv` of a secret return the value; masking applies to output.
-  Mark credential fields secret: `build.fsx` now has `NUGET_KEY = Var.env(envVar = "NUGET_KEY") |> secret`.
-- **Breaking: an implicit `XAKE__<NAME>` environment source.** Every declaration without an
-  explicit environment name reads `XAKE__<NAME>` first, `NAME` being its key in UPPER_SNAKE
-  (`buildConfig` -> `XAKE__BUILD_CONFIG`, `netfx-target` -> `XAKE__NETFX_TARGET`): a `var` rule
-  without an `Env` source (`var "N" [Default "d"]` reads `XAKE__N`, then the default), a
-  `Var.string`/`int`/`bool`/`create`/`env`/`secret` field without `envVar`. The 3.15 derived name
-  without the prefix (`BUILD_CONFIG`) is no longer read, with no compatibility path. An explicit
-  `Env "X"` / `envVar = "X"` replaces the implicit source; `Var.arg` has no environment source.
-  Migration: keep a plain name with `envVar = "NAME"` / `Env "NAME"`, or export `XAKE__NAME`.
-- **Breaking: a constant is overridden by `XAKE__<NAME>`.** `var "N" "v"` and an
-  `ExecOptions.ScriptVars` entry take `XAKE__N` when it is present (banner `env:XAKE__N`), else `v`;
-  `-d` still wins. Names that nothing declares get no implicit source: `XAKE__*` variables are not
-  scanned into the variable set. Two keys whose implicit names are equal (`a-b` and `A_B`,
-  `fooBar` and `FOO_BAR`) stop the run: `Variables 'A' and 'B' both read the environment variable
-  XAKE__N; rename one, or give one an explicit Env source`.
-- **Secrets through `XAKE__`:** `var "T" [Secret]` reads `XAKE__T`, the normal way to pass a
-  secret; `-d T=...` and `-d XAKE__T=...` stop the run ("set XAKE__T instead"). `--help` shows the
-  environment name of every rule and field, implicit or explicit.
-- **New: `ExecOptions.IgnoreEnvironment`** (default `false`), for tests and for programs that
-  embed Xake: no declaration reads the environment at launch (neither `XAKE__<NAME>` nor an
-  explicit `Env`/`envVar`); values come from per-demand values, `-d` (unless
-  `IgnoreCommandLine`), the constant and the defaults. `getEnv` is not affected; the banner shows
-  `environment:  ignored (IgnoreEnvironment)`. No command-line flag; `xakeEngine` leaves it off.
-  See [variables.md](variables.md#pinning-values-tests-and-embedding).
-- **Engine:** `Demand(target, vars)` values now win over the script's values (they were shadowed);
-  a per-demand value for a secret, an environment-only or a mistyped variable fails the demand
-  before any target. `XakeEngine.Start` raises `XakeException` on a launch error.
-- **Output:** the banner lists each variable once with its source (`cli`, `cli:<name>`, `script`,
-  `env:<NAME>`, `default`, `(not set)`), secrets as `***` (3.14 labelled all `script/cli`);
-  `--help` lists `var [...]` rules after the `varschema` fields, with their command-line names;
-  the `Debug` options dump shows the variables, secrets masked.
-- **Dependencies:** a target whose record comes from a 3.15 Var read (`Var (N, None)` +
-  `EnvVar`) rebuilds once; a secret field's record moves from `SecretDep (env name, SecretEnv)` to
-  `SecretDep (key, SecretArg)`, one rebuild. Repeated reads of a name in one recipe record one
-  dependency. The database format is unchanged (0.6).
-- **Breaking: `ExecOptions.Vars` is renamed `ExecOptions.ScriptVars`** (the script's values: the
-  entries given to `xake`/`xakeArgs` and every `var "N" "v"`; `CliVars` holds `-d`). No alias:
-  `{ ExecOptions.Default with Vars = [...] }` becomes `{ ExecOptions.Default with ScriptVars = [...] }`.
-  `ExecContext.Vars` (what a recipe reads) keeps its name. The E-2 text names
-  `ExecOptions.ScriptVars`.
-- **API:** new `VarSource`, `VarOrigin`, `VarDecl`, `VarEntry`; new fields `ExecOptions.CliVars`
-  (the `-d` pairs; `-d` no longer goes into `ExecOptions.ScriptVars`), `ExecOptions.VarDecls`,
-  `ExecOptions.VarDefinedBy` (where each `var`/`varschema` definition came from, for the
-  diagnostics) and `EngineOptions.Variables` (the variable set built at launch). Binary break for
-  code that builds `ExecOptions`/`EngineOptions` with a full record expression (not `with`);
-  `ExecContext` and the records Xake.Hermetic.Dotnet builds are unchanged.
+- **The `Xake` package no longer carries `Xake.Dotnet.dll`** (from `4.0.0-preview.2`; nor its
+  `.xml`, nor its dependencies `System.Resources.Extensions` and `Microsoft.Win32.Registry`): it
+  is the engine alone, packed from `src/core`. Xake.Dotnet ships from its own repository as the
+  package `Xake.Dotnet`; a script that uses `open Xake.Dotnet` (`csc`, `fsc`, `msbuild`,
+  `resgen`, ...) adds `#r "nuget: Xake.Dotnet"`. The 3.x `Xake.Dotnet` line is not republished
+  from this repository (#129, S-D14).
+- **`Xake.Hermetic.Dotnet` is no longer packed or published from this repository** (#129,
+  S-D17): its line ends at 0.10.0, and the hermetic library ships inside the `Xake.Dotnet` 4.0.0
+  package (`open Xake.Hermetic.Dotnet` unchanged), the id `Xake.Hermetic.Dotnet` pointing to
+  `Xake.Dotnet` (S-D2).
 
-### Library readers (Xake.Dotnet) and the optional import of library declarations
+**Pattern grammar and reserved characters** (rules and masks; details in
+[Patterns: rule matching](#patterns-rule-matching-on-the-pattern-module) and
+[Patterns: fileset scanning](#patterns-fileset-scanning-on-the-pattern-module))
 
-- **Breaking: Xake.Dotnet reads its build variables only from the variable set**, never from
-  the environment. `NUGET_PACKAGES`, `XAKE_CSC_SERVER`, `XAKE_CSC_JOBS`, `XAKE_FSC_JOBS` set
-  only in the environment are ignored; a CI that relied on one adds a declaration, e.g.
-  `var "NUGET_PACKAGES" [Env "NUGET_PACKAGES"]`, `var "XAKE_CSC_SERVER" [Env "XAKE_CSC_SERVER"]`,
-  `var "CSC_JOBS" [Env "XAKE_CSC_JOBS"]`, or passes `-d`.
-- **Breaking: the package folder defaults to `<project root>/.packages`** (was the environment
-  variable `NUGET_PACKAGES`, else `~/.nuget/packages`). It is always the build's own:
-  `packageRootWithSource` returns `ScriptVariable` for it, so `HERMETIC=on` accepts it without a
-  `NUGET_PACKAGES` variable; `PackageRootSource.EnvironmentVariable`/`UserProfile` are
-  `[<Obsolete>]`. A child `dotnet restore` gets the folder as `NUGET_PACKAGES`. The context-free
-  `DotNetFwk.nugetRoot ()` is `~/.nuget/packages` and reads no environment.
-- **Breaking: strict switches.** `NUGET_FETCH`, `XAKE_CSC_SERVER` (`on`/`off`, `true`/`false`,
-  `yes`/`no`, `1`/`0`) and `CSC_SERVER` (`on`, `off`, keepalive seconds) fail the reading target
-  on any other value (`CSC_SERVER='bogus': expected on, off or a number of seconds`; 3.15 warned
-  or took it as on). An empty value is the default (`-d NUGET_FETCH=` is on).
-- `RunOptions.Default.Server` is `Shared None` and reads nothing; `CompilerServer.fromEnvironment`
-  is `[<Obsolete>]` and returns `Shared None`. A recipe resolves the server from `CSC_SERVER`,
-  then `XAKE_CSC_SERVER` (`CompilerServer.resolve`).
-- **`Var.read<'t> "NAME"`**: the read for a library. A declared name is read through the
-  script's declaration, whatever its sources and default, only its type checked
-  (`Variable 'N' is read as 'T' but is declared by ... as 'U'`); an undeclared one is `getVar`.
-  No environment read, the dependency `getVar` records.
-- **`DotNetVars.Default`**: the variables Xake.Dotnet reads, as an optional schema
-  (`NUGET_PACKAGES`, `NUGET_FETCH`, `HERMETIC`, `CSC_SERVER`, `XAKE_CSC_SERVER`, `CSC_JOBS`,
-  `FSC_JOBS`; strings, `-d` only, the library's defaults). `varschema DotNetVars.Default` lists them
-  in `--help` and the banner; `{ DotNetVars.Default with NUGET_PACKAGES = Var.string(envVar = "NUGET_PACKAGES") |> withDefault ".packages" }`
-  also takes the environment (without `envVar`, `XAKE__NUGET_PACKAGES`). Importing changes no value; a target built before the import
-  rebuilds once (its dependency records the default).
+- **`( ) [ ] { } |` are reserved.** `\` before one of them escapes it (`src\(x\)` names
+  `src(x)`); `PatternAst.escapePath` turns a real path into a mask. `(`, `)` or `|` outside a
+  named group is an error [XP003]; `|` inside a named group (`(ext:dll|exe)`, a 3.x regex
+  alternation) is an error giving `(ext:{dll,exe})` [XP003]; an unbalanced `[` [XP002], a stray
+  `]`, `}` or an unclosed `{` [XP004], `{x}` without a comma [XP005], a named group in a mask
+  [XP008], `\,` directly inside braces [XP017].
+- **Classes and braces are wildcards everywhere**: `{a,b}` is an alternation, `[abc]`, `[a-z]`,
+  `[^a]` are classes in masks too (3.x masks: literal text) [XP104 on evidence]; `[!a]` is a
+  negated class [XP117]; `[c]` is the character `c` [XP105 in rules, XP106 in masks].
+- **`**`**: `**/` in a rule takes zero or more directories (3.x: one or more) [XP119];
+  `dir/**` in a mask is every file below `dir` [XP113]; `a**b` stays within one segment
+  [XP112]; `**` does not follow directory symlinks and junctions.
+- **Masks**: a trailing `/` names directories in every mask (`-- "obj/"` removes everything
+  below `obj`); `*.*` needs a `.` in the name [XP114]; `?` never matches zero characters;
+  results are ordered and duplicate-free.
+- **Case** follows one comparer per OS, ordinal on Linux and macOS, ignore-case on Windows.
+- **Errors for 3.x spellings that meant nothing or something unintended:** an unclosed
+  `(name:` [XP006], a group name starting with a digit [XP007], `/` inside a class, `[z-a]`,
+  `[[:` [XP010], a trailing `/` in a rule [XP011], `.`/`..` after a wildcard [XP012], outputs of a
+  multi-output rule with different groups [XP013] or a class or braces outside a group [XP014],
+  a repeated group name [XP015], an empty pattern [XP018], `{a/,b}` ending the pattern [XP019].
+- **Rule selection:** a `/` next to `**` no longer counts in specificity, so a globstar rule can
+  lose a tie it won in 3.x (D5).
+- **When errors surface:** an invalid pattern raises `PatternException` (`Invalid pattern
+  '<text>' (<context>) at character <n>: <reason> [XPnnn]`) when the rule or the fileset is
+  created, usually as the script loads; legacy spellings warn once in the build log. `\` before
+  any other character is still a separator, deprecated [XP110], an escape from 5.0.
 
-### Public seam for task libraries
+**Deleted and changed APIs**
 
-Xake.Dotnet uses public engine API only; no `InternalsVisibleTo` to it.
+- **`Path.matchesPattern` is removed** with the 3.x part matcher: use `Path.matches mask root
+  path` (#124, spec 8.7). `Path.matches` keeps its signature, uses the module's mask semantics
+  and raises `PatternException` on an invalid mask; `Path.specificity` is
+  `PatternAst.specificity` (#123).
+- **`Fileset.toFileList1` and the `FileSystem` adapter (`FileSystemType`) are removed**, not kept
+  obsolete: the walker reads the file system; use `toFileList` (D46).
+- **`Path.parse`/`parseDir` split as the lexer does** and keep a trailing separator as a
+  directory mask; a fileset recorded by 3.x with a trailing `**` reads back differently, so its
+  target reruns once (spec 8.7).
+- **`ExecOptions.Vars` is renamed `ExecOptions.ScriptVars`**, no alias (#115); new fields of
+  `ExecOptions`/`EngineOptions` break code that builds them with a full record expression (#111).
 
-- **New: `hasRule : string -> Recipe<ExecContext, bool>`**: whether a rule of the script would
-  build a target (the name resolved as `need` resolves it), without building it.
-- **`Xake.ProcessExec` is public** (`RequireQualifiedAccess`): `pexec`, `pexecSync`,
-  `drainTimeoutMs`, low-level process plumbing for libraries; scripts use `shell`/`sh`.
+**Variables** (details in [Variables](#variables-evaluated-at-launch))
+
+- A `Var.*` read in a recipe needs a declaration of its key (#111).
+- The key of a `varschema` field is its `name`, else its field name; `cliArg` is only its
+  command-line name (#111).
+- A name defined twice in the script stops the run; `-d` of a secret or of a `Var.env` field
+  stops the run (#111).
+- An implicit `XAKE__<NAME>` environment source for every declaration without an explicit one,
+  and a constant `var "N" "v"` is overridden by `XAKE__<NAME>`; the 3.15 name without the prefix
+  is no longer read (#111).
+- Xake.Dotnet (now shipped from its own repository) reads its build variables only from the
+  variable set, its package folder defaults to `<project root>/.packages`, and its switches are
+  strict (#112).
+
+### New features
+
+- **The pattern module `Xake.PatternAst`** (#117–#124): one grammar for rules and masks, with
+  classes, braces and `\` escapes; public parsing (`Rule.parse`/`tryParse`/`check`,
+  `Mask.parse`/`tryParse`/`check`), `escape`, `escapePath`, `unparse`, `groupNames`,
+  `wildcards`, `specificity`, `format`, `formatMatches` and `glob`; numbered `XPnnn` errors and
+  warnings; one fileset walker. Not opened by `open Xake`. Guide:
+  [overview.md](overview.md#patterns-masks-and-paths).
+- **Typed targets `Xake.Typed`** (#127, #130): `Target<'G>`, `Target<'G, 'O>` and `Command<'G>`,
+  rule patterns whose groups are the fields of an F# record, checked by the compiler. Guide:
+  [typed-targets.md](typed-targets.md).
+- **Variables** (#111, #112, #113, #115): `var "N" [sources]` (`Env`, `Default`, `Cli`, `Secret`,
+  `SecretHashed`), evaluation at launch with each variable's source in the banner,
+  `ExecOptions.IgnoreEnvironment`, `Var.read<'t>` for libraries and the optional
+  `DotNetVars.Default` schema. Guide: [variables.md](variables.md).
+- **A public seam for task libraries** (#122): `hasRule` and a public `Xake.ProcessExec`.
+
+### Fixes
+
+- A project root holding `( ) [ ] { } |` matches literally; `a//b` in a pattern is one
+  separator; an empty group value no longer leaves `(lib:)` in a multi-output name and a `)` in
+  a value no longer breaks it (#123).
+- An unreadable directory in a scan is skipped with a warning (3.x: the build failed with
+  `UnauthorizedAccessException`); a `**` scan no longer loops on a directory link cycle (#124).
+- `fileset { includefile ... }` and `excludefile` work (their arguments were swapped);
+  `includefile` skips blank lines (#124).
+- `Demand(target, vars)` values win over the script's values (they were shadowed) (#111).
+- File loggers are flushed at the end of the build, and a locked previous log file is tolerated
+  (#123).
+
+### Migration
+
+A script that uses `open Xake.Dotnet` adds `#r "nuget: Xake.Dotnet"`; one that referenced
+`Xake.Hermetic.Dotnet` takes it from that package too. A pattern that 4.0 rejects fails at load
+with its `XPnnn` code and the 4.0 spelling in the message: escape literal `( ) [ ] { } |` with
+`\` (or `PatternAst.escapePath`), write `{a,b}` for `(a|b)`, `dir/**/` for the directories
+below `dir`, `*/**/x` to require a directory; read the warnings in the build log. `toFileList1`
+becomes `toFileList`, `Path.matchesPattern` becomes `Path.matches`, `ExecOptions.Vars` becomes
+`ExecOptions.ScriptVars`. For variables: a CI that put `NUGET_PACKAGES`, `XAKE_CSC_SERVER`,
+`XAKE_CSC_JOBS` or `XAKE_FSC_JOBS` in the environment adds `var "NUGET_PACKAGES" [Env
+"NUGET_PACKAGES"]` (and the like, see below) or passes `-d`; a recipe that reads `Var.*`
+declares the key in `varschema`; a script that reads `getVar "pkg"` for a field with `cliArg =
+"pkg"` reads the field's own key; a name defined twice in a script is removed; credentials are
+not passed with `-d`; a field without `envVar` that was set from the environment under its plain
+name gets `envVar = "NAME"` (or the environment variable is renamed to `XAKE__NAME`), and a CI
+that happens to export `XAKE__<NAME>` for a constant `var` checks that it means it.
+
+### Announcement: phony `=>` is to be phased out in favour of `Command`
+
+Not a deprecation: in 4.0 `=>` (and the builder operation `phony`) compiles without a warning and
+behaves as before. The direction is that `Command` (typed, `Command<'G>`, or the string
+`command "name" { }`) replaces phony rules, which is the way to retire "phony" and its semantics.
+Migrating a `=>` rule to `Command<'G>.Rule` **adds `AlwaysRerun`** (a phony rule does not rerun by
+itself; a command always does), so a rule that relied on skipping stays a `=>` for now. The
+migration recipe is in [typed-targets.md](typed-targets.md#a-phony-rule-with-groups-becomes-a-command).
 
 ### Patterns: rule matching on the pattern module
 
@@ -274,14 +275,125 @@ New: rule patterns whose groups are the fields of an F# record, checked by the c
   `PatternException.ToString()` is its message alone, so a script failing at load shows no stack
   trace.
 
-### Announcement: phony `=>` is to be phased out in favour of `Command`
+### Variables: evaluated at launch
 
-Not a deprecation: in 4.0 `=>` (and the builder operation `phony`) compiles without a warning and
-behaves as before. The direction is that `Command` (typed, `Command<'G>`, or the string
-`command "name" { }`) replaces phony rules, which is the way to retire "phony" and its semantics.
-Migrating a `=>` rule to `Command<'G>.Rule` **adds `AlwaysRerun`** (a phony rule does not rerun by
-itself; a command always does), so a rule that relied on skipping stays a `=>` for now. The
-migration recipe is in [typed-targets.md](typed-targets.md#a-phony-rule-with-groups-becomes-a-command).
+Variables are evaluated once, before the build, by declarations the script states.
+Details: [tasks.md](tasks.md#script-variables).
+
+- **New: `var "N" [sources]`.** `var "N" [Env "X"; Default "v"]` takes the first defined source
+  in list order; `Cli "ext"` sets the name's command-line name (`-d ext=...`); `Secret` /
+  `SecretHashed` make it a secret. `var "N" "v"` keeps its meaning (a script value).
+- **Evaluation at launch.** `var` rules and `varschema` fields are evaluated once, before `setup`
+  and the first target (run, `--dryrun`, `--dump`, engine `start`): the environment is read
+  there, and a missing `required` value or a value that does not convert to the field's type
+  stops the run before any target (before: when a recipe read it). A `varschema` field's value is
+  visible to `getVar` and in the banner. `--help` evaluates nothing.
+- **Precedence:** engine per-demand variables > `-d` (the last wins) > the script's one definition
+  of the name (`var` or `ExecOptions.ScriptVars`) > the declaration's sources. A read records the final
+  value (`Var (N, value)`), not its source, so moving an equal value between the environment,
+  `-d` and `var` no longer rebuilds.
+- **Breaking: a `Var.*` read in a recipe needs a declaration** of its key: a `varschema` field
+  (or an equal `var [...]` rule). Without one the reading target fails ("... is read through Var
+  but is not declared: declare it in varschema, or use getVar ..."); with a different one (another
+  env name, default, type, required flag, secret mode or command-line name) it fails too. A Var
+  read no longer reads the environment and no longer records `EnvVar`; use `getVar` for script
+  values and `getEnv` for the environment.
+- **Breaking: the key of a field is its `name`, else its field name.** `cliArg` is only its
+  command-line name: with `p = Var.string(cliArg = "pkg")`, `-d pkg=v` sets `p` and `getVar "p"`
+  reads it (3.15 keyed it by `pkg`; a script reading `getVar "pkg"` changes). `-d p=v` for such
+  a field stops the run (`-d p: the variable is set on the command line as pkg; use -d pkg=...`).
+- **Breaking: a name defined twice in the script stops the run**: two `var` ops, a `var` op and an
+  `ExecOptions.ScriptVars` entry, a `varschema` field and a rule (before: the later `var` replaced the
+  earlier value, `var` won over `ExecOptions.ScriptVars`).
+- **Breaking: `-d` of a secret stops the run**, under its key, its command-line name or one of its
+  environment names (3.15 warned for an argument secret); `-d` of a `Var.env` field stops the run
+  (3.15 ignored it). `getVar`/`getEnv` of a secret return the value; masking applies to output.
+  Mark credential fields secret: `build.fsx` now has `NUGET_KEY = Var.env(envVar = "NUGET_KEY") |> secret`.
+- **Breaking: an implicit `XAKE__<NAME>` environment source.** Every declaration without an
+  explicit environment name reads `XAKE__<NAME>` first, `NAME` being its key in UPPER_SNAKE
+  (`buildConfig` -> `XAKE__BUILD_CONFIG`, `netfx-target` -> `XAKE__NETFX_TARGET`): a `var` rule
+  without an `Env` source (`var "N" [Default "d"]` reads `XAKE__N`, then the default), a
+  `Var.string`/`int`/`bool`/`create`/`env`/`secret` field without `envVar`. The 3.15 derived name
+  without the prefix (`BUILD_CONFIG`) is no longer read, with no compatibility path. An explicit
+  `Env "X"` / `envVar = "X"` replaces the implicit source; `Var.arg` has no environment source.
+  Migration: keep a plain name with `envVar = "NAME"` / `Env "NAME"`, or export `XAKE__NAME`.
+- **Breaking: a constant is overridden by `XAKE__<NAME>`.** `var "N" "v"` and an
+  `ExecOptions.ScriptVars` entry take `XAKE__N` when it is present (banner `env:XAKE__N`), else `v`;
+  `-d` still wins. Names that nothing declares get no implicit source: `XAKE__*` variables are not
+  scanned into the variable set. Two keys whose implicit names are equal (`a-b` and `A_B`,
+  `fooBar` and `FOO_BAR`) stop the run: `Variables 'A' and 'B' both read the environment variable
+  XAKE__N; rename one, or give one an explicit Env source`.
+- **Secrets through `XAKE__`:** `var "T" [Secret]` reads `XAKE__T`, the normal way to pass a
+  secret; `-d T=...` and `-d XAKE__T=...` stop the run ("set XAKE__T instead"). `--help` shows the
+  environment name of every rule and field, implicit or explicit.
+- **New: `ExecOptions.IgnoreEnvironment`** (default `false`), for tests and for programs that
+  embed Xake: no declaration reads the environment at launch (neither `XAKE__<NAME>` nor an
+  explicit `Env`/`envVar`); values come from per-demand values, `-d` (unless
+  `IgnoreCommandLine`), the constant and the defaults. `getEnv` is not affected; the banner shows
+  `environment:  ignored (IgnoreEnvironment)`. No command-line flag; `xakeEngine` leaves it off.
+  See [variables.md](variables.md#pinning-values-tests-and-embedding).
+- **Engine:** `Demand(target, vars)` values now win over the script's values (they were shadowed);
+  a per-demand value for a secret, an environment-only or a mistyped variable fails the demand
+  before any target. `XakeEngine.Start` raises `XakeException` on a launch error.
+- **Output:** the banner lists each variable once with its source (`cli`, `cli:<name>`, `script`,
+  `env:<NAME>`, `default`, `(not set)`), secrets as `***` (3.14 labelled all `script/cli`);
+  `--help` lists `var [...]` rules after the `varschema` fields, with their command-line names;
+  the `Debug` options dump shows the variables, secrets masked.
+- **Dependencies:** a target whose record comes from a 3.15 Var read (`Var (N, None)` +
+  `EnvVar`) rebuilds once; a secret field's record moves from `SecretDep (env name, SecretEnv)` to
+  `SecretDep (key, SecretArg)`, one rebuild. Repeated reads of a name in one recipe record one
+  dependency. The database format is unchanged (0.6).
+- **Breaking: `ExecOptions.Vars` is renamed `ExecOptions.ScriptVars`** (the script's values: the
+  entries given to `xake`/`xakeArgs` and every `var "N" "v"`; `CliVars` holds `-d`). No alias:
+  `{ ExecOptions.Default with Vars = [...] }` becomes `{ ExecOptions.Default with ScriptVars = [...] }`.
+  `ExecContext.Vars` (what a recipe reads) keeps its name. The E-2 text names
+  `ExecOptions.ScriptVars`.
+- **API:** new `VarSource`, `VarOrigin`, `VarDecl`, `VarEntry`; new fields `ExecOptions.CliVars`
+  (the `-d` pairs; `-d` no longer goes into `ExecOptions.ScriptVars`), `ExecOptions.VarDecls`,
+  `ExecOptions.VarDefinedBy` (where each `var`/`varschema` definition came from, for the
+  diagnostics) and `EngineOptions.Variables` (the variable set built at launch). Binary break for
+  code that builds `ExecOptions`/`EngineOptions` with a full record expression (not `with`);
+  `ExecContext` and the records Xake.Hermetic.Dotnet builds are unchanged.
+
+### Library readers (Xake.Dotnet) and the optional import of library declarations
+
+- **Breaking: Xake.Dotnet reads its build variables only from the variable set**, never from
+  the environment. `NUGET_PACKAGES`, `XAKE_CSC_SERVER`, `XAKE_CSC_JOBS`, `XAKE_FSC_JOBS` set
+  only in the environment are ignored; a CI that relied on one adds a declaration, e.g.
+  `var "NUGET_PACKAGES" [Env "NUGET_PACKAGES"]`, `var "XAKE_CSC_SERVER" [Env "XAKE_CSC_SERVER"]`,
+  `var "CSC_JOBS" [Env "XAKE_CSC_JOBS"]`, or passes `-d`.
+- **Breaking: the package folder defaults to `<project root>/.packages`** (was the environment
+  variable `NUGET_PACKAGES`, else `~/.nuget/packages`). It is always the build's own:
+  `packageRootWithSource` returns `ScriptVariable` for it, so `HERMETIC=on` accepts it without a
+  `NUGET_PACKAGES` variable; `PackageRootSource.EnvironmentVariable`/`UserProfile` are
+  `[<Obsolete>]`. A child `dotnet restore` gets the folder as `NUGET_PACKAGES`. The context-free
+  `DotNetFwk.nugetRoot ()` is `~/.nuget/packages` and reads no environment.
+- **Breaking: strict switches.** `NUGET_FETCH`, `XAKE_CSC_SERVER` (`on`/`off`, `true`/`false`,
+  `yes`/`no`, `1`/`0`) and `CSC_SERVER` (`on`, `off`, keepalive seconds) fail the reading target
+  on any other value (`CSC_SERVER='bogus': expected on, off or a number of seconds`; 3.15 warned
+  or took it as on). An empty value is the default (`-d NUGET_FETCH=` is on).
+- `RunOptions.Default.Server` is `Shared None` and reads nothing; `CompilerServer.fromEnvironment`
+  is `[<Obsolete>]` and returns `Shared None`. A recipe resolves the server from `CSC_SERVER`,
+  then `XAKE_CSC_SERVER` (`CompilerServer.resolve`).
+- **`Var.read<'t> "NAME"`**: the read for a library. A declared name is read through the
+  script's declaration, whatever its sources and default, only its type checked
+  (`Variable 'N' is read as 'T' but is declared by ... as 'U'`); an undeclared one is `getVar`.
+  No environment read, the dependency `getVar` records.
+- **`DotNetVars.Default`**: the variables Xake.Dotnet reads, as an optional schema
+  (`NUGET_PACKAGES`, `NUGET_FETCH`, `HERMETIC`, `CSC_SERVER`, `XAKE_CSC_SERVER`, `CSC_JOBS`,
+  `FSC_JOBS`; strings, `-d` only, the library's defaults). `varschema DotNetVars.Default` lists them
+  in `--help` and the banner; `{ DotNetVars.Default with NUGET_PACKAGES = Var.string(envVar = "NUGET_PACKAGES") |> withDefault ".packages" }`
+  also takes the environment (without `envVar`, `XAKE__NUGET_PACKAGES`). Importing changes no value; a target built before the import
+  rebuilds once (its dependency records the default).
+
+### Public seam for task libraries
+
+Xake.Dotnet uses public engine API only; no `InternalsVisibleTo` to it.
+
+- **New: `hasRule : string -> Recipe<ExecContext, bool>`**: whether a rule of the script would
+  build a target (the name resolved as `need` resolves it), without building it.
+- **`Xake.ProcessExec` is public** (`RequireQualifiedAccess`): `pexec`, `pexecSync`,
+  `drainTimeoutMs`, low-level process plumbing for libraries; scripts use `shell`/`sh`.
 
 ## 3.15.0 (2026-10-29)
 

@@ -160,10 +160,12 @@ dotnet fsi build.fsx -- -- build test pack    # self-hosting: the engine, the te
 
 `pack` writes `out/pkg/Xake/` only and fails if the nupkg carries anything but `Xake.dll`/`.xml`
 per framework under `lib/` (docs/devprocess.md).
-- Trap: the msbuild runs of `build.fsx` (`test-build::*`, the `out/` builds, `pack`) all build src/core through project
+- Trap: the msbuild runs of `build.fsx` (`test-build`, the `out/` build, `pack`) all build src/core through project
   references into the same `bin/Release` and `obj` folders; they take the `msbuild` resource (one at a time), since two
-  at once failed the v4.0.0-preview.1 publish run (MSB4018 GenerateDepsFile, `Xake.deps.json` in use). Keep any new
-  msbuild rule under `oneMsbuild`.
+  at once failed the v4.0.0-preview.1 publish run (MSB4018 GenerateDepsFile, `Xake.deps.json` in use). Run any new
+  msbuild step through the script's `dotnet` helper, which takes it.
+- Trap: the `out/` build's sources exclude `src/core/obj/`: `dotnet build` and `pack` write the version into
+  `obj/**/Xake.AssemblyInfo.fs`, which made every `build` a rebuild before 4.0.
 
 `samples/features.fsx` references `out/netstandard2.0/Xake.dll`, so run the self-hosting build first.
 

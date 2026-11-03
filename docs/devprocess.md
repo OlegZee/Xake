@@ -48,13 +48,12 @@ hermetic library are in [OlegZee/Xake.Dotnet](https://github.com/OlegZee/Xake.Do
 dotnet test src/tests -c Release
 ```
 
-The build script's `test` splits the project into the parallel jobs listed in `testjobs.fsx`
-(slices of whole fixture classes, the last one taking the rest): `test-build::<project>` builds
-the test project once, then every `test::<project>/<slice>` runs `dotnet test --no-build` on its
-slice, writing the trx and its full output (`console.log`) into `out/test/<project>/<slice>/`;
-the console shows one summary line per job. One job runs alone by naming it:
-`dotnet fsi build.fsx -- -- test::tests/jobs`. A new fixture lands in the `rest` slice; move it
-into a slice when it gets slow.
+The build script's `test` runs the project as two parallel jobs: `test-build` builds it once,
+then `test::jobs` (the delegated and resource fixture, slow on sleeps) and `test::rest` (every
+other fixture) run `dotnet test --no-build`, each writing the trx and its full output
+(`console.log`) into `out/test/<job>/`; the console shows one summary line per job. One job runs
+alone by naming it: `dotnet fsi build.fsx -- -- test::jobs`. The split is the `testJobs` list in
+`build.fsx`; a slow new fixture can get a job of its own there.
 
 Run filtered tests:
 

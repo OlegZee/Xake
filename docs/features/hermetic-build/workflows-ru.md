@@ -1,7 +1,7 @@
 # Герметичная сборка: сценарии работы
 
 Короткий путеводитель для владельца продукта. Как команда живёт с lock-файлами: от первой сборки
-у разработчика до CI, релиза и офлайна. Это пересказ [../../hermetic/workflows.md](../../hermetic/workflows.md),
+у разработчика до CI, релиза и офлайна. Это пересказ [../../hermetic/workflows.md](https://github.com/OlegZee/Xake.Dotnet/blob/dev/docs/hermetic/workflows.md),
 сверенный с исходниками ветки `feature/hermetic-build` на 2026-10-04 (Xake 3.5).
 
 Пометки:
@@ -312,9 +312,9 @@ do xakeScript {
 ```
 
 `check-locks` для импортированного lock сравнивает свежий импорт с закоммиченным. Это ~15 строк
-вокруг `Lock.diff`, они есть в [workflows.md](../../hermetic/workflows.md), раздел B. Ему нужны msbuild
+вокруг `Lock.diff`, они есть в [workflows.md](https://github.com/OlegZee/Xake.Dotnet/blob/dev/docs/hermetic/workflows.md), раздел B. Ему нужны msbuild
 и фиды. Самому `build` они не нужны. С `ProjectReference` между проектами нужен шаблон «одно правило
-на выход» из [hermetic-guide.md](../../hermetic-guide.md), раздел 6.
+на выход» из [hermetic-guide.md](https://github.com/OlegZee/Xake.Dotnet/blob/dev/docs/hermetic-guide.md), раздел 6.
 
 ## 6. Сценарий C: коллега / чистая машина
 
@@ -496,7 +496,7 @@ build:
 ## 8. Сценарий E: релиз
 
 Релиз это сценарий D плюс четыре шага. У каждого своя страница, короткие примеры в
-[hermetic-guide.md](../../hermetic-guide.md), разделы 8 до 10 (там они запускались).
+[hermetic-guide.md](https://github.com/OlegZee/Xake.Dotnet/blob/dev/docs/hermetic-guide.md), разделы 8 до 10 (там они запускались).
 
 **SBOM.** `Sbom.forAssembly (Roots.nugetRoot ()) entry assemblyPath` строит CycloneDX 1.6 только из
 записи lock: пакеты графа, файлы ссылок с SHA-256 под своим пакетом, компилятор, SDK и анализаторы в
@@ -556,7 +556,7 @@ Lock фиксирует каждый пакет по id, версии и хеш�
 
 Для импортированного lock то же самое: `Restore.into ".packages"`, `Lock.loadWith
 (Roots.packageRootOverride ...)` и `Lock.compileWith` с `Enabled = false` (пример в
-[hermetic-guide.md](../../hermetic-guide.md), раздел 7).
+[hermetic-guide.md](https://github.com/OlegZee/Xake.Dotnet/blob/dev/docs/hermetic-guide.md), раздел 7).
 
 Что офлайн ломается:
 

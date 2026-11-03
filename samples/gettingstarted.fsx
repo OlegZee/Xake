@@ -1,25 +1,29 @@
-// Compiles helloworld.exe from helloworld.cs.
+// Writes out/hello.txt, then out/greeting.txt from it: two file rules and a dependency.
 //
-// The package ships both the engine and the .NET Framework tasks, so one reference is enough.
-// `targetfwk` names the framework to compile against (here .NET Framework 4.6.2); the reference
-// assemblies come from a NuGet package when no Framework is installed, so this works on any OS.
-// Without it the default is the SDK's own .NET framework.
+// The `Xake` package is the engine alone. To compile C# or F# (`csc`, `fsc`), add
+// `#r "nuget: Xake.Dotnet"` and `open Xake.Dotnet`: that package is built in its own repository,
+// https://github.com/OlegZee/Xake.Dotnet.
 //
 // USAGE:
 // * `dotnet fsi gettingstarted.fsx`
+// * `dotnet fsi gettingstarted.fsx -- -- clean`
 
 #r "nuget: Xake"
 
 open Xake
-open Xake.Dotnet
+open Xake.Tasks
 
 // rules are written directly in the script body -- no `rules [ ... ]` wrapper
 do xakeScript {
-    "main" <== ["helloworld.exe"]
+    "main" <== ["out/greeting.txt"]
 
-    "helloworld.exe" ..> csc {
-        targetfwk "net-4.6.2"
-        src !!"helloworld.cs"
-        grefs ["System.dll"]
+    "out/hello.txt" ..> writeText "Hello"
+
+    // rebuilt only when out/hello.txt changes
+    "out/greeting.txt" ..> recipe {
+        let! hello = readText "out/hello.txt"
+        do! writeText (hello + " world!")
     }
+
+    "clean" => rm { dir "out" }
 }

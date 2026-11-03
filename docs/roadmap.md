@@ -3,6 +3,12 @@
 Ideas and larger items that are agreed in direction but not scheduled. Working state of a
 feature lives in `docs/features/<name>/`; this page is the cross-feature list.
 
+From 4.0 the .NET tasks and the hermetic library are the `Xake.Dotnet` package in their own
+repository, [OlegZee/Xake.Dotnet](https://github.com/OlegZee/Xake.Dotnet). Their sections below (Principles' target list,
+"Xake.Dotnet", "Xake.Hermetic.Dotnet", the description items) are kept as the record until that
+repository has a roadmap of its own; the paths they name (`src/dotnet`, `src/hermetic`,
+`docs/hermetic/`) are paths there.
+
 ## Delivered
 
 - Xake 3.13.0 and Xake.Hermetic.Dotnet 0.8.0 (2026-10-27): line-ending-neutral hashes of msbuild files in locks; targeting

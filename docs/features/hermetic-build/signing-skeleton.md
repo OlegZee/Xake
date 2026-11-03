@@ -1,6 +1,6 @@
 # Signing skeleton: plan and acceptance criteria
 
-Working notes split out of the product page [docs/hermetic/signing.md](../../hermetic/signing.md)
+Working notes split out of the product page [docs/hermetic/signing.md](https://github.com/OlegZee/Xake.Dotnet/blob/dev/docs/hermetic/signing.md)
 (section 5 there, 2026-09-24). Historical: the skeleton landed and its six tests live in
 `src/hermetic.tests/SignTests.fs`.
 

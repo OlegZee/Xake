@@ -4,8 +4,8 @@ Status: analysis for the owner, 2026-10-12. Read-only research; no decision. Que
 goal and write an **msbuild extension** that builds hermetically, with lock files". Context:
 [brief.md](brief.md) §1 (the fork: now the declarative fsc/csc route; later, separately, hermetic
 builds of existing msbuild projects), [interview.md](interview.md) Q3/Q5, [paket-analysis.md](paket-analysis.md)
-(NuGet lock facts reused, not redone), [../../../hermetic/lock.md](../../../hermetic/lock.md),
-[../../../hermetic-architecture.md](../../../hermetic-architecture.md). URLs were fetched on
+(NuGet lock facts reused, not redone), [../../../hermetic/lock.md](https://github.com/OlegZee/Xake.Dotnet/blob/dev/docs/hermetic/lock.md),
+[../../../hermetic-architecture.md](https://github.com/OlegZee/Xake.Dotnet/blob/dev/docs/hermetic-architecture.md). URLs were fetched on
 2026-10-12 unless marked **(search only)**; "(inferred)" is a conclusion from docs or source, not a
 statement there.
 

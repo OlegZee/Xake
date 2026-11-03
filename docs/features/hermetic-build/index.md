@@ -2,7 +2,7 @@
 
 Working state of branch `feature/hermetic-build` (local, 51 commits ahead of
 `origin/feature/hermetic-build`, not pushed). Up: [../../index.md](../../index.md). Product docs
-moved to [../../hermetic/](../../hermetic/index.md); a bare `lock.md`, `restore.md`, `pack.md`
+moved to [../../hermetic/](https://github.com/OlegZee/Xake.Dotnet/blob/dev/docs/hermetic/index.md); a bare `lock.md`, `restore.md`, `pack.md`
 etc. in older notes means the file there. Lengths are approximate line counts.
 
 Column **fsc task**: does a fresh session reworking `build.fsc.fsx` (PR #42) need this file.

@@ -108,21 +108,21 @@ Create `name.txt` next to the script and run it twice: the second run reports
 ```bash
 git clone https://github.com/OlegZee/Xake
 cd xake
-dotnet fsi build.fsx -- -- build      # features.fsx and fullframework.fsx use the local build
+dotnet fsi build.fsx -- -- build      # features.fsx uses the local build
 cd samples
 dotnet fsi gettingstarted.fsx
 dotnet fsi features.fsx
-dotnet fsi fullframework.fsx
 ```
+
+Samples of the .NET tasks (`csc`, `fsc`, hermetic builds) are in the
+[Xake.Dotnet repository](https://github.com/OlegZee/Xake.Dotnet/tree/dev/samples).
 
 ## Further reading
 
 * See [the features.fsx](https://github.com/OlegZee/Xake/blob/dev/samples/features.fsx) script for various samples.
-* See [docs/tasks.md](docs/tasks.md) for the task reference and [docs/dotnet-build.md](docs/dotnet-build.md) for building .NET Framework targets.
-* [Xake.Hermetic.Dotnet](docs/hermetic/README.md) (preview, separate package): lock files, restore from a lock, deterministic packs, SBOMs and signing for .NET builds.
-* [Xake.Hermetic.Dotnet architecture](docs/hermetic-architecture.md): design, evidence and known limits, for maintainers and reviewers.
-* [Xake.Hermetic.Dotnet guide](docs/hermetic-guide.md) (draft): a task-oriented walk-through from the first lock to packing and signing.
-* [Roadmap](docs/roadmap.md): what is planned and what is open for Xake and Xake.Hermetic.Dotnet.
+* See [docs/tasks.md](docs/tasks.md) for the task reference.
+* [Xake.Dotnet](https://github.com/OlegZee/Xake.Dotnet): the .NET tasks (`csc`, `fsc`, `msbuild`, `resgen`, project descriptions) and the hermetic library (lock files, restore from a lock, deterministic packs, SBOMs and signing), one package with its own repository and docs.
+* [Roadmap](docs/roadmap.md): what is planned and what is open for Xake.
 * We have the [introduction page](https://github.com/OlegZee/Xake/wiki/Introduction) for you to learn more about Xake.
 * And there're the [documentation notes](https://github.com/OlegZee/Xake/wiki) for more details.
 
@@ -134,46 +134,19 @@ Once you cloned the repository you are ready to compile and test the binaries:
 dotnet fsi build.fsx -- -- build test
 ```
 
-... or use `build.cmd` (`build.sh`) in the root folder. `build.fsx` (msbuild via `dotnet build`) is
-the build of record: packages and releases come from it.
-
-### The declarative build (`build.fsc.fsx`)
-
-The same three libraries, compiled by fsc from committed data instead of msbuild: a project
-description per project (`src/<dir>/xake.project.json`), a lock per project and configuration
-(`locks/<name>/Release.json`) and their fingerprints (`xake.fingerprints`). The script runs on the
-published `Xake` and `Xake.Hermetic.Dotnet` packages, so a fresh clone needs no bootstrap:
-
-```
-dotnet fsi build.fsc.fsx -- -- build              # out/Release/<fwk>/*.dll from the committed locks
-dotnet fsi build.fsc.fsx -- -- build check        # and fail on a stale description or lock
-```
-
-| Command | What it does |
-|---|---|
-| `import` | msbuild evaluates each `.fsproj` and writes its `xake.project.json` (only on change) |
-| `update-locks` | writes `locks/<name>/Release.json` from the descriptions, referenced projects first; packages via msbuild restore, kept versions unless `-d LOCK_REFRESH=<ids\|*>` |
-| `build` | compiles from the committed locks only, no msbuild; warns when a description or lock is stale against its inputs |
-| `check` | fails where `build` only warns (stale or hand-edited descriptions and locks) |
-
-After changing a project file: `import`, `update-locks`, commit the changed descriptions, locks
-and `xake.fingerprints`. The locks name the SDK's compiler by the SDK version (no hash), so they
-hold for that SDK version (10.0.401) on any OS (CI runs this build on Linux with that SDK). See
-[docs/hermetic/lock.md](docs/hermetic/lock.md#xake-generated-locks).
+... or use `build.cmd` (`build.sh`) in the root folder. `build.fsx` drives `dotnet build`, the
+tests and `dotnet pack`; packages and releases come from it.
 
 Releases are published to nuget.org by CI from a `v*` tag — see
 [docs/devprocess.md](docs/devprocess.md) for the packaging and release procedure.
 
-## Building .NET Framework targets
+## Building .NET targets
 
-The `csc`, `fsc`, `msbuild` and `resgen` tasks (package `Xake.Dotnet`, from 4.0.0; reference it with `#r "nuget: Xake.Dotnet"`) build full-framework binaries on any OS with
-nothing installed beyond the .NET SDK: the compilers come from the SDK and the reference
-assemblies from the `Microsoft.NETFramework.ReferenceAssemblies.*` packages, restored on first
-use. Mono is still supported as a fallback and can be requested explicitly with a `mono-`
-prefixed framework name.
-
-See [docs/dotnet-build.md](docs/dotnet-build.md) for the discovery rules, the supported
-runtimes, and how to switch between them.
+The `csc`, `fsc`, `msbuild` and `resgen` tasks build .NET and full-framework binaries on any OS
+with nothing installed beyond the .NET SDK. They are the `Xake.Dotnet` package (from 4.0.0;
+`#r "nuget: Xake.Dotnet"`, which brings `Xake` with it), developed in its own repository,
+https://github.com/OlegZee/Xake.Dotnet, together with the hermetic build library and their
+documentation.
 
 ## Documentation
 

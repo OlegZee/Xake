@@ -1,4 +1,6 @@
-#r "nuget: Xake, 3.5.0"
+// `csc` comes from the Xake.Dotnet package (its own repository, OlegZee/Xake.Dotnet), which
+// brings the engine, the Xake package, with it.
+#r "nuget: Xake.Dotnet"
 
 open Xake
 open Xake.Dotnet

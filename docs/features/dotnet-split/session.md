@@ -15,6 +15,8 @@ package for the repository `OlegZee/Xake.Dotnet`, shipped there as ONE package `
 | — S1 seam | Xake | `feature/dotnet-seam (#122)` (from `dev`) | — | #122 merged |
 | — S4 plan | Xake | `docs/dotnet-split-s4-plan` (from `dev` af45852) | — | #126 merged |
 | — S3b unbundle | Xake | `feature/xake-unbundle-dotnet` (from `dev` 0e804ba) | — | #129 merged |
+| — S6 final import | Xake.Dotnet | `feature/split-import` (tip e5fe8b7) | `~/projects/Xake.Dotnet/.claude/worktrees/feature/split-import` | PR #1 merged (6535bf8) |
+| — S7 removal | Xake | `feature/dotnet-split-remove` (from `dev` f550556) | agent worktree | local, not pushed |
 
 ## State
 
@@ -76,10 +78,33 @@ package for the repository `OlegZee/Xake.Dotnet`, shipped there as ONE package `
   `~/projects/Xake.Dotnet` (local `feature/split-scaffold`, tip 0422f3d) is rebuilt on preview.2,
   not pushed. S5 passed: `feature/patterns2` merged into `dev` as #131 (fe842d5).
 
+- 2026-11-03: S4 done (the scaffold is on Xake.Dotnet `dev`, 0422f3d, on preview.2). S6 done:
+  Xake.Dotnet PR #1 (`feature/split-import`, e5fe8b7), merged with a merge commit (6535bf8), carries `src/dotnet`,
+  `src/hermetic`, their tests, docs and samples on Xake `4.0.0-preview.3`.
+
+- 2026-11-03: S7 on `feature/dotnet-split-remove`. Removed what the import filter
+  (`tools/import-from-xake.py` in Xake.Dotnet) took: `src/dotnet`, `src/hermetic`,
+  `src/hermetic.tests`, 13 test files of `src/tests` and `fixtures/description`, the fsc/locks
+  self-build (`build.fsc.fsx`, `locks/` including `locks/Xake`, `xake.fingerprints`,
+  `src/core/xake.project.json`), the moved docs and samples. Kept in Xake although the filter
+  copied them: `testjobs.fsx` (trimmed to `tests/jobs` = "Delegated and resource tests" and
+  `tests/rest`), `docs/fingerprints.md` (the `Fingerprints` module is engine; its wiring example
+  now names Xake.Dotnet), the engine halves of `LibraryVarsTests` (pr2-69..75, fixture renamed
+  "Var read conformance") and `RecordShapeTests` (`ExecContext`, `withLogger`; "frozen within
+  Xake 4"), `Common.fs`/`XakeTestBase.fs` (trimmed: no `PackageRoot`, `BuildPackageRoot`,
+  `XAKE_CSC_SERVER` switch). `build.fsx`: one library, no `HermeticVersion`; the pack check
+  refuses anything but `Xake.dll`/`.xml` under `lib/`. `build.yml`: `build-fsc` gone;
+  `publish.yml`: `v*` only. Samples: `gettingstarted.fsx` and `features.fsx` engine-only,
+  `book/intro.fsx` on `#r "nuget: Xake.Dotnet"`. Docs point to OlegZee/Xake.Dotnet; the
+  `docs/tasks.md` .NET reference (csc/fsc operations, script variables, package folder) is
+  replaced by a pointer, and `roadmap.md` keeps the Xake.Dotnet/hermetic backlog as the record.
+
 ## Next step
 
-1. Owner: push the S4 scaffold (`feature/split-scaffold`) and tag a preview built after #131
-   (`v4.0.0-preview.3`).
-2. S6: the final history import from `dev` into Xake.Dotnet on that preview (a normal merge on
-   top of S4, per the rehearsal in [s4-plan.md](s4-plan.md)).
-3. Then S7 (remove `src/dotnet`, `src/hermetic` and the moved tests/docs/samples from Xake), S8, S9.
+1. Owner: review and merge the S7 PR (`feature/dotnet-split-remove` -> `dev`).
+2. Xake.Dotnet follow-up: it links to Xake's `docs/tasks.md#csc` (and other .NET anchors) for
+   the task reference, which S7 replaced by a pointer; that reference (Xake `docs/tasks.md` at
+   f550556, section ".NET tasks") belongs in Xake.Dotnet's docs. Also its `docs/session.md`
+   should take the "Xake.Dotnet facts" section of Xake's `docs/session.md` and its roadmap the
+   Xake.Dotnet/hermetic sections of Xake's `docs/roadmap.md` (then Xake drops them, S9).
+3. S8 (release), S9 (follow-ups).

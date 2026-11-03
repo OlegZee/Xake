@@ -7,13 +7,13 @@ commit touching the file; lengths are approximate line counts. Index written 202
 
 - Xake is an F# build tool in the spirit of Shake: build scripts are F# (`xakeScript { }`,
   `recipe { }`), with dependency tracking, incremental rebuilds and parallel execution.
-- Package `Xake` (3.15.0 on nuget.org; `dev` is the 4.0 line) carries the engine (`src/core`) and the .NET tasks
-  `csc`, `fsc`, `msbuild`, `resgen` (`src/dotnet`, namespace `Xake.Dotnet`).
-- Package `Xake.Hermetic.Dotnet` (0.10.0 on nuget.org, preview, `src/hermetic`; builds on the in-repo Xake until 4.0, 0.11 ships with it) adds the lock: a JSON file
-  in git recording what the compiler is handed plus SHA-256 of every outside input; also
-  restore, SBOM, verify, deterministic pack, signing skeleton.
-- Xake builds itself: `build.fsx` (msbuild-based, build of record) and `build.fsc.fsx` (fsc from
-  a lock; reworked in open PR #42, branch `pr/build-fsc-lock`).
+- Package `Xake` (3.15.0 on nuget.org; `dev` is the 4.0 line) is the engine alone (`src/core`).
+- The .NET tasks `csc`, `fsc`, `msbuild`, `resgen` (namespace `Xake.Dotnet`) and the hermetic
+  library (namespace `Xake.Hermetic.Dotnet`: locks, restore, SBOM, verify, deterministic pack,
+  signing) left this repository at 4.0: they are the one package `Xake.Dotnet`, built in
+  [OlegZee/Xake.Dotnet](https://github.com/OlegZee/Xake.Dotnet), with their docs and samples. Their design records stay here
+  under `docs/features/` (hermetic-build, hermetic-windows, release-process, dotnet-split).
+- Xake builds itself with `build.fsx` (`dotnet build`, the tests, `dotnet pack`).
 - Work goes on feature branches, PRs to `dev` on OlegZee/Xake; feature working notes live in
   `docs/features/<name>/`.
 
@@ -21,9 +21,10 @@ commit touching the file; lengths are approximate line counts. Index written 202
 
 | Area | Index | What is there |
 |---|---|---|
-| Base docs | this page, below | engine, tasks, .NET toolchain, process, roadmap, cross-feature session notes |
-| Hermetic product docs | [hermetic/index.md](hermetic/index.md) | user-facing reference of `Xake.Hermetic.Dotnet`: lock, restore, SBOM, verify, pack, signing, mode, workflows |
-| Feature working notes | [features/hermetic-build/index.md](features/hermetic-build/index.md) | session log, tracker, brief, design notes, experiments, proving scripts of `feature/hermetic-build` |
+| Base docs | this page, below | engine, tasks, process, roadmap, cross-feature session notes |
+| .NET tasks and hermetic docs | [OlegZee/Xake.Dotnet `docs/`](https://github.com/OlegZee/Xake.Dotnet/tree/dev/docs) | toolchain discovery, `csc`/`fsc` syntax, compiler server, descriptions, the hermetic reference, guide and architecture (moved at 4.0) |
+| Feature working notes | [features/hermetic-build/index.md](features/hermetic-build/index.md) | session log, tracker, brief, design notes, experiments, proving scripts of `feature/hermetic-build` (the record; the code is in Xake.Dotnet now) |
+| Dotnet split | [features/dotnet-split/session.md](features/dotnet-split/session.md) | moving `Xake.Dotnet` and the hermetic library to their own repository and package (4.0) |
 | Variables (4.0) | [features/vars-precedence/session.md](features/vars-precedence/session.md) | declarations evaluated at launch, `var` rules, `Var.read`, library variable sets: spec, briefs, PR notes; implemented in #111 and #112 (user reference: [tasks.md](tasks.md#script-variables)) |
 | Release process | [features/release-process/session.md](features/release-process/session.md) | versioning, the published version is the tag, hermetic on the in-repo Xake until 4.0, the split of `Xake.Dotnet` (D) at 4.0 |
 | Rule specificity | [features/rule-specificity/session.md](features/rule-specificity/session.md) | rule-matching working notes |
@@ -33,15 +34,9 @@ commit touching the file; lengths are approximate line counts. Index written 202
 
 | File | Why it matters | Lines | Status |
 |---|---|---|---|
-| [session.md](session.md) | cross-feature engine facts, release notes, traps; read at every session start (CLAUDE.md) | ~190 | current; its `build.fsc.fsx` section describes the pre-#42 form |
-| [roadmap.md](roadmap.md) | agreed-but-unscheduled items: principles, engine, Xake.Dotnet, Xake.Hermetic.Dotnet backlog | ~110 | current (2026-10-11) |
-| [tasks.md](tasks.md) | reference of all built-in tasks: `sh`, copy, rm, `csc`/`fsc`/`resolve`/`Csc.run` | ~535 | current (2026-10-11) |
-| [hermetic/README.md](hermetic/README.md) | entry page of `Xake.Hermetic.Dotnet` 0.2: what is new, the pieces, two ways in | ~170 | current |
-| [hermetic/workflows.md](hermetic/workflows.md) | team flows A-G: composed lock, imported project, fresh machine, CI, release, offline | ~750 | current; header still names 0.1 versions |
-| [hermetic-architecture.md](hermetic-architecture.md) | maintainers' view of the hermetic package: model, module map, lock format, evidence, limits | ~980 | current (2026-10-11) |
-| [hermetic-guide.md](hermetic-guide.md) | task-oriented user guide, first lock to signing, for 0.2 | ~760 | current, draft |
-| [hermetic/hermetic-mode.md](hermetic/hermetic-mode.md) | `HERMETIC=on`: the invariant, prerequisites, messages, pending parts | ~180 | current (shipped in 3.6 / 0.2) |
-| [features/hermetic-build/workflows-ru.md](features/hermetic-build/workflows-ru.md) | **RU.** owner's guide to the same flows, with the hermetic mode and a "not done yet" list | ~610 | current as of 3.5 / 0.2 previews (2026-10-09) |
+| [session.md](session.md) | cross-feature engine facts, release notes, traps; read at every session start (CLAUDE.md) | ~190 | current |
+| [roadmap.md](roadmap.md) | agreed-but-unscheduled items: principles, engine backlog | ~110 | current |
+| [tasks.md](tasks.md) | reference of the built-in tasks: `sh`, copy, rm, files, variables | ~535 | current |
 
 ## Base docs
 
@@ -52,18 +47,10 @@ commit touching the file; lengths are approximate line counts. Index written 202
 | [overview.md](overview.md) | short intro: minimal script, how to run, rule styles, the 4.0 pattern grammar (patterns, masks, paths) | first contact with Xake | ~100 | 2026-09-05 | current |
 | [typed-targets.md](typed-targets.md) | `Xake.Typed` (4.0): rule patterns with record groups, generated paths, `Command`, migration; a test compiles its snippets | writing rules with groups | ~430 | 2026-11-03 | current |
 | [cheatsheet.md](cheatsheet.md) | one-page syntax: entry point, `<==`/`<<<`, rules, variables (`var`, `varschema`, secrets) | writing or reading any build script | ~130 | 2026-10-06 | current |
-| [tasks.md](tasks.md) | reference of built-in tasks incl. the .NET ones | using a task or its settings | ~535 | 2026-10-11 | current |
+| [tasks.md](tasks.md) | reference of the built-in tasks (the .NET ones are in Xake.Dotnet) | using a task or its settings | ~535 | 2026-11-03 | current |
 | [release-notes.md](release-notes.md) | what changed per `Xake` release; the `4.0.0 (unreleased)` section holds the variable rework and its migration lines | upgrading, writing a release | ~300 | 2026-10-31 | current |
 | [variables.md](variables.md) | working with variables: `var`, `varschema`, `XAKE__` environment source, secrets, library variables, errors, 3.15 -> 4.0 migration | declaring or reading build variables | ~330 | 2026-10-31 | current |
 | [captureOutput.md](captureOutput.md) | `captureOutput` op of `sh`: route output to file, log, handler | capturing shell output | ~85 | 2026-05-04 | current |
-
-### .NET toolchain
-
-| File | What it is | Read when | Lines | Date | Status |
-|---|---|---|---|---|---|
-| [dotnet-build.md](dotnet-build.md) | toolchain discovery, host vs target runtime, `NETFX`/`NETFX-TARGET`, providers | touching `DotNetFwk.fs` or targeting net4x / netN.0 | ~465 | 2026-10-11 | current |
-| [csc-syntax.md](csc-syntax.md) | `csc {}` in detail: composed mode, `Csc` record, `resolve`, `Csc.run` | working on csc/fsc settings or the runner | ~280 | 2026-10-10 | current |
-| [csc-server.md](csc-server.md) | `csc` through the Roslyn compiler server: `/shared`, `CSC_SERVER`, `XAKE_CSC_SERVER` (build variables, not the environment); `CSC_JOBS`/`FSC_JOBS` | compile speed or CI server switch | ~155 | 2026-09-30 | current |
 
 ### Engine
 
@@ -78,19 +65,12 @@ commit touching the file; lengths are approximate line counts. Index written 202
 
 | File | What it is | Read when | Lines | Date | Status |
 |---|---|---|---|---|---|
-| [devprocess.md](devprocess.md) | branches, build/test, packaging and publishing, dependency floor, release | building, packing, releasing, bootstrapping a dev `#r` | ~270 | 2026-10-02 | current (PR #42 updates it) |
-| [session.md](session.md) | cross-feature session notes: release facts, traps, how to verify | every session start | ~190 | 2026-10-04 | current (PR #42 updates it) |
-| [roadmap.md](roadmap.md) | cross-feature backlog with principles | planning the next work | ~110 | 2026-10-11 | current (PR #42 updates it) |
-
-### Hermetic, top level
-
-| File | What it is | Read when | Lines | Date | Status |
-|---|---|---|---|---|---|
-| [hermetic-architecture.md](hermetic-architecture.md) | architecture of `Xake.Hermetic.Dotnet` for reviewers | design questions about the lock, its seams with `Xake` | ~980 | 2026-10-11 | current |
-| [hermetic-guide.md](hermetic-guide.md) | user guide of the hermetic package, 0.2 | learning the user-facing flow end to end | ~760 | 2026-10-11 | current, draft |
+| [devprocess.md](devprocess.md) | branches, build/test, packaging and publishing, release | building, packing, releasing, bootstrapping a dev `#r` | ~270 | 2026-11-03 | current |
+| [session.md](session.md) | cross-feature session notes: release facts, traps, how to verify | every session start | ~190 | 2026-11-03 | current |
+| [roadmap.md](roadmap.md) | cross-feature backlog with principles | planning the next work | ~110 | 2026-11-03 | current |
+| [fingerprints.md](fingerprints.md) | the `Fingerprints` module: a committed file recording how generated files were produced; stale/hand-edited/missing checks | committing generated files | ~70 | 2026-11-03 | current |
 
 ## Sub-indexes
 
-- [hermetic/index.md](hermetic/index.md): product reference pages of `Xake.Hermetic.Dotnet`.
 - [features/hermetic-build/index.md](features/hermetic-build/index.md): working notes of the
-  feature branch, with a column saying which ones the `build.fsc.fsx` task needs.
+  hermetic feature branch (the record; the code and product docs are in OlegZee/Xake.Dotnet).

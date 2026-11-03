@@ -57,6 +57,10 @@ Pure helpers for plain code and tests: `hashFile`, `hashBytes`, `compute`, `pars
 
 ## Wiring in a script
 
+The example is the hermetic build of project descriptions and locks (`Import`, `Locks`), which
+is the `Xake.Dotnet` package in [OlegZee/Xake.Dotnet](https://github.com/OlegZee/Xake.Dotnet) from 4.0; `Fingerprints` itself is
+in the engine.
+
 ```fsharp
 command "import" { let! _ = Import.descriptions projects Description.beside [] in () }   // records lines
 "update-locks" <== [ for n in projects -> $"lock::{n}::Release" ]              // hermetic/lock.md

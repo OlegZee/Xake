@@ -6,7 +6,9 @@ It tracks dependencies, supports incremental builds, and runs independent target
 Current project baseline:
 
 - .NET SDK 8.0 or newer
-- Xake NuGet package `Xake` — the engine and the .NET Framework tasks in one
+- Xake NuGet package `Xake` — the engine alone; the .NET tasks (`csc`, `fsc`, `msbuild`,
+  `resgen`) and the hermetic build library are the `Xake.Dotnet` package, from its own
+  repository, [OlegZee/Xake.Dotnet](https://github.com/OlegZee/Xake.Dotnet)
 
 ## Minimal script
 

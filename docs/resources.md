@@ -3,7 +3,7 @@
 Design note. Status: **decided and implemented in Xake 3.10**: (c) + (a), with the decisions
 in section 6. Scope: Xake core (`Resource`, `withResource`, `requiring`, `need`) and the
 compiler launcher shared by `Csc.run` and `Fsc.run`. The user-facing rules are in
-[delegated.md](delegated.md#1-resource) and [csc-server.md](csc-server.md#limiting-concurrent-compiles-csc_jobs-fsc_jobs).
+[delegated.md](delegated.md#1-resource) and [csc-server.md](https://github.com/OlegZee/Xake.Dotnet/blob/dev/docs/csc-server.md#limiting-concurrent-compiles-csc_jobs-fsc_jobs) (OlegZee/Xake.Dotnet).
 
 ## 0. Summary
 

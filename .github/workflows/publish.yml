@@ -1,7 +1,7 @@
 # Publishes the NuGet package `Xake` to nuget.org (see docs/devprocess.md):
-#   v<X.Y.Z>           -> Xake  (src/core, the engine alone; Xake.Dotnet ships from its own
-#                                repository, docs/features/dotnet-split S-D14)
-#   hermetic-v<X.Y.Z>  -> refused: Xake.Hermetic.Dotnet ended at 0.10.0 (S-D2)
+#   v<X.Y.Z>  -> Xake  (src/core, the engine alone; Xake.Dotnet, with the hermetic library,
+#                       ships from its own repository OlegZee/Xake.Dotnet, docs/features/dotnet-split)
+# Previews are tags too: v4.0.0-preview.3 -> 4.0.0-preview.3.
 # For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-net
 
 name: Publish package
@@ -10,7 +10,6 @@ on:
   push:
     tags:
       - 'v*'
-      - 'hermetic-v*'
 
 jobs:
   publish:
@@ -28,24 +27,18 @@ jobs:
     # The tag is the published version, exactly (`v3.15.0` -> 3.15.0): floors and bootstrap
     # references can be written from the tag alone. A re-run of the same tag is a no-op push
     # (--skip-duplicate); a broken release is replaced by the next patch, never re-published.
-    # The prefix picks the package, the build variable its version goes into (VERSION) and the
-    # pack command; `hermetic-v*` is refused.
     - name: Pick package and version from tag
       id: release
       run: |
         TAG_NAME="${{ github.ref_name }}"
         case "$TAG_NAME" in
-          hermetic-v*)
-            # Xake.Hermetic.Dotnet ended at 0.10.0; the hermetic assembly ships in the
-            # Xake.Dotnet package from its own repository (docs/features/dotnet-split, S-D2)
-            echo "::error::hermetic-v* releases ended at 0.10.0 (the hermetic assembly ships in Xake.Dotnet, from its own repository)"; exit 1 ;;
           v*)
             echo "package=Xake" >> $GITHUB_OUTPUT
             echo "variable=VERSION" >> $GITHUB_OUTPUT
             echo "pack=pack" >> $GITHUB_OUTPUT
             VERSION="${TAG_NAME#v}" ;;
           *)
-            echo "::error::tag '$TAG_NAME' is neither v* nor hermetic-v*"; exit 1 ;;
+            echo "::error::tag '$TAG_NAME' is not v*"; exit 1 ;;
         esac
         echo "version=${VERSION}" >> $GITHUB_OUTPUT
 

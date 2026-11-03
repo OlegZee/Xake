@@ -23,7 +23,6 @@
     <Compile Include="TypedTargetsTests.fs" />
     <Compile Include="TypedRulesTests.fs" />
     <Compile Include="TypedCompileTests.fs" />
-    
     <Compile Include="XakeScriptTests.fs" />
     <Compile Include="StaleArtifactDepTests.fs" />
     <Compile Include="MiscTests.fs" />
@@ -46,25 +45,11 @@
     <Compile Include="DelegatedTests.fs" />
     <Compile Include="ResourceGuardTests.fs" />
     <Compile Include="FlatScriptTests.fs" />
-    <Compile Include="DotnetTasksTests.fs" />
-    <Compile Include="ToolsetTests.fs" />
-    <Compile Include="PackageRootTests.fs" />
-    <Compile Include="SdkProbeTests.fs" />
-    <Compile Include="CscServerTests.fs" />
-    <Compile Include="ResxTests.fs" />
-    <Compile Include="CompilerCrashTests.fs" />
-    <Compile Include="CompilerJobsTests.fs" />
-    <Compile Include="FscTests.fs" />
-    <Compile Include="PathSpacesTests.fs" />
-    <Compile Include="HermeticModeTests.fs" />
     <Compile Include="LibraryVarsTests.fs" />
-    <Compile Include="DescriptionTests.fs" />
-    <Compile Include="ProjectPlanTests.fs" />
     <Compile Include="RecordShapeTests.fs" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\core\Xake.fsproj" />
-    <ProjectReference Include="..\dotnet\Xake.Dotnet.fsproj" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.6.0" />

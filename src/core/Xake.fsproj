@@ -7,11 +7,8 @@
     <DisableImplicitFSharpCoreReference>true</DisableImplicitFSharpCoreReference>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <!-- The "Xake" package is the engine alone (4.0, dotnet-split S-D14): Xake.Dotnet ships
-         from its own repository, and src/dotnet is not packed here. -->
+         from its own repository, OlegZee/Xake.Dotnet. -->
     <PackageId>Xake</PackageId>
-    <!-- the version build.fsx builds the libraries at (-p:XakePackageVersion=..., shared with
-         src/dotnet); not /p:Version, which would also become src/hermetic's version -->
-    <Version Condition="'$(XakePackageVersion)' != ''">$(XakePackageVersion)</Version>
     <TargetFrameworks>net462;netstandard2.0</TargetFrameworks>
     <Copyright>(c) OlegZee 2014-2026</Copyright>
     <Authors>OlegZee</Authors>

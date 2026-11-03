@@ -73,7 +73,7 @@ let downloads = Resource.newResource "downloads" 4
   `allowNeed body` lifts the guard for `body` (Shake's `unsafeAllowApply`): only when the
   closure of what it needs never takes the held resource. A task started by a `need` starts
   with nothing held. For compilers, do not wrap the compile recipe at all: `CSC_JOBS` /
-  `FSC_JOBS` throttle the launch at the right place ([csc-server.md](csc-server.md#limiting-concurrent-compiles-csc_jobs-fsc_jobs)).
+  `FSC_JOBS` throttle the launch at the right place ([csc-server.md](https://github.com/OlegZee/Xake.Dotnet/blob/dev/docs/csc-server.md#limiting-concurrent-compiles-csc_jobs-fsc_jobs), in OlegZee/Xake.Dotnet).
   The design record: [resources.md](resources.md).
 - **`requiring resource rule`** (`XakeScript.fs`) runs a rule's whole recipe under 1 unit, so
   the same rule applies to everything that recipe needs.

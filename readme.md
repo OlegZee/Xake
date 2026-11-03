@@ -4,23 +4,41 @@ Xake is a build utility that uses the full power of the F# programming language.
 
 ## Sample script
 
-The simple script looks like:
+A script that builds a .NET project with the SDK, and only when it has to:
 
 ```fsharp
-#r "nuget: Xake"
+#r "nuget: Xake, 4.0.0"
 
 open Xake
 open Xake.Tasks
 
-do xakeScript {
-    "main" => need ["out/hello.txt"]
+let vars = {|
+    // -d CONFIGURATION=Debug, or XAKE__CONFIGURATION in the environment
+    config = Var.string(name = "CONFIGURATION") |> withDefault "Release"
+|}
 
-    "out/hello.txt" ..> writeText "Hello world!"
+do xakeScript {
+    varschema vars
+
+    "main" <== ["out/app.dll"]
+
+    // rebuilt only when a source file, the project or CONFIGURATION changes
+    "out/app.dll" ..> recipe {
+        let! config = vars.config
+        let! sources = getFiles (!! "app/**/*.cs" ++ "app/*.csproj" -- "app/obj/" -- "app/bin/")
+        do! needFiles sources
+        do! sh "dotnet build app" { args ["-c"; config; "-o"; "out"] }
+    }
+
+    "clean" => rm { dir "out" }
 }
 ```
 
-This script builds `out/hello.txt` on demand, on any OS. Rules are written straight in the body
-of `xakeScript` — no `rules [ ... ]` wrapper needed.
+Next to a project made with `dotnet new console -n app`, `dotnet fsi build.fsx` builds
+`out/app.dll`; run it again and it reports `Skipped ... (up to date)`. Rules are written straight
+in the body of `xakeScript`, `sh` runs a process and fails the build on a non-zero exit code, and
+the variables are declared once and listed by `dotnet fsi build.fsx -- -- --help`
+([docs/variables.md](docs/variables.md)).
 
 The `Xake` package is the build engine alone (`Xake`, `Xake.Tasks`). The .NET tasks (`csc`, `fsc`,
 `msbuild`, `resgen`, hermetic builds) live in the `Xake.Dotnet` package, built from its own

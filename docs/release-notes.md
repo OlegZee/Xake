@@ -7,118 +7,349 @@ The `Xake` package: the engine (up to 3.15 it also carried `Xake.Dotnet`). From 
 
 ## 4.0.0 (unreleased)
 
-A breaking release: rule patterns and file masks follow one grammar (the pattern module, spec:
-`docs/features/pattern-module/spec.md`), variables are evaluated at launch by declarations the
-script states, and the `Xake` package is the engine alone. `Xake.Dotnet` and the hermetic
-library leave this repository and ship together as the package `Xake.Dotnet` 4.0.0 from its own
-repository (dotnet-split S-D2); the `Xake.Hermetic.Dotnet` line ends at 0.10.0.
+### Summary
 
-This section lists the breaking changes, the new features and the fixes, then the migration and
-an announcement; the sections after it describe each area in full.
+Xake 4.0 is a breaking release. What it is:
+
+- **One grammar for rule patterns and file masks** (the pattern module `Xake.PatternAst`, spec:
+  `docs/features/pattern-module/spec.md`): `( ) [ ] { } |` are reserved, `{a,b}` is an alternation,
+  `\` escapes, `dir/**` means every file below `dir`, and what 3.x read silently in an unintended
+  way is an error with a numbered `XPnnn` code.
+- **Variables are declared and evaluated once, at launch** (`var`, `varschema`, secrets masked in
+  every log): a `Var` read needs a declaration, the environment source of a declaration is
+  `XAKE__<NAME>`, libraries read only the variable set.
+- **The `Xake` package is the engine alone.** `Xake.Dotnet` (`csc`, `fsc`, `msbuild`, `resgen`) and
+  the hermetic library ship together as the package `Xake.Dotnet` 4.0.0 from
+  [OlegZee/Xake.Dotnet](https://github.com/OlegZee/Xake.Dotnet); `Xake.Hermetic.Dotnet` ends at 0.10.0.
+- **New:** typed targets (`Xake.Typed`), `Command`, `ExecOptions.IgnoreEnvironment`, a public seam
+  for task libraries (`hasRule`, `ProcessExec`).
+
+Who must act:
+
+| You | Action |
+|---|---|
+| a script with `open Xake.Dotnet` or `Xake.Hermetic.Dotnet` | add `#r "nuget: Xake.Dotnet"` |
+| a script with `(`, `)`, `[`, `{`, `|` in a rule or mask | read the `XPnnn` errors at load; escape or respell |
+| a script that lists, excludes or copies with `dir/**`, `**/` or `-- "dir/"` | check the result: the meaning changed with no error |
+| a script with `Var.*` reads, `var` redefinitions, or `-d` for secrets | declare the keys, define a name once, pass secrets as `XAKE__<NAME>` |
+| a CI that exported `NUGET_PACKAGES`, `XAKE_CSC_*`, `XAKE_FSC_JOBS`, `CI`, or a plain-named variable for a field | declare it with `Env "NAME"` or rename the variable to `XAKE__NAME` |
+| code that builds `ExecOptions`/`EngineOptions`, or calls `Path.matchesPattern`, `Fileset.toFileList1` | use `with`, `ScriptVars`, `Path.matches`, `toFileList` |
+
+Upgrade path: run the build on 4.0, fix every `XPnnn` error and launch error (they stop the run
+before any target), then review the warnings in `build.log`; the checklist is in
+[Migration checklist](#migration-checklist).
+
+The sections below, in order: breaking changes (with before and after), new features, the
+migration checklist, fixes and smaller changes, an announcement; then the full reference of each
+area (patterns, typed targets, variables, library readers, the public seam).
 
 ### Breaking changes
 
-**Packages**
+#### Patterns
 
-- **The `Xake` package no longer carries `Xake.Dotnet.dll`** (from `4.0.0-preview.2`; nor its
-  `.xml`, nor its dependencies `System.Resources.Extensions` and `Microsoft.Win32.Registry`): it
-  is the engine alone, packed from `src/core`. Xake.Dotnet ships from its own repository as the
-  package `Xake.Dotnet`; a script that uses `open Xake.Dotnet` (`csc`, `fsc`, `msbuild`,
-  `resgen`, ...) adds `#r "nuget: Xake.Dotnet"`. The 3.x `Xake.Dotnet` line is not republished
-  from this repository (#129, S-D14).
-- **`Xake.Hermetic.Dotnet` is no longer packed or published from this repository** (#129,
-  S-D17): its line ends at 0.10.0, and the hermetic library ships inside the `Xake.Dotnet` 4.0.0
-  package (`open Xake.Hermetic.Dotnet` unchanged), the id `Xake.Hermetic.Dotnet` pointing to
-  `Xake.Dotnet` (S-D2).
-- **`Xake.Dotnet` and the hermetic library moved to their own repository**,
-  [OlegZee/Xake.Dotnet](https://github.com/OlegZee/Xake.Dotnet) (dotnet-split S7): the sources (`src/dotnet`, `src/hermetic`),
-  their tests, docs (toolchain discovery, `csc`/`fsc` syntax, compiler server, project
-  descriptions, the hermetic reference, guide and architecture) and samples, and the fsc/locks
-  self-build (`build.fsc.fsx`, `locks/`, `xake.fingerprints`). This repository builds, tests and
-  packs the engine only; `publish.yml` takes `v*` tags only (no `hermetic-v*`).
+Rule patterns (`..>`, `*..>`, `=>`, `<==`, `<<<`, `target`, `targets`, `command`) and masks (`!!`,
+`ls`, `++`, `--`, `fileset { }`, `includefile`/`excludefile`) follow one grammar. An invalid
+pattern raises `PatternException` when the rule or fileset is created, usually as the script
+loads:
 
-**Pattern grammar and reserved characters** (rules and masks; details in
-[Patterns: rule matching](#patterns-rule-matching-on-the-pattern-module) and
-[Patterns: fileset scanning](#patterns-fileset-scanning-on-the-pattern-module))
+```text
+Invalid pattern 'out/a(1).txt' (rule) at character 6: '(' is reserved (Xake 3.x: a regex group); write \( for a literal '(' [XP003]
+```
 
-- **`( ) [ ] { } |` are reserved.** `\` before one of them escapes it (`src\(x\)` names
-  `src(x)`); `PatternAst.escapePath` turns a real path into a mask. `(`, `)` or `|` outside a
-  named group is an error [XP003]; `|` inside a named group (`(ext:dll|exe)`, a 3.x regex
-  alternation) is an error giving `(ext:{dll,exe})` [XP003]; an unbalanced `[` [XP002], a stray
-  `]`, `}` or an unclosed `{` [XP004], `{x}` without a comma [XP005], a named group in a mask
-  [XP008], `\,` directly inside braces [XP017].
-- **Classes and braces are wildcards everywhere**: `{a,b}` is an alternation, `[abc]`, `[a-z]`,
-  `[^a]` are classes in masks too (3.x masks: literal text) [XP104 on evidence]; `[!a]` is a
-  negated class [XP117]; `[c]` is the character `c` [XP105 in rules, XP106 in masks].
-- **`**`**: `**/` in a rule takes zero or more directories (3.x: one or more) [XP119];
-  `dir/**` in a mask is every file below `dir` [XP113]; `a**b` stays within one segment
-  [XP112]; `**` does not follow directory symlinks and junctions.
-- **Masks**: a trailing `/` names directories in every mask (`-- "obj/"` removes everything
-  below `obj`); `*.*` needs a `.` in the name [XP114]; `?` never matches zero characters;
-  results are ordered and duplicate-free.
-- **Case** follows one comparer per OS, ordinal on Linux and macOS, ignore-case on Windows.
-- **Errors for 3.x spellings that meant nothing or something unintended:** an unclosed
-  `(name:` [XP006], a group name starting with a digit [XP007], `/` inside a class, `[z-a]`,
-  `[[:` [XP010], a trailing `/` in a rule [XP011], `.`/`..` after a wildcard [XP012], outputs of a
-  multi-output rule with different groups [XP013] or a class or braces outside a group [XP014],
-  a repeated group name [XP015], an empty pattern [XP018], `{a/,b}` ending the pattern [XP019].
-- **Rule selection:** a `/` next to `**` no longer counts in specificity, so a globstar rule can
-  lose a tie it won in 3.x (D5).
-- **When errors surface:** an invalid pattern raises `PatternException` (`Invalid pattern
-  '<text>' (<context>) at character <n>: <reason> [XPnnn]`) when the rule or the fileset is
-  created, usually as the script loads; legacy spellings warn once in the build log. `\` before
-  any other character is still a separator, deprecated [XP110], an escape from 5.0.
+"Rule" and "mask" below name where the 3.x meaning applied. "Silent" means no error: the result
+changes, only a warning at evidence (`XP1nn`, in the build log, once per pattern) tells.
 
-**Deleted and changed APIs**
+| Pattern | 3.x | 4.0 | Code |
+|---|---|---|---|
+| `out/(ext:dll\|exe)` (rule) | regex alternation | error; write `out/(ext:{dll,exe})` | XP003 |
+| `out/a(1).txt` (rule) | regex group, matched `out/a1.txt` | error; write `@"out/a\(1\).txt"` | XP003 |
+| `src/a(1)/*.cs` (mask) | literal `(1)` | error; write `\(1\)`, or `PatternAst.escapePath` for a real path | XP003 |
+| `src/{a,b}.cs` | literal text `{a,b}` | alternation: `src/a.cs`, `src/b.cs`; `\{a,b\}` for the literal | XP104 on evidence (mask) |
+| `{x}` (no comma) | literal text | error; `\{x\}` or `{a,b}` | XP005 |
+| `[abc]`, `[a-z]`, `[^a]` in a mask | literal text | a character class | XP104 on evidence |
+| `[c]` in a rule | the character `c` | the character `c`, deprecated (write `c` or `\c`) | XP105 |
+| `sub[1]/*.c` in an include | literal `sub[1]` | `sub1` | XP106 |
+| `[!a]` in a rule or a wildcard exclude segment | class of `!` and `a` | negated class (`[^a]` has the same meaning in both) | XP117 |
+| `[a`, `]`, `}`, `{` unbalanced | literal in masks, crash in rules | error | XP002, XP004 |
+| `[a/b]`, `[z-a]`, `[[:alpha:]]` | split or regex meaning | error | XP010 |
+| `**/*.dll` in a rule | one or more directories | zero or more (`a.dll` at the root matches); `*/**/*.dll` requires one | XP119 on evidence |
+| `a**b` in a rule | crossed `/` | within one segment, like `a*b` | XP112 |
+| `dir/**` in a mask | include: the directories below; exclude: nothing | every file below `dir`; `dir/**/` for the directories | XP113 on evidence |
+| `dir/**/*` | every file below | unchanged | |
+| `-- "obj/"` (trailing `/` in a mask) | the `/` was dropped, removed nothing | the directory `obj`: every file below it is removed and not entered | silent |
+| `-- "obj"` | a file named `obj` | unchanged | |
+| `!! "*.*"` | any name | names with a `.` | XP114 on evidence |
+| `?` before a `.`, `*.rdl` on .NET Framework | `?` could match zero characters; `*.rdl` found `.rdlx` | the module decides every name: `?` is exactly one character | silent |
+| `out/` (trailing `/` in a rule) | matched nothing | error | XP011 |
+| `src/*/../x.cs`, `src/*/./x.cs` | `..` a parent step in masks, never matched in rules | error: `.`/`..` only before the first wildcard | XP012 |
+| `src/(x:*)/*.cs` (named group in a mask) | literal text, or the body in an exclude | error | XP008 |
+| `(1:*)` | accepted | error: a name must not start with a digit | XP007 |
+| `(p:*)/(p:*)` | each captured, the last won | error | XP015 |
+| `(name:` unclosed in a string rule | ran to the end of the pattern | error | XP006 |
+| `*..>` outputs with different groups, or a class or braces outside a group | names like `out/net8.0/.xml` | error when the rule is created | XP013, XP014 |
+| `""` | an empty mask matching the empty path | error | XP018 |
+| `{a/,b}` ending a pattern | literal text | error; write `{a,b}/` | XP019 |
+| `src\*.cs` | `\` is a separator | still a separator, deprecated; an escape from 5.0 | XP110 |
+| `src\(x\)\*.cs` | `\` is a separator | `\` before `( ) [ ] { } \|` is an escape | |
+| `\,` directly inside braces | separator | error; write `[,]` | XP017 |
+| a literal `*`, `?` or `,` | | no `\` escape in 4.0: `[*]`, `[?]`, `[,]`, `[\\]` for a backslash | |
+| `a//b` | `matchGroups` compared the raw text | one separator everywhere | silent |
+| a case difference (`Src/a.cs` for `src/*.cs`) | `Path.matches` ignored case, `matchGroups` did not; a literal exclude segment ignored case everywhere; macOS wildcard includes ignored case | one comparer per OS: ordinal on Linux and macOS, ignore-case on Windows | silent |
+| a scan result | file-system order, duplicates kept | ordinal order per directory (files before subdirectories), includes in declaration order, duplicates removed | silent |
+| `**` over a directory symlink or junction | followed (a cycle ended at the OS limit) | not followed, logged once at level Message; a literal or one-segment pattern (`node_modules/x/**`, `*/`) still enters it | silent |
+| an unreadable directory in a scan | `UnauthorizedAccessException` ended the build | skipped, one warning | silent |
+| rule selection with `**` next to `/` | the `/` counted in specificity | it counts 0: `*/?.dll` now beats `**/x.dll` for `a/x.dll` | silent |
 
-- **`Path.matchesPattern` is removed** with the 3.x part matcher: use `Path.matches mask root
-  path` (#124, spec 8.7). `Path.matches` keeps its signature, uses the module's mask semantics
-  and raises `PatternException` on an invalid mask; `Path.specificity` is
-  `PatternAst.specificity` (#123).
-- **`Fileset.toFileList1` and the `FileSystem` adapter (`FileSystemType`) are removed**, not kept
-  obsolete: the walker reads the file system; use `toFileList` (D46).
-- **`Path.parse`/`parseDir` split as the lexer does** and keep a trailing separator as a
-  directory mask; a fileset recorded by 3.x with a trailing `**` reads back differently, so its
-  target reruns once (spec 8.7).
-- **`ExecOptions.Vars` is renamed `ExecOptions.ScriptVars`**, no alias (#115); new fields of
-  `ExecOptions`/`EngineOptions` break code that builds them with a full record expression (#111).
+Which of these fail the script and which change a result:
 
-**Variables** (details in [Variables](#variables-evaluated-at-launch))
+- **Fail at load** (an error with the 4.0 spelling in the message): the rows with a code `XP0nn`.
+- **Change a result without an error**: `dir/**`, a trailing `/` in an exclude, `*.*`, `**/` in a
+  rule, `[abc]` and `{a,b}` in a mask, `[c]` in an include, `[!a]`, `a**b`, case, ordering, symlinks,
+  specificity. Read the warnings in `build.log` and compare the file lists once.
+- A fileset recorded by 3.x with a trailing `**` reads back differently, so its target reruns once.
 
-- A `Var.*` read in a recipe needs a declaration of its key (#111).
-- The key of a `varschema` field is its `name`, else its field name; `cliArg` is only its
-  command-line name (#111).
-- A name defined twice in the script stops the run; `-d` of a secret or of a `Var.env` field
-  stops the run (#111).
-- An implicit `XAKE__<NAME>` environment source for every declaration without an explicit one,
-  and a constant `var "N" "v"` is overridden by `XAKE__<NAME>`; the 3.15 name without the prefix
-  is no longer read (#111).
-- Xake.Dotnet (now shipped from its own repository) reads its build variables only from the
-  variable set, its package folder defaults to `<project root>/.packages`, and its switches are
-  strict (#112).
+The diagnostic codes a user meets:
+
+| Code | Kind | Meaning |
+|---|---|---|
+| XP002, XP004 | error | unbalanced `[`, `{`, a stray `]` or `}`; `\[`, `\{` for a literal |
+| XP003 | error | `(`, `)`, `\|` outside a named group; `(ext:dll\|exe)` is `(ext:{dll,exe})` |
+| XP005 | error | `{x}` without a comma |
+| XP006 | error | unclosed `(name:` |
+| XP007, XP015 | error | a group name that starts with a digit; a name used twice |
+| XP008 | error | a named group in a mask |
+| XP010 | error | `/` in a class, a reversed range, `[[:alpha:]]` |
+| XP011 | error | a rule pattern ending in `/` |
+| XP012 | error | `.` or `..` after a wildcard |
+| XP013, XP014 | error | multi-output rule: outputs with different groups; a class or braces outside a group in a pattern that is formatted (multi-output, typed targets) |
+| XP016 | error | a UNC root (`//server/share`) with a wildcard server or share |
+| XP017 | error | `\,` directly inside braces |
+| XP018, XP019 | error | an empty pattern; `{a/,b}` ending the pattern |
+| XP104 | warning | `[ab]` or `{a,b}` in a mask where an entry named like the 3.x literal exists |
+| XP105, XP106 | warning | `[c]` is the character `c` (rule; include) |
+| XP110 | warning | `\` used as a separator |
+| XP112, XP113, XP114, XP117, XP119 | warning | the 3.x reading differs: `a**b`, `dir/**`, `*.*`, `[!a]`, `**/` that took zero directories |
+| XP120 | warning | an absolute exclude outside the fileset that removes nothing |
+
+The 3.x clauses in the reasons and the legacy warnings (XP104 to XP119) are to be removed in 5.0;
+XP120 stays. The full table with the exact texts is section 7.2 and 7.3 of the pattern spec, the
+guide is [overview.md](overview.md#patterns-masks-and-paths).
+
+Before and after:
+
+```fsharp
+// 3.x                                           // 4.0
+"out/(ext:dll|exe)" ..> recipe { ... }           "out/(ext:{dll,exe})" ..> recipe { ... }
+"out/a(1).txt" ..> recipe { ... }                @"out/a\(1\).txt" ..> recipe { ... }
+!! "src/a(1)/*.cs"                               !! (PatternAst.escapePath "src/a(1)/*.cs")
+!! "bin/**"             // directories          !! "bin/**/"      // directories
+!! "src/**/*.cs" -- "obj/"   // removed nothing  // now prunes obj; same text, different result
+"**/*.dll" ..> ...      // needs a directory    "*/**/*.dll" ..> ...   // needs a directory
+```
+
+#### Variables
+
+How a value is resolved:
+
+| | 3.x | 4.0 |
+|---|---|---|
+| when | when a recipe read it | once at launch, before `setup` and any target; a missing `required` value or a bad conversion stops the run before any target |
+| order | `-d`, the script's values (a later `var` replaced an earlier one; `var` beat `ExecOptions.Vars`), a field's environment name; per-demand values were shadowed by the script | per-demand values, `-d` (the last wins), the script's one definition (`var "N" "v"` or an `ExecOptions.ScriptVars` entry), the declaration's sources in list order |
+| environment name of a declaration without `envVar` | the derived `BUILD_CONFIG` | `XAKE__BUILD_CONFIG`; an explicit `Env "X"` / `envVar = "X"` replaces it |
+| a constant `var "N" "v"` | ignored the environment | `XAKE__N` overrides it when present; `-d` still wins |
+| `Var` read of an undeclared name (`vars.field` without a matching declaration) | worked, read the environment | the reading target fails (E-8); a different declaration fails too (E-7); use `getVar`, `getEnv` |
+| key of a field | `cliArg` when given | `name`, else the field name; `cliArg` is only the `-d` name |
+| a name defined twice | the later `var` replaced the earlier; `var` beat `ExecOptions.Vars` | stops the run (E-2) |
+| `-d` of a secret | a warning | stops the run (E-1a); pass `XAKE__<KEY>` |
+| `-d` of a `Var.env` field | ignored | stops the run |
+| `-d` pairs | in `ExecOptions.Vars` | in `ExecOptions.CliVars` |
+| `Demand(target, vars)` | shadowed by the script's values | wins over everything |
+| libraries (Xake.Dotnet) | read `NUGET_PACKAGES`, `XAKE_CSC_SERVER`, `XAKE_CSC_JOBS`, `XAKE_FSC_JOBS`, `CI`, ... from the environment | read only the variable set; the CI declares what it wants |
+| package folder | `NUGET_PACKAGES`, else `~/.nuget/packages` | `<project root>/.packages` |
+| `NUGET_FETCH`, `CSC_SERVER`, `XAKE_CSC_SERVER` | a bad value warned or meant "on" | the reading target fails; an empty value is the default |
+| banner | `script/cli` for everything | one source per variable, secrets `***` |
+
+```fsharp
+// 3.x: BUILD_CONFIG was read for the field, a Var read needed no declaration
+let vars = {| buildConfig = Var.string() |}
+
+// 4.0: the field reads XAKE__BUILD_CONFIG; keep the old name explicitly
+let vars = {| buildConfig = Var.string(envVar = "BUILD_CONFIG") |}
+```
+
+```fsharp
+// 3.x: getVar "pkg" read the field p = Var.string(cliArg = "pkg")
+// 4.0: the key is the field name; -d pkg=... still sets it
+let vars = {| p = Var.string(cliArg = "pkg") |}
+// ... let! p = getVar "p"   (or let! p = vars.p)
+```
+
+```fsharp
+// 3.x CI: NUGET_PACKAGES=/cache and XAKE_CSC_JOBS=4 in the environment reached Xake.Dotnet
+// 4.0: declare them (or pass -d NUGET_PACKAGES=/cache)
+xakeScript {
+    var "NUGET_PACKAGES" [Env "NUGET_PACKAGES"]
+    var "CSC_JOBS" [Env "XAKE_CSC_JOBS"]
+    ...
+}
+```
+
+Dependencies: a target whose record comes from a 3.15 `Var` read (`Var (N, None)` plus `EnvVar`)
+rebuilds once; a secret field's record moves from `SecretDep (env name, SecretEnv)` to
+`SecretDep (key, SecretArg)`, one rebuild. The database format is unchanged (0.6).
+
+Details and the error ids E-1a to E-12: [Variables](#variables-evaluated-at-launch) below and
+[variables.md](variables.md).
+
+#### Packages
+
+| 3.x | 4.0 | Change in the script |
+|---|---|---|
+| `Xake` (engine, `Xake.Dotnet.dll` inside) | `Xake`: the engine alone (`Xake.dll`, `Xake.xml`); no `System.Resources.Extensions`, no `Microsoft.Win32.Registry` | nothing for an engine-only script |
+| `Xake.Dotnet` (inside `Xake`; `open Xake.Dotnet`) | the package `Xake.Dotnet` 4.0.0, depends on `Xake [4.0.0, 5.0)` | add `#r "nuget: Xake.Dotnet"`; `open Xake.Dotnet` unchanged |
+| `Xake.Hermetic.Dotnet` 0.x | no package from 4.0 (its line ends at 0.10.0); the assembly ships inside `Xake.Dotnet` 4.0.0, the id points to `Xake.Dotnet` | replace `#r "nuget: Xake.Hermetic.Dotnet"` with `#r "nuget: Xake.Dotnet"`; `open Xake.Hermetic.Dotnet` unchanged |
+| sources in `src/dotnet`, `src/hermetic` of this repository | [OlegZee/Xake.Dotnet](https://github.com/OlegZee/Xake.Dotnet) with their tests, docs, samples and the fsc/locks self-build | |
+
+- `Xake.Dotnet.dll` left the `Xake` package from `4.0.0-preview.2`; the 3.x `Xake.Dotnet` line is
+  not republished from this repository (#129, S-D14). `Xake.Hermetic.Dotnet` is no longer packed or
+  published here (#129, S-D17).
+- The moved parts: `src/dotnet`, `src/hermetic`, their tests, docs (toolchain discovery,
+  `csc`/`fsc` syntax, compiler server, project descriptions, the hermetic reference, guide and
+  architecture) and samples, and the fsc/locks self-build (`build.fsc.fsx`, `locks/`,
+  `xake.fingerprints`) (dotnet-split S7). This repository builds, tests and packs the engine only;
+  `publish.yml` takes `v*` tags only (no `hermetic-v*`).
+
+```fsharp
+// 3.x                                  // 4.0
+#r "nuget: Xake"                        #r "nuget: Xake"
+open Xake                               #r "nuget: Xake.Dotnet"
+open Xake.Dotnet                        open Xake
+                                        open Xake.Dotnet
+```
+
+#### Removed or renamed APIs
+
+| 3.x | 4.0 |
+|---|---|
+| `Path.matchesPattern` | removed; `Path.matches mask root path` (#124). It keeps its signature, uses the module's mask semantics and raises `PatternException` on an invalid mask |
+| `Fileset.toFileList1`, the `FileSystem` adapter (`FileSystemType`) | removed, not kept obsolete (D46); `toFileList` |
+| `Path.specificity` | is `PatternAst.specificity` (#123) |
+| `Path.parse`/`parseDir` | split as the lexer does (not inside `[...]`/`{...}`, not at an escaping `\`) and keep a trailing separator as a directory mask |
+| `ExecOptions.Vars` | `ExecOptions.ScriptVars`, no alias (#115): `{ ExecOptions.Default with ScriptVars = [...] }`; `-d` pairs are in the new `ExecOptions.CliVars` |
+| a full record expression for `ExecOptions`/`EngineOptions` | breaks (new fields `CliVars`, `VarDecls`, `VarDefinedBy`, `IgnoreEnvironment`, `EngineOptions.Variables`); build them with `with` |
+| `Var.*` read without a declaration | needs a `varschema` field or an equal `var [...]` rule |
+| `PackageRootSource.EnvironmentVariable`/`UserProfile`, `CompilerServer.fromEnvironment` (Xake.Dotnet) | `[<Obsolete>]`; the package root is the build's own folder, `fromEnvironment` returns `Shared None` |
+| `RegexParseException` for a lone `(`/`)` or an unbalanced `[` | `PatternException` |
+| `Xake.Dotnet` internals through `InternalsVisibleTo` | removed; the public seam: `hasRule`, `Xake.ProcessExec` |
 
 ### New features
 
-- **The pattern module `Xake.PatternAst`** (#117–#124): one grammar for rules and masks, with
-  classes, braces and `\` escapes; public parsing (`Rule.parse`/`tryParse`/`check`,
-  `Mask.parse`/`tryParse`/`check`), `escape`, `escapePath`, `unparse`, `groupNames`,
-  `wildcards`, `specificity`, `format`, `formatMatches` and `glob`; numbered `XPnnn` errors and
-  warnings; one fileset walker. Not opened by `open Xake`. Guide:
-  [overview.md](overview.md#patterns-masks-and-paths).
-- **Typed targets `Xake.Typed`** (#127, #130): `Target<'G>`, `Target<'G, 'O>` and `Command<'G>`,
-  rule patterns whose groups are the fields of an F# record, checked by the compiler. Guide:
-  [typed-targets.md](typed-targets.md).
-- **Variables** (#111, #112, #113, #115): `var "N" [sources]` (`Env`, `Default`, `Cli`, `Secret`,
-  `SecretHashed`), evaluation at launch with each variable's source in the banner,
-  `ExecOptions.IgnoreEnvironment`, `Var.read<'t>` for libraries and the optional
-  `DotNetVars.Default` schema. Guide: [variables.md](variables.md).
-- **A public seam for task libraries** (#122): `hasRule` and a public `Xake.ProcessExec`.
+- **Typed targets `Xake.Typed`** (#127, #130): a rule's groups are the fields of an F# record.
+  `open Xake.Typed` after `open Xake`. Guide: [typed-targets.md](typed-targets.md).
 
-### Fixes
+  ```fsharp
+  open Xake
+  open Xake.Typed
 
-- A project root holding `( ) [ ] { } |` matches literally; `a//b` in a pattern is one
-  separator; an empty group value no longer leaves `(lib:)` in a multi-output name and a `)` in
-  a value no longer breaks it (#123).
+  type AsmG = { cfg: string; fwk: string; name: string }
+  let Asm = Target<AsmG> "out/(cfg:*)/(fwk:*)/(name:*).dll"
+
+  let build = [
+      Asm.Rule <| fun m -> recipe { do! trace Message "%s for %s" m.name m.fwk }   // m.fkw does not compile
+  ]
+  let want = need [ Asm.Format { cfg = "Release"; fwk = "net8.0"; name = "Core" } ]
+  ```
+
+- **`Command<'G>`** (typed, always reruns, as `command "name" { }`):
+
+  ```fsharp
+  type LockG = { name: string; cfg: string }
+  let Lock = Command<LockG> "lock::(name:*)::(cfg:*)"
+  let lockRule = Lock.Rule <| fun { name = name; cfg = cfg } -> recipe { do! trace Message "lock %s %s" name cfg }
+  let wantLocks = need [ Lock.Format { name = "Core"; cfg = "Release" } ]
+  ```
+
+- **`varschema` and `var "N" [sources]`** (#111): typed fields and rules with sources `Env`,
+  `Default`, `Cli`, `Secret`, `SecretHashed`; `--help` lists them, the banner shows each source.
+
+  ```fsharp
+  let vars = {|
+      config = Var.string(cliArg = "config") |> withDefault "Debug"   // -d config=..., XAKE__CONFIG, Debug
+      jobs   = Var.int()                                              // int option
+  |}
+  xakeScript {
+      varschema vars
+      var "OUT" [Cli "out"; Default "bin"]            // -d out=..., XAKE__OUT, bin
+      rules [ "main" => recipe { let! config = vars.config in do! trace Message "%s" config } ]
+  }
+  ```
+
+- **Secrets** (#111): `Secret`/`SecretHashed` in a rule, `Var.secret`, `|> secret`,
+  `|> secretHashed` on a field. Every Xake logger replaces a secret value of 4 or more characters
+  with `***`; the database keeps only whether it was set (or a salted HMAC for `secretHashed`);
+  the value comes from `XAKE__<KEY>` or its `Env` name, `-d` of it stops the run.
+
+  ```fsharp
+  let vars = {| token = Var.secret<string>() |> required |}   // XAKE__TOKEN=... dotnet fsi build.fsx
+  ```
+
+- **`ExecOptions.IgnoreEnvironment`** (#115): no declaration reads the environment at launch;
+  for tests and for programs that embed Xake. `getEnv` is not affected.
+
+  ```fsharp
+  xakeArgs [] { ExecOptions.Default with IgnoreCommandLine = true; IgnoreEnvironment = true } { ... }
+  ```
+
+- **`Var.read<'t> "NAME"`** and the optional `DotNetVars.Default` schema (#112) for libraries.
+- **The pattern module `Xake.PatternAst`** (#117 to #124): public `Rule.parse`/`tryParse`/`check`,
+  `Mask.parse`/`tryParse`/`check`, `escape`, `escapePath`, `unparse`, `groupNames`, `wildcards`,
+  `specificity`, `format`, `formatMatches`, `glob`; one fileset walker. Not opened by `open Xake`.
+  Guide: [overview.md](overview.md#patterns-masks-and-paths).
+- **A public seam for task libraries** (#122): `hasRule : string -> Recipe<ExecContext, bool>` and
+  the public `Xake.ProcessExec`.
+
+### Migration checklist
+
+In order. Each step stops the run with a message or changes a result; do them before comparing
+build outputs.
+
+1. **Packages.** Scripts that use `csc`, `fsc`, `msbuild`, `resgen` or the hermetic library: add
+   `#r "nuget: Xake.Dotnet"` and remove `#r "nuget: Xake.Hermetic.Dotnet"`.
+   `grep -rn "Xake.Dotnet\|Xake.Hermetic" --include=*.fsx --include=*.fsproj .`
+2. **Build once and read the errors.** Every `XPnnn` error carries the 4.0 spelling. Escape
+   literal `( ) [ ] { } |` with `\` (or `PatternAst.escapePath` for a real path); `(a|b)` becomes
+   `{a,b}`; `(ext:dll|exe)` becomes `(ext:{dll,exe})`.
+   `grep -rnE '\(\w*:[^)]*\|' --include=*.fsx .` finds alternations.
+3. **Rules whose meaning changed silently.** Search for `**/` in rule patterns (it now takes zero
+   directories; write `*/**/` to require one), `dir/**` and trailing `/` in masks, `*.*`, `[` and
+   `{` in masks, `\` as a separator.
+   `grep -rnE '\*\*|\*\.\*|\\' --include=*.fsx .`
+4. **Read the warnings in `build.log`** (`Pattern '...' (rule|include|exclude): ... [XPnnn]`); fix
+   `XP105`, `XP106`, `XP110` (use `/`), `XP112`, `XP117`; XP113, XP114, XP119 mean a result differs.
+5. **Removed APIs.** `Path.matchesPattern` -> `Path.matches`, `toFileList1` -> `toFileList`,
+   `ExecOptions.Vars` -> `ExecOptions.ScriptVars`; `with` instead of full record expressions.
+   `grep -rn "matchesPattern\|toFileList1\|FileSystemType\|Vars *=" --include=*.fsx --include=*.fs .`
+6. **Variables.** Every recipe that reads `Var.*` has a declaring `varschema` field; a name is
+   defined once (`var`, `ExecOptions.ScriptVars`, field); `getVar` reads of a `cliArg` field use the
+   field's key.
+   `grep -rn "Var\.\(string\|int\|bool\|create\|env\|secret\|arg\)\|getVar" --include=*.fsx .`
+7. **Environment names.** A field or `var` rule without an environment name now reads
+   `XAKE__<NAME>`: keep the old name with `envVar = "NAME"` / `Env "NAME"`, or export `XAKE__NAME`;
+   a CI that exports `XAKE__<NAME>` for a constant `var` checks that it means it. Libraries read
+   only the variable set: declare `NUGET_PACKAGES`, `XAKE_CSC_SERVER`, `XAKE_CSC_JOBS`,
+   `XAKE_FSC_JOBS`, `CI`, `LOCK_REFRESH`, `SOURCE_DATE_EPOCH` as needed, or pass `-d`.
+8. **Secrets.** Remove `-d TOKEN=...`; pass `XAKE__TOKEN=...`; mark credential fields `secret`.
+   `grep -rn "\-d [A-Z_]*\(KEY\|TOKEN\|SECRET\|PASSWORD\)" .`
+9. **Package folder.** Xake.Dotnet's package folder is `<project root>/.packages` unless
+   `NUGET_PACKAGES` is declared; move or ignore the old cache, add `.packages` to `.gitignore`.
+10. **Rebuild once.** Targets with a 3.15 `Var` read or a secret dependency, and filesets with a
+    trailing `**`, rerun once; the database format is unchanged (0.6).
+
+### Fixes and smaller changes
+
+- A project root holding `( ) [ ] { } |` matches literally; `a//b` in a pattern is one separator;
+  an empty group value no longer leaves `(lib:)` in a multi-output name and a `)` in a value no
+  longer breaks it (#123).
 - An unreadable directory in a scan is skipped with a warning (3.x: the build failed with
   `UnauthorizedAccessException`); a `**` scan no longer loops on a directory link cycle (#124).
 - `fileset { includefile ... }` and `excludefile` work (their arguments were swapped);
@@ -126,23 +357,17 @@ an announcement; the sections after it describe each area in full.
 - `Demand(target, vars)` values win over the script's values (they were shadowed) (#111).
 - File loggers are flushed at the end of the build, and a locked previous log file is tolerated
   (#123).
-
-### Migration
-
-A script that uses `open Xake.Dotnet` adds `#r "nuget: Xake.Dotnet"`; one that referenced
-`Xake.Hermetic.Dotnet` takes it from that package too. A pattern that 4.0 rejects fails at load
-with its `XPnnn` code and the 4.0 spelling in the message: escape literal `( ) [ ] { } |` with
-`\` (or `PatternAst.escapePath`), write `{a,b}` for `(a|b)`, `dir/**/` for the directories
-below `dir`, `*/**/x` to require a directory; read the warnings in the build log. `toFileList1`
-becomes `toFileList`, `Path.matchesPattern` becomes `Path.matches`, `ExecOptions.Vars` becomes
-`ExecOptions.ScriptVars`. For variables: a CI that put `NUGET_PACKAGES`, `XAKE_CSC_SERVER`,
-`XAKE_CSC_JOBS` or `XAKE_FSC_JOBS` in the environment adds `var "NUGET_PACKAGES" [Env
-"NUGET_PACKAGES"]` (and the like, see below) or passes `-d`; a recipe that reads `Var.*`
-declares the key in `varschema`; a script that reads `getVar "pkg"` for a field with `cliArg =
-"pkg"` reads the field's own key; a name defined twice in a script is removed; credentials are
-not passed with `-d`; a field without `envVar` that was set from the environment under its plain
-name gets `envVar = "NAME"` (or the environment variable is renamed to `XAKE__NAME`), and a CI
-that happens to export `XAKE__<NAME>` for a constant `var` checks that it means it.
+- `PatternException.ToString()` is its message alone: a script failing at load shows no stack
+  trace. `XakeEngine.Start` raises `XakeException` on a launch error (#111).
+- The banner lists each variable once with its source (`cli`, `cli:<name>`, `script`,
+  `env:<NAME>`, `default`, `request`, `(not set)`), secrets as `***`; `--help` lists `var [...]`
+  rules and the environment name of every rule and field and evaluates nothing (#111).
+- `cp` in directory mode scans `dir/**/*` (3.x: `dir/**/*.*`), so it still copies every file
+  (#124).
+- `build.fsx` takes the NuGet key as a secret: `NUGET_KEY = Var.env(envVar = "NUGET_KEY") |> secret`
+  (#111).
+- Docs: variables ([variables.md](variables.md)), patterns, typed targets
+  ([typed-targets.md](typed-targets.md)) (#113, #131); secret masking measurements (#116).
 
 ### Announcement: phony `=>` is to be phased out in favour of `Command`
 
@@ -152,6 +377,9 @@ behaves as before. The direction is that `Command` (typed, `Command<'G>`, or the
 Migrating a `=>` rule to `Command<'G>.Rule` **adds `AlwaysRerun`** (a phony rule does not rerun by
 itself; a command always does), so a rule that relied on skipping stays a `=>` for now. The
 migration recipe is in [typed-targets.md](typed-targets.md#a-phony-rule-with-groups-becomes-a-command).
+
+The rest of this section is the reference of each area; the numbers in brackets are the items of
+section 3 of the pattern spec.
 
 ### Patterns: rule matching on the pattern module
 

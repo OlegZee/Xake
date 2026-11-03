@@ -1,25 +1,11 @@
 language: csharp
-solution: xake.sln
-env: VER=$(if [[ "${TRAVIS_TAG:0:1}" == "v" ]]; then echo ${TRAVIS_TAG:1}; else echo 0.0.0; fi;)
-install:
-- mono .paket/paket.bootstrapper.exe
-- mono .paket/paket.exe install
+dotnet: 7.0.202
+env: VER=$(if [[ "${TRAVIS_TAG:0:1}" == "v" ]]; then echo ${TRAVIS_TAG:1}.${TRAVIS_BUILD_NUMBER}; else echo 1.0.0.${TRAVIS_BUILD_NUMBER}; fi;)
 script:
-- echo "module Xake.Const [<Literal>]  let internal Version = \"$VER.$TRAVIS_BUILD_NUMBER\"" > ./core/VersionInfo.fs
-- fsharpi build.fsx -- build test nuget-pack
+  - dotnet fsi build.fsx -- -- build test -ll Diag
 deploy:
-  - provider: releases
-    file:
-    - "./bin/Xake.dll"
-    - "./bin/Xake.xml"
-    skip_cleanup: true
-    on:
-      tags: true
-      condition: "${TRAVIS_TAG:0:1} = v"
-    api-key:
-      secure: GcNd0L3Kdyv9vTeKqDXHAfxQne8a6guWQYCiiEvQWtLwNss4foV2dD6PQ8W+J7l+ay8wLC+P3ZKxO0GiKbn5cglXTbBI9WlrHk+nrSQ/JWmaqqjZhGUlAvlek0Ko4walGfRQJPIaZ9pbnX4L4Mj+jrwQWrI1IyzZXbSBL2i2Tgo=
   - provider: script
-    script: fsharpi build.fsx -- nuget-push
+    script: dotnet fsi build.fsx -- -- pack push -ll Diag
     skip_cleanup: true
     on:
       tags: true

@@ -1,0 +1,49 @@
+{
+  "$schema": "../../docs/schemas/xake.project.schema.json",
+  "name": "Xake.Dotnet",
+  "project": "Xake.Dotnet.fsproj",
+  "language": "fsharp",
+  "kind": "library",
+  "frameworks": ["netstandard2.0", "net462"],
+  "sources": [
+    "Tool.fs",
+    "Hash.fs",
+    "DotNetFwk.fs",
+    "HermeticMode.fs",
+    "ResourceFileset.fs",
+    "Resx.fs",
+    "DotnetTasks.fs",
+    "CscArgs.fs",
+    "FscArgs.fs",
+    "CompilerRunner.fs",
+    "Csc.fs",
+    "Fsc.fs",
+    "Dotnet.csc.fs",
+    "Dotnet.fsc.fs",
+    "Dotnet.resgen.fs",
+    "Dotnet.Msbuild.fs"
+  ],
+  "projectRefs": ["Xake"],
+  "packages": [
+    { "id": "FSharp.Core", "version": "8.0.100" }
+  ],
+  "options": { "doc": true },
+  "internalsVisibleTo": ["tests"],
+  "byFramework": {
+    "net462": { "references": ["System.Windows.Forms"] },
+    "netstandard2.0": { "packages": [ { "id": "Microsoft.Win32.Registry", "version": "5.0.0" } ] }
+  },
+  "package": {
+    "id": "Xake",
+    "description": "Xake build tool: the engine and the tasks for full .NET framework",
+    "authors": "OlegZee",
+    "copyright": "(c) OlegZee 2014-2026",
+    "tags": ["fsharp", "build", "make", "buildtool", "automation", "shake"],
+    "license": "MIT",
+    "projectUrl": "https://github.com/OlegZee/Xake",
+    "repository": { "type": "git", "url": "https://github.com/OlegZee/Xake" },
+    "icon": "../../Icon.png",
+    "readme": "../../readme.md",
+    "bundle": ["Xake"]
+  }
+}

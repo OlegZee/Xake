@@ -1,4 +1,4 @@
-#r "../bin/Xake.Core.dll"
+#r "nuget: Xake, 1.1.4.427-beta"
 
 open Xake
 open Xake.Tasks
@@ -9,11 +9,10 @@ do xakeScript {
             let! opt = getCtxOptions()
             do! need ["a/samplefile"; "a/b/samplefile1"]
             do! rm {dir "a"}
-            // let dd = Path.parseDir "*"|> Fileset.listByMask opt.ProjectRoot
-            // do! trace Level.Command "dd: %A" dd
+            // TODO more samples to come
         }
 
         "a/samplefile" ..> writeText "hello world"
-        "a/b/samplefile1" ..> writeText "hello world1"
+        "a/b/samplefile1" ..> writeText "this is another file"
     ]
 }

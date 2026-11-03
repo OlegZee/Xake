@@ -1,18 +1,16 @@
-#r @"../../packages/Xake/tools/Xake.Core.dll" // (1)
+// `csc` comes from the Xake.Dotnet package (its own repository, OlegZee/Xake.Dotnet), which
+// brings the engine, the Xake package, with it.
+#r "nuget: Xake.Dotnet"
 
-open Xake                          // (2)
+open Xake
+open Xake.Dotnet
 
-do xakeScript {                    // (3)
+do xakeScript {
+    "main" <== ["hw.dll"]
+    // the runtimeconfig is declared next to the dll, so `dotnet hw.dll` can start it
+    ["hw.dll"; "hw.runtimeconfig.json"] *..> csc {
+        src !!"hw.cs"
+    }
 
-    rule("main" <== ["hw.exe"])    // (4)
-
-    rule("hw.exe" ..> recipe {     // (5)
-        do! Csc {
-            CscSettings with
-                Src = !! "hw.cs"
-        }
-    })
-
-    rule (FileRule ("greet", recipe { do! trace Info "hello" }))
-
+    rule (PhonyRule ("greet", trace Message "hello"))
 }

@@ -14,6 +14,7 @@ _UpgradeReport*
 packages
 .nuget
 .paket
+.ionide
 
 # Ignore Visual Studio files
 *.pdb
@@ -29,7 +30,20 @@ packages
 .DS_Store
 *.swp
 TestResult.*
-.xake
+.xake*
+.fake
 .vs/
+.vscode/
+.ionide/
 samples/**/*.exe
 samples/**/*.dll
+samples/**/*.fsx.lock
+.idea
+temp
+.claude/settings.local.json
+~testout~
+paket-files/
+/out
+src/core/Xake.xml
+.claude/worktrees/
+.packages/

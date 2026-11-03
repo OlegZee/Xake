@@ -1,5 +1,2 @@
 @echo off
-.paket\paket.bootstrapper.exe
-.paket\paket.exe install
-
-fsi build.fsx
+dotnet fsi build.fsx -- -- build test

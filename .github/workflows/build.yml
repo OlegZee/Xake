@@ -1,0 +1,66 @@
+# This workflow will build a .NET project
+# For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-net
+
+name: Build and test
+
+on:
+  push:
+    branches: [ "dev" ]
+  pull_request:
+    # feature/patterns2 is the integration branch of the pattern work: its PRs get checks too
+    branches: [ "dev", "feature/patterns2" ]
+
+jobs:
+  build:
+    if: github.event_name != 'push' || !startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    # a normal run takes under 15 minutes; a hang fails here instead of at the 6-hour limit
+    # (the tests themselves are killed after 10 minutes each, build.fsx `test`)
+    timeout-minutes: 40
+
+    steps:
+    - uses: actions/checkout@v7
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v6
+      with:
+        # one SDK: global.json rolls forward (latestMajor) to the newest installed SDK, so an
+        # 8.0.x leg built with the image's SDK 10 as well and only duplicated this job
+        dotnet-version: '10.0.x'
+    # `test` runs the test project src/tests; `pack` builds the `Xake` package (src/core) and
+    # fails if it carries anything but Xake.dll/Xake.xml per framework (no Xake.Dotnet: the .NET
+    # tasks and the hermetic library build in OlegZee/Xake.Dotnet, with their own CI)
+    - name: Build, test & pack
+      run: dotnet fsi build.fsx -- -- build test pack
+    - name: Upload build log
+      uses: actions/upload-artifact@v7
+      if: always()
+      with:
+        name: build-log-${{ github.run_number }}
+        path: build.log
+        retention-days: 5
+
+  # Windows host check for the pattern code (PatternScan, PatternMatch, PatternAst and their
+  # vector tests, Fileset, paths): the whole NUnit project, without the self-hosting script.
+  # No exclusions: docs/features/hermetic-windows records no failing unit tests. Vectors that
+  # need a Unix or case-sensitive host Assert.Ignore (PatternScanVectorTests `requireHost`).
+  # If a test unrelated to patterns fails here on the first run, exclude it with
+  # `--filter "Name!~..."` and name the reason in a comment.
+  test-windows:
+    if: github.event_name != 'push' || !startsWith(github.ref, 'refs/tags/v')
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+    - uses: actions/checkout@v7
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v6
+      with:
+        dotnet-version: '10.0.x'
+    - name: Test
+      run: dotnet test src/tests -c Release --logger "trx;LogFileName=windows.trx" --results-directory TestResults
+    - name: Upload test results
+      uses: actions/upload-artifact@v7
+      if: always()
+      with:
+        name: test-windows-${{ github.run_number }}
+        path: TestResults
+        retention-days: 5

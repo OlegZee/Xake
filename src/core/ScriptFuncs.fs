@@ -1,0 +1,283 @@
+﻿namespace Xake
+
+open Xake.WorkerPool
+
+[<AutoOpen>]
+module ScriptFuncs =
+
+    /// <summary>
+    /// Gets action context.
+    /// </summary>
+    let getCtx(): Recipe<ExecContext, ExecContext> = ExecCore.getCtx()
+
+    /// <summary>
+    /// Runs a recipe body without holding a local CPU slot for its duration: the slot is
+    /// released before the body runs and reacquired after it completes (guaranteed even on
+    /// exception). Intended for I/O-bound or async waits — e.g. a rule that blocks on a
+    /// remote/delegated operation — so the local worker pool is not starved by waits that
+    /// are not doing CPU work. Many more detached rules than CPU cores can be in flight at once.
+    /// </summary>
+    let runDetached (body: Recipe<ExecContext,'b>) : Recipe<ExecContext,'b> =
+        recipe {
+            let! ctx = getCtx()
+            let! r0 = getResult()
+            let! (r', b) = Scheduler.withYieldedSlot ctx.Engine.Scheduler (A.runAction body (r0, ctx))
+            do! setResult r'
+            return b
+        }
+
+    /// <summary>
+    /// Acquires `units` of a resource for the duration of `body`, modeled on Shake's
+    /// `withResource`. The CPU slot is yielded while waiting to acquire (so a blocked holder
+    /// never pins a worker), then held together with the resource while the body runs; the
+    /// resource is released even if the body throws. The scheduler honors the resource limit
+    /// when running recipes concurrently. Unbounded resources impose no limit.
+    ///
+    /// The body must not `need` a target that has a rule (a plain file is fine): a dependency
+    /// built while the units are held may wait for the same resource, which can deadlock the
+    /// build, so such a `need` fails at once. Need first, then acquire; see `allowNeed`.
+    /// </summary>
+    let withResource (resource: Resource) (units: int) (body: Recipe<ExecContext,'b>) : Recipe<ExecContext,'b> =
+        Recipe (fun (r, ctx: ExecContext) -> async {
+            do! Scheduler.withYieldedSlot ctx.Engine.Scheduler (Resource.acquire resource units)
+            try
+                return! A.runAction body (r, { ctx with HeldResources = resource.ResourceName :: ctx.HeldResources })
+            finally
+                Resource.release resource units
+        })
+
+    /// <summary>
+    /// Lifts the "no `need` while a resource is held" guard of `withResource` and `requiring`
+    /// for `body` (Shake's `unsafeAllowApply`). Use with caution: only when the closure of
+    /// what `body` needs never takes the held resource, or the build can deadlock.
+    /// </summary>
+    let allowNeed (body: Recipe<ExecContext,'b>) : Recipe<ExecContext,'b> =
+        Recipe (fun (r, ctx: ExecContext) -> A.runAction body (r, { ctx with HeldResources = [] }))
+
+
+    /// <summary>
+    /// Gets the script execution context options.
+    /// </summary>
+    /// <returns>Recipe that returns the execution options</returns>
+    let getCtxOptions () = recipe {
+        let! (ctx: ExecContext) = getCtx()
+        return ctx.Options
+    }
+
+    /// <summary>
+    /// Executes and awaits specified artifacts (targets).
+    /// This function queues the specified targets for execution and waits for their completion.
+    /// </summary>
+    /// <param name="targets">List of target names to execute</param>
+    /// <returns>Recipe that ensures the targets are built</returns>
+    let need targets =
+        recipe {
+            let! ctx = getCtx()
+            let t' = targets |> List.map (ExecCore.makeTarget ctx)
+            do! ExecCore.need t'
+        }
+
+    /// <summary>
+    /// Tells whether a rule of the script would build the specified target, without building it.
+    /// The name is resolved as `need` resolves it: a phony action when a phony rule matches it,
+    /// otherwise a file relative to the project root. Records no dependency.
+    /// </summary>
+    /// <param name="target">Target name or file path</param>
+    /// <returns>Recipe that returns true when a rule matches the target</returns>
+    let hasRule (target: string) : Recipe<ExecContext, bool> = recipe {
+        let! ctx = getCtx()
+        let t = ExecCore.makeTarget ctx target
+        return ExecCore.locateRule ctx.Options.Rules ctx.Options.ProjectRoot t |> Option.isSome
+    }
+
+    /// A variable read records one dependency per name and value, whatever the number of reads.
+    let private recordDependency d = recipe {
+        let! result = getResult()
+        let repeated =
+            match d with
+            | Var _ | EnvVar _ | SecretDep _ -> List.contains d result.Depends
+            | _ -> false
+        if not repeated then
+            do! setResult { result with Depends = d :: result.Depends }
+    }
+
+    /// <summary>
+    /// Instructs Xake to rebuild the target even if dependencies are not changed.
+    /// Forces the target to be considered out-of-date regardless of file timestamps.
+    /// </summary>
+    /// <returns>Recipe that records the always-rerun dependency</returns>
+    let alwaysRerun() = AlwaysRerun |> recordDependency
+
+    /// <summary>
+    /// Gets the environment variable value and records it as a dependency.
+    /// If the environment variable changes, targets depending on it will be rebuilt.
+    /// </summary>
+    /// <param name="variableName">Name of the environment variable to retrieve</param>
+    /// <returns>Recipe that returns the environment variable value</returns>
+    /// <remarks>A name declared secret (`|> secret`, `Var.secret`) is recorded as a secret:
+    /// a digest instead of the value, and the value is masked in all output.</remarks>
+    let getEnv variableName =
+        let value = Util.getEnvVar variableName
+        recipe {
+            if Secrets.isSecret variableName then value |> Option.iter SecretMask.register
+            do! Secrets.toDependency SecretEnv variableName value |> recordDependency
+            return value
+        }
+
+    /// <summary>
+    /// Gets the script (options) variable value and records it as a dependency. 
+    /// It reads the variable set built at launch (`-d`, `ExecOptions.ScriptVars`, the declarations).
+    /// If the variable changes, targets depending on it will be rebuilt.
+    /// </summary>
+    /// <param name="variableName">Name of the script variable to retrieve</param>
+    /// <returns>Recipe that returns the variable value</returns>
+    /// <remarks>A name declared secret is recorded as a secret, see `getEnv`.</remarks>
+    let getVar variableName = recipe {
+        let! ctx = getCtx()
+        let value = Util.getVar ctx.Vars variableName
+
+        if Secrets.isSecret variableName then value |> Option.iter SecretMask.register
+        do! Secrets.toDependency SecretArg variableName value |> recordDependency
+        return value
+    }
+
+    /// <summary>
+    /// Gets the list of files matching specified fileset and records it as a dependency.
+    /// If files matching the pattern change, targets depending on this fileset will be rebuilt.
+    /// </summary>
+    /// <param name="fileset">Fileset pattern to match files against</param>
+    /// <returns>Recipe that returns the list of matching files</returns>
+    let getFiles fileset = recipe {
+        let! ctx = getCtx()
+        let files = fileset |> toFileList ctx.Options.ProjectRoot
+        do! GetFiles (fileset,files) |> recordDependency
+
+        return files
+    }
+
+    /// <summary>
+    /// Demands the files (and records dependencies).
+    /// Ensures that all files in the list are built/available.
+    /// </summary>
+    /// <param name="files">File list to demand</param>
+    /// <returns>Recipe that ensures all files are available</returns>
+    let needFiles (Filelist files) =
+        ExecCore.need (List.map FileTarget files)
+
+    /// <summary>
+    /// Gets the list of files matching specified fileset and demands them.
+    /// This is a convenience function that combines `getFiles` and `needFiles`. 
+    /// Records both dependencies on a fileset (mask) and on each found file.
+    /// </summary>
+    /// <param name="fileset">Fileset pattern to match and demand files</param>
+    /// <returns>Recipe that gets and demands all matching files</returns>
+    let dependsOn fileset = recipe {
+        let! files = getFiles fileset
+        do! needFiles files
+    }
+
+    /// <summary>
+    /// Gets current target file.
+    /// Only works for file targets, fails for phony targets.
+    /// </summary>
+    /// <returns>Recipe that returns the current target file</returns>
+    let getTargetFile() = recipe {
+        let! ctx = getCtx()
+        return ctx.Targets
+            |> function
+            | FileTarget file::_ -> file
+            | _ -> failwith "getTargetFile is not available for phony actions"
+    }
+
+    /// <summary>
+    /// Gets all current target files.
+    /// Only works for file targets, fails if any target is phony.
+    /// </summary>
+    /// <returns>Recipe that returns the list of current target files</returns>
+    let getTargetFiles() : Recipe<ExecContext, File list> = recipe {
+        let! ctx = getCtx()
+        return ctx.Targets |> List.collect (function |FileTarget file -> [file] |_ -> failwith "Expected only a file targets")
+    }
+
+    /// <summary>
+    /// Gets current target file name with full path.
+    /// Convenience function that combines getTargetFile and File.getFullName.
+    /// </summary>
+    /// <returns>Recipe that returns the full path of the current target file</returns>
+    let getTargetFullName() = recipe {
+        let! file = getTargetFile()
+        return File.getFullName file
+    }
+
+    /// <summary>
+    /// Gets all rule matches for the current target.
+    /// Returns a map of capture group names to their matched values.
+    /// </summary>
+    /// <returns>Recipe that returns the map of rule matches</returns>
+    let getRuleMatches () = recipe {
+        let! ctx = getCtx()
+        return ctx.RuleMatches
+    }
+
+    /// <summary>
+    /// Gets a specific rule match (capture group) by its name.
+    /// Returns empty string if the group is not found.
+    /// </summary>
+    /// <param name="key">Name of the capture group to retrieve</param>
+    /// <returns>Recipe that returns the matched value or empty string</returns>
+    let getRuleMatch key = recipe {
+        let! groups = getRuleMatches()
+        return groups |> Map.tryFind key |> function |Some v -> v | None -> ""
+    }
+
+
+    /// <summary>
+    /// Writes a message to the build log.
+    /// Alias for ExecCore.traceLog function.
+    /// </summary>
+    let trace = ExecCore.traceLog
+
+    /// <summary>
+    /// Demands specified targets sequentially, waiting for each to complete before starting the next.
+    /// </summary>
+    /// <param name="targets">List of target names to demand in sequence</param>
+    let needSequentially targets = recipe {
+        for t in targets do
+            do! need [t]
+    }
+
+    /// <summary>
+    /// Defines a phony rule that demands specified targets in parallel.
+    /// All targets are started simultaneously and the rule completes when all are done.
+    /// Example: "main" &lt;== ["build-release"; "build-debug"; "unit-test"]
+    /// </summary>
+    /// <param name="name">Name of the phony target</param>
+    /// <param name="targets">List of target names to demand</param>
+    /// <returns>Phony rule that demands the specified targets</returns>
+    let (<==) name targets =
+        PhonyRule (name, recipe {
+            do! need targets
+            do! alwaysRerun()   // always check demanded dependencies. Otherwise it wan't check any target is available
+        })
+
+    /// <summary>
+    /// Alias for the &lt;== operator.
+    /// Defines a phony rule that demands specified targets in parallel.
+    /// </summary>
+    let (<||) = (<==)
+    
+    /// <summary>
+    /// Defines a phony rule that demands targets to be built sequentially.
+    /// Unlike '&lt;==' operator, this one waits for completion of one target before starting another.
+    /// Example: "deploy" &lt;&lt;&lt; ["build"; "test"; "package"]
+    /// </summary>
+    /// <param name="name">Name of the phony target</param>
+    /// <param name="targets">List of target names to build sequentially</param>
+    /// <returns>Phony rule that builds targets in sequence</returns>
+    let (<<<) name targets =
+        PhonyRule (name, recipe {
+            do! needSequentially targets
+            do! alwaysRerun()
+        })
+
+

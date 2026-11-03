@@ -1,0 +1,207 @@
+// #r "nuget: Xake, 2.9.6"
+#r "../out/netstandard2.0/Xake.dll"
+
+// This a sample Xake script to show off some features.
+//
+// USAGE:
+// * `dotnet fsi features.fsx` or
+// 
+// Running particular targets:
+// * `dotnet fsi features.fsx -- -- clean main`
+//
+// The .NET tasks (`csc`, `fsc`, `msbuild`, `resgen`) are not part of the engine: they live in the
+// `Xake.Dotnet` package, built in its own repository (https://github.com/OlegZee/Xake.Dotnet),
+// whose samples show them.
+
+open Xake
+open Xake.Tasks
+
+xake ExecOptions.Default {
+
+    consolelog Verbosity.Diag
+
+    // this instruction defines the default target and could be overriden by command-line parameters
+    // this is redundant as "main" is default target
+    want ["main"]
+
+    // using wildcards and named groups when defining target
+    // The following rule defines how to build any file which names matches "*/*.cs*" pattern.
+    // Round brackets specify the named groups (known from regexps), the values can be accessed via getRuleMatch function
+    // e.g. for src/hello.csx the matches will be: dir=src, file=hello, ext=csx
+    //
+    // NOTE it is declared before the concrete rules on purpose: rules are matched in reverse
+    // declaration order, so a catch-all pattern placed *after* "temp/AssemblyInfo.cs" would
+    // shadow it and quietly produce nothing.
+
+    "(dir:*)/(file:*).(ext:c*)" ..> recipe {
+
+        let! dir = getRuleMatch "dir"
+        let! file = getRuleMatch "file"
+        let! ext = getRuleMatch "ext"
+
+        // here you place regular build steps
+
+        return ()
+    }
+
+    // this rule does nothing but demands the other targets
+    // the execution of the recipe is suspended until all demanded targets are built.
+    // Targets are executed in parallel. Dependencies could be demanded in any part of recipe.
+    command "main"  {
+        do! need ["tracetest"; "temp/a.cs"; "temp/AssemblyInfo.cs"; "temp/app.txt"]
+    }
+
+    // this is shorter way to express the same. See also `<==` and '<<<' operators.
+    "main"  => need ["tracetest"; "temp/a.cs"; "temp/AssemblyInfo.cs"; "temp/app.txt"]
+
+    // "phony" rule that produces no file but just removes the files
+    // `rm` recipe (Xake.Tasks namespace) allow to remove files and folders
+    "clean" => recipe {
+        do! rm {file "paket-files/*.*"}
+        do! rm {dir "out"}
+        do! rm {files (fileset {
+                includes "samplefile*"
+            }); verbose
+        }
+    }
+
+    command "dotnet-version" {
+        // this rule will run `dotnet --version` command and print the result
+        do! sh "dotnet --version" { () }
+
+        // you can pass arguments and set options for the command
+        do! sh "dotnet" {
+            arg "--version"
+            logprefix "sh:dotnet-version"
+        }
+
+        // Third option with `shellCmd` builder (wont fail on error by default)
+        let! error_code = shellCmd "dotnet" {
+            args [ "sdk"]
+            arg "check"
+        }
+        ()
+    }
+
+    // a rule that writes a source file (compiling it is a job for the `Xake.Dotnet` package)
+    "temp/a.cs" ..> writeText
+        """
+        class Program
+        {
+            public static void Main()
+            {
+                System.Console.WriteLine("Hello world!");
+            }
+        }
+        """
+
+    yield! [
+        // this rule gets the version from VERSION script variable and generates
+        // define the variable by running `dotnet fake run features.fsx -- -d VERSION:2.1.1`
+        target "temp/AssemblyInfo.cs" {
+            let! envVersion = getVar("VERSION")
+            let version = envVersion |> Option.defaultValue "1.0.0"
+            do! writeText <| sprintf "[assembly: System.Reflection.AssemblyVersion(\"%s\")]" version
+        }
+
+
+        // a file read by the rule below
+        "temp/hello.fs" ..> writeText
+            """
+            /// Greetings
+            module Hello
+
+            /// Says hello to `name`
+            let greet name = sprintf "Hello, %s!" name
+            """
+
+        // defining the target which produces multiple files
+        // recipe will be executed just once, regardless how many times its outcome was requested in other targets
+        // notice the `*..>` operator is used
+        ["temp/app.txt"; "temp/app.lines"] *..> recipe {
+
+            let! [appfile; linesfile] = getTargetFiles()
+
+            // `readText` demands temp/hello.fs and records it as a dependency
+            let! source = readText "temp/hello.fs"
+            System.IO.File.WriteAllText(appfile.FullName, source.ToUpperInvariant())
+            System.IO.File.WriteAllText(linesfile.FullName, string (source.Split('\n').Length))
+        }
+    ]
+    "libs" => recipe {
+        // this command will copy all dlls to `lib` (flat files)
+        do! cp {file "packages/mylib/net46/*.dll"; todir "lib"}
+
+        // this command will copy content of the specified folder to `lib` folder preserving structure starting from packages
+        do! cp {dir "packages/theirlib"; todir "lib"}
+
+        // this `cp` accepts fileset and also preserves the directory structure, using basedir as a root of the structure.
+        do! cp {
+            files (!!"*.exe" @@ "bin")
+            todir "deploy"
+        }
+    }
+
+    // shell commands runs shell command
+    "shell" => recipe {
+        let! errorLevel = sh "dir" {
+            args ["*.*"; "/A"]
+            workdir "."
+            result
+        }
+
+        // this will fail the script
+        // if errorLevel <> 0 then failwith "command failed"
+        // the same results could be obtained by `failonerror` instruction within shell {}
+
+        do! trace Info "dir command finished with %i error code" errorLevel
+    }
+
+    // all kind of control flow constructs are supported with recipe
+    "control-flow" => recipe {
+
+        // defining recipe
+        let log text = recipe {
+            do! trace Info "%s" text
+        }
+
+        for i in [1;2;3] do
+            do! trace Info "Circle %i" i
+            if i = 2 then
+                do! log "Fizz"  // use let!, do! to call any recipe
+        
+        try
+            let mutable j = 3
+            while j < 5 do
+                do! log (sprintf "j=%i" j)
+                j <- j + 1                
+        with _ ->
+            do! trace Error "Exception occurred!"
+    }
+
+    // working with filesets and dependencies
+    "fileset" => recipe {
+        let srcFileset = ls "src/*.cs"
+        let! files = getFiles srcFileset
+        do! needFiles files
+
+        // `let! files...` above records the dependency of `fileset` target from the set of files matching `src/*.cs` pattern. Whenever file is added or removed the dependency will be triggered
+        // `do! needFiles` records that `fileset` depends on *contents* of each file matching the mask. It will trigger if file size or timestamp is changed
+
+        // shorter way to express the same
+        do! dependsOn !! "src/*.cs"
+    }
+
+
+    // `trace` function demo
+    // note: output verbosity is set to Diag to display all messages (see the "consolelog" instruction on top of xakeScript body)
+
+    command "tracetest" {
+        do! trace Message "=============== Sample output follows this line\n\n"
+
+        for loglevel in [Level.Command; Level.Message; Level.Error; Level.Warning; Level.Debug; Level.Info; Level.Verbose] do
+            do! trace loglevel "Sample text"
+
+        do! trace Message "\n\n\tend of Sample output follows this line"
+    }
+}

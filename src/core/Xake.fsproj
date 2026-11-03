@@ -1,0 +1,87 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <AssemblyName>Xake</AssemblyName>
+    <OutputType>Library</OutputType>
+    <!-- The SDK would otherwise reference its own FSharp.Core, see the pin below. -->
+    <DisableImplicitFSharpCoreReference>true</DisableImplicitFSharpCoreReference>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <!-- The "Xake" package is the engine alone (4.0, dotnet-split S-D14): Xake.Dotnet ships
+         from its own repository, OlegZee/Xake.Dotnet. -->
+    <PackageId>Xake</PackageId>
+    <TargetFrameworks>net462;netstandard2.0</TargetFrameworks>
+    <Copyright>(c) OlegZee 2014-2026</Copyright>
+    <Authors>OlegZee</Authors>
+
+    <Description>Xake build tool: the engine</Description>
+    <PackageProjectUrl>https://github.com/OlegZee/Xake</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/OlegZee/Xake</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageTags>fsharp;build;make;buildtool;automation;shake</PackageTags>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageIcon>Icon.png</PackageIcon>
+    <PackageReadmeFile>readme.md</PackageReadmeFile>
+  </PropertyGroup>
+
+  <!-- nuget.org renders these; they are packed, not referenced by path, so the files have to
+       be listed explicitly. -->
+  <ItemGroup>
+    <None Include="..\..\Icon.png" Pack="true" PackagePath="\" Visible="false" />
+    <None Include="..\..\readme.md" Pack="true" PackagePath="\" Visible="false" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="Prelude.fs" />
+    <Compile Include="Logging.fs" />
+    <Compile Include="Pickler.fs" />
+    <Compile Include="Env.fs" />
+    <Compile Include="PatternAst.fs" />
+    <Compile Include="PatternMatch.fs" />
+    <Compile Include="PatternScan.fs" />
+    <Compile Include="Path.fs" />
+    <Compile Include="PathExt.fs" />
+    <Compile Include="File.fsi" />
+    <Compile Include="File.fs" />
+    <Compile Include="Fileset.fs" />
+    <Compile Include="Types.fs" />
+    <Compile Include="CommonLib.fs" />
+    <Compile Include="Database.fs" />
+    <Compile Include="RecipeBuilder.fs" />
+    <Compile Include="RecipeFunctions.fs" />
+    <Compile Include="WorkerPool.fs" />
+    <Compile Include="Resource.fs" />
+    <Compile Include="Progress.fs" />
+    <Compile Include="ExecTypes.fs" />
+    <Compile Include="XakeScript.fs" />
+    <Compile Include="DependencyAnalysis.fs" />
+    <Compile Include="ExecCore.fs" />
+    <Compile Include="VarEvaluation.fs" />
+    <Compile Include="ScriptRunner.fs" />
+    <Compile Include="XakeScriptBuilder.fs" />
+    <Compile Include="RuleBuilder.fs" />
+    <Compile Include="ScriptFuncs.fs" />
+    <Compile Include="Vars.fs" />
+    <Compile Include="TypedTargets.fs" />
+    <Compile Include="Fingerprints.fs" />
+    <Compile Include="ProcessExec.fs" />
+    <Compile Include="FileTasksImpl.fs" />
+    <Compile Include="Tasks\Cp.fs" />
+    <Compile Include="Tasks\Rm.fs" />
+    <Compile Include="Tasks\Shell.fs" />
+    <Compile Include="Tasks\misc.fs" />
+    <Compile Include="Program.fs" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Pinned deliberately: the version referenced here becomes the FSharp.Core floor for
+         every consumer of the package. Left unpinned it silently follows the SDK used to
+         build, so bumping the SDK would force everyone onto a newer FSharp.Core. 8.0.100 is
+         the .NET 8 baseline; raise it only as a conscious, breaking-ish decision. -->
+    <PackageReference Include="FSharp.Core" Version="8.0.100" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
+      <_Parameter1>tests</_Parameter1>
+    </AssemblyAttribute>
+  </ItemGroup>
+</Project>

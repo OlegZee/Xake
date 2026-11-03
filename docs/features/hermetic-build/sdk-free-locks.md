@@ -56,7 +56,7 @@ records; IL and metadata are equal.
 A recorded lock names the SDK's compiler (`sdk:Roslyn/bincore/csc.dll`, `sdk/<v>/FSharp/fsc.dll`)
 and the SDK's analyzers (`sdk:Sdks/Microsoft.NET.Sdk/analyzers/*NetAnalyzers.dll`) by the SDK
 version, and always carries the prerequisite `dotnet-sdk <NETCoreSdkVersion>` of the SDK that
-recorded it ([lock.md, Prerequisites](../../hermetic/lock.md#prerequisites)). With a
+recorded it ([lock.md, Prerequisites](https://github.com/OlegZee/Xake.Dotnet/blob/dev/docs/hermetic/lock.md#prerequisites)). With a
 `global.json` that rolls forward, the import takes whatever patch is installed, so one
 developer's SDK update re-records every lock (seen 2026-10-21: a package-manager upgrade moved
 8.0.425 to 8.0.426 and rewrote the SDK pin in 180 locks of a consumer with unchanged sources),

@@ -120,9 +120,9 @@ else the field name; `cliArg` is only its `-d` name. A declaration without an ex
 `envVar` reads `XAKE__<KEY in UPPER_SNAKE>` first (`buildConfig` -> `XAKE__BUILD_CONFIG`), and
 `XAKE__<NAME>` overrides a constant `var`; `Var.arg` reads no environment.
 
-Libraries (Xake.Dotnet, Xake.Hermetic.Dotnet) read only this variable set, never the environment:
-`var "NUGET_PACKAGES" [Env "NUGET_PACKAGES"]` takes it; `varschema DotNetVars.Default` lists what they
-read ([tasks.md](tasks.md#script-variables)).
+Libraries (such as Xake.Dotnet) read only this variable set, never the environment:
+`var "NUGET_PACKAGES" [Env "NUGET_PACKAGES"]` takes it; a library may export a schema of what it
+reads for `varschema` ([variables.md](variables.md)).
 
 A secret: the database keeps whether it is set (`secret`) or a salted hash (`secretHashed`),
 never the value; every log masks it as `***`; `-d` of a secret stops the run. See
@@ -139,31 +139,9 @@ do! sh "dotnet" {
 
 ## .NET tasks
 
-```fsharp
-open Xake.Dotnet
-
-// the target file is the output; `targetfwk` selects the reference assemblies,
-// by default the SDK's own .NET (net10.0 on SDK 10.0.x)
-"hello.exe" ..> csc { targetfwk "net-4.6.2"; src !!"hello.cs"; grefs ["System.dll"] }
-"app.dll"   ..> fsc { src !!"src/*.fs" }
-// an app `dotnet hw.dll` runs: declare the runtimeconfig as a target too
-["hw.dll"; "hw.runtimeconfig.json"] *..> csc { src !!"hw.cs" }
-"build"      => msbuild { buildfile "a.sln"; target "Rebuild"; prop ("Configuration","Release") }
-"res"        => resgen { resources (resourceset { prefix "App"; files !!"**/*.resx" }) }
-```
-
-Script variables: `NETFX` (tool framework), `NETFX-TARGET` (default target framework), `FSCVER`, `CSC_SERVER`, `CSC_JOBS`/`FSC_JOBS` (max concurrent compilers; `throttle (resource, units)` in `csc { }`/`fsc { }` uses the script's own resource instead).
-
-Locks of project descriptions (`Xake.Hermetic.Dotnet`, [hermetic/lock.md](hermetic/lock.md#xake-generated-locks)):
-a phony rule per project x configuration in the script, run only by `xake update-locks`:
-`"lock::(name:*)::(cfg:*)" => recipe { ...; do! need [ for r in d.ProjectRefs -> $"lock::{r}::{cfg}" ]; do! alwaysRerun (); do! Locks.generate lockOf outOf cfg (descriptionOf name) }`
-and `command "update-locks" { do! Locks.restoreAll descriptions "Release" lockOf descriptionOf; do! need [ for n in projects -> $"lock::{n}::Release" ] }`
--- references first by `need`, nothing compiled, all package sets in one `dotnet restore` (without `restoreAll`: one per project x framework);
-`-d LOCK_REFRESH=<ids|*>` re-resolves pinned packages.
-Build from the committed locks ([hermetic/lock.md](hermetic/lock.md#building-from-xake-generated-locks)):
-`command "build" { do! Locks.needAll descriptions "Release" lockOf outOf }` and
-`target "out/(cfg:*)/(fwk:*)/(name:*).dll" { ...; do! Locks.compileAs (lockOf name cfg) fwk versions }`
--- the dll is the target (`.xml` beside it when the lock asks for doc), refs built first, C# masks via `getFiles`, HERMETIC gate inside.
+`csc`, `fsc`, `msbuild`, `resgen` and the hermetic locks are the `Xake.Dotnet` package
+(`#r "nuget: Xake.Dotnet"`, `open Xake.Dotnet`), from its own repository,
+[OlegZee/Xake.Dotnet](https://github.com/OlegZee/Xake.Dotnet), which has their reference.
 
 ## Fingerprints of committed generated files
 

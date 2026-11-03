@@ -21,6 +21,8 @@ branch. `docs/session.md` keeps only what is cross-feature (engine facts, releas
 
 Xake is an F# build utility inspired by Shake. It uses F# as a full programming language to define build rules with dependency tracking, incremental builds, and parallel execution. Xake is self-hosting — it builds itself using its own build script (`build.fsx`).
 
+This repository is the engine alone (package `Xake`). The .NET tasks (`csc`, `fsc`, `msbuild`, `resgen`, project descriptions) and the hermetic build library (locks, restore, SBOM, pack, signing) are the package `Xake.Dotnet`, developed in its own repository, `OlegZee/Xake.Dotnet`; work on them goes there. Their design records stay here under `docs/features/` (hermetic-build, hermetic-windows, release-process, dotnet-split).
+
 ## Build & Test Commands
 
 ```bash
@@ -81,7 +83,7 @@ WorkerPool (parallel execution) → Rule matching & Recipe execution → Databas
 ### Project Layout
 
 - `src/core/` — Core library (`Xake.fsproj`), targets net462 + netstandard2.0
-- `src/tests/` — NUnit tests, targets net9.0
+- `src/tests/` — NUnit tests, targets net8.0
 - `build.fsx` — Self-hosting build script
 - `docs/` — Documentation (overview, implementation notes, dev process)
 - `samples/` — Example Xake scripts

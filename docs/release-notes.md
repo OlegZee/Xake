@@ -1,7 +1,9 @@
 # Release notes: `Xake`
 
-The `Xake` package: the engine (up to 3.15 it also carried `Xake.Dotnet`). Xake.Hermetic.Dotnet
-has its own notes ([hermetic/README.md](hermetic/README.md)).
+The `Xake` package: the engine (up to 3.15 it also carried `Xake.Dotnet`). From 4.0
+`Xake.Dotnet` and the hermetic library are developed and released in
+[OlegZee/Xake.Dotnet](https://github.com/OlegZee/Xake.Dotnet), with their own notes; the entries below about them up to
+4.0 are the history. Links to their docs point to that repository.
 
 ## 4.0.0 (unreleased)
 
@@ -28,6 +30,12 @@ an announcement; the sections after it describe each area in full.
   S-D17): its line ends at 0.10.0, and the hermetic library ships inside the `Xake.Dotnet` 4.0.0
   package (`open Xake.Hermetic.Dotnet` unchanged), the id `Xake.Hermetic.Dotnet` pointing to
   `Xake.Dotnet` (S-D2).
+- **`Xake.Dotnet` and the hermetic library moved to their own repository**,
+  [OlegZee/Xake.Dotnet](https://github.com/OlegZee/Xake.Dotnet) (dotnet-split S7): the sources (`src/dotnet`, `src/hermetic`),
+  their tests, docs (toolchain discovery, `csc`/`fsc` syntax, compiler server, project
+  descriptions, the hermetic reference, guide and architecture) and samples, and the fsc/locks
+  self-build (`build.fsc.fsx`, `locks/`, `xake.fingerprints`). This repository builds, tests and
+  packs the engine only; `publish.yml` takes `v*` tags only (no `hermetic-v*`).
 
 **Pattern grammar and reserved characters** (rules and masks; details in
 [Patterns: rule matching](#patterns-rule-matching-on-the-pattern-module) and
@@ -446,7 +454,7 @@ Xake.Dotnet uses public engine API only; no `InternalsVisibleTo` to it.
   reference-pack `dotnet restore` classify through the new `Tool.DiagnosticLog` (a repeated
   warning is logged once per run) and fail with the first 5 distinct errors, then
   "+N more, see the log" (`Tool.failOnExitCodeWith`, `Tool.errorSummary`). Signatures unchanged;
-  more lines now reach `Error`. See [dotnet-build.md](dotnet-build.md#troubleshooting).
+  more lines now reach `Error`. See [dotnet-build.md](https://github.com/OlegZee/Xake.Dotnet/blob/dev/docs/dotnet-build.md#troubleshooting).
 - **Breaking (binary): secret script variables.** `Var.secret<'t>(envVar = ...)` (environment
   only), `|> secret` and `|> secretHashed` on any var. The database keeps a digest, never the
   value: presence only by default (a rotated token rebuilds nothing, unset/set does), a salted
@@ -476,7 +484,7 @@ Xake.Dotnet uses public engine API only; no `InternalsVisibleTo` to it.
 ## 3.11.0 (tagged v3.11.0, 2026-10-22)
 
 - `csc`/`fsc` compile from an SDK path that contains a space: SDK and response-file paths are
-  quoted (`Tool.quoteArgument`, see [hermetic/README.md](hermetic/README.md) for the package side).
+  quoted (`Tool.quoteArgument`, see [hermetic/README.md](https://github.com/OlegZee/Xake.Dotnet/blob/dev/docs/hermetic/README.md) for the package side).
 
 ## 3.10.1 (tagged v3.10.1, 2026-10-21)
 
@@ -506,7 +514,7 @@ Xake.Dotnet uses public engine API only; no `InternalsVisibleTo` to it.
   (script variable, then env `XAKE_CSC_JOBS` / `XAKE_FSC_JOBS`; unset or `0` unlimited). Taken
   around the process launch only, after every input is built, so it replaces a `withResource`
   around the compile rule. Not a dependency: changing it rebuilds nothing. See
-  [csc-server.md](csc-server.md#limiting-concurrent-compiles-csc_jobs-fsc_jobs).
+  [csc-server.md](https://github.com/OlegZee/Xake.Dotnet/blob/dev/docs/csc-server.md#limiting-concurrent-compiles-csc_jobs-fsc_jobs).
 - **`throttle (resource, units)`** in `csc { }` / `fsc { }` (`Throttle` in `CscSettingsType`,
   `RunOptions`, `FscSettingsType`, `FscRunOptions`; default `None`): the compiler launch takes
   the script's own resource, at the same place, in place of `CSC_JOBS` / `FSC_JOBS`.
@@ -518,14 +526,14 @@ Xake.Dotnet uses public engine API only; no `InternalsVisibleTo` to it.
   `compileAsWith`/`compileAs` are thin wrappers over it, unchanged. The script's `Lock.Options`
   reach the runner (an explicit `Run.Server` wins over `CSC_SERVER`); on a release built on 3.10
   that is where `Run.Throttle`/`FscRun.Throttle` go. See
-  [hermetic/lock.md](hermetic/lock.md#building-from-xake-generated-locks).
+  [hermetic/lock.md](https://github.com/OlegZee/Xake.Dotnet/blob/dev/docs/hermetic/lock.md#building-from-xake-generated-locks).
 
 ## 3.9.0 (tagged v3.9.0, 2026-10-18; 3.9.1 the same day)
 
 - **Project description in the core.** `xake.project.json` (the format Xake.Hermetic.Dotnet
   introduced) is now `Xake.Dotnet.Description`: parse, validate, `load`/`save`/`find`/`beside`,
   schema `docs/schemas/xake.project.schema.json`. The schema is the hermetic package's latest plus
-  `frameworkReferences` (shared frameworks). See [description.md](description.md).
+  `frameworkReferences` (shared frameworks). See [description.md](https://github.com/OlegZee/Xake.Dotnet/blob/dev/docs/description.md).
 - **`csc { project "path" }` and `fsc { project "path" }`** compose a compilation from a
   description: sources (masks, `!` excludes), resources, defines and the SDK's framework symbols,
   options, `internalsVisibleTo`/`assemblyAttributes`, framework assemblies by name or path, and
@@ -556,7 +564,7 @@ Xake.Dotnet uses public engine API only; no `InternalsVisibleTo` to it.
 ## 3.6.0 (tagged v3.6.0, 2026-10-10)
 
 - **`HERMETIC=on`**: the completeness gate in `Csc.ofSettings`/`Fsc.ofSettings` (see
-  [dotnet-build.md](dotnet-build.md#hermetic-mode)).
+  [dotnet-build.md](https://github.com/OlegZee/Xake.Dotnet/blob/dev/docs/dotnet-build.md#hermetic-mode)).
 - **`NUGET_PACKAGES` and `NUGET_FETCH`** script variables; the .NET targeting pack is restored when
   it is not installed, `NETCORE_REF_VERSION` pins one per major.minor.
 - Reference packages for the SDK-sourced defaults: netstandard2.1, the net46x `netstandard.dll`
@@ -576,9 +584,9 @@ Xake.Dotnet uses public engine API only; no `InternalsVisibleTo` to it.
 ## 3.4.0 (tagged v3.4.0, 2026-10-01)
 
 - **`Csc` as the resolved compilation**, `csc { resolve }`, `Csc.run`, the Roslyn compiler server
-  (`CSC_SERVER`) and a compiler `toolset` (`CSC_TOOLSET`). See [csc-syntax.md](csc-syntax.md).
+  (`CSC_SERVER`) and a compiler `toolset` (`CSC_TOOLSET`). See [csc-syntax.md](https://github.com/OlegZee/Xake.Dotnet/blob/dev/docs/csc-syntax.md).
 - The SDK probe honours the project's `global.json`.
 - A target requested twice is built once per run; file rules whose pattern contains `..` match;
   a transient sharing violation opening the database is retried instead of recreating it.
 - The Xake.Hermetic.Dotnet package appears in this period; see
-  [hermetic/README.md](hermetic/README.md).
+  [hermetic/README.md](https://github.com/OlegZee/Xake.Dotnet/blob/dev/docs/hermetic/README.md).

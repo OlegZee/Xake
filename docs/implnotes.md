@@ -95,7 +95,7 @@ does not include variables.
 The current repository targets modern `dotnet` workflow with .NET SDK 8.0+ (see `global.json`).
 
 The build script itself always runs on modern .NET. Full framework and Mono are compilation
-*targets* handled by the `Xake.Dotnet` tasks; see [dotnet-build.md](dotnet-build.md) for how
+*targets* handled by the `Xake.Dotnet` tasks; see [dotnet-build.md](https://github.com/OlegZee/Xake.Dotnet/blob/dev/docs/dotnet-build.md) (OlegZee/Xake.Dotnet) for how
 that toolchain is discovered and selected.
 
 ## Teardown behavior

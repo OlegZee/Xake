@@ -168,9 +168,11 @@ undeclared one is `getVar`. It never reads the environment.
 ### Importing a library's declarations
 
 Libraries read their variables without declarations. To list them in `--help` and the banner,
-import their schema, and override a field by copy-and-update:
+import their schema, and override a field by copy-and-update (here the schemas of the
+`Xake.Dotnet` package, [OlegZee/Xake.Dotnet](https://github.com/OlegZee/Xake.Dotnet)):
 
 ```fsharp
+#r "nuget: Xake.Dotnet"
 open Xake.Dotnet
 open Xake.Hermetic.Dotnet
 
@@ -237,7 +239,8 @@ Secrets print as `***`.
 
 ## Library variables
 
-Xake.Dotnet and Xake.Hermetic.Dotnet read **only the variable set**, never the environment. A
+The `Xake.Dotnet` package (the .NET tasks and the hermetic library, its own repository
+[OlegZee/Xake.Dotnet](https://github.com/OlegZee/Xake.Dotnet) from 4.0) reads **only the variable set**, never the environment. A
 CI that wants the environment declares it: `var "NUGET_PACKAGES" [Env "NUGET_PACKAGES"]`.
 Switch values are strict (anything but the listed ones fails the reading target); an empty
 value is the default.
@@ -257,8 +260,9 @@ value is the default.
 
 To take a value from the environment under its own name, declare it explicitly
 (`var "CSC_JOBS" [Env "XAKE_CSC_JOBS"]`, `var "CI" [Env "CI"]`). See
-[dotnet-build.md](dotnet-build.md#where-packages-go), [csc-server.md](csc-server.md) and
-[hermetic/](hermetic/index.md).
+[dotnet-build.md](https://github.com/OlegZee/Xake.Dotnet/blob/dev/docs/dotnet-build.md#where-packages-go),
+[csc-server.md](https://github.com/OlegZee/Xake.Dotnet/blob/dev/docs/csc-server.md) and
+[hermetic/](https://github.com/OlegZee/Xake.Dotnet/blob/dev/docs/hermetic/index.md) in that repository.
 
 ## Pinning values: tests and embedding
 

@@ -71,17 +71,17 @@
 2. [`docs/features/hermetic-build/index.md`](index.md): колонка «fsc task» говорит, что нужно.
 3. [`session.md`](session.md): **только две последние секции** (2026-10-04 и 2026-10-11).
 4. Скрипт и lock из ветки PR (команды выше). Прочитать скрипт целиком, lock по структуре.
-5. [`docs/hermetic/workflows.md`](../../hermetic/workflows.md) §B (импортированный
+5. [`docs/hermetic/workflows.md`](https://github.com/OlegZee/Xake.Dotnet/blob/dev/docs/hermetic/workflows.md) §B (импортированный
    msbuild-проект) и [`workflows-ru.md`](workflows-ru.md) §2-4 (режим, что в репозитории,
    сценарий A).
-6. [`docs/hermetic/lock.md`](../../hermetic/lock.md): **только таблица «The API at a glance»**.
+6. [`docs/hermetic/lock.md`](https://github.com/OlegZee/Xake.Dotnet/blob/dev/docs/hermetic/lock.md): **только таблица «The API at a glance»**.
 7. [`docs/roadmap.md`](../../roadmap.md): бэклог, в том числе «Rules with arguments» (прямо про
    замечания 1-3).
 8. По необходимости:
    - [`fsc-design.md`](fsc-design.md) §6, если зайдёт речь о механике импорта;
-   - [`docs/hermetic/hermetic-mode.md`](../../hermetic/hermetic-mode.md), если зайдёт речь о режиме;
-   - [`docs/hermetic/pack.md`](../../hermetic/pack.md), если обсуждаем герметичный nupkg (п. 5);
-   - [`docs/hermetic/restore.md`](../../hermetic/restore.md) и workflows.md §F, если обсуждаем
+   - [`docs/hermetic/hermetic-mode.md`](https://github.com/OlegZee/Xake.Dotnet/blob/dev/docs/hermetic/hermetic-mode.md), если зайдёт речь о режиме;
+   - [`docs/hermetic/pack.md`](https://github.com/OlegZee/Xake.Dotnet/blob/dev/docs/hermetic/pack.md), если обсуждаем герметичный nupkg (п. 5);
+   - [`docs/hermetic/restore.md`](https://github.com/OlegZee/Xake.Dotnet/blob/dev/docs/hermetic/restore.md) и workflows.md §F, если обсуждаем
      офлайн и отказ от nuget.org (п. 8);
    - `import-page.fsx`, `the repo-a verification script`, если нужен образец скрипта для the trial product (п. 6).
 

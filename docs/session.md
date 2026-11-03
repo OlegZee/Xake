@@ -7,7 +7,10 @@
 feature folder: [features/vars-precedence](features/vars-precedence/session.md). The 4.0 pattern
 module and typed targets landed with #131 (2026-11-03,
 [features/pattern-module](features/pattern-module/session.md)); the release continues with the
-split, S6-S9 ([features/dotnet-split](features/dotnet-split/session.md)).
+split, S6-S9 ([features/dotnet-split](features/dotnet-split/session.md)). From S7 (branch
+`feature/dotnet-split-remove`) this repository is the engine alone: `src/dotnet`, `src/hermetic`,
+their tests, docs, samples and the fsc/locks self-build (`build.fsc.fsx`, `locks/`,
+`xake.fingerprints`) live in OlegZee/Xake.Dotnet.
 
 - **Variables are evaluated once at launch**, in `ScriptRunner.createScriptContext`
   (`src/core/VarEvaluation.fs`; the types and the pure parts are in `src/core/Vars.fs`): Run,
@@ -22,8 +25,8 @@ split, S6-S9 ([features/dotnet-split](features/dotnet-split/session.md)).
   overridden by `XAKE__N` (origin `env:XAKE__N`, still no declaration for a Var read); `Var.arg`
   has no env source; undeclared names get none (no `XAKE__*` scan); two keys of one implicit name
   are a launch error (E-12). The 3.15 derived name without the prefix is gone. `build.fsx` names
-  `VERSION`, `HERMETIC_VERSION`, `NUGET_KEY` with explicit `envVar` (publish.yml exports them,
-  and the bootstrap is still 3.15.0).
+  `VERSION`, `NUGET_KEY` with explicit `envVar` (publish.yml exports them, and the bootstrap is
+  still 3.15.0).
 - **Keys vs `-d` names:** the key is the internal name (a field's `name`, else the field name; the
   `var` rule's name); `cliArg` / `Cli` is only the `-d` name. `-d` of a key whose command-line name differs, of a
   secret or of a `Var.env` field stops the run.
@@ -34,12 +37,11 @@ split, S6-S9 ([features/dotnet-split](features/dotnet-split/session.md)).
 - **Secrets:** `Secret` records only whether the value is set, `SecretHashed` a salted hash
   (`SecretDep (key, SecretArg)`); logs, the banner and the debug dump show `***`; `getVar` of a
   secret returns the real value. The banner lists each variable once with its source.
-- **Libraries read only the variable set**, never the environment: Xake.Dotnet
-  (`NUGET_PACKAGES`, default `<project root>/.packages`; `NUGET_FETCH`, `CSC_SERVER`,
-  `XAKE_CSC_SERVER`, `CSC_JOBS`, `FSC_JOBS`; strict switch values) and Xake.Hermetic.Dotnet
-  (`CI`, `LOCK_REFRESH`, `LOCK_STALE`, `SOURCE_DATE_EPOCH`). They read through `Var.read`; the
-  optional import is `varschema DotNetVars.Default` / `HermeticVars.Default`. A CI that used the
-  environment adds `var "NUGET_PACKAGES" [Env "NUGET_PACKAGES"]` and the like.
+- **Libraries read only the variable set**, never the environment, through `Var.read` (the
+  engine's contract; `src/tests/LibraryVarsTests.fs` covers it). Xake.Dotnet's variables
+  (`NUGET_PACKAGES`, `CSC_SERVER`, `CI`, `LOCK_REFRESH`, ... and the `DotNetVars`/`HermeticVars`
+  schemas) are documented in [variables.md](variables.md#library-variables) and tested in
+  OlegZee/Xake.Dotnet.
 - **`ExecOptions` split:** `Vars` holds script constants only, `CliVars` the `-d` pairs,
   `VarDecls` the declarations, `VarDefinedBy` where each definition came from (for E-2);
   `EngineOptions.Variables` is the evaluated set (`Map<string, VarEntry>`). User reference:
@@ -51,144 +53,82 @@ split, S6-S9 ([features/dotnet-split](features/dotnet-split/session.md)).
   1.1 ms per 10,000 lines, negligible. See [features/vars-precedence/perf-secrets.md](features/vars-precedence/perf-secrets.md).
 - **Perf note:** `recordDependency` (`ScriptFuncs.fs`) dedups `Var`/`EnvVar`/`SecretDep` reads with
   `List.contains` over the target's dependencies: O(deps) per read.
-- **Release state:** published are Xake 3.15.0, `4.0.0-preview.1` and `4.0.0-preview.2`
-  (preview.2: the `Xake` package is the engine alone, #129), and Xake.Hermetic.Dotnet 0.10.0
-  (range `[3.14.0.45, 4.0)`; its last release, S-D2). Until the split the hermetic code
-  builds on the in-repo Xake (project references) and is no longer packed (#129), `bump-base` and the CI job
-  `hermetic-compat` are gone, `publish.yml` refuses `hermetic-v*`. At 4.0 `Xake.Dotnet` and the
-  hermetic code leave for the `Xake.Dotnet` repository as one package `Xake.Dotnet` 4.0.0
-  (release-process decision D, S-D2). Records frozen until 4.0 (`RecordShapeTests`) may change in 4.0.
-- Traps: a local `.xake` from before the rework makes the hermetic `test-build` misbehave (the
-  dependency records of Var reads and secrets changed): use `--resetdb`. The SDK pin is
-  10.0.403 in the locks and `build.yml`; another SDK needs `update-locks`. .NET removes an
-  environment variable set to `""` in-process, so a test cannot make an "empty value" through
-  the environment on Unix (pass it with `-d N=`). The importer reads `PrivateAssets=all` as
-  "bundled" (`package.bundle: ["Xake"]` in `src/hermetic/xake.project.json`).
+- **Release state:** published are Xake 3.15.0 and `4.0.0-preview.1..3` (preview.2 on: the
+  `Xake` package is the engine alone, #129), and Xake.Hermetic.Dotnet 0.10.0 (range
+  `[3.14.0.45, 4.0)`; its last release, S-D2). `publish.yml` takes `v*` tags only. `Xake.Dotnet`
+  4.0.0 (both assemblies) is released from OlegZee/Xake.Dotnet after Xake 4.0.0 (S8).
+  `ExecContext` is frozen within 4.x (`RecordShapeTests`); the compiler records' test moved with
+  their code.
+- Traps: a local `.xake` from before the rework can make a run misbehave (the dependency records
+  of Var reads and secrets changed): use `--resetdb`. .NET removes an environment variable set
+  to `""` in-process, so a test cannot make an "empty value" through the environment on Unix
+  (pass it with `-d N=`).
 
-## Release prep (branch `feature/rulesless-syntax`)
+## Release and packaging facts (from the 3.x release prep)
 
-Preparing the first release that ships `Xake.Dotnet` inside the `Xake` package. What was
-touched, so it is not re-litigated:
-
-- [`docs/dotnet-build.md`](dotnet-build.md) is the reference for toolchain discovery: the three
-  providers (`sdkImpl`, `msImpl`, `monoFwkImpl`), the fallback chain, framework-name
-  normalization, and the `NETFX`/`NETFX-TARGET`/`FSCVER` variables. Read it before touching
-  `DotNetFwk.fs`.
-- The nupkg had **no license metadata at all** and a deprecated `PackageIconUrl`. It now
-  declares `MIT`, packs `Icon.png` and `readme.md`, and packs with zero warnings. The readme is
-  referenced as `readme.md` — that is the git-tracked casing, and `README.md` would break the
-  pack on a case-sensitive CI filesystem.
+- The nupkg declares `MIT`, packs `Icon.png` and `readme.md`, and packs with zero warnings. The
+  readme is referenced as `readme.md` (the git-tracked casing; `README.md` would break the pack
+  on a case-sensitive CI filesystem).
 - The published version is the tag from 3.15 on (`v3.15.0` -> `3.15.0`); up to 3.14.0 /
   hermetic 0.9.0 `publish.yml` appended the run number (`v3.14.0` -> `3.14.0.45`). Decision:
   docs/features/release-process/review.md, option A.
-- `FSharp.Core` in the nupkg is whatever the SDK pins — currently `10.1.400`. Bumping the SDK
-  raises the floor for every consumer. Pin it explicitly in the projects if that matters.
-- The mono provider built its `PATH` env var as `sdkroot </> ("bin" + ";" + PATH)` — `+` binds
-  tighter than `</>`, and `;` is not the Unix separator. Fixed, but the mono path has no test
-  coverage.
-- `build.fsx` and `build.fsc.fsx` bootstrap from nuget.org (versions in their first lines;
-  `build.fsc.fsx` also takes `Xake.Hermetic.Dotnet`).
-  The base script stays on the base package only. The nuget references stay behind the release being made; bump
-  them only after a release lands on nuget.org, to the exact published version (the tag from
-  3.15 on, `X.Y.Z.<run>` before).
-  Developing against unreleased libraries: a temporary `#r` on dlls (or a `#i` local feed);
-  see docs/devprocess.md, "Bootstrapping note". `samples/gettingstarted.fsx` references the
+- `build.fsx` bootstraps from nuget.org (the version in its first line), behind the release
+  being made; bump it only after a release lands, to the exact published version. Developing
+  against unreleased libraries: a temporary `#r` on dlls (or a `#i` local feed); see
+  docs/devprocess.md, "Bootstrapping note". `samples/gettingstarted.fsx` references the
   published package (`#r "nuget: Xake"`) and is checked against it after each release.
-- `src/hermetic` builds on the in-repo `src/core`/`src/dotnet` (ProjectReferences) until Xake
-  4.0 (owner, 2026-10-31; before: the published `Xake` with a range, #108..#109). Its nupkg
-  depends on package `Xake` at the build's Xake version (`-p:XakePackageVersion`, build.fsx);
-  `bump-base` and CI `hermetic-compat` are gone; the next hermetic release ships with Xake 4.0.
-- **The supported floor is .NET 8**, enforced in three places (`global.json`, the tests TFM, the
-  CI matrix) and by an explicit `FSharp.Core` 8.0.100 pin with
-  `DisableImplicitFSharpCoreReference`. Without the pin the SDK's own FSharp.Core lands in the
-  nuspec and every consumer inherits it. See docs/devprocess.md.
+- **The supported floor is .NET 8**: `global.json`, the tests TFM, and an explicit `FSharp.Core`
+  8.0.100 pin with `DisableImplicitFSharpCoreReference`. Without the pin the SDK's own
+  FSharp.Core lands in the nuspec and every consumer inherits it. See docs/devprocess.md.
 - `builder {}` (the empty settings block) does **not** compile on F# 8 — `builder { () }` does,
   and is what the docs, samples and tests use.
-- `csc` with no `targetfwk` (and no `NETFX-TARGET`): in 3.4 an error (`Csc.ofSettings` failed
-  asking for one; the older fallback passed no framework references at all and only worked on
-  Windows via `csc.rsp`). Since 3.5 both `csc` and `fsc` default to the .NET framework of the SDK
-  the build runs on (`DotNetFwk.sdkFramework`, from the probed SDK's
-  `Microsoft.NETCoreSdk.BundledVersions.props`: `net10.0` for SDK 10.0.x), compiled against the
-  SDK's own targeting pack `<dotnet>/packs/Microsoft.NETCore.App.Ref/<ver>/ref/netN.0` (all of
-  it, no download); `fsc` also references the SDK's `FSharp/FSharp.Core.dll`. Precedence:
-  `targetfwk` > `NETFX-TARGET` > the SDK's framework. The "needs a target framework" error is
-  left only for when the SDK framework cannot be determined.
 - `samples/features.fsx` had a catch-all `"(dir:*)/(file:*).(ext:c*)"` rule declared *after*
   `temp/AssemblyInfo.cs`; since the last matching rule wins, it shadowed it and the sample had
   been failing for a long time. The catch-all now comes first.
-
+- `build.fsx` builds `netstandard2.0` only; the `net462` asset comes from `dotnet pack`.
 - Trap: tag `v3.12.0` was used by #89; check the tag list before writing a release-notes heading.
 
-## Earlier work: modernizing `src/dotnet`
+## Trap: a target requested twice in one run used to be built twice
 
-`src/dotnet` (Xake.Dotnet) was merged in from a separate repository and had not caught up with
-the engine. It has now been reworked to reuse the engine's APIs and match its style. What is
-worth knowing before touching it again:
+`need ["x"]` followed by `needFiles` on the same `x` rebuilt it. Fixed in `WorkerPool.fs`; two
+mechanisms were involved:
 
-- **`src/dotnet` no longer contains engine code**, and uses public engine API only (S1 of the
-  dotnet split): `ProcessExec` (public, `RequireQualifiedAccess`) and `hasRule`; no IVT to it.
-- **`pexecSync` exists for `DotNetFwk` only.** Framework and tool probing happens in plain
-  memoized functions with no async context; everything inside a recipe uses the `shell`/`sh`
-  task. `Async.RunSynchronously` is safe there (recipes run via `Async.StartAsTask` with no
-  `SynchronizationContext`) but it holds a CPU slot, which is why it is confined to the
-  memoized lookups.
-- **`#if NET46` was dead code** -- the projects target `net462`, for which the SDK defines
-  `NETFRAMEWORK`/`NET462`/`NET46_OR_GREATER` but *not* `NET46`. Use `NETFRAMEWORK`. Verify any
-  new conditional empirically; a wrong one fails silently by compiling nothing.
-- **resx compilation needs `System.Windows.Forms`** (`ResXResourceReader`), which is not one of
-  the SDK's implicit net462 references. It is referenced explicitly for that TFM only.
-- **Compiler diagnostics used to be invisible.** Roslyn writes them to stdout, which the old
-  `_system` logged at `Verbose`, and `levelFromString` only recognized diagnostics carrying a
-  source position -- so `error FS0084: ...` was missed too. Both are fixed; keep
-  `Impl.levelFromString` covering both diagnostic shapes.
+- the pool deduped only *in-flight* requests, dropping the entry when the task finished, and
+- the "does it need rebuilding" verdict is memoized for the whole run
+  (`getChangeReasons ctx |> memoizeRec`, `ExecCore.fs`) — the memo is how the recursive graph
+  analysis ties its knot, not an optimization that can be dropped — so the second request did
+  not ask the database again and got the pre-build "Not built yet" answer.
 
-### Known limitations, not defects of this work
+The pool now keeps two maps: `running`, which is shared by whoever asks whenever they ask, and
+`finished`, which serves the rest of the run and is emptied when the next one starts.
+`Scheduler.newRun` marks that boundary and is posted exactly where the memo is created. So:
+within a run a target executes once; across runs the database decides again; and a task that
+was already going when a run began still serves it. Covered by `builds a target requested twice
+in one run only once` and `builds a file needed and then needFiled only once`.
 
-- **fsc for .NET Framework from any host (3.5).** It used to fail on macOS with FS0074 ("add
-  a reference to assembly 'netstandard'"): every FSharp.Core there is (the SDK's, the
-  package's netstandard builds) references `netstandard 2.0.0.0`, and the net4x reference
-  assemblies below 4.7.1 have no `netstandard.dll`. Nothing net4x-specific was missing, only
-  that facade and an FSharp.Core reference; both are implicit now (`Fsc.ofSettings`):
-  FSharp.Core is the NuGet package at `DotNetFwk.fsharpCoreVersion` 8.0.100 /
-  `FSHARP_CORE_VERSION` (`lib/netstandard2.0`) for netstandard and .NET Framework, the SDK's
-  own for netN.0; the facade is the reference assemblies' `Facades/netstandard.dll` (4.7.1+)
-  or the SDK's `Microsoft/Microsoft.NET.Build.Extensions/net461/lib/netstandard.dll`. **Trap:**
-  not `NETStandard.Library`'s `build/netstandard2.0/ref/netstandard.dll` -- it *defines* the
-  types, so against `mscorlib` fsc warns FS3242 on every attribute and fails FS0193 on `lazy`
-  (a hello world still compiles, which hides it). csc is untouched (no implicit facade).
-  Runtime: below 4.7.2 the exe needs a `netstandard.dll` next to it; Xake does not copy it.
-- **fsc through the shared runner (3.5, B6).** `Fsc` is the twin of `Csc` (fsc's own
-  `--name:value` dialect in `FscArgs`, over `ArgsCore`, shared with `CscArgs`); `Csc.run` and
-  `Fsc.run` both fill an internal `CompilerRunner.RunPlan` and call `CompilerRunner.run`, so the
-  gate (generated files, `needFiles`, hash check, rsp) is one piece of code. `Fsc` and
-  `FscRunOptions` are `[<RequireQualifiedAccess>]`: their labels equal `Csc`'s/`RunOptions`',
-  and an unqualified record expression would otherwise infer the F# type. fsc reads the
-  response file `Impl.escapeArgument` writes (a source path with a space is tested). The
-  composed line has no `--nocopyfsharpcore`, so fsc copies the referenced `FSharp.Core.dll`
-  next to the output unless `args ["--nocopyfsharpcore"]`.
-- **A target requested twice in one run used to be built twice** — `need ["x"]` followed by
-  `needFiles` on the same `x` rebuilt it. Fixed in `WorkerPool.fs`; what actually went wrong
-  took two mechanisms, so it is worth writing down:
-  - the pool deduped only *in-flight* requests, dropping the entry when the task finished, and
-  - the "does it need rebuilding" verdict is memoized for the whole run
-    (`getChangeReasons ctx |> memoizeRec`, `ExecCore.fs`) — the memo is how the recursive graph
-    analysis ties its knot, not an optimization that can be dropped — so the second request did
-    not ask the database again and got the pre-build "Not built yet" answer.
+## Xake.Dotnet facts (moved at 4.0)
 
-  The pool now keeps two maps: `running`, which is shared by whoever asks whenever they ask,
-  and `finished`, which serves the rest of the run and is emptied when the next one starts.
-  `Scheduler.newRun` marks that boundary and is posted exactly where the memo is created. So:
-  within a run a target executes once; across runs the database decides again; and a task that
-  was already going when a run began still serves it, which is the pre-existing behaviour for
-  concurrent demands. Covered by
-  `builds a target requested twice in one run only once` and `builds a file needed and then
-  needFiled only once`.
-- `build.fsx` builds `netstandard2.0` only; the `net462` asset comes from `dotnet pack`. The
-  FSharp.Core reason given before (no net4x assembly in the pinned package) does not hold: a
-  net462 compile takes FSharp.Core's netstandard2.0 build plus the facade, which is what
-  `dotnet build` does too. What remains for a net462 leg of `build.fsc.fsx` is work, not a
-  blocker: `projects/net462/*.json` evaluations to read the references from (checking that
-  they carry the facade msbuild adds), and comparing its output with `dotnet pack`'s asset.
+The .NET tasks and the hermetic library are in OlegZee/Xake.Dotnet; their docs moved with them
+(`docs/dotnet-build.md` for toolchain discovery, `docs/csc-syntax.md`, `docs/csc-server.md`,
+`docs/hermetic*`). The facts below were learnt here and are kept until that repository's
+`docs/session.md` takes them (split S9):
+
+- `src/dotnet` uses public engine API only (S1): `ProcessExec` (public,
+  `RequireQualifiedAccess`; `pexecSync` only in `DotNetFwk`'s memoized probes, never inside a
+  recipe) and `hasRule`. Use `NETFRAMEWORK`, not `NET46` (never defined for `net462`); resx
+  needs `System.Windows.Forms` on net462; keep `Impl.levelFromString` covering both compiler
+  diagnostic shapes. The mono provider has no test coverage.
+- `csc`/`fsc` with no `targetfwk` (and no `NETFX-TARGET`) target the SDK's own framework
+  (`DotNetFwk.sdkFramework`). fsc for .NET Framework needs an implicit FSharp.Core and the
+  `netstandard.dll` facade; **trap:** not `NETStandard.Library`'s `ref/netstandard.dll`, which
+  defines the types (FS3242/FS0193 against `mscorlib`).
+- **Trap: fsc does not unquote its response file, and `shell` quotes nothing.** csc wants quoted
+  rsp lines, fsc bare ones (`CompilerRunner.RunPlan.ResponseQuoting`: `Argv` / `Verbatim`); every
+  argument Xake.Dotnet hands to `shell` goes through `Tool.quoteArgument` (`PathSpacesTests.fs`).
+- The fsc/locks self-build (`build.fsc.fsx`): a project-file change needs `import` AND
+  `update-locks` in the same PR, or CI `build-fsc` fails on the fingerprint check (#72, #79,
+  #95); the locks name the SDK compiler by version (10.0.403, pinned in its `build.yml`); the
+  importer reads `PrivateAssets=all` as "bundled".
 
 ## Trap: rule patterns with `..` never matched
 
@@ -209,76 +149,23 @@ file opens now retry an `IOException` up to five times with a 20 ms backoff; rea
 goes to the recreate path. The `EndOfStreamException` warning in test runs is deliberate: the
 `handles broken database` and storage tests write garbage on purpose.
 
-## Trap: fsc does not unquote its response file, and `shell` quotes nothing
-
-Compiles failed with the SDK under `C:\Program Files\dotnet`. Two layers: `shell` joins
-`args` with a space (the compiler dll and `@rsp` split at the space), and fsc reads each rsp
-line verbatim -- `"--reference:a b/l.dll"` is a file name to it (FS2020), `--reference:"a b/l.dll"`
-keeps the quotes (FS0084); only the bare line works. csc is the opposite (a bare line with a
-space is split, CS2001). `CompilerRunner.RunPlan.ResponseQuoting` (`Argv` for csc, `Verbatim`
-for fsc); every argument handed to `shell` by Xake.Dotnet and the hermetic package is quoted
-with `Tool.quoteArgument` (Windows argv rules, which .NET applies on every OS too, so a
-symlinked SDK directory with a space reproduces it on macOS/Linux: `PathSpacesTests.fs`).
-Scripts' own `shell { args }` stay raw.
-
 ## How to verify changes here
 
 ```bash
-dotnet build src/core -c Release && dotnet build src/dotnet -c Release   # both TFMs, 0 warnings
-dotnet restore src/hermetic.tests                                        # builds on the in-repo Xake (until 4.0), no NU1603
-dotnet build src/hermetic -c Release --no-restore                        # Xake.Hermetic.Dotnet, both TFMs, 0 warnings
-dotnet test src/tests -c Release                                         # all green (547 tests at the vars rework)
-dotnet test src/hermetic.tests -c Release --no-restore
-dotnet test src/tests --filter 'Category=Integration'                    # real csc and fsc runs
-dotnet test src/hermetic.tests --filter 'Category=Integration'
-dotnet fsi build.fsx -- -- build test pack                               # self-hosting: 3 libraries, both test projects, the Xake package
-dotnet fsi samples/fullframework.fsx                                     # end-to-end csc
+dotnet build src/core -c Release              # both TFMs, 0 warnings
+dotnet build src/tests --no-incremental       # 0 warnings
+dotnet test src/tests -c Release              # all green (1747 tests, 10 skipped, after the split)
+dotnet fsi build.fsx -- -- build test pack    # self-hosting: the engine, the test jobs, the Xake package
 ```
 
-Tests move between the two projects, so the split shifts. `pack` writes `out/pkg/Xake/` only: the `Xake` package is
-src/core alone (dotnet-split S-D14), and `pack` fails if it carries anything of `Xake.Dotnet` (docs/devprocess.md).
+`pack` writes `out/pkg/Xake/` only and fails if the nupkg carries anything but `Xake.dll`/`.xml`
+per framework under `lib/` (docs/devprocess.md).
 - Trap: the msbuild runs of `build.fsx` (`test-build::*`, the `out/` builds, `pack`) all build src/core through project
   references into the same `bin/Release` and `obj` folders; they take the `msbuild` resource (one at a time), since two
   at once failed the v4.0.0-preview.1 publish run (MSB4018 GenerateDepsFile, `Xake.deps.json` in use). Keep any new
   msbuild rule under `oneMsbuild`.
 
-`samples/*.fsx` reference `out/netstandard2.0/*.dll`, so run the self-hosting build first.
-
-## The fsc build (`build.fsc.fsx`)
-
-The declarative self-build (fsc-rework PR 7): the three libraries compiled by fsc from committed
-data, no msbuild for them. `build.fsx` stays the build of record (packages, releases).
-
-- Data: `src/<dir>/xake.project.json` (descriptions, written by `import`, msbuild evaluating the
-  `.fsproj`), `locks/<name>/Release.json` (written by `update-locks` = the phony
-  `lock::<name>::<cfg>` rules over `Locks.generate`), `xake.fingerprints` (one line per
-  description and lock: its hash, its inputs' hash, the inputs). All committed.
-- `build` = `Fingerprints.warn` + `Locks.needAll`, the rule `out/(cfg:*)/(fwk:*)/(name:*).dll` =
-  `Locks.compileAs`; `check` = `Fingerprints.check`. `test` is `dotnet test` as in `build.fsx`.
-  Release only; `pack` waits for `Package.nupkg` (PR 8).
-- Trap: any change to `src/hermetic/Xake.Hermetic.Dotnet.fsproj` (a version bump included) makes
-  `src/hermetic/xake.project.json` stale for the self-build; run `dotnet fsi build.fsc.fsx -- -- import`
-  (and `update-locks -d LOCK_REFRESH=Xake` when the core range moved) in the same PR, or CI's
-  `build-fsc` fails on the fingerprint check (#72, #79). The locks name the SDK compiler by
-  version: a removed SDK patch needs `update-locks` and the matching pin in `build.yml`.
-- Trap: adding a source file to a project needs `import` AND `update-locks` (the lock lists the
-  sources); CI `build-fsc` failed on #95 with FS0039 when only `import` ran.
-- Bootstrap: `#r "nuget: Xake, 3.15.0"` and `#r "nuget: Xake.Hermetic.Dotnet, 0.10.0"` (the first lines), no
-  `build.fsx` run first. Its `clean` removes `out/Release` only (`out/netstandard2.0` is
-  `build.fsx`'s).
-- Own database `.xake.fsc` (`xake { ExecOptions.Default with DbFileName = ... }`): the scripts no
-  longer share a bootstrap, and their phony targets (`build`, `test`, `clean`) share names.
-- The locks name the SDK's `fsc.dll` by path with an empty `Sha256`: the SDK version is its
-  identity (prerequisite `dotnet-sdk` 10.0.403, pinned in `build.yml`). The committed locks hold for SDK
-  10.0.403 on any OS/architecture; the CI job `build-fsc` runs on ubuntu-latest. Another SDK
-  needs `update-locks`.
-- `HERMETIC=on` is not set: it needs an exact SDK pin in `global.json` (`rollForward: disable`),
-  which the repository does not have (CI matrix 8.0/10.0). Open question.
-- `Fingerprints.warn` logs at `Message` (since #51), visible at the default console level; the
-  script sets no `consolelog`.
-- After a project-file change: `import`, `update-locks`, commit descriptions, locks and
-  `xake.fingerprints`. Without it `build` warns once per stale line and still builds; `check`
-  fails.
+`samples/features.fsx` references `out/netstandard2.0/Xake.dll`, so run the self-hosting build first.
 
 ## Earlier work: delegated execution (merged, PR #15)
 

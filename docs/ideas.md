@@ -32,7 +32,7 @@ the fallback there and the default on Unix; `sdk-net462` forces it, `mono-*` sti
 
 ### Shipped
 
-- `csc` for net4x — verified end to end on macOS, see `samples/fullframework.fsx`: the produced
+- `csc` for net4x — verified end to end on macOS, see `samples/fullframework.fsx` (now in OlegZee/Xake.Dotnet): the produced
   exe is PE32, CLR v4.0.30319, references mscorlib 4.0.0.0.
 - `fsc` option syntax on Unix — a leading `/` is a path there, so long options are passed as
   `--nologo`, `--target:`, `--out:`, `--define:`, `--resource:` and references as `-r:`.

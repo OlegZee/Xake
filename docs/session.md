@@ -3,7 +3,7 @@
 ## State of `dev`: the 4.0 line (2026-10-31, pattern module 2026-11-03)
 
 `dev` carries the variable rework (#111, #112) and is the line of **Xake 4.0**, a breaking release
-(owner; not 3.16). Release notes: [release-notes.md](release-notes.md), "4.0.0 (unreleased)". The
+(owner; not 3.16). Release notes: [release-notes.md](release-notes.md), "4.0.0 (2026-11-03)", published as Xake 4.0.0. The
 feature folder: [features/vars-precedence](features/vars-precedence/session.md). The 4.0 pattern
 module and typed targets landed with #131 (2026-11-03,
 [features/pattern-module](features/pattern-module/session.md)); the release continues with the
@@ -53,7 +53,7 @@ their tests, docs, samples and the fsc/locks self-build (`build.fsc.fsx`, `locks
   1.1 ms per 10,000 lines, negligible. See [features/vars-precedence/perf-secrets.md](features/vars-precedence/perf-secrets.md).
 - **Perf note:** `recordDependency` (`ScriptFuncs.fs`) dedups `Var`/`EnvVar`/`SecretDep` reads with
   `List.contains` over the target's dependencies: O(deps) per read.
-- **Release state:** published are Xake 3.15.0 and `4.0.0-preview.1..3` (preview.2 on: the
+- **Release state:** published are Xake **4.0.0** (2026-11-03, tag `v4.0.0` at 4297ea3 on `master`), 3.15.0 and `4.0.0-preview.1..3` (preview.2 on: the
   `Xake` package is the engine alone, #129), and Xake.Hermetic.Dotnet 0.10.0 (range
   `[3.14.0.45, 4.0)`; its last release, S-D2). `publish.yml` takes `v*` tags only. `Xake.Dotnet`
   4.0.0 (both assemblies) is released from OlegZee/Xake.Dotnet after Xake 4.0.0 (S8).

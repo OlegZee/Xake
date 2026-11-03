@@ -62,3 +62,36 @@ type PatternAstTests() =
         for p, code in specificityErrors do
             let e = Assert.Throws<PatternAst.PatternException>(fun () -> Path.specificity p |> ignore)
             StringAssert.Contains(code, e.Message, p)
+
+    // --- glob (spec 5.7), used by the typed layer's Glob ------------------------------------------
+
+    [<Test>]
+    member _.``glob: unbound groups become their bodies, bound values are escaped``() =
+        let parse = PatternAst.Rule.parse
+        Assert.AreEqual("*/*-a.ss", PatternAst.glob (fun _ -> None) (fun _ -> None) (parse "(root:*/(leaf:*-a)).ss"))
+        Assert.AreEqual("src/core/**/*.fs", PatternAst.glob (Map.ofList [ "dir", "core" ]).TryFind (fun _ -> None) (parse "src/(dir:*)/**/*.fs"))
+        // spec 11, example 16
+        let lib v = PatternAst.glob (function "lib" -> Some v | _ -> None) (fun _ -> None) (parse "src/(lib:*)/(name:*).cs")
+        Assert.AreEqual("src/core/*.cs", lib "core")
+        Assert.AreEqual(@"src/a\(b/*.cs", lib "a(b")
+        // bound wildcards take their value, unbound ones stay; literals keep their escapes
+        let toks = parse @"\(x\)/\[y\]\|*/(n:*)-?.txt"
+        Assert.AreEqual(@"\(x\)/\[y\]\|*/core-?.txt", PatternAst.glob (Map.ofList [ "n", "core" ]).TryFind (fun _ -> None) toks)
+        Assert.AreEqual(@"\(x\)/\[y\]\|a/*-\{7\}.txt", PatternAst.glob (fun _ -> None) (function 1 -> Some "a" | _ -> Some "{7}") toks)
+
+    [<Test>]
+    member _.``glob: positional numbers count top-level wildcards only; classes and braces stay``() =
+        let parse = PatternAst.Rule.parse
+        // the group's own '*' is not a positional slot: 1 is '**', 2 the last '*'
+        let toks = parse "gen/(dir:*)/**/*.txt"
+        Assert.AreEqual("gen/*/a/b/file.txt", PatternAst.glob (fun _ -> None) (function 1 -> Some "a/b" | 2 -> Some "file" | _ -> None) toks)
+        // an empty globstar slot drops one '/', as format does
+        Assert.AreEqual("gen/d/file.txt", PatternAst.glob (fun _ -> Some "d") (function 1 -> Some "" | _ -> Some "file") toks)
+        Assert.AreEqual("out/x/*.{dll,pdb}", PatternAst.glob (fun _ -> Some "x") (fun _ -> None) (parse "out/(n:*)/*.{dll,pdb}"))
+        Assert.AreEqual("[ab]-core.txt", PatternAst.glob (fun _ -> Some "core") (fun _ -> None) (parse "[ab]-(n:*).txt"))
+
+    [<Test>]
+    member _.``a PatternException prints as its message alone``() =
+        let e = PatternAst.PatternException "Invalid pattern 'x'"
+        Assert.AreEqual("Invalid pattern 'x'", e.ToString())
+        Assert.AreEqual("Invalid pattern 'x'", e.Message)

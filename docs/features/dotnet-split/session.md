@@ -99,12 +99,20 @@ package for the repository `OlegZee/Xake.Dotnet`, shipped there as ONE package `
   `docs/tasks.md` .NET reference (csc/fsc operations, script variables, package folder) is
   replaced by a pointer, and `roadmap.md` keeps the Xake.Dotnet/hermetic backlog as the record.
 
+- 2026-11-03 (end): S7 merged (#133), Xake `v4.0.0` published (4297ea3; the dated notes in
+  #137). Xake.Dotnet: #1 (S6 import, merge commit), #2 (.NET task reference), #3 (hermetic-windows
+  feature folder from Xake, #138 removed it here), #4 (release prep: floor `[4.0.0, 5.0)`,
+  release notes, `bump-base` keeps the BOM) merged; `v4.0.0-preview.1` published from its `dev`
+  and checked from outside the repository; #5 (`build.fsc.fsx` on the preview, versioned `#r`)
+  green, awaiting merge. Work moves to a session in Xake.Dotnet.
+
 ## Next step
 
-1. Owner: review and merge the S7 PR (`feature/dotnet-split-remove` -> `dev`).
-2. Xake.Dotnet follow-up: it links to Xake's `docs/tasks.md#csc` (and other .NET anchors) for
-   the task reference, which S7 replaced by a pointer; that reference (Xake `docs/tasks.md` at
-   f550556, section ".NET tasks") belongs in Xake.Dotnet's docs. Also its `docs/session.md`
-   should take the "Xake.Dotnet facts" section of Xake's `docs/session.md` and its roadmap the
-   Xake.Dotnet/hermetic sections of Xake's `docs/roadmap.md` (then Xake drops them, S9).
-3. S8 (release), S9 (follow-ups).
+In OlegZee/Xake.Dotnet (its `docs/session.md` and `docs/features/hermetic-windows/`):
+1. Merge #5; date the `4.0.0` heading of its release notes; owner merges `dev` -> `master` and
+   tags `v4.0.0` (S8).
+2. S9: `build.fsc.fsx` from `-preview.1` to `4.0.0`; its `docs/session.md` and roadmap take the
+   "Xake.Dotnet facts" of this repository's `docs/session.md` and the Xake.Dotnet/hermetic
+   sections of `docs/roadmap.md`, then this repository drops them (a Xake PR); owner deprecates and
+   unlists `Xake.Hermetic.Dotnet` and the `Xake.Dotnet` 1.1.x betas on nuget.org.
+3. Xake: bootstrap `build.fsx` from `Xake 3.15.0` to `4.0.0` (S9).

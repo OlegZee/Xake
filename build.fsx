@@ -1,17 +1,14 @@
 #r "nuget: Xake, 3.15.0"
 // #r "out/netstandard2.0/Xake.dll"
-#load "testjobs.fsx"
 
-// `test` runs the test jobs of testjobs.fsx in parallel (`test::tests/jobs`, `test::tests/rest`;
-// one runs alone by naming it). The test projects are built once (`test-build::<project>`),
-// each job runs `dotnet test --no-build` on its slice and writes into out/test/<project>/<slice>/
-// (the trx, the blame sequence file and console.log, its whole output); the console gets the
-// summary lines. FILTER (-d FILTER=Rm) narrows every job to its tests whose name matches Rm
-// (NUnit's `name =~ 'Rm'`, a regex; no quote in it); a job left with no test passes.
+// Builds Xake (src/core), tests it (src/tests) and packs the `Xake` package.
+// The .NET tasks and the hermetic library build in their own repository, OlegZee/Xake.Dotnet.
+//
+// Targets: main (= build, then test), build, test (test::jobs and test::rest in parallel),
+// test-build, pack, push, clean. Variables: --help.
 
 open Xake
 open Xake.Tasks
-open Testjobs
 
 let vars = {|
     // The env names are explicit: publish.yml exports VERSION, and from Xake 4.0 a field without
@@ -21,38 +18,24 @@ let vars = {|
     TestFilter = Var.string(cliArg = "FILTER", envVar = "FILTER", description = "Runs only the tests whose name matches this regex, e.g. 'Rm'")
 |}
 
-let frameworks = ["netstandard2.0" (*; "net462" *)]
+/// One msbuild at a time: `build`, `test-build` and `pack` all build src/core into the same
+/// bin/Release and obj folders, and two at once collide (MSB4018 GenerateDepsFile, "Xake.deps.json
+/// is being used by another process", the v4.0.0-preview.1 publish run). The test runs
+/// (`dotnet test --no-build`) do not take it.
+let msbuild = Resource.newResource "msbuild" 1
+let dotnet arglist = withResource msbuild 1 (sh "dotnet" { args arglist; failonerror })
 
-/// A library this script builds. `Needs` are the libraries (of this script) it is compiled
-/// against. Since 4.0 there is one, the engine; the .NET tasks and the hermetic library build in
-/// their own repository, OlegZee/Xake.Dotnet.
-type Library = { Name: string; Dir: string; Needs: string list }
+/// `test` runs src/tests as two jobs in parallel (about 20 s instead of 36 s): `test::jobs` is the
+/// delegated and resource fixture, slow on sleeps, `test::rest` every other fixture. Each writes
+/// its trx and its whole output (console.log) into out/test/<job>/; the console gets the summary
+/// lines. The NUnit selection is `NUnit.Where`, not vstest's `--filter`, which fails on a class
+/// name with a space in it.
+let delegatedFixture = "class == 'Tests.Delegated and resource tests'"
+let testJobs = [ "jobs", delegatedFixture; "rest", $"!({delegatedFixture})" ]
 
-let libraries =
-    [ { Name = "Xake"; Dir = "src/core"; Needs = [] } ]
-
-let library name = libraries |> List.find (fun lib -> lib.Name = name)
-
-/// Assembly and doc file a library produces, for every target framework.
-let binaries name =
-    [ for fwk in frameworks do
-      for ext in ["dll"; "xml"]
-        -> $"out/%s{fwk}/%s{name}.%s{ext}"
-    ]
-
-/// The NuGet package of this repository: `Xake`, the engine alone, packed from src/core. From
-/// 4.0 Xake.Dotnet (with the hermetic library) ships from its own repository,
-/// OlegZee/Xake.Dotnet (dotnet-split S-D2, S-D14).
-///
-/// The package goes into a folder of its own, `out/pkg/Xake/Xake.<version>.nupkg`, which CI
-/// pushes.
-let xakePackage = "Xake"
-let packagePath id version = $"out/pkg/%s{id}/%s{id}.%s{version}.nupkg"
-
-/// The `Xake` nupkg must carry Xake.dll and Xake.xml for every target framework and nothing
-/// else under lib/ (no Xake.Dotnet, S-D14); returns the problems found (none means the package
-/// is right).
-let checkXakePackage (nupkg: string) =
+/// The `Xake` nupkg carries Xake.dll and Xake.xml for every target framework and nothing else
+/// under lib/; returns the problems found.
+let checkPackage (nupkg: string) =
     use zip = System.IO.Compression.ZipFile.OpenRead nupkg
     let entries = [ for e in zip.Entries -> e.FullName ]
     [ for fwk in ["net462"; "netstandard2.0"] do
@@ -60,18 +43,9 @@ let checkXakePackage (nupkg: string) =
             if not (List.contains $"lib/{fwk}/{file}" entries) then yield $"no lib/{fwk}/{file}"
       for e in entries do
         let file = System.IO.Path.GetFileName e
-        if e.StartsWith "lib/" && file <> "Xake.dll" && file <> "Xake.xml" then
-            yield $"carries {e}" ]
+        if e.StartsWith "lib/" && file <> "Xake.dll" && file <> "Xake.xml" then yield $"carries {e}" ]
 
-let dotnet arglist = sh "dotnet" { args arglist; failonerror }
-
-/// One msbuild at a time over the in-repo projects: every `dotnet build`/`pack` here also
-/// builds src/core through project references, into the same src/core/bin/Release and obj
-/// folders, and two at once collide (MSB4018 GenerateDepsFile,
-/// "Xake.deps.json is being used by another process", the two test builds of `test` in the
-/// v4.0.0-preview.1 publish run). The test jobs (`dotnet test --no-build`) still run in parallel.
-let msbuild = Resource.newResource "msbuild" 1
-let oneMsbuild body = withResource msbuild 1 body
+let nupkg version = $"out/pkg/Xake/Xake.{version}.nupkg"
 
 do xakeScript {
     filelog "build.log" Diag
@@ -79,106 +53,71 @@ do xakeScript {
 
     rules [
         "main" <<< ["build"; "test"]
-
-        "build" <== List.collect (fun lib -> binaries lib.Name) libraries
         "clean" => rm {dir "out"}
 
-        "test" <== [ for j in testJobs -> $"test::{testJobName j}" ]
+        // netstandard2.0 only: the net462 asset comes from `dotnet pack`
+        "build" <== ["out/netstandard2.0/Xake.dll"; "out/netstandard2.0/Xake.xml"]
 
-        // all jobs of one test project, e.g. `test-project::tests`
-        "test-project::(project:*)" => recipe {
-            let! project = getRuleMatch "project"
-            do! need [ for j in testJobs do if j.Project = project then $"test::{testJobName j}" ]
+        targets ["out/netstandard2.0/Xake.dll"; "out/netstandard2.0/Xake.xml"] {
+            // not obj/: `dotnet build` and `pack` write the version into obj/**/Xake.AssemblyInfo.fs
+            let! sources = getFiles (fileset { basedir "src/core"; includes "Xake.fsproj"; includes "**/*.fs"; excludes "obj/**" })
+            do! needFiles sources
+            let! version = vars.Version
+            do! dotnet ["build"; "src/core"; "-c"; "Release"; "-f"; "netstandard2.0"; "-o"; "out/netstandard2.0"; $"/p:Version={version}"]
         }
 
-        // a test project, built once for all its jobs
-        "test-build::(project:*)" => recipe {
-            let! project = getRuleMatch "project"
-            do! oneMsbuild (sh $"dotnet build {testProjectDir project} -c Release" {
-                logprefix $"[test-build {project}]"
-                stdoutlevel (fun l -> if l.Contains ": error " then Level.Error else Level.Info)
-                failonerror })
-        }
+        "test" <== [ for name, _ in testJobs -> $"test::{name}" ]
 
-        "test::(project:*)/(slice:*)" => recipe {
-            let! project = getRuleMatch "project"
-            let! slice = getRuleMatch "slice"
-            let job = testJob project slice
-            do! need [ $"test-build::{project}" ]
-            let! testFilter = vars.TestFilter
+        "test-build" => dotnet ["build"; "src/tests"; "-c"; "Release"]
 
-            // a test running longer than 10 minutes is a hang: the run is stopped and the
-            // test named (the sequence file in the job's folder) instead of waiting forever
-            let hang = [ "--blame-hang"; "--blame-hang-timeout"; "10m"; "--blame-hang-dump-type"; "none" ]
-            resetTestJobDir job
-            do! sh $"dotnet test {testProjectDir project} -c Release --no-build" {
-                args (hang @ testArgs job testFilter)
-                logprefix $"[{testJobName job}]"
-                stdoutlevel (fun l -> if isTestSummary l then Level.Message else Level.Info)
-                captureOutput (ToFile (Both, testJobDir job + "/console.log"))
+        "test::(job:*)" => recipe {
+            let! name = getRuleMatch "job"
+            let where = testJobs |> List.find (fst >> (=) name) |> snd
+            let! filter = vars.TestFilter
+            do! need ["test-build"]
+
+            let dir = $"out/test/{name}"
+            if System.IO.Directory.Exists dir then System.IO.Directory.Delete(dir, true)
+            System.IO.Directory.CreateDirectory dir |> ignore
+            let where = match filter with Some f -> $"({where}) && name =~ '{f}'" | None -> where
+            // a test running longer than 10 minutes is a hang: the run stops and names it
+            do! sh "dotnet test src/tests -c Release --no-build" {
+                args [ "--blame-hang"; "--blame-hang-timeout"; "10m"; "--blame-hang-dump-type"; "none"
+                       "--results-directory"; dir; "--logger"; "\"trx;LogFileName=test.trx\""
+                       "--"; $"\"NUnit.Where={where}\"" ]
+                logprefix $"[test::{name}]"
+                stdoutlevel (fun l ->
+                    let l = l.TrimStart()
+                    if l.StartsWith "Passed!" || l.StartsWith "Failed!" || l.StartsWith "Skipped!" || l.StartsWith "Failed "
+                    then Level.Message else Level.Info)
+                captureOutput (ToFile (Both, dir + "/console.log"))
                 failonerror }
         }
 
-        // one rule compiles them all: which library and which framework is asked for
-        // is read off the target being built
-        targets ["out/(fwk:*)/(lib:*).dll"; "out/(fwk:*)/(lib:*).xml"] {
-
-            let! framework = getRuleMatch "fwk"
-            let! lib = getRuleMatch "lib" |> Recipe.map library
-
-            let! allFiles = getFiles <| fileset {
-                basedir lib.Dir
-                includes $"%s{lib.Name}.fsproj"
-                includes "**/*.fs"
-            }
-
-            do! needFiles allFiles
-            do! need [for dep in lib.Needs -> $"out/%s{framework}/%s{dep}.dll"]
-            let! version = vars.Version
-
-            do! oneMsbuild (dotnet ([
-                "build"
-                lib.Dir
-                "--configuration"; "Release"
-                "--framework"; framework
-                "--output"; "./out/" + framework
-                "/p:Version=" + version
-              ]))
-        }
-
-        (* Nuget publishing rules *)
-        // the `Xake` package (the engine alone), at this build's version (-d Version)
+        // the `Xake` package at this build's version (-d Version), checked for its content
         command "pack" {
             let! version = vars.Version
-            do! need [packagePath xakePackage version]
+            do! need [nupkg version]
         }
 
-        target $"out/pkg/%s{xakePackage}/%s{xakePackage}.(ver:*).nupkg" {
+        target "out/pkg/Xake/Xake.(ver:*).nupkg" {
             let! ver = getRuleMatch "ver"
-            let! nupkg = getTargetFullName()
-            do! oneMsbuild (dotnet [
-                "pack"; "src/core"
-                "-c"; "Release"
-                $"/p:Version={ver}"
-                "--output"; $"out/pkg/%s{xakePackage}/"
-            ])
-
-            match checkXakePackage nupkg with
-            | [] -> do! trace Level.Info "%s: the engine only" (System.IO.Path.GetFileName nupkg)
+            let! file = getTargetFullName()
+            do! dotnet ["pack"; "src/core"; "-c"; "Release"; $"/p:Version={ver}"; "--output"; "out/pkg/Xake/"]
+            match checkPackage file with
+            | [] -> do! trace Level.Info "%s: the engine only" (System.IO.Path.GetFileName file)
             | problems ->
-                System.IO.File.Delete nupkg
-                failwithf "%s: %s" nupkg (String.concat "; " problems)
+                System.IO.File.Delete file
+                failwithf "%s: %s" file (String.concat "; " problems)
         }
 
         // push needs pack to be explicitly called in advance
         command "push" {
             let! version = vars.Version
-            let! nuget_key = vars.NUGET_KEY
-            do! dotnet [
-                "nuget"; "push"; packagePath xakePackage version
-                "--source"; "https://www.nuget.org/api/v2/package"
-                "--api-key"; nuget_key
-            ]
+            let! key = vars.NUGET_KEY
+            do! sh "dotnet nuget push" {
+                args [nupkg version; "--source"; "https://www.nuget.org/api/v2/package"; "--api-key"; key]
+                failonerror }
         }
     ]
 }

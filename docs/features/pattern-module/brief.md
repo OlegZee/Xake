@@ -404,3 +404,11 @@ fixes how much breaks. 3.12.0 is released (tag `v3.12.0`); nothing of this featu
   (`TypedTargets.fs`, its tests, `TypedCompileTests`) from the frozen `feature/typed-matches` onto
   the module; 5b the docs (`docs/typed-targets.md`, the "Patterns, masks and paths" overview,
   cheatsheet, phony `=>` → `Command` announcement). Mirrors #91/#92 on the frozen branch.
+- **D49 (2026-11-03): typed-target pattern errors keep the declaration prefix**, e.g.
+  `Target<AsmG> "…": Invalid pattern '…' (rule) … [XP006]`; the module text and XP code follow
+  verbatim. Phase 5a question 1.
+- **D50 (2026-11-03): name lists in all pattern errors use `[a, b]`**; the typed layer's own
+  messages drop the F#-style `[a; b]` kept from the frozen branch. Phase 5a question 2.
+- **D51 (2026-11-03): XP014 is checked at creation for every typed pattern**, single-output
+  targets and `Command` included (spec 7.2 "a pattern that must be formatted"); the frozen code
+  checked multi-output only. Phase 5a question 3.

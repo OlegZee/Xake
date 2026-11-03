@@ -325,3 +325,23 @@ Nothing is open: S-D3 closed the last question. The note was approved by merging
 - **S-D3 (2026-11-02): breaking changes in the hermetic part are a minor bump** with a
   release-notes line while the part is marked "API may change"; once that mark is removed (first
   stable hermetic API), they are majors like the rest of the package.
+- **S-D4 (2026-11-03): `legacy-1.x` points to ba4acca**, the tip of the deleted
+  `feature/refactoring-core` branch (master 930219b plus that branch's commits), so the tag also
+  preserves the branch's work. The owner pushes it.
+- **S-D5 (2026-11-03): the owner creates the Xake.Dotnet worktree** for `feature/split-scaffold`;
+  the agent commits only there and never pushes. S4 plan question 1.
+- **S-D6 (2026-11-03): the history import rewrites a trailing `(#N)` in commit subjects to
+  `(OlegZee/Xake#N)`**, in S4 and identically in S6 (the filter stays deterministic). S4 plan
+  question 2.
+- **S-D7 (2026-11-03): the windows-latest leg runs all of `src/dotnet.tests`**, no filter; narrow
+  later only if slow. S4 plan question 3.
+- **S-D8 (2026-11-03): no `Xake.Dotnet` previews from S4**; a preview may follow S6, before
+  4.0.0. S4 plan question 4.
+- **S-D9 (2026-11-03): the history import uses the committed Python filter**
+  (`tools/import-from-xake.py` in Xake.Dotnet, over `git fast-export`/`fast-import`), not
+  `git filter-repo`; S6 reruns the same file. S4 plan question 5.
+- **S-D10 (2026-11-03): Xake.Dotnet gets `dev` from `master` and `dev` becomes the GitHub default
+  branch now** (owner action); `master` keeps 1.x until `dev` is merged into it at S8. S4 plan
+  question 6.
+- **S-D11 (2026-11-03): Xake.Dotnet release notes start fresh at 4.0.0** with a link to Xake's
+  notes for earlier history. S4 plan question 7.

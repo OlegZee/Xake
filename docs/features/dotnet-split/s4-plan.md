@@ -242,6 +242,8 @@ Nothing in S4 tags, publishes, or touches `master` of `OlegZee/Xake.Dotnet`.
 
 ## 7. Open questions for the owner
 
+**Answered 2026-11-03: all seven as recommended (brief S-D5 to S-D11). S-D4: `legacy-1.x` stays at ba4acca.**
+
 1. **Where does the agent work on Xake.Dotnet?** Agents may write only in their own worktree.
    Recommended: the owner creates the worktree of step 5 and hands its path to the agent; the
    agent commits there and never pushes.

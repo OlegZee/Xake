@@ -26,8 +26,8 @@ jobs:
         # one SDK: global.json rolls forward (latestMajor) to the newest installed SDK, so an
         # 8.0.x leg built with the image's SDK 10 as well and only duplicated this job
         dotnet-version: '10.0.x'
-    # `test` runs both test projects, src/tests and src/hermetic.tests; `pack` builds both
-    # packages and fails if the Xake.Hermetic.Dotnet nuspec has no dependency on package `Xake`
+    # `test` runs both test projects, src/tests and src/hermetic.tests; `pack` builds the `Xake`
+    # package (src/core) and fails if it carries anything of Xake.Dotnet
     - name: Build, test & pack
       run: dotnet fsi build.fsx -- -- build test pack
     - name: Upload build log

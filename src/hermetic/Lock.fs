@@ -1583,7 +1583,7 @@ module Lock =
         let collecting (Recipe inner: Recipe<ExecContext, unit>) =
             Recipe (fun (r, ctx: ExecContext) ->
                 let tee = Logging.CustomLogger (fun _ -> true) (fun line -> if line.Contains "AD0001" then lock crashLines (fun () -> crashLines.Add line))
-                inner (r, { ctx with Logger = Logging.CombineLogger ctx.Logger tee }))
+                inner (r, ctx |> ExecContext.withLogger (Logging.CombineLogger ctx.Logger tee)))
         recipe {
             match run.Server with
             | InProcess -> do! Csc.run run c

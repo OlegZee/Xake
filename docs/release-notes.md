@@ -19,6 +19,13 @@ without `envVar` that was set from the environment under its plain name gets `en
 (or the environment variable is renamed to `XAKE__NAME`), and a CI that happens to export
 `XAKE__<NAME>` for a constant `var` checks that it means it.
 
+**Breaking (package, from `4.0.0-preview.2`): the `Xake` package no longer carries
+`Xake.Dotnet.dll`** (nor its `.xml`, nor its dependencies `System.Resources.Extensions` and
+`Microsoft.Win32.Registry`): it is the engine alone, packed from `src/core`. Xake.Dotnet ships
+from its own repository as the package `Xake.Dotnet`; a script that uses `open Xake.Dotnet`
+(`csc`, `fsc`, `msbuild`, `resgen`, ...) adds `#r "nuget: Xake.Dotnet"`. The 3.x `Xake.Dotnet`
+line is not republished from this repository.
+
 **Variables are evaluated once, before the build, by declarations the script states.**
 Details: [tasks.md](tasks.md#script-variables).
 
@@ -127,6 +134,15 @@ Details: [tasks.md](tasks.md#script-variables).
   in `--help` and the banner; `{ DotNetVars.Default with NUGET_PACKAGES = Var.string(envVar = "NUGET_PACKAGES") |> withDefault ".packages" }`
   also takes the environment (without `envVar`, `XAKE__NUGET_PACKAGES`). Importing changes no value; a target built before the import
   rebuilds once (its dependency records the default).
+
+### Public seam for task libraries
+
+Xake.Dotnet uses public engine API only; no `InternalsVisibleTo` to it.
+
+- **New: `hasRule : string -> Recipe<ExecContext, bool>`**: whether a rule of the script would
+  build a target (the name resolved as `need` resolves it), without building it.
+- **`Xake.ProcessExec` is public** (`RequireQualifiedAccess`): `pexec`, `pexecSync`,
+  `drainTimeoutMs`, low-level process plumbing for libraries; scripts use `shell`/`sh`.
 
 ### Patterns: rule matching on the pattern module
 

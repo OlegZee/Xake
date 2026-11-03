@@ -77,6 +77,19 @@ module ScriptFuncs =
             do! ExecCore.need t'
         }
 
+    /// <summary>
+    /// Tells whether a rule of the script would build the specified target, without building it.
+    /// The name is resolved as `need` resolves it: a phony action when a phony rule matches it,
+    /// otherwise a file relative to the project root. Records no dependency.
+    /// </summary>
+    /// <param name="target">Target name or file path</param>
+    /// <returns>Recipe that returns true when a rule matches the target</returns>
+    let hasRule (target: string) : Recipe<ExecContext, bool> = recipe {
+        let! ctx = getCtx()
+        let t = ExecCore.makeTarget ctx target
+        return ExecCore.locateRule ctx.Options.Rules ctx.Options.ProjectRoot t |> Option.isSome
+    }
+
     /// A variable read records one dependency per name and value, whatever the number of reads.
     let private recordDependency d = recipe {
         let! result = getResult()

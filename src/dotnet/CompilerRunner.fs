@@ -296,10 +296,11 @@ module internal CompilerRunner =
             // a hashed file that is missing and that no rule of the script produces cannot be
             // obtained by the `needFiles` below, which would stop at the first one with "Neither
             // rule nor file"; report all of them now, each with the hash it was expected to have
-            let! ctxOptions = getCtxOptions()
-            let hasRule path =
-                ExecCore.locateRule ctxOptions.Rules ctxOptions.ProjectRoot (FileTarget (File.make path)) |> Option.isSome
-            do! verify (hashedFiles |> List.filter (fun (path, _) -> not (File.Exists path) && not (hasRule path)))
+            let unbuildable = ResizeArray()
+            for (path, expected) in hashedFiles |> List.filter (fst >> File.Exists >> not) do
+                let! produced = hasRule path
+                if not produced then unbuildable.Add (path, expected)
+            do! verify (List.ofSeq unbuildable)
 
             // the generated files and the `.resources` outputs have to exist before the inputs
             // are demanded (neither has a rule, so the engine takes them as plain files). This

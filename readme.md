@@ -10,24 +10,22 @@ The simple script looks like:
 #r "nuget: Xake"
 
 open Xake
-open Xake.Dotnet
+open Xake.Tasks
 
 do xakeScript {
-    "main" <== ["helloworld.exe"]
+    "main" => need ["out/hello.txt"]
 
-    "helloworld.exe" ..> csc {
-        targetfwk "net-4.6.2"
-        src !!"helloworld.cs"
-        grefs ["System.dll"]
-    }
+    "out/hello.txt" ..> writeText "Hello world!"
 }
 ```
 
-This script compiles helloworld assembly from helloworld.cs file, on any OS. Rules are written
-straight in the body of `xakeScript` — no `rules [ ... ]` wrapper needed.
+This script builds `out/hello.txt` on demand, on any OS. Rules are written straight in the body
+of `xakeScript` — no `rules [ ... ]` wrapper needed.
 
-The single `Xake` package contains both the engine (`Xake`, `Xake.Tasks`) and the tasks for the
-full .NET Framework (`Xake.Dotnet`) — one reference is enough.
+The `Xake` package is the build engine alone (`Xake`, `Xake.Tasks`). The .NET tasks (`csc`, `fsc`,
+`msbuild`, `resgen`, hermetic builds) live in the `Xake.Dotnet` package, built from its own
+repository, https://github.com/OlegZee/Xake.Dotnet, and published with 4.0.0: add
+`#r "nuget: Xake.Dotnet"` and `open Xake.Dotnet` to use them.
 
 ## Getting started
 
@@ -168,7 +166,7 @@ Releases are published to nuget.org by CI from a `v*` tag — see
 
 ## Building .NET Framework targets
 
-The `csc`, `fsc`, `msbuild` and `resgen` tasks build full-framework binaries on any OS with
+The `csc`, `fsc`, `msbuild` and `resgen` tasks (package `Xake.Dotnet`, from 4.0.0; reference it with `#r "nuget: Xake.Dotnet"`) build full-framework binaries on any OS with
 nothing installed beyond the .NET SDK: the compilers come from the SDK and the reference
 assemblies from the `Microsoft.NETFramework.ReferenceAssemblies.*` packages, restored on first
 use. Mono is still supported as a fallback and can be requested explicitly with a `mono-`

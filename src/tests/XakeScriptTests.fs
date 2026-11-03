@@ -281,6 +281,26 @@ type ``XakeScript tests``() =
 
         Assert.IsTrue(!matchedAny)
 
+    [<Test>]
+    member x.``hasRule tells whether a rule would build a target``() =
+        let mutable answers = []
+        do xake {x.TestOptions with Targets = ["main"]} {
+            rules [
+                "main" => recipe {
+                    let! a = hasRule "out/a.ss"
+                    let! b = hasRule "out/a.txt"
+                    let! c = hasRule "clean"
+                    let! d = hasRule "other"
+                    answers <- [a; b; c; d]
+                }
+                "out/*.ss" ..> recipe { do! writeText "ss" }
+                "clean" => recipe { return () }
+            ]
+        }
+        Assert.That(answers, Is.EqualTo [true; false; true; false])
+        // asking does not build
+        Assert.That(File.Exists "out/a.ss", Is.False)
+
     [<TestCase("x86-a.ss", "(plat:*)-a.ss", "plat:x86", TestName="Simple case")>]
     [<TestCase("subd1/x86-a.ss", "(dir:*)/(plat:*)-a.ss", "dir:subd1;plat:x86", TestName="groups in various parts")>]
     [<TestCase("subd1/x86-a.ss", "(root:*/*-a).ss", "root:subd1/x86-a", TestName="group across parts")>]

@@ -48,5 +48,5 @@
   ],
   "packages": [{ "id": "FSharp.Core", "version": "8.0.100" }],
   "options": { "doc": true },
-  "internalsVisibleTo": ["Xake.Dotnet", "tests"]
+  "internalsVisibleTo": ["tests"]
 }

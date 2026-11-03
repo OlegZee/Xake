@@ -121,10 +121,8 @@ touched, so it is not re-litigated:
 the engine. It has now been reworked to reuse the engine's APIs and match its style. What is
 worth knowing before touching it again:
 
-- **`src/dotnet` no longer contains engine code.** Its `ProcessExec.fs` and `CommonLib.fs`
-  copies are gone; it uses the engine's via `InternalsVisibleTo("Xake.Dotnet")` declared in
-  `src/core/Xake.fsproj`. If assembly signing is ever added, that attribute needs the public
-  key or Xake.Dotnet silently loses access to the internals.
+- **`src/dotnet` no longer contains engine code**, and uses public engine API only (S1 of the
+  dotnet split): `ProcessExec` (public, `RequireQualifiedAccess`) and `hasRule`; no IVT to it.
 - **`pexecSync` exists for `DotNetFwk` only.** Framework and tool probing happens in plain
   memoized functions with no async context; everything inside a recipe uses the `shell`/`sh`
   task. `Async.RunSynchronously` is safe there (recipes run via `Async.StartAsTask` with no
@@ -229,13 +227,16 @@ dotnet test src/tests -c Release                                         # all g
 dotnet test src/hermetic.tests -c Release --no-restore
 dotnet test src/tests --filter 'Category=Integration'                    # real csc and fsc runs
 dotnet test src/hermetic.tests --filter 'Category=Integration'
-dotnet fsi build.fsx -- -- build test pack                               # self-hosting: 3 libraries, both test projects, both packages
+dotnet fsi build.fsx -- -- build test pack                               # self-hosting: 3 libraries, both test projects, the Xake package
 dotnet fsi samples/fullframework.fsx                                     # end-to-end csc
 ```
 
-Tests move between the two projects, so the split shifts. `pack` writes `out/pkg/Xake/` and `out/pkg/Xake.Hermetic.Dotnet/` (independent:
-the hermetic pack builds on the in-repo `Xake` and depends on package `Xake` at the build's version; `pack-hermetic` packs only that one) and fails
-if the hermetic nuspec has no `Xake` dependency or names `Xake.Dotnet` (docs/devprocess.md).
+Tests move between the two projects, so the split shifts. `pack` writes `out/pkg/Xake/` only: the `Xake` package is
+src/core alone (dotnet-split S-D14), and `pack` fails if it carries anything of `Xake.Dotnet` (docs/devprocess.md).
+- Trap: the msbuild runs of `build.fsx` (`test-build::*`, the `out/` builds, `pack`) all build src/core through project
+  references into the same `bin/Release` and `obj` folders; they take the `msbuild` resource (one at a time), since two
+  at once failed the v4.0.0-preview.1 publish run (MSB4018 GenerateDepsFile, `Xake.deps.json` in use). Keep any new
+  msbuild rule under `oneMsbuild`.
 
 `samples/*.fsx` reference `out/netstandard2.0/*.dll`, so run the self-hosting build first.
 

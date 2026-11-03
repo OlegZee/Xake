@@ -13,6 +13,7 @@ package for the repository `OlegZee/Xake.Dotnet`, shipped there as ONE package `
 |----|------|--------|----------|--------|
 | — D1 design note | Xake | `feature/dotnet-split` (from `dev`) | `.claude/worktrees/feature/dotnet-split` | brief revised for one package, not pushed |
 | — S1 seam | Xake | `feature/dotnet-seam (#122)` (from `dev`) | `.claude/worktrees/feature/dotnet-seam` | #122 open, CI running |
+| — S4 plan | Xake | `docs/dotnet-split-s4-plan` (from `dev` af45852) | agent worktree | committed, not pushed |
 
 ## State
 
@@ -44,6 +45,15 @@ package for the repository `OlegZee/Xake.Dotnet`, shipped there as ONE package `
   `build.yml` pins 10.0.402; reverted. Without the refresh `build.fsc.fsx check` fails (the core
   description and the `Xake` lock changed with the IVT). Needs either a machine with SDK 10.0.402
   or a decision to move the pin to 10.0.403 (locks + `build.yml` in the same PR).
+
+- 2026-11-03: S4 plan written ([s4-plan.md](s4-plan.md)). Facts: `v4.0.0-preview.1` tagged at
+  af45852 but not yet in the nuget.org index; the local `legacy-1.x` tag points to the stale
+  branch's tip ba4acca and is not pushed (S2 half done; the remote branch is already gone);
+  `OlegZee/Xake.Dotnet` has default branch `master`, no PRs, issues off. Rehearsal (scratch clones,
+  `fast-export` + a Python path filter, `filter-repo` not installed): 617 -> 155 commits, 134 files,
+  identical blobs; old repo + removal + merge = 164 commits, 1.03 MiB pack; deterministic, and an
+  older cut is an ancestor of a newer one, so S6 is a normal merge on top of S4. Seven open
+  questions for the owner in §7 of the plan.
 
 ## Next step
 

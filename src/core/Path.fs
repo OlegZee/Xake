@@ -1,7 +1,6 @@
 ﻿module Xake.Path
 
 open System.IO
-open System.Text.RegularExpressions
 
 /// A single segment of a parsed file path or pattern.
 type Part =
@@ -35,12 +34,6 @@ type Specificity = int * int * int
 
 module private impl =
 
-    let notNullOrEmpty = System.String.IsNullOrEmpty >> not
-
-    let driveRegex = Regex(@"^[A-Za-z]:$", RegexOptions.Compiled)
-    let isMask (a:string) = a.IndexOfAny([|'*';'?'|]) >= 0
-    let iif fn b c a = match fn a with | true -> b a | _ -> c a
-    
     let isRoot = function | FsRoot::_ | Disk _::_ -> true | _ -> false
 
     /// <summary>
@@ -49,44 +42,114 @@ module private impl =
     let rec normalize = function
         | [] -> []
         | [x] -> [x]
-        | x::tail ->               
+        | x::tail ->
             match x::(normalize tail) with
             | Directory _::Parent::t -> t
             | CurrentDir::t -> t
             | rest -> rest
 
-    /// <summary>
-    /// Maps part of file path to a path part.
-    /// </summary>
-    /// <param name="mapPart"></param>
-    let mapPart isLast = function
-        | "**" -> Recurse
-        | "." -> CurrentDir
-        | ".." -> Parent (* works well now with Path.Combine() *)
-        | a when a.EndsWith(":") && driveRegex.IsMatch(a) -> Disk(a)
-        | a when not isLast -> a |> iif isMask DirectoryMask Directory
-        | a -> a |> iif isMask FileMask FileName
+    let private reserved = "()[]{}|"
 
-    let parse isLastPart pattern =
-     
-        if notNullOrEmpty pattern then
-            let parts = pattern.Split([|'\\'; '/'|], System.StringSplitOptions.RemoveEmptyEntries)
-            let fsroot = pattern.[0] |> function | '\\' | '/' -> [FsRoot] | _ -> []
-            in
-            let isLast = isLastPart parts
-            fsroot @ (parts |> Array.mapi (isLast >> mapPart) |> List.ofArray)
-                |> normalize |> PathMask
+    /// The end of the class starting at `i` (a `[`), the index of its closing `]`, or -1
+    /// (spec 4.1 class mode: a `]` right after `[`, `[!`, `[^` is an item, `\` escapes).
+    let private classEnd (s: string) (i: int) =
+        let n = s.Length
+        let mutable j = i + 1
+        if j < n && (s.[j] = '!' || s.[j] = '^') then j <- j + 1
+        if j < n && s.[j] = ']' then j <- j + 1
+        while j < n && s.[j] <> ']' do
+            j <- if s.[j] = '\\' then j + 2 else j + 1
+        if j < n then j else -1
+
+    /// Splits a mask at its separators with the lexer's rules (spec 6.1, 4.1): at `/` and at a
+    /// `\` that is a legacy separator, never inside `[...]` or `{...}` and never at a `\` that
+    /// escapes a reserved character. The segment texts keep their escapes; empty strings mark a
+    /// leading separator, a trailing one and a repeated one.
+    let split (s: string) : string list =
+        let segs = ResizeArray<string>()
+        let sb = System.Text.StringBuilder()
+        let n = s.Length
+        let mutable i = 0
+        let mutable braces = 0
+        while i < n do
+            let c = s.[i]
+            if c = '\\' && i + 1 < n && reserved.IndexOf s.[i + 1] >= 0 then
+                sb.Append(c).Append(s.[i + 1]) |> ignore
+                i <- i + 2
+            elif (c = '/' || c = '\\') && braces = 0 then
+                segs.Add(sb.ToString())
+                sb.Clear() |> ignore
+                i <- i + 1
+            elif c = '[' then
+                match classEnd s i with
+                | -1 -> sb.Append c |> ignore; i <- i + 1
+                | e -> sb.Append(s, i, e - i + 1) |> ignore; i <- e + 1
+            else
+                if c = '{' then braces <- braces + 1
+                elif c = '}' && braces > 0 then braces <- braces - 1
+                sb.Append c |> ignore
+                i <- i + 1
+        segs.Add(sb.ToString())
+        List.ofSeq segs
+
+    /// A segment holding a wildcard, a class or braces (an unescaped `* ? [ {`).
+    let isMask (a: string) =
+        let mutable i = 0
+        let mutable found = false
+        while not found && i < a.Length do
+            match a.[i] with
+            | '\\' -> i <- i + 2
+            | '*' | '?' | '[' | '{' -> found <- true
+            | _ -> i <- i + 1
+        found
+
+    let private isDrive (a: string) = a.Length = 2 && a.[1] = ':' && System.Char.IsLetter a.[0]
+
+    /// Parses a mask into parts (spec 6.1). A mask ending in a separator, or any mask when
+    /// `dirMode`, names directories: its last part is `Directory`, `DirectoryMask` or `Recurse`;
+    /// otherwise the last part is `FileName` or `FileMask` (a last `**` is `FileMask "**"`), so
+    /// `maskText` gives the text back. A leading `//` is two `FsRoot` (a UNC root, D24). `.` and
+    /// `x/..` are resolved in the literal prefix only (D34: after a wildcard they are XP012).
+    let parse (dirMode: bool) (pattern: string) =
+        if System.String.IsNullOrEmpty pattern then PathMask []
         else
-            PathMask []
+            let raw = split pattern
+            let leading = raw |> List.takeWhile ((=) "") |> List.length
+            let body = raw |> List.filter ((<>) "")
+            let dirMode = dirMode || (body <> [] && List.last raw = "")
+            let root = match leading with 0 -> [] | 1 -> [ FsRoot ] | _ -> [ FsRoot; FsRoot ]
+            let lastIndex = body.Length - 1
+            let parts =
+                body |> List.mapi (fun i a ->
+                    let isLast = i = lastIndex
+                    match a with
+                    | _ when i = 0 && leading = 0 && isDrive a -> Disk a
+                    | "**" -> if isLast && not dirMode then FileMask a else Recurse
+                    | "." when not (isLast && dirMode) -> CurrentDir
+                    | ".." when not (isLast && dirMode) -> Parent
+                    | a when not isLast || dirMode -> if isMask a then DirectoryMask a else Directory a
+                    | a -> if isMask a then FileMask a else FileName a)
+            let isWild = function DirectoryMask _ | FileMask _ | Recurse -> true | _ -> false
+            let prefix = parts |> List.takeWhile (isWild >> not)
+            let rest = parts |> List.skip prefix.Length
+            PathMask (root @ normalize prefix @ rest)
 
-    /// <summary>
-    /// supplementary function for parsing directory
-    /// </summary>
-    let isLastPartForDir _ _ = false
-    /// <summary>
-    /// supplementary function for parsing file
-    /// </summary>
-    let isLastPartForFile (parts:_ array) = (=) (parts.Length-1)
+    /// The mask text of parts made by `parse` (spec 6.1): segments joined with `/`, a trailing
+    /// `/` when the last part names directories.
+    let maskText (PathMask parts) =
+        let text = function
+            | FsRoot -> "" | Disk d | Directory d | DirectoryMask d | FileName d | FileMask d -> d
+            | Parent -> ".." | CurrentDir -> "." | Recurse -> "**"
+        let roots = parts |> List.takeWhile ((=) FsRoot) |> List.length
+        let body = parts |> List.skip roots
+        let head = match roots with 0 -> "" | 1 -> "/" | _ -> "//"
+        let joined = body |> List.map text |> String.concat "/"
+        let trailing =
+            match List.tryLast body with
+            | Some (Directory _ | DirectoryMask _ | Recurse) -> "/"
+            | Some (Disk _) when body.Length = 1 -> "/"
+            | _ -> ""
+        head + joined + trailing
 
     let dirSeparator = string Path.DirectorySeparatorChar
     let partToString =
@@ -101,38 +164,6 @@ module private impl =
         | Part.Disk d -> d + dirSeparator
         | Part.Recurse -> "**"
         | Part.FsRoot -> dirSeparator
-
-    // A segment is considered the start of a wildcard/named-group portion of a
-    // pattern once it contains any of these characters. Everything from that segment
-    // on is left untouched - it may legitimately contain '/' inside a named group
-    // (e.g. "(root:*/*-a).ss"), so it must not be split and reassembled.
-    let isSpecialSegment (s: string) = s.IndexOfAny([| '*'; '?'; '(' |]) >= 0
-
-    // A segment that must never be popped by a ".." above it: the empty segment
-    // produced by a leading '/' (unix/UNC root), or a drive letter like "C:".
-    let isRootMarkerSegment (s: string) = s = "" || (s.Length = 2 && s.[1] = ':')
-
-    /// Collapses "." and ".." segments against the preceding literal segment,
-    /// refusing to climb past a root marker segment.
-    let rec collapseDotSegments (stack: string list) = function
-        | [] -> List.rev stack
-        | "." :: rest -> collapseDotSegments stack rest
-        | ".." :: rest ->
-            match stack with
-            | top :: restStack when not (isRootMarkerSegment top) -> collapseDotSegments restStack rest
-            | _ -> collapseDotSegments stack rest
-        | s :: rest -> collapseDotSegments (s :: stack) rest
-
-    /// Normalizes ".." / "." only within the literal directory prefix of a combined
-    /// root+pattern path string (i.e. up to, but not including, the first segment
-    /// that contains a wildcard or named-group marker). The wildcard/named-group
-    /// suffix is left byte-for-byte as given.
-    let normalizeLiteralPrefix (combined: string) =
-        let segments = combined.Replace('\\', '/').Split('/') |> List.ofArray
-        let idx = segments |> List.tryFindIndex isSpecialSegment |> Option.defaultValue segments.Length
-        let prefix, suffix = segments |> List.splitAt idx
-        let normalizedPrefix = collapseDotSegments [] prefix
-        System.String.Join("/", normalizedPrefix @ suffix)
 
 
 module private PicklerImpl =
@@ -165,126 +196,6 @@ module private PicklerImpl =
 
     let pattern = wrap(PathMask, fun(PathMask pp) -> pp) (list patternpart)
 
-/// The 3.x segment matcher of `Fileset` scanning and `matchesPattern` (a `PathMask` segment with
-/// `*`/`?` becomes a regex). Rule matching, `matches` and `matchGroups` use the pattern module
-/// (`Xake.PatternAst`, `Xake.PatternMatch`) since Phase 4a; this stays until the scanner moves
-/// onto the module (Phase 4b), then it is deleted.
-module internal LegacyMask =
-
-    type Token =
-        | Lit of string
-        | Star            // `*`  — a run of non-separator characters
-        | DoubleStar      // `**` — anything, including '/'
-        | AnyChar         // `?`  — a single non-separator character
-        | Group of string * Token list   // `(name:...)` — a named capture around its body
-
-    let private isWord c = System.Char.IsLetterOrDigit c || c = '_'
-
-    // Parses tokens from s starting at i. When inGroup, a top-level ')' ends the run and is left
-    // for the caller to consume; otherwise ')' is an ordinary literal (as the old regex treated it).
-    let rec private parseAt (s: string) (inGroup: bool) (i0: int) : Token list * int =
-        let sb = System.Text.StringBuilder()
-        let tokens = System.Collections.Generic.List<Token>()
-        let flush () = if sb.Length > 0 then tokens.Add(Lit (sb.ToString())); sb.Clear() |> ignore
-        let mutable i = i0
-        let mutable stop = false
-        while not stop && i < s.Length do
-            let c = s.[i]
-            if inGroup && c = ')' then
-                stop <- true                                    // caller consumes the ')'
-            elif c = '*' && i + 1 < s.Length && s.[i + 1] = '*' then
-                flush (); tokens.Add DoubleStar; i <- i + 2
-            elif c = '*' then
-                flush (); tokens.Add Star; i <- i + 1
-            elif c = '?' then
-                flush (); tokens.Add AnyChar; i <- i + 1
-            elif c = '(' then
-                // a group opener is `(` <word+> `:` ; anything else is a literal '('
-                let mutable j = i + 1
-                while j < s.Length && isWord s.[j] do j <- j + 1
-                if j > i + 1 && j < s.Length && s.[j] = ':' then
-                    flush ()
-                    let name = s.Substring(i + 1, j - (i + 1))
-                    let inner, next = parseAt s true (j + 1)
-                    tokens.Add(Group(name, inner))
-                    i <- if next < s.Length && s.[next] = ')' then next + 1 else next
-                else
-                    sb.Append c |> ignore; i <- i + 1
-            else
-                sb.Append c |> ignore; i <- i + 1
-        flush ()
-        List.ofSeq tokens, i
-
-    /// Parses an Ant-style pattern into tokens (slashes normalized to '/').
-    let parse (pattern: string) : Token list =
-        parseAt (pattern.Replace('\\', '/')) false 0 |> fst
-
-    // Regex fragments, byte-identical to the former string-substitution map. Triple-quoted so the
-    // `\\` reaches the regex as a literal backslash inside the character class.
-    let private starRx  = """([^/\\]*)"""
-    let private anyRx   = """([^/\\])"""
-    let private dstarRx = "(.*)"
-    // The former substitution escaped only these metacharacters; '[' and ']' are deliberately
-    // absent, so they pass through unescaped exactly as before (no behavior change).
-    let private metachars = Regex(@"[.$^+!={}]", RegexOptions.Compiled)
-    let private escapeLiteral (s: string) = metachars.Replace(s, @"\$0")
-
-    /// The inner (unanchored) regex for a token list.
-    let rec toRegex (tokens: Token list) : string =
-        tokens
-        |> List.map (function
-            | Lit s -> escapeLiteral s
-            | Star -> starRx
-            | DoubleStar -> dstarRx
-            | AnyChar -> anyRx
-            | Group (name, inner) -> "(?<" + name + ">" + toRegex inner + ")")
-        |> String.concat ""
-
-module internal matchImpl =
-
-    let eq s1 s2 = System.StringComparer.OrdinalIgnoreCase.Equals(s1, s2)
-
-    let normalizeSlashes (pat: string) =
-        pat.Replace('\\', '/')
-
-    let private buildRegex (pattern:string) =
-        let pat = pattern |> LegacyMask.parse |> LegacyMask.toRegex
-        let ignoreCase = if Env.isUnix then RegexOptions.None else RegexOptions.IgnoreCase
-        in
-        Regex(@"^" + pat + "$", RegexOptions.Compiled + ignoreCase)
-
-    // Building a compiled Regex costs about a millisecond; the masks are few (a script's
-    // patterns and their segments) and matched against every file or target, so each is
-    // built once. A Regex is safe to share between threads for matching.
-    let private regexCache = System.Collections.Concurrent.ConcurrentDictionary<string, Regex> ()
-
-    /// The anchored regex for an Ant-style mask, built once per distinct mask.
-    let maskToRegex (pattern:string) = regexCache.GetOrAdd (pattern, fun p -> buildRegex p)
-
-    let matchPart (mask:Part) (path:Part) =
-        let matchByMask (rx:Regex) value = rx.Match(value).Success
-        match mask,path with
-        | (FsRoot, FsRoot) -> true
-        | (Disk mask, Disk d) | (Directory mask, Directory d) | FileName mask, FileName d when eq mask d -> true
-
-        | DirectoryMask mask, Directory d | FileMask mask, FileName d ->
-            matchByMask (maskToRegex mask) d
-
-        | _ -> false
-
-    let rec matchPaths (mask:Part list) (p:Part list) =
-        match mask,p with
-        | [], [] -> true
-        | [], _ | _, [] -> false
-
-        | Directory _::Recurse::Parent::ms, _ -> matchPaths (Recurse::ms) p
-        | Recurse::Parent::ms, _              -> matchPaths (Recurse::ms) p    // ignore parent ref
-
-        | Recurse::ms, (FileName _)::_ -> matchPaths ms p
-        | Recurse::ms, Directory _::xs -> (matchPaths mask xs) || (matchPaths ms p)
-        | m::ms, x::xs ->
-            matchPart m x && matchPaths ms xs
-
 /// Pickler for PathMask serialization.
 let pickler = PicklerImpl.pattern
 
@@ -306,20 +217,21 @@ let join (PathMask p1) (PathMask p2) =
     | _ -> p1 @ p2 |> impl.normalize |> PathMask
 
 /// <summary>
-/// Converts Ant-style file pattern to a list of parts. Assumes the path specified
+/// Converts a mask naming directories to a PathMask (as if it ended in '/'). The parts keep
+/// the segment text of the mask (spec 6.1); the mask is parsed by the pattern module when a
+/// fileset is evaluated.
 /// </summary>
-let parseDir = impl.parse impl.isLastPartForDir
+let parseDir = impl.parse true
 
 /// <summary>
-/// Converts Ant-style file pattern to a PathMask.
+/// Converts a mask to a PathMask: split at '/' (and at a '\' that is a legacy separator), not
+/// inside '[...]' or '{...}'; a mask ending in a separator names directories (spec 6.1).
 /// </summary>
-let parse = impl.parse impl.isLastPartForFile
+let parse = impl.parse false
 
-/// Returns true if the parsed file path matches the given PathMask (the 3.x part matcher, still
-/// behind `Fileset` scanning and hermetic's lock masks until Phase 4b).
-let matchesPattern (PathMask mask) file =
-    let (PathMask fileParts) = file |> impl.parse impl.isLastPartForFile in
-    matchImpl.matchPaths mask fileParts
+/// The mask text of a PathMask made by `parse` or `parseDir` (spec 6.1): what the pattern module
+/// parses when a fileset is evaluated.
+let maskText = impl.maskText
 
 module private RuleImpl =
 

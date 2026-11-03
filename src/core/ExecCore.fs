@@ -400,8 +400,9 @@ let runBuild (ctx: ExecContext) groups =
 let createContextCore (options: EngineOptions) (db: Agent<Storage.DatabaseApi>) vars showProgress =
     let logger = options.Logger
     let scheduler = Scheduler.create logger options.Threads
-    // pattern warnings (spec 7.3), including those buffered at script load, go to this build's log
-    let patternWarnings = PatternAst.Warnings.attach (fun message -> logger.Log Warning "%s" message)
+    // pattern warnings (spec 7.3) and fileset scan notes (6.5, 6.6), including those buffered at
+    // script load, go to this build's log
+    let patternWarnings = PatternAst.Warnings.attach (fun level message -> logger.Log level "%s" message)
 
     let finalize () =
         patternWarnings.Dispose()

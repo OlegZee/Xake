@@ -1,4 +1,4 @@
-/// The pattern module: one grammar, one parser and one AST for rule patterns and masks
+﻿/// The pattern module: one grammar, one parser and one AST for rule patterns and masks
 /// (docs/features/pattern-module/spec.md, sections 4, 5, 7 and 8; decisions D1-D34 in brief.md).
 ///
 /// This file holds the parser stage (PR 2): the AST, the lexer with its class mode, the parser with
@@ -731,24 +731,31 @@ let private issuesOf (usage: Use) (text: string) (parsed: Parsed) : Issue list =
 module Warnings =
     let private gate = obj ()
     let private seen = ConcurrentDictionary<string, bool>()
-    let private sinks = List<obj * (string -> unit)>()
-    let private buffer = Queue<string>()
+    let private sinks = List<obj * (Level -> string -> unit)>()
+    let private buffer = Queue<Level * string>()
 
-    let private emit (line: string) =
+    let private emit (level: Level) (line: string) =
         lock gate (fun () ->
             if sinks.Count = 0 then
-                if buffer.Count < 1000 then buffer.Enqueue line
+                if buffer.Count < 1000 then buffer.Enqueue((level, line))
             else
-                for (_, sink) in sinks do sink line)
+                for (_, sink) in sinks do sink level line)
 
-    /// Sends every warning (the buffered ones first) to the sink until disposed.
-    let internal attach (sink: string -> unit) : IDisposable =
+    /// Sends every warning and scan note (the buffered ones first) to the sink until disposed.
+    let internal attach (sink: Level -> string -> unit) : IDisposable =
         let key = obj ()
         lock gate (fun () ->
             sinks.Add((key, sink))
-            while buffer.Count > 0 do sink (buffer.Dequeue()))
+            while buffer.Count > 0 do
+                let level, line = buffer.Dequeue()
+                sink level line)
         { new IDisposable with
             member _.Dispose() = lock gate (fun () -> sinks.RemoveAll(fun (k, _) -> obj.ReferenceEquals(k, key)) |> ignore) }
+
+    /// A note of a fileset scan (spec 6.5, 6.6: a link not entered under `**` at level Message,
+    /// an unreadable directory at level Warning), once per (key, process).
+    let internal note (key: string) (level: Level) (line: string) =
+        if seen.TryAdd("note\n" + key, true) then emit level line
 
     /// The line of spec 7.3: `Pattern '<text>' (<use>): <part>; <part>. [<codes>]`.
     let internal format (usage: string) (pattern: string) (issues: Issue list) =
@@ -758,13 +765,13 @@ module Warnings =
 
     let internal report (usage: string) (pattern: string) (issues: Issue list) =
         if not (List.isEmpty issues) && seen.TryAdd(usage + "\n" + pattern, true) then
-            emit (format usage pattern issues)
+            emit Level.Warning (format usage pattern issues)
 
     /// An evidence or evaluation warning (XP104, XP113, XP114, XP119, XP120): one more line for
     /// the key (use, pattern), at most once per code (7.3).
     let internal reportEvidence (usage: string) (pattern: string) (issue: Issue) =
         if seen.TryAdd(usage + "\n" + pattern + "\n" + issue.Code, true) then
-            emit (format usage pattern [ issue ])
+            emit Level.Warning (format usage pattern [ issue ])
 
 // =================================================================================================
 // Parsing entry points (spec 8.2, D9, D34)

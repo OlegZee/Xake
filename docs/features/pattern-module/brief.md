@@ -387,3 +387,16 @@ fixes how much breaks. 3.12.0 is released (tag `v3.12.0`); nothing of this featu
   creation-time check applies to `<==` and `<<<`. (3) An empty signing target (`Sign.Settings`)
   is XP018 at rule creation (3.x silently matched nothing). Also: `applyWildcards`,
   `wildcardsRegex`, `patternTagRegex` deleted (spec 8.3) rather than wrapped.
+- **D44 (2026-11-03): the msbuild import keeps rewriting `dir/**` to `dir/**/*`** (`Import.xakeMask`).
+  Both select the same files in 4.0; the rewrite keeps recorded lock text byte-identical and avoids
+  XP113 (a 3.x-reading warning) on masks the user did not write. Phase 4b question 1.
+- **D45 (2026-11-03): the msbuild import escapes reserved characters** (`( ) [ ] { } |`) in item
+  masks and project paths it turns into Xake masks, so 3.x-literal paths such as `Foo (x86)` keep
+  importing. Lock text changes only for such paths. Phase 4b question 2.
+- **D46 (2026-11-03): `Fileset.toFileList1` and the `FileSystem` adapter are deleted in 4.0**, not
+  kept Obsolete: the adapter is ignored since scanning runs on the module. A release-notes line
+  records the removal. Phase 4b question 3.
+- **D47 (2026-11-03): the spec gets a dated "Phase 4b notes" entry**; approved sections 8.1/8.2 stay
+  intact. The entry lists the `Path.matchesPattern`/`LegacyMask`/`matchImpl` deletions, the new
+  `Path.parse` splitting and trailing-separator reading, D44–D46, and the one-time rebuild when a
+  3.x-pickled fileset with a trailing `Recurse` reads back as `dir/**/`. Phase 4b question 4.

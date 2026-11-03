@@ -1,4 +1,4 @@
-/// The scanner stage of the pattern module (docs/features/pattern-module/spec.md sections 6, 7.3
+﻿/// The scanner stage of the pattern module (docs/features/pattern-module/spec.md sections 6, 7.3
 /// and 9.5; decisions D9, D10, D11, D13, D17, D25, D29, D33, D39 in brief.md): a depth-first
 /// walker driven by the AST of each mask. Internal: the engine's `Fileset` keeps its 3.x scanner
 /// until Phase 4, when `Fileset.toFileList` becomes an adapter over `scan` (D31).
@@ -633,7 +633,17 @@ let scan (windows: bool) (baseDir: string) (fileset: (MaskRole * string) list) :
       Notes = List.ofSeq notes }
 
 /// Sends the warnings of an evaluation to the build log through the process-wide registry of
-/// 7.3 (once per (use, pattern, code)); the notes are the engine's to log (Phase 4).
+/// 7.3 (once per (use, pattern, code)), and its notes once per directory and process: a link
+/// not entered under `**` at level Message (6.5, D29), an unreadable directory at level Warning
+/// (6.6).
 let reportWarnings (result: ScanResult) =
     for w in result.Warnings do
         Warnings.reportEvidence w.Use w.Pattern { Code = w.Code; Text = w.Text }
+    for n in result.Notes do
+        match n with
+        | LinkSkipped dir ->
+            Warnings.note ("link\n" + dir) Level.Message
+                (sprintf "Directory '%s' is a link: '**' does not enter it (Xake 4.0); name it in the mask to scan it" dir)
+        | Unreadable dir ->
+            Warnings.note ("unreadable\n" + dir) Level.Warning
+                (sprintf "Directory '%s' cannot be read; the fileset scan skipped it" dir)

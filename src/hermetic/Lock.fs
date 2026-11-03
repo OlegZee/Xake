@@ -357,9 +357,9 @@ module Lock =
         let remaining = System.Collections.Generic.HashSet<string> (files)
         [ for m in masks do
             if not (m.StartsWith "!") then
-                let pattern = Xake.Path.parse (if m.EndsWith "**" then m + "/*" else m)
+                let covers = Xake.Path.matches m ""
                 let named =
-                    files |> List.filter (fun f -> remaining.Contains f && Xake.Path.matchesPattern pattern f)
+                    files |> List.filter (fun f -> remaining.Contains f && covers f)
                     |> List.distinct |> List.sortWith (fun a b -> System.String.Compare (a, b, System.StringComparison.OrdinalIgnoreCase))
                 for f in named do
                     remaining.Remove f |> ignore
@@ -899,9 +899,10 @@ module Lock =
             if recorded then sprintf "\"Id\": %s" (escape (identityOf roots entry role path))
             else sprintf "\"Path\": %s" (str path)
         let indent = "        "
-        let strings name (items: string list) =
-            items |> List.map (str >> sprintf "%s  %s" indent) |> String.concat ",\n"
+        let stringsWith value name (items: string list) =
+            items |> List.map (value >> sprintf "%s  %s" indent) |> String.concat ",\n"
             |> fun body -> sprintf "%s%s: [\n%s\n%s]" indent (escape name) body indent
+        let strings = stringsWith str
         let hashedList name (items: Hashed list) =
             items
             |> List.map (fun h -> sprintf "%s  { \"Path\": %s, \"Sha256\": %s }" indent (str h.Path) (escape h.Sha256))
@@ -989,7 +990,8 @@ module Lock =
           | Some r ->
               section "Recorded"
                 [ yield sprintf "%s\"By\": \"msbuild\"" indent
-                  yield strings "Masks" r.Masks
+                  // masks keep their escapes; a root is matched in its mask spelling (D45)
+                  yield stringsWith (Roots.tokenizeMask roots >> escape) "Masks" r.Masks
                   match placed with
                   | Some p when not (List.isEmpty p) -> yield pairs "Placed" p
                   | Some _ -> yield sprintf "%s\"Placed\": {}" indent
@@ -1076,7 +1078,7 @@ module Lock =
                          |> List.map (fun p ->
                              { Name = str "Name" p; Configuration = str "Configuration" p; Framework = str "Framework" p
                                Path = str "Path" p |> expand })
-                       Masks = strings "Masks" r
+                       Masks = field "Masks" r |> Option.map asArray |> Option.defaultValue [] |> List.choose asString |> List.map (Roots.expandMask roots)
                        Placed =
                          match field "Placed" r with
                          | Some (JObject members) -> Some (members |> List.choose (fun (k, v) -> asString v |> Option.map (fun v -> expand k, expand v)))

@@ -76,6 +76,17 @@ do! cp {
 }
 ```
 
+A fileset or a string on a line of its own is a source too: a fileset as `files`, a string as
+`file` (flattened). Entries and operations mix in any order:
+
+```fsharp
+do! cp {
+  !!"bin/*.dll" -- "bin/*.Tests.dll"
+  "README.md"
+  todir "deploy"
+}
+```
+
 Other copy helpers:
 
 ```fsharp
@@ -85,10 +96,20 @@ do! copyFile "src/App.config" "out/App.config"
 
 ## Remove tasks
 
+`del` is an alias for `rm`.
+
+Delete the files of a fileset, written on its own line:
+
+```fsharp
+do! rm { !!"out/*.*" }
+do! rm { !!"out/*.*" -- "out/keep.txt" }
+```
+
 Delete file or mask:
 
 ```fsharp
 do! rm {file "temp/*.tmp"}
+do! rm { "temp/*.tmp" }      // the same: a string entry is a file mask
 ```
 
 Delete directory:
@@ -109,15 +130,21 @@ do! rm {
 }
 ```
 
-`dir`, `file` and `files` may repeat and combine in one `rm`; targets apply in order:
+`dir`, `file` and `files` may repeat and combine in one `rm`, together with fileset and string
+entries, in any order; targets apply in order, and a fileset that matches nothing is not an error:
 
 ```fsharp
 do! rm {
   dir "out"
   dir "obj"
   file "*.tmp"
+  !!"logs/**/*.log" -- "logs/keep/**"
+  "build.cache"
+  verbose
 }
 ```
+
+A string entry is a file mask (as `file`), never a directory: use `dir` to delete a folder.
 
 ## .NET tasks
 

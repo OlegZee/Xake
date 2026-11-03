@@ -80,9 +80,13 @@ module RmImpl =
 
     /// Computation expression builder for the rm/del task.
     /// `file`, `dir` and `files` may repeat and combine; each adds a target.
+    /// A fileset or a string on its own line is a target too: `rm { !!"out/*.*" -- "out/keep.txt" }`,
+    /// `rm { "temp/*.tmp" }` (a string is a file mask, as `file`).
     type RmArgsBuilder() =
 
         let add (a: RmArgs) target = { a with targets = a.targets @ [target] }
+        let combine (a: RmArgs) (b: RmArgs) =
+            { targets = a.targets @ b.targets; verbose = a.verbose || b.verbose }
 
         [<CustomOperation("file")>]    member __.File(a :RmArgs, value) =    add a (File value)
         [<CustomOperation("dir")>]     member __.Dir(a :RmArgs, value) =     add a (Dir value)
@@ -90,6 +94,14 @@ module RmImpl =
         [<CustomOperation("verbose")>] member __.Verbose(a:RmArgs) =         {a with verbose = true}
 
         member __.Yield(()) = RmArgs.Default
+        /// A fileset entry: `rm { !!"out/*.*" }`.
+        member __.Yield(fileset: Fileset) = { RmArgs.Default with targets = [Files fileset] }
+        /// A file mask entry: `rm { "temp/*.tmp" }`, same as `file`.
+        member __.Yield(fileMask: string) = { RmArgs.Default with targets = [File fileMask] }
+        member __.Combine(a: RmArgs, b: RmArgs) = combine a b
+        member __.Delay(f: unit -> RmArgs) = f()
+        /// Lets an entry follow an operation: `rm { verbose; !!"out/*.*" }`.
+        member __.For(a: RmArgs, f: unit -> RmArgs) = combine a (f())
         member __.Zero() = RmArgs.Default
         member __.Run(args:RmArgs) = Rm args
 

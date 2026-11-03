@@ -1089,6 +1089,9 @@ package and the version variable, appends the run number as the fourth component
 packed), and pushes only the tagged package with `--skip-duplicate`. `build.yml` runs
 `build test pack` on SDK 8.0.x and 10.0.x.
 
+> Note (2026-11-03): hermetic packing left Xake in split step S3b; the hermetic library ships
+> inside the `Xake.Dotnet` package 4.0.0 from its own repository. The text above is kept as written.
+
 Order of release: `Xake` first, then `Xake.Hermetic.Dotnet` against the published version.
 `Xake` 3.7.0 is out as `3.7.0.26`, the floor of the 0.3 range. This PR makes
 `Xake.Hermetic.Dotnet` 0.3.0. `Xake` 3.4.0 (`3.4.0.21`) and `Xake.Hermetic.Dotnet` 0.1.0

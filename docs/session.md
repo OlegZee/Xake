@@ -227,13 +227,16 @@ dotnet test src/tests -c Release                                         # all g
 dotnet test src/hermetic.tests -c Release --no-restore
 dotnet test src/tests --filter 'Category=Integration'                    # real csc and fsc runs
 dotnet test src/hermetic.tests --filter 'Category=Integration'
-dotnet fsi build.fsx -- -- build test pack                               # self-hosting: 3 libraries, both test projects, both packages
+dotnet fsi build.fsx -- -- build test pack                               # self-hosting: 3 libraries, both test projects, the Xake package
 dotnet fsi samples/fullframework.fsx                                     # end-to-end csc
 ```
 
-Tests move between the two projects, so the split shifts. `pack` writes `out/pkg/Xake/` and `out/pkg/Xake.Hermetic.Dotnet/` (independent:
-the hermetic pack builds on the in-repo `Xake` and depends on package `Xake` at the build's version; `pack-hermetic` packs only that one) and fails
-if the hermetic nuspec has no `Xake` dependency or names `Xake.Dotnet` (docs/devprocess.md).
+Tests move between the two projects, so the split shifts. `pack` writes `out/pkg/Xake/` only: the `Xake` package is
+src/core alone (dotnet-split S-D14), and `pack` fails if it carries anything of `Xake.Dotnet` (docs/devprocess.md).
+- Trap: the msbuild runs of `build.fsx` (`test-build::*`, the `out/` builds, `pack`) all build src/core through project
+  references into the same `bin/Release` and `obj` folders; they take the `msbuild` resource (one at a time), since two
+  at once failed the v4.0.0-preview.1 publish run (MSB4018 GenerateDepsFile, `Xake.deps.json` in use). Keep any new
+  msbuild rule under `oneMsbuild`.
 
 `samples/*.fsx` reference `out/netstandard2.0/*.dll`, so run the self-hosting build first.
 

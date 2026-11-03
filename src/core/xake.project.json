@@ -44,5 +44,17 @@
   ],
   "packages": [{ "id": "FSharp.Core", "version": "8.0.100" }],
   "options": { "doc": true },
-  "internalsVisibleTo": ["tests"]
+  "internalsVisibleTo": ["tests"],
+  "package": {
+    "id": "Xake",
+    "description": "Xake build tool: the engine",
+    "authors": "OlegZee",
+    "copyright": "(c) OlegZee 2014-2026",
+    "tags": ["fsharp", "build", "make", "buildtool", "automation", "shake"],
+    "license": "MIT",
+    "projectUrl": "https://github.com/OlegZee/Xake",
+    "repository": { "type": "git", "url": "https://github.com/OlegZee/Xake" },
+    "icon": "../../Icon.png",
+    "readme": "../../readme.md"
+  }
 }

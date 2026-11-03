@@ -13,8 +13,8 @@ Decided 2026-10-29: A, B, E now; then D (after vars and patterns). See [review.m
 | E2 | tests read the range from the fsproj; readmes `#r` unversioned; base history out of the fsproj comment into release notes | in PR (`pr/bump-base`); the fsproj history went out in #108; the test fixture keeps its own copy (a snapshot, not tracked) |
 | E3 | bootstrap bump: `build.fsx` / `build.fsc.fsx` to Xake 3.14.0.45 / hermetic 0.9.0.46 | done (#106) |
 | E4 | (optional) workflow opening the bootstrap PR after a publish run | not planned: the bootstrap bump is two known versions now |
-| D0 | prerequisites: vars variant 3 (#111, #112, merged) and the pattern module merged to `dev` | vars done; pattern module waiting. The rework ships as Xake 4.0, D comes with it |
+| D0 | prerequisites: vars variant 3 (#111, #112, merged) and the pattern module merged to `dev` | done: vars (#111, #112), pattern module (#131, 2026-11-03). Ships as Xake 4.0, D with it |
 | D1 | design note for the split: package layout, meta-package or 4.0, `pexecSync`/`memoize` public, tests and CI moves | after D0 |
-| D2 | `Xake.Dotnet` and hermetic on the final vars and pattern APIs | after D0 |
+| D2 | `Xake.Dotnet` and hermetic on the final vars and pattern APIs | done in-repo (#112, #123, #124); the split is tracked in [dotnet-split](../dotnet-split/tracker.md) |
 | D3 | the split itself | after D1, D2 |
 | D-pre | until 4.0 the hermetic package builds on the in-repo Xake (owner, 2026-10-31): project references, dependency = the build's Xake version, `bump-base` and `hermetic-compat` retired, `hermetic-v*` paused; the published 0.10 range stays | done in #112 |

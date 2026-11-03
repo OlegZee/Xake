@@ -60,11 +60,12 @@ leave it alone.
 
 - 2026-11-03 (Phase 5b): user docs on `feature/typed-docs` (PR pending): `docs/typed-targets.md` rewritten against the current `TypedTargets.fs` (errors with declaration prefix, `[a, b]` lists, XP014 on every typed pattern), overview section "Patterns, masks and paths" for the 4.0 grammar, cheatsheet, and the `=>` announcement (no deprecation attribute in 4.0; migrating to `Command` adds AlwaysRerun). The docs snippet test is back in `TypedCompileTests`. Open for the owner: which release removes `=>`, and whether 4.0 marks it `[<Obsolete>]` (the spec and the brief decide neither).
 
+- 2026-11-03 (end): Phase 5b merged (#130); `feature/patterns2` merged into `dev` as #131
+  (merge of `dev`, fsc refresh, the 4.0 release notes in one section), CI green on all three
+  jobs. The pattern module is done; `feature/patterns2` is finished and can be deleted.
+
 ## Next step
 
-Fresh session: read `next-session.md` in this folder (hand-off of 2026-11-03).
-
-
-Phase 4a: #123 open; D43 confirmed 2026-11-03; the owner reviews. Then Phase 4b (Fileset scanning on `PatternScan`), launched after #123 merges.
-(`--repo OlegZee/Xake`). Then Phase 4b (D42): `Fileset` scanning on `PatternScan`, delete the
-3.x part matcher, hermetic's direct mask uses, the mask items of the release notes.
+None for this feature. The 4.0 release continues in
+[dotnet-split](../dotnet-split/session.md): S6 (final history import into Xake.Dotnet on a
+preview built after #131), S7, S8, S9.

@@ -11,10 +11,10 @@ package for the repository `OlegZee/Xake.Dotnet`, shipped there as ONE package `
 
 | PR | Repo | Branch | Worktree | Status |
 |----|------|--------|----------|--------|
-| — D1 design note | Xake | `feature/dotnet-split` (from `dev`) | `.claude/worktrees/feature/dotnet-split` | brief revised for one package, not pushed |
-| — S1 seam | Xake | `feature/dotnet-seam (#122)` (from `dev`) | `.claude/worktrees/feature/dotnet-seam` | #122 open, CI running |
-| — S4 plan | Xake | `docs/dotnet-split-s4-plan` (from `dev` af45852) | agent worktree | committed, not pushed |
-| — S3b unbundle | Xake | `feature/xake-unbundle-dotnet` (from `dev` 0e804ba) | agent worktree | committed, not pushed |
+| — D1 design note | Xake | `feature/dotnet-split` (from `dev`) | — | #121 merged |
+| — S1 seam | Xake | `feature/dotnet-seam (#122)` (from `dev`) | — | #122 merged |
+| — S4 plan | Xake | `docs/dotnet-split-s4-plan` (from `dev` af45852) | — | #126 merged |
+| — S3b unbundle | Xake | `feature/xake-unbundle-dotnet` (from `dev` 0e804ba) | — | #129 merged |
 
 ## State
 
@@ -72,8 +72,14 @@ package for the repository `OlegZee/Xake.Dotnet`, shipped there as ONE package `
   85 s vs 93 s before. Descriptions re-imported (core gains `package`, dotnet loses it); locks
   unchanged; `build check` green. Readme (packed into `Xake`) still shows `open Xake.Dotnet`.
 
+- 2026-11-03: S3b merged (#129), `v4.0.0-preview.2` published from ebfab1e. The S4 scaffold in
+  `~/projects/Xake.Dotnet` (local `feature/split-scaffold`, tip 0422f3d) is rebuilt on preview.2,
+  not pushed. S5 passed: `feature/patterns2` merged into `dev` as #131 (fe842d5).
+
 ## Next step
 
-S1: refresh the fsc locks (`import`, `update-locks -d LOCK_REFRESH=Xake`, `build check -d NUGET_FETCH=on`)
-the pin moved to 10.0.403 in #122 (as on feature/patterns2); PR #122 open against `dev`, CI running.
-After the merge: S3 (`v4.0.0-preview.1`).
+1. Owner: push the S4 scaffold (`feature/split-scaffold`) and tag a preview built after #131
+   (`v4.0.0-preview.3`).
+2. S6: the final history import from `dev` into Xake.Dotnet on that preview (a normal merge on
+   top of S4, per the rehearsal in [s4-plan.md](s4-plan.md)).
+3. Then S7 (remove `src/dotnet`, `src/hermetic` and the moved tests/docs/samples from Xake), S8, S9.

@@ -362,3 +362,12 @@ Nothing is open: S-D3 closed the last question. The note was approved by merging
   matched by hash like the email domain (S-D12) so the committed filter names nothing;
   deterministic, identical in S6. Until preview.2 (S-D14), the duplicate `Xake.Dotnet.dll`
   reference in the hermetic lock is accepted.
+- **S-D17 (2026-11-03): Xake stops packing and publishing `Xake.Hermetic.Dotnet` now (S3b, #129)**,
+  not at S7: without the bundled `Xake.Dotnet.dll` it would depend on an unpublished package, and
+  the line ends at 0.10.0 (S-D2). Hermetic ships inside `Xake.Dotnet` 4.0.0. S3b question 1.
+- **S-D18 (2026-11-03): the packed `readme.md` is fixed in #129, before preview.2**: an
+  engine-only example; the .NET tasks (`open Xake.Dotnet`, `csc`) move to the `Xake.Dotnet`
+  package from its own repository. S3b question 2.
+- **S-D19 (2026-11-03): `docs/hermetic-architecture.md` keeps its `pack-hermetic` text** with one
+  dated note that hermetic packing left Xake in S3b and ships inside `Xake.Dotnet` 4.0.0. S3b
+  question 3.

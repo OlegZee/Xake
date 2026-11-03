@@ -400,3 +400,7 @@ fixes how much breaks. 3.12.0 is released (tag `v3.12.0`); nothing of this featu
   intact. The entry lists the `Path.matchesPattern`/`LegacyMask`/`matchImpl` deletions, the new
   `Path.parse` splitting and trailing-separator reading, D44–D46, and the one-time rebuild when a
   3.x-pickled fileset with a trailing `Recurse` reads back as `dir/**/`. Phase 4b question 4.
+- **D48 (2026-11-03): Phase 5 in two PRs to `feature/patterns2`**: 5a ports the typed layer
+  (`TypedTargets.fs`, its tests, `TypedCompileTests`) from the frozen `feature/typed-matches` onto
+  the module; 5b the docs (`docs/typed-targets.md`, the "Patterns, masks and paths" overview,
+  cheatsheet, phony `=>` → `Command` announcement). Mirrors #91/#92 on the frozen branch.

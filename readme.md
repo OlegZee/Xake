@@ -20,17 +20,17 @@ let vars = {|
 do xakeScript {
     varschema vars
 
-    "main" <== ["out/app.dll"]
+    command "main" { do! need ["out/app.dll"] }
 
     // rebuilt only when a source file, the project or CONFIGURATION changes
-    "out/app.dll" ..> recipe {
+    target "out/app.dll" {
         let! config = vars.config
         let! sources = getFiles (!! "app/**/*.cs" ++ "app/*.csproj" -- "app/obj/" -- "app/bin/")
         do! needFiles sources
         do! sh "dotnet build app" { args ["-c"; config; "-o"; "out"] }
     }
 
-    "clean" => rm { dir "out" }
+    command "clean" { do! rm { dir "out" } }
 }
 ```
 
@@ -43,7 +43,7 @@ the variables are declared once and listed by `dotnet fsi build.fsx -- -- --help
 The `Xake` package is the build engine alone (`Xake`, `Xake.Tasks`). The .NET tasks (`csc`, `fsc`,
 `msbuild`, `resgen`, hermetic builds) live in the `Xake.Dotnet` package, built from its own
 repository, https://github.com/OlegZee/Xake.Dotnet, and published with 4.0.0: add
-`#r "nuget: Xake.Dotnet"` and `open Xake.Dotnet` to use them.
+`#r "nuget: Xake.Dotnet, 4.0.0"` and `open Xake.Dotnet` to use them.
 
 ## Getting started
 
@@ -53,7 +53,7 @@ install.
 
 ### 1. Hello world
 
-The smallest useful script: one phony rule, printing a message. `main` is the default target,
+The smallest useful script: one command, printing a message. `main` is the default target,
 so no arguments are needed.
 
 ```fsharp
@@ -62,13 +62,13 @@ so no arguments are needed.
 open Xake
 
 do xakeScript {
-    "main" => trace Message "Hello world!"
+    command "main" { do! trace Message "Hello world!" }
 }
 ```
 
 ### 2. A rule that produces a file
 
-`..>` declares a *file* target. The recipe writes the target file, and `main` demands it —
+`target` declares a *file* target. The recipe writes the target file, and `main` demands it —
 targets are built on demand, and only the ones that are actually needed.
 
 ```fsharp
@@ -78,11 +78,11 @@ open Xake
 open Xake.Tasks
 
 do xakeScript {
-    "main" => need ["out/hello.txt"]
+    command "main" { do! need ["out/hello.txt"] }
 
-    "out/hello.txt" ..> writeText "Hello world!"
+    target "out/hello.txt" { do! writeText "Hello world!" }
 
-    "clean" => rm { dir "out" }
+    command "clean" { do! rm { dir "out" } }
 }
 ```
 
@@ -104,9 +104,9 @@ open Xake
 open Xake.Tasks
 
 do xakeScript {
-    "main" => need ["out/hello.txt"]
+    command "main" { do! need ["out/hello.txt"] }
 
-    "out/hello.txt" ..> recipe {
+    target "out/hello.txt" {
         // records name.txt as a dependency of this target
         let! name = readText "name.txt"
 
@@ -114,7 +114,7 @@ do xakeScript {
         do! writeText $"Hello, {name.Trim()}!"
     }
 
-    "clean" => rm { dir "out" }
+    command "clean" { do! rm { dir "out" } }
 }
 ```
 
@@ -162,7 +162,7 @@ Releases are published to nuget.org by CI from a `v*` tag — see
 
 The `csc`, `fsc`, `msbuild` and `resgen` tasks build .NET and full-framework binaries on any OS
 with nothing installed beyond the .NET SDK. They are the `Xake.Dotnet` package (from 4.0.0;
-`#r "nuget: Xake.Dotnet"`, which brings `Xake` with it), developed in its own repository,
+`#r "nuget: Xake.Dotnet, 4.0.0"`, which brings `Xake` with it), developed in its own repository,
 https://github.com/OlegZee/Xake.Dotnet, together with the hermetic build library and their
 documentation.
 

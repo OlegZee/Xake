@@ -140,7 +140,7 @@ do! sh "dotnet" {
 ## .NET tasks
 
 `csc`, `fsc`, `msbuild`, `resgen` and the hermetic locks are the `Xake.Dotnet` package
-(`#r "nuget: Xake.Dotnet"`, `open Xake.Dotnet`), from its own repository,
+(`#r "nuget: Xake.Dotnet, 4.0.0"`, `open Xake.Dotnet`), from its own repository,
 [OlegZee/Xake.Dotnet](https://github.com/OlegZee/Xake.Dotnet), which has their reference.
 
 ## Fingerprints of committed generated files

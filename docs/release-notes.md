@@ -28,7 +28,7 @@ Who must act:
 
 | You | Action |
 |---|---|
-| a script with `open Xake.Dotnet` or `Xake.Hermetic.Dotnet` | add `#r "nuget: Xake.Dotnet"` |
+| a script with `open Xake.Dotnet` or `Xake.Hermetic.Dotnet` | add `#r "nuget: Xake.Dotnet, 4.0.0"` |
 | a script with `(`, `)`, `[`, `{`, `|` in a rule or mask | read the `XPnnn` errors at load; escape or respell |
 | a script that lists, excludes or copies with `dir/**`, `**/` or `-- "dir/"` | check the result: the meaning changed with no error |
 | a script with `Var.*` reads, `var` redefinitions, or `-d` for secrets | declare the keys, define a name once, pass secrets as `XAKE__<NAME>` |
@@ -206,8 +206,8 @@ Details and the error ids E-1a to E-12: [Variables](#variables-evaluated-at-laun
 | 3.x | 4.0 | Change in the script |
 |---|---|---|
 | `Xake` (engine, `Xake.Dotnet.dll` inside) | `Xake`: the engine alone (`Xake.dll`, `Xake.xml`); no `System.Resources.Extensions`, no `Microsoft.Win32.Registry` | nothing for an engine-only script |
-| `Xake.Dotnet` (inside `Xake`; `open Xake.Dotnet`) | the package `Xake.Dotnet` 4.0.0, depends on `Xake [4.0.0, 5.0)` | add `#r "nuget: Xake.Dotnet"`; `open Xake.Dotnet` unchanged |
-| `Xake.Hermetic.Dotnet` 0.x | no package from 4.0 (its line ends at 0.10.0); the assembly ships inside `Xake.Dotnet` 4.0.0, the id points to `Xake.Dotnet` | replace `#r "nuget: Xake.Hermetic.Dotnet"` with `#r "nuget: Xake.Dotnet"`; `open Xake.Hermetic.Dotnet` unchanged |
+| `Xake.Dotnet` (inside `Xake`; `open Xake.Dotnet`) | the package `Xake.Dotnet` 4.0.0, depends on `Xake [4.0.0, 5.0)` | add `#r "nuget: Xake.Dotnet, 4.0.0"`; `open Xake.Dotnet` unchanged |
+| `Xake.Hermetic.Dotnet` 0.x | no package from 4.0 (its line ends at 0.10.0); the assembly ships inside `Xake.Dotnet` 4.0.0, the id points to `Xake.Dotnet` | replace `#r "nuget: Xake.Hermetic.Dotnet, 0.10.0"` with `#r "nuget: Xake.Dotnet, 4.0.0"`; `open Xake.Hermetic.Dotnet` unchanged |
 | sources in `src/dotnet`, `src/hermetic` of this repository | [OlegZee/Xake.Dotnet](https://github.com/OlegZee/Xake.Dotnet) with their tests, docs, samples and the fsc/locks self-build | |
 
 - `Xake.Dotnet.dll` left the `Xake` package from `4.0.0-preview.2`; the 3.x `Xake.Dotnet` line is
@@ -221,8 +221,8 @@ Details and the error ids E-1a to E-12: [Variables](#variables-evaluated-at-laun
 
 ```fsharp
 // 3.x                                  // 4.0
-#r "nuget: Xake"                        #r "nuget: Xake"
-open Xake                               #r "nuget: Xake.Dotnet"
+#r "nuget: Xake, 3.15.0"                #r "nuget: Xake, 4.0.0"
+open Xake                               #r "nuget: Xake.Dotnet, 4.0.0"
 open Xake.Dotnet                        open Xake
                                         open Xake.Dotnet
 ```
@@ -305,6 +305,15 @@ open Xake.Dotnet                        open Xake
   `Mask.parse`/`tryParse`/`check`, `escape`, `escapePath`, `unparse`, `groupNames`, `wildcards`,
   `specificity`, `format`, `formatMatches`, `glob`; one fileset walker. Not opened by `open Xake`.
   Guide: [overview.md](overview.md#patterns-masks-and-paths).
+- **Fileset and string entries in `rm` and `cp`** (#135): a fileset or a mask string stands on
+  its own line in the block and mixes with the operations in any order; the old forms are
+  unchanged. A string entry is a file mask, as `file`.
+
+  ```fsharp
+  do! rm { !!"out/*.*" -- "out/keep.txt" }        // 3.x: rm { files (fileset { includes "out/*.*"; excludes "out/keep.txt" }) }
+  do! cp { !!"bin/*.dll" -- "bin/*.Tests.dll"; "README.md"; todir "deploy" }
+  ```
+
 - **A public seam for task libraries** (#122): `hasRule : string -> Recipe<ExecContext, bool>` and
   the public `Xake.ProcessExec`.
 
@@ -314,7 +323,7 @@ In order. Each step stops the run with a message or changes a result; do them be
 build outputs.
 
 1. **Packages.** Scripts that use `csc`, `fsc`, `msbuild`, `resgen` or the hermetic library: add
-   `#r "nuget: Xake.Dotnet"` and remove `#r "nuget: Xake.Hermetic.Dotnet"`.
+   `#r "nuget: Xake.Dotnet, 4.0.0"` and remove `#r "nuget: Xake.Hermetic.Dotnet"`.
    `grep -rn "Xake.Dotnet\|Xake.Hermetic" --include=*.fsx --include=*.fsproj .`
 2. **Build once and read the errors.** Every `XPnnn` error carries the 4.0 spelling. Escape
    literal `( ) [ ] { } |` with `\` (or `PatternAst.escapePath` for a real path); `(a|b)` becomes

@@ -49,7 +49,8 @@ commit touching the file; lengths are approximate line counts. Index written 202
 
 | File | What it is | Read when | Lines | Date | Status |
 |---|---|---|---|---|---|
-| [overview.md](overview.md) | short intro: minimal script, how to run, baseline | first contact with Xake | ~100 | 2026-09-05 | current |
+| [overview.md](overview.md) | short intro: minimal script, how to run, rule styles, the 4.0 pattern grammar (patterns, masks, paths) | first contact with Xake | ~100 | 2026-09-05 | current |
+| [typed-targets.md](typed-targets.md) | `Xake.Typed` (4.0): rule patterns with record groups, generated paths, `Command`, migration; a test compiles its snippets | writing rules with groups | ~430 | 2026-11-03 | current |
 | [cheatsheet.md](cheatsheet.md) | one-page syntax: entry point, `<==`/`<<<`, rules, variables (`var`, `varschema`, secrets) | writing or reading any build script | ~130 | 2026-10-06 | current |
 | [tasks.md](tasks.md) | reference of built-in tasks incl. the .NET ones | using a task or its settings | ~535 | 2026-10-11 | current |
 | [release-notes.md](release-notes.md) | what changed per `Xake` release; the `4.0.0 (unreleased)` section holds the variable rework and its migration lines | upgrading, writing a release | ~300 | 2026-10-31 | current |

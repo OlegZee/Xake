@@ -12,6 +12,16 @@ split, S6-S9 ([features/dotnet-split](features/dotnet-split/session.md)). From S
 their tests, docs, samples and the fsc/locks self-build (`build.fsc.fsx`, `locks/`,
 `xake.fingerprints`) live in OlegZee/Xake.Dotnet.
 
+**Where things stand (end of 2026-11-03).** Xake 4.0.0 is out; the rest of the 4.0 release
+(Xake.Dotnet 4.0.0, S9) and the hermetic Windows work continue in OlegZee/Xake.Dotnet, in a
+session started there. Landed in Xake after the split: readme on `sh "dotnet build"` and
+`command`/`target` (#134, #136), `build.fsx` for one library (#134), the 4.0 release notes rewrite
+(#134), fileset and string entries in `rm`/`cp` (#135), `hermetic-windows/` moved out (#138). The
+wiki (`~/projects/Xake.wiki`, pushed by the owner) is on 4.0: patterns, variables, typed targets,
+`command`/`target` examples, versioned `#r` lines. Open small items here: `--help` lists
+variables but not targets; `for`/`yield!` inside `rm`/`cp` are not supported
+([features/rm-fileset-syntax](features/rm-fileset-syntax/research.md)).
+
 - **Variables are evaluated once at launch**, in `ScriptRunner.createScriptContext`
   (`src/core/VarEvaluation.fs`; the types and the pure parts are in `src/core/Vars.fs`): Run,
   `--dryrun`, `--dump` and engine `start`; `--help` evaluates nothing. A recipe only reads.
@@ -55,8 +65,10 @@ their tests, docs, samples and the fsc/locks self-build (`build.fsc.fsx`, `locks
   `List.contains` over the target's dependencies: O(deps) per read.
 - **Release state:** published are Xake **4.0.0** (2026-11-03, tag `v4.0.0` at 4297ea3 on `master`), 3.15.0 and `4.0.0-preview.1..3` (preview.2 on: the
   `Xake` package is the engine alone, #129), and Xake.Hermetic.Dotnet 0.10.0 (range
-  `[3.14.0.45, 4.0)`; its last release, S-D2). `publish.yml` takes `v*` tags only. `Xake.Dotnet`
-  4.0.0 (both assemblies) is released from OlegZee/Xake.Dotnet after Xake 4.0.0 (S8).
+  `[3.14.0.45, 4.0)`; its last release, S-D2). `publish.yml` takes `v*` tags only. From
+  OlegZee/Xake.Dotnet: `Xake.Dotnet 4.0.0-preview.1` (both assemblies, on `Xake [4.0.0, 5.0)`;
+  tag on its `dev` at c2c3f06, 2026-11-03) is published and checked (its `build.fsc.fsx` and
+  scripts outside the repository); `Xake.Dotnet 4.0.0` is the next tag there (S8).
   `ExecContext` is frozen within 4.x (`RecordShapeTests`); the compiler records' test moved with
   their code.
 - Traps: a local `.xake` from before the rework can make a run misbehave (the dependency records

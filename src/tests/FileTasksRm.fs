@@ -150,3 +150,96 @@ type ``Testing Rm``() =
         }
 
         (Directory.Exists >> Assert.False) "a"
+
+    [<Test>]
+    member x.``Rm takes a fileset entry``() =
+        do xake {x.TestOptions with ThrowOnError = true} {
+            rules [
+                "main" => recipe {
+                    do! need ["out/a.txt"; "out/b.log"; "keep.txt"]
+                    do! rm { !!"out/*.*" }
+                }
+
+                "out/a.txt" ..> writeText "a"
+                "out/b.log" ..> writeText "b"
+                "keep.txt" ..> writeText "keep"
+            ]
+        }
+
+        (File.Exists >> Assert.False) ("out" </> "a.txt")
+        (File.Exists >> Assert.False) ("out" </> "b.log")
+        (File.Exists >> Assert.True) "keep.txt"
+
+    [<Test>]
+    member x.``Rm fileset entry honors excludes``() =
+        do xake {x.TestOptions with ThrowOnError = true} {
+            rules [
+                "main" => recipe {
+                    do! need ["out/a.txt"; "out/keep.txt"]
+                    do! rm { !!"out/*.*" -- "out/keep.txt" }
+                }
+
+                "out/a.txt" ..> writeText "a"
+                "out/keep.txt" ..> writeText "keep"
+            ]
+        }
+
+        (File.Exists >> Assert.False) ("out" </> "a.txt")
+        (File.Exists >> Assert.True) ("out" </> "keep.txt")
+
+    [<Test>]
+    member x.``Rm takes several entries, strings and operations mixed``() =
+        do xake {x.TestOptions with ThrowOnError = true} {
+            rules [
+                "main" => recipe {
+                    do! need ["a/samplefile"; "out/a.txt"; "obj/x.o"; "sample.tmp"; "keep.txt"]
+                    do! rm {
+                        verbose
+                        !!"out/*.*"
+                        "*.tmp"
+                        dir "a"
+                        !!"obj/*.*"
+                    }
+                }
+
+                "a/samplefile" ..> writeText "a"
+                "out/a.txt" ..> writeText "a"
+                "obj/x.o" ..> writeText "o"
+                "sample.tmp" ..> writeText "tmp"
+                "keep.txt" ..> writeText "keep"
+            ]
+        }
+
+        (Directory.Exists >> Assert.False) "a"
+        (File.Exists >> Assert.False) ("out" </> "a.txt")
+        (File.Exists >> Assert.False) ("obj" </> "x.o")
+        (File.Exists >> Assert.False) "sample.tmp"
+        (File.Exists >> Assert.True) "keep.txt"
+
+    [<Test>]
+    member x.``Rm takes a plain path string``() =
+        do xake {x.TestOptions with ThrowOnError = true} {
+            rules [
+                "main" => recipe {
+                    do! need ["samplefile"; "samplefile1"]
+                    do! del { "samplefile" }
+                }
+
+                "samplefile*" ..> writeText "hello world"
+            ]
+        }
+
+        (File.Exists >> Assert.False) "samplefile"
+        (File.Exists >> Assert.True) "samplefile1"
+
+    [<Test>]
+    member x.``Rm fileset entry matching nothing succeeds``() =
+        do xake {x.TestOptions with ThrowOnError = true} {
+            rules [
+                "main" => recipe {
+                    do! rm { !!"nothing-here/*.*"; verbose }
+                }
+            ]
+        }
+
+        (Directory.Exists >> Assert.False) "nothing-here"

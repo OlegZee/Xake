@@ -142,9 +142,18 @@ module CpImpl =
 
     /// Computation expression builder for the copy task.
     /// `file`, `dir` and `files` may repeat and combine; each adds a source.
+    /// A fileset or a string on its own line is a source too: `cp { !!"bin/*.dll"; todir "deploy" }`,
+    /// `cp { "README.md"; todir "deploy" }` (a string is a file mask, as `file`).
     type CopyBuilder() =
 
         let add (a: CpArgs) source = { a with sources = a.sources @ [source] }
+        let combine (a: CpArgs) (b: CpArgs) =
+            { sources = a.sources @ b.sources
+              todir = (match b.todir with null -> a.todir | d -> d)
+              flatten = a.flatten || b.flatten
+              verbose = a.verbose || b.verbose
+              overwrite = a.overwrite || b.overwrite
+              dryrun = a.dryrun || b.dryrun }
 
         [<CustomOperation("file")>]    member this.File(a :CpArgs, value) =   add a (File value)
         [<CustomOperation("dir")>]     member this.Dir(a :CpArgs, value) =    add a (Dir value)
@@ -157,7 +166,15 @@ module CpImpl =
 
         member this.Bind(x, f) = f x
         member this.Yield(()) = CpArgs.Default
+        /// A fileset entry: `cp { !!"bin/*.dll"; todir "deploy" }`.
+        member this.Yield(fileset: Fileset) = { CpArgs.Default with sources = [Files fileset] }
+        /// A file mask entry: `cp { "README.md"; todir "deploy" }`, same as `file`.
+        member this.Yield(fileMask: string) = { CpArgs.Default with sources = [File fileMask] }
+        member this.Combine(a: CpArgs, b: CpArgs) = combine a b
+        member this.Delay(f: unit -> CpArgs) = f()
         member x.For(sq, b) = for e in sq do b e
+        /// Lets an entry follow an operation: `cp { todir "deploy"; !!"bin/*.dll" }`.
+        member x.For(a: CpArgs, f: unit -> CpArgs) = combine a (f())
 
         member this.Zero() = CpArgs.Default
         member this.Run(args:CpArgs) = Cp args

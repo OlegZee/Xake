@@ -148,3 +148,44 @@ type ``Testing Copy task``() =
         assertTrue <| File.Exists ("cptgt" </> "cpin" </> "a" </> "samplefile")
         assertTrue <| File.Exists ("cptgt" </> "single.txt")
         assertTrue <| File.Exists ("cptgt" </> "s" </> "set.txt")
+
+    [<Test>]
+    member x.``copies fileset and string entries``() =
+        ["cptgt"; "cpin"] |> List.iter (fun d -> if Directory.Exists d then Directory.Delete (d, true))
+
+        do xake {x.TestOptions with ThrowOnError = true} {
+            rules [
+                "main" => recipe {
+                    do! need ["cpin/a/one.txt"; "cpin/a/skip.txt"; "readme.txt"]
+                    do! cp {
+                        todir "cptgt"
+                        !!"cpin/**/*.txt" -- "**/skip.txt"
+                        "readme.txt"
+                    }
+                }
+
+                "cpin/a/*.txt" ..> writeText "hello world"
+                "readme.txt" ..> writeText "readme"
+            ]
+        }
+
+        assertTrue <| File.Exists ("cptgt" </> "cpin" </> "a" </> "one.txt")
+        assertTrue <| not (File.Exists ("cptgt" </> "cpin" </> "a" </> "skip.txt"))
+        assertTrue <| File.Exists ("cptgt" </> "readme.txt")
+
+    [<Test>]
+    member x.``dry run with a fileset entry copies nothing``() =
+        ["cptgt"; "cpin"] |> List.iter (fun d -> if Directory.Exists d then Directory.Delete (d, true))
+
+        do xake {x.TestOptions with ThrowOnError = true} {
+            rules [
+                "main" => recipe {
+                    do! need ["cpin/one.txt"]
+                    do! cp { !!"cpin/*.txt"; todir "cptgt"; dryrun }
+                }
+
+                "cpin/one.txt" ..> writeText "hello world"
+            ]
+        }
+
+        assertTrue <| not (Directory.Exists "cptgt")

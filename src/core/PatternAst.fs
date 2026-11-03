@@ -74,10 +74,12 @@ type PatternError =
         let at = match e.Position with Some n -> sprintf " at character %d" n | None -> ""
         sprintf "Invalid pattern '%s' (%s)%s: %s [%s]" e.Pattern ctx at e.Reason e.Code
 
-/// An invalid pattern, or a rule whose outputs disagree. The message names the pattern.
+/// An invalid pattern, or a rule whose outputs disagree. The message names the pattern;
+/// `ToString()` is the message alone, so a script failing at load shows no stack trace (7.2).
 exception PatternException of string
     with
         override this.Message = this.Data0
+        override this.ToString() = this.Data0
 
 /// The characters that `\` escapes in Xake 4.0 (tm 55).
 let reservedChars = "()[]{}|"
@@ -959,6 +961,43 @@ let formatMatches (matches: Map<string, string>) (pattern: string) : string =
     let get (key: string) = match Map.tryFind key matches with Some v -> v | None -> ""
     let positional i = if i >= 1 && i <= numbers.Length then get (string numbers.[i - 1]) else ""
     formatText pattern get positional tokens
+
+/// A mask for partly known values (5.7): a bound named group or top-level bare wildcard becomes
+/// its value, escaped (`escape`); an unbound group becomes its own body (recursively), an unbound
+/// wildcard stays. The i-th top-level bare wildcard is `positional i`, as in `format` (wildcards
+/// inside braces count in text order, those inside groups do not). A globstar slot bound to ""
+/// drops one adjacent '/', as in `format`. Classes and braces stay. The result has no named
+/// groups, so it is a valid mask.
+let glob (named: string -> string option) (positional: int -> string option) (tokens: Token list) : string =
+    let mutable k = 0
+    let rec expand (inGroup: bool) (tokens: Token list) : Token list =
+        // None marks an empty globstar slot
+        let items =
+            [| for t in tokens do
+                 match t with
+                 | Star | AnyChar | Globstar | DoubleStar when not inGroup ->
+                     k <- k + 1
+                     match positional k with
+                     | Some "" when t = Globstar -> yield None
+                     | Some v -> yield Some (Lit v)
+                     | None -> yield Some t
+                 | Group (name, body) ->
+                     match named name with
+                     | Some "" when globstarSlot t -> yield None
+                     | Some v -> yield Some (Lit v)
+                     | None -> for x in expand true body -> Some x
+                 | Alt alts -> yield Some (Alt (alts |> List.map (expand inGroup)))
+                 | t -> yield Some t |]
+        let dropped = Array.create items.Length false
+        for i in 0 .. items.Length - 1 do
+            if items.[i].IsNone then
+                if i + 1 < items.Length && items.[i + 1] = Some Sep && not dropped.[i + 1] then dropped.[i + 1] <- true
+                elif i > 0 && items.[i - 1] = Some Sep && not dropped.[i - 1] then dropped.[i - 1] <- true
+        [ for i in 0 .. items.Length - 1 do
+            match items.[i] with
+            | Some t when not dropped.[i] -> yield t
+            | _ -> () ]
+    unparse (expand false tokens)
 
 /// The check made when a multi-output rule (`*..>`, `targets`) is created (5.6): every output
 /// parses, has no class or braces outside a group (XP014) and the same set of named groups as the

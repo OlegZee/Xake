@@ -400,3 +400,15 @@ fixes how much breaks. 3.12.0 is released (tag `v3.12.0`); nothing of this featu
   intact. The entry lists the `Path.matchesPattern`/`LegacyMask`/`matchImpl` deletions, the new
   `Path.parse` splitting and trailing-separator reading, D44–D46, and the one-time rebuild when a
   3.x-pickled fileset with a trailing `Recurse` reads back as `dir/**/`. Phase 4b question 4.
+- **D48 (2026-11-03): Phase 5 in two PRs to `feature/patterns2`**: 5a ports the typed layer
+  (`TypedTargets.fs`, its tests, `TypedCompileTests`) from the frozen `feature/typed-matches` onto
+  the module; 5b the docs (`docs/typed-targets.md`, the "Patterns, masks and paths" overview,
+  cheatsheet, phony `=>` → `Command` announcement). Mirrors #91/#92 on the frozen branch.
+- **D49 (2026-11-03): typed-target pattern errors keep the declaration prefix**, e.g.
+  `Target<AsmG> "…": Invalid pattern '…' (rule) … [XP006]`; the module text and XP code follow
+  verbatim. Phase 5a question 1.
+- **D50 (2026-11-03): name lists in all pattern errors use `[a, b]`**; the typed layer's own
+  messages drop the F#-style `[a; b]` kept from the frozen branch. Phase 5a question 2.
+- **D51 (2026-11-03): XP014 is checked at creation for every typed pattern**, single-output
+  targets and `Command` included (spec 7.2 "a pattern that must be formatted"); the frozen code
+  checked multi-output only. Phase 5a question 3.

@@ -236,6 +236,27 @@ section 3.
   (`FileSystemType`) are removed: the walker reads the file system; use `toFileList` (D46). The `fileset { includefile ... }` and
   `excludefile` operations work (their arguments were swapped).
 
+### Typed targets (`Xake.Typed`)
+
+New: rule patterns whose groups are the fields of an F# record, checked by the compiler.
+`open Xake.Typed` after `open Xake`. A full guide comes with the 4.0 documentation.
+
+- `Target<'G> "out/(cfg:*)/(name:*).dll"` (or a list of outputs), `Target<'G, 'O>` (the outputs
+  as a record of patterns, `Make` gives the record of paths) and `Command<'G>` (always runs, as
+  `command`). The carrier `'G` is a record (named or anonymous) whose `string` fields are the
+  named groups plus `_1`, `_2`, ... for the bare wildcards, `string` for one group, `unit` for
+  none.
+- Rules: `X.Rule <| fun m -> recipe { ... m.cfg ... }` or `X.rule { let! m = matched ... }`.
+  Generation: `Format`, `Paths`, `For`, `Any`, `Glob` (a `Fileset`, bound values escaped);
+  every generated path is matched back against its pattern.
+- The record and the pattern are compared when the value is created (usually at script start);
+  a mismatch, an invalid pattern (its `XPnnn` error) or outputs that disagree (XP013, XP014)
+  raise `PatternException` with the declaration in front (`Target<{| fwk; lib |}> "...": ...`).
+  Bare wildcards cannot pair across several outputs: name them.
+- **API:** `PatternAst.glob` (spec 5.7) turns a rule pattern with some values bound into a mask;
+  `PatternException.ToString()` is its message alone, so a script failing at load shows no stack
+  trace.
+
 ## 3.15.0 (2026-10-29)
 
 - **The published version is the tag.** `v3.15.0` goes to nuget.org as `3.15.0`, no longer with

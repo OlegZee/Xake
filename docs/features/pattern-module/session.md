@@ -11,6 +11,7 @@ then the typed layer (`Xake.Typed`) on top. Restart of `feature/typed-matches` (
 |----|--------|----------|
 | — integration branch (target of every phase PR; merges to `dev` at the end) | `feature/patterns2` (cut from `dev` 2026-10-31, pushed 2026-11-01) | — (no worktree; PR target only) |
 | [#118](https://github.com/OlegZee/Xake/pull/118) merged: PR 2 parser (453 vectors, `PatternAst.fs`) | `feature/pattern-parser` (from `feature/pattern-module`) | `.claude/worktrees/feature/pattern-parser` |
+| — Phase 5a (typed layer on the module, D48): PR pending | `feature/typed-port` (from `origin/feature/typed-port`) | agent worktree `.claude/worktrees/agent-a9684c9d8defcecc8` |
 | [#124](https://github.com/OlegZee/Xake/pull/124) Phase 4b (Fileset scanning, D42): open; D44-D47 decided 2026-11-03 | `feature/pattern-fileset` | `.claude/worktrees/feature/pattern-fileset` (after the move) |
 | — Phase 4b follow-up: D44-D47 applied, commits for #124 (owner pushes) | `feature/pattern-fileset-followup` (from `origin/feature/pattern-fileset`) | agent worktree `.claude/worktrees/agent-a98719db399551123` |
 | [#123](https://github.com/OlegZee/Xake/pull/123) Phase 4a (rules, D42): open, D43 confirmed 2026-11-03 | `feature/pattern-rules` | `.claude/worktrees/feature/pattern-rules` |
@@ -49,6 +50,12 @@ leave it alone.
   deleted (D46), spec 8.7 "Phase 4b notes" (D47). Trap: a recorded mask is not a path, so
   `Roots.tokenizeAll` (which turns `\` into `/`) must not touch it; use `Roots.tokenizeMask` /
   `expandMask`.
+
+- 2026-11-03 (Phase 5a): the typed layer is ported onto the module on `feature/typed-port`
+  (PR pending): `Xake.Typed` re-created from the frozen #91 on `PatternAst.Rule.check`,
+  `checkOutputs`, `formatMatches` and a new `PatternAst.glob`; module errors (XP006, XP013, XP014,
+  ...) reach typed users with the declaration in front. The docs snippet test of
+  `TypedCompileTests` comes with 5b (`docs/typed-targets.md`).
 
 ## Next step
 

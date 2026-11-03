@@ -4,18 +4,6 @@ module Xake.Fileset
 open System.IO
 open Xake
 
-/// <summary>
-/// Defines interface to a file system
-/// </summary>
-type FileSystemType = {
-    GetDisk: string -> string
-    GetDirRoot: string -> string
-    GetParent: string -> string
-    AllDirs: string -> string seq
-    ScanDirs: string -> string -> string seq  // mask -> dir -> dirs
-    ScanFiles: string -> string -> string seq // mask -> dir -> files
-}
-
 /// Type alias for a file pattern string.
 type FilePattern = string
 
@@ -42,17 +30,6 @@ let EmptyList = Filelist []
 module private Impl =
 
     open Path
-
-    let fullname (f:DirectoryInfo) = f.FullName
-
-    let FileSystem = {
-        GetDisk = fun d -> d + Path.DirectorySeparatorChar.ToString()
-        GetDirRoot = fun x -> Directory.GetDirectoryRoot x
-        GetParent = Directory.GetParent >> fullname
-        AllDirs = fun dir -> Directory.EnumerateDirectories(dir, "*", SearchOption.AllDirectories)
-        ScanDirs = fun mask dir -> Directory.EnumerateDirectories(dir, mask, SearchOption.TopDirectoryOnly)
-        ScanFiles = fun mask dir -> Directory.EnumerateFiles(dir, mask)
-    }
 
     let ifNone = Option.fold (fun _ -> id)
 
@@ -169,11 +146,6 @@ let parseDirMask = Path.parseDir
 [<System.Obsolete("Use Path.matches instead")>]
 let matches = Path.matches
 
-/// The real file system adapter. Unused since 4.0: fileset scanning reads the file system
-/// through the pattern module's walker.
-[<System.Obsolete("Unused since Xake 4.0: fileset scanning reads the file system directly")>]
-let FileSystem = Impl.FileSystem
-
 /// <summary>
 /// "Materializes" fileset to a filelist
 /// </summary>
@@ -184,13 +156,6 @@ let toFileList = Impl.scan
 /// </summary>
 let listByMask (root:string) (mask: Path.PathMask) : string seq =
     Impl.walk root [ PatternAst.MaskRole.Include, Path.maskText mask ] |> Seq.ofList
-
-/// <summary>
-/// The same as toFileList. The file system adapter is ignored since Xake 4.0 (the pattern
-/// module's walker reads the file system).
-/// </summary>
-[<System.Obsolete("The file system adapter is ignored since Xake 4.0; use toFileList")>]
-let toFileList1 (_: FileSystemType) root fileset = Impl.scan root fileset
 
 /// Describes how a file list changed: an item was added or removed.
 type ListDiffType<'a> = | Added of 'a | Removed of 'a

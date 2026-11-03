@@ -232,8 +232,8 @@ section 3.
   their shapes. `Path.parse`/`parseDir` split as the lexer does (not inside `[...]`/`{...}`, not at
   an escaping `\`) and keep the segment text; `Path.parse` keeps a trailing separator as a
   directory mask; `Path.maskText` gives the text back. `Path.matchesPattern` is removed: use
-  `Path.matches mask root path`. `toFileList1` and `FileSystem` are obsolete: the file-system
-  adapter is ignored (the walker reads the file system). The `fileset { includefile ... }` and
+  `Path.matches mask root path`. `Fileset.toFileList1` and the `FileSystem` adapter
+  (`FileSystemType`) are removed: the walker reads the file system; use `toFileList` (D46). The `fileset { includefile ... }` and
   `excludefile` operations work (their arguments were swapped).
 
 ## 3.15.0 (2026-10-29)

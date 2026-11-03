@@ -345,3 +345,20 @@ Nothing is open: S-D3 closed the last question. The note was approved by merging
   question 6.
 - **S-D11 (2026-11-03): Xake.Dotnet release notes start fresh at 4.0.0** with a link to Xake's
   notes for earlier history. S4 plan question 7.
+- **S-D12 (2026-11-03): the history import maps the owner's work address to
+  `513301+OlegZee@users.noreply.github.com`**, as author/committer and in `Co-authored-by` lines,
+  with a mailmap step in `tools/import-from-xake.py`; deterministic, identical in S6. S4 question 1.
+- **S-D13 (2026-11-03): the subject rewrite also covers `Merge pull request #N from …`** →
+  `Merge pull request OlegZee/Xake#N from …` (extends S-D6), in S4 and S6. S4 question 2.
+- **S-D14 (2026-11-03): Xake stops packing `Xake.Dotnet.dll` into the `Xake` package before S6.**
+  A Xake PR to `dev` drops it from the `Xake` nupkg (the `Xake.Dotnet` 3.x package line is not
+  republished from Xake), then the owner tags `v4.0.0-preview.2`; S6 and the scaffold build on
+  preview.2 and the `src/XakePackage.targets` workaround is deleted. A breaking package change
+  before 4.0.0, noted in the 4.0 release notes. S4 question 3.
+- **S-D15 (2026-11-03): the local `import/xake-cut` branch in Xake.Dotnet is deleted**; the
+  committed deterministic filter regenerates the cut for S6. S4 question 4.
+- **S-D16 (2026-11-03): the import filter also strips a former employer's package prefixes from
+  old file versions** (hermetic docs before Xake #60), replacing them with a neutral placeholder;
+  matched by hash like the email domain (S-D12) so the committed filter names nothing;
+  deterministic, identical in S6. Until preview.2 (S-D14), the duplicate `Xake.Dotnet.dll`
+  reference in the hermetic lock is accepted.

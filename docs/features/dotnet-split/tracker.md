@@ -8,9 +8,10 @@ rows: D1 = this brief, D2 = S5, D3 = S6-S8.
 | D1 | design note: seam, one-package layout, versioning, build/CI, old repo, sequencing | approved (merged as #121); S-D1–S-D3 applied |
 | A0 | owner approves the revised note | done: #121 merged; owner re-read 2026-11-03, no questions |
 | S1 | Xake: `ProcessExec` public, `hasRule`, `memoize` -> local cache, IVT `Xake.Dotnet` removed, hermetic `Lock.fs:1584` -> `withLogger` (B4) | done: #122 merged 2026-11-02 |
-| S2 | Xake.Dotnet: tag `legacy-1.x`, delete `feature/refactoring-core` (owner) | not started |
-| S3 | Xake: tag `v4.0.0-preview.1` | open: owner tags (S1 done) |
-| S4 | Xake.Dotnet: scaffold + rehearsal history import, one-package `build.fsx`, testjobs, workflows (incl. windows leg) on the preview | S3 tagged (af45852), preview not yet indexed on nuget.org; plan: [s4-plan.md](s4-plan.md), owner review |
+| S2 | Xake.Dotnet: tag `legacy-1.x`, delete `feature/refactoring-core` (owner) | done 2026-11-03: `legacy-1.x` at ba4acca pushed (S-D4), branch deleted; `dev` default (S-D10) |
+| S3 | Xake: tag `v4.0.0-preview.1` | done 2026-11-03: af45852 on nuget.org (third publish attempt: deps.json race, then an expired API key) |
+| S4 | Xake.Dotnet: scaffold + rehearsal history import, one-package `build.fsx`, testjobs, workflows (incl. windows leg) on the preview | scaffold on local `feature/split-scaffold` (7 commits, not pushed); rework per S-D12, S-D13, S-D15; rebuild on preview.2 (S-D14), then lock refresh and owner push |
+| S3b | Xake: stop packing `Xake.Dotnet.dll` into `Xake` (S-D14), tag `v4.0.0-preview.2` | open |
 | S5 | Xake: pattern-module Phase 4/5 incl. hermetic/`Xake.Dotnet` on 4.0 patterns (C3, `dir/**`), `feature/patterns2` -> `dev` (the gate) | pattern-module work |
 | S6 | Xake.Dotnet: final history import from `dev` after S5, on a preview built after S5 | waits for S5, S4 |
 | S7 | Xake: remove `src/dotnet`, `src/hermetic`, moved tests/docs/samples; `src/core` packs `Xake`; build/CI/publish reduced | waits for S6 |

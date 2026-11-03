@@ -412,3 +412,6 @@ fixes how much breaks. 3.12.0 is released (tag `v3.12.0`); nothing of this featu
 - **D51 (2026-11-03): XP014 is checked at creation for every typed pattern**, single-output
   targets and `Command` included (spec 7.2 "a pattern that must be formatted"); the frozen code
   checked multi-output only. Phase 5a question 3.
+- **D52 (2026-11-03): phony `=>` and the builder's `phony` stay unchanged in 4.0**: the release
+  notes announce `Command` as the way forward, with no `[<Obsolete>]` and no removal date; the
+  fate of `=>` is decided after 4.0. Phase 5b question 1.

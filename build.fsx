@@ -19,12 +19,12 @@ let projectVersion (path: string) =
     if m.Success then m.Groups.[1].Value.Trim() else "0.0.1"
 
 let vars = {|
-    // The env names are explicit: publish.yml exports VERSION / HERMETIC_VERSION, and from Xake 4.0
-    // a field without `envVar` reads XAKE__<NAME> (XAKE__VERSION) instead.
+    // The env names are explicit: publish.yml exports VERSION, and from Xake 4.0 a field without
+    // `envVar` reads XAKE__<NAME> (XAKE__VERSION) instead.
     Version    = Var.create<string>(envVar = "VERSION", description = "Version number for the Xake package, e.g. 1.2.3") |> withDefault "0.0.1"
-    // Xake.Hermetic.Dotnet is versioned on its own (0.x, may break): -d HermeticVersion=... or
-    // $HERMETIC_VERSION. The default is the <Version> its project file carries.
-    HermeticVersion = Var.create<string>(envVar = "HERMETIC_VERSION", description = "Version number for the Xake.Hermetic.Dotnet package, e.g. 0.1.0") |> withDefault (projectVersion "src/hermetic/Xake.Hermetic.Dotnet.fsproj")
+    // The assembly version of Xake.Hermetic.Dotnet (not packed here any more): -d HermeticVersion=...
+    // or $HERMETIC_VERSION. The default is the <Version> its project file carries.
+    HermeticVersion = Var.create<string>(envVar = "HERMETIC_VERSION", description = "Version number for the Xake.Hermetic.Dotnet assembly, e.g. 0.1.0") |> withDefault (projectVersion "src/hermetic/Xake.Hermetic.Dotnet.fsproj")
     NUGET_KEY  = Var.env<string>(envVar = "NUGET_KEY", description = "API key for NuGet.org, required for pushing packages") |> withDefault "" |> secret
     TestFilter = Var.string(cliArg = "FILTER", envVar = "FILTER", description = "Runs only the tests whose name matches this regex, e.g. 'Rm'")
 |}
@@ -32,14 +32,14 @@ let vars = {|
 let frameworks = ["netstandard2.0" (*; "net462" *)]
 
 /// A library this script builds. `Needs` are the libraries (of this script) it is compiled
-/// against, `Package` is the NuGet package it ships in (which decides its version).
-/// Xake.Hermetic.Dotnet needs none of them: it references the published `Xake` package.
-type Library = { Name: string; Dir: string; Needs: string list; Package: string }
+/// against. Only Xake is packed (see `xakePackage`); Xake.Hermetic.Dotnet has a version of its
+/// own (`HermeticVersion`), the other two the Xake version.
+type Library = { Name: string; Dir: string; Needs: string list }
 
 let libraries =
-    [ { Name = "Xake";                 Dir = "src/core";     Needs = [];                      Package = "Xake" }
-      { Name = "Xake.Dotnet";          Dir = "src/dotnet";   Needs = ["Xake"];                Package = "Xake" }
-      { Name = "Xake.Hermetic.Dotnet"; Dir = "src/hermetic"; Needs = ["Xake"; "Xake.Dotnet"]; Package = "Xake.Hermetic.Dotnet" } ]
+    [ { Name = "Xake";                 Dir = "src/core";     Needs = [] }
+      { Name = "Xake.Dotnet";          Dir = "src/dotnet";   Needs = ["Xake"] }
+      { Name = "Xake.Hermetic.Dotnet"; Dir = "src/hermetic"; Needs = ["Xake"; "Xake.Dotnet"] } ]
 
 let library name = libraries |> List.find (fun lib -> lib.Name = name)
 
@@ -50,48 +50,48 @@ let binaries name =
         -> $"out/%s{fwk}/%s{name}.%s{ext}"
     ]
 
-/// The two NuGet packages, versioned independently.
-/// `Xake` is packed from src/dotnet, which pulls the core's assembly into the same nupkg (see
-/// src/dotnet/Xake.Dotnet.fsproj). `Xake.Hermetic.Dotnet` is packed from src/hermetic, which
-/// builds on the in-repo Xake until 4.0 (project references): its `Xake` dependency is the
-/// Xake version of this build (-d Version), see `hermeticVersionArgs`.
+/// The NuGet package of this repository: `Xake`, the engine alone, packed from src/core. From
+/// 4.0 Xake.Dotnet ships from its own repository (dotnet-split S-D14): src/dotnet is not packed,
+/// and neither is src/hermetic (Xake.Hermetic.Dotnet ended at 0.10.0, S-D2); both still build
+/// and test here until the split's removal step (S7).
 ///
-/// Each package is packed into a folder of its own, `out/pkg/<id>/<id>.<version>.nupkg`: a
-/// single mask such as `out/(id:*).(ver:*).nupkg` cannot tell `Xake.Hermetic.Dotnet.0.1.0` from
-/// a Xake version `Hermetic.Dotnet.0.1.0` (and the last matching rule wins), and a folder per
-/// id also lets CI push `out/pkg/<id>/*.nupkg` without picking up the other package.
+/// The package goes into a folder of its own, `out/pkg/Xake/Xake.<version>.nupkg`, which CI
+/// pushes.
 let xakePackage = "Xake"
-let hermeticPackage = "Xake.Hermetic.Dotnet"
 let packagePath id version = $"out/pkg/%s{id}/%s{id}.%s{version}.nupkg"
 
-let versionOf package =
-    if package = hermeticPackage then vars.HermeticVersion else vars.Version
+let versionOf (lib: Library) =
+    if lib.Name = "Xake.Hermetic.Dotnet" then vars.HermeticVersion else vars.Version
 
-/// The nuspec dependencies of the hermetic package must name `Xake` (the package that carries
-/// both Xake.dll and Xake.Dotnet.dll) and never `Xake.Dotnet`, which is not a package; returns
-/// the problems found (none means the package is right). Its version is this build's Xake version.
-let checkXakeDependency (nupkg: string) =
+/// The `Xake` nupkg must carry Xake.dll and Xake.xml for every target framework and nothing of
+/// Xake.Dotnet (S-D14); returns the problems found (none means the package is right).
+let checkXakePackage (nupkg: string) =
     use zip = System.IO.Compression.ZipFile.OpenRead nupkg
-    let entry = zip.Entries |> Seq.find (fun e -> e.FullName.EndsWith ".nuspec" && not (e.FullName.Contains "/"))
-    use reader = new System.IO.StreamReader(entry.Open())
-    let doc = System.Xml.Linq.XDocument.Parse(reader.ReadToEnd())
-    let ids =
-        doc.Descendants()
-        |> Seq.filter (fun e -> e.Name.LocalName = "dependency")
-        |> Seq.map (fun e -> e.Attribute(System.Xml.Linq.XName.Get "id").Value)
-        |> List.ofSeq
-    [ if not (List.contains "Xake" ids) then yield "no dependency on package Xake"
-      if List.contains "Xake.Dotnet" ids then yield "depends on Xake.Dotnet, which is not a package" ]
+    let entries = [ for e in zip.Entries -> e.FullName ]
+    [ for fwk in ["net462"; "netstandard2.0"] do
+        for file in ["Xake.dll"; "Xake.xml"] do
+            if not (List.contains $"lib/{fwk}/{file}" entries) then yield $"no lib/{fwk}/{file}"
+      for e in entries do
+        if e.StartsWith "lib/" && System.IO.Path.GetFileName(e).StartsWith "Xake.Dotnet." then
+            yield $"carries {e}" ]
 
-/// The version arguments of a build or pack of src/hermetic: its own version, and the Xake
-/// version of the referenced src/dotnet and src/core (and so of the package's `Xake`
-/// dependency). Not /p:Version, which would give the referenced projects the hermetic version.
+/// The version arguments of a build of src/hermetic: its own version, and the Xake version of
+/// the referenced src/dotnet and src/core. Not /p:Version, which would give the referenced
+/// projects the hermetic version.
 let hermeticVersionArgs (hermeticVersion: string) = recipe {
     let! xakeVersion = vars.Version
     return [ "-p:HermeticVersion=" + hermeticVersion; "-p:XakePackageVersion=" + xakeVersion ]
 }
 
 let dotnet arglist = sh "dotnet" { args arglist; failonerror }
+
+/// One msbuild at a time over the in-repo projects: every `dotnet build`/`pack` here also
+/// builds src/core (and src/dotnet) through project references, into the same
+/// src/core/bin/Release and obj folders, and two at once collide (MSB4018 GenerateDepsFile,
+/// "Xake.deps.json is being used by another process", the two test builds of `test` in the
+/// v4.0.0-preview.1 publish run). The test jobs (`dotnet test --no-build`) still run in parallel.
+let msbuild = Resource.newResource "msbuild" 1
+let oneMsbuild body = withResource msbuild 1 body
 
 do xakeScript {
     filelog "build.log" Diag
@@ -114,10 +114,10 @@ do xakeScript {
         // a test project, built once for all its jobs
         "test-build::(project:*)" => recipe {
             let! project = getRuleMatch "project"
-            do! sh $"dotnet build {testProjectDir project} -c Release" {
+            do! oneMsbuild (sh $"dotnet build {testProjectDir project} -c Release" {
                 logprefix $"[test-build {project}]"
                 stdoutlevel (fun l -> if l.Contains ": error " then Level.Error else Level.Info)
-                failonerror }
+                failonerror })
         }
 
         "test::(project:*)/(slice:*)" => recipe {
@@ -156,81 +156,50 @@ do xakeScript {
 
             do! needFiles allFiles
             do! need [for dep in lib.Needs -> $"out/%s{framework}/%s{dep}.dll"]
-            let! version = versionOf lib.Package
+            let! version = versionOf lib
             let! versionArgs =
-                if lib.Package = hermeticPackage then hermeticVersionArgs version
+                if lib.Name = "Xake.Hermetic.Dotnet" then hermeticVersionArgs version
                 else recipe { return [ "/p:Version=" + version ] }
 
-            do! dotnet ([
+            do! oneMsbuild (dotnet ([
                 "build"
                 lib.Dir
                 "--configuration"; "Release"
                 "--framework"; framework
                 "--output"; "./out/" + framework
-              ] @ versionArgs)
+              ] @ versionArgs))
         }
 
         (* Nuget publishing rules *)
-        // both packages, each at its own version; until Xake 4.0 the hermetic one builds on the
-        // in-repo Xake and depends on the Xake version of this build (-d Version)
+        // the `Xake` package (the engine alone), at this build's version (-d Version)
         command "pack" {
             let! version = vars.Version
-            let! hermeticVersion = vars.HermeticVersion
-            do! need [packagePath xakePackage version; packagePath hermeticPackage hermeticVersion]
-        }
-
-        command "pack-hermetic" {
-            let! hermeticVersion = vars.HermeticVersion
-            do! need [packagePath hermeticPackage hermeticVersion]
+            do! need [packagePath xakePackage version]
         }
 
         target $"out/pkg/%s{xakePackage}/%s{xakePackage}.(ver:*).nupkg" {
             let! ver = getRuleMatch "ver"
-            do! dotnet [
-                "pack"; "src/dotnet"
+            let! nupkg = getTargetFullName()
+            do! oneMsbuild (dotnet [
+                "pack"; "src/core"
                 "-c"; "Release"
                 $"/p:Version={ver}"
                 "--output"; $"out/pkg/%s{xakePackage}/"
-            ]
-        }
+            ])
 
-        target $"out/pkg/%s{hermeticPackage}/%s{hermeticPackage}.(ver:*).nupkg" {
-            let! ver = getRuleMatch "ver"
-            let! nupkg = getTargetFullName()
-            let! versionArgs = hermeticVersionArgs ver
-
-            // src/hermetic references src/core and src/dotnet (until Xake 4.0): the nuspec
-            // depends on package `Xake` at this build's Xake version
-            do! dotnet ([
-                "pack"; "src/hermetic"
-                "-c"; "Release"
-                "--output"; $"out/pkg/%s{hermeticPackage}/"
-              ] @ versionArgs)
-
-            match checkXakeDependency nupkg with
-            | [] -> do! trace Level.Info "%s: depends on package Xake" (System.IO.Path.GetFileName nupkg)
+            match checkXakePackage nupkg with
+            | [] -> do! trace Level.Info "%s: the engine only" (System.IO.Path.GetFileName nupkg)
             | problems ->
                 System.IO.File.Delete nupkg
                 failwithf "%s: %s" nupkg (String.concat "; " problems)
         }
 
-        // push needs pack to be explicitly called in advance; one command per package, since
-        // they are released independently
+        // push needs pack to be explicitly called in advance
         command "push" {
             let! version = vars.Version
             let! nuget_key = vars.NUGET_KEY
             do! dotnet [
                 "nuget"; "push"; packagePath xakePackage version
-                "--source"; "https://www.nuget.org/api/v2/package"
-                "--api-key"; nuget_key
-            ]
-        }
-
-        command "push-hermetic" {
-            let! version = vars.HermeticVersion
-            let! nuget_key = vars.NUGET_KEY
-            do! dotnet [
-                "nuget"; "push"; packagePath hermeticPackage version
                 "--source"; "https://www.nuget.org/api/v2/package"
                 "--api-key"; nuget_key
             ]

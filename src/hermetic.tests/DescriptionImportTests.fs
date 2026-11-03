@@ -69,7 +69,12 @@ type ``Description import``() =
             Assert.That(core.Sources |> List.take 3, Is.EqualTo [ "Prelude.fs"; "Logging.fs"; "Pickler.fs" ])
             Assert.That(core.Sources, Does.Contain "Tasks/Cp.fs")
             Assert.That(core.InternalsVisibleTo |> List.map (fun f -> f.Name), Is.EqualTo [ "tests" ])
-            Assert.That(core.Package, Is.EqualTo None, "IsPackable is false")
+            // the `Xake` package is the engine alone (dotnet-split S-D14)
+            let pkg = core.Package.Value
+            Assert.That(pkg.Id, Is.EqualTo "Xake")
+            Assert.That(pkg.Bundle, Is.Empty)
+            Assert.That((pkg.Icon, pkg.Readme), Is.EqualTo ((Some "../../Icon.png", Some "../../readme.md")))
+            Assert.That(pkg.License, Is.EqualTo (Some "MIT"))
             Assert.That(dotnet.Name, Is.EqualTo "Xake.Dotnet")
             Assert.That(dotnet.Sources |> List.head, Is.EqualTo "Tool.fs")
             Assert.That(dotnet.ProjectRefs, Is.EqualTo [ "Xake" ])
@@ -77,11 +82,7 @@ type ``Description import``() =
             Assert.That((dotnet.ByFramework |> List.find (fst >> (=) "net462") |> snd).References, Is.EqualTo [ "System.Windows.Forms" ])
             Assert.That((dotnet.ByFramework |> List.find (fst >> (=) "netstandard2.0") |> snd).Packages |> List.map (fun p -> p.Id, p.Version),
                         Is.EqualTo [ "Microsoft.Win32.Registry", Some "5.0.0" ])
-            let pkg = dotnet.Package.Value
-            Assert.That(pkg.Id, Is.EqualTo "Xake")
-            Assert.That(pkg.Bundle, Is.EqualTo [ "Xake" ], "the PrivateAssets=all reference is packed into the package")
-            Assert.That((pkg.Icon, pkg.Readme), Is.EqualTo ((Some "../../Icon.png", Some "../../readme.md")))
-            Assert.That(pkg.License, Is.EqualTo (Some "MIT"))
+            Assert.That(dotnet.Package, Is.EqualTo None, "IsPackable is false")
             // until Xake 4.0 the hermetic project builds on the in-repo Xake: project references
             Assert.That(hermetic.ProjectRefs, Is.EqualTo [ "Xake"; "Xake.Dotnet" ])
             Assert.That(hermetic.Packages |> List.map (fun p -> p.Id, p.Version),

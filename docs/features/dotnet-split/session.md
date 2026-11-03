@@ -14,6 +14,7 @@ package for the repository `OlegZee/Xake.Dotnet`, shipped there as ONE package `
 | — D1 design note | Xake | `feature/dotnet-split` (from `dev`) | `.claude/worktrees/feature/dotnet-split` | brief revised for one package, not pushed |
 | — S1 seam | Xake | `feature/dotnet-seam (#122)` (from `dev`) | `.claude/worktrees/feature/dotnet-seam` | #122 open, CI running |
 | — S4 plan | Xake | `docs/dotnet-split-s4-plan` (from `dev` af45852) | agent worktree | committed, not pushed |
+| — S3b unbundle | Xake | `feature/xake-unbundle-dotnet` (from `dev` 0e804ba) | agent worktree | committed, not pushed |
 
 ## State
 
@@ -54,6 +55,22 @@ package for the repository `OlegZee/Xake.Dotnet`, shipped there as ONE package `
   identical blobs; old repo + removal + merge = 164 commits, 1.03 MiB pack; deterministic, and an
   older cut is an ancestor of a newer one, so S6 is a normal merge on top of S4. Seven open
   questions for the owner in §7 of the plan.
+
+- 2026-11-03: S3b (S-D14) on `feature/xake-unbundle-dotnet`. `Xake` is packed from `src/core`
+  (`PackageId Xake`, the metadata, icon and readme moved there from `src/dotnet`); `src/dotnet`
+  is `IsPackable=false`, `PackageId Xake.Dotnet`, `IncludeCoreOutput` gone. The nupkg holds
+  `lib/{net462,netstandard2.0}/Xake.dll/.xml`, `Icon.png`, `readme.md`; dependencies FSharp.Core
+  8.0.100 (+ System.ValueTuple on net462). `build.fsx`: `pack` packs only `Xake` and checks the
+  nupkg (`checkXakePackage`: Xake.dll/.xml per TFM, nothing named `Xake.Dotnet.*`);
+  `pack-hermetic`, `push-hermetic`, `checkXakeDependency` removed (the hermetic nupkg would now
+  depend on a non-published `Xake.Dotnet`, and Xake.Hermetic.Dotnet ended at 0.10.0, S-D2);
+  `publish.yml` refuses `hermetic-v*` for good. Publish race (preview.1 run, MSB4018
+  GenerateDepsFile on `src/core/bin/Release/netstandard2.0/Xake.deps.json` in
+  `[test-build tests]`): `test-build::tests` and `test-build::hermetic` ran `dotnet build` in
+  parallel, both building src/core through project references; every msbuild rule now takes a
+  one-unit `msbuild` resource (`oneMsbuild`), the test jobs stay parallel. `build test pack`
+  85 s vs 93 s before. Descriptions re-imported (core gains `package`, dotnet loses it); locks
+  unchanged; `build check` green. Readme (packed into `Xake`) still shows `open Xake.Dotnet`.
 
 ## Next step
 

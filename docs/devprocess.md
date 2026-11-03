@@ -94,16 +94,15 @@ dotnet fsi build.fsx -- -- build --dryrun
 
 ## Packaging and publishing
 
-Two NuGet packages, **versioned and released independently**:
+One NuGet package:
 
 | Package | Packed from | Contains | Version |
 |---|---|---|---|
-| `Xake` | `src/dotnet` | `Xake.dll` (engine) and `Xake.Dotnet.dll` (.NET tasks) | semver (3.x; 4.0 is next on `dev`), `-d Version=` / `$VERSION` |
-| `Xake.Hermetic.Dotnet` | `src/hermetic` | `Xake.Hermetic.Dotnet.dll` (locks, restore, SBOM, verify, pack, sign) | 0.x, `-d HermeticVersion=` / `$HERMETIC_VERSION`; default is the `<Version>` in its fsproj |
+| `Xake` | `src/core` | `Xake.dll` (engine) | semver (3.x; 4.0 is next on `dev`), `-d Version=` / `$VERSION` |
 
-`Xake` is packed from the leaf project `src/dotnet`, which references the core and pulls its
-assembly into the same nupkg — so the engine and the tasks always share one version and one
-publish. `src/core` is marked `IsPackable=false` and is never published on its own.
+Up to 3.15 `Xake` was packed from `src/dotnet` and carried `Xake.Dotnet.dll` too, and
+`Xake.Hermetic.Dotnet` (0.x, ended at 0.10.0) was packed from `src/hermetic`. Both now ship as
+`Xake.Dotnet` from its own repository; `src/dotnet` is `IsPackable=false`.
 
 `Xake.Hermetic.Dotnet` **builds on the in-repo `Xake` until 4.0** (owner, 2026-10-31):
 `src/hermetic` has ProjectReferences to `src/core` (private: `Xake.dll` ships inside package
@@ -136,35 +135,31 @@ test project (`tests` or `hermetic`).
 Note that `build.fsx` builds only `netstandard2.0` into `out/`; the `net462` assets come from
 `dotnet pack`, which builds both target frameworks.
 
-Create both packages locally, each at its own version:
+This repository packs one package, `Xake` (src/core, the engine alone). From 4.0 Xake.Dotnet
+ships from its own repository (`OlegZee/Xake.Dotnet`, [features/dotnet-split](features/dotnet-split/brief.md),
+S-D14): src/dotnet and src/hermetic still build and test here until the split's removal step,
+but are not packed, and the 3.x `Xake.Dotnet`/`Xake.Hermetic.Dotnet` lines are not republished
+from here. Create it locally:
 
 ```bash
-dotnet fsi build.fsx -- -- pack -d Version=X.Y.Z -d HermeticVersion=0.A.B
+dotnet fsi build.fsx -- -- pack -d Version=X.Y.Z
 ```
 
-Each package goes into a folder of its own: `out/pkg/Xake/Xake.X.Y.Z.nupkg` and
-`out/pkg/Xake.Hermetic.Dotnet/Xake.Hermetic.Dotnet.0.A.B.nupkg` (one mask for both would
-confuse `Xake.Hermetic.Dotnet.0.1.0` with a Xake version `Hermetic.Dotnet.0.1.0`). The two packs
-are independent: the hermetic one compiles against the restored `Xake` package, whatever
-`Version` the base is packed at. `pack-hermetic` packs only `Xake.Hermetic.Dotnet`.
-Inspect before publishing:
+The package goes into `out/pkg/Xake/Xake.X.Y.Z.nupkg`. `pack` fails if it lacks `Xake.dll`/
+`.xml` for a framework or carries anything of `Xake.Dotnet`. Inspect before publishing:
 
 ```bash
 unzip -l out/pkg/Xake/Xake.X.Y.Z.nupkg
-unzip -p out/pkg/Xake.Hermetic.Dotnet/Xake.Hermetic.Dotnet.0.A.B.nupkg Xake.Hermetic.Dotnet.nuspec
 ```
 
-`Xake` should contain `lib/net462/` and `lib/netstandard2.0/`, each with `Xake.dll`,
-`Xake.Dotnet.dll` and the matching `.xml` doc files, plus `Icon.png` and `readme.md`.
-`Xake.Hermetic.Dotnet` holds only `Xake.Hermetic.Dotnet.dll`/`.xml` per framework, plus
-`Icon.png` and its own `readme.md`.
+`Xake` should contain `lib/net462/` and `lib/netstandard2.0/`, each with `Xake.dll` and
+`Xake.xml`, plus `Icon.png` and `readme.md`.
 
 Push by hand (only needed when the tag-driven workflow is not used):
 
 ```bash
 export NUGET_KEY=...
-dotnet fsi build.fsx -- -- push -d Version=X.Y.Z -d NUGET_KEY=$NUGET_KEY                   # Xake
-dotnet fsi build.fsx -- -- push-hermetic -d HermeticVersion=0.A.B -d NUGET_KEY=$NUGET_KEY  # Xake.Hermetic.Dotnet
+dotnet fsi build.fsx -- -- push -d Version=X.Y.Z -d NUGET_KEY=$NUGET_KEY
 ```
 
 `pack` must be run before `push`; `push` does not imply it.
@@ -194,15 +189,14 @@ valid on the whole supported range.
 
 Releases are published by CI, not from a workstation. The
 [`publish.yml`](../.github/workflows/publish.yml) workflow triggers on a tag, picks the package
-by the tag's prefix, runs `build test pack` for `v*` (both packages; the hermetic one is not
-pushed) or `build test pack-hermetic` for `hermetic-v*` (refused until Xake 4.0: the hermetic
-package builds on the in-repo `Xake`, so it goes out together with it), and pushes **only the tagged package** to
-nuget.org with the `NUGET_API_KEY` repository secret:
+by the tag's prefix, runs `build test pack` for `v*` and pushes `Xake` to nuget.org with the
+`NUGET_API_KEY` repository secret; a `hermetic-v*` tag is refused (Xake.Hermetic.Dotnet ended
+at 0.10.0; the hermetic assembly ships in `Xake.Dotnet`, from its own repository):
 
 | Tag | Publishes | Version variable |
 |---|---|---|
 | `vX.Y.Z` | `Xake` | `VERSION` |
-| `hermetic-vX.Y.Z` | `Xake.Hermetic.Dotnet` | `HERMETIC_VERSION` |
+| `hermetic-vX.Y.Z` | nothing (refused) | |
 
 1. Merge `dev` into `master`
 2. Tag the release: `v` prefix for Xake, `hermetic-v` for Xake.Hermetic.Dotnet
@@ -216,11 +210,8 @@ git tag vX.Y.Z                 # or: git tag hermetic-v0.A.B
 git push origin master --tags
 ```
 
-Until Xake 4.0 only `v*` tags publish. The hermetic package (0.11) ships together with Xake 4.0,
-built on the same checkout, depending on package `Xake` at the version of that build; how it is
-tagged and published once `Xake.Dotnet` and the hermetic package are split out of this
-repository (release-process decision D) is settled with that split
-([features/release-process](features/release-process/session.md)).
+Only `v*` tags publish. `Xake.Dotnet` (with the hermetic assembly) is tagged and published from
+its own repository ([features/dotnet-split](features/dotnet-split/brief.md)).
 
 **The published version is the tag**, exactly: `v3.15.0` publishes `3.15.0`, `hermetic-v0.10.0`
 publishes `0.10.0` (up to 3.14.0 / 0.9.0 the run number was appended: `3.14.0.45`, `0.9.0.46`;
@@ -230,8 +221,8 @@ and tag the next patch.
 
 ### Release checklist
 
-- `dotnet fsi build.fsx -- -- build test pack` is green (both test projects, both packages,
-  the nuspec check), and so is the `dev` build on CI; `dotnet restore src/hermetic.tests`
+- `dotnet fsi build.fsx -- -- build test pack` is green (both test projects, the `Xake`
+  package and its content check), and so is the `dev` build on CI; `dotnet restore src/hermetic.tests`
   shows no NU1603
 - `dotnet test src/tests --filter 'Category=Integration'` and the same on `src/hermetic.tests`
   pass (real compiler invocations)

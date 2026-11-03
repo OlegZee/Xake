@@ -48,7 +48,7 @@ type ``Typed targets: declaration``() =
     [<Test>]
     member _.``a record field not in the pattern``() =
         let m = failsWith (fun () -> box (Target<TypedTargetsBad.MisspeltG> "out/(cfg:*)/(fwk:*)/(name:*).dll"))
-        Assert.That(m, Is.EqualTo "Target<MisspeltG> \"out/(cfg:*)/(fwk:*)/(name:*).dll\": the record MisspeltG has fields [cfg; fkw; name], the pattern has [cfg; fwk; name] (not in the record: [fwk]; not in the pattern: [fkw])")
+        Assert.That(m, Is.EqualTo "Target<MisspeltG> \"out/(cfg:*)/(fwk:*)/(name:*).dll\": the record MisspeltG has fields [cfg, fkw, name], the pattern has [cfg, fwk, name] (not in the record: [fwk]; not in the pattern: [fkw])")
 
     [<Test>]
     member _.``a group missing from the record``() =
@@ -59,7 +59,7 @@ type ``Typed targets: declaration``() =
     [<Test>]
     member _.``an anonymous record is named as F# writes it``() =
         let m = failsWith (fun () -> box (Target<{| fwk: string; lib: string |}> "out/(fwk:*)/(name:*).dll"))
-        Assert.That(m, Does.StartWith "Target<{| fwk; lib |}> \"out/(fwk:*)/(name:*).dll\": the record {| fwk; lib |} has fields [fwk; lib]")
+        Assert.That(m, Does.StartWith "Target<{| fwk; lib |}> \"out/(fwk:*)/(name:*).dll\": the record {| fwk; lib |} has fields [fwk, lib]")
         Assert.That(m, Does.Not.Contain "AnonymousType")
 
     [<Test>]
@@ -120,7 +120,7 @@ type ``Typed targets: declaration``() =
     [<Test>]
     member _.``a tuple is not a carrier``() =
         let m = failsWith (fun () -> box (Target<string * string> "out/(cfg:*)/(fwk:*)"))
-        Assert.That(m, Is.EqualTo "Target<string * string> \"out/(cfg:*)/(fwk:*)\": string * string is a tuple; a tuple's elements are positional (a swap goes unnoticed): declare a record with the fields [cfg; fwk]")
+        Assert.That(m, Is.EqualTo "Target<string * string> \"out/(cfg:*)/(fwk:*)\": string * string is a tuple; a tuple's elements are positional (a swap goes unnoticed): declare a record with the fields [cfg, fwk]")
 
     [<Test>]
     member _.``another type is not a carrier``() =
@@ -130,12 +130,12 @@ type ``Typed targets: declaration``() =
     [<Test>]
     member _.``unit with groups``() =
         let m = failsWith (fun () -> box (Command<unit> "lock::(name:*)::(cfg:*)"))
-        Assert.That(m, Is.EqualTo "Command<unit> \"lock::(name:*)::(cfg:*)\": unit carries no groups, the pattern has [name; cfg]; declare a record with these fields")
+        Assert.That(m, Is.EqualTo "Command<unit> \"lock::(name:*)::(cfg:*)\": unit carries no groups, the pattern has [name, cfg]; declare a record with these fields")
 
     [<Test>]
     member _.``string with several groups``() =
         let m = failsWith (fun () -> box (Command<string> "lock::(name:*)::(cfg:*)"))
-        Assert.That(m, Does.Contain "string carries one group, the pattern has [name; cfg]")
+        Assert.That(m, Does.Contain "string carries one group, the pattern has [name, cfg]")
 
     [<Test>]
     member _.``bare wildcards in a multi-output pattern``() =
@@ -145,7 +145,7 @@ type ``Typed targets: declaration``() =
     [<Test>]
     member _.``bare wildcards missing from the record``() =
         let m = failsWith (fun () -> box (Target<TypedTargetsBad.WildG> "src/(dir:*)/**/*.fs"))
-        Assert.That(m, Does.Contain "(not in the record: [_1; _2]); bare wildcards are fields _1, _2, ...")
+        Assert.That(m, Does.Contain "(not in the record: [_1, _2]); bare wildcards are fields _1, _2, ...")
 
     [<Test>]
     member _.``the exception prints as its message alone``() =

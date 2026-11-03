@@ -42,7 +42,7 @@ module internal Spec =
     let fail (message: string) : 'a = raise (PatternAst.PatternException message)
 
     /// Names as a message shows them: `[cfg; fwk]`.
-    let showNames (names: string list) = "[" + String.concat "; " names + "]"
+    let showNames (names: string list) = "[" + String.concat ", " names + "]"
 
     /// Patterns as a message shows them: `"a", "b"`.
     let showPatterns (patterns: string list) = patterns |> List.map (sprintf "\"%s\"") |> String.concat ", "

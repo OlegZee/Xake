@@ -239,7 +239,8 @@ section 3.
 ### Typed targets (`Xake.Typed`)
 
 New: rule patterns whose groups are the fields of an F# record, checked by the compiler.
-`open Xake.Typed` after `open Xake`. A full guide comes with the 4.0 documentation.
+`open Xake.Typed` after `open Xake`. Guide: [typed-targets.md](typed-targets.md); the pattern grammar is described in
+[overview.md](overview.md#patterns-masks-and-paths).
 
 - `Target<'G> "out/(cfg:*)/(name:*).dll"` (or a list of outputs), `Target<'G, 'O>` (the outputs
   as a record of patterns, `Make` gives the record of paths) and `Command<'G>` (always runs, as
@@ -256,6 +257,15 @@ New: rule patterns whose groups are the fields of an F# record, checked by the c
 - **API:** `PatternAst.glob` (spec 5.7) turns a rule pattern with some values bound into a mask;
   `PatternException.ToString()` is its message alone, so a script failing at load shows no stack
   trace.
+
+### Announcement: phony `=>` is to be phased out in favour of `Command`
+
+Not a deprecation: in 4.0 `=>` (and the builder operation `phony`) compiles without a warning and
+behaves as before. The direction is that `Command` (typed, `Command<'G>`, or the string
+`command "name" { }`) replaces phony rules, which is the way to retire "phony" and its semantics.
+Migrating a `=>` rule to `Command<'G>.Rule` **adds `AlwaysRerun`** (a phony rule does not rerun by
+itself; a command always does), so a rule that relied on skipping stays a `=>` for now. The
+migration recipe is in [typed-targets.md](typed-targets.md#a-phony-rule-with-groups-becomes-a-command).
 
 ## 3.15.0 (2026-10-29)
 

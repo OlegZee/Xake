@@ -47,7 +47,8 @@ targets that must run every time with `command` (or `alwaysRerun()` in a `phony`
 "deploy" <<< ["build"; "test"; "package"]
 ```
 
-`=>` plain phony rule:
+`=>` plain phony rule (to be phased out in favour of `Command`, see
+[typed-targets.md](typed-targets.md#the-future-of-)):
 
 ```fsharp
 "clean" => rm {dir "out"}
@@ -171,6 +172,47 @@ command "build"  { do! Fingerprints.warn "xake.fingerprints" }   // warns on sta
 ```
 
 See [fingerprints.md](fingerprints.md).
+
+## Patterns and masks (4.0)
+
+Rule patterns (`..>`, `*..>`, `target`, `command`) and fileset masks (`!!`, `++`, `--`) share one
+grammar; details in the [overview](overview.md#patterns-masks-and-paths).
+
+```fsharp
+"out/(cfg:*)/(name:*).dll" ..> recipe { let! cfg = getRuleMatch "cfg" in () }   // groups: rules only
+"out/(fwk:*)/(ext:{dll,xml})" ..> recipe { () }       // alternatives {a,b}; classes [abc] [!a] [a-z]
+!! "src/**/*.fs" -- "src/**/obj/"                     // ** = zero or more directories; trailing / = directories
+!! @"src/Foo \(x86\)/*.cs"                            // \ escapes ( ) [ ] { } | ; write patterns as @"..."
+!! (PatternAst.escapePath realDir + "/*.dll")         // a real path as a mask
+```
+
+| Mask | Selects |
+|---|---|
+| `dir/*` | files directly in `dir` |
+| `dir/**` or `dir/**/*` | every file below `dir` |
+| `dir/**/` | directories below `dir` |
+
+Always `/` as the separator. Unescaped `( ) [ ] { } |` and a group in a mask are errors with an
+`XPnnn` code (table: pattern spec 7.2); `\` as a separator and `[c]` warn. In a rule `**/x.dll`
+also matches `x.dll`; `*/**/x.dll` requires a directory.
+
+## Typed targets (4.0)
+
+`open Xake` first, then `open Xake.Typed`. Details: [typed-targets.md](typed-targets.md).
+
+```fsharp
+type AsmG = { cfg: string; name: string }
+let Asm = Target<AsmG> "out/(cfg:*)/(name:*).dll"       // fields = the pattern's groups
+let Clean = Command<unit> "clean"                       // always runs
+let rules = [
+    Asm.Rule <| fun m -> recipe { do! trace Message "%s %s" m.cfg m.name }   // or Asm.rule { let! m = matched ... }
+    Clean.Rule <| fun () -> recipe { () }
+]
+let wanted = need [ Asm.Format { cfg = "Release"; name = "Core" } ]          // the path, from the pattern
+```
+
+`Target<G, O>` names several outputs (`X.Make m`), `X.For [ ... ]` lists paths, `X.Glob` gives a
+`Fileset`. A record that disagrees with its pattern fails when the script starts.
 
 ## Filesets
 

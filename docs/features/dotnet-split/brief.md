@@ -357,3 +357,8 @@ Nothing is open: S-D3 closed the last question. The note was approved by merging
   before 4.0.0, noted in the 4.0 release notes. S4 question 3.
 - **S-D15 (2026-11-03): the local `import/xake-cut` branch in Xake.Dotnet is deleted**; the
   committed deterministic filter regenerates the cut for S6. S4 question 4.
+- **S-D16 (2026-11-03): the import filter also strips a former employer's package prefixes from
+  old file versions** (hermetic docs before Xake #60), replacing them with a neutral placeholder;
+  matched by hash like the email domain (S-D12) so the committed filter names nothing;
+  deterministic, identical in S6. Until preview.2 (S-D14), the duplicate `Xake.Dotnet.dll`
+  reference in the hermetic lock is accepted.

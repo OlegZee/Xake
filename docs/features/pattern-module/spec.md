@@ -1331,6 +1331,37 @@ val reportEvidence : usage: string -> pattern: string -> Issue -> unit
   `**/.*/**/*`, `bin/**/*`, `obj/**/*` excludes 13.0-14.1 ms vs 5.6-6.0 ms (pruning). No fast
   paths.
 
+### 8.7 Phase 4b notes (2026-11-03)
+
+What Phase 4b (#124, D42) implements for fileset scanning, recorded here; 8.1 and 8.2 stay as
+approved:
+
+- **Deleted:** `Path.matchesPattern`, `Path.LegacyMask` and `matchImpl` (the 3.x part matcher)
+  with the regex golden test. Callers use `Path.matches mask root path` (5.1 mask semantics);
+  hermetic's `Lock.canonicalSources` and `Locks.versionFor` do, without the `dir/**` →
+  `dir/**/*` fix-up (D12).
+- **`Path.parse` / `parseDir`** split a mask as the lexer does (4.1): at `/` and at a `\` that is
+  a legacy separator, never inside `[...]` or `{...}`, never at a `\` escaping a reserved
+  character; each part keeps its segment text with its escapes. A mask ending in a separator
+  names directories (its last part is `Directory`, `DirectoryMask` or `Recurse`), so
+  `-- "obj/"` is a directory exclude; a last `**` without one is `FileMask "**"`.
+  `Path.maskText` gives the mask text back (a trailing `/` for a directory part) and is what
+  `toFileList` hands to `PatternScan.scan`.
+- **D44:** the msbuild import keeps writing msbuild's `dir/**` as `dir/**/*`: the same files in
+  4.0, lock text unchanged, no XP113 on masks the user did not write.
+- **D45:** the import escapes `( ) [ ] { } |` in the item masks and project paths it turns into
+  Xake masks (`Foo (x86)` → `Foo \(x86\)`), keeping msbuild's `*`, `?`, `**`. Absolute masks of
+  a lock resolve the wildcard-free part against the project folder and escape it
+  (`escapePath`); a lock's roots are tokenized and expanded in their escaped spelling; the
+  base folder of `Described.expand` is the unescaped literal prefix. Description and lock text
+  change only for paths holding those characters.
+- **D46:** `Fileset.toFileList1` and the `FileSystem` adapter (`FileSystemType`) are deleted, not
+  kept Obsolete: the walker reads the file system.
+- **One-time rebuild:** a fileset pickled by 3.x with a trailing `Recurse` (3.x parsed `dir/**`
+  as `[Directory dir; Recurse]`) reads back as the directory mask `dir/**/`, while the script's
+  `dir/**` now parses to `FileMask "**"`. The recorded dependency no longer equals the
+  script's fileset, so its target reruns once and records the 4.0 form.
+
 ## 9. Matcher implementation (non-normative)
 
 ### 9.1 Status

@@ -1,6 +1,5 @@
-module internal Xake.ExecCore
+﻿module internal Xake.ExecCore
 
-open System.Text.RegularExpressions
 open DependencyAnalysis
 
 open Storage
@@ -17,26 +16,15 @@ let traceLog (level:Logging.Level) fmt =
     }
     Printf.kprintf write fmt
 
-let wildcardsRegex = Regex(@"\*\*|\*|\?", RegexOptions.Compiled)
-let patternTagRegex = Regex(@"\((?'tag'\w+?)\:[^)]+\)", RegexOptions.Compiled)
-let replace (regex:Regex) (evaluator: Match -> string) text = regex.Replace(text, evaluator)
-let ifNone x = function |Some x -> x | _ -> x
+/// `Path.matchRule` with an invalid pattern reported as the engine's build error (spec 7.1): a
+/// rule built from the `Rule` DU cases directly is first parsed here.
+let private matchRulePattern pattern root target =
+    try Path.matchRule pattern root target
+    with PatternAst.PatternException message -> raise (XakeException message)
 
-/// Substitutes wildcard and named capture group matches into a file pattern.
-/// Positional wildcards (*, **, ?) are replaced by index, named groups by tag.
-let applyWildcards = function
-    | None -> id
-    | Some matches ->
-        fun pat ->
-            let mutable i = 0
-            let evaluator m =
-                i <- i + 1
-                matches |> Map.tryFind (i.ToString()) |> ifNone ""
-            let evaluatorTag (m: Match) =
-                matches |> (Map.tryFind m.Groups.["tag"].Value) |> ifNone ""
-            pat
-            |> replace wildcardsRegex evaluator
-            |> replace patternTagRegex evaluatorTag
+let private specificityOf pattern =
+    try Path.specificity pattern
+    with PatternAst.PatternException message -> raise (XakeException message)
 
 /// A rule that matches a target, with what is needed to rank and explain the choice.
 /// `Pattern` is None for a condition rule (no textual pattern). `Index` is the position in the
@@ -48,6 +36,8 @@ type RuleMatchInfo<'ctx> = {
     Pattern: string option
     Specificity: Path.Specificity
     Index: int
+    /// evidence warning codes of the match (XP119), reported when the rule is selected
+    Evidence: string list
 }
 
 /// A condition rule has no pattern to measure, so it ranks below every pattern rule (whose
@@ -64,31 +54,33 @@ let explainMatch (Rules rules) projectRoot target : RuleMatchInfo<_> list =
 
         |FileConditionRule (meetCondition,_), FileTarget file when file |> File.getFullName |> meetCondition ->
             // TODO let condition rule extracting named groups
-            Some { Rule = rule; Groups = []; Targets = [target]; Pattern = None; Specificity = conditionSpecificity; Index = index }
+            Some { Rule = rule; Groups = []; Targets = [target]; Pattern = None; Specificity = conditionSpecificity; Index = index; Evidence = [] }
 
         |FileRule (pattern,_), FileTarget file ->
             file
             |> File.getFullName
-            |> Path.matchGroups pattern projectRoot
-            |> Option.map (fun groups -> { Rule = rule; Groups = groups; Targets = [target]; Pattern = Some pattern; Specificity = Path.specificity pattern; Index = index })
+            |> matchRulePattern pattern projectRoot
+            |> Option.map (fun (groups, evidence) -> { Rule = rule; Groups = groups; Targets = [target]; Pattern = Some pattern; Specificity = specificityOf pattern; Index = index; Evidence = evidence })
 
         |MultiFileRule (patterns, _), FileTarget file ->
             let fname = file |> File.getFullName
             patterns
             |> List.tryPick(fun pattern ->
-                Path.matchGroups pattern projectRoot fname
-                |> Option.map(fun groups -> groups, pattern)
+                matchRulePattern pattern projectRoot fname
+                |> Option.map(fun (groups, evidence) -> groups, evidence, pattern)
                 )
-            |> Option.map (fun (groups, pattern) ->
-                let generateName = applyWildcards (Map.ofList groups |> Some)
+            |> Option.map (fun (groups, evidence, pattern) ->
+                let generateName name =
+                    try PatternAst.formatMatches (Map.ofList groups) name
+                    with PatternAst.PatternException message -> raise (XakeException message)
 
                 let targets = patterns |> List.map (generateName >> (</>) projectRoot >> File.make >> FileTarget)
-                { Rule = rule; Groups = groups; Targets = targets; Pattern = Some pattern; Specificity = Path.specificity pattern; Index = index })
+                { Rule = rule; Groups = groups; Targets = targets; Pattern = Some pattern; Specificity = specificityOf pattern; Index = index; Evidence = evidence })
 
         |PhonyRule (pattern,_), PhonyAction phony ->
             phony
-            |> Path.matchGroups pattern ""
-            |> Option.map (fun groups -> { Rule = rule; Groups = groups; Targets = [target]; Pattern = Some pattern; Specificity = Path.specificity pattern; Index = index })
+            |> matchRulePattern pattern ""
+            |> Option.map (fun (groups, evidence) -> { Rule = rule; Groups = groups; Targets = [target]; Pattern = Some pattern; Specificity = specificityOf pattern; Index = index; Evidence = evidence })
 
         |DelegatedRule (inner, _), _ ->
             // Match using the inner rule's pattern logic, but surface the outer
@@ -243,6 +235,13 @@ let rec execOne (ctx: ExecContext) target =
         | None -> ()
     | _ -> ()
 
+    // a legacy reading the match revealed (XP119), once per pattern (spec 7.3)
+    match selected with
+    | Some { Pattern = Some pattern; Evidence = evidence } ->
+        for code in evidence do
+            PatternAst.Warnings.reportEvidence "rule" pattern (Path.ruleEvidence code target.FullName)
+    | _ -> ()
+
     match selected with
     | Some {Rule = rule; Groups = groups; Targets = targets} ->
         let groupsMap = groups |> Map.ofSeq
@@ -320,7 +319,7 @@ let makeTarget (ctx: ExecContext) name =
     let (Rules rules) = ctx.Options.Rules
     let rec isPhonyRule nm = function
         |PhonyRule (pattern,_) ->
-            nm |> Path.matchGroups pattern "" |> Option.isSome
+            nm |> matchRulePattern pattern "" |> Option.isSome
         |DelegatedRule (inner, _) -> isPhonyRule nm inner
         | _ -> false
     in
@@ -401,8 +400,12 @@ let runBuild (ctx: ExecContext) groups =
 let createContextCore (options: EngineOptions) (db: Agent<Storage.DatabaseApi>) vars showProgress =
     let logger = options.Logger
     let scheduler = Scheduler.create logger options.Threads
+    // pattern warnings (spec 7.3) and fileset scan notes (6.5, 6.6), including those buffered at
+    // script load, go to this build's log
+    let patternWarnings = PatternAst.Warnings.attach (fun level message -> logger.Log level "%s" message)
 
     let finalize () =
+        patternWarnings.Dispose()
         db.PostAndReply Storage.CloseWait
         (scheduler :> System.IDisposable).Dispose()
         FlushLogs()

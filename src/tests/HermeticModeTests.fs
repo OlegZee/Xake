@@ -192,7 +192,7 @@ type ``Hermetic mode``() =
         let text = cscIn x.TestOptions root "m8" (without ["CSC_TOOLSET"] (fullVars root)) (Some outside) |> failure
         let m8 =
             sprintf "'m8': HERMETIC=on: %s is outside the project root '%s' and the package folder '%s', and no prerequisite covers it"
-                (outside.Replace('\\', '/')) root (nuget ())
+                outside root (nuget ())
         Assert.That(text, Does.Contain m8)
         // all violations together, the compiler first
         let m3 = text.IndexOf "'m8': HERMETIC=on: the compiler "

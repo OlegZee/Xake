@@ -531,48 +531,52 @@ module Described =
             }
         visitAll [ d.Name ] d.ProjectRefs []
 
-    let private hasWildcard (s: string) = s.Contains "*" || s.Contains "?"
+    /// <summary>
+    /// The fileset absolute C# source masks name (`expand`), `None` without an include. The masks
+    /// are Xake masks with `/` (D45: reserved characters of real paths escaped); the base is the
+    /// leading wildcard-free folder of the first include, as a real path, and every mask is
+    /// made relative to it (the relative folder escaped again).
+    /// </summary>
+    let internal filesetOf (masks: string list) : Fileset option =
+        let split (mask: string) =
+            let isExclude = mask.StartsWith "!"
+            isExclude, (if isExclude then mask.Substring 1 else mask)
+        let entries = masks |> List.map split
+        match entries |> List.tryFind (fst >> not) with
+        | None -> None
+        | Some (_, first) ->
+            let baseDir =
+                match MaskText.splitFixed first with
+                | dir, "" -> normal (Path.GetDirectoryName dir)
+                | dir, _ -> dir
+            let relative (mask: string) =
+                let dir, rest = MaskText.splitFixed mask
+                let rel =
+                    if dir = baseDir then "."
+                    elif dir.StartsWith (baseDir + "/") then dir.Substring (baseDir.Length + 1)
+                    else
+                        System.Uri.UnescapeDataString (
+                            (System.Uri (baseDir.TrimEnd '/' + "/")).MakeRelativeUri(System.Uri dir).ToString ())
+                match rel, rest with
+                | ".", r -> r
+                | r, "" -> MaskText.ofPath r
+                | r, rest -> MaskText.ofPath r + "/" + rest
+            entries |> List.fold (fun (fs: Fileset) (isExclude, mask) ->
+                if isExclude then fs - relative mask else fs + relative mask) (Fileset.(~+) baseDir)
+            |> Some
 
     /// <summary>
     /// The files absolute C# source masks name, read through `getFiles` so that the target
     /// depends on the listing (an added `.cs` reruns it). The convention is the import's
     /// (`Import.csharpMasks`): an entry is an include, a `!` prefix makes it an exclude, applied in
     /// order (`["**/*.cs", "!obj/**/*", "!bin/**/*"]`), and `dir/**/*` is every file below
-    /// `dir`. The masks become one Xake fileset whose base is the leading wildcard-free folder
-    /// of the first include; the files come out sorted (ordinal).
+    /// `dir`. The masks become one Xake fileset (`filesetOf`); the files come out sorted (ordinal).
     /// </summary>
     let expand (masks: string list) : Recipe<ExecContext, string list> =
         recipe {
-            let split (mask: string) =
-                let isExclude = mask.StartsWith "!"
-                isExclude, normal (if isExclude then mask.Substring 1 else mask)
-            let entries = masks |> List.map split
-            match entries |> List.tryFind (fst >> not) with
+            match filesetOf masks with
             | None -> return []
-            | Some (_, first) ->
-                let fixedOf (mask: string) =
-                    let parts = mask.Split '/' |> List.ofArray
-                    let fixedParts = parts |> List.takeWhile (hasWildcard >> not)
-                    String.concat "/" fixedParts, parts |> List.skip fixedParts.Length |> String.concat "/"
-                let baseDir =
-                    match fixedOf first with
-                    | dir, "" -> normal (Path.GetDirectoryName dir)
-                    | dir, _ -> dir
-                let relative (mask: string) =
-                    let dir, rest = fixedOf mask
-                    let rel =
-                        if dir = baseDir then "."
-                        elif dir.StartsWith (baseDir + "/") then dir.Substring (baseDir.Length + 1)
-                        else
-                            System.Uri.UnescapeDataString (
-                                (System.Uri (baseDir.TrimEnd '/' + "/")).MakeRelativeUri(System.Uri dir).ToString ())
-                    match rel, rest with
-                    | ".", r -> r
-                    | r, "" -> r
-                    | r, rest -> r + "/" + rest
-                let fs =
-                    entries |> List.fold (fun (fs: Fileset) (isExclude, mask) ->
-                        if isExclude then fs - relative mask else fs + relative mask) (Fileset.(~+) baseDir)
+            | Some fs ->
                 let! (Filelist found) = getFiles fs
                 return
                     found |> List.map (File.getFullName >> normal) |> List.distinct

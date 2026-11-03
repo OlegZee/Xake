@@ -17,13 +17,16 @@ type ``Project description``() =
     let minimal name =
         sprintf "{\n  \"name\": \"%s\",\n  \"project\": \"%s.fsproj\",\n  \"language\": \"fsharp\",\n  \"kind\": \"library\",\n  \"frameworks\": [\"net8.0\"],\n  \"sources\": [\"Lib.fs\"]\n}\n" name name
 
+    /// A fixture as the writer emits it: `\n` line ends whatever the checkout's autocrlf did.
+    let fixture name = (File.ReadAllText (fixtures </> name)).Replace ("\r\n", "\n")
+
     let failure (text: string) =
         let e = Assert.Throws<exn>(fun () -> Description.parse text |> ignore)
         e.Message
 
     [<Test>]
     member x.``the hermetic example round-trips byte-identically``() =
-        let text = File.ReadAllText (fixtures </> "xake.project.json")
+        let text = fixture "xake.project.json"
         let d = Description.parse text
         Assert.That(Description.format d, Is.EqualTo text)
         Assert.That(d.Name, Is.EqualTo "Xake.Dotnet")
@@ -36,7 +39,7 @@ type ``Project description``() =
 
     [<Test>]
     member x.``every field of the schema round-trips byte-identically``() =
-        let text = File.ReadAllText (fixtures </> "full.xake.project.json")
+        let text = fixture "full.xake.project.json"
         let d = Description.parse text
         Assert.That(Description.format d, Is.EqualTo text)
         Assert.That(d.AssemblyName, Is.EqualTo (Some "Sample.Web.Api"))

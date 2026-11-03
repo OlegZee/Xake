@@ -180,7 +180,9 @@ module XakeScriptBuilder =
 
         let updRules (XakeScript (options, rules)) f = XakeScript (options, f(rules))
         let updTargets (XakeScript (options, rules)) f = XakeScript ({options with Targets = f(options.Targets)}, rules)
-        let addRule rule (Rules rules) :Rules<_> =    Rules (rule :: rules)
+        let addRule rule (Rules rules) :Rules<_> =
+            Rule.validate rule
+            Rules (rule :: rules)
 
         new (options: ExecOptions) = RulesBuilder(options, None)
 
@@ -205,10 +207,16 @@ module XakeScriptBuilder =
         // --- flat script body: rules may be written directly in the script, no `rules [..]` needed ---
 
         /// Yields a single rule into the script body.
-        member __.Yield(rule: ExecContext Rule) = XakeScript (options, Rules [rule])
+        /// This is the single point where a rule is checked (`Rule.validate`, spec 7.1): the operators and
+        /// builders only construct rules, so a rule written as a bare `FileRule (...)` is checked too.
+        /// Raises `PatternAst.PatternException` for an invalid pattern.
+        member __.Yield(rule: ExecContext Rule) =
+            Rule.validate rule
+            XakeScript (options, Rules [rule])
 
         /// Yields a list of rules into the script body (`yield! rules` or a bare list).
         member __.Yield(rules: ExecContext Rule list) =
+            rules |> List.iter Rule.validate
             XakeScript (options, Rules (List.rev rules))
 
         member this.YieldFrom(rules: #seq<ExecContext Rule>) =

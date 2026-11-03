@@ -1,4 +1,4 @@
-namespace Xake
+﻿namespace Xake
 
 [<AutoOpen>]
 module XakeScript =
@@ -120,14 +120,16 @@ module XakeScript =
     let ( ..?> ) fn fnRule = FileConditionRule (fn, fnRule)
 
     /// Creates a file rule that maps a pattern to a recipe.
-    let ( ..> ) pattern actionBody = FileRule (pattern, actionBody)
+    let ( ..> ) pattern actionBody =
+        FileRule (pattern, actionBody)
 
     /// Creates a multi-file rule from a sequence of patterns and a shared recipe.
     let ( *..> ) (patterns: #seq<string>) actionBody =
         MultiFileRule (patterns |> List.ofSeq, actionBody)
 
     /// Creates phony action (check if I can unify the operator name)
-    let (=>) name action = PhonyRule (name, action)
+    let (=>) name action =
+        PhonyRule (name, action)
 
     open WorkerPool
 

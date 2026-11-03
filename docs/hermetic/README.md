@@ -21,6 +21,12 @@
   `varschema` (`CI`, `LOCK_REFRESH`, `LOCK_STALE`, `SOURCE_DATE_EPOCH`), e.g.
   `varschema { HermeticVars.Default with CI = Var.string(envVar = "CI") |> withDefault "off" }` to take the
   runner's `CI` (without `envVar` the field reads `XAKE__CI`, Xake 4.0).
+- **C# source masks are Xake 4.0 masks.** The import escapes `( ) [ ] { } |` in the masks and
+  project paths it records (`Foo (x86)` is written `Foo \(x86\)`), so such folders keep
+  importing under Xake 4.0, where those characters are reserved; msbuild's `*`, `?`, `**` stay
+  wildcards and `dir/**` is still written `dir/**/*`. Descriptions and locks change only for
+  paths holding those characters; a description written by 0.10 with such a path needs a
+  re-import.
 
 ## 0.10.0 (2026-10-29)
 

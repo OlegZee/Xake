@@ -24,6 +24,7 @@ One line per item.
 - [x] PR5 satellites: deferred, S71 stays closed (roadmap)
 - [x] bootstrap bump build.fsx / build.fsc.fsx to 3.13.0.43 / 0.8.0.44
 - [x] Delivered: #93, #94, #95, #96, #97; releases v3.13.0 (3.13.0.43), hermetic-v0.8.0 (0.8.0.44); series closed 2026-10-27
+- [x] Windows CI leg (#120): the 7 first-run failures fixed test-side (CRLF fixtures, native separators, async file log, hard-coded log path); none excluded
 - Backlog (roadmap, "Backlog from the Windows findings"):
   - [ ] `Import.RecordOptions.Environment` / `Project.ImportOptions.Environment`
   - [ ] Floor check through the SDK probe + `MSBuild.deps.json` (`sdkDir` public in the core)
@@ -32,3 +33,5 @@ One line per item.
   - [ ] Build log defects (flush on exit, name clash, relative name, hard-coded "See build.log")
   - [ ] Satellite assemblies (S71)
   - [ ] Consumer validation on Windows
+- [ ] Tests that run scripts without `FileLog` share the bin `build.log` and race on Windows (`FileLogger` deletes a file another test's logger still holds): `CommandLineTests` fixed in #123; candidates still sharing it: CommandTests, DescriptionTests, FileTasksCopy, FileTasksRm, FlatScriptTests, FileTasksTests, ParentDirTargetTests, ProjectPlanTests, RuleSpecificityTests, StaleArtifactDepTests. Either isolate each, or make `FileLogger` tolerate a locked previous log (retry / FileShare). Related: "log not flushed at exit".
+- [x] Log not flushed at exit: `FlushLogs` now flushes every file logger (bounded 2 s) after the console sink; `FileLogger` flushes the previous logger of the same file and retries the delete on `IOException` (PR #123). This mostly mitigates the shared-`build.log` item above (isolation still cleaner).

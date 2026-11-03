@@ -38,6 +38,9 @@
     <Compile Include="Logging.fs" />
     <Compile Include="Pickler.fs" />
     <Compile Include="Env.fs" />
+    <Compile Include="PatternAst.fs" />
+    <Compile Include="PatternMatch.fs" />
+    <Compile Include="PatternScan.fs" />
     <Compile Include="Path.fs" />
     <Compile Include="PathExt.fs" />
     <Compile Include="File.fsi" />
@@ -61,6 +64,7 @@
     <Compile Include="RuleBuilder.fs" />
     <Compile Include="ScriptFuncs.fs" />
     <Compile Include="Vars.fs" />
+    <Compile Include="TypedTargets.fs" />
     <Compile Include="Fingerprints.fs" />
     <Compile Include="ProcessExec.fs" />
     <Compile Include="FileTasksImpl.fs" />

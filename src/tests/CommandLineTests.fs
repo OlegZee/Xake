@@ -7,7 +7,8 @@ open Xake
 open Xake.Tasks
 
 let currentDir = __SOURCE_DIRECTORY__
-let XakeOptions = ExecOptions.Default
+/// No file log by default: scripts must not contend for the shared bin build.log (Windows file lock).
+let XakeOptions = { ExecOptions.Default with FileLog = "" }
 
 /// Parses CLI args on top of initial ExecOptions, returning the merged ExecOptions.
 let private parseArgs args initial =
@@ -148,7 +149,7 @@ let ``resetdb ignores previously recorded information``() =
     File.WriteAllText(testRoot </> "input.txt", "seed")
 
     let runBuild args =
-        xakeArgs args { XakeOptions with ProjectRoot = testRoot; DbFileName = dbFile } {
+        xakeArgs args { XakeOptions with ProjectRoot = testRoot; DbFileName = dbFile; FileLog = testRoot </> "build.log" } {
             rules [
                 "out.txt" ..> action {
                     do! need ["input.txt"]
@@ -184,7 +185,7 @@ let ``runs teardown after successful CLI execution``() =
     withTempRoot "cli-teardown-success" <| fun testRoot ->
         let log = System.Collections.Generic.List<string> ()
 
-        xakeArgs ["build"] { XakeOptions with ProjectRoot = testRoot; DbFileName = ".xake-teardown-success"; NoPersist = true; Nologo = true } {
+        xakeArgs ["build"] { XakeOptions with ProjectRoot = testRoot; DbFileName = ".xake-teardown-success"; NoPersist = true; Nologo = true; FileLog = testRoot </> "build.log" } {
             teardown ["cleanup"]
             rules [
                 "build" => recipe {
@@ -204,7 +205,7 @@ let ``runs teardown after failed CLI execution when ThrowOnError is enabled``() 
         let log = System.Collections.Generic.List<string> ()
 
         Assert.Throws<XakeException>(fun () ->
-            xakeArgs ["build"] { XakeOptions with ProjectRoot = testRoot; DbFileName = ".xake-teardown-failure"; NoPersist = true; Nologo = true; ThrowOnError = true } {
+            xakeArgs ["build"] { XakeOptions with ProjectRoot = testRoot; DbFileName = ".xake-teardown-failure"; NoPersist = true; Nologo = true; FileLog = testRoot </> "build.log"; ThrowOnError = true } {
                 teardown ["cleanup"]
                 rules [
                     "build" => recipe {
@@ -223,7 +224,7 @@ let ``runs teardown after failed CLI execution when ThrowOnError is enabled``() 
 let ``skips teardown for dryrun and dump CLI modes``() =
     withTempRoot "cli-teardown-nonrun" <| fun testRoot ->
         let log = System.Collections.Generic.List<string> ()
-        let options = { XakeOptions with ProjectRoot = testRoot; DbFileName = ".xake-teardown-nonrun"; NoPersist = true; Nologo = true }
+        let options = { XakeOptions with ProjectRoot = testRoot; DbFileName = ".xake-teardown-nonrun"; NoPersist = true; Nologo = true; FileLog = testRoot </> "build.log" }
 
         xakeArgs ["--dryrun"; "build"] options {
             teardown ["cleanup"]
@@ -258,7 +259,7 @@ let ``teardown failure is reported when build succeeds``() =
 
         let exn =
             Assert.Throws<XakeException>(fun () ->
-                xakeArgs ["build"] { XakeOptions with ProjectRoot = testRoot; NoPersist = true; Nologo = true; ThrowOnError = true } {
+                xakeArgs ["build"] { XakeOptions with ProjectRoot = testRoot; NoPersist = true; Nologo = true; FileLog = testRoot </> "build.log"; ThrowOnError = true } {
                     teardown ["cleanup"]
                     rules [
                         "build" => recipe {
@@ -281,7 +282,7 @@ let ``original build error is preserved when teardown also fails``() =
 
         let exn =
             Assert.Throws<XakeException>(fun () ->
-                xakeArgs ["build"] { XakeOptions with ProjectRoot = testRoot; NoPersist = true; Nologo = true; ThrowOnError = true } {
+                xakeArgs ["build"] { XakeOptions with ProjectRoot = testRoot; NoPersist = true; Nologo = true; FileLog = testRoot </> "build.log"; ThrowOnError = true } {
                     teardown ["cleanup"]
                     rules [
                         "build" => recipe {

@@ -165,7 +165,7 @@ let signBudget   = Resource.newResource "sign" 4              // the service rat
 do xakeScript {
     rules [
         sign {
-            target "signed/(name:*).(ext:dll|exe|nupkg)"
+            target "signed/(name:*).(ext:{dll,exe,nupkg})"
             input (fun t -> "out" </> Path.GetFileName t)
             certificate (Sign.Thumbprint "cc4967777c49a3ff...")
             timestamp "http://timestamp.digicert.com"

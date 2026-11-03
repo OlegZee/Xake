@@ -1,10 +1,13 @@
 # Session notes
 
-## State of `dev`: the 4.0 line (2026-10-31)
+## State of `dev`: the 4.0 line (2026-10-31, pattern module 2026-11-03)
 
 `dev` carries the variable rework (#111, #112) and is the line of **Xake 4.0**, a breaking release
 (owner; not 3.16). Release notes: [release-notes.md](release-notes.md), "4.0.0 (unreleased)". The
-feature folder: [features/vars-precedence](features/vars-precedence/session.md).
+feature folder: [features/vars-precedence](features/vars-precedence/session.md). The 4.0 pattern
+module and typed targets landed with #131 (2026-11-03,
+[features/pattern-module](features/pattern-module/session.md)); the release continues with the
+split, S6-S9 ([features/dotnet-split](features/dotnet-split/session.md)).
 
 - **Variables are evaluated once at launch**, in `ScriptRunner.createScriptContext`
   (`src/core/VarEvaluation.fs`; the types and the pure parts are in `src/core/Vars.fs`): Run,
@@ -48,12 +51,13 @@ feature folder: [features/vars-precedence](features/vars-precedence/session.md).
   1.1 ms per 10,000 lines, negligible. See [features/vars-precedence/perf-secrets.md](features/vars-precedence/perf-secrets.md).
 - **Perf note:** `recordDependency` (`ScriptFuncs.fs`) dedups `Var`/`EnvVar`/`SecretDep` reads with
   `List.contains` over the target's dependencies: O(deps) per read.
-- **Release state:** published are Xake 3.15.0 and Xake.Hermetic.Dotnet 0.10.0 (range
-  `[3.14.0.45, 4.0)`). Until 4.0 the hermetic package builds on the in-repo Xake (project
-  references; its nupkg depends on `Xake` at the build's version), `bump-base` and the CI job
-  `hermetic-compat` are gone, `publish.yml` refuses `hermetic-v*`. At 4.0 hermetic 0.11 ships
-  with Xake, and `Xake.Dotnet` and the hermetic package are split out together (release-process
-  decision D). Records frozen until 4.0 (`RecordShapeTests`) may change in 4.0.
+- **Release state:** published are Xake 3.15.0, `4.0.0-preview.1` and `4.0.0-preview.2`
+  (preview.2: the `Xake` package is the engine alone, #129), and Xake.Hermetic.Dotnet 0.10.0
+  (range `[3.14.0.45, 4.0)`; its last release, S-D2). Until the split the hermetic code
+  builds on the in-repo Xake (project references) and is no longer packed (#129), `bump-base` and the CI job
+  `hermetic-compat` are gone, `publish.yml` refuses `hermetic-v*`. At 4.0 `Xake.Dotnet` and the
+  hermetic code leave for the `Xake.Dotnet` repository as one package `Xake.Dotnet` 4.0.0
+  (release-process decision D, S-D2). Records frozen until 4.0 (`RecordShapeTests`) may change in 4.0.
 - Traps: a local `.xake` from before the rework makes the hermetic `test-build` misbehave (the
   dependency records of Var reads and secrets changed): use `--resetdb`. The SDK pin is
   10.0.403 in the locks and `build.yml`; another SDK needs `update-locks`. .NET removes an

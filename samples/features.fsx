@@ -1,6 +1,5 @@
 // #r "nuget: Xake, 2.9.6"
 #r "../out/netstandard2.0/Xake.dll"
-#r "../out/netstandard2.0/Xake.Dotnet.dll"
 
 // This a sample Xake script to show off some features.
 //
@@ -9,10 +8,13 @@
 // 
 // Running particular targets:
 // * `dotnet fsi features.fsx -- -- clean main`
+//
+// The .NET tasks (`csc`, `fsc`, `msbuild`, `resgen`) are not part of the engine: they live in the
+// `Xake.Dotnet` package, built in its own repository (https://github.com/OlegZee/Xake.Dotnet),
+// whose samples show them.
 
 open Xake
 open Xake.Tasks
-open Xake.Dotnet
 
 xake ExecOptions.Default {
 
@@ -46,11 +48,11 @@ xake ExecOptions.Default {
     // the execution of the recipe is suspended until all demanded targets are built.
     // Targets are executed in parallel. Dependencies could be demanded in any part of recipe.
     command "main"  {
-        do! need ["tracetest"; "temp/a.exe"; "temp/app.dll"]
+        do! need ["tracetest"; "temp/a.cs"; "temp/AssemblyInfo.cs"; "temp/app.txt"]
     }
 
     // this is shorter way to express the same. See also `<==` and '<<<' operators.
-    "main"  => need ["tracetest"; "temp/a.exe"; "temp/app.dll"]
+    "main"  => need ["tracetest"; "temp/a.cs"; "temp/AssemblyInfo.cs"; "temp/app.txt"]
 
     // "phony" rule that produces no file but just removes the files
     // `rm` recipe (Xake.Tasks namespace) allow to remove files and folders
@@ -81,19 +83,7 @@ xake ExecOptions.Default {
         ()
     }
 
-    // .NET build rules
-    // build .net executable from C# sources using full .net framework (or mono under unix)
-    // notice there's no "out" parameter: csc recipe will use the target file as an output
-    // `targetfwk` selects the framework to compile against, and with it the reference
-    // assemblies (here .NET Framework ones, fetched from NuGet) -- without it csc compiles
-    // for the .NET of the SDK the script runs on (net10.0 on SDK 10.0.x)
-    "temp/a.exe" ..> csc {
-        targetfwk "net-4.6.2"
-        src (!!"temp/a.cs" + "temp/AssemblyInfo.cs")
-        grefs ["System.dll"]
-    }
-
-    // the rule above demands a.cs source file, this rule creates the source file
+    // a rule that writes a source file (compiling it is a job for the `Xake.Dotnet` package)
     "temp/a.cs" ..> writeText
         """
         class Program
@@ -115,7 +105,7 @@ xake ExecOptions.Default {
         }
 
 
-        // F# sources for the library below
+        // a file read by the rule below
         "temp/hello.fs" ..> writeText
             """
             /// Greetings
@@ -128,20 +118,14 @@ xake ExecOptions.Default {
         // defining the target which produces multiple files
         // recipe will be executed just once, regardless how many times its outcome was requested in other targets
         // notice the `*..>` operator is used
-        ["temp/app.dll"; "temp/app.xml"] *..> recipe {
+        ["temp/app.txt"; "temp/app.lines"] *..> recipe {
 
-            let! [appfile; xmlfile] = getTargetFiles()
+            let! [appfile; linesfile] = getTargetFiles()
 
-            // no `targetfwk` and no FSharp.Core reference: fsc compiles for the .NET of the SDK
-            // the script runs on (net10.0 on SDK 10.0.x) against the SDK's own reference
-            // assemblies and FSharp.Core, so nothing but the SDK is needed
-            do! Fsc.compile {
-                FscSettings with
-                    Src = !! "temp/hello.fs"
-                    Out = appfile
-                    Doc = xmlfile
-                    CommandArgs = ["--utf8output"]
-            }
+            // `readText` demands temp/hello.fs and records it as a dependency
+            let! source = readText "temp/hello.fs"
+            System.IO.File.WriteAllText(appfile.FullName, source.ToUpperInvariant())
+            System.IO.File.WriteAllText(linesfile.FullName, string (source.Split('\n').Length))
         }
     ]
     "libs" => recipe {

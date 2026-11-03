@@ -4,31 +4,24 @@ open NUnit.Framework
 open Microsoft.FSharp.Reflection
 
 open Xake
-open Xake.Dotnet
 
-/// The records Xake.Hermetic.Dotnet builds (record expressions or `with` copies). Its range
-/// on Xake runs up to 4.0, and a record expression compiled against one Xake calls the full
-/// constructor, so a field added to one of these in a 3.x minor breaks the published hermetic
-/// package at run time. Until 4.0 these do not grow: add a function or a builder operation
-/// instead (docs/devprocess.md, "The records the hermetic package builds").
+/// `ExecContext` is a public record that code outside Xake.dll builds or copies (Xake.Dotnet and
+/// its hermetic part, in their own repository, use `ExecContext.withLogger` rather than a record
+/// copy). A record expression compiled against one Xake calls the full constructor, so a field
+/// added in a 4.x minor would break a package built against an older 4.x at run time: the record
+/// stays frozen within 4.x (docs/features/dotnet-split/brief.md §10). Add a function instead.
 [<TestFixture>]
-type ``Record shapes frozen until Xake 4``() =
+type ``Record shapes frozen within Xake 4``() =
 
     static member Records : obj[][] = [|
         [| typeof<ExecContext>; [ "Engine"; "Vars"; "Progress"; "NeedRebuild"; "ShowProgress"; "Targets"; "RuleMatches"; "Ordinal"; "Logger"; "HeldResources" ] |]
-        [| typeof<CscTypes.CscSettingsType>; [ "Platform"; "Target"; "Out"; "Src"; "Ref"; "RefGlobal"; "Resources"; "Define"; "Unsafe"; "TargetFramework"; "CommandArgs"; "FailOnError"; "CscPath"; "Toolset"; "Server"; "Project"; "Throttle" ] |]
-        [| typeof<CscTypes.RunOptions>; [ "FailOnError"; "CscPath"; "Server"; "Environment"; "Throttle" ] |]
-        [| typeof<Csc>; [ "Name"; "Framework"; "Directory"; "Options"; "Defines"; "Sources"; "Generated"; "Resources"; "RuntimeConfig"; "Dependencies" ] |]
-        [| typeof<FscTypes.FscSettingsType>; [ "Platform"; "Target"; "Out"; "Src"; "Ref"; "RefGlobal"; "Resources"; "Define"; "TargetFramework"; "FscVersion"; "Doc"; "CommandArgs"; "FailOnError"; "NoFramework"; "Tailcalls"; "Project"; "Throttle" ] |]
-        [| typeof<FscTypes.FscRunOptions>; [ "FailOnError"; "FscPath"; "Environment"; "Throttle" ] |]
-        [| typeof<Fsc>; [ "Name"; "Framework"; "Directory"; "Options"; "Defines"; "Sources"; "Generated"; "Resources"; "RuntimeConfig"; "Dependencies" ] |]
     |]
 
     [<TestCaseSource("Records")>]
-    member _.``has the fields it had at 3.14``(t: System.Type, fields: string list) =
+    member _.``has the fields it had at 4.0``(t: System.Type, fields: string list) =
         let actual = FSharpType.GetRecordFields t |> Array.map (fun p -> p.Name) |> List.ofArray
         Assert.That(actual, Is.EqualTo fields,
-            sprintf "%s changed: a published Xake.Hermetic.Dotnet builds it; no new fields until 4.0" t.FullName)
+            sprintf "%s changed: packages built against Xake 4.x construct it; no new fields within 4.x" t.FullName)
 
     [<Test>]
     member _.``withLogger replaces only the logger``() =

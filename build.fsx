@@ -2,8 +2,8 @@
 // #r "out/netstandard2.0/Xake.dll"
 #load "testjobs.fsx"
 
-// `test` runs the test jobs of testjobs.fsx in parallel (`test::tests/jobs`, `test::hermetic/run`,
-// ...; one runs alone by naming it). The test projects are built once (`test-build::<project>`),
+// `test` runs the test jobs of testjobs.fsx in parallel (`test::tests/jobs`, `test::tests/rest`;
+// one runs alone by naming it). The test projects are built once (`test-build::<project>`),
 // each job runs `dotnet test --no-build` on its slice and writes into out/test/<project>/<slice>/
 // (the trx, the blame sequence file and console.log, its whole output); the console gets the
 // summary lines. FILTER (-d FILTER=Rm) narrows every job to its tests whose name matches Rm
@@ -13,18 +13,10 @@ open Xake
 open Xake.Tasks
 open Testjobs
 
-/// The literal `<Version>` a project file declares, if any.
-let projectVersion (path: string) =
-    let m = System.Text.RegularExpressions.Regex.Match(System.IO.File.ReadAllText path, "<Version>([^<]+)</Version>")
-    if m.Success then m.Groups.[1].Value.Trim() else "0.0.1"
-
 let vars = {|
     // The env names are explicit: publish.yml exports VERSION, and from Xake 4.0 a field without
     // `envVar` reads XAKE__<NAME> (XAKE__VERSION) instead.
     Version    = Var.create<string>(envVar = "VERSION", description = "Version number for the Xake package, e.g. 1.2.3") |> withDefault "0.0.1"
-    // The assembly version of Xake.Hermetic.Dotnet (not packed here any more): -d HermeticVersion=...
-    // or $HERMETIC_VERSION. The default is the <Version> its project file carries.
-    HermeticVersion = Var.create<string>(envVar = "HERMETIC_VERSION", description = "Version number for the Xake.Hermetic.Dotnet assembly, e.g. 0.1.0") |> withDefault (projectVersion "src/hermetic/Xake.Hermetic.Dotnet.fsproj")
     NUGET_KEY  = Var.env<string>(envVar = "NUGET_KEY", description = "API key for NuGet.org, required for pushing packages") |> withDefault "" |> secret
     TestFilter = Var.string(cliArg = "FILTER", envVar = "FILTER", description = "Runs only the tests whose name matches this regex, e.g. 'Rm'")
 |}
@@ -32,14 +24,12 @@ let vars = {|
 let frameworks = ["netstandard2.0" (*; "net462" *)]
 
 /// A library this script builds. `Needs` are the libraries (of this script) it is compiled
-/// against. Only Xake is packed (see `xakePackage`); Xake.Hermetic.Dotnet has a version of its
-/// own (`HermeticVersion`), the other two the Xake version.
+/// against. Since 4.0 there is one, the engine; the .NET tasks and the hermetic library build in
+/// their own repository, OlegZee/Xake.Dotnet.
 type Library = { Name: string; Dir: string; Needs: string list }
 
 let libraries =
-    [ { Name = "Xake";                 Dir = "src/core";     Needs = [] }
-      { Name = "Xake.Dotnet";          Dir = "src/dotnet";   Needs = ["Xake"] }
-      { Name = "Xake.Hermetic.Dotnet"; Dir = "src/hermetic"; Needs = ["Xake"; "Xake.Dotnet"] } ]
+    [ { Name = "Xake"; Dir = "src/core"; Needs = [] } ]
 
 let library name = libraries |> List.find (fun lib -> lib.Name = name)
 
@@ -51,20 +41,17 @@ let binaries name =
     ]
 
 /// The NuGet package of this repository: `Xake`, the engine alone, packed from src/core. From
-/// 4.0 Xake.Dotnet ships from its own repository (dotnet-split S-D14): src/dotnet is not packed,
-/// and neither is src/hermetic (Xake.Hermetic.Dotnet ended at 0.10.0, S-D2); both still build
-/// and test here until the split's removal step (S7).
+/// 4.0 Xake.Dotnet (with the hermetic library) ships from its own repository,
+/// OlegZee/Xake.Dotnet (dotnet-split S-D2, S-D14).
 ///
 /// The package goes into a folder of its own, `out/pkg/Xake/Xake.<version>.nupkg`, which CI
 /// pushes.
 let xakePackage = "Xake"
 let packagePath id version = $"out/pkg/%s{id}/%s{id}.%s{version}.nupkg"
 
-let versionOf (lib: Library) =
-    if lib.Name = "Xake.Hermetic.Dotnet" then vars.HermeticVersion else vars.Version
-
-/// The `Xake` nupkg must carry Xake.dll and Xake.xml for every target framework and nothing of
-/// Xake.Dotnet (S-D14); returns the problems found (none means the package is right).
+/// The `Xake` nupkg must carry Xake.dll and Xake.xml for every target framework and nothing
+/// else under lib/ (no Xake.Dotnet, S-D14); returns the problems found (none means the package
+/// is right).
 let checkXakePackage (nupkg: string) =
     use zip = System.IO.Compression.ZipFile.OpenRead nupkg
     let entries = [ for e in zip.Entries -> e.FullName ]
@@ -72,22 +59,15 @@ let checkXakePackage (nupkg: string) =
         for file in ["Xake.dll"; "Xake.xml"] do
             if not (List.contains $"lib/{fwk}/{file}" entries) then yield $"no lib/{fwk}/{file}"
       for e in entries do
-        if e.StartsWith "lib/" && System.IO.Path.GetFileName(e).StartsWith "Xake.Dotnet." then
+        let file = System.IO.Path.GetFileName e
+        if e.StartsWith "lib/" && file <> "Xake.dll" && file <> "Xake.xml" then
             yield $"carries {e}" ]
-
-/// The version arguments of a build of src/hermetic: its own version, and the Xake version of
-/// the referenced src/dotnet and src/core. Not /p:Version, which would give the referenced
-/// projects the hermetic version.
-let hermeticVersionArgs (hermeticVersion: string) = recipe {
-    let! xakeVersion = vars.Version
-    return [ "-p:HermeticVersion=" + hermeticVersion; "-p:XakePackageVersion=" + xakeVersion ]
-}
 
 let dotnet arglist = sh "dotnet" { args arglist; failonerror }
 
 /// One msbuild at a time over the in-repo projects: every `dotnet build`/`pack` here also
-/// builds src/core (and src/dotnet) through project references, into the same
-/// src/core/bin/Release and obj folders, and two at once collide (MSB4018 GenerateDepsFile,
+/// builds src/core through project references, into the same src/core/bin/Release and obj
+/// folders, and two at once collide (MSB4018 GenerateDepsFile,
 /// "Xake.deps.json is being used by another process", the two test builds of `test` in the
 /// v4.0.0-preview.1 publish run). The test jobs (`dotnet test --no-build`) still run in parallel.
 let msbuild = Resource.newResource "msbuild" 1
@@ -105,7 +85,7 @@ do xakeScript {
 
         "test" <== [ for j in testJobs -> $"test::{testJobName j}" ]
 
-        // all jobs of one test project, e.g. `test-project::hermetic`
+        // all jobs of one test project, e.g. `test-project::tests`
         "test-project::(project:*)" => recipe {
             let! project = getRuleMatch "project"
             do! need [ for j in testJobs do if j.Project = project then $"test::{testJobName j}" ]
@@ -125,7 +105,6 @@ do xakeScript {
             let! slice = getRuleMatch "slice"
             let job = testJob project slice
             do! need [ $"test-build::{project}" ]
-            do! need (testJobNeeds job)   // the compiler server's users, one after another
             let! testFilter = vars.TestFilter
 
             // a test running longer than 10 minutes is a hang: the run is stopped and the
@@ -134,7 +113,6 @@ do xakeScript {
             resetTestJobDir job
             do! sh $"dotnet test {testProjectDir project} -c Release --no-build" {
                 args (hang @ testArgs job testFilter)
-                env (testJobEnv job)
                 logprefix $"[{testJobName job}]"
                 stdoutlevel (fun l -> if isTestSummary l then Level.Message else Level.Info)
                 captureOutput (ToFile (Both, testJobDir job + "/console.log"))
@@ -156,10 +134,7 @@ do xakeScript {
 
             do! needFiles allFiles
             do! need [for dep in lib.Needs -> $"out/%s{framework}/%s{dep}.dll"]
-            let! version = versionOf lib
-            let! versionArgs =
-                if lib.Name = "Xake.Hermetic.Dotnet" then hermeticVersionArgs version
-                else recipe { return [ "/p:Version=" + version ] }
+            let! version = vars.Version
 
             do! oneMsbuild (dotnet ([
                 "build"
@@ -167,7 +142,8 @@ do xakeScript {
                 "--configuration"; "Release"
                 "--framework"; framework
                 "--output"; "./out/" + framework
-              ] @ versionArgs))
+                "/p:Version=" + version
+              ]))
         }
 
         (* Nuget publishing rules *)

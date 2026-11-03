@@ -5,6 +5,59 @@ open System.IO
 open Xake
 open Xake.Dotnet
 
+/// Mask text the import records (D45): msbuild masks and real paths turned into Xake 4.0 masks,
+/// whose `( ) [ ] { } |` are reserved. Masks here are `/`-separated and hold no `\` but the
+/// escapes these functions write.
+module internal MaskText =
+
+    /// An msbuild mask (`/`-separated) as a Xake mask: every reserved character escaped with
+    /// `\`, msbuild's wildcards `*`, `?` and `**` kept. A 3.x-literal path such as `Foo (x86)`
+    /// reads as that folder in 4.0. A mask without reserved characters is returned unchanged.
+    let ofMsbuild (mask: string) =
+        if mask |> Seq.exists (fun c -> Xake.PatternAst.reservedChars.IndexOf c >= 0) then
+            let sb = System.Text.StringBuilder ()
+            for c in mask do
+                if Xake.PatternAst.reservedChars.IndexOf c >= 0 then sb.Append('\\') |> ignore
+                sb.Append c |> ignore
+            sb.ToString ()
+        else mask
+
+    /// The literal text of wildcard-free mask text: each `\` escape resolved.
+    let unescape (text: string) =
+        if text.Contains "\\" then
+            let sb = System.Text.StringBuilder ()
+            let mutable i = 0
+            while i < text.Length do
+                if text.[i] = '\\' && i + 1 < text.Length then
+                    sb.Append text.[i + 1] |> ignore
+                    i <- i + 2
+                else
+                    sb.Append text.[i] |> ignore
+                    i <- i + 1
+            sb.ToString ()
+        else text
+
+    let private isWild (segment: string) = segment.Contains "*" || segment.Contains "?"
+
+    /// A mask split into its leading wildcard-free folder, as a real path (escapes resolved), and
+    /// the rest from the first wildcard segment on, as mask text (`""` for a literal mask).
+    let splitFixed (mask: string) =
+        let parts = mask.Split '/' |> List.ofArray
+        let fixedParts = parts |> List.takeWhile (isWild >> not)
+        unescape (String.concat "/" fixedParts), parts |> List.skip fixedParts.Length |> String.concat "/"
+
+    /// A real path relative or absolute, with `/`, as mask text naming it (`PatternAst.escapePath`).
+    let ofPath (path: string) = Xake.PatternAst.escapePath path
+
+    /// A mask relative to the folder `dir` (a real path) as an absolute mask: its wildcard-free
+    /// part resolved against `dir` (`Path.GetFullPath`, `/`) and escaped, the rest kept.
+    let absolute (dir: string) (mask: string) =
+        let fixedPart, rest = splitFixed mask
+        let full = (Path.GetFullPath (Path.Combine (dir, fixedPart))).Replace ('\\', '/')
+        match rest with
+        | "" -> ofPath full
+        | rest -> (ofPath full).TrimEnd '/' + "/" + rest
+
 /// <summary>
 /// The build variables Xake.Hermetic.Dotnet reads, as a schema a script MAY import:
 /// <c>varschema HermeticVars.Default</c>, or with fields changed by copy-and-update, e.g.
@@ -165,6 +218,16 @@ module Roots =
 
     let internal expand roots (path: string) =
         roots |> List.fold (fun (path: string) (token: string, root: string) -> path.Replace(token, root)) path
+
+    /// `tokenizeText` for a recorded mask (D45): each root is matched in its mask spelling
+    /// (`PatternAst.escapePath`), so a root holding `(x86)` is tokenized too; the mask keeps its
+    /// `\` escapes. For roots and masks without reserved characters it is `tokenizeAll`.
+    let internal tokenizeMask roots (mask: string) =
+        tokenizeText (roots |> List.map (fun (token, root) -> token, MaskText.ofPath root)) mask
+
+    /// `expand` for a recorded mask: each token becomes its root in mask spelling.
+    let internal expandMask roots (mask: string) =
+        expand (roots |> List.map (fun (token, root) -> token, MaskText.ofPath root)) mask
 
     /// `current` plus the extra roots a script declares (see `make`). An extra
     /// `$(NuGetPackageRoot)` (`packageRootOverride`) wins over the build's package folder.

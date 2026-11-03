@@ -926,24 +926,27 @@ type ``Record entry``() =
 
     let here () = (Directory.GetCurrentDirectory ()).Replace ('\\', '/')
     let sre () = here () + "/pkgs/system.resources.extensions/8.0.0/lib/net462/System.Resources.Extensions.dll"
-    let setup () =
-        RecordKit.write [ "proj"; "pkgs"; "dotnet" ]
-            [ "proj/A.cs", "class A { }\n"
-              "proj/Sub/B.cs", "class B { }\n"
-              "proj/R.resx", RecordKit.resx [ "A", "a" ]
-              "proj/obj/s/X.AssemblyInfo.cs", "[assembly: System.Reflection.AssemblyTitle(\"X\")]\r\n"
-              "proj/obj/s/X.R.resources", "compiled"
+    /// the project folder `proj` (or another name, D45: one holding reserved characters)
+    let setupIn (proj: string) =
+        RecordKit.write [ proj; "pkgs"; "dotnet" ]
+            [ proj + "/A.cs", "class A { }\n"
+              proj + "/Sub/B.cs", "class B { }\n"
+              proj + "/R.resx", RecordKit.resx [ "A", "a" ]
+              proj + "/obj/s/X.AssemblyInfo.cs", "[assembly: System.Reflection.AssemblyTitle(\"X\")]\r\n"
+              proj + "/obj/s/X.R.resources", "compiled"
               "pkgs/system.resources.extensions/8.0.0/lib/net462/System.Resources.Extensions.dll", "dll" ]
-    let context (masks: string list) : Import.RecordContext =
-        let dir = here () + "/proj"
+    let setup () = setupIn "proj"
+    let contextIn (proj: string) (masks: string list) : Import.RecordContext =
+        let dir = here () + "/" + proj
         let description =
             Description.parse (sprintf "{ \"name\": \"X\", \"project\": \"X.csproj\", \"language\": \"csharp\", \"frameworks\": [ \"net472\" ], \"sources\": [ %s ] }"
                                    (masks |> List.map (sprintf "\"%s\"") |> String.concat ", "))
         { Root = here (); ProjectFile = dir + "/X.csproj"; ProjectDir = dir; Description = description
           DescriptionFile = dir + "/xake.project.json"; PackageRoot = here () + "/pkgs"
           Pin = Lock.NoGlobalJson; PinFile = None; Pin' = ""; Inputs = []; OutOf = RecordKit.outOf; Imported = [ dir + "/X.csproj" ] }
-    let dump (references: string list) (preserialized: bool) : Import.Dump =
-        let dir = here () + "/proj"
+    let context = contextIn "proj"
+    let dumpIn (proj: string) (references: string list) (preserialized: bool) : Import.Dump =
+        let dir = here () + "/" + proj
         let args =
             [ "/noconfig"; "/target:library"; "/out:obj/s/X.dll" ]
             @ (references |> List.map (sprintf "/reference:%s"))
@@ -956,6 +959,7 @@ type ``Record entry``() =
           Items =
             Map [ "CscCommandLineArgs", args |> List.map (fun a -> a, Map.empty)
                   "EmbeddedResource", [ dir + "/R.resx", Map [ "OutputResource", "obj/s/X.R.resources" ] ] ] }
+    let dump = dumpIn "proj"
 
     [<Test>]
     member x.``generated files: known text kinds in the lock, any other kind copied, a compiled resx compiled again``() =
@@ -1000,6 +1004,27 @@ type ``Record entry``() =
         let entry, warnings, _ = Import.entryOf (context [ "**/*.cs"; "!obj/**/*" ]) "Release" "net472" (here () + "/proj/obj/s") (here () + "/b") (dump [] false)
         Assert.That(warnings, Is.Empty)
         Assert.That(entry.Recorded.Value.Masks, Is.EqualTo [ here () + "/proj/**/*.cs"; "!" + here () + "/proj/obj/**/*" ])
+
+    /// D45: a project folder holding reserved characters (`(x86)`, `[1]`) is recorded with them
+    /// escaped, the masks expand to msbuild's files, and the lock text reads back to the masks.
+    [<Test>]
+    member x.``a project folder with reserved characters is recorded with escaped masks``() =
+        let proj = "p (x86)[1]"
+        setupIn proj
+        File.WriteAllText (proj + "/obj/s/X.exe.licenses", "")
+        let entry, warnings, _ =
+            Import.entryOf (contextIn proj [ "**/*.cs"; "!obj/**/*" ]) "Release" "net472" (here () + "/" + proj + "/obj/s") (here () + "/b") (dumpIn proj [] false)
+        Assert.That(warnings, Is.Empty)
+        let escaped = PatternAst.escapePath (here ()) + "/p \\(x86\\)\\[1\\]"
+        Assert.That(entry.Recorded.Value.Masks, Is.EqualTo [ escaped + "/**/*.cs"; "!" + escaped + "/obj/**/*" ])
+        let roots = [ "$(ProjectRoot)", here () + "/" + proj ]
+        let masks = entry.Recorded.Value.Masks
+        Assert.That(masks |> List.map (Roots.tokenizeMask roots), Is.EqualTo [ "$(ProjectRoot)/**/*.cs"; "!$(ProjectRoot)/obj/**/*" ])
+        Assert.That(masks |> List.map (Roots.tokenizeMask roots >> Roots.expandMask roots), Is.EqualTo masks)
+        // the masks expand (`Described.expand`'s fileset) to the sources msbuild compiles
+        let (Filelist files) = (Described.filesetOf masks).Value |> Fileset.toFileList (here ())
+        Assert.That(files |> List.map (fun f -> f.FullName.Replace ('\\', '/')) |> List.sort,
+                    Is.EqualTo [ here () + "/" + proj + "/A.cs"; here () + "/" + proj + "/Sub/B.cs" ])
 
 
 /// One synthesized restore downloads one version of an id: the fetch of a recorded lock set
@@ -1210,3 +1235,52 @@ type ``Import record binding redirects``() =
         x.Prepare ()
         RecordKit.import x.TestOptions "import-2" RecordKit.recordDefault projects |> ignore
         Assert.That(recorded (), Is.EqualTo firstImport)
+
+
+/// D45: the msbuild import writes Xake 4.0 masks: `( ) [ ] { } |` of project paths and item
+/// masks escaped, msbuild's wildcards kept, `dir/**` still `dir/**/*` (D44); masks without
+/// reserved characters keep their text.
+[<TestFixture>]
+type ``Import masks with reserved characters``() =
+    inherit XakeTestBase("import-masks-reserved")
+
+    let here () = (Directory.GetCurrentDirectory ()).Replace ('\\', '/')
+    let dumpOf (dir: string) : Import.Dump =
+        { Props =
+            Map [ "MSBuildProjectDirectory", dir; "EnableDefaultItems", "true"; "EnableDefaultCompileItems", "true"
+                  "DefaultItemExcludes", "bin/**;obj/**"; "Configuration", "Release" ]
+          Items = Map.empty }
+    let project (compile: string) =
+        [ "X.csproj", System.Xml.Linq.XDocument.Parse (sprintf "<Project><ItemGroup>%s</ItemGroup></Project>" compile) ]
+    let write (files: string list) =
+        for f in files do
+            Directory.CreateDirectory (Path.GetDirectoryName f) |> ignore
+            File.WriteAllText (f, "class C { }\n")
+
+    [<Test>]
+    member x.``an item mask and a project folder with (x86) and [1] are escaped and expand to their files``() =
+        let dir = here () + "/Foo (x86)/p[1]"
+        write [ dir + "/A.cs"; dir + "/obj/G.cs"; dir + "/../Gen (x86)/[1]/B.cs"; dir + "/../Gen (x86)/[1]/sub/C.cs" ]
+        let masks = Import.csharpMasks (dumpOf dir) (project @"<Compile Include=""..\Gen (x86)\[1]\**"" Exclude=""..\Gen (x86)\[1]\sub\*.cs"" />") ignore
+        Assert.That(masks, Is.EqualTo [ "**/*.cs"; "!bin/**/*"; "!obj/**/*"; @"../Gen \(x86\)/\[1\]/**/*"; @"!../Gen \(x86\)/\[1\]/sub/*.cs" ])
+        let full (f: string) = (Path.GetFullPath f).Replace ('\\', '/')
+        Assert.That(Import.expandMasks dir masks |> List.sort,
+                    Is.EqualTo ([ dir + "/A.cs"; dir + "/../Gen (x86)/[1]/B.cs" ] |> List.map full |> List.sort))
+        // the absolute masks of the lock: the project folder resolved and escaped
+        Assert.That(MaskText.absolute dir "**/*.cs", Is.EqualTo (PatternAst.escapePath (here ()) + @"/Foo \(x86\)/p\[1\]/**/*.cs"))
+        Assert.That(MaskText.absolute dir @"../Gen \(x86\)/\[1\]/**/*", Is.EqualTo (PatternAst.escapePath (here ()) + @"/Foo \(x86\)/Gen \(x86\)/\[1\]/**/*"))
+
+    [<Test>]
+    member x.``masks without reserved characters keep their 3.x text``() =
+        let dir = here () + "/plain/p"
+        write [ dir + "/A.cs" ]
+        let masks = Import.csharpMasks (dumpOf dir) (project @"<Compile Include=""..\Gen\**"" /><Compile Remove=""Old\*.cs"" />") ignore
+        Assert.That(masks, Is.EqualTo [ "**/*.cs"; "!bin/**/*"; "!obj/**/*"; "../Gen/**/*"; "!Old/*.cs" ])
+        // the absolute masks: what `Path.GetFullPath` of the joined text gave before D45
+        for m in [ "**/*.cs"; "obj/**/*"; "../Gen/**/*"; "Old/*.cs"; "Sub/A.cs" ] do
+            Assert.That(MaskText.absolute dir m, Is.EqualTo ((Path.GetFullPath (Path.Combine (dir, m))).Replace ('\\', '/')), m)
+        // the lock text of a root without reserved characters: as `tokenizeAll` writes paths
+        let roots = [ "$(ProjectRoot)", here () + "/plain" ]
+        for m in [ here () + "/plain/p/**/*.cs"; "!" + here () + "/plain/p/obj/**/*" ] do
+            Assert.That(Roots.tokenizeMask roots m, Is.EqualTo (Roots.tokenizeAll roots m))
+            Assert.That(Roots.expandMask roots (Roots.tokenizeMask roots m), Is.EqualTo (Roots.expand roots (Roots.tokenizeAll roots m)))

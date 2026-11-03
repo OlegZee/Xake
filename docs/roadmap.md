@@ -155,6 +155,8 @@ From `docs/hermetic/workflows.md` ("Gaps"), in priority order:
 
 ### Build log defects (backlog, 2026-10-26)
 
+> Tracked in Xake.Dotnet since 2026-11-03: [docs/features/hermetic-windows](https://github.com/OlegZee/Xake.Dotnet/tree/dev/docs/features/hermetic-windows).
+
 The first reading was that `filelog "build.log" ...` appends to the file across runs. That was wrong: `FileLogger`
 (`Logging.fs`) recreates the file for every `xake {}` run. The real defects, found while checking it:
 
@@ -166,6 +168,8 @@ The first reading was that `filelog "build.log" ...` appends to the file across 
 Owner's decision: not now. Trace the growth the consumer solution saw in its own script or CI first.
 
 ### Satellite assemblies in imported locks (deferred, S71)
+
+> Tracked in Xake.Dotnet since 2026-11-03: [docs/features/hermetic-windows](https://github.com/OlegZee/Xake.Dotnet/tree/dev/docs/features/hermetic-windows).
 
 `Import.record` records no satellite (`<culture>/<asm>.resources.dll`) compilations, so a build from locks has none and a
 nuspec that ships them leaves them out (the consumer solution: 37 files per brand, `ja` and `zh-CN`). Still deferred by
@@ -179,6 +183,8 @@ Risk: under invariant globalization the culture-specific compile cannot work, so
 The owner's recorded preferences: capture the call, fail under invariant globalization, C# first.
 
 ### Backlog from the Windows findings
+
+> Tracked in Xake.Dotnet since 2026-11-03: [docs/features/hermetic-windows](https://github.com/OlegZee/Xake.Dotnet/tree/dev/docs/features/hermetic-windows).
 
 - `Import.RecordOptions.Environment` and `Project.ImportOptions.Environment`: explicit secrets for the import's msbuild
   runs (today it passes only `NUGET_PACKAGES`).

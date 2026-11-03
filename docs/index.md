@@ -12,7 +12,8 @@ commit touching the file; lengths are approximate line counts. Index written 202
   library (namespace `Xake.Hermetic.Dotnet`: locks, restore, SBOM, verify, deterministic pack,
   signing) left this repository at 4.0: they are the one package `Xake.Dotnet`, built in
   [OlegZee/Xake.Dotnet](https://github.com/OlegZee/Xake.Dotnet), with their docs and samples. Their design records stay here
-  under `docs/features/` (hermetic-build, hermetic-windows, release-process, dotnet-split).
+  under `docs/features/` (hermetic-build, release-process, dotnet-split); the hermetic Windows
+  feature moved to Xake.Dotnet.
 - Xake builds itself with `build.fsx` (`dotnet build`, the tests, `dotnet pack`).
 - Work goes on feature branches, PRs to `dev` on OlegZee/Xake; feature working notes live in
   `docs/features/<name>/`.
@@ -28,7 +29,7 @@ commit touching the file; lengths are approximate line counts. Index written 202
 | Variables (4.0) | [features/vars-precedence/session.md](features/vars-precedence/session.md) | declarations evaluated at launch, `var` rules, `Var.read`, library variable sets: spec, briefs, PR notes; implemented in #111 and #112 (user reference: [tasks.md](tasks.md#script-variables)) |
 | Release process | [features/release-process/session.md](features/release-process/session.md) | versioning, the published version is the tag, hermetic on the in-repo Xake until 4.0, the split of `Xake.Dotnet` (D) at 4.0 |
 | Rule specificity | [features/rule-specificity/session.md](features/rule-specificity/session.md) | rule-matching working notes |
-| Windows findings | [features/hermetic-windows/brief.md](features/hermetic-windows/brief.md) | closed 2026-10-27 (#93-#97, Xake 3.13.0, Xake.Hermetic.Dotnet 0.8.0): the seven remarks from the Windows run of the consumer solution (2026-10-26), analyses, brief with the owner's decision list, PR split; branch `feature/hermetic-windows` |
+| Windows findings | [Xake.Dotnet: features/hermetic-windows](https://github.com/OlegZee/Xake.Dotnet/tree/dev/docs/features/hermetic-windows) | moved to Xake.Dotnet 2026-11-03, where the work is finished; the Xake part closed 2026-10-27 (#93-#97, Xake 3.13.0, Xake.Hermetic.Dotnet 0.8.0) |
 
 ## Key cross-cutting pages
 

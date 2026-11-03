@@ -79,7 +79,7 @@ for the tests that leave `src/tests`.
 | `samples/gettingstarted.fsx`, `samples/features.fsx`, `samples/book/intro.fsx` | the csc parts take `#r "nuget: Xake.Dotnet"` or are replaced by engine-only steps |
 | `docs/tasks.md`, `cheatsheet.md`, `index.md`, `variables.md`, `resources.md`, `roadmap.md`, `devprocess.md`, `CLAUDE.md`, `docs/session.md` | .NET sections become links to the new repo; packaging section rewritten |
 | `docs/release-notes.md` | history stays; a 4.0.0 entry "`Xake.Dotnet` is a package of its own, hermetic included; `Xake.Hermetic.Dotnet` ends at 0.10.0" with the script change |
-| `docs/features/hermetic-build/`, `hermetic-windows/`, `release-process/` | stay as the record; new hermetic work gets feature folders in the new repo |
+| `docs/features/hermetic-build/`, `hermetic-windows/`, `release-process/` | stay as the record; new hermetic work gets feature folders in the new repo (2026-11-03, owner: `hermetic-windows/` moved to Xake.Dotnet to finish the work there) |
 
 ## 3. The seam: engine internals used by `Xake.Dotnet` and hermetic
 

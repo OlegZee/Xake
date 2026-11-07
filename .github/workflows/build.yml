@@ -41,7 +41,7 @@ jobs:
 
   # Windows host check for the pattern code (PatternScan, PatternMatch, PatternAst and their
   # vector tests, Fileset, paths): the whole NUnit project, without the self-hosting script.
-  # No exclusions: docs/features/hermetic-windows records no failing unit tests. Vectors that
+  # No exclusions: no failing unit tests are recorded for Windows. Vectors that
   # need a Unix or case-sensitive host Assert.Ignore (PatternScanVectorTests `requireHost`).
   # If a test unrelated to patterns fails here on the first run, exclude it with
   # `--filter "Name!~..."` and name the reason in a comment.

@@ -14,7 +14,7 @@ rows: D1 = this brief, D2 = S5, D3 = S6-S8.
 | S3b | Xake: stop packing `Xake.Dotnet.dll` into `Xake` (S-D14), tag `v4.0.0-preview.2` | done 2026-11-03: #129 merged, `v4.0.0-preview.2` (ebfab1e) on nuget.org |
 | S5 | Xake: pattern-module Phase 4/5 incl. hermetic/`Xake.Dotnet` on 4.0 patterns (C3, `dir/**`), `feature/patterns2` -> `dev` (the gate) | done 2026-11-03: #131 merged (fe842d5) |
 | S6 | Xake.Dotnet: final history import from `dev` after S5, on a preview built after S5 | done 2026-11-03: Xake.Dotnet PR #1 merged with a merge commit (6535bf8), on `4.0.0-preview.3`; CI green on `dev` |
-| S7 | Xake: remove `src/dotnet`, `src/hermetic`, moved tests/docs/samples; `src/core` packs `Xake`; build/CI/publish reduced | on `feature/dotnet-split-remove`, PR to `dev`: code/tests/build/CI/samples, docs and links; tests 1737 passed, 10 skipped |
-| S8 | release: Xake 4.0.0, then one tag `v4.0.0` = package `Xake.Dotnet` 4.0.0 (both assemblies) | waits for S7 |
-| S9 | bootstrap bumps, unlist 1.1.x betas, deprecate and unlist `Xake.Hermetic.Dotnet`, wiki `#r` lines, session docs of both repos | waits for S8 |
+| S7 | Xake: remove `src/dotnet`, `src/hermetic`, moved tests/docs/samples; `src/core` packs `Xake`; build/CI/publish reduced | done 2026-11-03: #133 merged; follow-ups #134-#136 (readme, build.fsx, release notes, rm/cp) |
+| S8 | release: Xake 4.0.0, then one tag `v4.0.0` = package `Xake.Dotnet` 4.0.0 (both assemblies) | Xake half done 2026-11-03: `v4.0.0` (4297ea3) published. Xake.Dotnet: release PR #4 merged, `v4.0.0-preview.1` published and checked (#5: `build.fsc.fsx` on it); the date in its release notes, `dev` -> `master` and the tag `v4.0.0` are next |
+| S9 | bootstrap bumps, unlist 1.1.x betas, deprecate and unlist `Xake.Hermetic.Dotnet`, wiki `#r` lines, session docs of both repos | waits for S8; done ahead: wiki `#r` lines (owner pushed), the .NET task reference moved (Xake.Dotnet #2); open: Xake `build.fsx` still bootstraps on `Xake 3.15.0` |
 | Q-open | hermetic breaking changes under one version line: minor bump (proposed) or major | closed by S-D3 (2026-11-02): minor bump while "API may change" |

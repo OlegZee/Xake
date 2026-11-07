@@ -5,7 +5,7 @@ The `Xake` package: the engine (up to 3.15 it also carried `Xake.Dotnet`). From 
 [OlegZee/Xake.Dotnet](https://github.com/OlegZee/Xake.Dotnet), with their own notes; the entries below about them up to
 4.0 are the history. Links to their docs point to that repository.
 
-## 4.0.0 (unreleased)
+## 4.0.0 (2026-11-03)
 
 ### Summary
 

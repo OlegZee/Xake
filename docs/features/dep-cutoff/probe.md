@@ -471,3 +471,134 @@ Found while implementing step 1; they change or refine the decisions above.
    verdict" (decision of 2026-11-17) comes with step 3, where the verdict moves into `execOne`.
    Until then, a `needs` added to the header of a target that is up to date does not rebuild it
    (as an edit of a recipe body does not in 4.0; critic M9).
+
+## Speculation: options A, B, C (2026-11-17, for the owner)
+
+The owner doubts speculative execution (brief Part 3, "Decision for a dependent", step 3): "on the
+previous run we may have turned on obfuscation; will we build the obfuscation then? It may be an
+expensive operation." Below: what each option decides, what cut-off it keeps on the Acceptance
+scenarios, the cost risk, the implementation cost, and the changes to the brief.
+
+### Terms
+
+T is the target being decided. Its record lists what its body used last time: sources (files
+without a rule), variables and environment, filesets, **static `needs`** (the header) and
+**dynamic dependencies** (`need` in the body), among them **rule targets** D with the epoch T saw.
+"Brought up to date" means: built if out of date, so the comparison is with what D is now.
+
+In every option the static `needs` are brought up to date before T is decided (decision of
+2026-11-17), so cut-off through static `needs` is the same in A, B and C. The options differ only
+for dynamic dependencies that are rule targets.
+
+### The obfuscation question
+
+- **The flag is a tracked variable** (`getVar`, a `Var` field, read by T before it needs the
+  obfuscated output): the variable is compared before anything is built and T reruns. Nothing is
+  built speculatively. Same in A, B and C.
+- **The flag is read by another rule** whose output T needs first (a config file made by a rule):
+  in A, with strict recorded order, that config group is brought up to date and compared first; it
+  changed, so T reruns and the obfuscation group after it is never built. In B, nothing is built.
+- **The flag is untracked** (`File.Exists`, `System.Environment` read directly, the time of day):
+  A brings the recorded obfuscation dependency up to date although the new body would not ask for
+  it: the expensive build runs for nothing. B never does.
+- **The obfuscation's own inputs changed and T still needs it:** A builds it during the verdict,
+  B builds it in T's body. Same cost, at a different moment.
+
+So with tracked state A builds only what the body would build anyway (Shake's argument); the cost
+risk of A is exactly the untracked state, plus the side-effecting phony of C3.
+
+### Option A: speculation, strict
+
+- Recorded dynamic dependencies are brought up to date **in recorded order and grouping**, stopping
+  at the first changed group (fixes critic C1); everything else (sources, variables, filesets) is
+  compared at its place in that order, not "cheap checks first".
+- Phony and `AlwaysRerun` targets are never built speculatively: out of date = changed (C3).
+- Needs, in the engine: the record of order and grouping (database 0.7); a speculative build path
+  whose failure is not a build error (log lines demoted or buffered, no cancellation of siblings,
+  the failed result kept for the run, M10); wait-chain cycle detection, because speculation can
+  meet a cycle the body would not (C4); docs on untracked state.
+
+### Option B: no speculation
+
+What B decides **without building anything** (other than the static `needs`):
+
+| T's recorded dependency | B's decision |
+|---|---|
+| source file | stamp and size equal: unchanged; moved: hash, compare with the history (epoch rules): equal content is unchanged |
+| variable, environment, secret, fileset membership | compared, as 4.0 |
+| static `needs` | brought up to date (built if needed), then compared by epoch: full cut-off |
+| dynamic rule target D | unchanged iff D's current record carries the epoch T saw **and** D is up to date by the same no-build decision, recursively. If D has already finished in this run (built or found up to date), its record is current and the rule above is exact. If D is running now, T waits for it (T's body would wait for it too). Otherwise D out of date means T changed, without building D |
+| dynamic phony target | out of date by the no-build decision: changed; up to date: its completion stamp, as 4.0 |
+
+So B keeps cut-off through sources, variables and static `needs`, and through dynamic rule targets
+that are **up to date** (touched-but-equal sources make them so). It loses cut-off through a dynamic
+rule target that is **out of date but would rebuild to the same bytes**: T reruns, as in 4.0.
+
+**Where B loses what A gets.** `out/(n:*).dll` is a deterministic compiler rule over `src/(n:*)/*.cs`.
+`out/App.dll` reads `App.proj` and needs the references it lists (`need [ "out/Core.dll" ]`): a
+**dynamic** need, computed from a file. A comment is edited in `src/Core/x.cs`.
+- A: App's verdict brings `out/Core.dll` up to date (Core recompiles, needed anyway), the bytes are
+  equal, the epoch is kept: App is not recompiled, and nothing downstream of App reruns.
+- B: `out/Core.dll` is out of date and B does not build it to find out, so App reruns: its body
+  needs Core (recompiled, same bytes) and App recompiles (same bytes). App's dependents that need
+  it dynamically rerun too, and so on up the chain: 4.0 behaviour for dynamic chains.
+- B gets A's result if App names Core statically. The reference list is known when the script loads
+  (the project files are read then), so the rules can be generated with literal `needs`:
+  `for p in projects do yield ("out/" + p.Name + ".dll") ..> recipe { needs [ for r in p.Refs -> "out/" + r + ".dll" ]; .. }`.
+  This is what the header exists for.
+
+### Option C: opt-in per rule (`speculate` in the header), default B
+
+- The dependent says "my recorded dynamic dependencies may be built to decide me". Default B.
+- Cost: all of A (order record, speculative failure path, cycle detection, phony rule) **plus** B's
+  no-build decision, plus a flag and its docs. The most code and the most behaviour to explain.
+- It puts the switch on the wrong side for the owner's case: the risk is a **dependee** that is
+  expensive to build (obfuscation), not a dependent. If A is ever wanted, a dependee-side opt-out
+  (`noSpeculation` in the obfuscation rule's header: "never build me to decide someone else") fits
+  the concern better.
+
+### Acceptance scenarios
+
+| Scenario | A | B | C (default B) |
+|---|---|---|---|
+| Control file A→B→A, the 100 targets name it in `needs` | cut-off | cut-off | cut-off |
+| Control file A→B→A, the 100 targets `need` it in the body | cut-off | the 100 rerun on return to A (the route rule is out of date; not built to compare) | as B unless the 100 say `speculate` |
+| Deterministic compiler, comment edit, dependents name the output in `needs` | cut-off | cut-off | cut-off |
+| Same, dependents `need` it dynamically | cut-off | rerun up the dynamic chain (4.0 behaviour) | as B unless `speculate` |
+| Source touched without an edit (twice) | nothing reruns | nothing reruns (the producer is up to date by hash, so its dependents are too) | same |
+| Expensive dependee needed last time, untracked branch drops it | built for nothing | not built | not built unless `speculate` |
+| Non-monotonic stamps, empty database, old databases | as specified | as specified | as specified |
+
+### Implementation cost (step 3), relative
+
+- **B:** epochs, lazy hashes, static `needs` before the verdict (already planned), and a no-build
+  decision that is 4.0's `getChangeReasons` generalised from stamps to epochs, memoised per run but
+  refreshed when a target finishes. No speculative failure path, no speculation cycles (C4 shrinks
+  to cycles of static `needs`, rejected when the plan is built), no C3, no M10, and C1 does not
+  arise (nothing is built during the verdict except static `needs`, and the record is compared
+  after them).
+- **A:** B's machinery minus the no-build recursion, plus the record of order and grouping, the
+  speculative build path (failures, logs, cancellation), cycle detection, the phony rule and the
+  untracked-state docs. Roughly twice B's verdict work and most of the step-3 risk.
+- **C:** A + B + the flag. The largest.
+
+### Changes to the brief
+
+- **B:** Part 3 "Decision for a dependent" step 3 becomes the no-build decision above; Acceptance
+  "Speculation" is removed and replaced by "a dynamic dependency on an out-of-date rule target reruns
+  the dependent (documented); a static `needs` on a deterministic output gets cut-off"; the
+  control-file scenario names the route in `needs`. Docs: "for cut-off through a rule's output,
+  name it in `needs`". Critic C1, C3, C4 (for speculation), M10 close.
+- **A:** step 3 keeps speculation with strict recorded order, no phony speculation, cycle detection;
+  C1, C3, C4, M10 are implemented as their proposals say.
+- **C:** both, plus the flag.
+
+### Recommendation: B for 5.0
+
+B gives cut-off where the motivating cases put it (a control file and fixed compiler inputs are
+fixed inputs, and the header makes them static), never builds anything to decide a target except
+what the rule declares, and removes most of the risk of step 3. What it gives up, cut-off through
+dynamic dependencies on out-of-date rule targets, is the 4.0 behaviour, so nothing gets worse. The
+database 0.7 record should still keep the order and grouping of dynamic needs (cheap, critic m1),
+so A, or a dependee-side opt-out variant of it, can be added in a minor release without a format
+change if real scripts show the need.

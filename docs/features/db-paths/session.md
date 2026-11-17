@@ -17,6 +17,11 @@ never reused, stop appending after a failed `Write`; M6 a record body never chan
 result takes a tag from 4-15, Q-D); M4 roots checked before `openDb`; M5 an undeclared root keeps its records
 through rewrites (Q-A).
 
+Owner answered critic Q-B..Q-I (brief.md "Decisions"); Q-A (records under an undeclared root at a rewrite) pending.
+Q-G condition, implementer's proposal: the count `<n> files outside all roots` is in the Info line whenever it is
+non-zero; the hint "declare a root (`pathRoot`)" is added only when the script declares no roots, matching the
+owner's "if no roots are declared".
+
 ## Next step
 
-Wait for the owner's triage of critic.md (Q-A..Q-I). Then docs, then code in the plan's order.
+Wait for Q-A. Then fold the decisions into plan.md (framing, read-only open, re-root, launch checks), docs, code.

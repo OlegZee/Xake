@@ -21,6 +21,22 @@ consumer. Engine facts are taken from the Xake sources at 43706d3: `src/core/Dat
     relocated), documented.
   - **Q6:** one shared 0.7 with dep-cutoff: record tags 4-15 are reserved for its records; no 0.8.
 
+- 2026-11-17, triage of the critic ([critic.md](critic.md), Q-B..Q-I; Q-A pending):
+  - **Q-B:** `--dump` and `--dryrun` open the database read-only: no upgrade, compaction or dropping of records.
+  - **Q-C:** every record starts with its length; a torn or unreadable tail is recovered by keeping the whole records
+    before it (salvage), not by discarding the file.
+  - **Q-D:** a record tag never changes its body; dep-cutoff's result with content data takes its own tag from 4-15.
+  - **Q-E:** two roots with the same value, or a declared root equal to `ProjectRoot`, is a launch error.
+  - **Q-F:** at open, a path that is not under its longest root of this run is re-rooted (one rewrite).
+  - **Q-G:** the Info line reports `<n> files outside all roots` when files fall outside every root, as a hint to
+    declare one; the documented recipe for a script below the repository root is a relative root (`pathRoot ".."`).
+    Owner's words: "if no roots are declared; we encourage declaring them" (implementer's proposal for the exact
+    condition in session.md).
+  - **Q-H:** a secret variable as a root is rejected at launch.
+  - **Q-I:** a synthetic test with paths pinned to 114 bytes is the size regression guard; the measurement on a real
+    database is an `[<Explicit>]` test the consumer runs on its file.
+  - Note (dep-cutoff decision): no content epochs in 5.0, so no epoch counter in 0.7.
+
 ## Problem
 
 The database stores every file path as a full string, once per reference:

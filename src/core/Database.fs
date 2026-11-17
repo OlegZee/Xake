@@ -441,7 +441,8 @@ module Storage =
                     tx.Commit()
             File.Delete(bkpath)
 
-        let openDatabaseFile (opts: DbOpenOptions) dbpath (logger : ILogger) =
+        /// `wrapAppend` wraps the stream results are appended to (tests inject write failures through it).
+        let openDatabaseFile (opts: DbOpenOptions) (wrapAppend: Stream -> Stream) dbpath (logger : ILogger) =
             let log = logger.Log
             let roots = toRoots opts
             let table = Table(roots)
@@ -546,7 +547,7 @@ module Storage =
             let writer =
                 if opts.ReadOnly then None
                 else
-                    let w = new BinaryWriter(openWithRetry (fun () -> File.Open (dbpath, FileMode.Append, FileAccess.Write) :> Stream))
+                    let w = new BinaryWriter(wrapAppend (openWithRetry (fun () -> File.Open (dbpath, FileMode.Append, FileAccess.Write) :> Stream)))
                     if w.BaseStream.Position = 0L then
                         writeHeader w
                         for (n, v) in currentRootRecords do writeFrame w (rootRecord n v)
@@ -573,14 +574,9 @@ module Storage =
     /// </summary>
     let resultPU = Persist.result06
     
-    /// <summary>
-    /// Opens the database with roots and options; returns the agent and what the open found.
-    /// </summary>
-    /// <param name="opts">Project root, declared roots, read-only.</param>
-    /// <param name="dbpath">Full xake database file name</param>
-    /// <param name="logger"></param>
-    let openDbWith (opts: DbOpenOptions) dbpath (logger : ILogger) = 
-        let db, table, codec, pu, dbwriter, report, loadedContent = impl.openDatabaseFile opts dbpath logger
+    /// `openDbWith` with the append stream wrapped by `wrapAppend` (tests inject write failures).
+    let internal openDbWrapped (opts: DbOpenOptions) (wrapAppend: System.IO.Stream -> System.IO.Stream) dbpath (logger : ILogger) = 
+        let db, table, codec, pu, dbwriter, report, loadedContent = impl.openDatabaseFile opts wrapAppend dbpath logger
         let content = Dictionary<string, File * ContentEntry list>(loadedContent)
         // Logging the agent's own failure must not throw out of the loop again.
         let logError fmt = Printf.kprintf (fun s -> try logger.Log Error "%s" s with _ -> ()) fmt
@@ -593,6 +589,7 @@ module Storage =
             let failedStores = ref 0
             // after a failed write the file may end in a partial record: nothing more is appended
             let writer = ref (dbwriter: System.IO.BinaryWriter option)
+            let broken = ref false
             let warnUnsaved () =
                 if failedStores.Value > 0 then
                     try logger.Log Warning "Database not fully saved: %d result(s) failed to store, the next build may rebuild them" failedStores.Value
@@ -619,12 +616,13 @@ module Storage =
                         with ex ->
                             failedStores.Value <- failedStores.Value + 1
                             writer.Value <- None
+                            broken.Value <- true
                             (try w.Dispose() with _ -> ())
                             logError "Database agent failed to write the result of '%s', nothing more is written in this run: %O" (name ()) ex
                     | Choice2Of2 ex ->
                         failedStores.Value <- failedStores.Value + 1
                         logError "Database agent failed to store the result of '%s': %O" (name ()) ex
-                | None -> ()
+                | None -> if broken.Value then failedStores.Value <- failedStores.Value + 1
             let storeContent (file: File, history: ContentEntry list) =
                 content.[file.FullName] <- (file, history)
                 match writer.Value with
@@ -638,12 +636,13 @@ module Storage =
                         with ex ->
                             failedStores.Value <- failedStores.Value + 1
                             writer.Value <- None
+                            broken.Value <- true
                             (try w.Dispose() with _ -> ())
                             logError "Database agent failed to write the content of '%s', nothing more is written in this run: %O" file.Name ex
                     | Choice2Of2 ex ->
                         failedStores.Value <- failedStores.Value + 1
                         logError "Database agent failed to store the content of '%s': %O" file.Name ex
-                | None -> ()
+                | None -> if broken.Value then failedStores.Value <- failedStores.Value + 1
             let rec loop (db) =
                 async {
                     let! msg = mbox.Receive()
@@ -686,6 +685,14 @@ module Storage =
         agent, report
 
     /// <summary>
+    /// Opens the database with roots and options; returns the agent and what the open found.
+    /// </summary>
+    /// <param name="opts">Project root, declared roots, read-only.</param>
+    /// <param name="dbpath">Full xake database file name</param>
+    /// <param name="logger"></param>
+    let openDbWith (opts: DbOpenOptions) dbpath (logger : ILogger) = openDbWrapped opts id dbpath logger
+
+    /// <summary>
     /// Opens database with the current directory as the project root and no declared roots.
     /// </summary>
     /// <param name="dbpath">Full xake database file name</param>
@@ -701,7 +708,7 @@ module Storage =
             use reader = new System.IO.BinaryReader(impl.openReadWithRetry dbpath)
             let header = Persist.dbHeader.unpickle reader
             header.XakeVer
-        let db, _, _, _, _, _, _ = impl.openDatabaseFile { opts with ReadOnly = true } dbpath (CustomLogger (fun _ -> false) ignore)
+        let db, _, _, _, _, _, _ = impl.openDatabaseFile { opts with ReadOnly = true } id dbpath (CustomLogger (fun _ -> false) ignore)
         ver, db.Status |> Map.toList |> List.map snd |> List.distinct
 
     /// <summary>

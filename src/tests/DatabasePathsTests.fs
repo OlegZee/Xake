@@ -48,6 +48,28 @@ module DbPathsHelpers =
 
 open DbPathsHelpers
 
+/// A stream that, once armed, writes half of the next buffer and throws (a disk full or a lost share).
+type FailingStream(inner: Stream, armed: bool ref) =
+    inherit Stream()
+    override _.CanRead = false
+    override _.CanSeek = inner.CanSeek
+    override _.CanWrite = true
+    override _.Length = inner.Length
+    override _.Position with get () = inner.Position and set v = inner.Position <- v
+    override _.Flush() = inner.Flush()
+    override _.Read(_, _, _) = raise (NotSupportedException())
+    override _.Seek(o, origin) = inner.Seek(o, origin)
+    override _.SetLength v = inner.SetLength v
+    override _.Write(buffer: byte[], offset, count) =
+        if armed.Value then
+            armed.Value <- false
+            inner.Write(buffer, offset, count / 2)
+            inner.Flush()
+            raise (IOException "injected write failure")
+        inner.Write(buffer, offset, count)
+    override _.Dispose(disposing) = if disposing then inner.Dispose()
+
+
 [<TestFixture>]
 type ``Database paths: unit``() =
 
@@ -170,6 +192,42 @@ type ``Database paths: storage``() =
         close db
         Assert.That(log2, Has.None.Contains "damaged")
         Assert.That(log2, Has.None.Contains "Failed to read database")
+
+    [<Test>]
+    member _.``a failed write stops appending and the file stays readable``() =
+        let dir = freshDir "failedwrite"
+        let dbpath = dir </> ".xake"
+        let log = Collections.Concurrent.ConcurrentQueue<string>()
+        let shared = dir </> "src" </> "shared.cs"
+        let r1 = mkResult (dir </> "out" </> "a.dll") [ shared ]
+        let r2 = mkResult (dir </> "out" </> "b.dll") [ shared; dir </> "src" </> "b.cs" ]
+        let r3 = mkResult (dir </> "out" </> "c.dll") [ shared; dir </> "src" </> "c.cs" ]
+        let armed = ref false
+        let db, _ = openDbWrapped (opts dir) (fun s -> new FailingStream(s, armed) :> Stream) dbpath (collecting log)
+        Store r1 |> db.Post
+        get db r1.Targets.Head |> ignore         // r1 is written
+        armed.Value <- true                       // the next write reaches the disk half way and throws
+        Store r2 |> db.Post
+        Store r3 |> db.Post
+        Assert.AreEqual(Some r2, get db r2.Targets.Head, "kept in memory for this run")
+        Assert.AreEqual(Some r3, get db r3.Targets.Head)
+        close db
+        Assert.That(log, Has.Some.Contains "failed to write the result of")
+        Assert.That(log, Has.Some.Contains "nothing more is written in this run")
+        Assert.That(log, Has.Some.Contains "Database not fully saved: 2 result(s)", "r2 failed, r3 was not written")
+
+        // the next run: the half record is dropped, r1 loads, r2 and r3 rebuild and store normally
+        let log2 = Collections.Concurrent.ConcurrentQueue<string>()
+        let db, _ = openDbWith (opts dir) dbpath (collecting log2)
+        Assert.AreEqual(Some r1, get db r1.Targets.Head)
+        Assert.AreEqual(None, get db r2.Targets.Head)
+        Assert.AreEqual(None, get db r3.Targets.Head)
+        Store r2 |> db.Post
+        Store r3 |> db.Post
+        close db
+        Assert.That(log2, Has.Some.Contains "Recovering database")
+        let _, results = readDatabase (opts dir) dbpath
+        Assert.AreEqual([ r1; r2; r3 ], results |> List.sortBy (fun r -> r.Targets.Head.FullName))
 
     [<Test>]
     member _.``a torn tail is dropped and the whole records kept``() =

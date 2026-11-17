@@ -28,11 +28,16 @@ All owner decisions are in brief.md "Decisions" (Q1-Q6, critic Q-A..Q-I). Implem
   11 skipped; `dotnet fsi build.fsx -- -- build test pack` green.
 
 Not done / open:
-- No test injects a failed `Write` (IO error mid-append); the code path stops appending and logs.
 - Root-relative display in logs, progress and `--dump` (Q1: a later feature).
 - dep-cutoff merge: its content records take tags 4-15 (Q-D); `feature/dep-cutoff` not merged here.
 
+Later (2026-11-17): feature/db-paths was merged into feature/dep-cutoff (122e9b1). Then on this branch: a failed
+`Write` test (an injected stream writes half a record and throws: the agent stops appending, the close warning
+counts the failed result and every result not written after it, the next open recovers the tail); internal seam
+`Storage.openDbWrapped`. Verified: Release build 0 warnings, 1789 tests passed / 11 skipped, build.fsx build test
+pack green.
+
 ## Next step
 
-Owner review of the implementation; then merge `feature/dep-cutoff` when the orchestrator says so,
-and check that its result records use their own tag.
+The orchestrator has dep-cutoff merge this branch again. Nothing else open here except the later features in
+the tracker (root-relative display, case rules).

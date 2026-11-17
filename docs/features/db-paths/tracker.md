@@ -12,7 +12,7 @@
 | 8 | Synthetic database, size test, load-time measurements | done (measurements.md) |
 | 9 | Verify: Release build 0 warnings, tests, build.fsx build test pack | done 2026-11-17 |
 | 10 | Owner: undeclared root fails the run or not (`undeclaredRootFailsRun`) | done: prints only |
-| 11 | Test of a failed `Write` (IO error) | open |
+| 11 | Test of a failed `Write` (IO error) | done: `a failed write stops appending ...` |
 | 12 | Root-relative display of paths in logs, progress, --dump | later (separate feature, Q1) |
 | 13 | Case rules of File vs Target (plan fact 4) | later (out of scope, noted) |
-| 14 | Merge feature/dep-cutoff, its content records on tags 4-15 | when the orchestrator says |
+| 14 | Merge into feature/dep-cutoff | done by dep-cutoff (122e9b1); later db-paths commits merged there again on request |

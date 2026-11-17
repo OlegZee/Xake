@@ -57,16 +57,15 @@ one-byte tag:
 **Room for dep-cutoff (step 3).** Its database part (brief "Database (0.7)") maps onto this layout without a second
 format:
 
-- *Output records* `(Target, Stamp, Size, Epoch, History)` live in `BuildResult`, so they are part of the
-  `ResultRec` pickle; the target inside is a file id like any other.
-- *Per-file source table* `(Stamp, Size, Epoch, History)`: a record keyed by the file id, e.g. tag 4
-  `SourceRec (fileId, stamp, size, epoch, history)`, appended when an entry changes; the last one per id wins on load,
-  compaction keeps the live ones. The file table gives it a 2-3 byte key instead of a path.
-- *Database-wide epoch counter:* tag 5 `EpochRec (next)`, or derived on load as `max + 1` over all epochs read
-  (dep-cutoff's choice; either fits).
-- *Dependency order and grouping of dynamic needs, the static `needs` mark, the epoch seen:* fields of the dependency
-  pickle inside `ResultRec` (for instance a `NeedGroup` case or a group index per dependency, a `static` flag); they
-  change the `ResultRec` body, not the record layout. Files in them are ids.
+- No content epochs in 5.0 (dep-cutoff owner decision, 2026-11-17): no epoch counter and no `EpochRec`.
+- *Output records* `(Target, Stamp, Size, History)`, `History` a list of `((Stamp, Size), Hash option)`, live in
+  `BuildResult`, so they are part of the result pickle; the target inside is a file id like any other.
+- *Per-file source table* `(fileId, Stamp, Size, History)` with the same `History`: a record keyed by the file id,
+  e.g. tag 4 `SourceRec`, appended when an entry changes; the last one per id wins on load, compaction keeps the live
+  ones. The file table gives it a 2-3 byte key instead of a path.
+- *Dependency order and grouping of dynamic needs, the static `needs` mark:* fields of the dependency pickle inside
+  the result (for instance a `NeedGroup` case or a group index per dependency, a `static` flag). Files in them are
+  ids. Whether a changed result body keeps tag 2 or takes a new tag is critic M6 / Q-D, open.
 - *`produces` mappings:* part of the producer's `ResultRec`, or tag 6 if they need their own record.
 - The picklers become functions of the path table (`result table`); dep-cutoff's new fields reuse the same `file`
   pickler, so whatever it adds is compact and relocatable for free.

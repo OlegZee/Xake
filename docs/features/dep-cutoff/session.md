@@ -26,12 +26,16 @@ Step 1 implemented (local commits, see `git log`):
   rules too. `requiring` on file rules adds to the header.
 - Tests: `src/tests/RuleHeaderTests.fs` (14), `fixtures/header-neg/cases.fsx` run by
   `TypedCompileTests.fs`. Docs: `docs/rule-header.md`, cheatsheet, release notes.
-- Not yet: `ruleHeader`/`including` (owner's choice pending), `also` behaviour beyond matching
-  (step 2), the verdict move (step 3: until then static needs run only when the target runs).
+- `ruleHeader ["n"] { }` (`RuleHeaderBuilder`, `Rule.share` checks declared/used groups) and
+  `including h` (`RuleHeader.Included` keeps each header's name and groups for the registration
+  check in `Rule.validate`).
+- Verified 2026-11-17: `dotnet build src/core -c Release` 0 warnings, `dotnet test src/tests -c
+  Release` 1762 passed / 10 skipped, `dotnet fsi build.fsx -- -- build test pack` green.
+- Not yet: `also` behaviour beyond matching (step 2), the verdict move (step 3: until then static
+  needs run only when the target runs).
 
 ## Next step
 
-Report step 1 to the orchestrator with the critic summary. Then, on the owner's answers:
-`ruleHeader`/`including` with the chosen group-substitution option; accepted critic findings into
-brief.md; then step 2 (`also`: missing-output rebuild with current outputs, M1 overlap check,
+Step 1 is reported to the orchestrator with the critic summary. On the owner's answers: accepted
+critic findings into brief.md; then step 2 (`also`: missing-output rebuild with current outputs, M1 overlap check,
 `needs` naming an own `also`, missing declared output after the body = error).

@@ -121,9 +121,12 @@ module DomainTypes =
           /// `Some false` for `noContentCutoff`, `Some true` for `contentCutoff`, None: the default.
           ContentCutoff: bool option
           /// Resources the engine holds while the body runs (`requires`), with their units.
-          Requires: (Resource * int) list }
+          Requires: (Resource * int) list
+          /// Shared headers merged in with `including`: how each is named in errors and the groups
+          /// it declares, which the including rule must have.
+          Included: (string * string list) list }
         /// No declarations.
-        static member Empty = { Also = []; Needs = []; ContentCutoff = None; Requires = [] }
+        static member Empty = { Also = []; Needs = []; ContentCutoff = None; Requires = []; Included = [] }
         /// The resources to take, each once (a resource named twice, e.g. by `requires` and
         /// `requiring`, takes the larger number of units), in the order of their names.
         member h.Locks : (Resource * int) list =
@@ -138,7 +141,21 @@ module DomainTypes =
             { Also = a.Also @ b.Also
               Needs = a.Needs @ b.Needs
               ContentCutoff = (match b.ContentCutoff with Some _ -> b.ContentCutoff | None -> a.ContentCutoff)
-              Requires = a.Requires @ b.Requires }
+              Requires = a.Requires @ b.Requires
+              Included = a.Included @ b.Included }
+
+    /// <summary>
+    /// A header to share between rules, made with `ruleHeader ["n"] { .. }` and merged into a rule
+    /// with `including h`. `Groups` are the groups of the including rule that its patterns use.
+    /// </summary>
+    type SharedHeader =
+        internal { Name: string; Groups: string list; Items: RuleHeader }
+        /// How errors name it: `ruleHeader [n] (needs "obj/(n:*).rsp")`.
+        member h.Description = h.Name
+        /// The groups it declares.
+        member h.DeclaredGroups = h.Groups
+        /// Its header items.
+        member h.Header = h.Items
 
     /// A rule body with its header: what `recipe { also ..; needs ..; body }` gives. Only the
     /// file-rule forms accept it; it cannot be bound inside another recipe.
@@ -163,10 +180,42 @@ module DomainTypes =
         let outputs (patterns: string list) (header: RuleHeader) = patterns @ header.Also
 
         let private fail (message: string) : 'a = raise (PatternAst.PatternException message)
+        let private showNames (names: string list) = "[" + String.concat ", " names + "]"
+
+        /// Makes a shared header (`ruleHeader groups { .. }`), checking that every group its patterns
+        /// use is declared and every declared group is used.
+        let share (groups: string list) (header: RuleHeader) : SharedHeader =
+            let items =
+                [ for p in header.Needs -> "needs", p
+                  for p in header.Also -> "also", p ]
+            let name =
+                let first = match items with (op, p) :: _ -> sprintf " (%s \"%s\"%s)" op p (if items.Length > 1 then ", ..." else "") | [] -> ""
+                sprintf "ruleHeader %s%s" (showNames groups) first
+            let used =
+                [ for op, p in items do
+                    for g in PatternAst.Rule.parse p |> PatternAst.groupNames -> op, p, g ]
+            for op, p, g in used do
+                if not (List.contains g groups) then
+                    fail (sprintf "%s: %s \"%s\" uses the group %s, which is not declared; declared: %s (write ruleHeader [\"%s\"; ..])" name op p g (showNames groups) g)
+            for g in groups do
+                if not (used |> List.exists (fun (_, _, u) -> u = g)) then
+                    fail (sprintf "%s: the group %s is declared but no pattern uses it" name g)
+            for g, n in groups |> List.countBy id do
+                if n > 1 then fail (sprintf "%s: the group %s is declared twice" name g)
+            { Name = name; Groups = groups; Items = { header with Included = [] } }
 
         /// Checks a header against the groups its patterns may use (None: a condition rule, no groups).
         let private checkHeader (owner: string) (groups: string list option) (header: RuleHeader) =
-            let showNames (names: string list) = "[" + String.concat ", " names + "]"
+            for (shared, declared) in header.Included do
+                match groups with
+                | None when not declared.IsEmpty ->
+                    fail (sprintf "%s includes %s, which uses the group%s %s; a condition rule has no pattern and no groups" owner shared (if declared.Length > 1 then "s" else "") (String.concat ", " declared))
+                | Some known ->
+                    match declared |> List.filter (fun g -> not (List.contains g known)) with
+                    | [] -> ()
+                    | missing ->
+                        fail (sprintf "%s includes %s, which uses the group%s %s; the rule has the groups %s" owner shared (if missing.Length > 1 then "s" else "") (String.concat ", " missing) (showNames known))
+                | None -> ()
             for p in header.Needs do
                 let names = PatternAst.Rule.parse p |> PatternAst.groupNames
                 match groups with

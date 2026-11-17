@@ -7,6 +7,7 @@ type AsmG = { n: string }
 let Asm = Target<AsmG> "out/(n:*).dll"
 let cscLock = Resource.newResource "csc" 1
 let body : Recipe<ExecContext, unit> = recipe { () }
+let cscHeader = ruleHeader ["n"] { needs "obj/(n:*).rsp"; requires cscLock }
 let shared : Headed<ExecContext> = recipe { needs "obj/(n:*).rsp"; do! body }
 //#case ok-every-form
 let r1 = "out/(n:*).dll" ..> recipe {
@@ -32,6 +33,13 @@ let r7 = Asm.rule { needs "obj/(n:*).rsp"; let! m = matched in do! need [ m.n ] 
 let r8 = Asm.Rule <| fun m -> recipe { do! need [ m.n ] }
 let r9 = "out/(n:*).dll" ..> shared
 let r10 = "out/(n:*).dll" ..> recipe { do! body }
+let r11 = "out/(n:*).dll" ..> recipe {
+    including cscHeader
+    also "out/(n:*).pdb"
+    including (ruleHeader [] { needs "common.rsp" })
+    do! body
+}
+let r12 = Asm.rule { including cscHeader; let! m = matched in do! need [ m.n ] }
 //#case header-after-do FS3095
 let r = "out/(n:*).dll" ..> recipe {
     do! body
@@ -84,3 +92,13 @@ let r = "main" => recipe { needs "a" }
 let r = command "main" { needs "a" }
 //#case header-on-typed-form-d FS0193
 let r = Asm.Rule <| fun m -> recipe { needs "a" }
+//#case including-after-do FS3095
+let r = "out/(n:*).dll" ..> recipe {
+    do! body
+    including cscHeader
+}
+//#case ruleHeader-with-a-body FS0708
+let h = ruleHeader ["n"] {
+    needs "obj/(n:*).rsp"
+    do! body
+}

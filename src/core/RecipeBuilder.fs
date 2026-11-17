@@ -131,6 +131,10 @@ module Builder =
         /// `contentCutoff`: the default, for symmetry.
         [<CustomOperation("contentCutoff")>]
         member _.ContentCutoff(h: RuleHeader) = { h with ContentCutoff = Some true }
+        /// `including h`: the items of a shared header (`ruleHeader ["n"] { .. }`), merged in place.
+        [<CustomOperation("including")>]
+        member _.Including(h: RuleHeader, shared: SharedHeader) =
+            RuleHeader.Merge (h, { shared.Header with Included = [ shared.Description, shared.DeclaredGroups ] })
         /// Joins the header and the body; the body is delayed, so loading the script never runs it.
         member _.For(h: RuleHeader, body: unit -> Recipe<'c, unit>) : Headed<'c> = Headed (h, delayF body)
         /// A rule with a header and no body.
@@ -142,6 +146,30 @@ module Builder =
         [<CompilerMessage("A recipe with a header (also, needs, requires, ...) is a rule body: give it to a rule (..>, *..>, target, X.rule); it cannot be used inside another recipe.", 3095, IsError = true)>]
         member _.Bind(_: Headed<'c>, _: unit -> Recipe<'c, 'b>) : Recipe<'c, 'b> = failwith "unreachable"
     
+    /// `ruleHeader ["n"] { needs ..; requires .. }`: a header shared between rules, merged in with
+    /// `including h`. The list names the groups of the including rule the header uses.
+    type RuleHeaderBuilder(groups: string list) =
+        member _.Yield(()) = RuleHeader.Empty
+        member _.Zero() = RuleHeader.Empty
+        [<CustomOperation("also")>]
+        member _.Also(h: RuleHeader, pattern: string) = { h with Also = h.Also @ [ pattern ] }
+        [<CustomOperation("needs")>]
+        member _.Needs(h: RuleHeader, pattern: string) = { h with Needs = h.Needs @ [ pattern ] }
+        [<CustomOperation("needs")>]
+        member _.Needs(h: RuleHeader, patterns: string list) = { h with Needs = h.Needs @ patterns }
+        [<CustomOperation("requires")>]
+        member _.Requires(h: RuleHeader, resource: Resource) = { h with Requires = h.Requires @ [ resource, 1 ] }
+        [<CustomOperation("requires")>]
+        member _.Requires(h: RuleHeader, (resource: Resource, units: int)) = { h with Requires = h.Requires @ [ resource, units ] }
+        [<CustomOperation("noContentCutoff")>]
+        member _.NoContentCutoff(h: RuleHeader) = { h with ContentCutoff = Some false }
+        [<CustomOperation("contentCutoff")>]
+        member _.ContentCutoff(h: RuleHeader) = { h with ContentCutoff = Some true }
+        member _.Run(h: RuleHeader) : SharedHeader = Rule.share groups h
+
+    /// `ruleHeader ["n"] { .. }`: a header shared between rules (see `RuleHeaderBuilder`).
+    let ruleHeader (groups: string list) = RuleHeaderBuilder groups
+
     /// Backward-compatible alias for the recipe builder.
     let action = RecipeBuilder()
     /// The recipe computation expression builder instance.

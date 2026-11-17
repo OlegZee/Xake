@@ -255,3 +255,46 @@ type ``Rule header``() =
                     Does.Contain "a condition rule has no pattern and no groups")
         Assert.That(loads ("out/(n:*).txt" ..> recipe { also "out/(m:*).pdb" }) |> Option.defaultValue "", Does.Contain "XP013")
 
+    [<Test>]
+    member x.``including merges a shared header: its needs are built first, its lock taken``() =
+        x.Fresh ()
+        File.WriteAllText("src/A.rsp", "r")
+        let lock = Resource.newResource "shared-lock" 1
+        let shared = ruleHeader ["n"] { needs "src/(n:*).rsp"; requires lock }
+        let events = ConcurrentQueue<string>()
+        let rule =
+            "out/(n:*).dll" ..> recipe {
+                including shared
+                needs "prep"
+                events.Enqueue "body"
+                do! writeText "dll"
+            }
+        match rule with
+        | FileRule (_, h, _) ->
+            Assert.That(h.Needs, Is.EqualTo [ "src/(n:*).rsp"; "prep" ])
+            Assert.That(h.Locks |> List.map (fun (r, _) -> r.ResourceName), Is.EqualTo [ "shared-lock" ])
+        | other -> Assert.Fail (sprintf "expected a file rule, got %A" other)
+        let failed = x.Build [ "out/A.dll" ] [ "prep" => recipe { events.Enqueue "prep" }; rule ]
+        Assert.That(failed, Is.False)
+        Assert.That(List.ofSeq events, Is.EqualTo [ "prep"; "body" ])
+
+    [<Test>]
+    member x.``ruleHeader checks its groups when it is made``() =
+        let made (f: unit -> SharedHeader) = try f () |> ignore; "" with e -> e.Message
+        Assert.That(made (fun () -> ruleHeader ["n"] { needs "obj/(m:*).rsp" }),
+                    Does.Contain "ruleHeader [n] (needs \"obj/(m:*).rsp\"): needs \"obj/(m:*).rsp\" uses the group m, which is not declared; declared: [n]")
+        Assert.That(made (fun () -> ruleHeader ["n"; "cfg"] { needs "obj/(n:*).rsp" }),
+                    Does.Contain "the group cfg is declared but no pattern uses it")
+        Assert.That(made (fun () -> ruleHeader [] { needs "obj/common.rsp" }), Is.Empty)
+
+    [<Test>]
+    member x.``including a header whose group the rule lacks fails, naming the rule, the header and the group``() =
+        let shared = ruleHeader ["n"] { needs "obj/(n:*).rsp" }
+        let loads (r: ExecContext Rule) =
+            try xake { x.TestOptions with Targets = [ "none" ]; ThrowOnError = true } { rules [ r; "none" => recipe { () } ] } ; ""
+            with e -> e.Message
+        Assert.That(loads ("out/(name:*).dll" ..> recipe { including shared }),
+                    Does.Contain "rule \"out/(name:*).dll\" includes ruleHeader [n] (needs \"obj/(n:*).rsp\"), which uses the group n; the rule has the groups [name]")
+        Assert.That(loads ((fun _ -> true) ..?> recipe { including shared }),
+                    Does.Contain "includes ruleHeader [n] (needs \"obj/(n:*).rsp\"), which uses the group n; a condition rule has no pattern and no groups")
+        Assert.That(loads ((fun _ -> true) ..?> recipe { including (ruleHeader [] { needs "obj/common.rsp" }) }), Is.Empty)

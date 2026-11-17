@@ -88,12 +88,36 @@ module DomainTypes =
         { Name: string; Start: System.DateTime; OwnTime: int<ms>; WaitTime: int<ms> }
         with static member Empty = {Name = ""; Start = new System.DateTime(1900,1,1); OwnTime = 0<ms>; WaitTime = 0<ms>}
 
+    /// <summary>
+    /// What a result records for content cut-off (Xake 5.0, database 0.7, docs/content-cutoff.md).
+    /// </summary>
+    type ContentRecord =
+        { /// The size of each file dependency (a source or a rule's output) as the dependent saw it;
+          /// its time is in the `FileDep` / `ArtifactDep2` itself. A file with no entry (a record of
+          /// Xake 4.x) compares by time alone.
+          Sizes: (File * int64) list
+          /// The static inputs (`needs`) the result was built with, after the groups were filled in:
+          /// a target's full name or a fileset mask. A different set makes the target out of date.
+          StaticNeeds: string list
+          /// How many dependencies each dynamic `need` call recorded, in call order (kept for a later
+          /// speculative mode; unused by the 5.0 decision).
+          NeedGroups: int list
+          /// False when the result carries no content data (recorded by Xake 4.x, or read back from a
+          /// record that does not keep it): its sizes and static needs are then unknown, not empty.
+          Recorded: bool }
+        /// No content data: a result recorded by Xake 4.x, or one whose rule ran with none.
+        static member Empty = { Sizes = []; StaticNeeds = []; NeedGroups = []; Recorded = false }
+        /// The content data of a result recorded now, before anything is added to it.
+        static member Fresh = { ContentRecord.Empty with Recorded = true }
+
     /// Recorded result of building one or more targets, including dependencies and step timings.
     type BuildResult =
         { Targets : Target list
           Built : Timestamp
           Depends : Dependency list
-          Steps : StepInfo list }
+          Steps : StepInfo list
+          /// Content cut-off data (5.0); `ContentRecord.Empty` in a result read from an older database.
+          Content : ContentRecord }
 
     /// An async build action that threads BuildResult state through its execution.
     type Recipe<'a,'b> = Recipe of (BuildResult * 'a -> Async<BuildResult * 'b>)

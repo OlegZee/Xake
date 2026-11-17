@@ -24,7 +24,8 @@ module BuildLog =
         { Targets = target
           Built = DateTime.Now
           Depends = []
-          Steps = [] }
+          Steps = []
+          Content = ContentRecord.Fresh }
     
     /// Creates a new database
     let newDatabase() = { Database.Status = Map.empty }
@@ -101,7 +102,10 @@ module Storage =
                  { Targets = r
                    Built = built
                    Depends = deps
-                   Steps = steps }), 
+                   Steps = steps
+                   // dep-cutoff step 3: the content data is not persisted until the 0.7 layout
+                   // (feature/db-paths) gives it its record; a result read here has none
+                   Content = ContentRecord.Empty }), 
                  fun r -> (r.Targets, r.Built, r.Depends, r.Steps)) 
                 (quad (list target) date (list dependency) (list step))
         

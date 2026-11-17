@@ -114,6 +114,17 @@ work is at the end and starts with a spike that settles the builder design.
 - 2026-11-17, **M9: yes.** A header whose static set (`needs`, `also`) differs from the one recorded makes the target
   out of date (`also`: step 2, the current outputs; `needs`: step 3, recorded and marked static in 0.7).
 - 2026-11-17: **go for step 2** (`also` on the multi-output representation), scope as in "Acceptance by step / Step 2".
+- 2026-11-17, step 3 (implementer, from the sources; for the owner):
+  - **One per-file content table for sources and outputs alike** (`ContentStore`: `(Stamp, Size) -> Hash option`
+    history per file), instead of output histories inside `BuildResult`: the producer's run updates the entries of
+    its outputs, a dependent's comparison those of sources. One record kind for db-paths (file id, history; last one
+    wins) and the engine makes the entries of delegated outputs itself (M6). `BuildResult.Content` keeps what is
+    per dependent: the sizes seen, the static needs, the need grouping.
+  - **A rule target that is running when a dependent is decided counts as changed** (no waiting): waiting could
+    hang on a cycle a script edit introduced (critic C4); the dependent's body waits for it anyway.
+  - **Persistence of the content data waits for db-paths:** the 4.0 result pickler ignores `BuildResult.Content`
+    (read back as "no content data"), and the content table is in memory for the engine's lifetime
+    (`IContentPersistence` is the seam). The acceptance tests run several demands on one engine.
 - 2026-11-17: **step 1 starts**: the header in `recipe` and every file-rule form, static `needs`, `requires`, the
   `FileRule`/`MultiFileRule` merge as needed.
 

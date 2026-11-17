@@ -38,6 +38,7 @@ Options:
   --resetdb           - reset the database before starting the build
   --progress, -p      - display progress indicator
   --noprogress, -p-   - do not display progress
+  --content-cutoff=off - decide as Xake 4.0 (a moved file time is a change), no hashing
 
             """
             { optionsSoFar with ShowHelp = true; Nologo = true }, TopLevel
@@ -65,6 +66,10 @@ Options:
             {optionsSoFar with Progress = true}, TopLevel
         | "--noprogress" | "-p-" -> 
             {optionsSoFar with Progress = false}, TopLevel
+        | "--content-cutoff=off" ->
+            {optionsSoFar with ContentCutoff = false}, TopLevel
+        | "--content-cutoff=on" | "--content-cutoff" ->
+            {optionsSoFar with ContentCutoff = true}, TopLevel
 
         | x when x.StartsWith("-") || x.StartsWith("/") ->
             printfn "Option '%s' is unrecognized" x

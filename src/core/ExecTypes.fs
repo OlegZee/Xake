@@ -103,6 +103,14 @@ type RunCounters() =
         System.Threading.Interlocked.Increment &c.filesHashed |> ignore
         System.Threading.Interlocked.Add (&c.hashTicks, elapsed.Ticks) |> ignore
     member internal c.TaskScheduled () = System.Threading.Interlocked.Increment &c.tasksScheduled |> ignore
+    // per-run state of the decision (content cut-off): the targets finished in this run, and the
+    // memo of decisions made without building, dropped for a target when it finishes
+    member val internal Started = System.Collections.Concurrent.ConcurrentDictionary<Target, bool>() with get
+    member val internal Finished = System.Collections.Concurrent.ConcurrentDictionary<Target, bool>() with get
+    member val internal Decisions = System.Collections.Concurrent.ConcurrentDictionary<Target, Lazy<string option>>() with get
+    member internal c.MarkFinished (t: Target) =
+        c.Finished.[t] <- true
+        c.Decisions.TryRemove t |> ignore
     /// The counters so far.
     member c.Summary : RunSummary =
         { TargetsRun = System.Threading.Volatile.Read &c.targetsRun
@@ -132,6 +140,8 @@ type EngineOptions = {
     Variables: Map<string, VarEntry>
     /// Receives the summary of every run or demand (`onSummary`); None: only the log line.
     SummarySink: IRunSummarySink option
+    /// Content cut-off on (the default) or off (`--content-cutoff=off`: decide as Xake 4.0).
+    ContentCutoff: bool
 } with
     static member Default = {
         ProjectRoot = System.IO.Directory.GetCurrentDirectory()
@@ -142,6 +152,7 @@ type EngineOptions = {
         RuleMatch = MostSpecific
         Variables = Map.empty
         SummarySink = None
+        ContentCutoff = true
     }
 
 /// Engine-level immutable state shared across all tasks.
@@ -150,6 +161,8 @@ and EngineState = {
     Db: Agent<Storage.DatabaseApi>
     Scheduler: Scheduler<ExecStatus>
     RootLogger: ILogger
+    /// The content histories of files (content cut-off, docs/content-cutoff.md).
+    Content: ContentStore
 }
 
 /// Script execution context

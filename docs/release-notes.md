@@ -36,6 +36,16 @@ Xake 5.0 is a breaking release: the rule representation and the database format 
 - **Breaking:** `ExecContext` has a new field, `Counters`; a package that builds an `ExecContext`
   with a record expression must be rebuilt against 5.0 (`ExecContext.withLogger` is unaffected).
   `EngineOptions` and `ExecOptions` have a new field, `SummarySink`.
+- **Content cut-off** ([content-cutoff.md](content-cutoff.md)), on by default: a dependency with a new
+  time and the same content (by SHA-256, computed lazily) does not rerun its dependents; a rebuild that
+  reproduces an output's bytes stops there. `--content-cutoff=off` (command line, or
+  `ExecOptions.ContentCutoff`) decides as 4.0. The run summary counts files hashed, hashing time and
+  cut-offs.
+- **Changed decisions:** the up-to-date decision is made when a target's task starts: its static
+  `needs` are built first; a rule's output needed in the body is not built to decide (out of date: the
+  dependent reruns, as in 4.0). An output changed outside the build (edited, touched) reruns its rule
+  unless its hash shows the same content; an output another target modifies in place makes its rule
+  rerun every time.
 - **Breaking:** a rule with several outputs (`*..>`, `targets`, `also`) must write every one of them;
   one it did not write fails the build, naming it (in 4.0 the rule silently reran every time). When
   an output of a rule is built by another, more specific rule, the build fails naming both.

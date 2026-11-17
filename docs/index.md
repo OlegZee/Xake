@@ -46,6 +46,7 @@ commit touching the file; lengths are approximate line counts. Index written 202
 | File | What it is | Read when | Lines | Date | Status |
 |---|---|---|---|---|---|
 | [overview.md](overview.md) | short intro: minimal script, how to run, rule styles, the 4.0 pattern grammar (patterns, masks, paths) | first contact with Xake | ~100 | 2026-09-05 | current |
+| [content-cutoff.md](content-cutoff.md) | content cut-off (5.0): what is compared, lazy hashes, what reruns, `--content-cutoff=off` | a rebuild you did not expect, or one that did not happen | ~60 | 2026-11-17 | 5.0, in progress |
 | [rule-header.md](rule-header.md) | the rule header (5.0): `also`, `needs`, `requires`, `noContentCutoff`; groups; what does not compile | writing rules with fixed inputs, side outputs or locks | ~150 | 2026-11-17 | 5.0, in progress |
 | [typed-targets.md](typed-targets.md) | `Xake.Typed` (4.0): rule patterns with record groups, generated paths, `Command`, migration; a test compiles its snippets | writing rules with groups | ~430 | 2026-11-03 | current |
 | [cheatsheet.md](cheatsheet.md) | one-page syntax: entry point, `<==`/`<<<`, rules, variables (`var`, `varschema`, secrets) | writing or reading any build script | ~130 | 2026-10-06 | current |

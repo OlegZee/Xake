@@ -67,6 +67,10 @@ module XakeScript =
         /// Reset database before build
         ResetDb: bool
 
+        /// Content cut-off (default on): a dependency with a new time and the same content is not a
+        /// change. `--content-cutoff=off` on the command line decides as Xake 4.0 (docs/content-cutoff.md).
+        ContentCutoff: bool
+
         /// Skip build database; every target always rebuilds.
         NoPersist: bool
 
@@ -116,6 +120,7 @@ module XakeScript =
             VarSchema = []
             RuleMatch = MostSpecific
             SummarySink = None
+            ContentCutoff = true
         }
     end
 

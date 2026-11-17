@@ -32,7 +32,7 @@ type ``Delegated and resource tests``() =
         enter, leave, peak
 
     let emptyResult targets : BuildResult =
-        { Targets = targets; Built = System.DateTime.Now; Depends = []; Steps = [] }
+        { Targets = targets; Built = System.DateTime.Now; Depends = []; Steps = []; Content = ContentRecord.Empty }
 
     // An in-memory fake of Qualhalla's delegated executor: a run-scoped result store keyed
     // by a fixed identity, with in-flight dedup. Returns (executor, bodyRunCount, store, key).

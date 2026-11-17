@@ -62,7 +62,22 @@ Trap found: a failed build without `ThrowOnError` calls `exit`, which kills the 
 ("Test Run Aborted" with a misleading "Passed!" line); check the totals, not only "Passed!".
 Verified: 0 warnings, 1775 passed / 10 skipped, `build test pack` green.
 
+Step 3a done (2026-11-17, local): `src/core/ContentStore.fs` (per-file `(Stamp, Size) -> Hash`
+history, lazy SHA-256 once per file and state, invariant one state one content, last 8);
+`EngineState.Content`; `BuildResult.Content` (`ContentRecord`: sizes seen, static needs keys, need
+groups, `Recorded`); `ExecCore.decide` (missing outputs, static needs built first, M9 static set,
+`decideRecord`: outputs changed outside, then each dependency by pair then hash; rule targets:
+finished in this run / running = changed / not started = `decideNoBuild`, memoised per run in
+`RunCounters.Decisions`); `recordOutputsBefore/After` (pre-hash, post-hash, cut-off count and Info
+line); `--content-cutoff=off`, `ExecOptions/EngineOptions.ContentCutoff`. The 4.0 memo
+(`getChangeReasons`) stays for progress and `--dump` only. Database.fs: only the result pickler
+fills `Content = Empty` (db-paths owns the rest). Tests: `ContentCutoffTests.fs` (11, engine mode);
+storage round-trip tests compare without `Content`. Verified: 0 warnings, 1786 passed / 10 skipped,
+`build test pack` green.
+
 ## Next step
 
-Report step 2. Next is step 3 (content cut-off, database 0.7, `.xake.lock`), on the owner's go. Then step 2 (`also`: missing-output rebuild with current outputs, M1 overlap check,
+Reported to the orchestrator: persistence reached. Next: merge feature/db-paths (orchestrator/owner
+decide the direction), then 3b (content records in db-paths' 0.7 layout, M11 upgrade test,
+script-run acceptance tests), then 3c (M4 fast path). Then step 2 (`also`: missing-output rebuild with current outputs, M1 overlap check,
 `needs` naming an own `also`, missing declared output after the body = error).

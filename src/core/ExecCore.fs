@@ -124,6 +124,15 @@ let newTaskContext targets matches ctx =
         HeldResources = []
     }
 
+/// How a file dependency compares with the state its dependent saw (content cut-off).
+type private Compared =
+    /// the same time and size
+    | Same
+    /// another time or size, the same content (by hash): the new state
+    | SameContent of System.DateTime * int64
+    /// changed, with the reason
+    | Differs of string
+
 /// Executes a single target: locates the matching rule, submits the work to the
 /// scheduler, and returns the target, its execution status, and a dependency record.
 /// If no rule matches but a corresponding file exists, returns JustFile status.
@@ -144,28 +153,23 @@ let rec execOne (ctx: ExecContext) target =
                 ctx.Logger.Log Error "%s" errorText
                 raise (XakeException errorText)
 
-    let run ruleMatches action targets =
+    let run ruleMatches (header: RuleHeader) action targets =
         let primaryTarget = targets |> List.head
         async {
             ctx.Counters.TaskScheduled ()
-            // any output of the rule's current outputs missing reruns it (an `also` added since the
-            // last run included), whatever the record says
-            let missingOutput =
-                targets |> List.tryFind (function FileTarget f -> not (File.exists f) | PhonyAction _ -> false)
-            let rebuild =
-                match missingOutput with
-                | Some missing when targets.Length > 1 ->
-                    ctx.Logger.Log Info "Rebuild %A: output %s is missing" primaryTarget.ShortName missing.ShortName
-                    true
-                | _ -> ctx.NeedRebuild targets
-            match rebuild with
-            | true ->
+            for t in targets do ctx.Counters.Started.[t] <- true
+            let taskContext = newTaskContext targets ruleMatches ctx
+            // the decision (docs/content-cutoff.md): static needs first, then the record
+            let! reason = decide taskContext header ruleMatches targets
+            match reason with
+            | Some reason ->
+                ctx.Logger.Log Info "Rebuild %A: %s" primaryTarget.ShortName reason
                 ctx.Counters.TargetRun ()
-                let taskContext = newTaskContext targets ruleMatches ctx
                 do ctx.Logger.Log Command "Started %s as task %i" primaryTarget.ShortName taskContext.Ordinal
 
                 do Progress.TaskStart primaryTarget |> ctx.Progress.Post
 
+                let previous = recordOutputsBefore taskContext header targets
                 let startResult = {BuildLog.makeResult targets with Steps = [Step.start "all"]}
                 let! (result,_) = action (startResult, taskContext)
                 // Built is the completion time: it is the change stamp of a phony target
@@ -173,13 +177,16 @@ let rec execOne (ctx: ExecContext) target =
                 let result = {Step.updateTotalDuration result with Built = System.DateTime.Now}
 
                 checkOutputsWritten targets
+                recordOutputsAfter taskContext header targets previous
                 Store result |> ctx.Db.Post
+                for t in targets do ctx.Counters.MarkFinished t
 
                 do Progress.TaskComplete primaryTarget |> ctx.Progress.Post
                 do ctx.Logger.Log Command "Completed %s in %A ms (wait %A ms)" primaryTarget.ShortName (Step.lastStep result).OwnTime  (Step.lastStep result).WaitTime
                 return Succeed
-            | false ->
+            | None ->
                 ctx.Counters.TargetSkipped ()
+                for t in targets do ctx.Counters.MarkFinished t
                 do ctx.Logger.Log Command "Skipped %s (up to date)" primaryTarget.ShortName
                 return Skipped
         }
@@ -210,7 +217,10 @@ let rec execOne (ctx: ExecContext) target =
                 Scheduler.withYieldedSlot ctx.Engine.Scheduler (executor taskContext targets bodyThunk)
 
             checkOutputsWritten targets
+            // the engine makes the content records of a delegated rule's outputs itself (decision M6)
+            recordOutputsAfter taskContext (getHeader ctx.Options.Rules ctx.Options.ProjectRoot primaryTarget) targets []
             Store result |> ctx.Db.Post
+            for t in targets do ctx.Counters.MarkFinished t
 
             do Progress.TaskComplete primaryTarget |> ctx.Progress.Post
             do ctx.Logger.Log Command "Completed delegated %s" primaryTarget.ShortName
@@ -300,19 +310,24 @@ let rec execOne (ctx: ExecContext) target =
         let taskAction =
             match rule with
             | DelegatedRule (_, executor) -> runDelegated groupsMap action executor targets
-            | _ -> run groupsMap action targets
+            | _ -> run groupsMap header action targets
         async {
             let! waitTask = (fun channel -> Run(target, targets, taskAction, channel)) |> (Scheduler.pool ctx.Engine.Scheduler).PostAndAsyncReply
             let! status = waitTask
             // the dependee is built or up to date now: record its change stamp, so a later run
             // sees a rebuild done in between, by another run or target group (S66)
             let stamp = getChangeStamp ctx target |> Option.defaultValue System.DateTime.MinValue
-            return target, status, ArtifactDep2 (target, stamp)
+            let size =
+                match target with
+                | FileTarget f -> ContentStore.StateOf f |> Option.map (fun (_, size) -> f, size)
+                | PhonyAction _ -> None
+            return target, status, ArtifactDep2 (target, stamp), size
         }
     | None ->
         target |> function
         | FileTarget file when File.exists file ->
-            async.Return <| (target, ExecStatus.JustFile, FileDep (file, File.getLastWriteTime file))
+            let size = ContentStore.StateOf file |> Option.map (fun (_, size) -> file, size)
+            async.Return <| (target, ExecStatus.JustFile, FileDep (file, File.getLastWriteTime file), size)
         | _ ->
             let errorText = sprintf "Neither rule nor file is found for '%s'" target.FullName
             do ctx.Logger.Log Error "%s" errorText
@@ -324,7 +339,7 @@ and execParallel ctx = List.map (execOne ctx) >> Seq.ofList >> Async.Parallel
 /// Executes dependency targets in parallel, yielding the current scheduler slot while waiting.
 /// Returns Succeed if at least one dependency was rebuilt, Skipped otherwise,
 /// along with the list of recorded dependencies.
-and execNeed (ctx: ExecContext) targets : Async<ExecStatus * Dependency list> =
+and execNeed (ctx: ExecContext) targets : Async<ExecStatus * Dependency list * (File * int64) list> =
     async {
         // hold-and-wait: a dependency built while this recipe holds a resource may itself wait
         // for that resource, and every unit can end up held by recipes waiting for their
@@ -357,11 +372,12 @@ and execNeed (ctx: ExecContext) targets : Async<ExecStatus * Dependency list> =
 
         primaryTarget |> (Progress.TaskResume >> ctx.Progress.Post)
 
-        let dependencies = statuses |> Array.map (fun (_,_,x) -> x) |> List.ofArray in
+        let dependencies = statuses |> Array.map (fun (_,_,x,_) -> x) |> List.ofArray in
+        let sizes = statuses |> Array.choose (fun (_,_,_,size) -> size) |> List.ofArray
         return
-            (match statuses |> Array.exists (fun (_,x,_) -> x = ExecStatus.Succeed) with
+            (match statuses |> Array.exists (fun (_,x,_,_) -> x = ExecStatus.Succeed) with
                 |true -> Succeed
-                |false -> Skipped), dependencies
+                |false -> Skipped), dependencies, sizes
     }
 
 /// The static `needs` of a header for one match: each pattern with the match's groups filled in.
@@ -376,14 +392,16 @@ and private resolveNeeds (ctx: ExecContext) (groups: Map<string, string>) (patte
                 with PatternAst.PatternException _ -> None   // braces or a class outside a group
             else None
         match single with
-        | Some path -> [ makeTarget ctx path ], []
+        | Some path -> let t : Target = makeTarget ctx path in [ t ], [], t.FullName
         | None ->
             let mask = PatternAst.glob (fun name -> Map.tryFind name groups) (fun _ -> None) tokens
             let fileset = Fileset.ls mask
             let (Filelist list) as files = fileset |> Fileset.toFileList ctx.Options.ProjectRoot
-            list |> List.map FileTarget, [ GetFiles (fileset, files) ]
+            list |> List.map FileTarget, [ GetFiles (fileset, files) ], mask
     let resolved = patterns |> List.map resolve
-    (resolved |> List.collect fst |> List.distinct), (resolved |> List.collect snd)
+    (resolved |> List.collect (fun (t, _, _) -> t) |> List.distinct),
+    (resolved |> List.collect (fun (_, d, _) -> d)),
+    (resolved |> List.map (fun (_, _, k) -> k) |> List.distinct |> List.sort)
 
 /// Applies a rule header around a rule's recipe (docs/rule-header.md): the static `needs` are
 /// requested together and recorded before the body; then the `requires` resources are taken, in
@@ -397,10 +415,11 @@ and private withHeader (header: RuleHeader) (groups: Map<string, string>) (body:
             | [] -> async.Return result
             | patterns -> async {
                 let startTime = System.DateTime.Now
-                let targets, filesetDeps = resolveNeeds ctx groups patterns
-                let! _, deps = execNeed ctx targets
+                let targets, filesetDeps, keys = resolveNeeds ctx groups patterns
+                let! _, deps, sizes = execNeed ctx targets
                 let waited = int (System.DateTime.Now - startTime).TotalMilliseconds * 1<ms>
-                return { result with Depends = result.Depends @ filesetDeps @ deps } |> Step.updateWaitTime waited }
+                let content = { result.Content with Sizes = result.Content.Sizes @ sizes; StaticNeeds = keys }
+                return { result with Depends = result.Depends @ filesetDeps @ deps; Content = content } |> Step.updateWaitTime waited }
         let locks = header.Locks
         let rec holding (taken: (Resource * int) list) (rest: (Resource * int) list) = async {
             match rest with
@@ -416,6 +435,195 @@ and private withHeader (header: RuleHeader) (groups: Map<string, string>) (body:
         }
         return! holding [] locks
     })
+
+/// The header of the rule that builds a target (Empty for none or a phony rule).
+and private getHeader rules projectRoot (target: Target) : RuleHeader =
+    let rec headerOf = function
+        | FileRule (_, h, _) | FileConditionRule (_, h, _) -> h
+        | PhonyRule _ -> RuleHeader.Empty
+        | DelegatedRule (inner, _) -> headerOf inner
+    match locateRule rules projectRoot target with
+    | Some (rule, _, _) -> headerOf rule
+    | None -> RuleHeader.Empty
+
+/// Whether content cut-off applies to a rule's outputs in this run.
+and private cutoffFor (ctx: ExecContext) (header: RuleHeader) =
+    ctx.Options.ContentCutoff && header.ContentCutoff <> Some false
+
+/// Before a rule's body overwrites its outputs: an output that is still what the rule last wrote
+/// and has no hash yet is hashed (its dependents saw exactly that content). Returns each output's
+/// hash before the body, for the cut-off count.
+and private recordOutputsBefore (ctx: ExecContext) (header: RuleHeader) (targets: Target list) =
+    if not (cutoffFor ctx header) then [] else
+    [ for t in targets do
+        match t with
+        | FileTarget f ->
+            match ctx.Engine.Content.History f, ContentStore.StateOf f with
+            | head :: _, Some state when ContentStore.Same (head.Stamp, head.Size) state ->
+                match ctx.Engine.Content.Current f ctx.Counters.FileHashed with
+                | Some (_, h) -> yield f, h
+                | None -> ()
+            | _ -> ()
+        | PhonyAction _ -> () ]
+
+/// After a rule's body: each output's new state is recorded. A rebuild (the output had a history)
+/// hashes the new content, so cut-off works from the first rebuild; a first build hashes nothing.
+/// The same content as before the body is a cut-off (counted, logged at Info).
+and private recordOutputsAfter (ctx: ExecContext) (header: RuleHeader) (targets: Target list) (before: (File * byte[]) list) =
+    let cutoff = cutoffFor ctx header
+    let mutable same = not before.IsEmpty
+    for t in targets do
+        match t with
+        | FileTarget f ->
+            match ContentStore.StateOf f with
+            | Some state ->
+                let store = ctx.Engine.Content
+                if cutoff && not (store.History f).IsEmpty then
+                    match store.Current f ctx.Counters.FileHashed with
+                    | Some (_, h) ->
+                        match before |> List.tryFind (fun (g, _) -> g.FullName = f.FullName) with
+                        | Some (_, old) when old = h -> ()
+                        | _ -> same <- false
+                    | None -> same <- false
+                else
+                    store.Record f state None
+                    same <- false
+            | None -> same <- false
+        | PhonyAction _ -> same <- false
+    if same then
+        ctx.Counters.TargetCutOff ()
+        ctx.Logger.Log Info "cut-off: %s rebuilt with the same content" (List.head targets).ShortName
+
+/// Compares a file dependency with the state the dependent saw (docs/content-cutoff.md): the same
+/// time and size, or the same content by hash (`SameContent`: the record should take the new
+/// state). A moved source with no known hash is hashed for the next time.
+and private compareFile (ctx: ExecContext) (isSource: bool) (file: File) (seen: System.DateTime * int64) : Compared =
+    match ContentStore.StateOf file with
+    | None -> Differs (sprintf "file %s is missing" file.Name)
+    | Some now when ContentStore.Same now seen -> Same
+    | Some _ when not ctx.Options.ContentCutoff -> Differs (sprintf "file %s changed" file.Name)
+    | Some _ ->
+        let store = ctx.Engine.Content
+        match store.HashOf file seen with
+        | None ->
+            if isSource then store.Current file ctx.Counters.FileHashed |> ignore
+            Differs (sprintf "file %s changed (its earlier content is not known)" file.Name)
+        | Some h ->
+            match store.Current file ctx.Counters.FileHashed with
+            | Some (now, h') when h' = h -> SameContent now
+            | _ -> Differs (sprintf "file %s changed" file.Name)
+
+/// The decision for a recorded result, without building anything (decision 2026-11-17, option B):
+/// None when it is up to date, else the reason; `refresh` collects dependencies found unchanged
+/// by hash with their new state. A rule target the result depends on is up to date when it
+/// finished in this run, or (not started) by this same decision, recursively; one that is running
+/// counts as changed.
+and private decideRecord (ctx: ExecContext) (visiting: Set<string>) (record: BuildResult) (refresh: ResizeArray<Dependency * (File * int64)>) : string option =
+    let sizeOf (f: File) =
+        record.Content.Sizes |> List.tryFind (fun (g, _) -> g.FullName = f.FullName) |> Option.map snd |> Option.defaultValue -1L
+    let ruleTargetReady (d: Target) =
+        if ctx.Counters.Finished.ContainsKey d then None
+        elif ctx.Counters.Started.ContainsKey d then Some (sprintf "it depends on %s, being rebuilt" d.ShortName)
+        else
+            match decideNoBuild ctx visiting d with
+            | None -> None
+            | Some _ -> Some (sprintf "it depends on %s, out of date" d.ShortName)
+    let check (dep: Dependency) : string option =
+        match dep with
+        | FileDep (f, stamp) ->
+            match compareFile ctx true f (stamp, sizeOf f) with
+            | Same -> None
+            | SameContent (now, size) -> refresh.Add (FileDep (f, now), (f, size)); None
+            | Differs reason -> Some reason
+        | ArtifactDep2 (FileTarget f as d, stamp) ->
+            match ruleTargetReady d with
+            | Some reason -> Some reason
+            | None ->
+                match compareFile ctx false f (stamp, sizeOf f) with
+                | Same -> None
+                | SameContent (now, size) -> refresh.Add (ArtifactDep2 (d, now), (f, size)); None
+                | Differs reason -> Some reason
+        | ArtifactDep2 (PhonyAction _ as d, _) ->
+            match ruleTargetReady d with
+            | Some reason -> Some reason
+            | None ->
+                match getDepState (Util.getVar ctx.Vars) (toFileList ctx.Options.ProjectRoot) (fun _ -> []) (getChangeStamp ctx) dep with
+                | NotChanged, _ -> None
+                | _ -> Some (sprintf "it depends on %s, run since" d.ShortName)
+        | ArtifactDep d -> Some (sprintf "it depends on %s, recorded by an older Xake" d.ShortName)
+        | _ ->
+            match getDepState (Util.getVar ctx.Vars) (toFileList ctx.Options.ProjectRoot) (fun _ -> []) (getChangeStamp ctx) dep with
+            | NotChanged, _ -> None
+            | reason, _ -> Some (sprintf "%A" reason)
+    // an output changed outside the build: the same content (known by hash) is not a change
+    let outputs () =
+        record.Targets |> List.tryPick (function
+            | FileTarget f ->
+                match ctx.Engine.Content.History f with
+                | head :: _ ->
+                    match compareFile ctx false f (head.Stamp, head.Size) with
+                    | Same | SameContent _ -> None
+                    | Differs _ when not (File.exists f) -> Some (sprintf "output %s is missing" f.Name)
+                    | Differs _ -> Some (sprintf "output %s was changed outside the build" f.Name)
+                | [] -> if File.exists f then None else Some (sprintf "output %s is missing" f.Name)
+            | PhonyAction _ -> None)
+    match record.Depends with
+    | [] -> Some "it has no dependencies"
+    | depends ->
+        match outputs () with
+        | Some reason -> Some reason
+        | None -> depends |> List.tryPick check
+
+/// The decision for a target without building it (memoised for the run, dropped when it finishes).
+and private decideNoBuild (ctx: ExecContext) (visiting: Set<string>) (target: Target) : string option =
+    if visiting.Contains target.FullName then Some "a dependency cycle in the recorded results" else
+    let decision =
+        ctx.Counters.Decisions.GetOrAdd(target, fun t -> lazy (
+            match (fun ch -> GetResult(t, ch)) |> ctx.Db.PostAndReply with
+            | None -> Some "not built yet"
+            | Some record -> decideRecord ctx (visiting.Add t.FullName) record (ResizeArray ())))
+    try decision.Value
+    with :? System.InvalidOperationException -> Some "a dependency cycle in the recorded results"
+
+/// The decision for a target whose task runs now: its static `needs` are brought up to date first
+/// (they are needed anyway), then its record is compared. None: up to date (a record refreshed by
+/// content comparison is stored again). Some reason: rebuild.
+and private decide (ctx: ExecContext) (header: RuleHeader) (groups: Map<string, string>) (targets: Target list) : Async<string option> =
+    async {
+        let primary = List.head targets
+        let missing = targets |> List.tryFind (function FileTarget f -> not (File.exists f) | PhonyAction _ -> false)
+        let! staticKeys =
+            match header.Needs with
+            | [] -> async.Return []
+            | patterns -> async {
+                let needed, _, keys = resolveNeeds ctx groups patterns
+                let! _ = execNeed ctx needed
+                return keys }
+        match missing, (fun ch -> GetResult(primary, ch)) |> ctx.Db.PostAndReply with
+        | Some m, _ when targets.Length > 1 -> return Some (sprintf "output %s is missing" m.ShortName)
+        | _, None -> return Some "it was not built yet"
+        | _, Some record when record.Content.Recorded && record.Content.StaticNeeds <> staticKeys ->
+            return Some "its static needs changed"
+        | _, Some record ->
+            let refresh = ResizeArray ()
+            match decideRecord ctx (Set.singleton primary.FullName) record refresh with
+            | Some reason -> return Some reason
+            | None ->
+                if refresh.Count > 0 then
+                    let updated (dep: Dependency) =
+                        refresh |> Seq.tryPick (fun (d, _) ->
+                            match d, dep with
+                            | FileDep (f, _), FileDep (g, _) when f.FullName = g.FullName -> Some d
+                            | ArtifactDep2 (t, _), ArtifactDep2 (u, _) when t = u -> Some d
+                            | _ -> None) |> Option.defaultValue dep
+                    let sizes = refresh |> Seq.map snd |> List.ofSeq
+                    let names = sizes |> List.map (fun (f, _) -> f.FullName) |> Set.ofList
+                    let content =
+                        { record.Content with
+                            Sizes = (record.Content.Sizes |> List.filter (fun (f, _) -> not (names.Contains f.FullName))) @ sizes }
+                    Store { record with Depends = record.Depends |> List.map updated; Content = content } |> ctx.Db.Post
+                return None
+    }
 
 /// Resolves a target name to a PhonyAction if a matching phony rule exists, otherwise to a FileTarget.
 /// Phony actions take precedence over files with the same name.
@@ -519,6 +727,7 @@ let createContextCore (options: EngineOptions) (db: Agent<Storage.DatabaseApi>) 
         Db = db
         Scheduler = scheduler
         RootLogger = logger
+        Content = ContentStore None
     }
 
     let ctx = {
@@ -553,7 +762,7 @@ let demandTarget (ctx: ExecContext) (targetName: string) : Async<ExecStatus> =
         let progressSink = Progress.openProgress (getDurationDeps ctx getDeps) ctx.Engine.Options.Threads [target] ctx.ShowProgress
         let stepCtx = {ctx with NeedRebuild = List.exists needRebuild; Progress = progressSink}
         try
-            let! (_, status, _) = execOne stepCtx target
+            let! (_, status, _, _) = execOne stepCtx target
             return status
         finally
             Progress.Finish |> progressSink.Post
@@ -565,10 +774,11 @@ let need targets = recipe {
     let startTime = System.DateTime.Now
 
     let! ctx = getCtx()
-    let! _,deps = targets |> execNeed ctx
+    let! _, deps, sizes = targets |> execNeed ctx
 
     let totalDuration = int (System.DateTime.Now - startTime).TotalMilliseconds * 1<ms>
     let! result = getResult()
-    let result' = {result with Depends = result.Depends @ deps} |> (Step.updateWaitTime totalDuration)
+    let content = { result.Content with Sizes = result.Content.Sizes @ sizes; NeedGroups = result.Content.NeedGroups @ [ deps.Length ] }
+    let result' = {result with Depends = result.Depends @ deps; Content = content} |> (Step.updateWaitTime totalDuration)
     do! setResult result'
 }

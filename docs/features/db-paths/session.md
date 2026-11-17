@@ -21,19 +21,18 @@ All owner decisions are in brief.md "Decisions" (Q1-Q6, critic Q-A..Q-I). Implem
 - `ExecOptions.PathRoots`, `RootValue` (`RootPath`, `RootVar`), `fromVar`, `pathRoot` builder op;
   `ScriptRunner.resolveRoots` checks roots before the database opens (launch errors: name, duplicate, same folder,
   project root, secret variable); unset variable = undeclared; `--dump`/`--dryrun` open read-only.
-  Switch `undeclaredRootFailsRun` (ScriptRunner.fs) = false: the owner's open point.
+  `undeclaredRootFailsRun` (ScriptRunner.fs) = false: the error only prints (owner, 2026-11-17).
 - Tests: `src/tests/DatabasePathsTests.fs` (25 + 1 explicit). Docs: `docs/database.md`, release notes 5.0.0.
 - Measured: [measurements.md](measurements.md).
 - Verified 2026-11-17: `dotnet build src/core -c Release` 0 warnings; `dotnet test src/tests -c Release` 1788 passed,
   11 skipped; `dotnet fsi build.fsx -- -- build test pack` green.
 
 Not done / open:
-- Owner: does an undeclared root fail the run (`undeclaredRootFailsRun`)?
 - No test injects a failed `Write` (IO error mid-append); the code path stops appending and logs.
 - Root-relative display in logs, progress and `--dump` (Q1: a later feature).
 - dep-cutoff merge: its content records take tags 4-15 (Q-D); `feature/dep-cutoff` not merged here.
 
 ## Next step
 
-Owner review of the implementation and the switch; then merge `feature/dep-cutoff` when the orchestrator says so,
+Owner review of the implementation; then merge `feature/dep-cutoff` when the orchestrator says so,
 and check that its result records use their own tag.

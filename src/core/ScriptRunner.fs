@@ -21,9 +21,8 @@ let (|Dump|Dryrun|Run|) (opts:ExecOptions) =
     | _ when opts.DryRun -> Dryrun
     | _ -> Run
 
-/// Owner's open point (Q-A, docs/features/db-paths): records under a root this run does not declare are
-/// reported as an error at open. `false`: print and continue (those targets rebuild); `true`: also a launch error
-/// (the run stops with exit code 2).
+/// Records under a root this run does not declare are reported as an error at open and the run continues
+/// (owner, 2026-11-17, docs/features/db-paths/brief.md Q-A). `true` would also make them a launch error.
 let private undeclaredRootFailsRun = false
 
 /// The path roots of the run, checked: the roots for the database, the launch errors, notes (an unset variable).

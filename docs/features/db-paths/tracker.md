@@ -11,7 +11,7 @@
 | 7 | Undeclared roots carried, re-root, salvage, diagnostics | done |
 | 8 | Synthetic database, size test, load-time measurements | done (measurements.md) |
 | 9 | Verify: Release build 0 warnings, tests, build.fsx build test pack | done 2026-11-17 |
-| 10 | Owner: undeclared root fails the run or not (`undeclaredRootFailsRun`) | waiting |
+| 10 | Owner: undeclared root fails the run or not (`undeclaredRootFailsRun`) | done: prints only |
 | 11 | Test of a failed `Write` (IO error) | open |
 | 12 | Root-relative display of paths in logs, progress, --dump | later (separate feature, Q1) |
 | 13 | Case rules of File vs Target (plan fact 4) | later (out of scope, noted) |

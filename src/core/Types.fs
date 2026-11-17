@@ -110,6 +110,10 @@ module DomainTypes =
         /// The content data of a result recorded now, before anything is added to it.
         static member Fresh = { ContentRecord.Empty with Recorded = true }
 
+    /// One entry of a file's content history: the time and size the file had, and the hash of its
+    /// content then, when it was computed (docs/content-cutoff.md).
+    type ContentEntry = { Stamp: Timestamp; Size: int64; Hash: byte[] option }
+
     /// Recorded result of building one or more targets, including dependencies and step timings.
     type BuildResult =
         { Targets : Target list

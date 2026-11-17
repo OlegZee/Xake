@@ -727,7 +727,11 @@ let createContextCore (options: EngineOptions) (db: Agent<Storage.DatabaseApi>) 
         Db = db
         Scheduler = scheduler
         RootLogger = logger
-        Content = ContentStore None
+        // the content histories are kept in the database (tag 5 records), read once here
+        Content =
+            ContentStore (Some { new IContentPersistence with
+                                    member _.Load () = db.PostAndReply LoadContent |> Seq.ofList
+                                    member _.Save (file, history) = db.Post (StoreContent (file, history)) })
     }
 
     let ctx = {

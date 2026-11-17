@@ -75,9 +75,17 @@ fills `Content = Empty` (db-paths owns the rest). Tests: `ContentCutoffTests.fs`
 storage round-trip tests compare without `Content`. Verified: 0 warnings, 1786 passed / 10 skipped,
 `build test pack` green.
 
+Merged feature/db-paths (0396f41) as 122e9b1 (conflict: ExecOptions fields, both kept). Step 3b
+done: `Tag.ResultContent` (4) = tag-2 body + `ContentRecord` (`Persist.result07c`), every result
+written with it, tag 2 read as "no content data"; `Tag.Content` (5) = file id + history
+(`contentHistory`), last per file wins, kept by a rewrite, carried as bytes under an undeclared root;
+`DatabaseApi.StoreContent` / `LoadContent`; `ContentStore` persists through them
+(`createContextCore`). Changes in db-paths' code: the two tags in `PathTable.Tag`; `read07`
+handles tags 4 and 5; `rewrite` writes the histories; `ReadState.Content`; the compaction count
+includes histories; two `DatabasePathsTests` (0.6 upgrade, read-only) expect `Content = Empty`
+from a 0.6 file. Verified: 0 warnings, 1816 passed / 11 skipped, `build test pack` green.
+
 ## Next step
 
-Reported to the orchestrator: persistence reached. Next: merge feature/db-paths (orchestrator/owner
-decide the direction), then 3b (content records in db-paths' 0.7 layout, M11 upgrade test,
-script-run acceptance tests), then 3c (M4 fast path). Then step 2 (`also`: missing-output rebuild with current outputs, M1 overlap check,
+Report 3b. Next: 3c (M4 fast path for no-change runs), then the PR question (owner). Then step 2 (`also`: missing-output rebuild with current outputs, M1 overlap check,
 `needs` naming an own `also`, missing declared output after the body = error).

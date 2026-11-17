@@ -3,10 +3,6 @@ namespace Xake
 open System
 open System.Collections.Concurrent
 
-/// One entry of a file's content history: the time and size the file had, and the hash of its
-/// content then, when it was computed (docs/content-cutoff.md).
-type ContentEntry = { Stamp: DateTime; Size: int64; Hash: byte[] option }
-
 /// Where the content histories are kept between runs. The 0.7 database implements it (one record
 /// per file, the last one wins); until then the histories live as long as the engine.
 type IContentPersistence =

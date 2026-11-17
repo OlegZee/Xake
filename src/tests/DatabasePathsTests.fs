@@ -226,6 +226,8 @@ type ``Database paths: storage``() =
         let r1 = mkResult (dir </> "out" </> "a.dll") [ dir </> "src" </> "a.cs" ]
         let r2 = { makeResult [ PhonyAction "main" ] with Depends = [ ArtifactDep2 (r1.Targets.Head, DateTime(2020, 1, 3)) ] }
         OldDatabase.write dbpath "0.6" [ r1; r2 ]
+        // a 0.6 record carries no content data (dep-cutoff): it reads back as `ContentRecord.Empty`
+        let r1, r2 = { r1 with Content = ContentRecord.Empty }, { r2 with Content = ContentRecord.Empty }
         let log = Collections.Concurrent.ConcurrentQueue<string>()
         let db, _ = openDbWith (opts dir) dbpath (collecting log)
         Assert.AreEqual(Some r1, get db r1.Targets.Head)
@@ -242,6 +244,7 @@ type ``Database paths: storage``() =
         let dbpath = dir </> ".xake"
         let r1 = mkResult (dir </> "out" </> "a.dll") [ dir </> "src" </> "a.cs" ]
         OldDatabase.write dbpath "0.6" [ r1 ]
+        let r1 = { r1 with Content = ContentRecord.Empty }   // 0.6 carries no content data (dep-cutoff)
         let before = File.ReadAllBytes dbpath
         let db, _ = openDbWith { opts dir with ReadOnly = true } dbpath quiet
         Assert.AreEqual(Some r1, get db r1.Targets.Head)

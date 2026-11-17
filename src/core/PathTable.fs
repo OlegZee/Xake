@@ -97,6 +97,10 @@ module Tag =
     let [<Literal>] File = 1uy
     let [<Literal>] Result = 2uy
     let [<Literal>] RootValue = 3uy
+    /// dep-cutoff (4-15): a result with its content data (`BuildResult.Content`); tag 2 is a result without
+    let [<Literal>] ResultContent = 4uy
+    /// dep-cutoff: one file's content history `(file id, entries)`; the last one per file wins
+    let [<Literal>] Content = 5uy
 
 /// The table of one database file. `roots` are this run's roots (any order).
 type Table(roots: Root list) =

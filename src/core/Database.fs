@@ -146,9 +146,35 @@ module Storage =
             member val Write : File -> int = (fun _ -> invalidOp "no path transaction") with get, set
             member val Read : int -> File = (fun _ -> invalidOp "no path table") with get, set
 
+        /// A file as its path-table id.
+        let file07 (codec: FileCodec) : PU<File> =
+            { pickle = (fun f w -> PathTable.Varint.write w (codec.Write f)); unpickle = fun r -> codec.Read (PathTable.Varint.read r) }
+
+        /// The body of tag 2: a result without content data.
         let result07 (codec: FileCodec) =
-            let file = { pickle = (fun f w -> PathTable.Varint.write w (codec.Write f)); unpickle = fun r -> codec.Read (PathTable.Varint.read r) }
+            let file = file07 codec
             makeResult file file (wrap (Fileset.Filelist, fun (Fileset.Filelist l) -> l) (list file))
+
+        /// One entry of a content history (dep-cutoff).
+        let contentEntry =
+            wrap ((fun (stamp, size, hash) -> { ContentEntry.Stamp = stamp; Size = size; Hash = hash }),
+                  fun (e: ContentEntry) -> e.Stamp, e.Size, e.Hash)
+                 (triple date int64 (option bytes))
+
+        /// `BuildResult.Content` (dep-cutoff).
+        let contentRecord (file: PU<File>) =
+            wrap ((fun (sizes, needs, groups, recorded) -> { Sizes = sizes; StaticNeeds = needs; NeedGroups = groups; Recorded = recorded }),
+                  fun (c: ContentRecord) -> c.Sizes, c.StaticNeeds, c.NeedGroups, c.Recorded)
+                 (quad (list (pair file int64)) (list str) (list int) bool)
+
+        /// The body of tag 4: the body of tag 2, then the content data.
+        let result07c (codec: FileCodec) =
+            wrap ((fun (r: BuildResult, c) -> { r with Content = c }), fun (r: BuildResult) -> r, r.Content)
+                 (pair (result07 codec) (contentRecord (file07 codec)))
+
+        /// The body of tag 5: a file and its content history.
+        let contentHistory (codec: FileCodec) =
+            pair (file07 codec) (list contentEntry)
         
         let dbHeader = 
             wrap 
@@ -234,7 +260,7 @@ module Storage =
             try
                 use body = new MemoryStream()
                 use bw = new BinaryWriter(body)
-                bw.Write Tag.Result
+                bw.Write Tag.ResultContent
                 pu.pickle result bw
                 bw.Flush()
                 body.ToArray()
@@ -245,6 +271,27 @@ module Storage =
         let storeBytes codec pu (table: Table) (result: BuildResult) =
             let tx = Tx(table)
             let record = resultRecord codec pu tx result
+            use out = new MemoryStream()
+            use w = new BinaryWriter(out)
+            tx.WriteRecords w
+            writeFrame w record
+            w.Flush()
+            out.ToArray(), tx
+
+        /// The bytes of one stored content history: the path records it needs, then the record.
+        let contentBytes (codec: FileCodec) (table: Table) (file: Xake.File, history: ContentEntry list) =
+            let tx = Tx(table)
+            codec.Write <- tx.IdOf
+            let record =
+                try
+                    use body = new MemoryStream()
+                    use bw = new BinaryWriter(body)
+                    bw.Write Tag.Content
+                    (contentHistory codec).pickle (file, history) bw
+                    bw.Flush()
+                    body.ToArray()
+                finally
+                    codec.Write <- (fun _ -> invalidOp "no path transaction")
             use out = new MemoryStream()
             use w = new BinaryWriter(out)
             tx.WriteRecords w
@@ -273,6 +320,8 @@ module Storage =
             mutable Damaged: bool
             /// a live record names a path whose root is not its longest root in this run
             mutable MisRooted: bool
+            /// the content histories read (dep-cutoff), by full name: the last record per file
+            Content: Dictionary<string, Xake.File * ContentEntry list>
             LiveIds: HashSet<int> }
 
         let read07 (st: ReadState) (table: Table) (codec: FileCodec) (pu: Pickler.PU<BuildResult>) (reader: BinaryReader) (logger: ILogger) =
@@ -298,7 +347,8 @@ module Storage =
                         | Tag.RootValue ->
                             let name = r.ReadString()
                             st.RootValues <- st.RootValues |> Map.add name (r.ReadString())
-                        | Tag.Result ->
+                        | Tag.Result | Tag.ResultContent as tag ->
+                            let pu = if tag = Tag.Result then result07 codec else pu
                             let ids = ResizeArray<int>()
                             let stale = HashSet<string>()
                             codec.Read <- (fun id ->
@@ -319,6 +369,23 @@ module Storage =
                                 let resolvable = result.Targets |> List.filter (function FileTarget f -> f <> Xake.File.undefined | PhonyAction _ -> true)
                                 st.Db <- { Status = resolvable |> List.fold (fun m t -> Map.remove t m) st.Db.Status }
                                 st.Carried <- st.Carried @ [ { Bytes = bytes; Ids = ids; Keys = keys; RootKeys = List.ofSeq stale } ]
+                        | Tag.Content ->
+                            let mutable id = -1
+                            let mutable stale = None
+                            codec.Read <- (fun i ->
+                                id <- i
+                                match table.Resolve i with
+                                | ValueSome f -> f
+                                | ValueNone -> stale <- Some (table.RootKeyOfFile i); Xake.File.undefined)
+                            let file, history = (contentHistory codec).unpickle r
+                            let key = "content:" + table.StoredPath id
+                            st.Carried <- st.Carried |> List.filter (fun c -> not (List.contains key c.Keys))
+                            match stale with
+                            | None ->
+                                st.Content.[file.FullName] <- (file, history)
+                                if st.LiveIds.Add id && table.IsMisRooted id then st.MisRooted <- true
+                            | Some rootKey ->
+                                st.Carried <- st.Carried @ [ { Bytes = bytes; Ids = [ id ]; Keys = [ key ]; RootKeys = [ rootKey ] } ]
                         | tag ->
                             // reserved for records this version does not know: dropped at the next rewrite
                             logger.Log Level.Verbose "Skipping a database record with tag %d" (int tag)
@@ -368,6 +435,10 @@ module Storage =
                     let bytes, tx = storeBytes codec pu table r
                     writer.Write bytes
                     tx.Commit())
+                for (file, history) in st.Content.Values do
+                    let bytes, tx = contentBytes codec table (file, history)
+                    writer.Write bytes
+                    tx.Commit()
             File.Delete(bkpath)
 
         let openDatabaseFile (opts: DbOpenOptions) dbpath (logger : ILogger) =
@@ -375,7 +446,7 @@ module Storage =
             let roots = toRoots opts
             let table = Table(roots)
             let codec = FileCodec()
-            let pu = result07 codec
+            let pu = result07c codec
             let bkpath = makeBkpath dbpath
             // if exists backup restore
             if File.Exists(bkpath) && not opts.ReadOnly then 
@@ -386,7 +457,8 @@ module Storage =
                 with _ -> ()
                 File.Move(bkpath, dbpath)
             let st = { Db = newDatabase(); Carried = []; RootValues = Map.empty; Records = 0; IsOld = false
-                       Damaged = false; MisRooted = false; LiveIds = HashSet<int>() }
+                       Damaged = false; MisRooted = false; Content = Dictionary<string, Xake.File * ContentEntry list>()
+                       LiveIds = HashSet<int>() }
             // read database
             if File.Exists(dbpath) then 
                 try 
@@ -405,6 +477,7 @@ module Storage =
                     st.Damaged <- false
                     st.Db <- newDatabase()
                     st.Carried <- []
+                    st.Content.Clear()
                     log Warning "Failed to read database, so recreating. Got \"%s\"" <| ex.ToString()
                     if not opts.ReadOnly then
                         try 
@@ -454,7 +527,7 @@ module Storage =
 
             let currentRootRecords = roots |> List.map (fun r -> r.Name, r.Recorded)
             let missingRootRecords = currentRootRecords |> List.filter (fun (n, v) -> st.RootValues.TryFind n <> Some v)
-            let needed = st.Db.Status.Count + st.Carried.Length + st.LiveIds.Count
+            let needed = st.Db.Status.Count + st.Carried.Length + st.Content.Count + st.LiveIds.Count
             let compact = st.Records > 5 * needed + 16
             if opts.ReadOnly then
                 ()
@@ -482,12 +555,16 @@ module Storage =
                     w.Flush()
                     Some w
             let report = { UndeclaredRoots = undeclared }
-            st.Db, table, codec, pu, writer, report
+            st.Db, table, codec, pu, writer, report, st.Content
     
     /// Messages accepted by the database agent.
     type DatabaseApi =
         | GetResult of Target * AsyncReplyChannel<Option<BuildResult>>
         | Store of BuildResult
+        /// A file's new content history (dep-cutoff); appended as one record.
+        | StoreContent of File * ContentEntry list
+        /// The content histories read at open and stored since.
+        | LoadContent of AsyncReplyChannel<(File * ContentEntry list) list>
         | Close
         | CloseWait of AsyncReplyChannel<unit>
     
@@ -503,7 +580,8 @@ module Storage =
     /// <param name="dbpath">Full xake database file name</param>
     /// <param name="logger"></param>
     let openDbWith (opts: DbOpenOptions) dbpath (logger : ILogger) = 
-        let db, table, codec, pu, dbwriter, report = impl.openDatabaseFile opts dbpath logger
+        let db, table, codec, pu, dbwriter, report, loadedContent = impl.openDatabaseFile opts dbpath logger
+        let content = Dictionary<string, File * ContentEntry list>(loadedContent)
         // Logging the agent's own failure must not throw out of the loop again.
         let logError fmt = Printf.kprintf (fun s -> try logger.Log Error "%s" s with _ -> ()) fmt
         let agent = new MailboxProcessor<_>(fun mbox ->
@@ -547,6 +625,25 @@ module Storage =
                         failedStores.Value <- failedStores.Value + 1
                         logError "Database agent failed to store the result of '%s': %O" (name ()) ex
                 | None -> ()
+            let storeContent (file: File, history: ContentEntry list) =
+                content.[file.FullName] <- (file, history)
+                match writer.Value with
+                | Some w ->
+                    match (try Choice1Of2 (impl.contentBytes codec table (file, history)) with ex -> Choice2Of2 ex) with
+                    | Choice1Of2 (bytes, tx) ->
+                        try
+                            w.Write bytes
+                            w.Flush()
+                            tx.Commit()
+                        with ex ->
+                            failedStores.Value <- failedStores.Value + 1
+                            writer.Value <- None
+                            (try w.Dispose() with _ -> ())
+                            logError "Database agent failed to write the content of '%s', nothing more is written in this run: %O" file.Name ex
+                    | Choice2Of2 ex ->
+                        failedStores.Value <- failedStores.Value + 1
+                        logError "Database agent failed to store the content of '%s': %O" file.Name ex
+                | None -> ()
             let rec loop (db) =
                 async {
                     let! msg = mbox.Receive()
@@ -565,6 +662,12 @@ module Storage =
                             try result |> addResult db
                             with ex -> logError "Database agent failed to record a result: %O" ex; db
                         return! loop db'
+                    | StoreContent (file, history) ->
+                        storeContent (file, history)
+                        return! loop db
+                    | LoadContent ch ->
+                        ch.Reply (content.Values |> List.ofSeq)
+                        return! loop db
                     | Close ->
                         do (try logger.Log Info "Closing database" with _ -> ())
                         do warnUnsaved ()
@@ -598,7 +701,7 @@ module Storage =
             use reader = new System.IO.BinaryReader(impl.openReadWithRetry dbpath)
             let header = Persist.dbHeader.unpickle reader
             header.XakeVer
-        let db, _, _, _, _, _ = impl.openDatabaseFile { opts with ReadOnly = true } dbpath (CustomLogger (fun _ -> false) ignore)
+        let db, _, _, _, _, _, _ = impl.openDatabaseFile { opts with ReadOnly = true } dbpath (CustomLogger (fun _ -> false) ignore)
         ver, db.Status |> Map.toList |> List.map snd |> List.distinct
 
     /// <summary>
@@ -615,6 +718,8 @@ module Storage =
                     return! loop db
                 | Store result ->
                     return! loop (result |> addResult db)
+                | StoreContent _ -> return! loop db
+                | LoadContent ch -> ch.Reply []; return! loop db
                 | Close -> ()
                 | CloseWait ch -> ch.Reply ()
             }

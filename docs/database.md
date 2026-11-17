@@ -94,9 +94,11 @@ its length (a 7-bit encoded integer, counting the tag and the body), a one-byte 
 |---:|---|---|
 | 0 | `DirRec` | id, parent id + 1 (0: a root), name: one path segment, or the root's name (`$(ProjectRoot)`, `$(NAME)`, `/`, `C:\`) |
 | 1 | `FileRec` | id, directory id, file name |
-| 2 | `ResultRec` | a build result: targets, time, dependencies, steps; every file in it is a file id |
+| 2 | `ResultRec` | a build result: targets, time, dependencies, steps; every file in it is a file id. Read as a result without content data (written by no 5.0 run) |
 | 3 | `RootRec` | root name, the value it had in the run that wrote it (as written, for a relative root) |
-| 4-15 | reserved | records of content cut-off (Xake 5.0) |
+| 4 | `ResultContentRec` | the body of tag 2, then the result's content data ([content-cutoff.md](content-cutoff.md)): the size each file dependency had (file id, size), the static needs (strings), the size of each `need` group, a "recorded" flag. Every result is written with this tag |
+| 5 | `ContentRec` | a file's content history: file id, then its entries newest first, each `(time, size, SHA-256 or none)`; the last record per file wins, a rewrite keeps one per file |
+| 6-15 | reserved | later records of content cut-off |
 
 - Ids are 7-bit encoded integers from one counter shared by directories and files. An id is never reused, even
   after a failed write.

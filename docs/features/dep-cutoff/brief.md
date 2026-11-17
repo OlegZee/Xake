@@ -62,6 +62,22 @@ work is at the end and starts with a spike that settles the builder design.
   dependent reruns). Part 3 "Decision for a dependent" and the Acceptance sections below are rewritten accordingly.
   Database 0.7 still records the order and grouping of dynamic needs, so speculation (A) can be added in a minor
   release without a format change. Critic C1, C3, C4 (speculation part) and M10 are resolved by this.
+- 2026-11-17, critic part 2 ([critic.md](critic.md)):
+  - **M1:** outputs of two rules overlapping for one target is an error naming both (step 2).
+  - **M2:** a declared output the body did not write is an error naming the rule and the output (step 2).
+  - **M3:** `--content-cutoff=off` is defined as the 5.0 verdict with "a moved stamp is a change" and checked against
+    recorded 4.0 reruns on named scenarios. **Its purpose:** a safety switch: compare a build with 4.0's decisions
+    and fall back to them if cut-off misbehaves.
+  - **M4:** a fast path for no-change runs (no scheduling when nothing in the recorded closure moved) and the counter
+    of tasks scheduled in a no-change run, as proposed.
+  - **M5:** the verdict phase yields its CPU slot and runs under the task's own context with `HeldResources = []`,
+    as proposed (step 1's static needs already do).
+  - **M11:** a no-change run right after the upgrade from 0.6 reruns 0 targets (stamp fallback for records without
+    an epoch); the downgrade loss is noted in the release notes.
+  - **Acceptance by step** (below) is accepted and replaces "Acceptance" as the spec.
+- Pending with the owner (2026-11-17): C2 (epoch collision), M6 (delegated rules and epochs), M9 (a header changed
+  between runs), restored `out/` without hashes (a/b/c), typed form D with a header ([probe.md](probe.md) "Typed
+  form D with a header, again"), `RunSummary` cost and timing ([probe.md](probe.md) "Cost of `RunSummary`").
 - 2026-11-17: **step 1 starts**: the header in `recipe` and every file-rule form, static `needs`, `requires`, the
   `FileRule`/`MultiFileRule` merge as needed.
 
@@ -328,9 +344,9 @@ Measured by counters, not by timings: the run summary exposes `files hashed`, `t
 - **Empty database.** A clean run: `files hashed = 0`.
 - Old databases load; `--dump` shows output records with stamp, size, epoch and history (hash prefixes).
 
-## Acceptance by step (proposal for the owner, 2026-11-17)
+## Acceptance by step (accepted 2026-11-17)
 
-Replaces "Acceptance" above once approved (critic M13). Every counter named here is in the run summary below.
+Replaces "Acceptance" above (critic M13). Every counter named here is in the run summary below.
 
 ### Step 1: header, static `needs`, `requires`, shared headers (done locally)
 

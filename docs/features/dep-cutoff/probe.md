@@ -602,3 +602,94 @@ dynamic dependencies on out-of-date rule targets, is the 4.0 behaviour, so nothi
 database 0.7 record should still keep the order and grouping of dynamic needs (cheap, critic m1),
 so A, or a dependee-side opt-out variant of it, can be added in a minor release without a format
 change if real scripts show the need.
+
+## Typed form D with a header, again (critic M7; 2026-11-17, for the owner)
+
+The owner: "can't we call it with defaults and stop after collecting the header?" Facts, checked in
+a scratch spike: `X.Rule` cannot be overloaded (F# rejects an overloaded or SRTP method used
+through `<|`), so a header in form D needs **another member name**. A non-overloaded member with
+another name works through `<|`, whatever its argument type. The options:
+
+### D1. `X.RuleH <| fun m -> recipe { needs ..; .. }`: call the function once at registration
+
+- `RuleH(body: 'G -> Headed)` calls `body` once when the script loads, with **sentinel groups** (each
+  field a value that cannot come from a match, e.g. `"\u0000n"`), takes the header and drops the
+  recipe (the body is lazy, so nothing of it runs). At run time it calls `body` again with the real
+  match and takes the recipe.
+- Lambdas that compute from `m` before `recipe` (`let out = Lib.Make m in recipe { .. }`) work: a
+  sentinel is a valid group value for formatting (checked: `sprintf "out/%s.dll" m.n` succeeds).
+- A header that uses `m` (`needs (sprintf "obj/%s.rsp" m.n)`) is caught: the header text contains
+  the sentinel, so registration fails with "the header of X.RuleH uses the match (m.n); write the
+  group in the pattern: needs \"obj/(n:*).rsp\"". Without this check such a header would silently
+  name a wrong file.
+- A lambda that does I/O with `m` before `recipe` (`File.ReadAllText m.n`) throws at registration:
+  a registration error naming the rule ("X.RuleH runs its function once when the script loads, to
+  read the header; it failed: ..; compute this inside recipe { }").
+- Costs: about 50 lines plus tests; the function runs once more than the rule runs (side effects
+  before `recipe` happen at load too, to document); a sentinel scheme to explain; a second name
+  next to `Rule`.
+
+### D2. `X.RuleWith h <| fun m -> recipe { .. }`: the header as a value, before the function
+
+```fsharp
+let cscHeader = ruleHeader ["n"] { needs "obj/(n:*).rsp"; requires cscLock }
+Asm.RuleWith cscHeader <| fun m -> recipe { do! cscBody m.n }
+Asm.RuleWith (ruleHeader ["n"] { also "out/(n:*).pdb" }) <| fun m -> recipe { .. }
+```
+
+- A curried member (`member _.RuleWith (header: SharedHeader) (body: 'G -> Recipe<..>)`); checked in
+  the spike through `<|`. The header comes first in the text, as in every other form.
+- Nothing is called at registration; the shared header's groups are checked against the target's
+  pattern as for `including` (option A of the third round), so a wrong group is a registration error.
+- Costs: about 15 lines plus tests and a docs paragraph. The header is written with `ruleHeader`, not
+  inside `recipe { }`, which is a second way to write it (the same operations).
+
+### D3. Catch the failure and treat it as "no header"
+
+Only possible together with D1 (`X.Rule` cannot take a header at all). Silently dropping a header
+the user wrote, because the function threw at load, turns a mistake into a wrong build. Rejected.
+
+### Recommendation: D2
+
+It gives form D a header with no call at registration, no sentinels and no double evaluation, at the
+lowest cost, and it reuses `ruleHeader`, whose group checks already exist. D1 is possible if the
+owner wants the header inside `recipe { }` in form D as well; it is the costlier and subtler one.
+
+## Cost of `RunSummary` (2026-11-17, for the owner)
+
+The proposal (brief, "Counters: the run summary"): `TargetsRun`, `TargetsSkipped`, `CutOff`,
+`FilesHashed`, `HashTime`, `TasksScheduled`; one log line at the end of a run; `OnSummary` and
+`XakeEngine.LastSummary`.
+
+Where each counter is incremented:
+
+| Counter | Site | Calls |
+|---|---|---|
+| `TargetsRun` | `ExecCore.execOne.run`, the `true` branch of the verdict | once per target that runs |
+| `TargetsSkipped` | the same, the `false` branch | once per target found up to date |
+| `TasksScheduled` | `WorkerPool`, the `None` branch of `Run` (a new task, not a join) | once per pool task |
+| `FilesHashed`, `HashTime` | the hashing helper of step 3 (one function: read stamp, hash, re-read) | once per file hashed |
+| `CutOff` | the step-3 output record update, when a rebuilt output keeps its epoch | once per such target |
+
+- **Storage:** a small class of `int64` fields created per run (in `runBuild`, and per `Demand` in
+  engine mode) and carried in `ExecContext` (one field). Increments are `Interlocked.Increment` /
+  `Interlocked.Add` (hash time in ticks). Not an agent: a mailbox round trip costs microseconds and an
+  `async` hop per target, an interlocked increment a few nanoseconds. `TasksScheduled` is counted
+  inside the pool's agent, which is single-threaded, but it is the same counters object, so
+  `Interlocked` there too.
+- **Hot paths:** one interlocked increment per target and one per hashed file (next to a file stat or
+  a SHA-256 of the file): not measurable. `HashTime` uses `Stopwatch.GetTimestamp` around the hash.
+- **Run boundaries:** a script run sums its target groups (one summary at the end, where "Build
+  completed in" is logged, `ScriptRunner`); in engine mode each `Demand` has its own counters, so a
+  target that one demand builds and another joins counts in the first only (documented).
+- **API:** `OnSummary` as an `ExecOptions` field of function type makes the record lose structural
+  equality; nothing compares `ExecOptions` today (checked), but to keep that open, the field can be an
+  interface (`ISummarySink`, like `CustomLogger: ILogger`) or a `xakeScript` operation
+  (`onSummary (fun s -> ..)`). Proposal: the operation, plus the field as an interface for engine
+  options; `XakeEngine.LastSummary` set after each `Demand`.
+- **Size:** about 60 lines in `src/core` (type 10, counters 15, increments 10, log line and callback
+  15, engine 10) and about 40 lines of tests.
+- **Steps 1-2 can fill part of it now:** `TargetsRun`, `TargetsSkipped` and `TasksScheduled` exist
+  today (the branches are there); `CutOff`, `FilesHashed`, `HashTime` stay 0 until step 3. Doing it in
+  step 1-2 also gives the tests of step 2 and 3 their counters from the start. Proposal: add it as
+  item 1h (before step 2).

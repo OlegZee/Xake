@@ -544,7 +544,7 @@ type ``Vars conformance (spec section 8)``() =
         // a 3.15 Var read recorded Var (X, None) + EnvVar (A, Some v)
         IO.File.Delete ".xake"
         let old = { BuildLog.makeResult [PhonyAction "main"] with Depends = [ Var ("VC25G", None); EnvVar ("VC25_C", Some "v") ] }
-        OldDatabase.write ".xake" BuildLog.XakeDbVersion [old]
+        OldDatabase.write ".xake" "0.6" [old]
         let schema = {| VC25G = Var.string(envVar = "VC25_C") |}
         withEnv ["VC25_C", "v"] (fun () ->
             let runOld () =

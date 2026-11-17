@@ -5,23 +5,35 @@ Branch `feature/db-paths` (worktree `.claude/worktrees/db-paths-ced680`), cut fr
 as-is 2026-11-17; engine facts in it are from `43706d3`, the sources win). Shares the 0.7 version bump with
 [dep-cutoff](../dep-cutoff/brief.md) ("Database (0.7)").
 
-## Where things stand (2026-11-17)
+## Where things stand (2026-11-17, implemented)
 
-Plan in [plan.md](plan.md); owner answered Q1-Q6 (brief.md "Decisions"). Fresh-eyes critic (Fable) in
-[critic.md](critic.md): 2 critical, 8 major, 12 minor, owner questions Q-A..Q-I. Implementer checked C1 against
-`Database.fs` (the read loop keeps results read before a failure, deletes the file and does not rewrite them;
-harmless in 0.6, a dangling-id corruption in 0.7): it holds. Nothing implemented.
+All owner decisions are in brief.md "Decisions" (Q1-Q6, critic Q-A..Q-I). Implemented, local commits only:
 
-Implementer's leaning for the triage: C1 length-framed records with salvage of the readable prefix (Q-C); C2 ids
-never reused, stop appending after a failed `Write`; M6 a record body never changes under its tag (dep-cutoff's
-result takes a tag from 4-15, Q-D); M4 roots checked before `openDb`; M5 an undeclared root keeps its records
-through rewrites (Q-A).
+- `src/core/PathTable.fs` (new, internal): varint, roots (`split` by longest root on a separator boundary, Target's
+  case rule), `Table` (DirRec/FileRec by id, resolution per run, one `File` per path, mis-rooted check), `Tx` (ids
+  handed out while pickling, records collected, committed only after the write; ids never reused).
+- `src/core/Database.fs`: format 0.7 (length-framed records, tags 0-3, 4-15 reserved), 0.6 pickler kept for
+  0.4-0.6 (`Storage.resultPU`), `openDbWith` (roots, read-only, `DbOpenReport`), `readDatabase`; rewrites for
+  upgrade, scrub, compaction, damaged tail (salvage), re-root; records under undeclared roots carried as raw
+  frames with their path records; Error per undeclared root, `root moved`, `files outside all roots` (hint when no
+  roots are declared), `database: n records, d dirs, f files, size` at Info. After a failed write the agent stops
+  appending.
+- `ExecOptions.PathRoots`, `RootValue` (`RootPath`, `RootVar`), `fromVar`, `pathRoot` builder op;
+  `ScriptRunner.resolveRoots` checks roots before the database opens (launch errors: name, duplicate, same folder,
+  project root, secret variable); unset variable = undeclared; `--dump`/`--dryrun` open read-only.
+  Switch `undeclaredRootFailsRun` (ScriptRunner.fs) = false: the owner's open point.
+- Tests: `src/tests/DatabasePathsTests.fs` (25 + 1 explicit). Docs: `docs/database.md`, release notes 5.0.0.
+- Measured: [measurements.md](measurements.md).
+- Verified 2026-11-17: `dotnet build src/core -c Release` 0 warnings; `dotnet test src/tests -c Release` 1788 passed,
+  11 skipped; `dotnet fsi build.fsx -- -- build test pack` green.
 
-Owner answered critic Q-B..Q-I (brief.md "Decisions"); Q-A (records under an undeclared root at a rewrite) pending.
-Q-G condition, implementer's proposal: the count `<n> files outside all roots` is in the Info line whenever it is
-non-zero; the hint "declare a root (`pathRoot`)" is added only when the script declares no roots, matching the
-owner's "if no roots are declared".
+Not done / open:
+- Owner: does an undeclared root fail the run (`undeclaredRootFailsRun`)?
+- No test injects a failed `Write` (IO error mid-append); the code path stops appending and logs.
+- Root-relative display in logs, progress and `--dump` (Q1: a later feature).
+- dep-cutoff merge: its content records take tags 4-15 (Q-D); `feature/dep-cutoff` not merged here.
 
 ## Next step
 
-Wait for Q-A. Then fold the decisions into plan.md (framing, read-only open, re-root, launch checks), docs, code.
+Owner review of the implementation and the switch; then merge `feature/dep-cutoff` when the orchestrator says so,
+and check that its result records use their own tag.

@@ -1,6 +1,6 @@
 # Plan: compact, relocatable paths in the build database (database 0.7)
 
-Status: questions answered by the owner 2026-11-17 (brief.md "Decisions"); critic review next. Nothing is implemented. Brief: [brief.md](brief.md) (engine facts from
+Status: implemented 2026-11-17. The reference is now [docs/database.md](../../database.md); where this plan and the owner decisions (brief.md) or the reference differ, those win. Brief: [brief.md](brief.md) (engine facts from
 `43706d3`); checked here against the sources at `4ece63b` (`feature/dep-cutoff`, step 1).
 
 ## Where the brief and the sources differ

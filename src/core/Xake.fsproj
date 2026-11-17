@@ -46,6 +46,7 @@
     <Compile Include="Resource.fs" />
     <Compile Include="Types.fs" />
     <Compile Include="CommonLib.fs" />
+    <Compile Include="PathTable.fs" />
     <Compile Include="Database.fs" />
     <Compile Include="RecipeBuilder.fs" />
     <Compile Include="RecipeFunctions.fs" />

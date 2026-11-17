@@ -37,6 +37,13 @@ consumer. Engine facts are taken from the Xake sources at 43706d3: `src/core/Dat
     database is an `[<Explicit>]` test the consumer runs on its file.
   - Note (dep-cutoff decision): no content epochs in 5.0, so no epoch counter in 0.7.
 
+- 2026-11-17, **Q-A:** records that name a root this run does not declare are an **error printed on the console**:
+  at open, one Error per such root with its last recorded value, the number of records and the fix (declare the root
+  or set its variable). The records are not loaded (Q4; those targets rebuild), and no rewrite (upgrade, compaction,
+  re-root, scrub) drops them: they are carried over as whole length-framed records with the path entries they name,
+  so declaring the root again brings them back. Open for the owner: whether this error fails the run (exit code like
+  a launch error) or only prints and continues; implemented as "print and continue" behind one switch point.
+
 ## Problem
 
 The database stores every file path as a full string, once per reference:

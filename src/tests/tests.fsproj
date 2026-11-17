@@ -28,6 +28,7 @@
     <Compile Include="MiscTests.fs" />
     <Compile Include="StorageTests.fs" />
     <Compile Include="AgentFailureTests.fs" />
+    <Compile Include="DatabasePathsTests.fs" />
     <Compile Include="FileTasksCopy.fs" />
     <Compile Include="FileTasksTests.fs" />
     <Compile Include="FileTasksRm.fs" />

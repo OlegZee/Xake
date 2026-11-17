@@ -21,22 +21,80 @@ let (|Dump|Dryrun|Run|) (opts:ExecOptions) =
     | _ when opts.DryRun -> Dryrun
     | _ -> Run
 
+/// Owner's open point (Q-A, docs/features/db-paths): records under a root this run does not declare are
+/// reported as an error at open. `false`: print and continue (those targets rebuild); `true`: also a launch error
+/// (the run stops with exit code 2).
+let private undeclaredRootFailsRun = false
+
+/// The path roots of the run, checked: the roots for the database, the launch errors, notes (an unset variable).
+let resolveRoots (opts: ExecOptions) (variables: Map<string, VarEntry>) =
+    let cmp = PathTable.Roots.comparison
+    let projectRoot = PathTable.Roots.normalize opts.ProjectRoot
+    let nameOk (n: string) = n.Length > 0 && n |> Seq.forall (fun c -> System.Char.IsLetterOrDigit c || c = '_')
+    let fullOf (p: string) = PathTable.Roots.normalize (System.IO.Path.Combine(projectRoot, p))
+    let resolved =
+        opts.PathRoots |> List.map (fun (name, value) ->
+            let checkName =
+                if not (nameOk name) then [ sprintf "pathRoot \"%s\": a root name is letters, digits and '_'" name ]
+                elif System.String.Equals(name, "ProjectRoot", System.StringComparison.OrdinalIgnoreCase) then
+                    [ "pathRoot \"ProjectRoot\": the name is taken by the project root" ]
+                else []
+            match value with
+            | RootPath p when System.String.IsNullOrWhiteSpace p ->
+                name, None, checkName @ [ sprintf "pathRoot \"%s\": the path is empty" name ], []
+            | RootPath p ->
+                name, Some { Storage.DbRoot.Name = name; Storage.DbRoot.Path = fullOf p; Storage.DbRoot.Recorded = p }, checkName, []
+            | RootVar v ->
+                match variables.TryFind v with
+                | Some { Decl = Some d } when d.Secret <> NotSecret ->
+                    name, None, checkName @ [ sprintf "pathRoot \"%s\": variable %s is secret and cannot be a root (its value would be written to the database)" name v ], []
+                | Some { Value = Some value } when not (System.String.IsNullOrWhiteSpace value) ->
+                    name, Some { Storage.DbRoot.Name = name; Storage.DbRoot.Path = fullOf value; Storage.DbRoot.Recorded = value }, checkName, []
+                | _ ->
+                    name, None, checkName, [ sprintf "pathRoot \"%s\": variable %s is not set, the root is not declared in this run" name v ] )
+    let roots = resolved |> List.choose (fun (_, r, _, _) -> r)
+    let duplicateNames =
+        resolved |> List.countBy (fun (n, _, _, _) -> n) |> List.filter (fun (_, c) -> c > 1)
+        |> List.map (fun (n, _) -> sprintf "pathRoot \"%s\" is declared more than once" n)
+    let sameFolder =
+        [ for r in roots do
+            if r.Path.Equals(projectRoot, cmp) then
+                yield sprintf "pathRoot \"%s\": the folder %s is the project root" r.Name r.Path ]
+        @ (roots |> List.groupBy (fun r -> if cmp = System.StringComparison.Ordinal then r.Path else r.Path.ToUpperInvariant())
+           |> List.filter (fun (_, rs) -> rs.Length > 1)
+           |> List.map (fun (p, rs) -> sprintf "pathRoots %s name the same folder %s" (rs |> List.map (fun r -> "\"" + r.Name + "\"") |> String.concat ", ") (rs.Head.Path)))
+    let errors = (resolved |> List.collect (fun (_, _, e, _) -> e)) @ duplicateNames @ sameFolder
+    let notes = resolved |> List.collect (fun (_, _, _, n) -> n)
+    roots, errors, notes
+
 /// Creates execution context from CLI ExecOptions, handling ResetDb and logger construction.
 /// This is the launch (run, dry-run, dump and engine `Start`): the variable set is built here,
 /// once, and the launch errors are returned with the context; the caller reports them.
+/// Roots are checked before the database opens; with launch errors no database is opened.
 let createScriptContext (opts: ExecOptions) rules =
     let variables, launchErrors = VarEvaluation.launch opts
     let engineOpts = toEngineOptions opts rules variables
-    let db =
-        if opts.NoPersist then
-            Storage.noopDb ()
+    let roots, rootErrors, rootNotes = resolveRoots opts variables
+    let launchErrors = launchErrors @ rootErrors
+    for note in rootNotes do engineOpts.Logger.Log Info "%s" note
+    let db, dbErrors =
+        if opts.NoPersist || not launchErrors.IsEmpty then
+            Storage.noopDb (), []
         else
             let dbPath = engineOpts.ProjectRoot </> opts.DbFileName
             if opts.ResetDb then
                 Storage.cleanupDb dbPath engineOpts.Logger
-            Storage.openDb dbPath engineOpts.Logger
+            let dbOpts = { Storage.DbOpenOptions.ProjectRoot = engineOpts.ProjectRoot
+                           Storage.DbOpenOptions.Roots = roots
+                           Storage.DbOpenOptions.ReadOnly = opts.DumpDeps || opts.DryRun }
+            let db, report = Storage.openDbWith dbOpts dbPath engineOpts.Logger
+            let errors =
+                if undeclaredRootFailsRun then
+                    report.UndeclaredRoots |> List.map (fun (key, n) -> sprintf "database: %d records name the root %s, which this run does not declare" n key)
+                else []
+            db, errors
     let ctx, finalize = ExecCore.createContextCore engineOpts db (VarEvaluation.flatVars variables) opts.Progress
-    ctx, finalize, launchErrors
+    ctx, finalize, launchErrors @ dbErrors
 
 let runTeardownAsync (ctx: ExecContext) =
     async {

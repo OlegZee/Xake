@@ -56,6 +56,12 @@ work is at the end and starts with a spike that settles the builder design.
   - **M13:** Acceptance is split by step and the contradictions resolved: proposal in "Acceptance by step"
     below, for the owner.
   - **m11:** `ExecOptions.ContentCutoff` may be public.
+- 2026-11-17: **no speculation in 5.0 (option B,** [probe.md](probe.md) "Speculation: options A, B, C"**)**. Only
+  static `needs` are built before the verdict; a dynamic dependency on a rule target is compared without building it
+  (unchanged if that target is up to date, or has finished in this run, with the epoch the dependent saw; otherwise the
+  dependent reruns). Part 3 "Decision for a dependent" and the Acceptance sections below are rewritten accordingly.
+  Database 0.7 still records the order and grouping of dynamic needs, so speculation (A) can be added in a minor
+  release without a format change. Critic C1, C3, C4 (speculation part) and M10 are resolved by this.
 - 2026-11-17: **step 1 starts**: the header in `recipe` and every file-rule form, static `needs`, `requires`, the
   `FileRule`/`MultiFileRule` merge as needed.
 
@@ -236,23 +242,31 @@ A hash is computed only when a comparison needs it.
 ### Decision for a dependent
 
 This **replaces** the 4.0 rule "a stamp that did not move is still a change when the dependee's own dependencies
-changed": the dependee is brought up to date and the result compared.
+changed". Nothing is built to decide a target except its static `needs` (decision 2026-11-17, option B: no
+speculation).
 
-1. **Cheap checks first**: variables, environment, filesets membership, source files. If any changed, the target runs:
-   no speculation is needed.
-2. **Static `needs`**: brought up to date (needed anyway), then compared.
-3. **Recorded dynamic dependencies**, in recorded `need` order (the record must keep the order and the grouping of a
-   `need [a; b]` call): bring each group up to date **speculatively**, compare, stop at the first changed group (Shake's
-   rule). The rest is not built: the body will ask for what it still needs.
-   - A speculative failure is not a build error and does not cancel the run: the target counts as changed and runs; the
-     failure is logged at Info. If the new run of the body (or any other target in the run) needs that dependency, the
-     failure is reported there as usual — the failed result is kept for the run, not retried.
-   - A recorded dependency that now has no rule and no file: changed, not an error.
-   - A failure of a static `needs` (step 2) is an ordinary error, not a speculative one.
-4. **Where.** The verdict is computed lazily in `execOne.run`, right before `ctx.NeedRebuild`, after steps 2–3; the
-   run-wide memo of `getChangeReasons` no longer applies to artifact dependencies. A dependee built once per run
-   (existing in-flight dedup); concurrent dependents await the same result and read the same record.
-5. Phony targets have no content: cut-off does not apply to them.
+1. **Static `needs`**: brought up to date (built if needed: they are needed anyway), then compared by epoch. A failure
+   is an ordinary build error. Full cut-off: a static `needs` on a deterministic output rebuilt with the same bytes is
+   unchanged.
+2. **The rest of the record, after step 1, without building anything:**
+   - sources: `(Stamp, Size)` equal: unchanged; moved: hash and compare with the history (epoch rules above);
+   - variables, environment, secrets, fileset membership: compared, as 4.0;
+   - a **dynamic dependency on a rule target** D: unchanged iff D's current record carries the epoch the dependent saw
+     (or a hash-equal one in its history) **and** D is up to date by this same no-build decision, recursively. If D has
+     already finished in this run (built or found up to date), its record is current and the comparison is exact; if D
+     is running, the dependent waits for it. Otherwise (D out of date, not built yet) the dependent counts as changed:
+     D is not built to find out. Its body will build D when it needs it, as in 4.0;
+   - a dynamic phony target: out of date by this decision: changed; up to date: its completion stamp, as 4.0;
+   - a recorded dependency that now has no rule and no file: changed, not an error.
+3. **Where.** The verdict is computed lazily in `execOne.run`, right before `ctx.NeedRebuild`, after step 1. The
+   no-build decision of step 2 is memoised for the run and refreshed for a target when it finishes (the 4.0 memo stuck
+   to a verdict made before a dependee was rebuilt).
+4. Phony targets have no content: cut-off does not apply to them.
+5. **What is given up** (documented): cut-off through a dynamic dependency on a rule target that is out of date but
+   would rebuild to the same bytes; the dependent reruns, as in 4.0. For cut-off through a rule's output, name it in
+   `needs`.
+6. The record keeps the order and grouping of dynamic `need` calls (database 0.7), unused by this decision, so a
+   speculative mode can be added later without a format change.
 
 ### Control
 
@@ -279,7 +293,9 @@ changed": the dependee is brought up to date and the result compared.
 
 ## Out of scope
 
-- Error policy (`failonerror`, keep-going, what counts as an error). Only the speculative failure of Part 3 is defined.
+- Error policy (`failonerror`, keep-going, what counts as an error).
+- Speculative execution (bringing recorded dynamic dependencies up to date to decide a dependent): not in 5.0
+  (decision 2026-11-17); the record keeps what it would need.
 - Shorthand for `also` (relative paths, `{n}`/`{stem}`).
 - Deprecation of multi-output rules; header on `*..>`.
 - Hashing the result value of a phony target; header on condition, delegated and phony rules.
@@ -297,7 +313,7 @@ Measured by counters, not by timings: the run summary exposes `files hashed`, `t
   step start events); `--dryrun` lists them; a single-path `needs` that resolves to nothing fails before the body runs;
   an empty fileset does not.
 - **Cut-off, control file (A→B→A).** A rule writes `on`/`off` from a variable into `obj/layer.route`; 100 targets
-  need it and are requested only while it is `on` (in the `off` run another route is taken). Runs: on (100 built) →
+  name it in `needs` and are requested only while it is `on` (in the `off` run another route is taken). Runs: on (100 built) →
   off (the 100 not requested, the route rewritten) → on: the route returns to A's epoch, `targets rerun` excludes all
   100. A further run with no change: `files hashed = 0`. Control: if the 100 are requested in the `off` run, they
   rebuild in both later runs.
@@ -305,8 +321,8 @@ Measured by counters, not by timings: the run summary exposes `files hashed`, `t
   bytes: rerun. An output edited by hand between runs: rebuilt, dependents rerun.
 - **Cut-off, sources.** A source touched without an edit twice: the second time nothing reruns; a following no-change
   run hashes 0 files; with `--content-cutoff=off` the dependents rerun.
-- **Speculation.** A dependent whose body stops needing a recorded dependency that now fails: it reruns, the build
-  succeeds. Recorded dependencies after the first changed group are not built.
+- **Dynamic vs static.** A dynamic dependency on an out-of-date rule target reruns the dependent (no speculation); a
+  static `needs` on a deterministic output gets cut-off.
 - **Non-monotonic stamps.** Source A at T10 → B at T20 (dependent built) → A restored with mtime T10 → `touch` to T30:
   the dependent reruns (content is A, it was built from B). Same stamp, different size: dependent reruns.
 - **Empty database.** A clean run: `files hashed = 0`.
@@ -356,7 +372,7 @@ its record:
   before saving a cache.
 
 Acceptance:
-- **Control file (A→B→A):** as in "Acceptance" above (on: 100 built; off: not requested, route rewritten; on: the
+- **Control file (A→B→A):** the 100 targets name the route in `needs`; as in "Acceptance" above (on: 100 built; off: not requested, route rewritten; on: the
   route returns to A's epoch, `targets rerun` excludes the 100; a further no-change run: `files hashed = 0`).
   Control: requested in the `off` run, they rebuild in both later runs.
 - **Outputs:** a dependee rebuilt with identical bytes: dependents not rerun from its first rebuild; different
@@ -366,9 +382,10 @@ Acceptance:
 - **Restored output with a fresh time and the recorded hash:** nothing reruns.
 - **Sources:** touched twice without an edit: the second time nothing reruns; a following no-change run hashes 0
   files; with `--content-cutoff=off` the dependents rerun.
-- **Speculation:** a dependent whose body stops needing a recorded dependency that now fails: reruns, the build
-  succeeds (exit code 0); recorded dependencies after the first changed group are not built. (C3, phony targets in
-  speculation, waits for the owner.)
+- **Dynamic vs static:** a dynamic dependency on an out-of-date rule target reruns the dependent, and nothing is
+  built to decide it; a static `needs` on a deterministic output rebuilt with the same bytes gets cut-off.
+- **Nothing is built to decide a target** except its static `needs`: a recorded dynamic dependency whose body is
+  expensive and is no longer needed is not built (counter `TargetsRun`).
 - **Non-monotonic stamps:** A at T10 → B at T20 (dependent built) → A restored at T10 → `touch` to T30: the
   dependent reruns. Same stamp, different size: reruns.
 - **Empty database:** a clean run, `files hashed = 0`.

@@ -85,6 +85,11 @@ A plain statement before the header (`printfn ..`) is allowed and runs when the 
   of other rules that have not been built yet. To depend on generated files, name them (`needs
   "gen/(n:*).cs"`) or need the rule that makes them.
 
+**For content cut-off through a rule's output, name it in `needs`.** A static `needs` is brought up
+to date before the rule is decided, so a dependee rebuilt with the same bytes does not rerun the
+rule. A rule's output needed in the body is not built to decide the rule: if it is out of date, the
+rule reruns (as in Xake 4.0).
+
 **Only the header is static.** A `need` anywhere in the body, including inside a helper recipe
 the body calls, is dynamic: it runs when the body reaches it, as in Xake 4.0. It is correct, but the
 engine does not know of it before the body runs.

@@ -38,8 +38,12 @@ Step 1 implemented (local commits, see `git log`):
 - Not yet: `also` behaviour beyond matching (step 2), the verdict move (step 3: until then static
   needs run only when the target runs).
 
+Owner decision 2026-11-17: **no speculation in 5.0 (option B)**; brief Part 3 "Decision for a
+dependent" and both Acceptance sections rewritten; critic C1, C3, C4 (speculation part), M10
+closed; rule-header.md says "for cut-off through a rule's output, name it in `needs`".
+
 ## Next step
 
-Wait for the owner: the rest of the critic triage, C3, the "Acceptance by step" proposal (restored
-`out/` option a/b/c) and the counters API. Then step 2 (`also`: missing-output rebuild with current outputs, M1 overlap check,
+Wait for the owner: the rest of the critic triage, the "Acceptance by step" proposal with the
+`RunSummary` counters, restored `out/` without hashes (option a/b/c), and the go for step 2. Then step 2 (`also`: missing-output rebuild with current outputs, M1 overlap check,
 `needs` naming an own `also`, missing declared output after the body = error).

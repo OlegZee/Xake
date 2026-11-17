@@ -394,3 +394,117 @@ type ``Run summary``() =
         Assert.That(eng.LastSummary |> Option.map (fun s -> s.TargetsRun), Is.EqualTo (Some 1))
         eng.StopAsync().Wait()
 
+
+/// Step 2: side outputs (`also`) on the multi-output representation.
+[<TestFixture>]
+type ``Side outputs``() =
+    inherit XakeTestBase("side-outputs")
+
+    member private x.Fresh () =
+        for d in [ "out"; "src" ] do try Directory.Delete(d, true) with _ -> ()
+        try File.Delete ".xake" with _ -> ()
+        Directory.CreateDirectory "src" |> ignore
+
+    /// Builds; returns the error message, "" on success.
+    member private x.Run (targets: string list) (rules': ExecContext Rule list) =
+        try
+            xake { x.TestOptions with Targets = targets; ResetDb = false; ThrowOnError = true } { rules rules' }
+            ""
+        with e -> e.Message
+
+    /// `out/(n:*).dll` with `also out/(n:*).pdb`, writing both from `src/<n>.cs`; counts its runs.
+    member private x.Compiler (runs: int ref) =
+        "out/(n:*).dll" ..> recipe {
+            also "out/(n:*).pdb"
+            let! m = getRuleMatches ()
+            do! need [ "src/" + m.["n"] + ".cs" ]
+            runs.Value <- runs.Value + 1
+            Directory.CreateDirectory "out" |> ignore
+            File.WriteAllText("out/" + m.["n"] + ".pdb", "pdb " + File.ReadAllText ("src/" + m.["n"] + ".cs"))
+            do! writeText "dll"
+        }
+
+    [<Test>]
+    member x.``need of a side output builds the rule for its main target``() =
+        x.Fresh ()
+        File.WriteAllText("src/A.cs", "a")
+        let runs = ref 0
+        Assert.That(x.Run [ "out/A.pdb" ] [ x.Compiler runs ], Is.Empty)
+        Assert.That(runs.Value, Is.EqualTo 1)
+        Assert.That(File.Exists "out/A.dll" && File.Exists "out/A.pdb", Is.True)
+        Assert.That(x.Run [ "out/A.dll" ] [ x.Compiler runs ], Is.Empty)
+        Assert.That(runs.Value, Is.EqualTo 1, "built once for both outputs")
+
+    [<Test>]
+    member x.``deleting a side output alone reruns the rule``() =
+        x.Fresh ()
+        File.WriteAllText("src/A.cs", "a")
+        let runs = ref 0
+        Assert.That(x.Run [ "out/A.dll" ] [ x.Compiler runs ], Is.Empty)
+        File.Delete "out/A.pdb"
+        Assert.That(x.Run [ "out/A.dll" ] [ x.Compiler runs ], Is.Empty)
+        Assert.That(runs.Value, Is.EqualTo 2)
+        Assert.That(File.Exists "out/A.pdb", Is.True)
+
+    [<Test>]
+    member x.``an also added since the last run counts as missing``() =
+        x.Fresh ()
+        File.WriteAllText("src/A.cs", "a")
+        let runs = ref 0
+        let before =
+            "out/(n:*).dll" ..> recipe {
+                let! m = getRuleMatches ()
+                do! need [ "src/" + m.["n"] + ".cs" ]
+                runs.Value <- runs.Value + 1
+                do! writeText "dll" }
+        Assert.That(x.Run [ "out/A.dll" ] [ before ], Is.Empty)
+        Assert.That(x.Run [ "out/A.dll" ] [ x.Compiler runs ], Is.Empty)
+        Assert.That(runs.Value, Is.EqualTo 2, "the rule now declares out/A.pdb, which does not exist")
+
+    [<Test>]
+    member x.``a declared output the body did not write is an error naming it``() =
+        x.Fresh ()
+        let rule =
+            "out/(n:*).dll" ..> recipe {
+                also "out/(n:*).pdb"
+                do! writeText "dll" }
+        Assert.That(x.Run [ "out/A.dll" ] [ rule ], Does.Contain("did not write its declared output").And.Contain("A.pdb"))
+
+    [<Test>]
+    member x.``a dependent of a side output reruns when it changes``() =
+        x.Fresh ()
+        File.WriteAllText("src/A.cs", "a")
+        let runs, readerRuns = ref 0, ref 0
+        let reader =
+            "out/A.symbols" ..> recipe {
+                do! need [ "out/A.pdb" ]
+                readerRuns.Value <- readerRuns.Value + 1
+                do! writeText (File.ReadAllText "out/A.pdb") }
+        Assert.That(x.Run [ "out/A.symbols" ] [ x.Compiler runs; reader ], Is.Empty)
+        Assert.That(x.Run [ "out/A.symbols" ] [ x.Compiler runs; reader ], Is.Empty)
+        Assert.That(readerRuns.Value, Is.EqualTo 1, "up to date")
+        System.Threading.Thread.Sleep 100
+        File.WriteAllText("src/A.cs", "a2")
+        Assert.That(x.Run [ "out/A.symbols" ] [ x.Compiler runs; reader ], Is.Empty)
+        Assert.That(readerRuns.Value, Is.EqualTo 2)
+        Assert.That(File.ReadAllText "out/A.symbols", Is.EqualTo "pdb a2")
+
+    [<Test>]
+    member x.``outputs of two rules overlapping for one target is an error naming both``() =
+        x.Fresh ()
+        File.WriteAllText("src/special.cs", "s")
+        let runs = ref 0
+        let special = "out/special.pdb" ..> recipe { do! writeText "special pdb" }
+        let message = x.Run [ "out/special.dll" ] [ x.Compiler runs; special ]
+        Assert.That(message, Does.Contain("Outputs overlap").And.Contain("\"out/(n:*).dll\"").And.Contain("\"out/special.pdb\""))
+        Assert.That(runs.Value, Is.EqualTo 0)
+
+    [<Test>]
+    member x.``an also checked like a multi-output rule; a needs of an own output is a registration error``() =
+        let loads (r: ExecContext Rule) =
+            try xake { x.TestOptions with Targets = [ "none" ]; ThrowOnError = true } { rules [ r; "none" => recipe { () } ] } ; ""
+            with e -> e.Message
+        Assert.That(loads ("out/(n:*).dll" ..> recipe { also "out/(m:*).pdb"; () }), Does.Contain "XP013")
+        Assert.That(loads ("out/(n:*).dll" ..> recipe { also "out/(n:*).{pdb,xml}"; () }), Does.Contain "XP014")
+        Assert.That(loads ("out/(n:*).dll" ..> recipe { also "out/(n:*).pdb"; needs "out/(n:*).pdb"; () }),
+                    Does.Contain "rule \"out/(n:*).dll\": needs \"out/(n:*).pdb\" names an output of the same rule")

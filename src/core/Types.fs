@@ -251,6 +251,10 @@ module DomainTypes =
                     if all.Length > 1 then PatternAst.checkOutputs all
                     let groups = PatternAst.Rule.parse main |> PatternAst.groupNames
                     checkHeader (sprintf "rule \"%s\"" main) (Some groups) header
+                    match header.Needs |> List.filter (fun n -> List.contains n all) with
+                    | [] -> ()
+                    | own :: _ ->
+                        fail (sprintf "rule \"%s\": needs \"%s\" names an output of the same rule; a rule cannot need what it writes" main own)
                     if header.HeaderOnly then
                         fail (sprintf "rule \"%s\" has a header and no body: a file rule must have a body that writes its target. To run inputs before something else, put them in the needs of the rule that uses them, or use a phony rule (=>) with need" main)
             | FileConditionRule (_, header, _) ->

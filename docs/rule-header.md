@@ -100,8 +100,18 @@ engine does not know of it before the body runs.
 `also "out/(n:*).pdb"` declares another output of the rule. It has the same named groups as the
 main pattern and nothing a match cannot fill in (XP013, XP014, as for `*..>`).
 
-- `need ["out/A.pdb"]` builds the rule of `out/(n:*).dll` for `out/A.dll`.
-- The rule is out of date when any of its outputs is missing.
+- `need ["out/A.pdb"]` builds the rule of `out/(n:*).dll` for `out/A.dll`; both outputs are built by
+  one run of the body. Rule lookup is as for any pattern: the most specific matching rule wins.
+- The rule is out of date when any of its **current** outputs is missing: deleting `out/A.pdb` alone
+  reruns it, and so does an `also` added since the last run.
+- The body must write every output it declares: one it did not write is an error naming the rule
+  and the output, and nothing is recorded, so the next run tries again. This holds for `*..>` and
+  `targets` too.
+- One file has one rule: when an output of the selected rule is built by another rule (for example
+  `also "out/(n:*).pdb"` next to a rule for `out/special.pdb`), the build fails naming both rules.
+  Narrow one of the patterns.
+- A rule cannot need its own outputs: `needs "out/(n:*).pdb"` next to `also "out/(n:*).pdb"` is an
+  error when the script loads.
 - `also` and `*..>` are the same thing: a rule with several outputs, the first one main.
 - A file the body writes but does not declare stays a plain file for its dependents.
 

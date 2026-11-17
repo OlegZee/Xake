@@ -48,7 +48,19 @@ Items 1h and 1i (2026-11-17): `RunSummary`/`RunCounters`/`IRunSummarySink` in `E
 script operation, `XakeEngine.LastSummary` per demand; `Target<'G>.RuleWith`. A delegated rule's
 header lock is tested. Verified: 0 warnings, 1768 passed / 10 skipped, `build test pack` green.
 
+C2 corrected by the owner (2026-11-17): integer epoch ids, +1, varint; max seen on load through
+one reader; `.xake.lock` held from load to close (brief "Decisions"; implemented with step 3).
+
+Step 2 done (2026-11-17, local): in `ExecCore.execOne` a missing current output reruns a
+multi-output rule; `checkOutputsWritten` fails a run whose body left a declared output unwritten
+(nothing recorded); the selected rule's other outputs must resolve back to it (overlap = error
+naming both); `Rule.validate` refuses a `needs` equal to an own output. Tests: `Side outputs` in
+RuleHeaderTests.fs; one 4.0 test (`multitarget rule generates names`) now writes its outputs.
+Trap found: a failed build without `ThrowOnError` calls `exit`, which kills the NUnit host
+("Test Run Aborted" with a misleading "Passed!" line); check the totals, not only "Passed!".
+Verified: 0 warnings, 1775 passed / 10 skipped, `build test pack` green.
+
 ## Next step
 
-Wait for the owner: the C2 id size (128- or 64-bit random) and the go for step 2. Then step 2 (`also`: missing-output rebuild with current outputs, M1 overlap check,
+Report step 2. Next is step 3 (content cut-off, database 0.7, `.xake.lock`), on the owner's go. Then step 2 (`also`: missing-output rebuild with current outputs, M1 overlap check,
 `needs` naming an own `also`, missing declared output after the body = error).

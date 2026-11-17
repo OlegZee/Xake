@@ -36,6 +36,11 @@ Xake 5.0 is a breaking release: the rule representation and the database format 
 - **Breaking:** `ExecContext` has a new field, `Counters`; a package that builds an `ExecContext`
   with a record expression must be rebuilt against 5.0 (`ExecContext.withLogger` is unaffected).
   `EngineOptions` and `ExecOptions` have a new field, `SummarySink`.
+- **Breaking:** a rule with several outputs (`*..>`, `targets`, `also`) must write every one of them;
+  one it did not write fails the build, naming it (in 4.0 the rule silently reran every time). When
+  an output of a rule is built by another, more specific rule, the build fails naming both.
+- A rule with several outputs reruns when any of its current outputs is missing, including one
+  added to the rule since the last run.
 - A file rule with a header and no body, and a rule naming one resource twice (`requires`,
   `requiring`, an included header), are errors when the script loads.
 - **Shared headers:** `ruleHeader ["n"] { needs ..; requires .. }` makes a header value that rules

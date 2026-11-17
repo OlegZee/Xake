@@ -130,11 +130,35 @@ let newTaskContext targets matches ctx =
 /// Raises XakeException when neither a rule nor a file is found.
 let rec execOne (ctx: ExecContext) target =
 
+    // a rule with several outputs (`*..>`, `also`) must write every one of them (decision M2):
+    // a missing one would make the rule rerun forever. Not recorded, so the next run retries.
+    let checkOutputsWritten (targets: Target list) =
+        if targets.Length > 1 then
+            match targets |> List.filter (function FileTarget f -> not (File.exists f) | PhonyAction _ -> false) with
+            | [] -> ()
+            | missing ->
+                let errorText =
+                    sprintf "The rule for '%s' did not write its declared output%s %s; a rule writes every output it declares (also, *..>): write it, or remove it from the rule"
+                        (List.head targets).ShortName (if missing.Length > 1 then "s" else "")
+                        (missing |> List.map (fun t -> "'" + t.ShortName + "'") |> String.concat ", ")
+                ctx.Logger.Log Error "%s" errorText
+                raise (XakeException errorText)
+
     let run ruleMatches action targets =
         let primaryTarget = targets |> List.head
         async {
             ctx.Counters.TaskScheduled ()
-            match ctx.NeedRebuild targets with
+            // any output of the rule's current outputs missing reruns it (an `also` added since the
+            // last run included), whatever the record says
+            let missingOutput =
+                targets |> List.tryFind (function FileTarget f -> not (File.exists f) | PhonyAction _ -> false)
+            let rebuild =
+                match missingOutput with
+                | Some missing when targets.Length > 1 ->
+                    ctx.Logger.Log Info "Rebuild %A: output %s is missing" primaryTarget.ShortName missing.ShortName
+                    true
+                | _ -> ctx.NeedRebuild targets
+            match rebuild with
             | true ->
                 ctx.Counters.TargetRun ()
                 let taskContext = newTaskContext targets ruleMatches ctx
@@ -148,6 +172,7 @@ let rec execOne (ctx: ExecContext) target =
                 // (see Dependency.ArtifactDep2 and DependencyAnalysis.getChangeStamp)
                 let result = {Step.updateTotalDuration result with Built = System.DateTime.Now}
 
+                checkOutputsWritten targets
                 Store result |> ctx.Db.Post
 
                 do Progress.TaskComplete primaryTarget |> ctx.Progress.Post
@@ -184,6 +209,7 @@ let rec execOne (ctx: ExecContext) target =
             let! result =
                 Scheduler.withYieldedSlot ctx.Engine.Scheduler (executor taskContext targets bodyThunk)
 
+            checkOutputsWritten targets
             Store result |> ctx.Db.Post
 
             do Progress.TaskComplete primaryTarget |> ctx.Progress.Post
@@ -215,10 +241,28 @@ let rec execOne (ctx: ExecContext) target =
                 ctx.Logger.Log Message "  %s %-48s {lit=%d, **=%d, wc=%d}"
                     (if i = 0 then "->" else "  ") (m.Pattern |> Option.defaultValue "<condition>") l (-d) (-w)))
 
-    let selected =
+    let select (candidates: RuleMatchInfo<_> list) =
         match ruleMatchMode with
         | MostSpecific -> candidates |> List.tryHead
         | LastDeclared -> candidates |> List.sortBy (fun m -> m.Index) |> List.tryHead
+    let selected = select candidates
+
+    // one target has one rule (decision M1): every other output of the selected rule must resolve
+    // back to it, or two rules write one file and which runs depends on timing
+    match selected with
+    | Some best when best.Targets.Length > 1 ->
+        let ruleName (m: RuleMatchInfo<_>) = m.Pattern |> Option.defaultValue "<condition>"
+        for output in best.Targets do
+            if output <> target then
+                match select (explainMatch ctx.Options.Rules ctx.Options.ProjectRoot output) with
+                | Some other when other.Index <> best.Index ->
+                    let errorText =
+                        sprintf "Outputs overlap: '%s' is an output of the rule \"%s\" (building '%s') and is built by the rule \"%s\"; a file has one rule: narrow one of the patterns, or remove the output from the first rule"
+                            output.ShortName (ruleName best) target.ShortName (ruleName other)
+                    ctx.Logger.Log Error "%s" errorText
+                    raise (XakeException errorText)
+                | _ -> ()
+    | _ -> ()
 
     // Warn when the winner ties on specificity with a different pattern (MostSpecific only): the
     // choice then rests on declaration order, which is the trap this feature exists to surface.

@@ -13,7 +13,7 @@
 | 1g | Tests: RuleHeaderTests.fs, fixtures/header-neg (compile cases) | done |
 | 1h | `RunSummary`: counters per run / per `Demand`, log line, `onSummary`, `XakeEngine.LastSummary` | done (local); `CutOff`, `FilesHashed`, `HashTime` filled in step 3 |
 | 1i | Typed form D header: `X.RuleWith h <| fun m -> ..` (owner: D2) | done (local) |
-| 2 | `also` on the multi-output representation (lookup, missing outputs, M1 overlap check) | pending; matching already shared with `*..>` |
+| 2 | `also` on the multi-output representation: lookup, missing current output reruns (M9), unwritten output = error (M2), overlapping outputs = error (M1), XP013/XP014, `needs` of an own output | done (local) |
 | 3 | Content cut-off: epochs, lazy hashes, verdict in `execOne`, database 0.7 | pending; critic C1-C4, M2-M5, M9-M11 belong here |
 | 4 | Plan for progress and `--dryrun` (may follow 5.0) | pending |
 | 5 | `produces` (may follow 5.0) | pending |

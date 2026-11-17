@@ -48,8 +48,10 @@ Items 1h and 1i (2026-11-17): `RunSummary`/`RunCounters`/`IRunSummarySink` in `E
 script operation, `XakeEngine.LastSummary` per demand; `Target<'G>.RuleWith`. A delegated rule's
 header lock is tested. Verified: 0 warnings, 1768 passed / 10 skipped, `build test pack` green.
 
-C2 corrected by the owner (2026-11-17): integer epoch ids, +1, varint; max seen on load through
-one reader; `.xake.lock` held from load to close (brief "Decisions"; implemented with step 3).
+No epochs in 5.0 (owner, 2026-11-17; supersedes the C2 id decisions): dependents record the
+`(Stamp, Size)` they saw; output records and source entries keep a history `(Stamp, Size) -> Hash
+option` (last 8); a dependent decided unchanged by hash gets its pair refreshed. Brief Part 3 and
+"Database (0.7)" rewritten; content epochs are a roadmap idea (docs/roadmap.md).
 
 Step 2 done (2026-11-17, local): in `ExecCore.execOne` a missing current output reruns a
 multi-output rule; `checkOutputsWritten` fails a run whose body left a declared output unwritten

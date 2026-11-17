@@ -37,6 +37,7 @@ commit touching the file; lengths are approximate line counts. Index written 202
 |---|---|---|---|
 | [session.md](session.md) | cross-feature engine facts, release notes, traps; read at every session start (CLAUDE.md) | ~190 | current |
 | [roadmap.md](roadmap.md) | agreed-but-unscheduled items: principles, engine backlog | ~110 | current |
+| [database.md](database.md) | the build database `.xake`: format 0.7, path roots, relocation, rewrites | ~150 | current |
 | [tasks.md](tasks.md) | reference of the built-in tasks: `sh`, copy, rm, files, variables | ~535 | current |
 
 ## Base docs

@@ -7,15 +7,24 @@ open NUnit.Framework
 open Xake
 open Xake.Tasks
 
-/// Reads and writes `.xake` files the way an older Xake did (database 0.4: no ArtifactDep2).
+/// Reads and writes `.xake` files the way an older Xake did (database 0.4-0.6: paths as strings);
+/// `read` also reads the current format.
 module OldDatabase =
     let private headerPU = Pickler.triple Pickler.str Pickler.str Pickler.date
 
     /// header version and all records in file order (later records win when loaded)
     let read (path: string) =
-        use r = new BinaryReader(File.OpenRead path)
-        let (_, ver, _) = headerPU.unpickle r
-        ver, [ while r.BaseStream.Position < r.BaseStream.Length do yield Storage.resultPU.unpickle r ]
+        let ver =
+            use r = new BinaryReader(File.OpenRead path)
+            let (_, ver, _) = headerPU.unpickle r
+            ver
+        if ver < BuildLog.XakeDbVersion then
+            use r = new BinaryReader(File.OpenRead path)
+            headerPU.unpickle r |> ignore
+            ver, [ while r.BaseStream.Position < r.BaseStream.Length do yield Storage.resultPU.unpickle r ]
+        else
+            // the current format (0.7): read through the database itself, roots of the current directory
+            Storage.readDatabase Storage.DbOpenOptions.Default path
 
     let write (path: string) (ver: string) (results: BuildResult list) =
         use w = new BinaryWriter(File.Create path)

@@ -56,6 +56,18 @@ Xake 5.0 is a breaking release: the rule representation and the database format 
 - **Shared headers:** `ruleHeader ["n"] { needs ..; requires .. }` makes a header value that rules
   merge in with `including h`; the list names the groups of the including rule it uses, checked
   when the header is made and when a rule includes it.
+- **Database 0.7: compact, relocatable paths** ([database.md](database.md)). Every path is stored once, in a
+  directory/file table, and records name it by id; on a large database the file is several times smaller and
+  loads faster, and every distinct file is one `File` value in memory. Paths are stored relative to a root:
+  `$(ProjectRoot)` and roots the script declares with `pathRoot "NAME" "path"` (absolute, relative to the project
+  root, or `fromVar "VAR"`), so a moved working copy or a re-pointed root rebuilds nothing. Records under a root the
+  run does not declare are reported as an error at open, not loaded, and kept in the file. Records are
+  length-framed: a damaged tail is dropped and the rest kept. `--dump` and `--dryrun` open the database read-only.
+  0.4-0.6 databases upgrade with no rebuild.
+- **Breaking:** `ExecOptions.PathRoots` is new; `Storage.openDb` returns as before but `Storage.openDbWith` takes
+  the roots and reports undeclared ones; `Storage.resultPU` is the result pickler of 0.4-0.6 databases (paths as
+  strings), kept for reading old files. Xake 4.x cannot read a 0.7 database (it discards it and rebuilds); do not
+  share a `.xake` between 4.x and 5.0.
 
 ## 4.0.0 (2026-11-03)
 

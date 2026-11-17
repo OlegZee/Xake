@@ -150,7 +150,7 @@ type ``Secret variables``() =
             Assert.That(logged, Has.Some.Contains "Upgrading database")
             let ver, results = OldDatabase.read ".xake"
             Assert.AreEqual(BuildLog.XakeDbVersion, ver)
-            Assert.AreEqual("0.6", ver)
+            Assert.AreEqual("0.7", ver)
             let deps = results |> List.collect (fun r -> r.Depends)
             Assert.That(deps, Does.Contain(SecretDep (name, SecretEnv, SecretPresent)))
             Assert.That(deps, Does.Contain(EnvVar ("XAKE_UNRELATED_OLD", None)))

@@ -3,6 +3,16 @@
 [<AutoOpen>]
 module XakeScript =
 
+    /// The value of a path root (`pathRoot`, `ExecOptions.PathRoots`).
+    type RootValue =
+        /// An absolute path, or a path relative to the project root (recorded as written, so it moves with the project).
+        | RootPath of string
+        /// The launch-time value of a variable; unset or empty leaves the root undeclared for the run.
+        | RootVar of string
+
+    /// A path root whose value is the launch-time value of variable `name`.
+    let fromVar name = RootVar name
+
     /// Script execution options
     type ExecOptions = {
         /// Defines project root folder
@@ -90,6 +100,10 @@ module XakeScript =
         RuleMatch: RuleMatchMode
         /// Receives the summary of every run (`onSummary` in a script); None: only the log line.
         SummarySink: IRunSummarySink option
+
+        /// Declared path roots: database paths under a root are stored relative to it (docs/database.md).
+        /// `$(ProjectRoot)` is always a root and is not listed here.
+        PathRoots: (string * RootValue) list
     } with
         static member Default = {
             ProjectRoot = System.IO.Directory.GetCurrentDirectory()
@@ -121,6 +135,7 @@ module XakeScript =
             RuleMatch = MostSpecific
             SummarySink = None
             ContentCutoff = true
+            PathRoots = []
         }
     end
 

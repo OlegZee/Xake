@@ -258,6 +258,17 @@ module XakeScriptBuilder =
         member __.RootDir(XakeScript (options, rules), dir) =
             XakeScript ({options with ProjectRoot = dir}, rules)
 
+        /// Declares a path root: database paths under `path` are stored relative to `$(NAME)`, so moving
+        /// the folder keeps them valid. `path` is absolute or relative to the project root.
+        [<CustomOperation("pathRoot")>]
+        member __.PathRoot(XakeScript (options, rules), name: string, path: string) =
+            XakeScript ({ options with PathRoots = options.PathRoots @ [name, RootPath path] }, rules)
+
+        /// Declares a path root by a value: `pathRoot "PACKAGES" (fromVar "NUGET_PACKAGES")`.
+        [<CustomOperation("pathRoot")>]
+        member __.PathRoot(XakeScript (options, rules), name: string, value: RootValue) =
+            XakeScript ({ options with PathRoots = options.PathRoots @ [name, value] }, rules)
+
         /// A script value of a variable (`-d` and the engine's per-demand vars win over it).
         [<CustomOperation("var")>]
         member __.AddVar(XakeScript (options, rules), name: string, value: string) =

@@ -95,8 +95,13 @@ had written; `ContentEntry.Written` marks the states a rule wrote, `ContentStore
 the producer compares (tag 5 entries carry the flag). Verified: 0 warnings, 1818 passed / 11
 skipped, `build test pack` green.
 
+## State (2026-11-17): PR open
+
+`feature/dep-cutoff` (with feature/db-paths merged, last as 7eece1e) is pushed and open as
+https://github.com/OlegZee/Xake/pull/140 into `dev` (squash, by the repository rule). Not merged, no
+tag: release 5.0 is on hold, more features land before it. Waiting for review and merge.
+
 ## Next step
 
-Steps 0-3 (the 5.0 release scope) are done locally. Next: the owner's call on the PR (dep-cutoff +
-db-paths together into dev), Xake.Dotnet's follow-up; steps 4-5 (plan/--dryrun, produces) may follow. Then step 2 (`also`: missing-output rebuild with current outputs, M1 overlap check,
-`needs` naming an own `also`, missing declared output after the body = error).
+After the merge: Xake.Dotnet follows 5.0 (Rule DU shape, SRTP operators, `ExecContext.Counters`);
+steps 4-5 (plan and `--dryrun`, `produces`) may follow in minor releases.

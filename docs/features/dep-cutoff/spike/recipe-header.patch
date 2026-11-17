@@ -1,5 +1,5 @@
 diff --git a/src/core/RecipeBuilder.fs b/src/core/RecipeBuilder.fs
-index b98e634..bde1821 100644
+index b98e634..b89532f 100644
 --- a/src/core/RecipeBuilder.fs
 +++ b/src/core/RecipeBuilder.fs
 @@ -84,6 +84,10 @@ module internal A =
@@ -13,7 +13,7 @@ index b98e634..bde1821 100644
      /// Computation expression builder for recipe { ... } blocks.
      type RecipeBuilder() =
          member this.Return(c) = returnF c
-@@ -102,6 +106,17 @@ module Builder =
+@@ -102,7 +106,27 @@ module Builder =
          member this.TryWith(body, handler) = tryWithF body handler
          member this.TryFinally(body, compensation) = tryFinallyF (body) compensation
          member this.Using(disposable:#System.IDisposable, body) = usingF disposable body
@@ -22,6 +22,7 @@ index b98e634..bde1821 100644
 +        [<CustomOperation("also")>]  member _.Also (h: RuleHeader, p: string) = { h with Also = h.Also @ [p] }
 +        [<CustomOperation("needs")>] member _.Needs(h: RuleHeader, p: string) = { h with Needs = h.Needs @ [p] }
 +        [<CustomOperation("needs")>] member _.Needs(h: RuleHeader, ps: string list) = { h with Needs = h.Needs @ ps }
++        [<CustomOperation("including")>] member _.Include(h: RuleHeader, other: RuleHeader) = { Also = h.Also @ other.Also; Needs = h.Needs @ other.Needs; Cutoff = (match other.Cutoff with Some _ -> other.Cutoff | None -> h.Cutoff) }
 +        [<CustomOperation("noContentCutoff")>] member _.NoContentCutoff(h: RuleHeader) = { h with Cutoff = Some false }
 +        member _.For(h: RuleHeader, body: unit -> Recipe<'c, unit>) : Headed<'c> = Headed (h, delayF body)
 +        member _.Delay(f: unit -> RuleHeader) : Headed<'c> = Headed (f (), doneF)
@@ -29,8 +30,17 @@ index b98e634..bde1821 100644
 +        [<CompilerMessage("The rule header (also, needs, noContentCutoff) must come before the body: move it above the first let!/do!.", 3095, IsError = true)>]
 +        member _.Bind(m: Recipe<'a,'b>, f: 'b -> RuleHeader) : RuleHeader = failwith "unreachable"
      
++    /// A header alone, to share between rules: `let csHeader = ruleHeader { needs ..; requires .. }`.
++    type HeaderBuilder() =
++        member _.Yield(()) = RuleHeader.Empty
++        member _.Zero() = RuleHeader.Empty
++        [<CustomOperation("also")>]  member _.Also (h: RuleHeader, p: string) = { h with Also = h.Also @ [p] }
++        [<CustomOperation("needs")>] member _.Needs(h: RuleHeader, p: string) = { h with Needs = h.Needs @ [p] }
++        [<CustomOperation("needs")>] member _.Needs(h: RuleHeader, ps: string list) = { h with Needs = h.Needs @ ps }
++    let ruleHeader = HeaderBuilder()
      /// Backward-compatible alias for the recipe builder.
      let action = RecipeBuilder()
+     /// The recipe computation expression builder instance.
 diff --git a/src/core/XakeScript.fs b/src/core/XakeScript.fs
 index 97a792a..7803ef4 100644
 --- a/src/core/XakeScript.fs

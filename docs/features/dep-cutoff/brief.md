@@ -19,8 +19,19 @@ work is at the end and starts with a spike that settles the builder design.
   message after `do!`), not "FS3095" as written below.
 - 2026-11-17: **`FileRule` and `MultiFileRule` merge** into one file-rule case with a main-first outputs list;
   `also` and `*..>` both build it.
-- Open (asked 2026-11-17, answers in probe.md "Owner's questions"): header in `recipe` for every file-rule
-  form; header on `targets`/`*..>` and `..?>`; `requires <resource>`; rules over a list of masks.
+- 2026-11-17, second round (answers in [probe.md](probe.md) "Owner's questions"): **the header lives in
+  `recipe`**; every file-rule form accepts a headed recipe (`..>`, `*..>`, `..?>`, `target`, `targets`,
+  `X.rule`, `X.Rule`); phony forms reject it at compile time. This supersedes "header only on `target` /
+  `X.rule`" above and the "Which builders get a header" section below.
+- 2026-11-17: **header on `targets` / `*..>` in 5.0**; `..?>` gets a header without `also`, and its `needs` take
+  no groups (it has no pattern).
+- 2026-11-17: **`requires lock` / `requires (lock, n)`**, a header operation: static `needs` and the verdict
+  first, without the lock; the lock only when the target runs; several locks in name order.
+- 2026-11-17: **`needs` keeps the list form**; all `needs` of a rule (every line, every list element) are
+  requested together before the body, order irrelevant; a failure is an ordinary error.
+- 2026-11-17: rules over a list of masks: later, not 5.0.
+- Proposed 2026-11-17, awaiting the owner: `ruleHeader { .. }` header values and `including h` (helpers
+  contributing header items), in 5.0 with step 1.
 
 ## Problem
 
@@ -126,6 +137,8 @@ produces the path, the mapping disappears with the old result. Cut-off: as sourc
   wildcards → a single path**, resolved like `need` (rule, `also`, `produces`, existing file; nothing → error before
   the body runs).
 - Phony targets: may be named (`needs "clean"` is a target name, no wildcards) — same resolution as `need`.
+- All `needs` of a rule (every line, every element of a `needs [..]` list) are one set: order and grouping do
+  not matter (decision 2026-11-17).
 - Started together, before the body, through the same scheduler as `need`: dependencies between them are ordinary
   graph edges, so no ordering rule is needed. Recorded like a body `need`, marked static.
 

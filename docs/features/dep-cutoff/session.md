@@ -6,19 +6,21 @@ kickoff: content cut-off on by default, `--content-cutoff=off` on the command li
 policy, `also` shorthand, multi-output deprecation and a header on `*..>` are out of scope; the
 brief's Acceptance is the spec; where the brief and the 4.0 sources disagree the sources win.
 
-## Where things stand (2026-11-17, later)
+## Where things stand (2026-11-17, end of the spike rounds)
 
-Step 0 done ([probe.md](probe.md), [spike/](spike/)). The owner approved the syntax (`target` /
-`X.rule`; `also`, `needs`, `noContentCutoff`) and the `FileRule`/`MultiFileRule` merge; both are
-recorded in brief.md "Decisions". The owner then asked four questions; the answers are in probe.md
-"Owner's questions". The main one: header operations on `recipe` itself plus an SRTP `..>`
-compile the whole test suite unchanged (1744 passed), so the proposal is now one syntax (the header
-in `recipe`, accepted by every file-rule form). Also proposed: a header on `targets`/`*..>` and
-on `..?>` (no `also` there), `requires <resource>` (static needs, then acquire, then body), and
-masks-list sugar later. Reported to the orchestrator.
+Step 0 done ([probe.md](probe.md), [spike/](spike/)). Owner decisions, all in brief.md
+"Decisions": the header lives in `recipe` and every file-rule form accepts it (phony rejects);
+header on `targets`/`*..>` in 5.0; `..?>` header without `also`, `needs` without groups;
+`requires lock` / `(lock, n)` (needs and verdict first, lock only when the target runs);
+`needs` list kept, all needs one unordered set; `FileRule`/`MultiFileRule` merged; masks list later.
+Second-round answers in probe.md: a headed recipe nested in a recipe is always a compile error
+(`spike/nested.sh`); helper `need` stays dynamic; proposed `ruleHeader { }` + `including h` for
+helpers contributing header items (awaiting the owner). Reported to the orchestrator.
 
 ## Next step
 
-Wait for the owner's decisions on the four answers; record them in brief.md "Decisions". Then the
-fresh-eyes critic subagent (model Fable; gets brief, probe, code, docs only), owner decides on its
-findings, then docs from the API examples, then step 1. Do not start step 1 before that.
+Wait for the owner to see the second-round answers and decide on `ruleHeader`/`including`. Then
+the fresh-eyes critic subagent (model Fable; gets brief, probe, code, docs only), owner decides
+on its findings (accepted ones into brief.md), then docs from the API examples, then step 1
+(header in `recipe`, SRTP rule operators, static `needs`, `requires`). The prototype to start
+from: [spike/recipe-header.patch](spike/recipe-header.patch) on `1837856`.

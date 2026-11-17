@@ -252,3 +252,98 @@ With the merged representation this is cheap, but it is a different thing from o
 writes it in a script (`for m in masks do yield m ..> body`), and with the header in `recipe` the
 shared body carries its header too. A sugar (`masks |..> body`, expanding to one rule per mask)
 is a one-liner on top. Proposal: later, not in 5.0; noted in the tracker.
+
+## Second round (2026-11-17): owner's follow-ups
+
+Decisions on the answers above are in brief.md "Decisions". Checked against
+[spike/recipe-header.patch](spike/recipe-header.patch) (now also with `ruleHeader`-style header
+values and `including`, see (c)); the nesting cases are re-runnable with
+[spike/nested.sh](spike/nested.sh).
+
+### `needs` with a list: order does not matter
+
+`needs "a"`, `needs ["b"; "c"]` and any number of `needs` lines are one set. **All of them are
+requested together before the body starts; their order, and how they are split into lines and
+lists, does not matter.** Dependencies between them are ordinary graph edges, so one `needs` may
+itself depend on another and the engine sorts it out. A failure of any is an ordinary build error
+(the rule's body does not run), not a speculative one. A duplicate is requested once. This goes
+into the brief (Part 2, "Static needs") and the docs.
+
+### Groups: one plain sentence for the docs
+
+For the docs plan: "A group is a named part of the rule's pattern, such as `(n:*)` in
+`out/(n:*).dll`; in the header you write the same group name and the engine fills in what the
+target matched. A condition rule (`..?>`) has no pattern, so it has no groups: its `needs` are
+plain paths or filesets, and it cannot have an `also` (there is nothing to name the side output
+from)."
+
+### `requires`: confirmed, and the verdict comes before the lock
+
+Yes, that is the proposal: `requires lock` / `requires (lock, n)` is a header operation; the engine
+takes the lock itself, the body does nothing. For one target the order is:
+
+1. Static `needs` are brought up to date (they are needed for the verdict anyway), without the lock.
+2. The up-to-date check / content cut-off verdict (cheap checks, then the recorded dynamic
+   dependencies, speculatively), without the lock.
+3. Up to date: done, **the lock is never taken**.
+4. Out of date: acquire (yielding the CPU slot while waiting; several resources in name order),
+   run the body, release (also on failure). A dynamic `need` of a rule target in the body still hits
+   the 4.0 deadlock guard, as under `requiring`.
+
+### Nested recipes and the header
+
+**(a) A headed recipe used inside another recipe is always a compile error** (`spike/nested.sh`):
+
+| Form | Result |
+|------|--------|
+| `do! headed` | FS0041 No overloads match for method 'Bind' |
+| `let! x = headed` | FS0041 |
+| `return! headed` | FS0708 (the recipe builder has no `ReturnFrom`, as in 4.0) |
+| `match! headed with ..` | FS0041 |
+| `for .. do do! headed` | FS0041 |
+| `do! helper ()` where `helper ()` returns a headed recipe | FS0041 |
+| `run headed` where `run (body: Recipe<..>)` | FS0001 |
+| `run headed` where `let run body = recipe { do! body }` (inferred) | FS0041, the definition of `run` itself fails, as it does in 4.0 |
+| `headed` as a statement (first or last) | FS0001 / FS0041 |
+| `if c then headed` | FS0001 |
+| `withResource lock 1 headed` (and every function taking a `Recipe`) | FS0001 |
+| `ignore headed` | compiles: an explicit discard, the body never runs, as `ignore (need [..])` today |
+
+The reason is structural, not a list of guarded cases: a headed recipe has its own type
+(`Headed`), and only the rule forms accept it; every recipe combinator takes a `Recipe`. The
+messages can be improved (an error-marked `Bind(Headed, ..)` overload naming the problem, as done
+for the header-after-`do!` case).
+
+**(b) A plain helper recipe that calls `need`:** correct, but dynamic. The helper's `need` runs
+when the body reaches it, is recorded as a dynamic dependency (speculated on the next run, Part 3),
+and is not part of the plan or started before the body. Docs: "Only `needs` in the header is
+static; a `need` anywhere in the body, including inside helper recipes, is dynamic."
+
+**(c) Helpers contributing header items: proposed, cheap.** A header is a value of its own:
+
+```fsharp
+// library or script helper: the static part as a header, the dynamic part as a recipe
+let compileHeader = ruleHeader { needs "obj/(n:*).rsp"; needs ["obj/(n:*).res"]; requires cscLock }
+let compileBody (n: string) = recipe { do! need [n] ... }
+
+"out/(n:*).dll" ..> recipe {
+    including compileHeader          // its items join this rule's header
+    also "out/(n:*).pdb"
+    let! m = getRuleMatches ()
+    do! compileBody m.["n"]
+}
+```
+
+- `ruleHeader { .. }` builds a header value with the same operations (no body); `including h`
+  merges it into the rule's header (lists append, a later cut-off setting wins). Prototyped:
+  compiles; `including` after `do!` is FS3095 with Xake's message.
+- Its patterns use group names; they are checked against the pattern of each rule that includes
+  it, at registration (XP013-style error naming both).
+- Cost: one builder type (header operations only) and one operation; the merge is a record
+  append. The helper must expose two things (header and body) instead of one; that is the honest
+  limit: automatic collection of headers from recipes bound in the body is impossible without
+  running the body (binds depend on values).
+- Names: `include` is reserved by F# (warning FS0046), hence `including`. `header` as the builder
+  name is a common word in user scripts and would collide on `open Xake`; hence `ruleHeader`.
+- Proposal: in 5.0, with step 1 (small, and it makes the library rule "pure single-purpose
+  function" story work for static needs).

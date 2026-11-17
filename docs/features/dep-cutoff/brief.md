@@ -75,9 +75,21 @@ work is at the end and starts with a spike that settles the builder design.
   - **M11:** a no-change run right after the upgrade from 0.6 reruns 0 targets (stamp fallback for records without
     an epoch); the downgrade loss is noted in the release notes.
   - **Acceptance by step** (below) is accepted and replaces "Acceptance" as the spec.
-- Pending with the owner (2026-11-17): C2 (epoch collision), M6 (delegated rules and epochs), M9 (a header changed
-  between runs), restored `out/` without hashes (a/b/c), typed form D with a header ([probe.md](probe.md) "Typed
-  form D with a header, again"), `RunSummary` cost and timing ([probe.md](probe.md) "Cost of `RunSummary`").
+- 2026-11-17, **C2 (epoch collision): the most reliable option, random 128-bit epoch ids** (a `Guid`, 122 random
+  bits), with no counter. Why not "max id seen on load + 1": it is sound only if (1) the load scans every place an id
+  can appear (dependency records, output records, their history, the source table), so a future record kind that
+  forgets one silently reuses ids; and (2) no two processes allocate from the same file, which today rests on
+  `File.Open (.., FileMode.Append, FileAccess.Write)` holding the file exclusively from after the load to the end of
+  the run: two runs started together can both load the same maximum before either opens the file for writing. A
+  durable allocation record before use closes (2) only with a lock held from load to close. Random ids close every
+  case with no state to persist and no scan; the cost is 16 bytes per id instead of 8 (a record with 50 dependencies
+  and 4-entry histories: about 1 KB more), and epochs need no order. The database-wide counter of Part 3 is dropped.
+- 2026-11-17, **restored `out/` without hashes: option (a)**, accepted for 5.0 and documented as transitional: an
+  output gets a hash at its first rebuild (the pre-hash), so a restored output that was built once and never rebuilt
+  has no hash and, with a fresh time, rebuilds once; after that its hash is recorded and a restore is free.
+- Pending with the owner (2026-11-17): M6 (delegated rules and epochs), M9 (a header changed
+  between runs), typed form D with a header (D1 vs D2, [probe.md](probe.md) "Typed
+  form D with a header, again"), `RunSummary` as item 1h ([probe.md](probe.md) "Cost of `RunSummary`").
 - 2026-11-17: **step 1 starts**: the header in `recipe` and every file-rule form, static `needs`, `requires`, the
   `FileRule`/`MultiFileRule` merge as needed.
 
@@ -209,7 +221,7 @@ steps), and an interval test would accept a dependent built from other content. 
 **epoch id**.
 
 - Each **output** record of a producer and each **source file** carries `(Stamp, Size, Epoch, History)`.
-  `Epoch` is an id from a database-wide counter; `History` is a short list (last N, e.g. 4) of `(Epoch, Hash option)`
+  `Epoch` is a random 128-bit id (decision 2026-11-17, C2); `History` is a short list (last N, e.g. 4) of `(Epoch, Hash option)`
   of this file, newest first.
 - Dependents record the **epoch id** they saw (plus the stamp, for diagnostics). A dependency is **unchanged** iff the
   recorded id equals the current `Epoch`, or both ids have known hashes in `History` and the hashes are equal.
@@ -301,7 +313,7 @@ speculation).
 ### Database (0.7)
 
 - Output records `(Target, Stamp, Size, Epoch, History)` in `BuildResult`; per-file source table with the same fields;
-  a database-wide epoch counter; dependency records hold the epoch id seen, keep the dependency order and grouping;
+  epoch ids are random 128-bit values (no counter); dependency records hold the epoch id seen, keep the dependency order and grouping;
   `produces` with the producer; static `needs` marked.
 - `produces` mappings are dropped when the producer's rule no longer exists or its pattern no longer matches the
   producer's target.
@@ -382,10 +394,9 @@ its record:
 - So Part 2 ("if the record has a hash, equal content is unchanged") and Part 3 ("changed outside: no pre-hash,
   it is a change") are the two halves of this rule, not a conflict.
 - **Restored `out/` without hashes rebuilds.** Outputs get a hash only at their first rebuild (lazy, the pre-hash),
-  so a cache of outputs that were built once and never rebuilt has no hashes. Options for the owner: (a) accept
-  for 5.0 and say so (recommended: no cost for builds that never restore); (b) hash every output after its body
-  (one hash per built output, every build); (c) a command `--hash-outputs` that hashes the current outputs, run
-  before saving a cache.
+  so a cache of outputs that were built once and never rebuilt has no hashes. **Decided (2026-11-17): (a)**, accepted
+  for 5.0 and documented as transitional (such an output rebuilds once after a restore, then its hash is recorded).
+  Not taken: (b) hash every output after its body; (c) a `--hash-outputs` command before saving a cache.
 
 Acceptance:
 - **Control file (A→B→A):** the 100 targets name the route in `needs`; as in "Acceptance" above (on: 100 built; off: not requested, route rewritten; on: the

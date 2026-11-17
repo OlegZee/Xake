@@ -5,6 +5,25 @@ The `Xake` package: the engine (up to 3.15 it also carried `Xake.Dotnet`). From 
 [OlegZee/Xake.Dotnet](https://github.com/OlegZee/Xake.Dotnet), with their own notes; the entries below about them up to
 4.0 are the history. Links to their docs point to that repository.
 
+## 5.0.0 (unreleased)
+
+Xake 5.0 is a breaking release: the rule representation and the database format change.
+
+- **The rule header** ([rule-header.md](rule-header.md)): a file rule's `recipe { }` may start with
+  declarations read when the script loads: `also` (side outputs), `needs` (static inputs, built
+  before the body), `requires` (a lock the engine takes around the body), `noContentCutoff`. Every
+  file-rule form takes it (`..>`, `*..>`, `..?>`, `target`, `targets`, typed `X.rule` / `X.Rule`); a
+  header operation after the body, or a recipe with a header used inside another recipe, does not
+  compile.
+- **Breaking: one file-rule case.** `FileRule` and `MultiFileRule` are one case,
+  `FileRule (outputs, header, recipe)`, the main output first; `FileConditionRule` carries a header
+  too. Code matching on the cases (`FileRule (mask, _)`) changes; scripts that use the operators and
+  builders do not.
+- **Breaking:** `..>`, `*..>` and `..?>` are inline operators over a recipe with or without a
+  header; a wrong right-hand side now reads "No overloads match for method 'op_Dollar'".
+- `also`, `needs`, `requires`, `noContentCutoff`, `contentCutoff` are keywords at the start of a
+  statement inside `recipe { }` (a local value of that name still works).
+
 ## 4.0.0 (2026-11-03)
 
 ### Summary

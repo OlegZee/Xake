@@ -158,3 +158,97 @@ threw at registration).
 
 - Compile time and error-message quality of the overloaded `Delay`/`Run` inside big scripts.
 - IDE tooltips / colouring of the new keywords.
+
+## Owner's questions on the spike (2026-11-17)
+
+The owner approved the syntax (`target` / `X.rule`; `also`, `needs`, `noContentCutoff`) and the
+merge of `FileRule` and `MultiFileRule` (item 5), and asked four questions. Answers, each with a
+proposal. Checked in a scratch worktree (not on this branch): header operations added to the real
+`RecipeBuilder`, `..>` made an SRTP operator over `Recipe` and the headed type.
+
+### 3. The header in `recipe` (answered first: it changes 1 and 2)
+
+**It works, and it is cheap.** With `Yield`/`also`/`needs`/`noContentCutoff`/`For`/`Delay`
+overloads on `RecipeBuilder` itself and `..>` accepting both a `Recipe` and a headed recipe:
+
+- `src/core` builds with 0 warnings; **`src/tests` compiles unchanged and passes (1744 passed,
+  10 skipped)**: no existing recipe, helper function or generic recipe code needed a change.
+- `"out/(n:*).dll" ..> recipe { also ..; needs ..; do! .. }` works inside `xakeScript`, next to
+  plain `..> recipe { }` rules; a header-only `recipe { also "x" }` works.
+- A headed body is a value: `let body = recipe { needs "common.rsp"; .. }` then
+  `"a/*.dll" ..> body` and `"b/*.dll" ..> body` (the header is checked against each rule's pattern
+  at registration).
+- Misuse stays a compile error: `do! recipe { also .. }` inside another recipe (FS0041 "No
+  overloads match for method 'Bind'"; can get a clear `CompilerMessage` text, as the `do!` case);
+  header op after `do!` FS3095 with our text; a headed recipe given to `=>` / `*..>` today FS0193
+  (each rule form decides by its overloads).
+- The body stays lazy (`For` delays it): a throwing first statement does not fail registration.
+- A local named `also`/`needs` inside a recipe still works (`let also = "x" in ..`): custom operation
+  names are keywords only at statement start.
+
+Costs, honestly:
+- `..>` (and `*..>`, `..?>`) become `inline` SRTP operators. A wrong right-hand side reads "No
+  overloads match for method 'op_Dollar'" instead of "expected Recipe"; fixable in part with a
+  documented message on the witness type, not fully.
+- `also`/`needs`/`noContentCutoff` become keywords at statement start in **every** recipe, also in
+  helpers that are never rule bodies (where a header is a type error at the use site, not at the
+  `recipe { }`).
+- The `recipe` builder's `Delay` gets two overloads; no inference regressions in the test suite,
+  IDE behaviour not checked.
+- Typed form D, `X.Rule <| fun m -> recipe { also ..; .. }`: the header is inside the lambda. It can
+  be read at registration by calling the lambda once with `X.Any` (all groups null): the body is
+  lazy, so only the header operations run; a header argument that uses `m` fails registration with
+  a clear message. Works, but it is a trick; form B (`X.rule { }`) needs none.
+
+**Proposal: one syntax, the header lives in `recipe`.** Every file-rule form accepts a headed
+recipe: `..>`, `*..>`, `..?>` (with the limits in 1), `target`, `targets`, `X.rule`, `X.Rule`
+(with the `X.Any` call). Phony forms (`=>`, `command`, `Command.rule`) reject it at compile time.
+`target`/`X.rule` keep working as approved, because they inherit `RecipeBuilder`; the approved
+syntax is a subset, nothing is lost. This supersedes "header only on `target`/`X.rule`".
+
+### 1. `targets` / `*..>` and the condition rule `..?>`
+
+- **`targets` / `*..>`: no extra cost after the merge (item 5).** A multi-output rule becomes the
+  same file-rule case with the outputs list (first = main); `also` appends to it; `needs`,
+  `noContentCutoff`, `requires` work the same. Proposal: yes, in 5.0 (removes an out-of-scope
+  line from the brief).
+- **`..?>` (no pattern, no groups):**
+  - `needs` of paths and filesets **without groups**: yes (nothing to substitute); a group in a
+    `needs` of a condition rule is a registration error.
+  - `noContentCutoff` / `contentCutoff`: yes, they need no pattern.
+  - `requires <resource>`: yes.
+  - `also`: **no**, registration error. A condition rule matches many unrelated paths; a side output
+    cannot be named without groups, and a literal `also` would make every matched file produce the
+    same path.
+  - Rule lookup is unchanged (condition rules rank below every pattern rule).
+- Phony: out, as agreed.
+
+### 2. `requires <resource>`
+
+4.0: `requiring lock rule` wraps the whole recipe: yields the CPU slot while waiting
+(`Scheduler.withYieldedSlot`), holds 1 unit for the whole body, and while held a `need` of a
+target that has a rule fails (`HeldResources`, deadlock guard; `allowNeed` lifts it).
+
+Proposal:
+- `requires lock` (1 unit) and `requires (lock, n)`; several allowed.
+- Order: **static `needs` first, then acquire, then the body, release at the end** (also on
+  failure). The `needs` are built without holding the lock, so they never hit the deadlock guard:
+  today a locked rule cannot `need` a rule target at all, with `needs` in the header it can.
+  The guard stays for dynamic `need` in the body, as with `requiring`.
+- Several resources are acquired in a fixed order (by resource name), so two rules naming the same
+  locks in different orders cannot deadlock.
+- Waiting yields the CPU slot, as `requiring` does.
+- `|> requiring lock` stays (it also serves phony rules); on a headed rule it is the same as a
+  `requires` added to the header. `requires` and `requiring` naming the same concept is now
+  intended.
+- Content cut-off verdict (step 3) runs before acquiring: an up-to-date target never takes the lock.
+- Implementation note: `Resource` (and `WorkerPool`) compile after `RecipeBuilder.fs`; neither
+  depends on `Recipe`, so they move before it.
+
+### 4. Rules over a list of masks
+
+With the merged representation this is cheap, but it is a different thing from outputs: several
+**alternative main patterns** for one body are several rules sharing one recipe. 4.0 already
+writes it in a script (`for m in masks do yield m ..> body`), and with the header in `recipe` the
+shared body carries its header too. A sugar (`masks |..> body`, expanding to one rule per mask)
+is a one-liner on top. Proposal: later, not in 5.0; noted in the tracker.

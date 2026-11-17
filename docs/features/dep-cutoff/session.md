@@ -6,17 +6,19 @@ kickoff: content cut-off on by default, `--content-cutoff=off` on the command li
 policy, `also` shorthand, multi-output deprecation and a header on `*..>` are out of scope; the
 brief's Acceptance is the spec; where the brief and the 4.0 sources disagree the sources win.
 
-## Where things stand (2026-11-17)
+## Where things stand (2026-11-17, later)
 
-Step 0 (spike) done: [probe.md](probe.md), prototype in [spike/](spike/). Proposed: the header on
-`target "p" { .. }` and typed `X.rule { .. }`; operations `also`, `needs` (string or list),
-`noContentCutoff`, `contentCutoff`; `..>` unchanged. Six brief-vs-sources differences are listed
-in probe.md (error codes are FS0001/FS0041/FS3086, FS3095 only via a `CompilerMessage` overload;
-`For` returns header+body; `rule {}` collides with the script op; args not literal-only; 4.0 does
-not detect a hand-edited output; the public `Rule` DU changes shape). Reported to the orchestrator.
+Step 0 done ([probe.md](probe.md), [spike/](spike/)). The owner approved the syntax (`target` /
+`X.rule`; `also`, `needs`, `noContentCutoff`) and the `FileRule`/`MultiFileRule` merge; both are
+recorded in brief.md "Decisions". The owner then asked four questions; the answers are in probe.md
+"Owner's questions". The main one: header operations on `recipe` itself plus an SRTP `..>`
+compile the whole test suite unchanged (1744 passed), so the proposal is now one syntax (the header
+in `recipe`, accepted by every file-rule form). Also proposed: a header on `targets`/`*..>` and
+on `..?>` (no `also` there), `requires <resource>` (static needs, then acquire, then body), and
+masks-list sugar later. Reported to the orchestrator.
 
 ## Next step
 
-Wait for the owner's approval of the syntax. Then: the fresh-eyes critic subagent (model Fable,
-gets brief, probe, code, docs only), owner decides on findings, accepted ones into brief.md; then
-docs from the brief's API examples, then step 1.
+Wait for the owner's decisions on the four answers; record them in brief.md "Decisions". Then the
+fresh-eyes critic subagent (model Fable; gets brief, probe, code, docs only), owner decides on its
+findings, then docs from the API examples, then step 1. Do not start step 1 before that.

@@ -8,6 +8,20 @@ win: report the difference. It supersedes `content-cutoff-brief.md` (kept for hi
 This is a major change (rule representation, database format), hence 5.0. Read the whole brief first; the order of
 work is at the end and starts with a spike that settles the builder design.
 
+## Decisions (owner)
+
+- 2026-11-17, kickoff: content cut-off on by default; `--content-cutoff=off` on the command line only, no
+  environment form. Out of scope: error policy, `also` shorthand, deprecation of multi-output rules. The
+  Acceptance section is the spec. Where this brief and the 4.0 sources disagree, the sources win.
+- 2026-11-17, spike ([probe.md](probe.md)): **syntax approved**: the header on `target "p" { }` and typed
+  `X.rule { }`, operations `also`, `needs` (a pattern or a list), `noContentCutoff` (`contentCutoff`); `..>`
+  unchanged. Header operations after the body do not compile (FS0001/FS0041/FS3086; FS3095 with Xake's
+  message after `do!`), not "FS3095" as written below.
+- 2026-11-17: **`FileRule` and `MultiFileRule` merge** into one file-rule case with a main-first outputs list;
+  `also` and `*..>` both build it.
+- Open (asked 2026-11-17, answers in probe.md "Owner's questions"): header in `recipe` for every file-rule
+  form; header on `targets`/`*..>` and `..?>`; `requires <resource>`; rules over a list of masks.
+
 ## Problem
 
 1. **A rule's outputs and fixed inputs are invisible until its body runs.** A recipe is an opaque function: the

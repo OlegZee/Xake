@@ -63,6 +63,28 @@ A built-in Xake CLI command that generates `xake.project.json` from project file
 fsproj), so a repository needs no script target for the import. Today the script calls
 `Import.descriptions` from a target of its own.
 
+### Content epochs: ids per content version (idea, dropped from 5.0 on 2026-11-17)
+
+Xake 5.0's content cut-off compares a dependency by the `(Stamp, Size)` the dependent saw and, when
+that pair is gone, by hashes kept in a short per-file history (docs/features/dep-cutoff/brief.md,
+Part 3). The alternative, designed and dropped for 5.0: give each content version of a file an
+**epoch id**; dependents record the id; a rebuild that reproduces earlier bytes returns to the earlier
+id (A→B→A is A's id again).
+
+- **Why dropped:** ids need a database-wide allocator that survives a crash between appended results
+  and the saved counter (critic C2), one reader that sees every id, and a lock against two runs
+  allocating at once. The pair-and-hash history gives the same decisions on every 5.0 acceptance
+  scenario with none of that.
+- **When it would pay off:**
+  - a dependee rewritten many times, alternating between a few contents, while a dependent is not
+    requested: an id survives any number of rewrites, a pair only the last N (the 5.0 history); a
+    dependent decided by hash gets its pair refreshed, so this matters only for dependents left
+    unrequested over many rebuilds;
+  - a compact content identity in records shared beyond one database (a shared or remote cache keyed
+    by content), where a stable id per content is what is looked up.
+- **What 5.0 keeps for it:** the order and grouping of dynamic `need` calls and per-file histories
+  with hashes; ids could be added as a history field in a later database version.
+
 ## Xake.Dotnet
 
 ### B6: `Fsc` through the shared runner (done in 3.5 / hermetic 0.2)

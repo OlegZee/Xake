@@ -58,7 +58,7 @@ work is at the end and starts with a spike that settles the builder design.
   - **m11:** `ExecOptions.ContentCutoff` may be public.
 - 2026-11-17: **no speculation in 5.0 (option B,** [probe.md](probe.md) "Speculation: options A, B, C"**)**. Only
   static `needs` are built before the verdict; a dynamic dependency on a rule target is compared without building it
-  (unchanged if that target is up to date, or has finished in this run, with the epoch the dependent saw; otherwise the
+  (unchanged if that target is up to date, or has finished in this run, with the content the dependent saw; otherwise the
   dependent reruns). Part 3 "Decision for a dependent" and the Acceptance sections below are rewritten accordingly.
   Database 0.7 still records the order and grouping of dynamic needs, so speculation (A) can be added in a minor
   release without a format change. Critic C1, C3, C4 (speculation part) and M10 are resolved by this.
@@ -73,9 +73,15 @@ work is at the end and starts with a spike that settles the builder design.
   - **M5:** the verdict phase yields its CPU slot and runs under the task's own context with `HeldResources = []`,
     as proposed (step 1's static needs already do).
   - **M11:** a no-change run right after the upgrade from 0.6 reruns 0 targets (stamp fallback for records without
-    an epoch); the downgrade loss is noted in the release notes.
+    a size); the downgrade loss is noted in the release notes.
   - **Acceptance by step** (below) is accepted and replaces "Acceptance" as the spec.
-- 2026-11-17, **C2 (epoch collision), corrected by the owner: epoch ids are integers, allocated deterministically
+- 2026-11-17, **no epochs in 5.0** (owner; supersedes the C2 entry below and M6's "epochs"): a dependent
+  records the `(Stamp, Size)` it saw, as 4.0 records the stamp; each output record and source entry keeps a short
+  history of `(Stamp, Size) -> Hash option`. Unchanged iff the recorded pair equals the current one, or the history
+  has a hash for the recorded pair equal to the hash of the current content. No ids, no counter, so no C2 and no
+  `.xake.lock` for ids. Part 3 "Content by stamp, size and hash" and "Database (0.7)" are rewritten; content epochs
+  are in docs/roadmap.md as a later idea.
+- (superseded by "no epochs") 2026-11-17, **C2 (epoch collision), corrected by the owner: epoch ids are integers, allocated deterministically
   (+1)**, stored as varints (compact, as db-paths stores numbers). The earlier "random 128-bit" entry is withdrawn.
   - **The counter is derived, not stored:** on load, the next id is the largest id seen in the file + 1. A stored
     counter record would need its own write-before-use ordering; with the lock below the process that loaded is the
@@ -102,8 +108,8 @@ work is at the end and starts with a spike that settles the builder design.
   `Interlocked` increments; `TargetsRun`, `TargetsSkipped`, `TasksScheduled` filled from step 1, the others in step 3;
   `OnSummary` through an interface field and a `xakeScript` operation, so `ExecOptions` keeps structural equality;
   `XakeEngine.LastSummary`.
-- 2026-11-17, **M6: the engine assigns output records and epochs of delegated rules itself**, after the executor
-  returns; epochs and records from an executor are never trusted. The header (`needs`, `requires`) applies to the
+- 2026-11-17, **M6: the engine makes the output records of delegated rules itself** (stamp, size, history), after
+  the executor returns; records from an executor are never trusted. The header (`needs`, `requires`) applies to the
   delegated body.
 - 2026-11-17, **M9: yes.** A header whose static set (`needs`, `also`) differs from the one recorded makes the target
   out of date (`also`: step 2, the current outputs; `needs`: step 3, recorded and marked static in 0.7).
@@ -232,29 +238,30 @@ transitive verdict), since it cannot build anything to compare.
 When a dependee's stamp moved, its content is compared with the content the dependent last saw; equal is not a
 change. **On by default.**
 
-### Content epochs (the model)
+### Content by stamp, size and hash (the model; decision 2026-11-17, no epochs)
 
 Stamps are not compared as intervals: they are not monotonic (restored caches, `tar`/`rsync -t`, checkouts, clock
-steps), and an interval test would accept a dependent built from other content. Instead content is identified by an
-**epoch id**.
+steps), and an interval test would accept a dependent built from other content. A dependency is compared by the
+exact `(Stamp, Size)` the dependent saw, and by content when that pair is gone.
 
-- Each **output** record of a producer and each **source file** carries `(Stamp, Size, Epoch, History)`.
-  `Epoch` is an integer id, the next one = the largest in the database + 1 (decision 2026-11-17, C2); `History` is a short list (last N, e.g. 4) of `(Epoch, Hash option)`
-  of this file, newest first.
-- Dependents record the **epoch id** they saw (plus the stamp, for diagnostics). A dependency is **unchanged** iff the
-  recorded id equals the current `Epoch`, or both ids have known hashes in `History` and the hashes are equal.
-- When the file's `(Stamp, Size)` moves:
-  - no hash can be computed or compared → new epoch (a fresh id);
-  - hash computed and equal to a hash in `History` → the current epoch becomes **that** id (A→B→A returns to A's id,
-    so a dependent built from A stays valid);
-  - different hash → new epoch with that hash.
-- A hash computed later for the current content (the pre-hash of an output) is attached to the current epoch in
-  `History`: dependents that recorded that id without a hash become comparable.
-- **Skipped dependents need no rewrite**: their id stays valid as long as the content does.
-- Same stamp with a different size, or different bytes behind a preserved mtime that a hash reveals: a new epoch, so
-  the dependent's id no longer matches. Same stamp and size with different bytes and no hash: not detectable, as in 4.0.
-- Outputs with `noContentCutoff` and phony targets: **every rebuild starts a new epoch**, no hash. Since the dependee is
-  brought up to date before the comparison, this gives the 4.0 result without the transitive rule.
+- A **dependent** records, for each file dependency (a source or a rule's output), the `(Stamp, Size)` it saw, as 4.0
+  records the stamp. Stamps compare with the 4.0 tolerance (10 ms), sizes exactly.
+- Each **output** record of a producer and each **source** entry keeps a `History`: the last N (proposal: 8)
+  `((Stamp, Size), Hash option)` of that file, newest first; the head is the file's current pair.
+- **Unchanged** iff the recorded pair equals the file's current `(Stamp, Size)`; otherwise iff the history holds a hash
+  for the recorded pair and the current content's hash (from the history, or computed) equals it. No hash for the
+  recorded pair: changed.
+- A→B→A: A's hash stays in the history under A's pair, so a dependent built from A stays valid when A comes back
+  under a new stamp.
+- **Invariant:** one pair maps to one content in a file's history. If a hash reveals different bytes behind a pair
+  already in the history (a preserved mtime), the old entry is dropped (so dependents that recorded it rerun).
+- **A dependent decided unchanged by hash** gets its recorded pair refreshed to the current one (its record is
+  appended again). Without that, a dependent that is skipped while its dependee is rebuilt N times would lose its pair
+  from the bounded history and rerun once; with it, the next run compares pairs and hashes nothing.
+- Same stamp with a different size: a different pair, compared by hash. Same stamp and size with different bytes
+  and no hash: not detectable, as in 4.0.
+- Outputs with `noContentCutoff` and phony targets: never hashed; every rebuild is a new pair without a hash, so
+  dependents rerun (phony targets keep 4.0's completion stamp).
 
 Sources have one table in the database (one entry per file, shared by all dependents). A moved source is hashed once:
 the result is written to the table before any dependent decides, and concurrent dependents await it. The table is
@@ -264,7 +271,7 @@ saved with the run's results; entries not referenced by any record are pruned wh
 
 A hash is computed only when a comparison needs it.
 
-- **Empty database** (CI agent, fresh clone, new target): records get a fresh epoch without a hash. Nothing is hashed;
+- **Empty database** (CI agent, fresh clone, new target): records get their pair without a hash. Nothing is hashed;
   a clean build costs what it costs in 4.0.
 - **Outputs, before the body overwrites them**: if the output exists, its record has no hash, and its current
   stamp and size **equal the producer's recorded ones**, hash it before the body runs (the dependents saw exactly that
@@ -272,7 +279,8 @@ A hash is computed only when a comparison needs it.
   hash the new file. So cut-off works from the first rebuild.
 - **Sources** (and undeclared outputs, `produces` on an empty database): the old content cannot be hashed before it
   changes. Moved stamp with no hash → changed, and the current content is hashed and recorded; moved stamp with a hash
-  → hash, compare, extend the epoch or start a new one. Cut-off works from a file's second move.
+  → hash, compare with the hash of the pair the dependent recorded, add the current pair with its hash to the
+  history. Cut-off works from a file's second move.
 - **Why sources are hashed at a move and not at first sight.** Neither hash is needed for the decision at hand (with no
   old hash, a moved file is a change anyway); both are an investment for the next move. At first sight it would be
   every file of the tree, almost none of which will be touched (a CI agent touches none). At a move it is only the
@@ -291,14 +299,14 @@ This **replaces** the 4.0 rule "a stamp that did not move is still a change when
 changed". Nothing is built to decide a target except its static `needs` (decision 2026-11-17, option B: no
 speculation).
 
-1. **Static `needs`**: brought up to date (built if needed: they are needed anyway), then compared by epoch. A failure
+1. **Static `needs`**: brought up to date (built if needed: they are needed anyway), then compared (pair, then hash). A failure
    is an ordinary build error. Full cut-off: a static `needs` on a deterministic output rebuilt with the same bytes is
    unchanged.
 2. **The rest of the record, after step 1, without building anything:**
-   - sources: `(Stamp, Size)` equal: unchanged; moved: hash and compare with the history (epoch rules above);
+   - sources: `(Stamp, Size)` equal: unchanged; moved: hash and compare with the history (rules above);
    - variables, environment, secrets, fileset membership: compared, as 4.0;
-   - a **dynamic dependency on a rule target** D: unchanged iff D's current record carries the epoch the dependent saw
-     (or a hash-equal one in its history) **and** D is up to date by this same no-build decision, recursively. If D has
+   - a **dynamic dependency on a rule target** D: unchanged iff D's current output matches what the dependent saw
+     (the pair, or a hash in D's history, as above) **and** D is up to date by this same no-build decision, recursively. If D has
      already finished in this run (built or found up to date), its record is current and the comparison is exact; if D
      is running, the dependent waits for it. Otherwise (D out of date, not built yet) the dependent counts as changed:
      D is not built to find out. Its body will build D when it needs it, as in 4.0;
@@ -321,8 +329,8 @@ speculation).
   environment form. `off` gives **the same rebuild decisions as 4.0** (stamps only, transitive rule, no hashing); static
   `needs` still start before the body.
 - Per rule: `noContentCutoff` in the header, for outputs that are huge and always different: no hashing, every
-  rebuild is a new epoch (see above).
-- An `off` run hashes nothing and starts a new epoch for every moved file (its decisions are those of 4.0); epoch data
+  rebuild is a new pair without a hash (see above).
+- An `off` run hashes nothing and records every moved file's new pair without a hash (its decisions are those of 4.0); history data
   stays consistent, so the next `on` run continues from it.
 - `contentCutoff` exists for symmetry; it is the default.
 - Logged: `[INF] cut-off: <target> rebuilt with the same content, <n> dependents not rerun`; the run summary gives the
@@ -330,12 +338,16 @@ speculation).
 
 ### Database (0.7)
 
-- Output records `(Target, Stamp, Size, Epoch, History)` in `BuildResult`; per-file source table with the same fields;
-  epoch ids are varint integers, next = max seen on load + 1, under the `.xake.lock` lock (C2); dependency records hold the epoch id seen, keep the dependency order and grouping;
-  `produces` with the producer; static `needs` marked.
+- Output records `(Target, History)` in `BuildResult`, the history's head being the output's current `(Stamp, Size,
+  Hash option)`; a per-file source table `(FileId, History)` with the same history (in db-paths terms: the source record
+  is `(fileId, stamp, size, history)`; there is no epoch record); `Hash` is 32 bytes (SHA-256), optional.
+- Dependency records hold the `(Stamp, Size)` seen (the 4.0 `FileDep`/`ArtifactDep2` stamp plus the size); they keep the
+  order and grouping of dynamic `need` calls; static `needs` are marked.
+- `produces` with the producer.
 - `produces` mappings are dropped when the producer's rule no longer exists or its pattern no longer matches the
   producer's target.
-- 0.4–0.6 databases load (no content data: everything behaves as first seen). `XakeDbVersion` becomes 0.7.
+- 0.4–0.6 databases load: a dependency recorded without a size compares by stamp alone (the 4.0 tolerance), so a
+  no-change run right after the upgrade reruns 0 targets (M11); histories start empty. `XakeDbVersion` becomes 0.7.
 
 ## Out of scope
 
@@ -360,7 +372,7 @@ Measured by counters, not by timings: the run summary exposes `files hashed`, `t
   an empty fileset does not.
 - **Cut-off, control file (A→B→A).** A rule writes `on`/`off` from a variable into `obj/layer.route`; 100 targets
   name it in `needs` and are requested only while it is `on` (in the `off` run another route is taken). Runs: on (100 built) →
-  off (the 100 not requested, the route rewritten) → on: the route returns to A's epoch, `targets rerun` excludes all
+  off (the 100 not requested, the route rewritten) → on: the route returns to A's content, `targets rerun` excludes all
   100. A further run with no change: `files hashed = 0`. Control: if the 100 are requested in the `off` run, they
   rebuild in both later runs.
 - **Cut-off, outputs.** A dependee rebuilt with identical bytes: dependents not rerun from its first rebuild; different
@@ -372,7 +384,7 @@ Measured by counters, not by timings: the run summary exposes `files hashed`, `t
 - **Non-monotonic stamps.** Source A at T10 → B at T20 (dependent built) → A restored with mtime T10 → `touch` to T30:
   the dependent reruns (content is A, it was built from B). Same stamp, different size: dependent reruns.
 - **Empty database.** A clean run: `files hashed = 0`.
-- Old databases load; `--dump` shows output records with stamp, size, epoch and history (hash prefixes).
+- Old databases load; `--dump` shows output records with stamp, size and history (hash prefixes).
 
 ## Acceptance by step (accepted 2026-11-17)
 
@@ -407,7 +419,7 @@ its record:
   stamp). This is the restored-`out/` case. Different: the file was edited by hand; the producer reruns, and its
   new output is compared with the **recorded** hash, which is the content the dependents saw: equal, the
   dependents do not rerun; different, they rerun.
-- **the record has no hash:** nothing to compare; the producer reruns and its output starts a new epoch, so the
+- **the record has no hash:** nothing to compare; the producer reruns and its new output is a pair the dependents did not record, so the
   dependents rerun. The edited file is never pre-hashed (it is not what the dependents saw).
 - So Part 2 ("if the record has a hash, equal content is unchanged") and Part 3 ("changed outside: no pre-hash,
   it is a change") are the two halves of this rule, not a conflict.
@@ -418,7 +430,7 @@ its record:
 
 Acceptance:
 - **Control file (A→B→A):** the 100 targets name the route in `needs`; as in "Acceptance" above (on: 100 built; off: not requested, route rewritten; on: the
-  route returns to A's epoch, `targets rerun` excludes the 100; a further no-change run: `files hashed = 0`).
+  route returns to A's content, `targets rerun` excludes the 100; a further no-change run: `files hashed = 0`).
   Control: requested in the `off` run, they rebuild in both later runs.
 - **Outputs:** a dependee rebuilt with identical bytes: dependents not rerun from its first rebuild; different
   bytes: rerun.
@@ -437,7 +449,7 @@ Acceptance:
 - **`--content-cutoff=off`:** the same reruns as 4.0 on named scenarios (the StaleArtifactDep, MiscTests rebuild
   cases and the control-file control), recorded as expected target lists (critic M3).
 - **Old databases:** 0.4-0.6 load; a no-change run right after the upgrade reruns 0 targets (critic M11);
-  `--dump` shows output records with stamp, size, epoch, history (hash prefixes).
+  `--dump` shows output records with stamp, size and history (hash prefixes).
 
 ### Steps 4-5: plan, `--dryrun`, `produces`
 
@@ -472,7 +484,7 @@ type RunSummary =
    names. Report the chosen syntax before building on it.
 1. Header and static `needs`.
 2. `also` on the multi-output representation.
-3. Content cut-off: epochs, lazy hashes, decision in `execOne`, database 0.7.
+3. Content cut-off: (stamp, size) histories with lazy hashes, decision in `execOne`, database 0.7.
 4. Plan for progress and `--dryrun`.
 5. `produces`.
 

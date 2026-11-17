@@ -13,8 +13,8 @@ type RuleMatchTests() =
     let noop = Recipe (fun (r, _) -> async { return r, () })
 
     let mkRules n =
-        [ for i in 1..n -> FileRule (sprintf "out/r%i/(cfg:*)/(name:*).dll" i, noop) ]
-        @ [ FileRule ("out/(cfg:*)/(fwk:*)/(name:*).dll", noop) ]
+        [ for i in 1..n -> FileRule ([sprintf "out/r%i/(cfg:*)/(name:*).dll" i], RuleHeader.Empty, noop) ]
+        @ [ FileRule (["out/(cfg:*)/(fwk:*)/(name:*).dll"], RuleHeader.Empty, noop) ]
         |> Rules
 
     [<Test>]
@@ -23,7 +23,7 @@ type RuleMatchTests() =
         let rules = mkRules 3
         let target = root </> "out" </> "Debug" </> "net472" </> "A.B.dll" |> File.make |> FileTarget
         match ExecCore.locateRule rules root target with
-        | Some (FileRule (pattern, _), groups, _) ->
+        | Some (FileRule ([pattern], _, _), groups, _) ->
             Assert.AreEqual("out/(cfg:*)/(fwk:*)/(name:*).dll", pattern)
             let groups = Map.ofList groups
             Assert.AreEqual("Debug", groups.["cfg"])

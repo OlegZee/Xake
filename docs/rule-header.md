@@ -19,8 +19,9 @@ cut-off (`noContentCutoff`). The body after it is the recipe as before.
 ```
 
 The header lives in `recipe { }`, so every file-rule form takes it: `..>`, `*..>`, `..?>`,
-`target "p" { }`, `targets [..] { }`, and the typed `X.rule { }` and `X.Rule <| fun m -> recipe { }`.
-Phony rules (`=>`, `command`, `Command<_>`) take no header: giving them one is a compile error.
+`target "p" { }`, `targets [..] { }` and the typed `X.rule { }`. Phony rules (`=>`, `command`,
+`Command<_>`) and the typed `X.Rule <| fun m -> recipe { }` take no header: giving them one is a
+compile error.
 
 ## Operations
 
@@ -31,6 +32,7 @@ Phony rules (`=>`, `command`, `Command<_>`) take no header: giving them one is a
 | `requires lock`, `requires (lock, n)` | a resource the engine holds while the body runs (see [Locks](#locks-requires)) |
 | `noContentCutoff` | every rebuild of this rule's outputs counts as a change for its dependents (content cut-off, Xake 5.0) |
 | `contentCutoff` | the default; exists for symmetry |
+| `including h` | the items of a shared header `h` (see [Shared headers](#shared-headers-ruleheader-and-including)) |
 
 ## Groups
 
@@ -69,7 +71,12 @@ A plain statement before the header (`printfn ..`) is allowed and runs when the 
   target (`needs "clean"`), or an existing file. A single target that resolves to nothing fails
   before the body runs.
 - A failure of a static need is an ordinary build error; the body does not run.
-- Static needs are recorded like the body's `need`s.
+- Static needs are recorded like the body's `need`s. A fileset is recorded as the set of files it
+  matched (a file added or removed later is a change) and each file as a dependency; a matched
+  file that has a rule is built.
+- A fileset is matched against the files **on disk** when the rule runs: it does not see outputs
+  of other rules that have not been built yet. To depend on generated files, name them (`needs
+  "gen/(n:*).cs"`) or need the rule that makes them.
 
 **Only the header is static.** A `need` anywhere in the body, including inside a helper recipe
 the body calls, is dynamic: it runs when the body reaches it, as in Xake 4.0. It is correct, but the
@@ -88,6 +95,8 @@ main pattern and nothing a match cannot fill in (XP013, XP014, as for `*..>`).
 ## Locks: `requires`
 
 `requires lock` holds one unit of the resource while the body runs; `requires (lock, n)` holds `n`.
+A resource named twice (two `requires`, or `requires` and `|> requiring`) is taken once, with the
+larger number of units.
 For each target the engine:
 
 1. builds the static `needs`, without the lock;
@@ -109,13 +118,52 @@ inside another recipe (`do!`, `let!`, `match!`, passing it to a function that ta
 compile error, so a header can never be silently lost in a nested recipe. A recipe without a header
 is used as before.
 
-A body with a header can be shared by several rules:
+A body with a header can be shared by several rules (a value needs its type written, as any
+recipe value does that nothing else fixes):
 
 ```fsharp
-let compile = recipe { needs "obj/(n:*).rsp"; let! m = getRuleMatches () in do! cscBody m.["n"] }
+let compile : Headed<ExecContext> = recipe {
+    needs "obj/(n:*).rsp"
+    let! m = getRuleMatches ()
+    do! cscBody m.["n"]
+}
 "out/(n:*).dll" ..> compile
 "tests/(n:*).dll" ..> compile
 ```
+
+## Shared headers: `ruleHeader` and `including`
+
+A header can be a value of its own, so a library or a script helper can provide the static part of
+a rule and the rules can include it:
+
+```fsharp
+/// The static part of a C# compile rule: the response file and the compiler lock.
+let cscHeader = ruleHeader ["n"] {
+    needs "obj/(n:*).rsp"
+    requires cscLock
+}
+
+"out/(n:*).dll" ..> recipe {
+    including cscHeader              // needs obj/<n>.rsp, takes cscLock when the target runs
+    also "out/(n:*).pdb"
+    let! m = getRuleMatches ()
+    do! cscBody m.["n"]
+}
+```
+
+- `ruleHeader ["n"]` lists the groups the header uses: they are the groups of **the rule that
+  includes it**, filled in from that rule's match. `ruleHeader [] { .. }` is a header without
+  groups.
+- Two checks, both when the script loads:
+  - in the header, every group a pattern uses is declared and every declared group is used;
+  - in the rule, `including h` needs every group `h` declares; otherwise the error names the rule,
+    the header and the missing group, e.g. `rule "out/(name:*).dll" includes ruleHeader [n]
+    (needs "obj/(n:*).rsp"), which uses the group n; the rule has the groups [name]`.
+- A shared header takes the same operations as a rule header (`also`, `needs`, `requires`,
+  `noContentCutoff`, `contentCutoff`). `including` is a header operation itself: it comes before the
+  body, may appear several times, and merges in place (lists append, a later cut-off setting wins).
+- A helper that needs inputs computed from the match provides a recipe for them too: the header is
+  only what is known when the script loads.
 
 ## Typed targets
 
@@ -131,6 +179,5 @@ Asm.rule {
 }
 ```
 
-`Asm.Rule <| fun m -> recipe { needs ..; .. }` works too: the engine calls the function once when
-the script loads, with every group empty, to read the header (the body is not run). A header
-argument that uses `m` there fails with a message naming the rule.
+The function form `Asm.Rule <| fun m -> recipe { .. }` takes no header: the header would be inside
+the function, which runs only when the rule runs. Use `Asm.rule { }` for a typed rule with a header.

@@ -5,11 +5,18 @@ open Xake
 [<AutoOpen>]
 module RuleBuilder =
 
-    type RuleBuilder(ruleType: string, name: string, ?patterns: string list) =
+    /// `target "p" { .. }` and `targets ["p"; "q"] { .. }`: a file rule; the body may start with a
+    /// header (`also`, `needs`, `requires`, `noContentCutoff`).
+    type FileRuleBuilder(patterns: string list) =
         inherit RecipeBuilder()
-        member __.Run(expr: Recipe<ExecContext, unit>) =
-            match ruleType with
-            | "command" -> PhonyRule (name, recipe {
+        member __.Run(body: Recipe<ExecContext, unit>) : ExecContext Rule = FileRule (patterns, RuleHeader.Empty, body)
+        member __.Run(Headed (header, body): Headed<ExecContext>) : ExecContext Rule = FileRule (patterns, header, body)
+
+    /// `command "name" { .. }`: a phony rule that always runs; no header.
+    type CommandBuilder(name: string) =
+        inherit RecipeBuilder()
+        member __.Run(expr: Recipe<ExecContext, unit>) : ExecContext Rule =
+            PhonyRule (name, recipe {
                 do! expr
                 let! result = getResult()
                 let depends =
@@ -19,10 +26,7 @@ module RuleBuilder =
                         AlwaysRerun :: result.Depends
                 do! setResult { result with Depends = depends }
               })
-            | "target"  -> FileRule (name, expr)
-            | "targets" -> MultiFileRule (patterns.Value, expr)
-            | _ -> failwith "Invalid rule type"
 
-    let command name = RuleBuilder("command", name)
-    let target pattern = RuleBuilder("target", pattern)
-    let targets patterns = RuleBuilder("targets", "", patterns)
+    let command name = CommandBuilder(name)
+    let target pattern = FileRuleBuilder([ pattern ])
+    let targets patterns = FileRuleBuilder(patterns)

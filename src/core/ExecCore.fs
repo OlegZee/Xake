@@ -52,17 +52,19 @@ let explainMatch (Rules rules) projectRoot target : RuleMatchInfo<_> list =
     let rec matchRule index rule =
         match rule, target with
 
-        |FileConditionRule (meetCondition,_), FileTarget file when file |> File.getFullName |> meetCondition ->
+        |FileConditionRule (meetCondition,_,_), FileTarget file when file |> File.getFullName |> meetCondition ->
             // TODO let condition rule extracting named groups
             Some { Rule = rule; Groups = []; Targets = [target]; Pattern = None; Specificity = conditionSpecificity; Index = index; Evidence = [] }
 
-        |FileRule (pattern,_), FileTarget file ->
+        |FileRule ([pattern], { Also = [] }, _), FileTarget file ->
             file
             |> File.getFullName
             |> matchRulePattern pattern projectRoot
             |> Option.map (fun (groups, evidence) -> { Rule = rule; Groups = groups; Targets = [target]; Pattern = Some pattern; Specificity = specificityOf pattern; Index = index; Evidence = evidence })
 
-        |MultiFileRule (patterns, _), FileTarget file ->
+        |FileRule (patterns, header, _), FileTarget file ->
+            // several outputs (`*..>` or `also`): the match of any names them all, main first
+            let patterns = Rule.outputs patterns header
             let fname = file |> File.getFullName
             patterns
             |> List.tryPick(fun pattern ->
@@ -185,10 +187,9 @@ let rec execOne (ctx: ExecContext) target =
         }
 
     let rec getAction = function
-        | FileRule (_, a)
-        | FileConditionRule (_, a)
-        | MultiFileRule (_, a)
-        | PhonyRule (_, a) -> a
+        | FileRule (_, h, a)
+        | FileConditionRule (_, h, a) -> h, a
+        | PhonyRule (_, a) -> RuleHeader.Empty, a
         | DelegatedRule (inner, _) -> getAction inner
 
     // result expression is...
@@ -245,7 +246,8 @@ let rec execOne (ctx: ExecContext) target =
     match selected with
     | Some {Rule = rule; Groups = groups; Targets = targets} ->
         let groupsMap = groups |> Map.ofSeq
-        let (Recipe action) = rule |> getAction
+        let header, recipe = rule |> getAction
+        let (Recipe action) = withHeader header groupsMap recipe
         let taskAction =
             match rule with
             | DelegatedRule (_, executor) -> runDelegated groupsMap action executor targets
@@ -313,9 +315,62 @@ and execNeed (ctx: ExecContext) targets : Async<ExecStatus * Dependency list> =
                 |false -> Skipped), dependencies
     }
 
+/// The static `needs` of a header for one match: each pattern with the match's groups filled in.
+/// Without wildcards it is one target, resolved as `need` resolves a name (a phony target first);
+/// with wildcards (or braces) it is a fileset of the existing files, recorded as `GetFiles`.
+and private resolveNeeds (ctx: ExecContext) (groups: Map<string, string>) (patterns: string list) =
+    let resolve (pattern: string) =
+        let tokens = PatternAst.Rule.parse pattern
+        let single =
+            if List.isEmpty (PatternAst.wildcards tokens) then
+                try Some (PatternAst.formatMatches groups pattern)
+                with PatternAst.PatternException _ -> None   // braces or a class outside a group
+            else None
+        match single with
+        | Some path -> [ makeTarget ctx path ], []
+        | None ->
+            let mask = PatternAst.glob (fun name -> Map.tryFind name groups) (fun _ -> None) tokens
+            let fileset = Fileset.ls mask
+            let (Filelist list) as files = fileset |> Fileset.toFileList ctx.Options.ProjectRoot
+            list |> List.map FileTarget, [ GetFiles (fileset, files) ]
+    let resolved = patterns |> List.map resolve
+    (resolved |> List.collect fst |> List.distinct), (resolved |> List.collect snd)
+
+/// Applies a rule header around a rule's recipe (docs/rule-header.md): the static `needs` are
+/// requested together and recorded before the body; then the `requires` resources are taken, in
+/// the order of their names, yielding the CPU slot while waiting; the body runs holding them and
+/// they are released also when it fails.
+and private withHeader (header: RuleHeader) (groups: Map<string, string>) (body: Recipe<ExecContext, unit>) : Recipe<ExecContext, unit> =
+    if header.Needs.IsEmpty && header.Requires.IsEmpty then body else
+    Recipe (fun (result: BuildResult, ctx: ExecContext) -> async {
+        let! result =
+            match header.Needs with
+            | [] -> async.Return result
+            | patterns -> async {
+                let startTime = System.DateTime.Now
+                let targets, filesetDeps = resolveNeeds ctx groups patterns
+                let! _, deps = execNeed ctx targets
+                let waited = int (System.DateTime.Now - startTime).TotalMilliseconds * 1<ms>
+                return { result with Depends = result.Depends @ filesetDeps @ deps } |> Step.updateWaitTime waited }
+        let locks = header.Locks
+        let rec holding (taken: (Resource * int) list) (rest: (Resource * int) list) = async {
+            match rest with
+            | [] ->
+                let held = taken |> List.map (fun (r, _) -> r.ResourceName)
+                return! A.runAction body (result, { ctx with HeldResources = held @ ctx.HeldResources })
+            | (resource, units) :: rest ->
+                do! Scheduler.withYieldedSlot ctx.Engine.Scheduler (Resource.acquire resource units)
+                try
+                    return! holding (taken @ [ resource, units ]) rest
+                finally
+                    Resource.release resource units
+        }
+        return! holding [] locks
+    })
+
 /// Resolves a target name to a PhonyAction if a matching phony rule exists, otherwise to a FileTarget.
 /// Phony actions take precedence over files with the same name.
-let makeTarget (ctx: ExecContext) name =
+and makeTarget (ctx: ExecContext) name =
     let (Rules rules) = ctx.Options.Rules
     let rec isPhonyRule nm = function
         |PhonyRule (pattern,_) ->

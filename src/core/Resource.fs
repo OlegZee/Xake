@@ -1,6 +1,5 @@
 namespace Xake
 
-open Xake.WorkerPool
 
 /// Internal message protocol for the resource agent.
 type private ResMsg =
@@ -14,7 +13,7 @@ type private ResMsg =
 /// the limit by yielding the CPU slot while a recipe waits to acquire units, so a
 /// blocked holder never pins a worker thread.
 type Resource =
-    private { Name: string; mutable Limit: int option; Agent: Agent<ResMsg> option }
+    private { Name: string; mutable Limit: int option; Agent: MailboxProcessor<ResMsg> option }
 
     /// The resource name (for diagnostics).
     member this.ResourceName = this.Name

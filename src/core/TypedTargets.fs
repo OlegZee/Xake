@@ -125,10 +125,8 @@ module internal Spec =
         masks |> List.fold (fun fs mask -> fs ++ mask) Fileset.Empty
 
     /// The engine rule: a file rule for one output, a multi-file rule for several.
-    let fileRule (spec: Spec) (body: Recipe<ExecContext, unit>) : ExecContext Rule =
-        match spec.Texts with
-        | [ text ] -> FileRule (text, body)
-        | texts -> MultiFileRule (texts, body)
+    let fileRule (spec: Spec) (header: RuleHeader) (body: Recipe<ExecContext, unit>) : ExecContext Rule =
+        FileRule (spec.Texts, header, body)
 
 /// How a type carries named string values: a record by field name, `string` for one, `unit` for none.
 type internal Codec<'T> =
@@ -227,6 +225,18 @@ type TypedRuleBuilder<'G> internal (read: Map<string, string> -> 'G, make: Recip
     /// Makes the rule from the recipe.
     member _.Run(body: Recipe<ExecContext, unit>) : ExecContext Rule = make body
 
+/// Form B of a file target, `X.rule { also ..; needs ..; let! m = matched ... }`: as
+/// `TypedRuleBuilder`, and the body may start with a rule header (docs/rule-header.md).
+type TypedFileRuleBuilder<'G> internal (read: Map<string, string> -> 'G, make: RuleHeader -> Recipe<ExecContext, unit> -> ExecContext Rule) =
+    inherit RecipeBuilder()
+    /// `let! m = matched`: the groups of the rule match.
+    member this.Bind(_: Matched, f: 'G -> Recipe<ExecContext, 'b>) : Recipe<ExecContext, 'b> =
+        this.Bind(getRuleMatches (), fun (m: Map<string, string>) -> f (read m))
+    /// Makes the rule from the recipe.
+    member _.Run(body: Recipe<ExecContext, unit>) : ExecContext Rule = make RuleHeader.Empty body
+    /// Makes the rule from the header and the recipe.
+    member _.Run(Headed (header, body): Headed<ExecContext>) : ExecContext Rule = make header body
+
 /// The form B marker value.
 [<AutoOpen>]
 module TypedMatch =
@@ -277,12 +287,13 @@ type Target<'G> internal (spec: Spec, owner: string) =
     member _.Glob(groups: 'G) : Fileset.Fileset = Spec.glob spec (codec.Write groups)
     /// Form D, the rule: `X.Rule <| fun m -> recipe { ... m.fwk ... }`.
     member _.Rule(body: 'G -> Recipe<ExecContext, unit>) : ExecContext Rule =
-        Spec.fileRule spec (recipe {
+        Spec.fileRule spec RuleHeader.Empty (recipe {
             let! m = getRuleMatches ()
             do! body (read m)
         })
-    /// Form B, the rule: `X.rule { let! m = matched ... }`.
-    member _.rule : TypedRuleBuilder<'G> = TypedRuleBuilder<'G>(read, Spec.fileRule spec)
+    /// Form B, the rule: `X.rule { let! m = matched ... }`; the body may start with a header
+    /// (`also`, `needs`, `requires`, `noContentCutoff`).
+    member _.rule : TypedFileRuleBuilder<'G> = TypedFileRuleBuilder<'G>(read, Spec.fileRule spec)
 
     override _.ToString() = owner
 

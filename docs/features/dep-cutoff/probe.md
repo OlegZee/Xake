@@ -435,3 +435,39 @@ let cscHeader = ruleHeader ["n"] { needs "obj/(n:*).rsp"; requires cscLock }
     do! cscBody m.["n"]
 }
 ```
+
+## Step 1 findings (2026-11-17)
+
+Found while implementing step 1; they change or refine the decisions above.
+
+1. **The typed function form `X.Rule <| fun m -> ..` cannot take a header.** F# rejects an
+   overloaded method used through `<|` (FS0041, "A unique overload for method 'Rule' could not be
+   determined"), and an inline SRTP member as well (FS0002). Accepting a headed recipe there would
+   break every existing `X.Rule <| fun m -> recipe { .. }`. So `X.Rule` stays recipe-only; a
+   typed rule with a header is written `X.rule { needs ..; let! m = matched .. }`. This also
+   settles critic M7 (calling the lambda with `X.Any` broke valid 4.0 lambdas). The decision
+   "every file-rule form accepts it (… `X.Rule`)" is narrowed to every form but `X.Rule`.
+2. **A statement with a value inside `recipe { }` is now an error** (critic m3). With `Yield` on
+   the builder, `f (); do! ..` where `f ()` returns a value is FS0001; in 4.0 it was warning FS0020.
+   The common case was a bug: `need ["a"]` without `do!` built nothing. Kept, listed as breaking in
+   the release notes. The test suite had no such statement.
+3. **Helpers over the operators still compile** (critic m2): `let mk p body = p ..> body`,
+   `List.map (fun p -> p ..> recipe { .. })` and `List.map ((..>) "p")` all compile with the SRTP
+   operators.
+4. **A headed recipe value needs its type** (critic m5): `let h = recipe { needs "x" }` is a value
+   restriction error (FS0030), as any generic recipe value is; `let h : Headed<ExecContext> = ..`
+   compiles. Documented; `ruleHeader` (pending) avoids it.
+5. **`{ do! a; do! b }` on one line does not compile, with or without a header.** An F# parsing
+   rule, not new; the tests write such bodies on several lines.
+6. **Duplicate locks are merged** (critic M12): a resource named twice (two `requires`, or
+   `requires` and `|> requiring`) is taken once with the larger number of units, instead of a
+   registration error.
+7. **Delegated rules apply the header** (critic M6): the static `needs` and the locks run inside
+   the delegated body (`runDelegated` gets the same composed action), so `|> requiring` on a
+   delegated file rule still locks.
+8. **When static needs run in step 1.** The verdict is still the 4.0 one (recorded dependencies,
+   transitive, computed before the task runs); static needs are built when the target runs, before
+   the lock and the body, and recorded as ordinary dependencies. "Static needs first, then the
+   verdict" (decision of 2026-11-17) comes with step 3, where the verdict moves into `execOne`.
+   Until then, a `needs` added to the header of a target that is up to date does not rebuild it
+   (as an edit of a recipe body does not in 4.0; critic M9).

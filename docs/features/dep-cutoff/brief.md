@@ -36,6 +36,14 @@ work is at the end and starts with a spike that settles the builder design.
 - 2026-11-17: `..?>` has no groups and no `also` (accepted). `requires` execution order accepted: static `needs`,
   then the verdict, then the lock, then the body. A headed recipe nested in a recipe is a compile error by type
   (accepted as designed).
+- 2026-11-17, step 1 (implementer, from the sources; [probe.md](probe.md) "Step 1 findings"): the typed function
+  form `X.Rule <| fun m -> ..` takes no header (F# rejects an overloaded or SRTP method through `<|`); typed
+  headers are written in `X.rule { }`. A statement with a value in `recipe { }` becomes an error. Duplicate
+  locks merge (larger units). A fresh-eyes review is in [critic.md](critic.md), awaiting the owner.
+- 2026-11-17: **groups in a shared header: option A, declared groups** (`ruleHeader ["n"] { .. }`): checked at
+  creation (every used group declared, every declared group used) and at registration (the including rule has
+  every declared group), errors naming the header, the rule and the group. `including` is implemented with
+  step 1.
 - 2026-11-17: **step 1 starts**: the header in `recipe` and every file-rule form, static `needs`, `requires`, the
   `FileRule`/`MultiFileRule` merge as needed.
 

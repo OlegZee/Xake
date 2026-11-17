@@ -23,6 +23,12 @@ Xake 5.0 is a breaking release: the rule representation and the database format 
   header; a wrong right-hand side now reads "No overloads match for method 'op_Dollar'".
 - `also`, `needs`, `requires`, `noContentCutoff`, `contentCutoff` are keywords at the start of a
   statement inside `recipe { }` (a local value of that name still works).
+- **Breaking:** a statement with a value inside `recipe { }` is an error (it was warning FS0020).
+  The common case was a bug: `need ["a"]` without `do!` built nothing.
+- `rule |> requiring lock` on a file rule is `requires lock` in its header: the engine builds the
+  static `needs` first, then takes the lock around the body (a rule without `needs` behaves as in
+  4.0). On a phony rule it locks the whole recipe, as before.
+- The typed function form `X.Rule <| fun m -> recipe { }` takes no header (`X.rule { }` does).
 
 ## 4.0.0 (2026-11-03)
 

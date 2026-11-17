@@ -108,12 +108,50 @@ module DomainTypes =
     type DelegatedExecutor<'ctx> =
         'ctx -> Target list -> (unit -> Async<BuildResult>) -> Async<BuildResult>
 
+    /// <summary>
+    /// The declarations of a file rule read when the script loads, without running its body: the
+    /// rule header (Xake 5.0). Written at the start of `recipe { }` with `also`, `needs`,
+    /// `requires`, `noContentCutoff`; see docs/rule-header.md.
+    /// </summary>
+    type RuleHeader =
+        { /// Outputs besides the main one (`also`), patterns over the main pattern's groups.
+          Also: string list
+          /// Static inputs (`needs`): one unordered set, built before the body.
+          Needs: string list
+          /// `Some false` for `noContentCutoff`, `Some true` for `contentCutoff`, None: the default.
+          ContentCutoff: bool option
+          /// Resources the engine holds while the body runs (`requires`), with their units.
+          Requires: (Resource * int) list }
+        /// No declarations.
+        static member Empty = { Also = []; Needs = []; ContentCutoff = None; Requires = [] }
+        /// The resources to take, each once (a resource named twice, e.g. by `requires` and
+        /// `requiring`, takes the larger number of units), in the order of their names.
+        member h.Locks : (Resource * int) list =
+            h.Requires
+            |> List.fold (fun (acc: (Resource * int) list) (r, n) ->
+                match acc |> List.tryFindIndex (fun (x, _) -> obj.ReferenceEquals (x, r)) with
+                | Some i -> acc |> List.mapi (fun j (x, m) -> if j = i then x, max m n else x, m)
+                | None -> acc @ [ r, n ]) []
+            |> List.sortBy (fun (r, _) -> r.ResourceName)
+        /// The two headers together: lists append, a cut-off setting of the second wins.
+        static member Merge (a: RuleHeader, b: RuleHeader) =
+            { Also = a.Also @ b.Also
+              Needs = a.Needs @ b.Needs
+              ContentCutoff = (match b.ContentCutoff with Some _ -> b.ContentCutoff | None -> a.ContentCutoff)
+              Requires = a.Requires @ b.Requires }
+
+    /// A rule body with its header: what `recipe { also ..; needs ..; body }` gives. Only the
+    /// file-rule forms accept it; it cannot be bound inside another recipe.
+    type Headed<'ctx> = Headed of RuleHeader * Recipe<'ctx, unit>
+
     /// A build rule that maps a target pattern to a recipe.
     type 'ctx Rule =
-        | FileRule of string * Recipe<'ctx,unit>
-        | MultiFileRule of string list * Recipe<'ctx,unit>
+        /// A file rule: its output patterns (the first is the main one; `*..>` gives several, `also`
+        /// in the header adds more), its header and its recipe.
+        | FileRule of outputs: string list * header: RuleHeader * Recipe<'ctx,unit>
         | PhonyRule of string * Recipe<'ctx,unit>
-        | FileConditionRule of (string -> bool) * Recipe<'ctx,unit>
+        /// A rule for the files a condition accepts; its header has no `also` and no groups.
+        | FileConditionRule of (string -> bool) * RuleHeader * Recipe<'ctx,unit>
         /// Wraps any inner rule, delegating its up-to-date check and execution to the
         /// caller-supplied executor. Opt-in: ordinary rules are unaffected.
         | DelegatedRule of 'ctx Rule * DelegatedExecutor<'ctx>
@@ -121,18 +159,50 @@ module DomainTypes =
     type 'ctx Rules = Rules of 'ctx Rule list
 
     module Rule =
+        /// The output patterns of a file rule, the main one first: its outputs and its header's `also`.
+        let outputs (patterns: string list) (header: RuleHeader) = patterns @ header.Also
+
+        let private fail (message: string) : 'a = raise (PatternAst.PatternException message)
+
+        /// Checks a header against the groups its patterns may use (None: a condition rule, no groups).
+        let private checkHeader (owner: string) (groups: string list option) (header: RuleHeader) =
+            let showNames (names: string list) = "[" + String.concat ", " names + "]"
+            for p in header.Needs do
+                let names = PatternAst.Rule.parse p |> PatternAst.groupNames
+                match groups with
+                | None when not names.IsEmpty ->
+                    fail (sprintf "%s: needs \"%s\" uses the groups %s, but a condition rule has no pattern and no groups; write a plain path or fileset" owner p (showNames names))
+                | Some known ->
+                    match names |> List.filter (fun n -> not (List.contains n known)) with
+                    | [] -> ()
+                    | unknown ->
+                        fail (sprintf "%s: needs \"%s\" uses the group%s %s, which the rule's pattern does not have (its groups: %s)" owner p (if unknown.Length > 1 then "s" else "") (showNames unknown) (showNames known))
+                | None -> ()
+            for (r, units) in header.Requires do
+                if units < 1 then fail (sprintf "%s: requires %s with %d units; it takes at least 1" owner r.ResourceName units)
+
         /// Checks the patterns of a rule (spec 7.1): every pattern parses (legacy-syntax warnings are
-        /// logged once), and the outputs of a multi-output rule have the same named groups and nothing
-        /// that cannot be filled in from a match (XP013, XP014). A condition rule has no pattern.
+        /// logged once), and the outputs of a multi-output rule (`*..>` or `also`) have the same named
+        /// groups and nothing that cannot be filled in from a match (XP013, XP014). The header's
+        /// `needs` use only the main pattern's groups; a condition rule has no `also` and no groups.
         /// Raises `PatternAst.PatternException`; it is applied where every rule enters a script
         /// (`XakeScriptBuilder`), whichever way the rule was built.
         let rec validate (rule: 'ctx Rule) : unit =
             match rule with
-            | FileRule (pattern, _) | PhonyRule (pattern, _) -> PatternAst.Rule.check pattern
-            | MultiFileRule (patterns, _) ->
-                patterns |> List.iter PatternAst.Rule.check
-                PatternAst.checkOutputs patterns
-            | FileConditionRule _ -> ()
+            | PhonyRule (pattern, _) -> PatternAst.Rule.check pattern
+            | FileRule (patterns, header, _) ->
+                let all = outputs patterns header
+                match all with
+                | [] -> fail "a file rule has no output pattern"
+                | main :: _ ->
+                    all |> List.iter PatternAst.Rule.check
+                    if all.Length > 1 then PatternAst.checkOutputs all
+                    let groups = PatternAst.Rule.parse main |> PatternAst.groupNames
+                    checkHeader (sprintf "rule \"%s\"" main) (Some groups) header
+            | FileConditionRule (_, header, _) ->
+                if not header.Also.IsEmpty then
+                    fail (sprintf "a condition rule (..?>) cannot have an also (%s): it has no pattern to name a side output from" (String.concat ", " header.Also))
+                checkHeader "a condition rule (..?>)" None header
             | DelegatedRule (inner, _) -> validate inner
 
     /// How to pick among the rules that match a target.

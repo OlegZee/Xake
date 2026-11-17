@@ -102,6 +102,45 @@ module Builder =
         member this.TryWith(body, handler) = tryWithF body handler
         member this.TryFinally(body, compensation) = tryFinallyF (body) compensation
         member this.Using(disposable:#System.IDisposable, body) = usingF disposable body
+
+        // --- the rule header (Xake 5.0, docs/rule-header.md) ---
+        // The header has its own type: `Yield` starts it, every operation maps it, `For` joins it
+        // with the body into a `Headed`. An operation after `let!`/`do!` then does not type-check,
+        // and a `Headed` cannot be bound by any of the `Bind` overloads.
+
+        /// Starts a rule header.
+        member _.Yield(()) = RuleHeader.Empty
+        /// `also "out/(n:*).pdb"`: another output of the rule.
+        [<CustomOperation("also")>]
+        member _.Also(h: RuleHeader, pattern: string) = { h with Also = h.Also @ [ pattern ] }
+        /// `needs "obj/(n:*).rsp"`: a static input, built before the body.
+        [<CustomOperation("needs")>]
+        member _.Needs(h: RuleHeader, pattern: string) = { h with Needs = h.Needs @ [ pattern ] }
+        /// `needs ["a"; "b"]`: static inputs; all `needs` of a rule are one unordered set.
+        [<CustomOperation("needs")>]
+        member _.Needs(h: RuleHeader, patterns: string list) = { h with Needs = h.Needs @ patterns }
+        /// `requires lock`: one unit of the resource, held by the engine while the body runs.
+        [<CustomOperation("requires")>]
+        member _.Requires(h: RuleHeader, resource: Resource) = { h with Requires = h.Requires @ [ resource, 1 ] }
+        /// `requires (lock, n)`: n units of the resource, held while the body runs.
+        [<CustomOperation("requires")>]
+        member _.Requires(h: RuleHeader, (resource: Resource, units: int)) = { h with Requires = h.Requires @ [ resource, units ] }
+        /// `noContentCutoff`: every rebuild of this rule's outputs is a change for its dependents.
+        [<CustomOperation("noContentCutoff")>]
+        member _.NoContentCutoff(h: RuleHeader) = { h with ContentCutoff = Some false }
+        /// `contentCutoff`: the default, for symmetry.
+        [<CustomOperation("contentCutoff")>]
+        member _.ContentCutoff(h: RuleHeader) = { h with ContentCutoff = Some true }
+        /// Joins the header and the body; the body is delayed, so loading the script never runs it.
+        member _.For(h: RuleHeader, body: unit -> Recipe<'c, unit>) : Headed<'c> = Headed (h, delayF body)
+        /// A rule with a header and no body.
+        member _.Delay(f: unit -> RuleHeader) : Headed<'c> = Headed (f (), doneF)
+        member _.Delay(f: unit -> Headed<'c>) : Headed<'c> = f ()
+
+        [<CompilerMessage("The rule header (also, needs, requires, noContentCutoff) must come before the body: move it above the first let!/do!.", 3095, IsError = true)>]
+        member _.Bind(_: Recipe<'a, 'b>, _: 'b -> RuleHeader) : RuleHeader = failwith "unreachable"
+        [<CompilerMessage("A recipe with a header (also, needs, requires, ...) is a rule body: give it to a rule (..>, *..>, target, X.rule); it cannot be used inside another recipe.", 3095, IsError = true)>]
+        member _.Bind(_: Headed<'c>, _: unit -> Recipe<'c, 'b>) : Recipe<'c, 'b> = failwith "unreachable"
     
     /// Backward-compatible alias for the recipe builder.
     let action = RecipeBuilder()

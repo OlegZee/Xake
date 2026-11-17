@@ -30,8 +30,14 @@ work is at the end and starts with a spike that settles the builder design.
 - 2026-11-17: **`needs` keeps the list form**; all `needs` of a rule (every line, every list element) are
   requested together before the body, order irrelevant; a failure is an ordinary error.
 - 2026-11-17: rules over a list of masks: later, not 5.0.
-- Proposed 2026-11-17, awaiting the owner: `ruleHeader { .. }` header values and `including h` (helpers
-  contributing header items), in 5.0 with step 1.
+- 2026-11-17, third round: **`ruleHeader { .. }` header values and `including h`** accepted (helpers contributing
+  header items), in 5.0. Open: how group substitution in a shared header is made obvious (options in
+  [probe.md](probe.md) "Third round"); `including` is implemented after that decision.
+- 2026-11-17: `..?>` has no groups and no `also` (accepted). `requires` execution order accepted: static `needs`,
+  then the verdict, then the lock, then the body. A headed recipe nested in a recipe is a compile error by type
+  (accepted as designed).
+- 2026-11-17: **step 1 starts**: the header in `recipe` and every file-rule form, static `needs`, `requires`, the
+  `FileRule`/`MultiFileRule` merge as needed.
 
 ## Problem
 

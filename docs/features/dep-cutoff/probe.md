@@ -347,3 +347,91 @@ let compileBody (n: string) = recipe { do! need [n] ... }
   name is a common word in user scripts and would collide on `open Xake`; hence `ruleHeader`.
 - Proposal: in 5.0, with step 1 (small, and it makes the library rule "pure single-purpose
   function" story work for static needs).
+
+## Third round (2026-11-17): making group substitution in a shared header obvious
+
+The owner accepted `ruleHeader` + `including`, with one concern: in
+
+```fsharp
+let compileHeader = ruleHeader { needs "obj/(n:*).rsp" }
+"out/(n:*).dll" ..> recipe { including compileHeader; .. }
+```
+
+nothing at the header says that `(n:*)` is filled in from whichever rule includes it, and nothing
+at the rule says which of its groups the header uses. Three options.
+
+### A. Declared groups (the header lists the groups it uses)
+
+```fsharp
+let compileHeader = ruleHeader ["n"] {          // "this header uses the group n of the including rule"
+    needs "obj/(n:*).rsp"
+    needs ["obj/(n:*).res"]
+    requires cscLock
+}
+"out/(n:*).dll" ..> recipe { including compileHeader; .. }
+```
+
+- Checked twice. At creation: every group in the header's patterns is declared, every declared
+  group is used ("ruleHeader [n]: the pattern 'obj/(m:*).rsp' uses the group m, not declared;
+  declared: n"). At registration: the including rule has every declared group ("rule
+  'out/(name:*).dll' includes the header ruleHeader [n] (build.fsx line 12), which uses the group
+  n; the rule has the groups name").
+- A header with no groups is `ruleHeader [] { .. }` (or `ruleHeader { .. }`, the same).
+- Cost: a list argument on the builder, two checks; the location comes from
+  `CallerFilePath`/`CallerLineNumber` on the builder's constructor-like function (or is left out:
+  then the message names the header by its groups and first pattern).
+
+### B. Explicit group parameters (a function of the groups)
+
+```fsharp
+let compileHeader = ruleHeader (fun (g: Groups) -> header {
+    needs $"obj/{g.n}.rsp"                       // g.n: a placeholder that stands for the group
+})
+// typed variant: the fields of 'G are the groups, checked by the compiler
+let compileHeaderT = ruleHeader (fun (g: AsmG) -> header { needs $"obj/{g.n}.rsp" })
+Asm.rule { including compileHeaderT; .. }        // compile error if Asm's group type is not AsmG
+```
+
+- At registration the function is called with placeholders (`g.n` = `"(n:*)"`, or a typed record
+  of them), so the text the reader sees names the group as a value, like the body does with
+  `m.n`.
+- The typed variant gives a compile-time check against a typed rule; the untyped `g.n` needs `?`
+  or an indexer (`g.["n"]`), no better than A for untyped rules.
+- Cost: higher. Two builders (`ruleHeader` over a function, `header` inside), placeholder
+  values that must not be used for anything but patterns (a `g.n.ToUpper()` silently produces a
+  wrong pattern), and an overloaded `including` for typed and untyped headers.
+
+### C. Explicit mapping at the including rule
+
+```fsharp
+let compileHeader = ruleHeader { needs "obj/(n:*).rsp" }
+"out/(name:*).dll" ..> recipe { including compileHeader ["n", "name"]; .. }
+```
+
+- The rule says which of its groups feeds which header group; the header may use its own names.
+- Cost: low, but every inclusion carries a mapping, even the common case where the names are
+  equal; it answers "the names may differ", which is not the concern.
+
+### Recommendation: A
+
+It puts the fact the owner found missing (this header uses group `n` of the including rule) at
+the top of the header, in one word, and both mistakes (an undeclared group in the header, a
+missing group in the rule) fail at once with a message naming the header, the rule and the group.
+It costs one argument and two checks. B's typed variant is attractive only for typed targets and
+can be added later as an overload (`ruleHeader (fun (g: AsmG) -> ..)`) without breaking A. C
+solves a different problem.
+
+Docs example (A), with the rule this enables: a library function returns the header and the body
+separately.
+
+```fsharp
+/// The static part of a C# compile rule: the response file and the compiler lock.
+let cscHeader = ruleHeader ["n"] { needs "obj/(n:*).rsp"; requires cscLock }
+
+"out/(n:*).dll" ..> recipe {
+    including cscHeader              // needs obj/<n>.rsp, takes cscLock when the target runs
+    also "out/(n:*).pdb"
+    let! m = getRuleMatches ()
+    do! cscBody m.["n"]
+}
+```

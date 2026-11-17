@@ -380,7 +380,7 @@ type ``Run summary``() =
         let first, second = summaries.[0], summaries.[1]
         // two command-line targets are two groups, run one after the other: b's group finds c up to date
         Assert.That((first.TargetsRun, first.TargetsSkipped, first.TasksScheduled), Is.EqualTo((3, 1, 4)))
-        Assert.That((second.TargetsRun, second.TargetsSkipped, second.TasksScheduled), Is.EqualTo((0, 2, 2)), "a and b are decided up to date without scheduling c")
+        Assert.That((second.TargetsRun, second.TargetsSkipped, second.TasksScheduled), Is.EqualTo((0, 2, 0)), "a no-change run schedules no task (fast path)")
         Assert.That((second.CutOff, second.FilesHashed, second.HashTime), Is.EqualTo((0, 0, System.TimeSpan.Zero)))
 
     [<Test>]

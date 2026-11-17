@@ -457,6 +457,11 @@ Acceptance:
 - **Non-monotonic stamps:** A at T10 → B at T20 (dependent built) → A restored at T10 → `touch` to T30: the
   dependent reruns. Same stamp, different size: reruns.
 - **Empty database:** a clean run, `files hashed = 0`.
+- **No-change runs (critic M4):** a target that is up to date by its record and its recorded closure, decided without
+  building anything, is not scheduled: a run where nothing moved schedules no task (`TasksScheduled = 0`, every
+  requested target counted in `TargetsSkipped`). A target whose closure moved, or that has a static `needs` set
+  different from its record, an output missing, `AlwaysRerun`, or a delegated rule, is scheduled as before; a target
+  already started or finished in the run is joined as before.
 - **`--content-cutoff=off`:** the same reruns as 4.0 on named scenarios (the StaleArtifactDep, MiscTests rebuild
   cases and the control-file control), recorded as expected target lists (critic M3).
 - **Old databases:** 0.4-0.6 load; a no-change run right after the upgrade reruns 0 targets (critic M11);

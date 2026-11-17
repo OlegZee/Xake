@@ -323,8 +323,8 @@ type ``Content cut-off persisted``() =
             { BuildLog.makeResult [ FileTarget (file "out/a.dll") ] with
                 Depends = [ FileDep (file "src/a.cs", System.DateTime(2026, 1, 2)) ]
                 Content = { Sizes = [ file "src/a.cs", 42L ]; StaticNeeds = [ dir </> "obj/a.rsp"; "src/*.cs" ]; NeedGroups = [ 1; 2 ]; Recorded = true } }
-        let history = [ { ContentEntry.Stamp = System.DateTime(2026, 1, 3); Size = 42L; Hash = Some (Array.init 32 byte) }
-                        { ContentEntry.Stamp = System.DateTime(2026, 1, 2); Size = 41L; Hash = None } ]
+        let history = [ { ContentEntry.Stamp = System.DateTime(2026, 1, 3); Size = 42L; Hash = Some (Array.init 32 byte); Written = true }
+                        { ContentEntry.Stamp = System.DateTime(2026, 1, 2); Size = 41L; Hash = None; Written = false } ]
         let db, _ = Storage.openDbWith (DbPathsHelpers.opts dir) dbpath DbPathsHelpers.quiet
         Storage.Store result |> db.Post
         Storage.StoreContent (file "src/a.cs", [ history.[1] ]) |> db.Post
@@ -412,7 +412,7 @@ type ``Content cut-off persisted``() =
         let declared = { DbPathsHelpers.opts proj with Roots = [ { Storage.DbRoot.Name = "EXT"; Path = ext; Recorded = ext } ] }
         let undeclared = DbPathsHelpers.opts proj
         let external = File.make (ext </> "lib.dll")
-        let history = [ { ContentEntry.Stamp = System.DateTime(2026, 1, 3); Size = 7L; Hash = Some (Array.init 32 byte) } ]
+        let history = [ { ContentEntry.Stamp = System.DateTime(2026, 1, 3); Size = 7L; Hash = Some (Array.init 32 byte); Written = true } ]
         let load (o: Storage.DbOpenOptions) =
             let db, _ = Storage.openDbWith o dbpath DbPathsHelpers.quiet
             let loaded = db.PostAndReply(Storage.LoadContent, DbPathsHelpers.timeoutMs)
@@ -424,3 +424,33 @@ type ``Content cut-off persisted``() =
         File.AppendAllText(dbpath, "\u007F")                  // a damaged tail: the next open rewrites the file
         Assert.That(load undeclared |> List.isEmpty, Is.True, "not loaded while its root is undeclared")
         Assert.AreEqual([ external, history ], load declared, "carried through the rewrite")
+
+    [<Test>]
+    member x.``a no-change run schedules no task, through static and body needs; a moved leaf is scheduled``() =
+        x.Fresh ()
+        File.WriteAllText("src/A.cs", "class A {}")
+        let compiled, linked, packed = ref 0, ref 0, ref 0
+        let pack =
+            "out/App.zip" ..> recipe {
+                do! need [ "out/App.exe" ]                     // a body need on top of App's static needs
+                packed.Value <- packed.Value + 1
+                do! writeText "zip"
+            }
+        let rules () = [ x.Compiler compiled; x.App linked; pack ]
+        x.Run [] "out/App.zip" (rules ()) |> ignore
+        let quiet = x.Run [] "out/App.zip" (rules ())
+        Assert.That((quiet.TasksScheduled, quiet.TargetsRun, quiet.TargetsSkipped), Is.EqualTo((0, 0, 1)))
+        later ()
+        File.WriteAllText("src/A.cs", "class A { int changed; }")
+        let moved = x.Run [] "out/App.zip" (rules ())
+        Assert.That((compiled.Value, linked.Value, packed.Value), Is.EqualTo((2, 2, 2)))
+        Assert.That(moved.TasksScheduled, Is.GreaterThanOrEqualTo 3)
+
+    [<Test>]
+    member x.``a command is always scheduled``() =
+        x.Fresh ()
+        let ran = ref 0
+        let rules () = [ command "deploy" { ran.Value <- ran.Value + 1 } ]
+        x.Run [] "deploy" (rules ()) |> ignore
+        let second = x.Run [] "deploy" (rules ())
+        Assert.That((ran.Value, second.TasksScheduled), Is.EqualTo((2, 1)))

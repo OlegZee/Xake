@@ -85,7 +85,18 @@ handles tags 4 and 5; `rewrite` writes the histories; `ReadState.Content`; the c
 includes histories; two `DatabasePathsTests` (0.6 upgrade, read-only) expect `Content = Empty`
 from a 0.6 file. Verified: 0 warnings, 1816 passed / 11 skipped, `build test pack` green.
 
+Step 3c done (2026-11-17, local): `ExecCore.upToDateWithoutScheduling` (not started/finished in
+the run, outputs present, static-needs keys equal, `decideRecord` = None) runs in `execOne` before
+the pool; a hit counts as skipped, marks the targets finished and starts no task. The checks block on
+database lookups, so they pass `RunCounters.FastGate` (a semaphore of the core count): 100 parallel
+checks starved the thread pool (a 50 s test) without it. Found with it: a dependent's comparison
+recorded an edited output's state as the newest history entry, which the producer took for what it
+had written; `ContentEntry.Written` marks the states a rule wrote, `ContentStore.LastWritten` is what
+the producer compares (tag 5 entries carry the flag). Verified: 0 warnings, 1818 passed / 11
+skipped, `build test pack` green.
+
 ## Next step
 
-Report 3b. Next: 3c (M4 fast path for no-change runs), then the PR question (owner). Then step 2 (`also`: missing-output rebuild with current outputs, M1 overlap check,
+Steps 0-3 (the 5.0 release scope) are done locally. Next: the owner's call on the PR (dep-cutoff +
+db-paths together into dev), Xake.Dotnet's follow-up; steps 4-5 (plan/--dryrun, produces) may follow. Then step 2 (`also`: missing-output rebuild with current outputs, M1 overlap check,
 `needs` naming an own `also`, missing declared output after the body = error).

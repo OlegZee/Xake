@@ -47,6 +47,13 @@ the same content`.
   wrote, so the rule reruns every time: give the modified file its own name.
 - Phony targets have no content: they compare by their completion time, as in 4.0.
 
+## No-change runs
+
+A target that is up to date by its record and everything it recorded, decided without building
+anything, is not scheduled: a run where nothing moved starts no task (the run summary shows
+`tasks 0`). A target whose inputs moved, a `command` (it always runs) and a delegated rule are
+scheduled as before.
+
 ## Database
 
 The histories and the size of each dependency are kept in the build database (`.xake`, version 0.7).

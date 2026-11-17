@@ -311,9 +311,25 @@ let rec execOne (ctx: ExecContext) target =
             match rule with
             | DelegatedRule (_, executor) -> runDelegated groupsMap action executor targets
             | _ -> run groupsMap header action targets
+        // the fast path (critic M4): a target up to date by its record and its recorded closure,
+        // decided without building anything, is not scheduled at all
         async {
-            let! waitTask = (fun channel -> Run(target, targets, taskAction, channel)) |> (Scheduler.pool ctx.Engine.Scheduler).PostAndAsyncReply
-            let! status = waitTask
+            let! fast =
+                match rule with
+                | DelegatedRule _ -> async.Return false
+                | _ -> async {
+                    do! ctx.Counters.FastGate.WaitAsync() |> Async.AwaitTask
+                    try return upToDateWithoutScheduling ctx header groupsMap targets
+                    finally ctx.Counters.FastGate.Release() |> ignore }
+            let! status =
+                if fast then
+                    ctx.Counters.TargetSkipped ()
+                    for t in targets do ctx.Counters.MarkFinished t
+                    ctx.Logger.Log Info "Skipped %s (up to date, not scheduled)" target.ShortName
+                    async.Return Skipped
+                else async {
+                    let! waitTask = (fun channel -> Run(target, targets, taskAction, channel)) |> (Scheduler.pool ctx.Engine.Scheduler).PostAndAsyncReply
+                    return! waitTask }
             // the dependee is built or up to date now: record its change stamp, so a later run
             // sees a rebuild done in between, by another run or target group (S66)
             let stamp = getChangeStamp ctx target |> Option.defaultValue System.DateTime.MinValue
@@ -458,8 +474,8 @@ and private recordOutputsBefore (ctx: ExecContext) (header: RuleHeader) (targets
     [ for t in targets do
         match t with
         | FileTarget f ->
-            match ctx.Engine.Content.History f, ContentStore.StateOf f with
-            | head :: _, Some state when ContentStore.Same (head.Stamp, head.Size) state ->
+            match ctx.Engine.Content.LastWritten f, ContentStore.StateOf f with
+            | Some head, Some state when ContentStore.Same (head.Stamp, head.Size) state ->
                 match ctx.Engine.Content.Current f ctx.Counters.FileHashed with
                 | Some (_, h) -> yield f, h
                 | None -> ()
@@ -481,12 +497,13 @@ and private recordOutputsAfter (ctx: ExecContext) (header: RuleHeader) (targets:
                 if cutoff && not (store.History f).IsEmpty then
                     match store.Current f ctx.Counters.FileHashed with
                     | Some (_, h) ->
+                        store.Record f state (Some h) true
                         match before |> List.tryFind (fun (g, _) -> g.FullName = f.FullName) with
                         | Some (_, old) when old = h -> ()
                         | _ -> same <- false
                     | None -> same <- false
                 else
-                    store.Record f state None
+                    store.Record f state None true
                     same <- false
             | None -> same <- false
         | PhonyAction _ -> same <- false
@@ -559,13 +576,13 @@ and private decideRecord (ctx: ExecContext) (visiting: Set<string>) (record: Bui
     let outputs () =
         record.Targets |> List.tryPick (function
             | FileTarget f ->
-                match ctx.Engine.Content.History f with
-                | head :: _ ->
+                match ctx.Engine.Content.LastWritten f with
+                | Some head ->
                     match compareFile ctx false f (head.Stamp, head.Size) with
                     | Same | SameContent _ -> None
                     | Differs _ when not (File.exists f) -> Some (sprintf "output %s is missing" f.Name)
                     | Differs _ -> Some (sprintf "output %s was changed outside the build" f.Name)
-                | [] -> if File.exists f then None else Some (sprintf "output %s is missing" f.Name)
+                | None -> if File.exists f then None else Some (sprintf "output %s is missing" f.Name)
             | PhonyAction _ -> None)
     match record.Depends with
     | [] -> Some "it has no dependencies"
@@ -584,6 +601,44 @@ and private decideNoBuild (ctx: ExecContext) (visiting: Set<string>) (target: Ta
             | Some record -> decideRecord ctx (visiting.Add t.FullName) record (ResizeArray ())))
     try decision.Value
     with :? System.InvalidOperationException -> Some "a dependency cycle in the recorded results"
+
+/// Stores a record again with the dependencies found unchanged by content at their new state.
+and private storeRefreshed (ctx: ExecContext) (record: BuildResult) (refresh: ResizeArray<Dependency * (File * int64)>) =
+    if refresh.Count > 0 then
+        let updated (dep: Dependency) =
+            refresh |> Seq.tryPick (fun (d, _) ->
+                match d, dep with
+                | FileDep (f, _), FileDep (g, _) when f.FullName = g.FullName -> Some d
+                | ArtifactDep2 (t, _), ArtifactDep2 (u, _) when t = u -> Some d
+                | _ -> None) |> Option.defaultValue dep
+        let sizes = refresh |> Seq.map snd |> List.ofSeq
+        let names = sizes |> List.map (fun (f, _) -> f.FullName) |> Set.ofList
+        let content =
+            { record.Content with
+                Sizes = (record.Content.Sizes |> List.filter (fun (f, _) -> not (names.Contains f.FullName))) @ sizes }
+        Store { record with Depends = record.Depends |> List.map updated; Content = content } |> ctx.Db.Post
+
+/// Whether a target can be skipped without a task (critic M4): not started or finished in this run,
+/// no current output missing, a record whose static needs are those of the rule now, and a record
+/// up to date by the no-build decision (its closure, recursively). Static needs are not built here:
+/// a static need that is out of date makes the decision "changed", and the target is scheduled.
+and private upToDateWithoutScheduling (ctx: ExecContext) (header: RuleHeader) (groups: Map<string, string>) (targets: Target list) : bool =
+    let primary = List.head targets
+    let fresh = targets |> List.forall (fun t -> not (ctx.Counters.Started.ContainsKey t || ctx.Counters.Finished.ContainsKey t))
+    let outputsPresent = targets |> List.forall (function FileTarget f -> File.exists f | PhonyAction _ -> true)
+    fresh && outputsPresent &&
+    match (fun ch -> GetResult(primary, ch)) |> ctx.Db.PostAndReply with
+    | None -> false
+    | Some record ->
+        let staticSame =
+            not record.Content.Recorded
+            || (let _, _, keys = if header.Needs.IsEmpty then [], [], [] else resolveNeeds ctx groups header.Needs
+                keys = record.Content.StaticNeeds)
+        staticSame &&
+        (let refresh = ResizeArray ()
+         match decideRecord ctx (Set.singleton primary.FullName) record refresh with
+         | None -> storeRefreshed ctx record refresh; true
+         | Some _ -> false)
 
 /// The decision for a target whose task runs now: its static `needs` are brought up to date first
 /// (they are needed anyway), then its record is compared. None: up to date (a record refreshed by
@@ -609,19 +664,7 @@ and private decide (ctx: ExecContext) (header: RuleHeader) (groups: Map<string, 
             match decideRecord ctx (Set.singleton primary.FullName) record refresh with
             | Some reason -> return Some reason
             | None ->
-                if refresh.Count > 0 then
-                    let updated (dep: Dependency) =
-                        refresh |> Seq.tryPick (fun (d, _) ->
-                            match d, dep with
-                            | FileDep (f, _), FileDep (g, _) when f.FullName = g.FullName -> Some d
-                            | ArtifactDep2 (t, _), ArtifactDep2 (u, _) when t = u -> Some d
-                            | _ -> None) |> Option.defaultValue dep
-                    let sizes = refresh |> Seq.map snd |> List.ofSeq
-                    let names = sizes |> List.map (fun (f, _) -> f.FullName) |> Set.ofList
-                    let content =
-                        { record.Content with
-                            Sizes = (record.Content.Sizes |> List.filter (fun (f, _) -> not (names.Contains f.FullName))) @ sizes }
-                    Store { record with Depends = record.Depends |> List.map updated; Content = content } |> ctx.Db.Post
+                storeRefreshed ctx record refresh
                 return None
     }
 

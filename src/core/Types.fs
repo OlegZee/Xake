@@ -112,7 +112,11 @@ module DomainTypes =
 
     /// One entry of a file's content history: the time and size the file had, and the hash of its
     /// content then, when it was computed (docs/content-cutoff.md).
-    type ContentEntry = { Stamp: Timestamp; Size: int64; Hash: byte[] option }
+    type ContentEntry =
+        { Stamp: Timestamp; Size: int64; Hash: byte[] option
+          /// The state a rule wrote (an output after its body), not one seen by a comparison: the
+          /// latest such entry is what the rule's own "changed outside the build?" check compares.
+          Written: bool }
 
     /// Recorded result of building one or more targets, including dependencies and step timings.
     type BuildResult =

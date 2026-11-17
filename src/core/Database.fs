@@ -157,9 +157,9 @@ module Storage =
 
         /// One entry of a content history (dep-cutoff).
         let contentEntry =
-            wrap ((fun (stamp, size, hash) -> { ContentEntry.Stamp = stamp; Size = size; Hash = hash }),
-                  fun (e: ContentEntry) -> e.Stamp, e.Size, e.Hash)
-                 (triple date int64 (option bytes))
+            wrap ((fun (stamp, size, hash, written) -> { ContentEntry.Stamp = stamp; Size = size; Hash = hash; Written = written }),
+                  fun (e: ContentEntry) -> e.Stamp, e.Size, e.Hash, e.Written)
+                 (quad date int64 (option bytes) bool)
 
         /// `BuildResult.Content` (dep-cutoff).
         let contentRecord (file: PU<File>) =

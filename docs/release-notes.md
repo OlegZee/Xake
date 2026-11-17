@@ -41,6 +41,8 @@ Xake 5.0 is a breaking release: the rule representation and the database format 
   reproduces an output's bytes stops there. `--content-cutoff=off` (command line, or
   `ExecOptions.ContentCutoff`) decides as 4.0. The run summary counts files hashed, hashing time and
   cut-offs.
+- **No-change runs schedule nothing:** a target up to date by its recorded closure is skipped without
+  a task (`tasks 0` in the run summary).
 - **Changed decisions:** the up-to-date decision is made when a target's task starts: its static
   `needs` are built first; a rule's output needed in the body is not built to decide (out of date: the
   dependent reruns, as in 4.0). An output changed outside the build (edited, touched) reruns its rule

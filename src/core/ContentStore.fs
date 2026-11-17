@@ -64,22 +64,28 @@ type ContentStore(persistence: IContentPersistence option) =
         |> List.tryFind (fun e -> ContentStore.Same (e.Stamp, e.Size) state)
         |> Option.bind (fun e -> e.Hash)
 
-    /// Records a state of the file as its newest. A state already in the history is replaced (one
-    /// state, one content: a different hash behind a known state drops the old entry); a hash
-    /// already known for the state is kept when none is given.
-    member _.Record (file: File) (stamp: DateTime, size: int64) (hash: byte[] option) =
+    /// Records a state of the file as its newest; `written` when the rule that builds the file wrote
+    /// it. A state already in the history is replaced (one state, one content: a different hash
+    /// behind a known state drops the old entry); a known hash and a written mark are kept.
+    member _.Record (file: File) (stamp: DateTime, size: int64) (hash: byte[] option) (written: bool) =
         let history =
             table.AddOrUpdate(file.FullName,
-                (fun _ -> [ { Stamp = stamp; Size = size; Hash = hash } ]),
+                (fun _ -> [ { Stamp = stamp; Size = size; Hash = hash; Written = written } ]),
                 (fun _ old ->
                     let same, rest = old |> List.partition (fun e -> ContentStore.Same (e.Stamp, e.Size) (stamp, size))
-                    let hash =
-                        match hash, same with
-                        | Some h, _ -> Some h
-                        | None, e :: _ -> e.Hash
-                        | None, [] -> None
-                    { Stamp = stamp; Size = size; Hash = hash } :: rest |> List.truncate ContentStore.HistoryLength))
+                    let entry =
+                        match same with
+                        | e :: _ when hash.IsSome && e.Hash.IsSome && e.Hash <> hash ->
+                            // other bytes behind a known state: the old entry is dropped
+                            { Stamp = stamp; Size = size; Hash = hash; Written = written }
+                        | e :: _ -> { Stamp = stamp; Size = size; Hash = (if hash.IsSome then hash else e.Hash); Written = written || e.Written }
+                        | [] -> { Stamp = stamp; Size = size; Hash = hash; Written = written }
+                    entry :: rest |> List.truncate ContentStore.HistoryLength))
         persistence |> Option.iter (fun p -> p.Save (file, history))
+
+    /// The latest state the rule that builds the file wrote, if any.
+    member this.LastWritten (file: File) : ContentEntry option =
+        this.History file |> List.tryFind (fun e -> e.Written)
 
     /// The current state of the file and the hash of its content, hashing it if the history has no
     /// hash for that state (once per file and state; `hashed` is told the time each hashing took).
@@ -101,6 +107,6 @@ type ContentStore(persistence: IContentPersistence option) =
                         h)).Value
                 match computed with
                 | Some h ->
-                    this.Record file state (Some h)
+                    this.Record file state (Some h) false
                     Some (state, h)
                 | None -> None

@@ -106,6 +106,9 @@ type RunCounters() =
     // per-run state of the decision (content cut-off): the targets finished in this run, and the
     // memo of decisions made without building, dropped for a target when it finishes
     member val internal Started = System.Collections.Concurrent.ConcurrentDictionary<Target, bool>() with get
+    // the fast-path checks block on database lookups: at most as many at once as there are cores,
+    // so many parallel checks never starve the thread pool
+    member val internal FastGate = new System.Threading.SemaphoreSlim(max 2 System.Environment.ProcessorCount) with get
     member val internal Finished = System.Collections.Concurrent.ConcurrentDictionary<Target, bool>() with get
     member val internal Decisions = System.Collections.Concurrent.ConcurrentDictionary<Target, Lazy<string option>>() with get
     member internal c.MarkFinished (t: Target) =

@@ -316,3 +316,81 @@ type ``Rule header``() =
         Assert.That(loads ((fun _ -> true) ..?> recipe { including shared }),
                     Does.Contain "includes ruleHeader [n] (needs \"obj/(n:*).rsp\"), which uses the group n; a condition rule has no pattern and no groups")
         Assert.That(loads ((fun _ -> true) ..?> recipe { including (ruleHeader [] { needs "obj/common.rsp" }); () }), Is.Empty)
+
+    [<Test>]
+    member x.``X.RuleWith gives the typed function form a header, checked against the pattern``() =
+        x.Fresh ()
+        File.WriteAllText("src/A.rsp", "r")
+        let Asm = Xake.Typed.Target<{| n: string |}> "out/(n:*).dll"
+        let events = ConcurrentQueue<string>()
+        let shared = ruleHeader ["n"] { needs "src/(n:*).rsp"; needs "prep" }
+        let rule = Asm.RuleWith shared <| fun m -> recipe { events.Enqueue ("body " + m.n); do! writeText "dll" }
+        let failed = x.Build [ "out/A.dll" ] [ "prep" => recipe { events.Enqueue "prep" }; rule ]
+        Assert.That(failed, Is.False)
+        Assert.That(List.ofSeq events, Is.EqualTo [ "prep"; "body A" ])
+        let Other = Xake.Typed.Target<{| name: string |}> "out/(name:*).lib"
+        let message =
+            try xake { x.TestOptions with Targets = [ "none" ]; ThrowOnError = true } {
+                    rules [ (Other.RuleWith shared <| fun _ -> recipe { () }); "none" => recipe { () } ] } ; ""
+            with e -> e.Message
+        Assert.That(message, Does.Contain "rule \"out/(name:*).lib\" includes ruleHeader [n]")
+
+    [<Test>]
+    member x.``a delegated rule holds the lock of its header around the body``() =
+        x.Fresh ()
+        let lock = Resource.newResource "delegated-guard" 1
+        let executor : DelegatedExecutor<ExecContext> = fun _ _ body -> body ()
+        let failed =
+            x.Build [ "out/a.txt" ] [
+                "gen/a.txt" ..> recipe { do! writeText "g" }
+                "out/a.txt" ..> recipe {
+                    requires lock
+                    do! need [ "gen/a.txt" ]       // a rule target under the held lock: the guard fails it
+                    do! writeText "a" } |> delegated executor ]
+        Assert.That(failed, Is.True, "the lock is held in the delegated body, so the need is refused")
+
+/// The run summary (item 1h): counters per run, the log line, `onSummary`, `XakeEngine.LastSummary`.
+[<TestFixture>]
+type ``Run summary``() =
+    inherit XakeTestBase("run-summary")
+
+    [<Test>]
+    member x.``a run counts the targets it ran and skipped, and reports to onSummary``() =
+        for d in [ "out" ] do try Directory.Delete(d, true) with _ -> ()
+        try File.Delete ".xake" with _ -> ()
+        File.WriteAllText("c.in", "c")
+        let summaries = ResizeArray<RunSummary>()
+        let run () =
+            xake { x.TestOptions with Targets = [ "out/a.txt"; "out/b.txt" ]; ResetDb = false; ThrowOnError = true } {
+                onSummary summaries.Add
+                rules [
+                    "out/a.txt" ..> recipe {
+                        do! need [ "out/c.txt" ]
+                        do! writeText "a" }
+                    "out/b.txt" ..> recipe {
+                        do! need [ "out/c.txt" ]
+                        do! writeText "b" }
+                    "out/c.txt" ..> recipe {
+                        do! need [ "c.in" ]
+                        do! writeText "c" } ]
+            }
+        run ()
+        run ()
+        Assert.That(summaries.Count, Is.EqualTo 2)
+        let first, second = summaries.[0], summaries.[1]
+        // two command-line targets are two groups, run one after the other: b's group finds c up to date
+        Assert.That((first.TargetsRun, first.TargetsSkipped, first.TasksScheduled), Is.EqualTo((3, 1, 4)))
+        Assert.That((second.TargetsRun, second.TargetsSkipped, second.TasksScheduled), Is.EqualTo((0, 2, 2)), "a and b are decided up to date without scheduling c")
+        Assert.That((second.CutOff, second.FilesHashed, second.HashTime), Is.EqualTo((0, 0, System.TimeSpan.Zero)))
+
+    [<Test>]
+    member x.``an engine keeps the summary of the last demand``() =
+        let eng = xakeEngine {
+            phony "build" (recipe { () })
+            start
+        }
+        Assert.That(eng.LastSummary, Is.EqualTo None)
+        eng.Demand("build").Wait()
+        Assert.That(eng.LastSummary |> Option.map (fun s -> s.TargetsRun), Is.EqualTo (Some 1))
+        eng.StopAsync().Wait()
+

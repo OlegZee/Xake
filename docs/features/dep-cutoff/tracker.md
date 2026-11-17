@@ -10,7 +10,9 @@
 | 1d | `requires lock` / `(lock, n)`; `requiring` on file rules = header; locks after needs, name order, merged | done (local) |
 | 1e | `ruleHeader ["n"] { }` + `including h` (option A, declared groups) | done (local) |
 | 1f | Docs: rule-header.md, cheatsheet, release notes 5.0.0 (unreleased) | done for 1a-1d |
-| 1g | Tests: RuleHeaderTests.fs (17), fixtures/header-neg (compile cases) | done |
+| 1g | Tests: RuleHeaderTests.fs, fixtures/header-neg (compile cases) | done |
+| 1h | `RunSummary`: counters per run / per `Demand`, log line, `onSummary`, `XakeEngine.LastSummary` | done (local); `CutOff`, `FilesHashed`, `HashTime` filled in step 3 |
+| 1i | Typed form D header: `X.RuleWith h <| fun m -> ..` (owner: D2) | done (local) |
 | 2 | `also` on the multi-output representation (lookup, missing outputs, M1 overlap check) | pending; matching already shared with `*..>` |
 | 3 | Content cut-off: epochs, lazy hashes, verdict in `execOne`, database 0.7 | pending; critic C1-C4, M2-M5, M9-M11 belong here |
 | 4 | Plan for progress and `--dryrun` (may follow 5.0) | pending |

@@ -12,7 +12,7 @@ let toEngineOptions (opts: ExecOptions) (rules: Rules<ExecContext>) (variables: 
         | logFileName,level -> CombineLogger logger (FileLogger logFileName level)
     { ProjectRoot = opts.ProjectRoot; Threads = opts.Threads
       Logger = MaskingLogger logger; Teardown = opts.Teardown; Rules = rules; RuleMatch = opts.RuleMatch
-      Variables = variables }
+      Variables = variables; SummarySink = opts.SummarySink }
 
 /// Active pattern that classifies ExecOptions into Dump, Dryrun, or Run execution mode.
 let (|Dump|Dryrun|Run|) (opts:ExecOptions) =
@@ -223,12 +223,19 @@ let runScript options rules =
                     false
             if setupOk then
                 let start = System.DateTime.Now
+                let counters = RunCounters()
+                let reportSummary () =
+                    let summary = counters.Summary
+                    ctx.Logger.Log Message "%s" (RunSummary.format summary)
+                    ctx.Options.SummarySink |> Option.iter (fun sink -> sink.Report summary)
                 try
-                    targetLists |> ExecCore.runBuild ctx |> fun a -> Async.RunSynchronously(a, cancellationToken = cts.Token) |> ignore
+                    targetLists |> ExecCore.runBuild { ctx with Counters = counters } |> fun a -> Async.RunSynchronously(a, cancellationToken = cts.Token) |> ignore
+                    reportSummary ()
                     ctx.Logger.Log Message "\n\n    Build completed in %A\n" (System.DateTime.Now - start)
                 with
                 | :? System.OperationCanceledException ->
                     // Ctrl+C: build async workflow was cancelled; fall through to teardown on main thread
+                    reportSummary ()
                     ctx.Logger.Log Message "\n\n\tBuild interrupted after running for %A\n" (System.DateTime.Now - start)
                     exitCode <- 1
                 | exn ->
@@ -239,6 +246,7 @@ let runScript options rules =
 
                     do ctx.Logger.Log Error "Error '%s'. See build.log for more details" errorText
                     do ctx.Logger.Log Verbose "Error details are:\n%A\n\n" details
+                    reportSummary ()
                     do ctx.Logger.Log Message "\n\n\tBuild failed after running for %A\n" (System.DateTime.Now - start)
 
                     if options.ThrowOnError then

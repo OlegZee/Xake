@@ -62,6 +62,62 @@ type VarEntry = {
     Decl: VarDecl option
 }
 
+/// <summary>
+/// What a run did: logged at its end ("Run summary: ...") and handed to `onSummary` /
+/// `XakeEngine.LastSummary`. In Xake 5.0 step 1 `CutOff`, `FilesHashed` and `HashTime` are 0
+/// (content cut-off fills them).
+/// </summary>
+type RunSummary = {
+    /// Targets whose recipe ran (delegated targets count here when their executor was called).
+    TargetsRun: int
+    /// Targets found up to date.
+    TargetsSkipped: int
+    /// Targets rebuilt with the same content, whose dependents did not rerun.
+    CutOff: int
+    /// Files hashed to compare content.
+    FilesHashed: int
+    /// Time spent hashing.
+    HashTime: System.TimeSpan
+    /// Tasks started in the worker pool (a target requested twice is one task).
+    TasksScheduled: int
+}
+
+/// Receives the summary of every run (`onSummary` in a script).
+type IRunSummarySink =
+    abstract Report: RunSummary -> unit
+
+/// The counters of one run (one per script run, one per `Demand` in engine mode). Incremented
+/// with `Interlocked` from any task; `Summary` reads them.
+[<Sealed; AllowNullLiteral>]
+type RunCounters() =
+    [<DefaultValue>] val mutable private targetsRun: int
+    [<DefaultValue>] val mutable private targetsSkipped: int
+    [<DefaultValue>] val mutable private cutOff: int
+    [<DefaultValue>] val mutable private filesHashed: int
+    [<DefaultValue>] val mutable private hashTicks: int64
+    [<DefaultValue>] val mutable private tasksScheduled: int
+    member internal c.TargetRun () = System.Threading.Interlocked.Increment &c.targetsRun |> ignore
+    member internal c.TargetSkipped () = System.Threading.Interlocked.Increment &c.targetsSkipped |> ignore
+    member internal c.TargetCutOff () = System.Threading.Interlocked.Increment &c.cutOff |> ignore
+    member internal c.FileHashed (elapsed: System.TimeSpan) =
+        System.Threading.Interlocked.Increment &c.filesHashed |> ignore
+        System.Threading.Interlocked.Add (&c.hashTicks, elapsed.Ticks) |> ignore
+    member internal c.TaskScheduled () = System.Threading.Interlocked.Increment &c.tasksScheduled |> ignore
+    /// The counters so far.
+    member c.Summary : RunSummary =
+        { TargetsRun = System.Threading.Volatile.Read &c.targetsRun
+          TargetsSkipped = System.Threading.Volatile.Read &c.targetsSkipped
+          CutOff = System.Threading.Volatile.Read &c.cutOff
+          FilesHashed = System.Threading.Volatile.Read &c.filesHashed
+          HashTime = System.TimeSpan.FromTicks (System.Threading.Interlocked.Read &c.hashTicks)
+          TasksScheduled = System.Threading.Volatile.Read &c.tasksScheduled }
+
+module RunSummary =
+    /// The log line of a summary.
+    let format (s: RunSummary) =
+        sprintf "Run summary: targets run %d, skipped %d, tasks %d, cut-off %d, files hashed %d (%d ms)"
+            s.TargetsRun s.TargetsSkipped s.TasksScheduled s.CutOff s.FilesHashed (int s.HashTime.TotalMilliseconds)
+
 /// Engine-level options: immutable after construction.
 type EngineOptions = {
     ProjectRoot: string
@@ -74,6 +130,8 @@ type EngineOptions = {
     /// The variable set built at launch: every key with its value, origin and declaration.
     /// Var reads, the banner and the per-demand checks look here.
     Variables: Map<string, VarEntry>
+    /// Receives the summary of every run or demand (`onSummary`); None: only the log line.
+    SummarySink: IRunSummarySink option
 } with
     static member Default = {
         ProjectRoot = System.IO.Directory.GetCurrentDirectory()
@@ -83,6 +141,7 @@ type EngineOptions = {
         Rules = Rules []
         RuleMatch = MostSpecific
         Variables = Map.empty
+        SummarySink = None
     }
 
 /// Engine-level immutable state shared across all tasks.
@@ -110,6 +169,8 @@ and ExecContext = {
     /// `withResource` and `requiring` for their body. A `need` of a target that has a rule
     /// fails while it is not empty (hold-and-wait deadlock); `allowNeed` clears it.
     HeldResources: string list
+    /// The counters of the current run (one per script run or `Demand`).
+    Counters: RunCounters
 } with
     /// Shortcut to engine options.
     member ctx.Options = ctx.Engine.Options

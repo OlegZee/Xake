@@ -89,7 +89,9 @@ do xakeScript {
 }
 ```
 
-See [rule-header.md](rule-header.md).
+Shared: `let h = ruleHeader ["n"] { needs "obj/(n:*).rsp" }`, then `including h` in a header, or
+`X.RuleWith h <| fun m -> recipe { .. }`. Every run logs a `Run summary:` line; `onSummary` in the
+script receives it. See [rule-header.md](rule-header.md).
 
 ## Recipe helpers
 

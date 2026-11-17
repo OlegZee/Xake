@@ -19,8 +19,9 @@ cut-off (`noContentCutoff`). The body after it is the recipe as before.
 ```
 
 The header lives in `recipe { }`, so every file-rule form takes it: `..>`, `*..>`, `..?>`,
-`target "p" { }`, `targets [..] { }` and the typed `X.rule { }`. Phony rules (`=>`, `command`,
-`Command<_>`) and the typed `X.Rule <| fun m -> recipe { }` take no header: giving them one is a
+`target "p" { }`, `targets [..] { }` and the typed `X.rule { }`; the typed function form takes it as
+a value (`X.RuleWith h <| fun m -> ..`, see [Typed targets](#typed-targets)). Phony rules (`=>`,
+`command`, `Command<_>`) and `X.Rule <| fun m -> recipe { }` take no header: giving them one is a
 compile error.
 
 ## Operations
@@ -193,4 +194,13 @@ Asm.rule {
 ```
 
 The function form `Asm.Rule <| fun m -> recipe { .. }` takes no header: the header would be inside
-the function, which runs only when the rule runs. Use `Asm.rule { }` for a typed rule with a header.
+the function, which runs only when the rule runs. Give it the header as a value with `RuleWith`, or
+use `Asm.rule { }`:
+
+```fsharp
+let cscHeader = ruleHeader ["n"] { needs "obj/(n:*).rsp"; requires cscLock }
+Asm.RuleWith cscHeader <| fun m -> recipe { do! cscBody m.n }
+```
+
+The header's groups must be groups of the target's pattern, checked when the script loads, as for
+`including`; the function is not called then.

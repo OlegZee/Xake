@@ -87,9 +87,19 @@ work is at the end and starts with a spike that settles the builder design.
 - 2026-11-17, **restored `out/` without hashes: option (a)**, accepted for 5.0 and documented as transitional: an
   output gets a hash at its first rebuild (the pre-hash), so a restored output that was built once and never rebuilt
   has no hash and, with a fresh time, rebuilds once; after that its hash is recorded and a restore is free.
-- Pending with the owner (2026-11-17): M6 (delegated rules and epochs), M9 (a header changed
-  between runs), typed form D with a header (D1 vs D2, [probe.md](probe.md) "Typed
-  form D with a header, again"), `RunSummary` as item 1h ([probe.md](probe.md) "Cost of `RunSummary`").
+- 2026-11-17, **M7: D2.** Typed form D takes a header as a value: `X.RuleWith h <| fun m -> recipe { .. }` with
+  `h = ruleHeader [..] { .. }`; its groups are checked as for `including`. `X.Rule` stays recipe-only.
+- 2026-11-17, **`RunSummary`: item 1h, before step 2.** A counters object per run (per `Demand` in engine mode) with
+  `Interlocked` increments; `TargetsRun`, `TargetsSkipped`, `TasksScheduled` filled from step 1, the others in step 3;
+  `OnSummary` through an interface field and a `xakeScript` operation, so `ExecOptions` keeps structural equality;
+  `XakeEngine.LastSummary`.
+- 2026-11-17, **M6: the engine assigns output records and epochs of delegated rules itself**, after the executor
+  returns; epochs and records from an executor are never trusted. The header (`needs`, `requires`) applies to the
+  delegated body.
+- 2026-11-17, **M9: yes.** A header whose static set (`needs`, `also`) differs from the one recorded makes the target
+  out of date (`also`: step 2, the current outputs; `needs`: step 3, recorded and marked static in 0.7).
+- Pending with the owner (2026-11-17): C2 id size (128-bit random as decided, or 64-bit random as a middle ground);
+  the go for step 2.
 - 2026-11-17: **step 1 starts**: the header in `recipe` and every file-rule form, static `needs`, `requires`, the
   `FileRule`/`MultiFileRule` merge as needed.
 

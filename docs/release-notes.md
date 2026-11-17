@@ -28,7 +28,14 @@ Xake 5.0 is a breaking release: the rule representation and the database format 
 - `rule |> requiring lock` on a file rule is `requires lock` in its header: the engine builds the
   static `needs` first, then takes the lock around the body (a rule without `needs` behaves as in
   4.0). On a phony rule it locks the whole recipe, as before.
-- The typed function form `X.Rule <| fun m -> recipe { }` takes no header (`X.rule { }` does).
+- The typed function form `X.Rule <| fun m -> recipe { }` takes no header; `X.RuleWith h <| fun m -> ..`
+  takes a `ruleHeader` value, and `X.rule { }` takes one inside.
+- **Run summary:** every run ends with a line `Run summary: targets run 3, skipped 120, tasks 123,
+  cut-off 0, files hashed 0 (0 ms)`; a script receives it with `onSummary (fun s -> ..)` (a
+  `RunSummary` record), an engine keeps the last demand's in `XakeEngine.LastSummary`.
+- **Breaking:** `ExecContext` has a new field, `Counters`; a package that builds an `ExecContext`
+  with a record expression must be rebuilt against 5.0 (`ExecContext.withLogger` is unaffected).
+  `EngineOptions` and `ExecOptions` have a new field, `SummarySink`.
 - A file rule with a header and no body, and a rule naming one resource twice (`requires`,
   `requiring`, an included header), are errors when the script loads.
 - **Shared headers:** `ruleHeader ["n"] { needs ..; requires .. }` makes a header value that rules

@@ -133,8 +133,10 @@ let rec execOne (ctx: ExecContext) target =
     let run ruleMatches action targets =
         let primaryTarget = targets |> List.head
         async {
+            ctx.Counters.TaskScheduled ()
             match ctx.NeedRebuild targets with
             | true ->
+                ctx.Counters.TargetRun ()
                 let taskContext = newTaskContext targets ruleMatches ctx
                 do ctx.Logger.Log Command "Started %s as task %i" primaryTarget.ShortName taskContext.Ordinal
 
@@ -152,6 +154,7 @@ let rec execOne (ctx: ExecContext) target =
                 do ctx.Logger.Log Command "Completed %s in %A ms (wait %A ms)" primaryTarget.ShortName (Step.lastStep result).OwnTime  (Step.lastStep result).WaitTime
                 return Succeed
             | false ->
+                ctx.Counters.TargetSkipped ()
                 do ctx.Logger.Log Command "Skipped %s (up to date)" primaryTarget.ShortName
                 return Skipped
         }
@@ -166,6 +169,8 @@ let rec execOne (ctx: ExecContext) target =
     let runDelegated ruleMatches action (executor: DelegatedExecutor<ExecContext>) targets =
         let primaryTarget = targets |> List.head
         async {
+            ctx.Counters.TaskScheduled ()
+            ctx.Counters.TargetRun ()
             let taskContext = newTaskContext targets ruleMatches ctx
             do ctx.Logger.Log Command "Started %s as delegated task %i" primaryTarget.ShortName taskContext.Ordinal
             do Progress.TaskStart primaryTarget |> ctx.Progress.Post
@@ -483,6 +488,7 @@ let createContextCore (options: EngineOptions) (db: Agent<Storage.DatabaseApi>) 
         Vars = vars
         ShowProgress = showProgress
         HeldResources = []
+        Counters = RunCounters()
         }
     ctx, finalize
 

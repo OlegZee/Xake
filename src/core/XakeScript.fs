@@ -84,6 +84,8 @@ module XakeScript =
 
         /// Rule selection strategy among the rules that match a target.
         RuleMatch: RuleMatchMode
+        /// Receives the summary of every run (`onSummary` in a script); None: only the log line.
+        SummarySink: IRunSummarySink option
     } with
         static member Default = {
             ProjectRoot = System.IO.Directory.GetCurrentDirectory()
@@ -113,6 +115,7 @@ module XakeScript =
             ShowHelp = false
             VarSchema = []
             RuleMatch = MostSpecific
+            SummarySink = None
         }
     end
 

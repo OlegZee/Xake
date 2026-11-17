@@ -291,6 +291,15 @@ type Target<'G> internal (spec: Spec, owner: string) =
             let! m = getRuleMatches ()
             do! body (read m)
         })
+    /// Form D with a header: `X.RuleWith h <| fun m -> recipe { ... }`, where
+    /// `h = ruleHeader ["n"] { needs ..; requires .. }`. The header's groups must be groups of this
+    /// pattern (checked when the script loads, as for `including`); nothing is called at load.
+    member _.RuleWith (header: SharedHeader) (body: 'G -> Recipe<ExecContext, unit>) : ExecContext Rule =
+        let header = { header.Header with Included = [ header.Description, header.DeclaredGroups ] }
+        Spec.fileRule spec header (recipe {
+            let! m = getRuleMatches ()
+            do! body (read m)
+        })
     /// Form B, the rule: `X.rule { let! m = matched ... }`; the body may start with a header
     /// (`also`, `needs`, `requires`, `noContentCutoff`).
     member _.rule : TypedFileRuleBuilder<'G> = TypedFileRuleBuilder<'G>(read, Spec.fileRule spec)

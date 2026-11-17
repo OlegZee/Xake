@@ -42,8 +42,13 @@ Owner decision 2026-11-17: **no speculation in 5.0 (option B)**; brief Part 3 "D
 dependent" and both Acceptance sections rewritten; critic C1, C3, C4 (speculation part), M10
 closed; rule-header.md says "for cut-off through a rule's output, name it in `needs`".
 
+Items 1h and 1i (2026-11-17): `RunSummary`/`RunCounters`/`IRunSummarySink` in `ExecTypes.fs`,
+`ExecContext.Counters` (record shape test moved to "frozen within Xake 5"), increments in
+`execOne.run`/`runDelegated`, summary logged by `ScriptRunner` (also on failure), `onSummary`
+script operation, `XakeEngine.LastSummary` per demand; `Target<'G>.RuleWith`. A delegated rule's
+header lock is tested. Verified: 0 warnings, 1768 passed / 10 skipped, `build test pack` green.
+
 ## Next step
 
-Wait for the owner: the rest of the critic triage, the "Acceptance by step" proposal with the
-`RunSummary` counters, restored `out/` without hashes (option a/b/c), and the go for step 2. Then step 2 (`also`: missing-output rebuild with current outputs, M1 overlap check,
+Wait for the owner: the C2 id size (128- or 64-bit random) and the go for step 2. Then step 2 (`also`: missing-output rebuild with current outputs, M1 overlap check,
 `needs` naming an own `also`, missing declared output after the body = error).

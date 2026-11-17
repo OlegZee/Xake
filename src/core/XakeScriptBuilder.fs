@@ -280,6 +280,12 @@ module XakeScriptBuilder =
             let loglevel = defaultArg loglevel Verbosity.Chatty in
             XakeScript ({options with ConLogLevel =loglevel}, rules)
 
+        /// `onSummary (fun s -> ..)`: called with the summary of every run (targets run, skipped, ...).
+        [<CustomOperation("onSummary")>]
+        member __.OnSummary(XakeScript (options, rules), report: RunSummary -> unit) =
+            let sink = { new IRunSummarySink with member _.Report s = report s }
+            XakeScript ({options with SummarySink = Some sink}, rules)
+
         [<CustomOperation("ruleMatch")>]
         member __.RuleMatch(XakeScript (options, rules), mode: RuleMatchMode) =
             XakeScript ({options with RuleMatch = mode}, rules)
@@ -337,6 +343,8 @@ module XakeScriptBuilder =
         [<VolatileField>]
         let mutable stopped = false
         let inFlight = ConcurrentDictionary<string, Lazy<Task<ExecStatus>>> ()
+        [<VolatileField>]
+        let mutable lastSummary : RunSummary option = None
 
         // the demand's own vars come first: they win over the script's, the last pair of a name wins
         let makeCtx extraVars = {
@@ -350,6 +358,7 @@ module XakeScriptBuilder =
             Ordinal = 0
             Logger = engine.RootLogger
             HeldResources = []
+            Counters = RunCounters()
         }
 
         /// Starts a XakeEngine from a fully assembled XakeScript.
@@ -389,7 +398,15 @@ module XakeScriptBuilder =
             let demandCtx = makeCtx vars
             let rec tryDemand () : Task =
                 let newLazy = Lazy<_>(fun () ->
-                    let task = ExecCore.demandTarget demandCtx targetName |> Async.StartAsTask
+                    let demandCtx = { demandCtx with Counters = RunCounters() }
+                    let task =
+                        async {
+                            try return! ExecCore.demandTarget demandCtx targetName
+                            finally
+                                let summary = demandCtx.Counters.Summary
+                                lastSummary <- Some summary
+                                engine.Options.SummarySink |> Option.iter (fun sink -> sink.Report summary)
+                        } |> Async.StartAsTask
                     task.ContinueWith(fun (_: Task<ExecStatus>) -> inFlight.TryRemove targetName |> ignore) |> ignore
                     task
                 )
@@ -404,6 +421,10 @@ module XakeScriptBuilder =
                         return! tryDemand () |> Async.AwaitTask
                     } |> Async.StartAsTask :> Task
             tryDemand ()
+
+        /// The summary of the last finished `Demand` (each demand has its own counters; a target
+        /// one demand builds and another joins counts in the first). None before the first.
+        member _.LastSummary : RunSummary option = lastSummary
 
         /// Stops the engine: waits for in-flight tasks, runs teardown targets, then releases resources.
         member this.StopAsync() : Task =

@@ -75,15 +75,24 @@ work is at the end and starts with a spike that settles the builder design.
   - **M11:** a no-change run right after the upgrade from 0.6 reruns 0 targets (stamp fallback for records without
     an epoch); the downgrade loss is noted in the release notes.
   - **Acceptance by step** (below) is accepted and replaces "Acceptance" as the spec.
-- 2026-11-17, **C2 (epoch collision): the most reliable option, random 128-bit epoch ids** (a `Guid`, 122 random
-  bits), with no counter. Why not "max id seen on load + 1": it is sound only if (1) the load scans every place an id
-  can appear (dependency records, output records, their history, the source table), so a future record kind that
-  forgets one silently reuses ids; and (2) no two processes allocate from the same file, which today rests on
-  `File.Open (.., FileMode.Append, FileAccess.Write)` holding the file exclusively from after the load to the end of
-  the run: two runs started together can both load the same maximum before either opens the file for writing. A
-  durable allocation record before use closes (2) only with a lock held from load to close. Random ids close every
-  case with no state to persist and no scan; the cost is 16 bytes per id instead of 8 (a record with 50 dependencies
-  and 4-entry histories: about 1 KB more), and epochs need no order. The database-wide counter of Part 3 is dropped.
+- 2026-11-17, **C2 (epoch collision), corrected by the owner: epoch ids are integers, allocated deterministically
+  (+1)**, stored as varints (compact, as db-paths stores numbers). The earlier "random 128-bit" entry is withdrawn.
+  - **The counter is derived, not stored:** on load, the next id is the largest id seen in the file + 1. A stored
+    counter record would need its own write-before-use ordering; with the lock below the process that loaded is the
+    only allocator, so the maximum is enough. An id handed out and never written (a crash) is referenced by nothing
+    on disk, so reusing it is harmless.
+  - **Gap 1, an id the load does not see:** every record kind that carries an epoch (dependency records, output
+    records and their history, the source table) is read through **one** function that also reports the largest id
+    it met; a test enumerates the record kinds with an epoch (by reflection over the 0.7 record types) and asserts
+    each goes through it.
+  - **Gap 2, two runs loading the same maximum:** a run takes an exclusive lock **before** the load and holds it until
+    the database is closed. It is a separate file, `.xake.lock` next to `.xake` (opened `FileShare.None`), so the
+    database file itself can still be moved for compaction, and a held lock is never mistaken for corruption: today
+    an `IOException` on open, after 5 retries, takes the "failed to read database, so recreating" path, which would
+    delete the other run's database. The second run waits up to a time-out (proposal: 30 s, logged once at Message
+    "waiting for another Xake run on this database") and then fails with "another Xake run uses this database
+    (`.xake.lock`)". Engine mode holds the lock for the engine's lifetime.
+  - Implemented with step 3 (database 0.7), where epochs appear.
 - 2026-11-17, **restored `out/` without hashes: option (a)**, accepted for 5.0 and documented as transitional: an
   output gets a hash at its first rebuild (the pre-hash), so a restored output that was built once and never rebuilt
   has no hash and, with a fresh time, rebuilds once; after that its hash is recorded and a restore is free.
@@ -98,8 +107,7 @@ work is at the end and starts with a spike that settles the builder design.
   delegated body.
 - 2026-11-17, **M9: yes.** A header whose static set (`needs`, `also`) differs from the one recorded makes the target
   out of date (`also`: step 2, the current outputs; `needs`: step 3, recorded and marked static in 0.7).
-- Pending with the owner (2026-11-17): C2 id size (128-bit random as decided, or 64-bit random as a middle ground);
-  the go for step 2.
+- 2026-11-17: **go for step 2** (`also` on the multi-output representation), scope as in "Acceptance by step / Step 2".
 - 2026-11-17: **step 1 starts**: the header in `recipe` and every file-rule form, static `needs`, `requires`, the
   `FileRule`/`MultiFileRule` merge as needed.
 
@@ -231,7 +239,7 @@ steps), and an interval test would accept a dependent built from other content. 
 **epoch id**.
 
 - Each **output** record of a producer and each **source file** carries `(Stamp, Size, Epoch, History)`.
-  `Epoch` is a random 128-bit id (decision 2026-11-17, C2); `History` is a short list (last N, e.g. 4) of `(Epoch, Hash option)`
+  `Epoch` is an integer id, the next one = the largest in the database + 1 (decision 2026-11-17, C2); `History` is a short list (last N, e.g. 4) of `(Epoch, Hash option)`
   of this file, newest first.
 - Dependents record the **epoch id** they saw (plus the stamp, for diagnostics). A dependency is **unchanged** iff the
   recorded id equals the current `Epoch`, or both ids have known hashes in `History` and the hashes are equal.
@@ -323,7 +331,7 @@ speculation).
 ### Database (0.7)
 
 - Output records `(Target, Stamp, Size, Epoch, History)` in `BuildResult`; per-file source table with the same fields;
-  epoch ids are random 128-bit values (no counter); dependency records hold the epoch id seen, keep the dependency order and grouping;
+  epoch ids are varint integers, next = max seen on load + 1, under the `.xake.lock` lock (C2); dependency records hold the epoch id seen, keep the dependency order and grouping;
   `produces` with the producer; static `needs` marked.
 - `produces` mappings are dropped when the producer's rule no longer exists or its pattern no longer matches the
   producer's target.

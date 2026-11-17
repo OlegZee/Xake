@@ -29,6 +29,8 @@ Xake 5.0 is a breaking release: the rule representation and the database format 
   static `needs` first, then takes the lock around the body (a rule without `needs` behaves as in
   4.0). On a phony rule it locks the whole recipe, as before.
 - The typed function form `X.Rule <| fun m -> recipe { }` takes no header (`X.rule { }` does).
+- A file rule with a header and no body, and a rule naming one resource twice (`requires`,
+  `requiring`, an included header), are errors when the script loads.
 - **Shared headers:** `ruleHeader ["n"] { needs ..; requires .. }` makes a header value that rules
   merge in with `including h`; the list names the groups of the including rule it uses, checked
   when the header is made and when a rule includes it.

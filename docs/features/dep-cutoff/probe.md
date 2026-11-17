@@ -459,9 +459,9 @@ Found while implementing step 1; they change or refine the decisions above.
    compiles. Documented; `ruleHeader` (pending) avoids it.
 5. **`{ do! a; do! b }` on one line does not compile, with or without a header.** An F# parsing
    rule, not new; the tests write such bodies on several lines.
-6. **Duplicate locks are merged** (critic M12): a resource named twice (two `requires`, or
-   `requires` and `|> requiring`) is taken once with the larger number of units, instead of a
-   registration error.
+6. **Duplicate locks** (critic M12): first merged (larger units); **superseded by the owner
+   (2026-11-17): a resource named twice on one rule is a registration error**, and so are two
+   resources of the same name on one rule. Locks are ordered by name, then by creation ordinal.
 7. **Delegated rules apply the header** (critic M6): the static `needs` and the locks run inside
    the delegated body (`runDelegated` gets the same composed action), so `|> requiring` on a
    delegated file rule still locks.

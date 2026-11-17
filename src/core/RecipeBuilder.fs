@@ -137,8 +137,9 @@ module Builder =
             RuleHeader.Merge (h, { shared.Header with Included = [ shared.Description, shared.DeclaredGroups ] })
         /// Joins the header and the body; the body is delayed, so loading the script never runs it.
         member _.For(h: RuleHeader, body: unit -> Recipe<'c, unit>) : Headed<'c> = Headed (h, delayF body)
-        /// A rule with a header and no body.
-        member _.Delay(f: unit -> RuleHeader) : Headed<'c> = Headed (f (), doneF)
+        /// A header with no body: the rule forms refuse it when the script loads (a file rule
+        /// must write its target).
+        member _.Delay(f: unit -> RuleHeader) : Headed<'c> = Headed ({ f () with HeaderOnly = true }, doneF)
         member _.Delay(f: unit -> Headed<'c>) : Headed<'c> = f ()
 
         [<CompilerMessage("The rule header (also, needs, requires, noContentCutoff) must come before the body: move it above the first let!/do!.", 3095, IsError = true)>]

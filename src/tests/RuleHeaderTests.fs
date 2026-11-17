@@ -174,14 +174,34 @@ type ``Rule header``() =
         Assert.That(failed, Is.True)
 
     [<Test>]
-    member x.``requiring on a file rule is requires in its header; naming the lock twice takes it once``() =
-        x.Fresh ()
-        let lock = Resource.newResource "twice" 1
-        let rule = "out/a.txt" ..> recipe { requires lock; do! writeText "a" } |> requiring lock
-        match rule with
-        | FileRule (_, header, _) -> Assert.That(header.Locks |> List.map snd, Is.EqualTo [ 1 ])
+    member x.``requiring on a file rule is requires in its header``() =
+        let lock = Resource.newResource "requiring" 1
+        match "out/a.txt" ..> recipe { do! writeText "a" } |> requiring lock with
+        | FileRule (_, header, _) -> Assert.That(header.Locks |> List.map (fun (r, n) -> r.ResourceName, n), Is.EqualTo [ "requiring", 1 ])
         | other -> Assert.Fail (sprintf "expected a file rule, got %A" other)
-        Assert.That(x.Build [ "out/a.txt" ] [ rule ], Is.False, "a lock held twice by one rule would hang")
+
+    [<Test>]
+    member x.``a resource named twice on one rule is a registration error, whatever named it``() =
+        let lock = Resource.newResource "twice" 1
+        let other = Resource.newResource "twice" 1          // another resource with the same name
+        let shared = ruleHeader [] { requires lock }
+        let loads (r: ExecContext Rule) =
+            try xake { x.TestOptions with Targets = [ "none" ]; ThrowOnError = true } { rules [ r; "none" => recipe { () } ] } ; ""
+            with e -> e.Message
+        let expected = "rule \"out/a.txt\" requires the resource twice more than once"
+        for rule in [ "out/a.txt" ..> recipe { requires lock; do! writeText "a" } |> requiring lock
+                      "out/a.txt" ..> recipe { requires lock; requires (lock, 2); do! writeText "a" }
+                      "out/a.txt" ..> recipe { including shared; including shared; do! writeText "a" }
+                      "out/a.txt" ..> recipe { requires lock; requires other; do! writeText "a" } ] do
+            Assert.That(loads rule, Does.Contain expected)
+
+    [<Test>]
+    member x.``locks are taken by name, then by creation, whatever the order they are written in``() =
+        let b = Resource.newResource "b-lock" 1
+        let a1 = Resource.newResource "a-lock" 1
+        let a2 = Resource.newResource "a-lock-2" 1
+        let header = { RuleHeader.Empty with Requires = [ b, 1; a2, 1; a1, 1 ] }
+        Assert.That(header.Locks |> List.map (fun (r, _) -> r.ResourceName), Is.EqualTo [ "a-lock"; "a-lock-2"; "b-lock" ])
 
     [<Test>]
     member x.``the header of a delegated rule applies: needs built, lock taken``() =
@@ -230,17 +250,15 @@ type ``Rule header``() =
         Assert.That(count.Value, Is.EqualTo 5)
 
     [<Test>]
-    member x.``a header-only rule has needs and an empty body``() =
-        x.Fresh ()
-        let ran = ref false
-        let failed =
-            x.Build [ "stamp" ] [
-                "dep" => recipe { ran.Value <- true }
-                "out/h.txt" ..> recipe { needs "dep" }
-                "stamp" <== [ "out/h.txt" ] ]
-        // the body writes nothing, so the target file is missing afterwards: that is the rule's business
-        ignore failed
-        Assert.That(ran.Value, Is.True)
+    member x.``a header-only file rule is a registration error``() =
+        let loads (r: ExecContext Rule) =
+            try xake { x.TestOptions with Targets = [ "none" ]; ThrowOnError = true } { rules [ r; "none" => recipe { () } ] } ; ""
+            with e -> e.Message
+        Assert.That(loads ("out/h.txt" ..> recipe { needs "dep" }), Does.Contain "rule \"out/h.txt\" has a header and no body")
+        Assert.That(loads (target "out/h.txt" { needs "dep" }), Does.Contain "rule \"out/h.txt\" has a header and no body")
+        Assert.That(loads ((fun _ -> true) ..?> recipe { needs "dep" }), Does.Contain "has a header and no body")
+        // a body, even an empty one, is a body
+        Assert.That(loads ("out/h.txt" ..> recipe { needs "dep"; () }), Is.Empty)
 
     [<Test>]
     member x.``registration errors: an unknown group in needs, an also or a group on a condition rule``() =
@@ -297,4 +315,4 @@ type ``Rule header``() =
                     Does.Contain "rule \"out/(name:*).dll\" includes ruleHeader [n] (needs \"obj/(n:*).rsp\"), which uses the group n; the rule has the groups [name]")
         Assert.That(loads ((fun _ -> true) ..?> recipe { including shared }),
                     Does.Contain "includes ruleHeader [n] (needs \"obj/(n:*).rsp\"), which uses the group n; a condition rule has no pattern and no groups")
-        Assert.That(loads ((fun _ -> true) ..?> recipe { including (ruleHeader [] { needs "obj/common.rsp" }) }), Is.Empty)
+        Assert.That(loads ((fun _ -> true) ..?> recipe { including (ruleHeader [] { needs "obj/common.rsp" }); () }), Is.Empty)

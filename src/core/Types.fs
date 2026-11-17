@@ -124,25 +124,24 @@ module DomainTypes =
           Requires: (Resource * int) list
           /// Shared headers merged in with `including`: how each is named in errors and the groups
           /// it declares, which the including rule must have.
-          Included: (string * string list) list }
+          Included: (string * string list) list
+          /// True for a header written with no body (`recipe { needs .. }`): a file rule must have
+          /// a body that writes its target, so such a rule is refused when the script loads.
+          HeaderOnly: bool }
         /// No declarations.
-        static member Empty = { Also = []; Needs = []; ContentCutoff = None; Requires = []; Included = [] }
-        /// The resources to take, each once (a resource named twice, e.g. by `requires` and
-        /// `requiring`, takes the larger number of units), in the order of their names.
+        static member Empty = { Also = []; Needs = []; ContentCutoff = None; Requires = []; Included = []; HeaderOnly = false }
+        /// The resources to take, in one order for the whole process: by name, then by creation
+        /// (two resources may share a name). A rule names each resource once (`Rule.validate`).
         member h.Locks : (Resource * int) list =
-            h.Requires
-            |> List.fold (fun (acc: (Resource * int) list) (r, n) ->
-                match acc |> List.tryFindIndex (fun (x, _) -> obj.ReferenceEquals (x, r)) with
-                | Some i -> acc |> List.mapi (fun j (x, m) -> if j = i then x, max m n else x, m)
-                | None -> acc @ [ r, n ]) []
-            |> List.sortBy (fun (r, _) -> r.ResourceName)
+            h.Requires |> List.sortBy (fun (r, _) -> r.ResourceName, r.CreationOrdinal)
         /// The two headers together: lists append, a cut-off setting of the second wins.
         static member Merge (a: RuleHeader, b: RuleHeader) =
             { Also = a.Also @ b.Also
               Needs = a.Needs @ b.Needs
               ContentCutoff = (match b.ContentCutoff with Some _ -> b.ContentCutoff | None -> a.ContentCutoff)
               Requires = a.Requires @ b.Requires
-              Included = a.Included @ b.Included }
+              Included = a.Included @ b.Included
+              HeaderOnly = a.HeaderOnly || b.HeaderOnly }
 
     /// <summary>
     /// A header to share between rules, made with `ruleHeader ["n"] { .. }` and merged into a rule
@@ -229,6 +228,10 @@ module DomainTypes =
                 | None -> ()
             for (r, units) in header.Requires do
                 if units < 1 then fail (sprintf "%s: requires %s with %d units; it takes at least 1" owner r.ResourceName units)
+            match header.Requires |> List.countBy (fun (r, _) -> r.ResourceName) |> List.filter (fun (_, n) -> n > 1) with
+            | [] -> ()
+            | (name, _) :: _ ->
+                fail (sprintf "%s requires the resource %s more than once (requires, requiring or an included header); name it once, with the units it needs: requires (%s, n)" owner name name)
 
         /// Checks the patterns of a rule (spec 7.1): every pattern parses (legacy-syntax warnings are
         /// logged once), and the outputs of a multi-output rule (`*..>` or `also`) have the same named
@@ -248,10 +251,14 @@ module DomainTypes =
                     if all.Length > 1 then PatternAst.checkOutputs all
                     let groups = PatternAst.Rule.parse main |> PatternAst.groupNames
                     checkHeader (sprintf "rule \"%s\"" main) (Some groups) header
+                    if header.HeaderOnly then
+                        fail (sprintf "rule \"%s\" has a header and no body: a file rule must have a body that writes its target. To run inputs before something else, put them in the needs of the rule that uses them, or use a phony rule (=>) with need" main)
             | FileConditionRule (_, header, _) ->
                 if not header.Also.IsEmpty then
                     fail (sprintf "a condition rule (..?>) cannot have an also (%s): it has no pattern to name a side output from" (String.concat ", " header.Also))
                 checkHeader "a condition rule (..?>)" None header
+                if header.HeaderOnly then
+                    fail "a condition rule (..?>) has a header and no body: a file rule must have a body that writes its target"
             | DelegatedRule (inner, _) -> validate inner
 
     /// How to pick among the rules that match a target.

@@ -48,6 +48,13 @@ Header arguments are evaluated when the script loads, so they are plain values: 
 string (`needs (sprintf ..)`) is fine, a value known only from the match (`m.["n"]`) is not
 available there. Anything computed from the match stays a `need` in the body.
 
+## A header needs a body
+
+A file rule must have a body that writes its target: `"out/x" ..> recipe { needs "a" }` (a header
+and nothing else) is an error when the script loads. To run inputs before something, put them in
+the `needs` of the rule that uses them, or use a phony rule (`"prepare" => recipe { do! need [..] }`).
+An explicit empty body (`recipe { needs "a"; () }`) is a body.
+
 ## The header comes first
 
 Header operations must come before the body. This is checked by the compiler:
@@ -95,14 +102,15 @@ main pattern and nothing a match cannot fill in (XP013, XP014, as for `*..>`).
 ## Locks: `requires`
 
 `requires lock` holds one unit of the resource while the body runs; `requires (lock, n)` holds `n`.
-A resource named twice (two `requires`, or `requires` and `|> requiring`) is taken once, with the
-larger number of units.
+A rule names each resource once: the same resource twice (two `requires`, `requires` and
+`|> requiring`, or an included header that brings it) is an error when the script loads, naming the
+rule and the resource. So are two different resources with the same name on one rule.
 For each target the engine:
 
 1. builds the static `needs`, without the lock;
 2. decides whether the target is up to date, without the lock; an up-to-date target never takes it;
-3. takes the lock (several in the order of their names, so two rules naming the same locks cannot
-   deadlock), yielding its CPU slot while it waits;
+3. takes the lock, yielding its CPU slot while it waits; several are taken in one order for the
+   whole build (by name, then by creation), so two rules naming the same locks cannot deadlock;
 4. runs the body and releases the lock, also when the body fails.
 
 While the lock is held, a `need` of a target that has a rule fails, as under `withResource` (it

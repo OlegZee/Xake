@@ -29,13 +29,17 @@ Step 1 implemented (local commits, see `git log`):
 - `ruleHeader ["n"] { }` (`RuleHeaderBuilder`, `Rule.share` checks declared/used groups) and
   `including h` (`RuleHeader.Included` keeps each header's name and groups for the registration
   check in `Rule.validate`).
+- Critic part 1 applied (owner, 2026-11-17): header-only file rule = registration error
+  (`RuleHeader.HeaderOnly`, checked last in `Rule.validate`); a resource named twice on a rule =
+  error (by name); locks ordered by name, then `Resource.CreationOrdinal`. M13: "Acceptance by
+  step" and a `RunSummary` counters proposal in brief.md, for the owner.
 - Verified 2026-11-17: `dotnet build src/core -c Release` 0 warnings, `dotnet test src/tests -c
-  Release` 1762 passed / 10 skipped, `dotnet fsi build.fsx -- -- build test pack` green.
+  Release` 1764 passed / 10 skipped, `dotnet fsi build.fsx -- -- build test pack` green.
 - Not yet: `also` behaviour beyond matching (step 2), the verdict move (step 3: until then static
   needs run only when the target runs).
 
 ## Next step
 
-Step 1 is reported to the orchestrator with the critic summary. On the owner's answers: accepted
-critic findings into brief.md; then step 2 (`also`: missing-output rebuild with current outputs, M1 overlap check,
+Wait for the owner: the rest of the critic triage, C3, the "Acceptance by step" proposal (restored
+`out/` option a/b/c) and the counters API. Then step 2 (`also`: missing-output rebuild with current outputs, M1 overlap check,
 `needs` naming an own `also`, missing declared output after the body = error).

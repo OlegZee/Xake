@@ -44,6 +44,18 @@ work is at the end and starts with a spike that settles the builder design.
   creation (every used group declared, every declared group used) and at registration (the including rule has
   every declared group), errors naming the header, the rule and the group. `including` is implemented with
   step 1.
+- 2026-11-17, critic part 1 ([critic.md](critic.md)):
+  - **M8:** a file rule with a header and no body (`recipe { needs .. }`) is a registration error (also for
+    `..?>`); an explicit empty body (`recipe { needs ..; () }`) is a body.
+  - **M12:** a resource named more than once on one rule (`requires` twice, `requires` + `requiring`, an included
+    header bringing it) is a registration error naming the rule and the resource, not a merge. Implementer's
+    proposal, applied: two *different* resources with the same name on one rule are the same error (errors name
+    resources by name); across rules, locks are taken by name, then by creation ordinal, a total order, so
+    same-name resources on different rules cannot deadlock. Not an error at creation: tests and libraries create
+    same-name resources legitimately (one per script, per test).
+  - **M13:** Acceptance is split by step and the contradictions resolved: proposal in "Acceptance by step"
+    below, for the owner.
+  - **m11:** `ExecOptions.ContentCutoff` may be public.
 - 2026-11-17: **step 1 starts**: the header in `recipe` and every file-rule form, static `needs`, `requires`, the
   `FileRule`/`MultiFileRule` merge as needed.
 
@@ -299,6 +311,98 @@ Measured by counters, not by timings: the run summary exposes `files hashed`, `t
   the dependent reruns (content is A, it was built from B). Same stamp, different size: dependent reruns.
 - **Empty database.** A clean run: `files hashed = 0`.
 - Old databases load; `--dump` shows output records with stamp, size, epoch and history (hash prefixes).
+
+## Acceptance by step (proposal for the owner, 2026-11-17)
+
+Replaces "Acceptance" above once approved (critic M13). Every counter named here is in the run summary below.
+
+### Step 1: header, static `needs`, `requires`, shared headers (done locally)
+
+- Header operations after `let!`/`do!`/`let`/inside `for` do not compile; a recipe with a header used inside
+  another recipe does not compile (compile cases in `src/tests/fixtures/header-neg`).
+- Registration runs no body; a header-only file rule, a missing group, an `also` or a group on `..?>`, a resource
+  named twice are registration errors naming the rule.
+- On an empty database every `needs` target has started before the body's first step; a single-path `needs` that
+  resolves to nothing fails before the body; an empty fileset does not.
+- `requires`: the lock is held around the body only; a locked rule's static needs may be rule targets.
+- A rule without a header makes the same decisions as 4.0 (the existing suite, unchanged).
+
+### Step 2: `also`
+
+- `need "out/A.pdb"` builds the rule of `out/(n:*).dll` for `out/A.dll`.
+- Deleting `out/A.pdb` alone reruns the rule; the check uses the rule's **current** outputs (an `also` added since
+  the last run counts as missing).
+- A declared output the body did not write is an error naming the rule and the output (critic M2).
+- Two rules whose outputs overlap for one target: an error naming both (critic M1).
+- A dependent of the `.pdb` reruns when it changes (stamps, as 4.0, until step 3).
+- XP013/XP014 for a bad `also`; `needs` naming an `also` of the same rule (textual): registration error.
+
+### Step 3: content cut-off
+
+Outputs changed outside the build (the contradictions, resolved). For an output whose `(stamp, size)` differs from
+its record:
+- **the record has a hash:** hash the file. Equal: the output is unchanged (no rebuild; the record takes the new
+  stamp). This is the restored-`out/` case. Different: the file was edited by hand; the producer reruns, and its
+  new output is compared with the **recorded** hash, which is the content the dependents saw: equal, the
+  dependents do not rerun; different, they rerun.
+- **the record has no hash:** nothing to compare; the producer reruns and its output starts a new epoch, so the
+  dependents rerun. The edited file is never pre-hashed (it is not what the dependents saw).
+- So Part 2 ("if the record has a hash, equal content is unchanged") and Part 3 ("changed outside: no pre-hash,
+  it is a change") are the two halves of this rule, not a conflict.
+- **Restored `out/` without hashes rebuilds.** Outputs get a hash only at their first rebuild (lazy, the pre-hash),
+  so a cache of outputs that were built once and never rebuilt has no hashes. Options for the owner: (a) accept
+  for 5.0 and say so (recommended: no cost for builds that never restore); (b) hash every output after its body
+  (one hash per built output, every build); (c) a command `--hash-outputs` that hashes the current outputs, run
+  before saving a cache.
+
+Acceptance:
+- **Control file (A→B→A):** as in "Acceptance" above (on: 100 built; off: not requested, route rewritten; on: the
+  route returns to A's epoch, `targets rerun` excludes the 100; a further no-change run: `files hashed = 0`).
+  Control: requested in the `off` run, they rebuild in both later runs.
+- **Outputs:** a dependee rebuilt with identical bytes: dependents not rerun from its first rebuild; different
+  bytes: rerun.
+- **Hand-edited output:** without a hash: producer and dependents rerun; with a hash and a rebuild that reproduces
+  the recorded bytes: producer reruns, dependents do not.
+- **Restored output with a fresh time and the recorded hash:** nothing reruns.
+- **Sources:** touched twice without an edit: the second time nothing reruns; a following no-change run hashes 0
+  files; with `--content-cutoff=off` the dependents rerun.
+- **Speculation:** a dependent whose body stops needing a recorded dependency that now fails: reruns, the build
+  succeeds (exit code 0); recorded dependencies after the first changed group are not built. (C3, phony targets in
+  speculation, waits for the owner.)
+- **Non-monotonic stamps:** A at T10 → B at T20 (dependent built) → A restored at T10 → `touch` to T30: the
+  dependent reruns. Same stamp, different size: reruns.
+- **Empty database:** a clean run, `files hashed = 0`.
+- **`--content-cutoff=off`:** the same reruns as 4.0 on named scenarios (the StaleArtifactDep, MiscTests rebuild
+  cases and the control-file control), recorded as expected target lists (critic M3).
+- **Old databases:** 0.4-0.6 load; a no-change run right after the upgrade reruns 0 targets (critic M11);
+  `--dump` shows output records with stamp, size, epoch, history (hash prefixes).
+
+### Steps 4-5: plan, `--dryrun`, `produces`
+
+- `--dryrun` lists the static closure (rules, `also`, `needs`) and the recorded dynamic part; for cut-off it
+  reports what may rerun.
+- The progress estimate of a first run uses the static closure.
+- `produces`: a later run resolves a `need` of a produced path by the database; the mapping disappears when the
+  producer no longer produces it.
+
+### Counters: the run summary (proposal)
+
+```fsharp
+/// What a run did, for the log and for tests.
+type RunSummary =
+    { TargetsRun: int          // bodies executed
+      TargetsSkipped: int      // up to date
+      CutOff: int              // rebuilt with the same content: dependents not rerun
+      FilesHashed: int
+      HashTime: System.TimeSpan
+      TasksScheduled: int }    // pool tasks, for the no-op cost (critic M4)
+```
+
+- Logged at the end of every run at `Message` level, one line: `targets run 3, skipped 120, cut-off 2, files hashed
+  5 (12 ms)`.
+- Readable by a script and by tests: `ExecOptions.OnSummary: RunSummary -> unit` (default: nothing), called once at
+  the end of the run; the engine mode (`XakeEngine`) gets `LastSummary` after each `Demand`.
+- Steps 1-2 fill `TargetsRun`, `TargetsSkipped`, `TasksScheduled`; step 3 the rest.
 
 ## Order of work
 

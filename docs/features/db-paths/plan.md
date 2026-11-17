@@ -1,6 +1,6 @@
 # Plan: compact, relocatable paths in the build database (database 0.7)
 
-Status: proposal for the owner (2026-11-17). Nothing is implemented. Brief: [brief.md](brief.md) (engine facts from
+Status: questions answered by the owner 2026-11-17 (brief.md "Decisions"); critic review next. Nothing is implemented. Brief: [brief.md](brief.md) (engine facts from
 `43706d3`); checked here against the sources at `4ece63b` (`feature/dep-cutoff`, step 1).
 
 ## Where the brief and the sources differ
@@ -76,13 +76,18 @@ format:
 ## Roots
 
 - Roots of a run: `$(ProjectRoot)` = `ExecOptions.ProjectRoot` (full, normalized), always; plus
-  `ExecOptions.PathRoots : (string * string) list` (name -> absolute path), new, also on `EngineOptions`.
-  Checked at launch: a name is `[A-Za-z0-9_]+` and not `ProjectRoot`, names unique, a value absolute (made full and
-  normalized); a violation is a launch error like the variable errors.
+  `ExecOptions.PathRoots` (new, also on `EngineOptions`) and the `pathRoot` script operation (Q2), no command line.
+  A root's value is an absolute path, a path relative to `ProjectRoot`, or a variable (`fromVar "NAME"`, Q3: the
+  launch-time value; unset = the root is undeclared this run). Shape, e.g.
+  `PathRoots : (string * RootValue) list` with `RootValue = RootPath of string | RootVar of string`.
+- A relative root is resolved against `ProjectRoot` for this run and recorded as relative (its `RootRec` holds the
+  relative text), so it moves with the project.
+  Checked at launch: a name is `[A-Za-z0-9_]+` and not `ProjectRoot`, names unique, a value made full and
+  normalized; a violation is a launch error like the variable errors.
 - Split: the longest root whose path is a prefix of the file's directory on a separator boundary; else the
   file-system root (`Path.GetPathRoot`). Comparison by `Target`'s rule (ordinal on Unix, ignore-case on Windows).
 - Load: a root `DirRec` resolves to its value in this run; `/`, `C:\` resolve to themselves. A `ResultRec` that names
-  a file under a root this run does not declare is **stale**: it is not loaded, and the targets it names that are
+  a file under a root this run does not declare is **stale** (Q4): it is not loaded, and the targets it names that are
   resolvable are removed from the map (so an older record of the same target cannot win). The run does not fail;
   those targets rebuild. Counted in the Info line.
 - `RootRec`: on the first `Store` of a run, if a named root's value differs from the last `RootRec` for it (or there
@@ -109,7 +114,8 @@ format:
 
 ## Display and diagnostics
 
-- A loaded `File` is `T (name, FileInfo fullPath)` with `name` per Q1 (proposal: the full path, as today).
+- A loaded `File` is `T (fullPath, FileInfo fullPath)` (Q1: `Name` is the full path, as in 4.0). Root-relative
+  display in logs and progress is a separate later feature.
 - `--dump` prints paths through a formatter that shows the root: `$(ProjectRoot)/src/a.cs`, `$(NAME)/rest`, else
   absolute.
 - Info at open: `database: <n> records, <d> dirs, <f> files, <size>`; plus `root ... moved` and `<k> stale records
@@ -146,7 +152,11 @@ format:
 6. Verify: `dotnet build src/core -c Release` 0 warnings, `dotnet test src/tests -c Release`,
    `dotnet fsi build.fsx -- -- build test pack`.
 
-## Open questions for the owner
+## Questions (answered 2026-11-17, see brief.md "Decisions")
+
+Q1 stored relative to roots, `Name` stays full, display later; Q2 option + `pathRoot`, relative root paths allowed
+and recorded relative; Q3 `fromVar` roots; Q4 not loaded; Q5 `BaseDir` stays a string; Q6 one shared 0.7, tags 4-15
+for dep-cutoff. The original questions follow.
 
 - **Q1. Name of a loaded `File`.** The brief wants it relative to its root so logs do not show long absolute paths,
   and equal to the name of the same target made by the script. In the sources a script target's `Name` is already

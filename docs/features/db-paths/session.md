@@ -7,12 +7,16 @@ as-is 2026-11-17; engine facts in it are from `43706d3`, the sources win). Share
 
 ## Where things stand (2026-11-17)
 
-Plan and open questions in [plan.md](plan.md), reported to the orchestrator; nothing implemented. The plan lists
-six differences between the brief and the sources (target names already absolute, no db dump, three disagreeing
-case rules, `Fileset.BaseDir`, path-valued variables) and questions Q1-Q6.
+Plan in [plan.md](plan.md); owner answered Q1-Q6 (brief.md "Decisions"). Fresh-eyes critic (Fable) in
+[critic.md](critic.md): 2 critical, 8 major, 12 minor, owner questions Q-A..Q-I. Implementer checked C1 against
+`Database.fs` (the read loop keeps results read before a failure, deletes the file and does not rewrite them;
+harmless in 0.6, a dangling-id corruption in 0.7): it holds. Nothing implemented.
+
+Implementer's leaning for the triage: C1 length-framed records with salvage of the readable prefix (Q-C); C2 ids
+never reused, stop appending after a failed `Write`; M6 a record body never changes under its tag (dep-cutoff's
+result takes a tag from 4-15, Q-D); M4 roots checked before `openDb`; M5 an undeclared root keeps its records
+through rewrites (Q-A).
 
 ## Next step
 
-Wait for the owner's answers to Q1-Q6. Then a fresh-eyes critic subagent (model Fable) on brief.md, plan.md and the
-sources (`Database.fs`, `File.fs`, `Fileset.fs`, `Types.fs`, `ExecCore.fs`, `ScriptRunner.fs`), findings to
-`critic.md`; owner triage; then docs, then code in the plan's order.
+Wait for the owner's triage of critic.md (Q-A..Q-I). Then docs, then code in the plan's order.

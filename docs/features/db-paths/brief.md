@@ -4,6 +4,23 @@ Audience: the agent working in the Xake repository. Xake is public, so this brie
 consumer. Engine facts are taken from the Xake sources at 43706d3: `src/core/Database.fs`, `Fileset.fs`, `File.fs`,
 `Pickler.fs` and `ExecTypes.fs`.
 
+## Decisions (owner)
+
+- 2026-11-17, answers to the plan's questions ([plan.md](plan.md) Q1-Q6):
+  - **Q1:** in the file every path under a root is stored relative to that root (as planned). In memory a loaded
+    `File` keeps its full path as `Name` (as in 4.0); root-relative display in logs, progress and `--dump` is a
+    separate later feature. This supersedes §5 "Display names of loaded targets".
+  - **Q2:** roots are declared through `ExecOptions.PathRoots` and a `pathRoot` operation of the script builder; no
+    command-line form. A root's path may also be given relative: it is resolved against `ProjectRoot` and recorded
+    as relative, so it moves together with the project.
+  - **Q3:** a root may take its value from a variable (`fromVar`): the launch-time value; an unset variable makes it
+    an undeclared root.
+  - **Q4:** records naming a root this run does not declare (one declared in an earlier run, the script since edited
+    or the variable unset) are not loaded; those targets rebuild, the run does not fail.
+  - **Q5:** the implementer's call: `Fileset.BaseDir` of `GetFiles` stays a string (an absolute `BaseDir` is not
+    relocated), documented.
+  - **Q6:** one shared 0.7 with dep-cutoff: record tags 4-15 are reserved for its records; no 0.8.
+
 ## Problem
 
 The database stores every file path as a full string, once per reference:

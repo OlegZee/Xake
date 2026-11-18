@@ -31,7 +31,7 @@ compile error.
 | `also "pattern"` | another output of the rule, besides the main one (see [Side outputs](#side-outputs-also)) |
 | `needs "pattern"`, `needs ["p1"; "p2"]` | inputs every run needs (see [Static needs](#static-needs-needs)) |
 | `requires lock`, `requires (lock, n)` | a resource the engine holds while the body runs (see [Locks](#locks-requires)) |
-| `noContentCutoff` | every rebuild of this rule's outputs counts as a change for its dependents (stored on the rule; content cut-off uses it) |
+| `noContentCutoff` | every rebuild of this rule's outputs counts as a change for its dependents (stored on the rule; takes effect with content cut-off, later in 5.0) |
 | `contentCutoff` | the default; exists for symmetry |
 | `including h` | the items of a shared header `h` (see [Shared headers](#shared-headers-ruleheader-and-including)) |
 

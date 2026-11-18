@@ -4,7 +4,7 @@ Specification: [brief.md](brief.md). Ported from `archive/xake5-attempt1` (dep-c
 
 | Item | Status |
 |---|---|
-| Design report to the orchestrator (port, changes, line budget) | done; approved 2026-11-18 |
+| Design (port, changes, size) | approved 2026-11-18 |
 | Header types, one file-rule case, validation (M8, M12, XP013/XP014, own-output needs) | done |
 | Header in `recipe` and every file-rule form; `ruleHeader` + `including`; `X.RuleWith` | done |
 | `execOne`: needs -> locks -> body on a fresh result; `headerDeps @ bodyDeps`, `StaticCount` | done |
@@ -17,7 +17,6 @@ Specification: [brief.md](brief.md). Ported from `archive/xake5-attempt1` (dep-c
 
 ## Later (for the owner)
 
-- Size: core 519 changed lines (424 added, 95 removed) against the 452 budget; the first attempt's
-  in-scope header code was 468 by the same count. The M9 hook (`currentRule`, `selectRule`,
-  `StaticKey`, the `getChangeReasons` argument) is about 55 of them and was not in the first
-  attempt's step 2. Possible trims are cosmetic (doc comments, `SharedHeader` accessors).
+- Hashing, the cut-off verdict and `noContentCutoff` taking effect: phase 3.
+- Static `needs` built before the verdict (the first attempt's order "needs, verdict, lock"): with
+  phase 3's cut-off; phase 2 decides first (phase 1's transitive rule), then builds the needs.

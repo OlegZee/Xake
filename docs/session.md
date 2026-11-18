@@ -4,8 +4,9 @@
 
 5.0 is built in three phases, one squash-merged PR each, the 5.0 tag only at the end. Phase 1
 (`File`, database 0.7, epochs) is OlegZee/Xake#141, folder
-[features/db-paths-simple](features/db-paths-simple/session.md); phase 2 (rule header, `also`) and
-phase 3 (hashing and content cut-off) follow. The release notes collect it under "5.0.0
+[features/db-paths-simple](features/db-paths-simple/session.md); phase 2 (rule header, `also`,
+`StaticCount`, M9 in the verdict) is in [features/rule-header](features/rule-header/session.md);
+phase 3 (hashing and content cut-off) follows. The release notes collect it under "5.0.0
 (unreleased)".
 
 ## State of `dev`: the 4.0 line (2026-10-31, pattern module 2026-11-03)

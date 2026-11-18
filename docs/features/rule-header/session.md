@@ -1,15 +1,14 @@
 # Session: rule-header (Xake 5.0 phase 2)
 
-**Where things stand (2026-11-18).** Branch `feature/rule-header` from `origin/dev` `b6aa7c1`.
-Design approved by the owner ([brief.md](brief.md), "Decisions"); implemented in local commits,
-not pushed. Checked: core Release 0 warnings; macOS 1828 tests green; `build.fsx build test pack`
-green; Windows VM (`ssh win11`, branch moved by a git bundle) core 0 warnings, 1803 passed, 21
-skipped. Core size: 519 changed lines (424 added, 95 removed) against the 452 budget; see the
-tracker's "Later".
+**Where things stand (2026-11-18).** Implemented and pushed as branch `feature/rule-header` (from
+`dev` at `b6aa7c1`); PR to `dev`, squash. The specification as built is [brief.md](brief.md); work
+items and the Later list in [tracker.md](tracker.md). Checked before the push: core Release 0
+warnings; 1828 tests green on macOS; `build.fsx build test pack` green; Windows VM (`ssh win11`)
+core 0 warnings, 1803 passed, 21 skipped. The owner accepted the size (519 changed core lines).
 
-**Next step.** The owner decides on the size (accept, or trim) and on push / PR (`--repo
-OlegZee/Xake`, base `dev`, squash). No push, no PR without the owner.
+**Next step.** CI on the PR, then the owner's squash-merge. After the merge, remove the worktree
+and branch (the owner's action); phase 3 (hashing and content cut-off) in a new feature folder.
 
 | PR | Branch | Worktree |
 |---|---|---|
-| (none yet) | `feature/rule-header` | `.claude/worktrees/dep-cutoff-dabef6` |
+| (opened with the push) | `feature/rule-header` | `.claude/worktrees/dep-cutoff-dabef6` |

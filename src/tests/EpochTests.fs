@@ -108,12 +108,22 @@ type ``Epoch tests``() =
                 phony "always" (recipe { do! alwaysRerun () })
                 start
             }
-        engine.Demand("always").Wait()
-        let first = (x.Results ()).Status.[PhonyAction "always"].Epoch
-        engine.Demand("always").Wait()
-        let second = (x.Results ()).Status.[PhonyAction "always"].Epoch
-        engine.StopAsync().Wait()
-        Assert.AreEqual(first + 1L, second)
+        // the agent stores a result after the demand completes: read the file once the engine
+        // is stopped (the database closed), and stop it even when a demand fails, so that its
+        // lock never outlives the test
+        try
+            engine.Demand("always").Wait()
+            engine.Demand("always").Wait()
+        finally
+            engine.StopAsync().Wait()
+        let epochs =
+            Storage.readRecords x.TestOptions.ProjectRoot ".xake"
+            |> Seq.choose (function
+                | Storage.DbRecord.Result r when r.Targets = [ PhonyAction "always" ] -> Some r.Epoch
+                | _ -> None)
+            |> List.ofSeq
+        Assert.AreEqual(2, epochs.Length)
+        Assert.AreEqual(epochs.[0] + 1L, epochs.[1])
 
     [<Test>]
     member x.``a moved project keeps its database: nothing is rebuilt``() =
@@ -193,10 +203,12 @@ type ``Epoch tests``() =
                 phony "fast" (recipe { do! alwaysRerun () })
                 start
             }
-        let slow = engine.Demand "slow"
-        let fast = engine.Demand "fast"
-        System.Threading.Tasks.Task.WaitAll [| slow; fast |]
-        engine.StopAsync().Wait()
+        try
+            let slow = engine.Demand "slow"
+            let fast = engine.Demand "fast"
+            System.Threading.Tasks.Task.WaitAll [| slow; fast |]
+        finally
+            engine.StopAsync().Wait()
         let db = x.Results ()
         Assert.AreNotEqual(db.Status.[PhonyAction "slow"].Epoch, db.Status.[PhonyAction "fast"].Epoch)
 

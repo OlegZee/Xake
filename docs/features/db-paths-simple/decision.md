@@ -233,6 +233,53 @@ size and `changed`.
 - `dotnet build src/core -c Release`: 0 warnings; `dotnet test src/tests -c Release`: green;
   `dotnet fsi build.fsx -- -- build test pack`: green.
 
+## Amendments after the critic (2026-11-18)
+
+Correctness clarifications within the decisions above, from [critic.md](critic.md). Where they
+differ from the sections above, they win.
+
+- **A1, recording re-stats** (critic 1). When a body records `FileDep f` (also each file of a
+  fileset result), `f` is statted again even if it was observed in this run. If the stat moved and
+  no other body has recorded `f` in this run: `changed` = the newest epoch (A2), append the
+  `FileRec`. If another body already recorded `f` in this run: leave the `FileRec` (the next run
+  sees the move; both dependents rerun). Observations made only by a verdict stay cached.
+- **A2, epoch hand-out** (critic 2, 3). Every `Scheduler.newRun` takes the next epoch: each target
+  group in `runTargets`, each `demandTarget` (setup, teardown, engine `Demand`). The observed set
+  and `Spellings` are cleared exactly when the epoch advances. Runs may overlap in engine mode
+  (`Demand` of different names): `Observe` always stamps `changed` with the newest epoch handed
+  out, and a result takes the epoch captured in its run context when its task started.
+- **A3, delegated rules** (critic 4). A result produced by the body (`bodyThunk`) gets the run's
+  epoch. A result returned without the body running keeps the epoch of the result already in the
+  local database for that target (the run's epoch if there is none); a foreign `Epoch` is never
+  stored. On `Store`, dependency files without a `FileRec` are observed. `docs/delegated.md` says so.
+- **A4, write failures** (critic 5). A failed `Write` stops appends until the database is closed
+  (in engine mode they do not resume at the next run). A pickling failure (nothing written)
+  discards the ids it allocated and the agent continues; `AgentFailureTests` "survives a failed
+  store" keeps passing.
+- **A5, lock** (critic 6). The lock is taken first: `--resetdb` (today `cleanupDb` before
+  `openDb`) and the `.bak` restore run under it (for example `openDb` takes the reset flag, or
+  `cleanupDb` takes the lock; the smaller change). The lock file is never deleted. A failed
+  `openDb` releases it. Readers open with `FileShare.ReadWrite ||| FileShare.Delete`; a file that
+  is missing or short during a compaction gives an empty or shorter sequence, no exception.
+  Release note: a recipe that starts Xake on the same project root waits 30 s and fails.
+- **A6, roots and paths** (critic 7). `ProjectRoot` is normalised once at launch with
+  `Path.collapse`. `collapse` upper-cases a Windows drive letter (`c:` -> `C:`) for every path.
+  `File.display` tests the root prefix on a segment boundary (`/work/proj` is not a prefix of
+  `/work/proj2/a.c`). On Windows `File.make` resolves `\foo` (no drive) and `C:foo` (drive-relative)
+  with `Path.GetFullPath` before `collapse`.
+- **A7, upgrade** (critic 8). A file's converted `FileRec` takes the stamp recorded by the result
+  with the latest `Built` (not the largest time). An `ArtifactDep2` stamp of `DateTime.MinValue`
+  counts as no stamp (`Epoch = 0`). On Linux an upgraded `GetFiles` is re-scanned ignoring case;
+  with case variants on disk its dependent reruns once (said in the test and the release note).
+- **A8, the rest of 1c** (critic 9). `noopDb` implements `Observe`, `Files` and epochs (no file, no
+  lock). `--dump` and `--dryrun` observe in memory only and append nothing. The verdict keeps
+  today's cases "No dependencies", "Not built yet" and "target file does not exist". When a
+  multi-output rule ran, all its file targets are re-observed.
+- **A9, two spellings and the case flag** (critic 10). The check covers file targets that matched
+  a rule (not plain files passing through `execOne`) and file dependencies; phony names are
+  excluded and never share the key space with paths. The `PatternMatch` compile cache key includes
+  the case flag.
+
 ## Budget
 
 `Database.fs` about +225 lines, core about +330, tests about +350 (estimates from design.md;

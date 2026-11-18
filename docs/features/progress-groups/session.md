@@ -1,6 +1,6 @@
 # Session: progress-groups
 
-Branch `feature/progress-groups`, from `dev` at fa5b33b. Not pushed, no PR.
+Branch `feature/progress-groups`, from `dev` at fa5b33b. PR [OlegZee/Xake#145](https://github.com/OlegZee/Xake/pull/145), open into `dev`.
 
 **Where things stand (2026-11-19).** The owner chose 1A + 2C + 3A ([brief.md](brief.md)); it is
 implemented, documented and tested (`src/tests/StepTimeTests.fs`); macOS release build 0 warnings,
@@ -17,4 +17,4 @@ What changed in code:
   `group 'names' done in N s` at `Message`.
 - A task skipped after its verdict posts `TaskComplete`.
 
-**Next step.** The owner's word to push and open the PR into `dev` (squash).
+**Next step.** CI on the PR, the owner's review, squash merge into `dev`; then the worktree removal command to the owner.

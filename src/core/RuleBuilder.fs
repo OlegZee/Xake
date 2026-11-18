@@ -8,13 +8,13 @@ module RuleBuilder =
     /// `target "p" { .. }` and `targets ["p"; "q"] { .. }`: a file rule; the body may start with a
     /// header (`also`, `needs`, `requires`, `noContentCutoff`).
     type FileRuleBuilder(patterns: string list) =
-        inherit RecipeBuilder()
+        inherit RuleRecipeBuilder()
         member __.Run(body: Recipe<ExecContext, unit>) : ExecContext Rule = FileRule (patterns, RuleHeader.Empty, body)
         member __.Run(Headed (header, body): Headed<ExecContext>) : ExecContext Rule = FileRule (patterns, header, body)
 
     /// `command "name" { .. }`: a phony rule that always runs; no header.
     type CommandBuilder(name: string) =
-        inherit RecipeBuilder()
+        inherit RuleRecipeBuilder()
         member __.Run(expr: Recipe<ExecContext, unit>) : ExecContext Rule =
             PhonyRule (name, recipe {
                 do! expr

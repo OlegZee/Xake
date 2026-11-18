@@ -53,6 +53,7 @@
     <Compile Include="WorkerPool.fs" />
     <Compile Include="Progress.fs" />
     <Compile Include="ExecTypes.fs" />
+    <Compile Include="RuleMatch.fs" />
     <Compile Include="XakeScript.fs" />
     <Compile Include="DependencyAnalysis.fs" />
     <Compile Include="ExecCore.fs" />

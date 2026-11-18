@@ -32,13 +32,14 @@ A rule with groups reads them by name, as strings:
 
 ```fsharp
 "out/(cfg:*)/(fwk:*)/(name:*).dll" ..> recipe {
-    let! fwk = getRuleMatch "fkw"       // a typo: compiles, runs, gives ""
+    let! m = matched
+    let fwk = m["fkw"]                  // a typo: compiles, fails only when the rule runs
     ...
 }
 ```
 
-`getRuleMatch` answers `""` for a name the pattern does not have, so the typo above surfaces as a
-wrong path far from its cause. The other direction has the same trouble: a rule needing that dll
+The typo above is found only when the rule runs (with the obsolete `getRuleMatch` it was worse: a
+silent `""` and a wrong path far from its cause). The other direction has the same trouble: a rule needing that dll
 writes `$"out/{cfg}/{fwk}/{name}.dll"` by hand, and the string drifts from the pattern the day one
 of them changes.
 
@@ -152,8 +153,8 @@ let ruleB =
     }
 ```
 
-`X.rule { ... }` is `recipe { ... }` plus `let! m = matched`, which gives the groups of the rule
-being run. `let! { name = n } = matched` destructures. The case-only pair `Rule` (form D) and
+`X.rule { ... }` is `recipe { ... }` where `let! m = matched` gives the groups of the rule being
+run as the record (in a plain `recipe { }` it gives a `RuleMatch`, read by name: `m["name"]`). `let! { name = n } = matched` destructures. The case-only pair `Rule` (form D) and
 `rule` (form B) is intentional.
 
 ## Generating paths
@@ -281,7 +282,7 @@ Target<AsmG> "out/(cfg:*)/(fwk:*)/(name:*).dll": the values cfg = "Release", fwk
 
 | When | What |
 |---|---|
-| compile time | a misspelt group (`m.fkw`), a missing or unknown field in `Format { ... }` or in the outputs record, the record of another target, `matched` outside a rule, `m.name` in a `Command<unit>` rule, the `open` order |
+| compile time | a misspelt group (`m.fkw`), a missing or unknown field in `Format { ... }` or in the outputs record, the record of another target, `m.name` in a `Command<unit>` rule, the `open` order |
 | script start | the record against the pattern (fields, types), the pattern itself (every `XPnnn` error: unclosed group, reserved character, a class or braces outside a group), the outputs' group sets, the outputs record |
 | run time | the values given to `Format`/`Paths`/`For` against the pattern (`null`, a value the pattern would not match back) |
 
@@ -304,10 +305,10 @@ The compile-time cases are tested with `dotnet fsi --typecheck-only`
 | | String API | `Xake.Typed` |
 |---|---|---|
 | declare | `"out/(name:*).o" ..> recipe { }` | `let X = Target<G> "out/(name:*).o"` |
-| read a group | `let! n = getRuleMatch "name"` (`""` when the name is unknown) | `m.name`, checked by the compiler |
+| read a group | `let! m = matched`, `m["name"]` (an unknown name fails the task) | `m.name`, checked by the compiler |
 | path for `need` | `$"out/{n}.o"` written by hand | `X.Format { name = n }` |
 | several outputs | `[ ".dll"; ".xml" ] *..> ...`, groups read by name | `Target<G, O>`, `X.Make m` gives the labelled paths |
-| group name mismatch | silent `""` at run time | compile error / error at script start |
+| group name mismatch | an error when the rule runs | compile error / error at script start |
 | phony with groups | `"lock::(n:*)" => recipe { }` (no `AlwaysRerun`) | `Command<G>` (always runs) |
 | patterns built at run time | yes | yes (checked where created) |
 | sharing a target between scripts | strings kept in sync | a record and a value |
@@ -317,11 +318,12 @@ has groups or where other rules need to name its outputs.
 
 ## Migration
 
-### `getRuleMatch` stays
+### The string rules stay
 
-`getRuleMatch`, `getRuleMatches` and the string rules (`..>`, `*..>`, `target`, `targets`,
-`command`) are **not deprecated** and behave as before (an unknown group still gives `""`).
-Migrate where it helps; nothing forces it.
+The string rules (`..>`, `*..>`, `target`, `targets`, `command`) and `getRuleMatches` are **not
+deprecated**. `getRuleMatch` is obsolete (5.0): `let! m = matched`, then `m["name"]`, reads a group
+and fails on an unknown name instead of giving `""`. Migrate to typed targets where it helps;
+nothing forces it.
 
 ### A single-file rule with groups
 
@@ -329,9 +331,8 @@ Before:
 
 ```fsharp
 "out/(cfg:*)/(fwk:*)/(name:*).dll" ..> recipe {
-    let! cfg = getRuleMatch "cfg"
-    let! fwk = getRuleMatch "fwk"
-    let! name = getRuleMatch "name"
+    let! m = matched
+    let cfg, fwk, name = m["cfg"], m["fwk"], m["name"]
     do! need [ $"obj/{cfg}/{fwk}/{name}.cs" ]
     ...
 }
@@ -362,8 +363,8 @@ Before:
 
 ```fsharp
 [ "out/(fwk:*)/(lib:*).dll"; "out/(fwk:*)/(lib:*).xml" ] *..> recipe {
-    let! fwk = getRuleMatch "fwk"
-    let! lib = getRuleMatch "lib"
+    let! m = matched
+    let fwk, lib = m["fwk"], m["lib"]
     let dll, xml = $"out/{fwk}/{lib}.dll", $"out/{fwk}/{lib}.xml"
     ...
 }
@@ -383,8 +384,8 @@ Before:
 
 ```fsharp
 "lock::(name:*)::(cfg:*)" => recipe {
-    let! name = getRuleMatch "name"
-    let! cfg = getRuleMatch "cfg"
+    let! m = matched
+    let name, cfg = m["name"], m["cfg"]
     do! alwaysRerun ()
     ...
 }

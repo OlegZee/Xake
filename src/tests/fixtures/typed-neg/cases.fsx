@@ -35,8 +35,8 @@ let r = Lib.Rule <| fun m -> recipe { printfn "%s" (Lib.Make m).pdb }
 let L = Target<LibG, LibOut> { dll = "out/(fwk:*)/(lib:*).dll" }
 //#case another-patterns-record FS0001
 let r = Asm.Rule <| fun (m: LibG) -> recipe { printfn "%s" m.lib }
-//#case matched-outside-a-rule FS0041
-let r = recipe { let! m = matched in printfn "%A" m }
+//#case matched-in-a-plain-recipe-is-untyped FS0039
+let r = recipe { let! m = matched in printfn "%s" m.name }
 //#case unit-command-has-no-groups FS0039
 let r = Clean.Rule <| fun m -> recipe { printfn "%s" m.name }
 //#case typed-opened-before-xake FS0717

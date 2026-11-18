@@ -229,6 +229,7 @@ module ScriptFuncs =
     /// </summary>
     /// <param name="key">Name of the capture group to retrieve</param>
     /// <returns>Recipe that returns the matched value or empty string</returns>
+    [<System.Obsolete("Use `let! m = matched`, then m[\"name\"] (an unknown name fails the task; m.TryFind for an optional one); to be removed in a later release")>]
     let getRuleMatch key = recipe {
         let! groups = getRuleMatches()
         return groups |> Map.tryFind key |> function |Some v -> v | None -> ""

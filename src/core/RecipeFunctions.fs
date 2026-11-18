@@ -3,6 +3,9 @@ module Xake.Recipe
 
 open Xake
 
+/// The plain builder: `RuleRecipe.recipe` is defined after `ExecContext`.
+let private recipe = RecipeBuilder()
+
 /// <summary>
 /// Ignores action result in case task returns the value but you don't need it.
 /// </summary>

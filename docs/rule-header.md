@@ -13,7 +13,7 @@ cut-off (`noContentCutoff`). The body after it is the recipe as before.
     needs ["src/(n:*)/**/*.cs"; "obj/(n:*).res"]
     requires cscLock                     // taken by the engine around the body
     // ---- the body, as before
-    let! m = getRuleMatches ()
+    let! m = matched
     do! need [ ... ]                     // a dynamic need: still allowed
 }
 ```
@@ -46,7 +46,7 @@ A condition rule (`..?>`) has no pattern, so it has no groups: its `needs` are p
 filesets, and it cannot have an `also` (there is nothing to name the side output from).
 
 Header arguments are evaluated when the script loads, so they are plain values: a computed
-string (`needs (sprintf ..)`) is fine, a value known only from the match (`m.["n"]`) is not
+string (`needs (sprintf ..)`) is fine, a value known only from the match (`m["n"]`) is not
 available there. Anything computed from the match stays a `need` in the body.
 
 ## A header needs a body
@@ -150,8 +150,8 @@ recipe value does that nothing else fixes):
 ```fsharp
 let compile : Headed<ExecContext> = recipe {
     needs "obj/(n:*).rsp"
-    let! m = getRuleMatches ()
-    do! cscBody m.["n"]
+    let! m = matched
+    do! cscBody m["n"]
 }
 "out/(n:*).dll" ..> compile
 "tests/(n:*).dll" ..> compile
@@ -172,8 +172,8 @@ let cscHeader = ruleHeader ["n"] {
 "out/(n:*).dll" ..> recipe {
     including cscHeader              // needs obj/<n>.rsp, takes cscLock when the target runs
     also "out/(n:*).pdb"
-    let! m = getRuleMatches ()
-    do! cscBody m.["n"]
+    let! m = matched
+    do! cscBody m["n"]
 }
 ```
 

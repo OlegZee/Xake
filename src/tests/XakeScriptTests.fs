@@ -364,14 +364,14 @@ type ``XakeScript tests``() =
     [<TestCase("subd1/x86-a.ss", "*/(plat:*)-a.ss", "plat", ExpectedResult = "x86", TestName="groups in various parts")>]
     [<TestCase("(abc.ss", @"[(]*.ss", "plat", ExpectedResult = "", TestName="Escaped brackets")>]
     [<TestCase("filename.ss", "*.ss", "1", ExpectedResult = "filename", TestName="Match wildcards")>]
-    member x.``getRuleMatch() matches part``(tgt,mask,tag) =
+    member x.``matched reads a part``(tgt,mask,tag) =
 
         let resultValue = ref ""
 
         do xake {x.TestOptions with Targets = [tgt]} {
             rule (mask ..> recipe {
-                let! value = getRuleMatch tag
-                resultValue := value
+                let! m = matched
+                resultValue := m.TryFind tag |> Option.defaultValue ""
             })
         }
 

@@ -97,7 +97,8 @@ let executor = makeLocalExecutor (Resource.newResource "dispatch" BUDGET)
 
 let suiteRule =
     ("testsuite-(num:*)" => recipe {
-        let! num = getRuleMatch "num"
+        let! m = matched
+        let num = m["num"]
         let name = sprintf "testsuite-%s" num
         let n = int num
         let seconds = 5 + (n % 6)

@@ -19,6 +19,9 @@
 | Tests + size measurement (>= 5x) + explicit real-file test | done (steps 3+4) |
 
 | Amendments A1-A9 (critic, 2026-11-18) | done (follow-up commit) |
+| B1 functional path table, B2 `beginRun` / epoch in `ExecContext`, B3 `LegacyRead` (owner 2026-11-18) | done (one commit: the three rewrite the same code) |
+| Review fixes R1, R2, R3, R4, R7; simplifications a-j; review test gaps | done (A4 write failure untested: no way to inject a failing write) |
+| R6 `Path.matches` case mode | waits for the owner |
 
 ## Later (for the owner)
 

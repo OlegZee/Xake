@@ -20,35 +20,33 @@ holds the absolute path (`Name` absolute), `Built` kept, filesets case-insensiti
 absolute path" and that phase 1 has one root (`openDb root`, `ProjectRoot` only; the root number in
 `DirRec` is the only room kept for more roots). The design was **approved on 2026-11-18**; the normative spec is [decision.md](decision.md).
 
-**Implementation (2026-11-18, separate session).** Steps 1 (docs), 2 (1a) and 3+4 (1b database
-0.7 and 1c epochs, one commit: 0.7 stores dependencies by id without a stamp, so the 4.0 verdict
-cannot run on it) are committed; all tests green. The amendments A1-A9 are a follow-up commit. `build.fsx build test pack` is
-green; the explicit size test ran on a real 0.6 database. **Next step:** the review by the
-starting session (fixes as follow-up commits on this branch), then push and the PR.
+**Implementation (2026-11-18, separate session).** Phase 1 with A1-A9, then B1-B3, the review
+fixes R1-R4 and R7, the simplifications a-j and the review's test gaps are committed; all tests
+green, `build.fsx build test pack` green. **Next step:** the starting session reviews again; R6
+(`Path.matches` case mode) waits for the owner; then push and the PR.
 
 Measured (2026-11-18): synthetic 1000 results x 30 file dependencies (mean path 118 B): 0.6
 3 960 017 B, 0.7 196 590 B (20.1x). A real 0.6 database of 88 564 308 B (84.5 MB) upgrades to
 3 069 697 B (28.9x; the upgrade writes the live results only: 1 932 results, 24 687 files) in
-1.3 s.
+2.9 s (1.3 s with the mutable path table of the first version: the immutable maps of B1).
 
 Notes from the implementation:
-- `Path.matches` (public mask test) keeps its 4.0 case mode (ignore-case on Windows only); the
-  spec lists no change for it.
-- A fileset ignoring case on a Unix host lists directories instead of probing literal names, so
-  other spellings on disk are found (the files keep their disk spelling).
+- `Path.matches` (public mask test) keeps its 4.0 case mode (R6, owner).
+- A fileset ignoring case on a Unix host lists directories instead of probing literal names; a
+  probe hit takes the spelling on disk, an ordinal search drops a hit spelt otherwise (R2).
 - `Target.Display root` is the engine's output name; `ShortName` (the absolute path) stays in the
   worker pool's Info/Never lines, which have no root.
 - `DbRecord` is `RequireQualifiedAccess` (its `Result` case would shadow F#'s `Result`).
-- `DatabaseApi` also gains `NewRun` (replies the run's epoch, A2) and `InMemory` (`--dump`,
-  `--dryrun` append nothing, A8); `Observe` takes an `ObserveMode` (`Verdict`, `Recording` A1,
-  `Output`). `ExecContext` gains `RunEpoch` (A2: a result takes the epoch of the run its task
-  started in); `Storage.openDbWith` (internal) takes the `--resetdb` flag (A5).
+- `DatabaseApi`: `Observe` with an `ObserveMode` (`Verdict`, `Recording` A1, `Output`), `NewRun`
+  (replies the run's epoch), `InMemory` (`--dump`, `--dryrun` post it and a `NewRun`).
+  `ExecContext.RunEpoch`; `BuildLog.Database.Epoch`; `readDatabase` returns the database.
+- `Storage.openDbWith` (internal) takes the `--resetdb` flag (A5); `cleanupDb` takes the lock.
 - A9 as implemented: a file target is checked as a target when a rule matched it, a plain file
-  passing through `execOne` is checked as a file dependency (it is recorded as `FileDep` there).
+  passing through `execOne` as a file dependency (it is recorded as `FileDep` there).
 - A torn write is cut back to the end of its last whole record, which may be a new `PathRec`
   written in the same `Write` as the torn record (harmless: an id with no user).
-- Line budget against `dev` (after A1-A9): `Database.fs` +628 -204, net +424 (estimate +225);
-  core +1006 -426, net +580 (+330); tests +716 -229, net +487 (+350).
+- Line budget against `dev`: `Database.fs` net +214, `LegacyRead.fs` +120, core net +473, tests
+  net +645 (before B1-B3: +424, -, +580, +487).
 
 **Next step (original plan).** Implementation in a separate session (Opus, medium effort) on this branch and
 worktree: docs first (`docs/` + release notes "5.0.0 (unreleased)"),

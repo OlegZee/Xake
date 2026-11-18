@@ -54,7 +54,13 @@ Tests for every scope item (port `RuleHeaderTests.fs` and the compile-negative f
 - Before ending the session, update `docs/features/rule-header/session.md`: where things stand and the exact next step.
 - Report to the orchestrator session that started you at: the design, the end of implementation, before push.
 
-## Design (proposed 2026-11-18, awaiting the owner)
+## Decisions (owner)
+
+- 2026-11-18: **the design below is approved as proposed** (316f8eb), with M9 in the verdict (the
+  `current` hook in `getChangeReasons`). Implement docs first, then code and tests, within the
+  452-line core budget; report the actual sizes.
+
+## Design (approved 2026-11-18)
 
 Ported from `archive/xake5-attempt1` (commits 6e20af1, 00462b8, 1bfd4c4, the `X.RuleWith` part of
 219071e, bc86619), tracker items 1a-1g, 1i, 2. Not ported: `RunSummary` (1h), `ExecContext.Counters`,

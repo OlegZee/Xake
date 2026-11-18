@@ -109,8 +109,13 @@ The file starts with a version header (`BuildLog.XakeDbVersion`, `0.7`; `XakeDbM
   itself has change reasons (the 4.0 transitive rule); `TargetDep (PhonyAction p)` when it has no
   result, its `Epoch > e`, or the same transitive rule. `GetFiles` compares only the file list;
   `EnvVar`, `Var`, `SecretDep` and `AlwaysRerun` are as before.
-- `StaticCount`, the number of leading dependencies from the rule header, is 0 in phase 1 and
-  round-trips.
+- `StaticCount`, the number of leading dependencies from the rule header. `execOne` builds the
+  header's `needs`, runs the body on a fresh result and stores `headerDeps @ bodyDeps`, so the
+  body's recording order (`need` appends; `getVar`, `getEnv`, `getFiles`, `alwaysRerun` prepend;
+  `setResult` and delegated executors replace) cannot move them. The verdict (`getChangeReasons`)
+  gets the rule's current outputs and static set from `ExecCore` (`current`): a missing current
+  output, or a static set (file/target names, filesets) differing from the keys of the first
+  `StaticCount` dependencies, makes the target out of date, and dependents see it through the memo.
 
 ### Case and names
 

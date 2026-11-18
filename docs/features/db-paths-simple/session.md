@@ -22,9 +22,14 @@ absolute path" and that phase 1 has one root (`openDb root`, `ProjectRoot` only;
 
 **Implementation (2026-11-18, separate session).** Steps 1 (docs), 2 (1a) and 3+4 (1b database
 0.7 and 1c epochs, one commit: 0.7 stores dependencies by id without a stamp, so the 4.0 verdict
-cannot run on it) are committed; all tests green. The amendments A1-A9 are a follow-up commit. Remaining:
-the full `build.fsx build test pack` and the explicit size test on a real 0.6 database, then the
-review by the starting session.
+cannot run on it) are committed; all tests green. The amendments A1-A9 are a follow-up commit. `build.fsx build test pack` is
+green; the explicit size test ran on a real 0.6 database. **Next step:** the review by the
+starting session (fixes as follow-up commits on this branch), then push and the PR.
+
+Measured (2026-11-18): synthetic 1000 results x 30 file dependencies (mean path 118 B): 0.6
+3 960 017 B, 0.7 196 590 B (20.1x). A real 0.6 database of 88 564 308 B (84.5 MB) upgrades to
+3 069 697 B (28.9x; the upgrade writes the live results only: 1 932 results, 24 687 files) in
+1.3 s.
 
 Notes from the implementation:
 - `Path.matches` (public mask test) keeps its 4.0 case mode (ignore-case on Windows only); the
@@ -42,7 +47,8 @@ Notes from the implementation:
   passing through `execOne` is checked as a file dependency (it is recorded as `FileDep` there).
 - A torn write is cut back to the end of its last whole record, which may be a new `PathRec`
   written in the same `Write` as the torn record (harmless: an id with no user).
-- Line budget: `Database.fs` net +377 (estimate +225), core net +502 (+330), tests net +413 (+350).
+- Line budget against `dev` (after A1-A9): `Database.fs` +628 -204, net +424 (estimate +225);
+  core +1006 -426, net +580 (+330); tests +716 -229, net +487 (+350).
 
 **Next step (original plan).** Implementation in a separate session (Opus, medium effort) on this branch and
 worktree: docs first (`docs/` + release notes "5.0.0 (unreleased)"),

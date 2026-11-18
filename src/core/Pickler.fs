@@ -63,6 +63,42 @@ let list pu =
     }
 
 /// <summary>
+/// A non-negative integer in the 7-bit variable-length encoding (`Write7BitEncodedInt` is not
+/// public on netstandard2.0).
+/// </summary>
+let varint64 =
+    { pickle = (fun (v: int64) (st: OutState) ->
+        if v < 0L then invalidArg "v" "varint: a negative value"
+        let mutable u = uint64 v
+        while u >= 0x80UL do
+            st.Write(Operators.byte (u ||| 0x80UL))
+            u <- u >>> 7
+        st.Write(Operators.byte u))
+      unpickle = fun (st: InState) ->
+        let mutable result = 0UL
+        let mutable shift = 0
+        let mutable more = true
+        while more do
+            if shift > 63 then failwith "varint: too long"
+            let b = st.ReadByte()
+            result <- result ||| (uint64 (b &&& 0x7Fuy) <<< shift)
+            shift <- shift + 7
+            more <- b &&& 0x80uy <> 0uy
+        Operators.int64 result }
+
+/// <summary>
+/// A non-negative int in the 7-bit variable-length encoding.
+/// </summary>
+let varint = wrap ((fun (x: int64) -> Operators.int x), (fun (x: int) -> Operators.int64 x)) varint64
+
+/// <summary>
+/// List pickler with a varint length in front (database 0.7).
+/// </summary>
+let vlist pu =
+    { pickle = fun (xs: 'a list) st -> varint.pickle (List.length xs) st; xs |> List.iter (fun x -> pu.pickle x st)
+      unpickle = fun st -> let n = varint.unpickle st in List.init n (fun _ -> pu.unpickle st) }
+
+/// <summary>
 /// Variant (discriminated union) pickler.
 /// </summary>
 /// <param name="ftag">Maps type to index in array of picklers.</param>

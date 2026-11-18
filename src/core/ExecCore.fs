@@ -122,6 +122,18 @@ let newTaskContext targets matches ctx =
         HeldResources = []
     }
 
+/// Observes a file through the database (decision 1c); `force` re-observes a rule's output
+/// right after the rule.
+let observeFile (ctx: ExecContext) (force: bool) (file: File) =
+    ctx.Db.PostAndAsyncReply(fun ch -> Observe(file, force, ch)) |> Async.Ignore
+
+/// Re-observes the file outputs of a rule that just finished.
+let private observeOutputs (ctx: ExecContext) (targets: Target list) = async {
+    for t in targets do
+        match t with
+        | FileTarget f -> do! observeFile ctx true f
+        | PhonyAction _ -> () }
+
 /// A new table for the two-spellings check of one run.
 let newSpellings () = System.Collections.Concurrent.ConcurrentDictionary<string, string * bool>(System.StringComparer.Ordinal)
 
@@ -159,10 +171,10 @@ let rec execOne (ctx: ExecContext) target =
 
                 let startResult = {BuildLog.makeResult targets with Steps = [Step.start "all"]}
                 let! (result,_) = action (startResult, taskContext)
-                // Built is the completion time: it is the change stamp of a phony target
-                // (see Dependency.ArtifactDep2 and DependencyAnalysis.getChangeStamp)
+                // Built is the completion time; the database gives the result the run's epoch
                 let result = {Step.updateTotalDuration result with Built = System.DateTime.Now}
 
+                do! observeOutputs ctx targets
                 Store result |> ctx.Db.Post
 
                 do Progress.TaskComplete primaryTarget |> ctx.Progress.Post
@@ -196,6 +208,7 @@ let rec execOne (ctx: ExecContext) target =
             let! result =
                 Scheduler.withYieldedSlot ctx.Engine.Scheduler (executor taskContext targets bodyThunk)
 
+            do! observeOutputs ctx targets
             Store result |> ctx.Db.Post
 
             do Progress.TaskComplete primaryTarget |> ctx.Progress.Post
@@ -276,15 +289,20 @@ let rec execOne (ctx: ExecContext) target =
         async {
             let! waitTask = (fun channel -> Run(target, targets, taskAction, channel)) |> (Scheduler.pool ctx.Engine.Scheduler).PostAndAsyncReply
             let! status = waitTask
-            // the dependee is built or up to date now: record its change stamp, so a later run
-            // sees a rebuild done in between, by another run or target group (S66)
-            let stamp = getChangeStamp ctx target |> Option.defaultValue System.DateTime.MinValue
-            return target, status, ArtifactDep2 (target, stamp)
+            // the dependee is built or up to date now: its file is observed (a built one already
+            // was, right after its rule) and the dependency recorded by id (decision 1c)
+            match target with
+            | FileTarget file -> do! observeFile ctx false file
+            | PhonyAction _ -> ()
+            return target, status, TargetDep target
         }
     | None ->
         target |> function
         | FileTarget file when File.exists file ->
-            async.Return <| (target, ExecStatus.JustFile, FileDep (file, File.getLastWriteTime file))
+            async {
+                do! observeFile ctx false file
+                return target, ExecStatus.JustFile, FileDep file
+            }
         | _ ->
             let errorText = sprintf "Neither rule nor file is found for '%s'" target.FullName
             do ctx.Logger.Log Error "%s" errorText
@@ -403,6 +421,7 @@ let runBuild (ctx: ExecContext) groups =
             // the change analysis below is memoized for the whole group, so the pool has to
             // treat the group as one run: a target it already built must not be built again
             do Scheduler.newRun ctx.Engine.Scheduler
+            do Storage.NewRun |> ctx.Db.Post
 
             let progressSink = Progress.openProgress (getDurationDeps ctx getDeps) options.Threads targets ctx.ShowProgress
             let stepCtx = {ctx with NeedRebuild = List.exists needRebuild; Progress = progressSink; Spellings = newSpellings ()}
@@ -466,6 +485,7 @@ let demandTarget (ctx: ExecContext) (targetName: string) : Async<ExecStatus> =
     async {
         let target = makeTarget ctx targetName
         do Scheduler.newRun ctx.Engine.Scheduler
+        do Storage.NewRun |> ctx.Db.Post
         let getDeps = getChangeReasons ctx |> memoizeRec
         let needRebuild (t: Target) =
             getDeps t |> function | [] -> false | _ -> true

@@ -20,7 +20,26 @@ holds the absolute path (`Name` absolute), `Built` kept, filesets case-insensiti
 absolute path" and that phase 1 has one root (`openDb root`, `ProjectRoot` only; the root number in
 `DirRec` is the only room kept for more roots). The design was **approved on 2026-11-18**; the normative spec is [decision.md](decision.md).
 
-**Implementation (2026-11-18, separate session).** Step 1 (docs) and step 2 (1a `File`, case, two spellings) committed; step 3 (1b database 0.7) in progress. Notes: `Path.matches` (public mask test) keeps its 4.0 case mode (ignore-case on Windows only), the spec lists no change for it; a fileset ignoring case on a Unix host lists directories instead of probing literal names, so other spellings on disk are found.
+**Implementation (2026-11-18, separate session).** Steps 1 (docs), 2 (1a) and 3+4 (1b database
+0.7 and 1c epochs, one commit: 0.7 stores dependencies by id without a stamp, so the 4.0 verdict
+cannot run on it) are committed; all tests green. Remaining: the full `build.fsx build test pack`
+and the explicit size test on a real 0.6 database, then the review by the starting session.
+
+Notes from the implementation:
+- `Path.matches` (public mask test) keeps its 4.0 case mode (ignore-case on Windows only); the
+  spec lists no change for it.
+- A fileset ignoring case on a Unix host lists directories instead of probing literal names, so
+  other spellings on disk are found (the files keep their disk spelling).
+- `Target.Display root` is the engine's output name; `ShortName` (the absolute path) stays in the
+  worker pool's Info/Never lines, which have no root.
+- `DbRecord` is `RequireQualifiedAccess` (its `Result` case would shadow F#'s `Result`).
+- `DatabaseApi` also gains `NewRun` (the epoch is held by the database agent and handed out per
+  run); the agent stamps a stored result with the run's epoch.
+- A dry run or `--dump` observes files, so it may append `FileRec`s (a moved stat gets
+  `changed` = that epoch); the next real run decides the same as it would without them.
+- A torn write is cut back to the end of its last whole record, which may be a new `PathRec`
+  written in the same `Write` as the torn record (harmless: an id with no user).
+- Line budget: `Database.fs` net +377 (estimate +225), core net +502 (+330), tests net +413 (+350).
 
 **Next step (original plan).** Implementation in a separate session (Opus, medium effort) on this branch and
 worktree: docs first (`docs/` + release notes "5.0.0 (unreleased)"),

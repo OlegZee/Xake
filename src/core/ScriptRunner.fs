@@ -34,7 +34,7 @@ let createScriptContext (opts: ExecOptions) rules =
             let dbPath = engineOpts.ProjectRoot </> opts.DbFileName
             if opts.ResetDb then
                 Storage.cleanupDb dbPath engineOpts.Logger
-            Storage.openDb dbPath engineOpts.Logger
+            Storage.openDb engineOpts.ProjectRoot dbPath engineOpts.Logger
     let ctx, finalize = ExecCore.createContextCore engineOpts db (VarEvaluation.flatVars variables) opts.Progress
     ctx, finalize, launchErrors
 

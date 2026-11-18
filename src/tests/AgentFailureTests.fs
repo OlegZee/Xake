@@ -52,7 +52,7 @@ type AgentFailureTests() =
         let mkTarget name = name |> File.make |> FileTarget
         let get (db: Agent<DatabaseApi>) t = db.PostAndReply((fun ch -> GetResult(t, ch)), timeoutMs)
         try
-            let db = openDb dbpath logger
+            let db = openDb dir dbpath logger
             let good1 = { makeResult [mkTarget "good1.dll"] with Depends = [ Var("A", Some "1") ] }
             // a null variable name makes the pickler throw (BinaryWriter.Write(null: string))
             // half way through the record
@@ -73,7 +73,7 @@ type AgentFailureTests() =
 
             // reopen: the good records read back, the failed one left nothing in the file
             logged.Clear()
-            let db2 = openDb dbpath logger
+            let db2 = openDb dir dbpath logger
             Assert.AreEqual(Some good1.Depends, get db2 (mkTarget "good1.dll") |> Option.map (fun r -> r.Depends))
             Assert.AreEqual(Some good2.Depends, get db2 (mkTarget "good2.dll") |> Option.map (fun r -> r.Depends))
             Assert.IsTrue((get db2 (mkTarget "bad.dll")).IsNone)

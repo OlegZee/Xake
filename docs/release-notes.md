@@ -104,6 +104,12 @@ Also:
 - On Linux a fileset recorded by Xake 4.x is re-scanned ignoring case after the upgrade: where the
   disk has names differing only in case, its dependent reruns once.
 
+- **Step times:** waiting for a resource (`requires`, `requiring`, `withResource`, and so the .NET
+  tasks' `CSC_JOBS`) is `WaitTime`, not `OwnTime`; a rule with header `needs` no longer gets a
+  too small (even negative) `OwnTime`. The sum of `OwnTime` now shows the real parallelism.
+- **Progress with several target groups:** the status line names the group (`[2/3 test]`), each
+  finished group logs its time, and a task skipped by content cut-off leaves the estimate.
+
 For `Xake.Dotnet` users: `File.undefined` is removed; `Xake.Dotnet` moves to `File option` at its
 5.0.
 

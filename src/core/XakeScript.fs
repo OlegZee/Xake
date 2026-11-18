@@ -156,9 +156,11 @@ module XakeScript =
 
     let private wrapRecipe (resource: Resource) (body: Recipe<ExecContext, unit>) : Recipe<ExecContext, unit> =
         Recipe (fun (s, ctx: ExecContext) -> async {
+            // the wait for the unit is the step's wait, not its own time
+            let started = System.DateTime.Now
             do! Scheduler.withYieldedSlot ctx.Engine.Scheduler (Resource.acquire resource 1)
             try
-                return! A.runAction body (s, { ctx with HeldResources = resource.ResourceName :: ctx.HeldResources })
+                return! A.runAction body (Step.updateWaitTime (Step.msSince started) s, { ctx with HeldResources = resource.ResourceName :: ctx.HeldResources })
             finally
                 Resource.release resource 1
         })

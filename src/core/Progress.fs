@@ -187,7 +187,8 @@ let estimateEndTime getDurationDeps threadCount groups =
 /// <param name="getDurationDeps">gets the dependency duration in ms</param>
 /// <param name="threadCount"></param>
 /// <param name="goals"></param>
-let openProgress getDurationDeps threadCount goals toConsole = 
+/// <param name="label">the status line's prefix: the target group of several, or empty</param>
+let openProgress getDurationDeps threadCount goals (label: string) toConsole = 
 
     let progressBar = WindowsProgress.createTaskbarIndicator() |> Impl.ignoreFailures
     let machineState = {Cpu = BusyUntil 0<ms> |> List.replicate threadCount; Tasks = Map.empty}
@@ -217,7 +218,7 @@ let openProgress getDurationDeps threadCount goals toConsole =
         do ProgressMessage.Progress (timeLeft, percentDone) |> progressBar
         if toConsole then
             let activeTasks = runningTasks |> Map.filter (fun _ (_,isRunning) -> isRunning) |> Map.count
-            do WriteConsoleProgress (timeLeft, percentDone, activeTasks)
+            do WriteConsoleProgress (label, timeLeft, percentDone, activeTasks)
 
     let updTime = ref System.DateTime.Now
     let advanceRunningTime rt =

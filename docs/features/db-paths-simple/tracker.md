@@ -26,5 +26,6 @@
 - Hashing and the cut-off verdict: phase 3 (format ready in 0.7).
 - `Fileset.BaseDir` stored relative to the root.
 - Version string compare breaks at "0.10".
+- Delegated cache hits keep an old epoch, so their dependents rerun on every hit once the sources changed (review R5; same as 4.0).
 - Run record (epoch, start, demanded targets, change reasons) for analysis.
 - String table for repeated strings (variables, masks, step and phony names): about -12% compacted (owner 2026-11-18: Later).

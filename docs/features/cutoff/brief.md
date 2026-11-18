@@ -33,6 +33,11 @@ to the same bytes, of a touched source, or of a restored `out/` do not rerun. On
 - **Q3, eager output hashing** (2026-11-18): outputs are hashed right after every run of their
   rule (with the pre-hash); `noContentCutoff` is the escape for large outputs.
 - **Q4** (2026-11-18): `RunSummary` and the no-change fast path are in this PR.
+- **Design** ([design.md](design.md), approved 2026-11-18): static `needs` are built before the
+  verdict (needs -> verdict -> locks -> body); hashing outside the database agent (`Moved` /
+  `Settle` compare-and-set, per-run dedup); a cycle check on the verdict wait (no documented
+  hang); inside the no-build recursion a running dependee counts as changed, only a target's
+  direct dependees are waited for; running/finished from a `WorkerPool.Query` message.
 
 ## The rule
 

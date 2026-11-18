@@ -1,6 +1,6 @@
 # Phase 3 design report: content cut-off
 
-Status: **for the owner's approval** (no code written). Base: `dev` at `4f99e4a`, branch
+Status: **approved** (2026-11-18, the five questions answered as recommended). Base: `dev` at `4f99e4a`, branch
 `feature/content-cutoff`. Input: [brief.md](brief.md) (accepted 2026-11-18). No database format
 change. Items marked **Proposal** are mine, not yet accepted.
 

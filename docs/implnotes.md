@@ -100,17 +100,35 @@ The file starts with a version header (`BuildLog.XakeDbVersion`, `0.7`; `XakeDbM
   per run (then cached); when a body records it as a `FileDep` it is statted again, and a moved
   stat counts as a change unless another body already recorded it in this run; a rule's outputs
   (every output of a multi-output rule) are statted again right after the rule. The stat
-  (existence, write time, length) is compared with the `FileRec`: no record, or a moved stamp or
-  size, gives `changed` = the run's epoch and a new record; an unknown size is filled in with
-  `changed` kept. There is no hashing yet (`Hash = None`). `--dump` and `--dryrun` observe in
-  memory only and append nothing.
+  (existence, write time, length) is compared with the `FileRec`: no record gives `changed` = the
+  run's epoch and no hash; an unknown size is filled in with `changed` kept. `--dump` and
+  `--dryrun` observe in memory only and append nothing.
+- **Hashing (5.0 phase 3, docs/content-cutoff.md).** The agent decides, the caller hashes: when a
+  moved stat (or an output) needs a hash, `Observe` replies `Moved` without touching the record;
+  `DependencyAnalysis.observe` hashes (stat, SHA-256, stat; first 8 bytes) off the agent and posts
+  `Settle (file, known, hashed, mode)`, applied only if the record is still `known`
+  (compare-and-set). Concurrent observers of one file share one hash (per-run dedup in `RunState`).
+  Moved with a hash: equal keeps `changed`, else `changed` = run. Moved without a hash: `changed` =
+  run and the new hash stored. `Output true` hashes every output after its rule, even with an equal
+  stat (coarse time stamps); `Output false` (`noContentCutoff`) stores no hash and sets `changed` =
+  run; `PreHash` hashes an output with no hash and an equal stat before its rule runs. With
+  `--content-cutoff=off` (`ExecOptions.ContentCutoff`, passed in the mode) nothing is hashed and a
+  moved stat clears the hash.
 - Verdict for a target with a stored result of epoch `e`: `FileDep f` is stale when `f` is missing
-  or `changed > e`; `TargetDep (FileTarget f)` when `f` is missing, `changed > e`, or the dependee
-  itself has change reasons (the 4.0 transitive rule); `TargetDep (PhonyAction p)` when it has no
-  result, its `Epoch > e`, or the same transitive rule. `GetFiles` compares only the file list;
+  or `changed > e`. `TargetDep t`: the worker pool is asked (`Query`) whether `t` finished in this
+  run, is running, or has not started. Finished: compared exactly (`changed > e` for a file,
+  `Epoch > e` for a phony). Running: the target's own verdict waits for it, then compares; a
+  waits-for map (`RunState.Waits`, set around the verdict wait and `execNeed`) stops a wait that
+  would close a cycle (the dependee counts as changed). Not started: `changed`/`Epoch > e`, or the
+  dependee's own no-build verdict non-empty (the 4.0 transitive rule, kept only here). The no-build
+  verdict (memoised per run) never waits: inside it a running dependee is a change. It serves the
+  recursion, the fast path and the progress estimate. `GetFiles` compares only the file list;
   `EnvVar`, `Var`, `SecretDep` and `AlwaysRerun` are as before.
+- Order in a task (`execOne.run`): static `needs`, the verdict, the pre-hash, the locks, the body,
+  the outputs. The fast path: a target that is not running or finished in this run and whose
+  no-build verdict is empty is skipped without a task. `RunCounters` (per run) feed `RunSummary`.
 - `StaticCount`, the number of leading dependencies from the rule header. `execOne` builds the
-  header's `needs`, runs the body on a fresh result and stores `headerDeps @ bodyDeps`, so the
+  header's `needs` (before the verdict), runs the body on a fresh result and stores `headerDeps @ bodyDeps`, so the
   body's recording order (`need` appends; `getVar`, `getEnv`, `getFiles`, `alwaysRerun` prepend;
   `setResult` and delegated executors replace) cannot move them. The verdict (`getChangeReasons`)
   gets the rule's current outputs and static set from `ExecCore` (`current`): a missing current

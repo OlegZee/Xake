@@ -76,6 +76,22 @@ do xakeScript {
 }
 ```
 
+## Rule header (5.0)
+
+```fsharp
+"out/(n:*).dll" ..> recipe {          // also *..>, ..?>, target, targets, X.rule { } (not phony, not X.Rule)
+	also  "out/(n:*).pdb"             // side output
+	needs "obj/(n:*).rsp"             // static input, built before the body; needs ["a"; "b"] too
+	requires cscLock                  // lock held around the body; requires (lock, n)
+	noContentCutoff
+	let! m = getRuleMatches ()        // the body; header operations after it do not compile
+	do! need [ "src/" + m.["n"] + ".cs" ]
+}
+```
+
+Shared: `let h = ruleHeader ["n"] { needs "obj/(n:*).rsp" }`, then `including h` in a header, or
+`X.RuleWith h <| fun m -> recipe { .. }`. See [rule-header.md](rule-header.md).
+
 ## Recipe helpers
 
 ```fsharp

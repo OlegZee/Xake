@@ -15,7 +15,7 @@ type RuleSpecificityTests() =
     let noop = Recipe (fun (r, _) -> async { return r, () })
     let file (root: string) (p: string) = root </> p |> File.make |> FileTarget
     let patternOf = function
-        | Some (FileRule (p, _), _, _) | Some (PhonyRule (p, _), _, _) -> p
+        | Some (FileRule (p :: _, _, _), _, _) | Some (PhonyRule (p, _), _, _) -> p
         | other -> failwithf "expected a file/phony rule, got %A" other
 
     // --- the specificity metric itself --------------------------------------------------------
@@ -44,8 +44,8 @@ type RuleSpecificityTests() =
         let root = x.TestOptions.ProjectRoot
         // general declared AFTER the specific one: last-declared order would pick the general.
         let rules =
-            Rules [ FileRule ("out/(b:*)/(cfg:*)/(fwk:*)/(asm:*).dll", noop)   // index 0 = last declared
-                    FileRule ("out/(b:*)/obf/(fwk:*)/(asm:*).dll", noop) ]
+            Rules [ FileRule (["out/(b:*)/(cfg:*)/(fwk:*)/(asm:*).dll"], RuleHeader.Empty, noop)   // index 0 = last declared
+                    FileRule (["out/(b:*)/obf/(fwk:*)/(asm:*).dll"], RuleHeader.Empty, noop) ]
         let target = file root "out/acme/obf/net472/A.B.dll"
         Assert.AreEqual("out/(b:*)/obf/(fwk:*)/(asm:*).dll",
                         ExecCore.locateRule rules root target |> patternOf)
@@ -65,10 +65,10 @@ type RuleSpecificityTests() =
     member x.``locateRule prefers a file rule over a condition rule``() =
         let root = x.TestOptions.ProjectRoot
         let rules =
-            Rules [ FileRule ("src/(name:*).cs", noop)
-                    FileConditionRule ((fun _ -> true), noop) ]
+            Rules [ FileRule (["src/(name:*).cs"], RuleHeader.Empty, noop)
+                    FileConditionRule ((fun _ -> true), RuleHeader.Empty, noop) ]
         match ExecCore.locateRule rules root (file root "src/a.cs") with
-        | Some (FileRule (p, _), _, _) -> Assert.AreEqual("src/(name:*).cs", p)
+        | Some (FileRule (p :: _, _, _), _, _) -> Assert.AreEqual("src/(name:*).cs", p)
         | other -> Assert.Fail(sprintf "expected the file rule, got %A" other)
 
     // --- end to end: the recipe that actually runs --------------------------------------------
@@ -129,7 +129,7 @@ type RulePatternTests() =
     let noop = Recipe (fun (r, _) -> async { return r, () })
     let file (root: string) (p: string) = root </> p |> File.make |> FileTarget
     let patternOf = function
-        | Some (FileRule (p, _), _, _) | Some (PhonyRule (p, _), _, _) -> p
+        | Some (FileRule (p :: _, _, _), _, _) | Some (PhonyRule (p, _), _, _) -> p
         | other -> failwithf "expected a file/phony rule, got %A" other
     let throwsCode (code: string) (f: unit -> obj) =
         let e = Assert.Throws<PatternAst.PatternException>(fun () -> f () |> ignore)
@@ -152,9 +152,9 @@ type RulePatternTests() =
 
     [<Test>]
     member x.``a rule built from the DU cases is checked when yielded``() =
-        throwsCode "XP004" (yielded x (FileRule ("{x", noop))) |> ignore
+        throwsCode "XP004" (yielded x (FileRule (["{x"], RuleHeader.Empty, noop))) |> ignore
         // the `rules` operation goes through the same check
-        throwsCode "XP004" (fun () -> box (xake x.TestOptions { rules [ FileRule ("{x", noop) ] })) |> ignore
+        throwsCode "XP004" (fun () -> box (xake x.TestOptions { rules [ FileRule (["{x"], RuleHeader.Empty, noop) ] })) |> ignore
 
     [<Test>]
     member x.``a regex alternation in a group points to braces``() =
@@ -177,7 +177,7 @@ type RulePatternTests() =
     [<Test>]
     member x.``an invalid pattern in a rule built from the DU fails the build with its message``() =
         let root = x.TestOptions.ProjectRoot
-        let rules = Rules [ FileRule ("src/(a:*)/(a:*).cs", noop) ]
+        let rules = Rules [ FileRule (["src/(a:*)/(a:*).cs"], RuleHeader.Empty, noop) ]
         let e = Assert.Throws<XakeException>(fun () -> ExecCore.locateRule rules root (file root "src/x/y.cs") |> ignore)
         StringAssert.Contains("XP015", e.Message)
 
@@ -185,7 +185,7 @@ type RulePatternTests() =
     member x.``a globstar rule loses to a single-segment rule for a root file``() =
         // D5 / spec example 9: '*.dll' (4, 0, -2) beats '**/*.dll' (4, -1, -2) for 'a.dll'
         let root = x.TestOptions.ProjectRoot
-        let rules = Rules [ FileRule ("**/*.dll", noop); FileRule ("*.dll", noop) ]
+        let rules = Rules [ FileRule (["**/*.dll"], RuleHeader.Empty, noop); FileRule (["*.dll"], RuleHeader.Empty, noop) ]
         Assert.AreEqual("*.dll", ExecCore.locateRule rules root (file root "a.dll") |> patternOf)
         Assert.AreEqual("**/*.dll", ExecCore.locateRule rules root (file root "a/b.dll") |> patternOf)
 
@@ -193,7 +193,7 @@ type RulePatternTests() =
     member x.``item 33: a '/' next to '**' counts no literal``() =
         // 3.x picked '**/x.dll' (5 literals with the '/') over '*/?.dll' (5); 4.0 counts '**/' 0
         let root = x.TestOptions.ProjectRoot
-        let rules = Rules [ FileRule ("*/?.dll", noop); FileRule ("**/x.dll", noop) ]
+        let rules = Rules [ FileRule (["*/?.dll"], RuleHeader.Empty, noop); FileRule (["**/x.dll"], RuleHeader.Empty, noop) ]
         Assert.AreEqual("*/?.dll", ExecCore.locateRule rules root (file root "a/x.dll") |> patternOf)
 
     [<Test>]

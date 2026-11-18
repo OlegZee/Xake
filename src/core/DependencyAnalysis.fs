@@ -100,13 +100,25 @@ let rec getDepState getVar getFileList (getChangedDeps: Target -> ChangeReason l
     | EnvVar _ | Var _ -> NotChanged, None
 
 
+/// What a static set is compared by (M9): a file or target by name, a fileset by itself.
+type StaticKey = StaticName of string | StaticFiles of Fileset
+
+/// The static set of header dependencies, as keys.
+let staticKeys (deps: Dependency list) =
+    deps |> List.choose (function
+        | FileDep f -> Some (StaticName f.Name)
+        | TargetDep t -> Some (StaticName t.Name)
+        | GetFiles (fs, _) -> Some (StaticFiles fs)
+        | _ -> None) |> Set.ofList
+
 /// <summary>
 /// Gets the list of reasons to rebuilt the target. Empty list means target is not changed.
 /// </summary>
 /// <param name="ctx"></param>
 /// <param name="getTargetDeps">gets state for nested dependency</param>
 /// <param name="target">The target to analyze</param>
-let getChangeReasons (ctx: ExecContext) getTargetDeps target =
+/// `current` gives the target's rule now: its outputs and static set (None without a rule).
+let getChangeReasons (ctx: ExecContext) (current: Target -> (Target list * Set<StaticKey>) option) getTargetDeps target =
 
     // separates change reason into two lists and collabses FilesChanged all into one
     let collapseFilesChanged reasons =
@@ -123,16 +135,28 @@ let getChangeReasons (ctx: ExecContext) getTargetDeps target =
     | Some {BuildResult.Depends = []} ->
         [ChangeReason.Other "No dependencies", Some "It means target is not \"pure\" and depends on something beyond our control (oracle)"]
 
-    | Some {BuildResult.Depends = depends; Targets = result; Epoch = epoch} ->
+    | Some ({BuildResult.Depends = depends; Targets = result; Epoch = epoch} as built) ->
         let getResult t = (fun ch -> GetResult(t, ch)) |> ctx.Db.PostAndReply
         let depState =
             getDepState (Util.getVar ctx.Vars) (toFileList ctx.Options.ProjectRoot) getTargetDeps
                         (observe ctx Verdict >> Async.RunSynchronously) getResult (File.display ctx.Options.ProjectRoot) epoch
 
+        // the rule now (M9): a current output missing (an `also` added since included), or a static
+        // set other than the recorded one
+        let ruleReasons =
+            match current target with
+            | None -> []
+            | Some (outputs, keys) ->
+                [ match outputs |> List.tryFind (function FileTarget f -> not (File.exists f) | _ -> false) with
+                  | Some t -> yield ChangeReason.Other (sprintf "output %s is missing" (t.Display ctx.Options.ProjectRoot)), None
+                  | None -> ()
+                  if keys <> staticKeys (List.truncate built.StaticCount depends) then
+                      yield ChangeReason.Other "its static needs changed", None ]
         depends
             |> List.map depState
             |> List.filter (fst >> (<>) ChangeReason.NotChanged)
             |> collapseFilesChanged
+            |> List.append ruleReasons
             |> function
             | [] ->
                 match result with
@@ -157,9 +181,9 @@ let getDurationDeps ctx getDeps t =
 //        (tt,dd)
 
 /// Dumps all dependencies for particular target
-let dumpDeps (ctx: ExecContext) (target: Target list) =
+let dumpDeps (ctx: ExecContext) current (target: Target list) =
 
-    let getDeps = getChangeReasons ctx |> memoizeRec
+    let getDeps = getChangeReasons ctx current |> memoizeRec
 
     let doneTargets = System.Collections.Hashtable()
     let indent i = String.replicate i "  "

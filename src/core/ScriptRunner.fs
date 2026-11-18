@@ -94,7 +94,7 @@ let bannerLines (options: ExecOptions) (variables: Map<string, VarEntry>) (targe
 /// Displays estimated build time and parallelism degree.
 let dryRun (ctx: ExecContext) (setup: string list) (groups: string list list) =
     let options = ctx.Options
-    let getDeps = getChangeReasons ctx |> memoizeRec
+    let getDeps = getChangeReasons ctx (ExecCore.currentRule ctx) |> memoizeRec
 
     // getPlainDeps getDeps (getExecTime ctx)
     if not setup.IsEmpty then
@@ -200,7 +200,7 @@ let runScript options rules =
             Storage.InMemory |> ctx.Db.Post
             ctx.Db.PostAndReply Storage.NewRun |> ignore
             do logger.Log Level.Command "Dumping dependencies for targets %A" targetLists
-            targetLists |> List.iter (List.map (ExecCore.makeTarget ctx) >> (dumpDeps ctx))
+            targetLists |> List.iter (List.map (ExecCore.makeTarget ctx) >> (dumpDeps ctx (ExecCore.currentRule ctx)))
         | Dryrun ->
             Storage.InMemory |> ctx.Db.Post
             ctx.Db.PostAndReply Storage.NewRun |> ignore

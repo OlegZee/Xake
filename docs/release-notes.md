@@ -37,6 +37,38 @@ Breaking changes:
    no-change run after the upgrade rebuilds nothing. The 0.4-0.6 databases are upgraded by a legacy reader that will
    be removed in a later release.
 
+8. **One file-rule case.** `FileRule` and `MultiFileRule` are one case,
+   `FileRule (outputs, header, recipe)`, the main output first; `FileConditionRule` carries a
+   header too. Code matching on the cases changes; scripts that use the operators and builders do
+   not. `..>`, `*..>` and `..?>` are inline operators over a recipe with or without a header; a
+   wrong right-hand side reads "No overloads match for method 'op_Dollar'".
+9. **A statement with a value inside `recipe { }` is an error** (it was warning FS0020). The common
+   case was a bug: `need ["a"]` without `do!` built nothing.
+10. **A rule with several outputs** (`*..>`, `targets`, `also`) must write every one of them; one it
+   did not write fails the build, naming it (in 4.0 the rule silently reran every time). When an
+   output of a rule is built by another rule, the build fails naming both.
+
+The rule header ([rule-header.md](rule-header.md)):
+
+- A file rule's `recipe { }` may start with declarations read when the script loads: `also` (side
+  outputs), `needs` (static inputs, built before the body and recorded first), `requires` (a lock
+  the engine takes around the body), `noContentCutoff` / `contentCutoff` (stored for content
+  cut-off). Every file-rule form takes it (`..>`, `*..>`, `..?>`, `target`, `targets`, typed
+  `X.rule`; `X.RuleWith h <| fun m -> ..` takes a `ruleHeader` value); phony forms and
+  `X.Rule <| fun m -> ..` do not. A header operation after the body, or a recipe with a header used
+  inside another recipe, does not compile. `also`, `needs`, `requires`, `noContentCutoff`,
+  `contentCutoff`, `including` are keywords at the start of a statement inside `recipe { }`.
+- **Shared headers:** `ruleHeader ["n"] { needs ..; requires .. }` makes a header value that rules
+  merge in with `including h`; the list names the groups of the including rule it uses, checked
+  when the header is made and when a rule includes it.
+- `rule |> requiring lock` on a file rule is `requires lock` in its header: the lock is taken around
+  the body only, after the static `needs`. On a phony rule it locks the whole recipe, as before.
+- A target is out of date when one of its rule's current outputs is missing (an `also` added since
+  the last run included), or when the rule's static `needs` differ from those recorded; a target
+  built by 4.x with a rule that has `needs` reruns once.
+- A file rule with a header and no body, and a rule naming one resource twice (`requires`,
+  `requiring`, an included header), are errors when the script loads.
+
 Also:
 
 - A second Xake run on the same database waits up to 30 s, then fails: "another Xake run uses this

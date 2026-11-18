@@ -345,6 +345,10 @@ type ``XakeScript tests``() =
                 let! options = getCtxOptions()
                 root <- options.ProjectRoot
                 fileNames <- (files |> List.map (fun f -> f.Name))
+                // a rule writes every output it declares (5.0)
+                for f in files do
+                    System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName (File.getSysFileName f)) |> ignore
+                    System.IO.File.WriteAllText(File.getSysFileName f, "")
                 map := groups; matchedAny <- true
             })
         }

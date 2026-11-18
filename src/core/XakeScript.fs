@@ -116,16 +116,28 @@ module XakeScript =
         }
     end
 
-    /// Creates the rule for specified file pattern.
-    let ( ..?> ) fn fnRule = FileConditionRule (fn, fnRule)
+    /// The right-hand side of the file-rule operators: a recipe, or a recipe with a header
+    /// (`recipe { needs ..; .. }`). An implementation detail of `..>`, `*..>` and `..?>`.
+    type RuleBody = RuleBody with
+        static member ($) (RuleBody, body: Recipe<ExecContext, unit>) = RuleHeader.Empty, body
+        static member ($) (RuleBody, Headed (header, body): Headed<ExecContext>) = header, body
 
-    /// Creates a file rule that maps a pattern to a recipe.
-    let ( ..> ) pattern actionBody =
-        FileRule (pattern, actionBody)
+    /// Creates the rule for the files a condition accepts. The recipe may have a header without
+    /// `also` and without groups (a condition has no pattern).
+    let inline ( ..?> ) (condition: string -> bool) body : ExecContext Rule =
+        let header, recipe = RuleBody $ body
+        FileConditionRule (condition, header, recipe)
 
-    /// Creates a multi-file rule from a sequence of patterns and a shared recipe.
-    let ( *..> ) (patterns: #seq<string>) actionBody =
-        MultiFileRule (patterns |> List.ofSeq, actionBody)
+    /// Creates a file rule that maps a pattern to a recipe, with or without a header.
+    let inline ( ..> ) (pattern: string) body : ExecContext Rule =
+        let header, recipe = RuleBody $ body
+        FileRule ([ pattern ], header, recipe)
+
+    /// Creates a file rule with several outputs (the first is the main one) from a recipe, with or
+    /// without a header.
+    let inline ( *..> ) (patterns: #seq<string>) body : ExecContext Rule =
+        let header, recipe = RuleBody $ body
+        FileRule (List.ofSeq patterns, header, recipe)
 
     /// Creates phony action (check if I can unify the operator name)
     let (=>) name action =
@@ -142,20 +154,19 @@ module XakeScript =
                 Resource.release resource 1
         })
 
-    let rec private mapRecipe (f: Recipe<ExecContext, unit> -> Recipe<ExecContext, unit>) = function
-        | FileRule (p, r)          -> FileRule (p, f r)
-        | MultiFileRule (ps, r)    -> MultiFileRule (ps, f r)
-        | PhonyRule (n, r)         -> PhonyRule (n, f r)
-        | FileConditionRule (c, r) -> FileConditionRule (c, f r)
-        | DelegatedRule (inner, exec) -> DelegatedRule (mapRecipe f inner, exec)
-
-    /// Wraps a rule so its recipe runs under a resource lock (1 unit, CPU-slot yielding).
-    /// The whole recipe holds the unit, so, as inside `withResource`, a `need` of a target
-    /// that has a rule fails (it could deadlock); plain files are allowed, `allowNeed` lifts it.
-    /// Compose with the existing rule operators, e.g.
+    /// Locks a rule (1 unit, CPU-slot yielding). For a file rule it is `requires resource` in the
+    /// header: the engine builds the static `needs`, then takes the lock around the body. A phony
+    /// rule has no header: its whole recipe holds the unit. While the unit is held, as inside
+    /// `withResource`, a `need` of a target that has a rule fails (it could deadlock); plain files
+    /// are allowed, `allowNeed` lifts it. Compose with the rule operators, e.g.
     /// `"restore:*" => recipe { ... } |> requiring restoreLock`.
-    let requiring (resource: Resource) (rule: ExecContext Rule) : ExecContext Rule =
-        rule |> mapRecipe (wrapRecipe resource)
+    let rec requiring (resource: Resource) (rule: ExecContext Rule) : ExecContext Rule =
+        let lock (header: RuleHeader) = { header with Requires = header.Requires @ [ resource, 1 ] }
+        match rule with
+        | FileRule (ps, h, r)          -> FileRule (ps, lock h, r)
+        | FileConditionRule (c, h, r)  -> FileConditionRule (c, lock h, r)
+        | PhonyRule (n, r)             -> PhonyRule (n, wrapRecipe resource r)
+        | DelegatedRule (inner, exec)  -> DelegatedRule (requiring resource inner, exec)
 
     /// Marks a rule as delegated, delegating its up-to-date check and execution to the
     /// caller-supplied executor. Script authors keep writing `need ["target"]`; whether the

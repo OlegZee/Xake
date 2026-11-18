@@ -46,6 +46,7 @@ commit touching the file; lengths are approximate line counts. Index written 202
 | File | What it is | Read when | Lines | Date | Status |
 |---|---|---|---|---|---|
 | [overview.md](overview.md) | short intro: minimal script, how to run, rule styles, the 4.0 pattern grammar (patterns, masks, paths) | first contact with Xake | ~100 | 2026-09-05 | current |
+| [rule-header.md](rule-header.md) | the rule header (5.0): `also`, `needs`, `requires`, `noContentCutoff`; groups; what does not compile | writing rules with fixed inputs, side outputs or locks | ~215 | 2026-11-18 | 5.0, unreleased |
 | [typed-targets.md](typed-targets.md) | `Xake.Typed` (4.0): rule patterns with record groups, generated paths, `Command`, migration; a test compiles its snippets | writing rules with groups | ~430 | 2026-11-03 | current |
 | [cheatsheet.md](cheatsheet.md) | one-page syntax: entry point, `<==`/`<<<`, rules, variables (`var`, `varschema`, secrets) | writing or reading any build script | ~130 | 2026-10-06 | current |
 | [tasks.md](tasks.md) | reference of the built-in tasks (the .NET ones are in Xake.Dotnet) | using a task or its settings | ~535 | 2026-11-03 | current |

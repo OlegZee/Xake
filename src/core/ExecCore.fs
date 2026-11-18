@@ -52,16 +52,18 @@ let explainMatch (Rules rules) projectRoot target : RuleMatchInfo<_> list =
     let rec matchRule index rule =
         match rule, target with
 
-        |FileConditionRule (meetCondition,_), FileTarget file when file |> File.getSysFileName |> meetCondition ->
+        |FileConditionRule (meetCondition,_,_), FileTarget file when file |> File.getSysFileName |> meetCondition ->
             // TODO let condition rule extracting named groups
             Some { Rule = rule; Groups = []; Targets = [target]; Pattern = None; Specificity = conditionSpecificity; Index = index; Evidence = [] }
 
-        |FileRule (pattern,_), FileTarget file ->
+        |FileRule ([pattern], { Also = [] }, _), FileTarget file ->
             file.Name
             |> matchRulePattern pattern projectRoot
             |> Option.map (fun (groups, evidence) -> { Rule = rule; Groups = groups; Targets = [target]; Pattern = Some pattern; Specificity = specificityOf pattern; Index = index; Evidence = evidence })
 
-        |MultiFileRule (patterns, _), FileTarget file ->
+        |FileRule (patterns, header, _), FileTarget file ->
+            // several outputs (`*..>` or `also`): the match of any names them all, main first
+            let patterns = Rule.outputs patterns header
             let fname = file.Name
             patterns
             |> List.tryPick(fun pattern ->
@@ -104,6 +106,20 @@ let locateRule rules projectRoot target =
     explainMatch rules projectRoot target
     |> List.tryHead
     |> Option.map (fun m -> m.Rule, m.Groups, m.Targets)
+
+/// The candidates for a target and the rule selected among them by the script's `ruleMatch`.
+let selectRule (ctx: ExecContext) target =
+    let candidates = explainMatch ctx.Options.Rules ctx.Options.ProjectRoot target
+    candidates,
+    match ctx.Options.RuleMatch with
+    | MostSpecific -> candidates |> List.tryHead
+    | LastDeclared -> candidates |> List.sortBy (fun m -> m.Index) |> List.tryHead
+
+/// A rule's header and recipe.
+let rec ruleAction = function
+    | FileRule (_, h, a) | FileConditionRule (_, h, a) -> h, a
+    | PhonyRule (_, a) -> RuleHeader.Empty, a
+    | DelegatedRule (inner, _) -> ruleAction inner
 
 /// Global counter for assigning ordinals to tasks submitted to the worker pool.
 let refTaskOrdinal = ref 0
@@ -151,7 +167,20 @@ let checkSpelling (ctx: ExecContext) (isTarget: bool) (file: File) =
 /// Raises XakeException when neither a rule nor a file is found.
 let rec execOne (ctx: ExecContext) target =
 
-    let run ruleMatches action targets =
+    // a rule with several outputs (`*..>`, `also`) must write every one of them (M2): a missing
+    // one would make the rule rerun forever. Nothing is recorded, so the next run retries.
+    let checkOutputsWritten (targets: Target list) =
+        match targets |> List.filter (function FileTarget f -> not (File.exists f) | PhonyAction _ -> false) with
+        | missing when targets.Length > 1 && not missing.IsEmpty ->
+            let errorText =
+                sprintf "The rule for '%s' did not write its declared output%s %s; a rule writes every output it declares (also, *..>): write it, or remove it from the rule"
+                    ((List.head targets).Display ctx.Options.ProjectRoot) (if missing.Length > 1 then "s" else "")
+                    (missing |> List.map (fun t -> "'" + t.Display ctx.Options.ProjectRoot + "'") |> String.concat ", ")
+            ctx.Logger.Log Error "%s" errorText
+            raise (XakeException errorText)
+        | _ -> ()
+
+    let run ruleMatches header action targets =
         let primaryTarget = targets |> List.head
         async {
             match ctx.NeedRebuild targets with
@@ -161,11 +190,11 @@ let rec execOne (ctx: ExecContext) target =
 
                 do Progress.TaskStart primaryTarget |> ctx.Progress.Post
 
-                let startResult = {BuildLog.makeResult targets with Steps = [Step.start "all"]}
-                let! (result,_) = action (startResult, taskContext)
-                // Built is the completion time; Epoch the run the task started in (A2)
-                let result = {Step.updateTotalDuration result with Built = System.DateTime.Now; Epoch = ctx.RunEpoch}
+                let! result = runHeaded taskContext header action targets
+                // Epoch is the run the task started in (A2)
+                let result = { result with Epoch = ctx.RunEpoch }
 
+                checkOutputsWritten targets
                 do! observeOutputs ctx targets
                 Store result |> ctx.Db.Post
 
@@ -184,7 +213,7 @@ let rec execOne (ctx: ExecContext) target =
     // governed solely by whatever dispatch Resource the executor applies (or is unbounded).
     // `runDetached` inside a delegated body is therefore redundant. The result is still
     // stored locally so downstream targets resolve as built.
-    let runDelegated ruleMatches action (executor: DelegatedExecutor<ExecContext>) targets =
+    let runDelegated ruleMatches header action (executor: DelegatedExecutor<ExecContext>) targets =
         let primaryTarget = targets |> List.head
         async {
             let taskContext = newTaskContext targets ruleMatches ctx
@@ -194,9 +223,7 @@ let rec execOne (ctx: ExecContext) target =
             let bodyRan = ref false
             let bodyThunk () = async {
                 bodyRan.Value <- true
-                let startResult = {BuildLog.makeResult targets with Steps = [Step.start "all"]}
-                let! (result,_) = action (startResult, taskContext)
-                return {Step.updateTotalDuration result with Built = System.DateTime.Now}
+                return! runHeaded taskContext header action targets
             }
 
             let! result =
@@ -210,6 +237,7 @@ let rec execOne (ctx: ExecContext) target =
                     return local |> Option.map (fun r -> r.Epoch) |> Option.defaultValue ctx.RunEpoch }
             let result = { result with Epoch = epoch }
 
+            checkOutputsWritten targets
             do! observeOutputs ctx targets
             Store result |> ctx.Db.Post
 
@@ -218,17 +246,7 @@ let rec execOne (ctx: ExecContext) target =
             return Succeed
         }
 
-    let rec getAction = function
-        | FileRule (_, a)
-        | FileConditionRule (_, a)
-        | MultiFileRule (_, a)
-        | PhonyRule (_, a) -> a
-        | DelegatedRule (inner, _) -> getAction inner
-
-    // result expression is...
-    let candidates = explainMatch ctx.Options.Rules ctx.Options.ProjectRoot target
-
-    // The rule selection strategy, set in the script by the `ruleMatch` operation.
+    let candidates, selected = selectRule ctx target
     let ruleMatchMode = ctx.Options.RuleMatch
 
     // -d EXPLAIN_RULE=<target>: dump the matching rules and the winner for a matching target.
@@ -243,10 +261,20 @@ let rec execOne (ctx: ExecContext) target =
                 ctx.Logger.Log Message "  %s %-48s {lit=%d, **=%d, wc=%d}"
                     (if i = 0 then "->" else "  ") (m.Pattern |> Option.defaultValue "<condition>") l (-d) (-w)))
 
-    let selected =
-        match ruleMatchMode with
-        | MostSpecific -> candidates |> List.tryHead
-        | LastDeclared -> candidates |> List.sortBy (fun m -> m.Index) |> List.tryHead
+    // one file has one rule (M1): every other output of the selected rule must select it back
+    match selected with
+    | Some best when best.Targets.Length > 1 ->
+        let ruleName (m: RuleMatchInfo<_>) = m.Pattern |> Option.defaultValue "<condition>"
+        for output in best.Targets do
+            match output <> target, selectRule ctx output with
+            | true, (_, Some other) when other.Index <> best.Index ->
+                let errorText =
+                    sprintf "Outputs overlap: '%s' is an output of the rule \"%s\" (building '%s') and is built by the rule \"%s\"; a file has one rule: narrow one of the patterns, or remove the output from the first rule"
+                        (output.Display ctx.Options.ProjectRoot) (ruleName best) (target.Display ctx.Options.ProjectRoot) (ruleName other)
+                ctx.Logger.Log Error "%s" errorText
+                raise (XakeException errorText)
+            | _ -> ()
+    | _ -> ()
 
     // Warn when the winner ties on specificity with a different pattern (MostSpecific only): the
     // choice then rests on declaration order, which is the trap this feature exists to surface.
@@ -283,11 +311,11 @@ let rec execOne (ctx: ExecContext) target =
     match selected with
     | Some {Rule = rule; Groups = groups; Targets = targets} ->
         let groupsMap = groups |> Map.ofSeq
-        let (Recipe action) = rule |> getAction
+        let header, Recipe action = ruleAction rule
         let taskAction =
             match rule with
-            | DelegatedRule (_, executor) -> runDelegated groupsMap action executor targets
-            | _ -> run groupsMap action targets
+            | DelegatedRule (_, executor) -> runDelegated groupsMap header action executor targets
+            | _ -> run groupsMap header action targets
         async {
             let! waitTask = (fun channel -> Run(target, targets, taskAction, channel)) |> (Scheduler.pool ctx.Engine.Scheduler).PostAndAsyncReply
             let! status = waitTask
@@ -356,9 +384,53 @@ and execNeed (ctx: ExecContext) targets : Async<ExecStatus * Dependency list> =
                 |false -> Skipped), dependencies
     }
 
+/// The static `needs` of a header for one match (groups filled in): a pattern without wildcards
+/// is one target, resolved as `need` resolves a name; with wildcards (or braces) it is a fileset of
+/// the existing files, recorded as `GetFiles`. Returns the targets and the `GetFiles` entries.
+and resolveNeeds (ctx: ExecContext) (groups: Map<string, string>) (patterns: string list) =
+    let resolve (pattern: string) =
+        let tokens = PatternAst.Rule.parse pattern
+        let single =
+            if List.isEmpty (PatternAst.wildcards tokens) then
+                try Some (PatternAst.formatMatches groups pattern)
+                with PatternAst.PatternException _ -> None   // braces or a class outside a group
+            else None
+        match single with
+        | Some path -> [ makeTarget ctx path ], []
+        | None ->
+            let fileset = Fileset.ls (PatternAst.glob (fun name -> Map.tryFind name groups) (fun _ -> None) tokens)
+            let (Filelist files) as list = fileset |> Fileset.toFileList ctx.Options.ProjectRoot
+            files |> List.map FileTarget, [ GetFiles (fileset, list) ]
+    let resolved = patterns |> List.map resolve
+    (resolved |> List.collect fst |> List.distinct), (resolved |> List.collect snd)
+
+/// A task's work (docs/rule-header.md): the header's static `needs`, requested together; then its
+/// locks in `Locks` order, yielding the CPU slot while waiting; then the body on a fresh result,
+/// holding them. The header's entries go first (`StaticCount`), whatever the body records.
+and private runHeaded (ctx: ExecContext) (header: RuleHeader) action targets : Async<BuildResult> = async {
+    let start = { BuildLog.makeResult targets with Steps = [Step.start "all"] }
+    let started = System.DateTime.Now
+    let! headerDeps = async {
+        match resolveNeeds ctx ctx.RuleMatches header.Needs with
+        | [], filesetDeps -> return filesetDeps
+        | targets, filesetDeps ->
+            let! _, deps = execNeed ctx targets
+            return filesetDeps @ deps }
+    let start = start |> Step.updateWaitTime (int (System.DateTime.Now - started).TotalMilliseconds * 1<ms>)
+    let rec holding (held: string list) rest = async {
+        match rest with
+        | [] -> return! action (start, { ctx with HeldResources = held @ ctx.HeldResources })
+        | (resource: Resource, units) :: rest ->
+            do! Scheduler.withYieldedSlot ctx.Engine.Scheduler (Resource.acquire resource units)
+            try return! holding (held @ [ resource.ResourceName ]) rest
+            finally Resource.release resource units }
+    let! (result, _) = holding [] header.Locks
+    return { Step.updateTotalDuration result with
+                Built = System.DateTime.Now; Depends = headerDeps @ result.Depends; StaticCount = headerDeps.Length } }
+
 /// Resolves a target name to a PhonyAction if a matching phony rule exists, otherwise to a FileTarget.
 /// Phony actions take precedence over files with the same name.
-let makeTarget (ctx: ExecContext) name =
+and makeTarget (ctx: ExecContext) name =
     let (Rules rules) = ctx.Options.Rules
     let rec isPhonyRule nm = function
         |PhonyRule (pattern,_) ->
@@ -369,6 +441,14 @@ let makeTarget (ctx: ExecContext) name =
     match rules |> List.exists (isPhonyRule name) with
     | true -> PhonyAction name
     | _ -> ctx.Options.ProjectRoot </> name |> File.make |> FileTarget
+
+/// The rule of a target now, for the verdict (M9): its outputs and static set; None without a rule.
+let currentRule (ctx: ExecContext) target =
+    match selectRule ctx target with
+    | _, Some m ->
+        let targets, filesetDeps = resolveNeeds ctx (Map.ofList m.Groups) (fst (ruleAction m.Rule)).Needs
+        Some (m.Targets, staticKeys (filesetDeps @ List.map TargetDep targets))
+    | _ -> None
 
 /// Recursively flattens an AggregateException into its leaf exceptions.
 let rec unwindAggEx (e:System.Exception) = seq {
@@ -396,7 +476,7 @@ let beginRun (ctx: ExecContext) = async {
     do Scheduler.newRun ctx.Engine.Scheduler
     let! epoch = ctx.Db.PostAndAsyncReply Storage.NewRun
     let ctx = { ctx with Spellings = newSpellings (); RunEpoch = epoch }
-    return ctx, getChangeReasons ctx |> memoizeRec }
+    return ctx, getChangeReasons ctx (currentRule ctx) |> memoizeRec }
 
 /// Runs the full build pipeline for the given target groups.
 /// Each group is executed sequentially; targets within a group run in parallel.

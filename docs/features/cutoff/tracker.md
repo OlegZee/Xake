@@ -1,7 +1,10 @@
-# Tracker — cutoff brief
+# Tracker — content cut-off (phase 3)
 
-- [ ] Owner's intent: what early cut-off must preserve
-- [ ] Decisions recorded in brief.md
-- [ ] Record shapes for phase 1 (db-paths-simple)
-- [ ] Optional fresh-eyes review (Fable, brief + sources only)
-- [ ] Commit locally; report to the orchestrator
+- [x] Rebase on origin/dev, branch feature/content-cutoff
+- [x] Brief draft
+- [ ] Owner: Q1 dynamic dependee, Q2 hand-edited output, Q3 eager output hashing, Q4 RunSummary/fast path
+- [ ] Design report with line budget -> owner approval
+- [ ] Docs first, code, tests (brief's Acceptance)
+- [ ] Windows VM check (ssh win11), report to the orchestrator
+
+## Later

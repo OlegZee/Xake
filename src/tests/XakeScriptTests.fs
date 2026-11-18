@@ -344,14 +344,15 @@ type ``XakeScript tests``() =
                 let! files = getTargetFiles()
                 let! options = getCtxOptions()
                 root <- options.ProjectRoot
-                fileNames <- (files |> List.map File.getFullName)
+                fileNames <- (files |> List.map (fun f -> f.Name))
                 map := groups; matchedAny <- true
             })
         }
 
         Assert.IsTrue matchedAny
         Assert.That(fileNames, Is.All.StartsWith root)
-        let relFileNames = fileNames |> List.map (fun s -> s.Substring(root.Length + 1).Replace("\\", "/"))
+        // Xake's forms on both sides ('/'): the root and the target names (C1)
+        let relFileNames = fileNames |> List.map (fun s -> s.Substring(root.TrimEnd('/').Length + 1))
 
         Assert.That(relFileNames, expect.Split(';') |> Is.EquivalentTo)
 

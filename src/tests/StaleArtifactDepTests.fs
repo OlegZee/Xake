@@ -168,8 +168,8 @@ type ``StaleArtifactDep tests``() =
                         do! need ["out/app.dll"]
                         packRuns.Value <- packRuns.Value + 1
                         let! pkg = getTargetFile()
-                        File.Delete pkg.FullName
-                        use zip = System.IO.Compression.ZipFile.Open(pkg.FullName, System.IO.Compression.ZipArchiveMode.Create)
+                        File.Delete (Xake.File.getSysFileName pkg)
+                        use zip = System.IO.Compression.ZipFile.Open(Xake.File.getSysFileName pkg, System.IO.Compression.ZipArchiveMode.Create)
                         zip.CreateEntryFromFile("out/app.dll", "lib/app.dll") |> ignore
                     }
                 ]
@@ -239,14 +239,14 @@ type ``StaleArtifactDep tests``() =
             [ res [ PhonyAction "deploy" ] [ artifact (FileTarget b) ]
               res [ FileTarget a ] [ LegacyRead.OldFile (file "up_in.txt", stamp "up_in.txt") ]
               res [ FileTarget b ] [ artifact (FileTarget a) ] ]
-        let artifact2 t = match t with FileTarget f -> LegacyRead.OldArtifact2 (t, stamp f.FullName) | _ -> failwith "file"
+        let artifact2 t = match t with FileTarget f -> LegacyRead.OldArtifact2 (t, stamp (Xake.File.getSysFileName f)) | _ -> failwith "file"
         OldDatabase.writeOld ".xake" "0.6" (old06 artifact2)
         do script x.TestOptions "up_" aRuns bRuns ["deploy"]
         Assert.AreEqual((1, 1), (aRuns.Value, bRuns.Value), "a no-change run after the upgrade rebuilds nothing")
         Assert.AreEqual(BuildLog.XakeDbVersion, OldDatabase.version ".xake")
 
         // a 0.6 result that saw an older stamp reruns
-        let older t = match t with FileTarget f -> LegacyRead.OldArtifact2 (t, (stamp f.FullName).AddSeconds -5.0) | _ -> failwith "file"
+        let older t = match t with FileTarget f -> LegacyRead.OldArtifact2 (t, (stamp (Xake.File.getSysFileName f)).AddSeconds -5.0) | _ -> failwith "file"
         OldDatabase.writeOld ".xake" "0.6" [ res [ PhonyAction "deploy" ] [ artifact2 (FileTarget b) ]
                                              res [ FileTarget a ] [ LegacyRead.OldFile (file "up_in.txt", stamp "up_in.txt") ]
                                              res [ FileTarget b ] [ older (FileTarget a) ] ]

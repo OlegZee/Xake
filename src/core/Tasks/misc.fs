@@ -10,7 +10,8 @@ module MiscImpl =
     /// Writes text to a file.
     /// </summary>
     let writeTargetText content = recipe {
-        let! fileName = getTargetFullName()
+        let! target = getTargetFile()
+        let fileName = Xake.File.getSysFileName target
         do ensureDirCreated fileName
         do File.WriteAllText(fileName, content)
     }
@@ -22,7 +23,8 @@ module MiscImpl =
     /// Writes binary data to a file.
     /// </summary>
     let writeTargetBytes content = recipe {
-        let! fileName = getTargetFullName()
+        let! target = getTargetFile()
+        let fileName = Xake.File.getSysFileName target
         do ensureDirCreated fileName
         do File.WriteAllBytes(fileName, content)
     }

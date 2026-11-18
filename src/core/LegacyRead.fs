@@ -1,4 +1,4 @@
-/// Reads databases 0.4-0.6 (Xake 3.x/4.x) for the upgrade to 0.7 (decision B3). Self-contained:
+﻿/// Reads databases 0.4-0.6 (Xake 3.x/4.x) for the upgrade to 0.7 (decision B3). Self-contained:
 /// removing this module leaves `Database.fs` with one call to drop ("no longer read, recreating").
 module internal Xake.LegacyRead
 
@@ -42,7 +42,7 @@ let private fileset =
 /// The 0.4-0.6 result pickler: paths are strings, joined with the root (an absolute one stays as
 /// is); a pickled file is its absolute path (the tests' fixture writes with it).
 let result (root: string) =
-    let file = wrap ((fun s -> File.make (root </> s)), fun (f: File) -> f.FullName) str
+    let file = wrap ((fun s -> File.make (root </> s)), File.getSysFileName) str
     let target =
         alt (function FileTarget _ -> 0 | PhonyAction _ -> 1)
             [| wrap (FileTarget, fun (FileTarget f | OtherwiseFail f) -> f) file

@@ -437,7 +437,7 @@ module Storage =
                 else
                     observed.Add file |> ignore
                     let first = mode <> Recording || recorded.Add file
-                    let fi = System.IO.FileInfo file.FullName
+                    let fi = File.getFileInfo file
                     if not fi.Exists then None, db, out
                     else
                         let state =

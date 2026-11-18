@@ -1,4 +1,4 @@
-namespace Tests
+﻿namespace Tests
 
 open System.IO
 open NUnit.Framework
@@ -65,7 +65,7 @@ type ``Typed targets: rules``() =
         do! need [ for dep in lib.Needs -> (Lib.Make { m with lib = dep }).dll ]
         say "compile %s %s" m.lib m.fwk
         let (Fileset.Filelist files) = sources
-        let text = files |> List.map (fun f -> File.ReadAllText f.FullName) |> List.sort |> String.concat ""
+        let text = files |> List.map (fun f -> File.ReadAllText (Xake.File.getSysFileName f)) |> List.sort |> String.concat ""
         write out.dll text
         write out.xml $"<doc>{m.lib}</doc>"
     }

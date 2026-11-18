@@ -52,18 +52,17 @@ let explainMatch (Rules rules) projectRoot target : RuleMatchInfo<_> list =
     let rec matchRule index rule =
         match rule, target with
 
-        |FileConditionRule (meetCondition,_), FileTarget file when file |> File.getFullName |> meetCondition ->
+        |FileConditionRule (meetCondition,_), FileTarget file when file |> File.getSysFileName |> meetCondition ->
             // TODO let condition rule extracting named groups
             Some { Rule = rule; Groups = []; Targets = [target]; Pattern = None; Specificity = conditionSpecificity; Index = index; Evidence = [] }
 
         |FileRule (pattern,_), FileTarget file ->
-            file
-            |> File.getFullName
+            file.Name
             |> matchRulePattern pattern projectRoot
             |> Option.map (fun (groups, evidence) -> { Rule = rule; Groups = groups; Targets = [target]; Pattern = Some pattern; Specificity = specificityOf pattern; Index = index; Evidence = evidence })
 
         |MultiFileRule (patterns, _), FileTarget file ->
-            let fname = file |> File.getFullName
+            let fname = file.Name
             patterns
             |> List.tryPick(fun pattern ->
                 matchRulePattern pattern projectRoot fname

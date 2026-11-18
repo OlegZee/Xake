@@ -109,7 +109,7 @@ module private PicklerImpl =
           wrap (Excludes, fun (Excludes p | OtherwiseFail p) -> p) Path.pickler
         |]
 
-    let fileinfo = wrap(File.make, File.getFullName) str
+    let fileinfo = wrap(File.make, fun (f: File) -> f.Name) str
 
     let fileset  = wrap(Fileset, fun (Fileset (o,l)) -> o,l) (pair filesetoptions (list filesetElement))
     let filelist = wrap(Filelist, fun (Filelist l) -> l) (list fileinfo)
@@ -171,7 +171,7 @@ type ListDiffType<'a> = | Added of 'a | Removed of 'a
 /// <param name="list2"></param>
 let compareFileList (Filelist list1) (Filelist list2) =
 
-    let setOfNames = List.map File.getFullName >> Set.ofList
+    let setOfNames = List.map (fun (f: File) -> f.Name) >> Set.ofList
 
     let set1, set2 = setOfNames list1, setOfNames list2
 

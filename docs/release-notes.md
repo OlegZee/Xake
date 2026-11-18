@@ -19,6 +19,11 @@ Breaking changes:
 2. **`File`.** `File.undefined` is removed. `Name` is the absolute path (the engine's own output
    is relative to the project root). `File.make` normalises: a trailing separator is dropped and,
    on Windows, `\` becomes `/` internally. `File.display` and `File.comparer` are added.
+   `Name` is Xake's name of a file (`/` separators), and every path string Xake hands out is in
+   that form, `ExecContext.Options.ProjectRoot` included. `File.getSysFileName` gives the OS form
+   (`\` on Windows) for command lines and tools, `File.getFileInfo` a new `FileInfo` per call.
+   `FullName`, `File.getFullName` and `getTargetFullName` are deprecated aliases of the OS form,
+   to be removed in a later release.
 3. **`Dependency`.** `FileDep of File` and `TargetDep of Target` carry no stamp; `ArtifactDep` and
    `ArtifactDep2` are removed. `BuildResult` gains `Epoch` and `StaticCount` (`Built` stays the
    time). `BuildLog.Database` gains `Files` and `FileState` is added.

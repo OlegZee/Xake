@@ -22,6 +22,7 @@
 | B1 functional path table, B2 `beginRun` / epoch in `ExecContext`, B3 `LegacyRead` (owner 2026-11-18) | done (one commit: the three rewrite the same code) |
 | Review fixes R1, R2, R3, R4, R7; simplifications a-j; review test gaps | done (A4 write failure untested: no way to inject a failing write) |
 | R6 / B4 `Path.matches` ignores case on every OS | done |
+| Windows CI (PR #141): C2 root normalised for matching; B5/C1 `getSysFileName`, `getFileInfo`, `FullName`/`getFullName`/`getTargetFullName` obsolete | done, Windows run by the starting session |
 
 ## Later (for the owner)
 

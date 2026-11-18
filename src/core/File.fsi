@@ -1,4 +1,4 @@
-namespace Xake
+﻿namespace Xake
 
 /// A file: its normalised absolute path (`/` as the separator on every OS), compared ordinally.
 [<Sealed>]
@@ -7,9 +7,11 @@ type File =
     override Equals: obj -> bool
     override GetHashCode: unit -> int
 
-    /// The absolute path with `/` separators.
+    /// Xake's name of the file: the normalised absolute path with `/`, its identity (what Xake
+    /// stores, compares and shows).
     member Name : string
-    /// The absolute path in the OS form (`\` on Windows).
+    /// The path in the OS form (`File.getSysFileName`).
+    [<System.Obsolete("Use File.getSysFileName for the OS form, or Name for Xake's form; to be removed in a later release")>]
     member FullName : string
 
 [<CompilationRepresentation(CompilationRepresentationFlags.ModuleSuffix)>]
@@ -34,7 +36,15 @@ module File =
     /// Gets the file direactory.
     val getDirName: File -> string
 
-    /// Gets fully qualified file name.
+    /// The path in the OS form (`\` on Windows), for command lines and tools: `Name` with the
+    /// separators converted, one to one.
+    val getSysFileName: File -> string
+
+    /// A new `FileInfo` of the file at each call, for disk queries (nothing is cached in `File`).
+    val getFileInfo: File -> System.IO.FileInfo
+
+    /// The path in the OS form.
+    [<System.Obsolete("Use File.getSysFileName for the OS form, or Name for Xake's form; to be removed in a later release")>]
     val getFullName: File -> string
 
     /// Get true if file exists

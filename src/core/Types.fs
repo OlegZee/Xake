@@ -21,7 +21,7 @@ module DomainTypes =
                 | PhonyAction name -> name
             member internal this.FullName =
                 match this with
-                | FileTarget file -> file.FullName
+                | FileTarget file -> File.getSysFileName file
                 | PhonyAction name -> name
             
             override x.Equals(yobj) =

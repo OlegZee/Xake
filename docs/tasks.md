@@ -173,7 +173,7 @@ Common helpers used inside `recipe`:
 - `getEnv`
 - `getCtxOptions`
 - `getTargetFile`
-- `getTargetFullName`
+- `getTargetFullName` (deprecated in 5.0: `getTargetFile` with `File.getSysFileName`)
 - `hasRule` (whether a rule would build a target, without building it)
 
 Example:

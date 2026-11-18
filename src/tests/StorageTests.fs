@@ -265,7 +265,7 @@ let ``database 0.7 is at least 5x smaller than 0.6 on a synthetic database``() =
         [ for r in 0 .. 999 ->
             let deps = [ for k in 0 .. 29 -> path ((r * 7 + k * 31) % 1050) ]
             r, deps ]
-    let meanPath = results |> List.collect snd |> List.averageBy (fun f -> float f.FullName.Length)
+    let meanPath = results |> List.collect snd |> List.averageBy (fun f -> float f.Name.Length)
     let old =
         use ms = new MemoryStream()
         use w = new BinaryWriter(ms)

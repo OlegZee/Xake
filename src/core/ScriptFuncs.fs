@@ -205,12 +205,13 @@ module ScriptFuncs =
 
     /// <summary>
     /// Gets current target file name with full path.
-    /// Convenience function that combines getTargetFile and File.getFullName.
+    /// Convenience function that combines getTargetFile and File.getSysFileName.
     /// </summary>
     /// <returns>Recipe that returns the full path of the current target file</returns>
+    [<System.Obsolete("Use getTargetFile with File.getSysFileName for the OS form, or Name for Xake's form; to be removed in a later release")>]
     let getTargetFullName() = recipe {
         let! file = getTargetFile()
-        return File.getFullName file
+        return File.getSysFileName file
     }
 
     /// <summary>

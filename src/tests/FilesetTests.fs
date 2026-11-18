@@ -26,7 +26,7 @@ module private tree =
 
     let relative root (files: Xake.File list) =
         let full = (DirectoryInfo root).FullName
-        files |> List.map (fun f -> (File.getFullName f).Substring(full.Length).TrimStart('/', '\\').Replace('\\', '/'))
+        files |> List.map (fun f -> (File.getSysFileName f).Substring(full.Length).TrimStart('/', '\\').Replace('\\', '/'))
 
     /// The files `fs` lists under `root`, relative and '/'-separated, in result order.
     let ordered root (fs: Fileset) =

@@ -1,4 +1,4 @@
-module ``Command line interface``
+﻿module ``Command line interface``
 
 open System.IO
 open NUnit.Framework
@@ -46,7 +46,7 @@ let ``accepts various switches``() =
     // Engine-level assertions
     let eo = !engineOptions
     Assert.AreEqual(33, eo.Threads)
-    Assert.AreEqual(currentDir, eo.ProjectRoot)
+    Assert.AreEqual((File.make currentDir).Name, eo.ProjectRoot)    // Xake's form (C1)
 
     // CLI-level assertions: verify parsing directly
     let parsed = parseArgs args {XakeOptions with DbFileName = ".xake-vari"}

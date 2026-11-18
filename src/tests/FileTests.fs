@@ -54,7 +54,8 @@ type ``File type``() =
         let f = File.make "sub/../a.txt"
         Assert.AreEqual((Path.collapse (Directory.GetCurrentDirectory() </> "a.txt")), f.Name)
         Assert.IsFalse(f.Name.Contains "\\")
-        Assert.AreEqual(Path.GetFullPath(root </> "a.txt"), f.FullName)
+        Assert.AreEqual(Path.GetFullPath(root </> "a.txt"), File.getSysFileName f)
+        Assert.AreEqual(Path.GetFullPath(root </> "a.txt"), (File.getFileInfo f).FullName)
         Assert.AreEqual(File.make (root </> "a.txt"), f)
         Assert.Throws<exn>(fun () -> File.make "  " |> ignore) |> ignore
 

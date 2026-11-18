@@ -7,9 +7,12 @@ open System.IO
 type File = private F of string with
 
     member f.Name = let (F n) = f in n
-    member f.FullName =
+    /// The OS form: `/` -> the OS separator.
+    member internal f.SysName =
         let (F n) = f
         if Path.DirectorySeparatorChar = '/' then n else n.Replace('/', Path.DirectorySeparatorChar)
+    [<System.Obsolete("Use File.getSysFileName for the OS form, or Name for Xake's form; to be removed in a later release")>]
+    member f.FullName = f.SysName
 
     interface System.IComparable with
         member x.CompareTo yobj =
@@ -62,10 +65,14 @@ module File =
     /// Returns the file extension including the leading dot.
     let getFileExt (f:File) = f.Name |> Path.GetExtension
     /// Returns the directory portion of a File's full path.
-    let getDirName (f:File) = f.FullName |> Path.GetDirectoryName
-    /// Returns the fully qualified path of the file.
-    let getFullName (f:File) = f.FullName
+    let getDirName (f:File) = f.SysName |> Path.GetDirectoryName
+    /// The path in the OS form.
+    let getSysFileName (f:File) = f.SysName
+    /// A new FileInfo of the file.
+    let getFileInfo (f:File) = FileInfo f.SysName
+    [<System.Obsolete("Use File.getSysFileName for the OS form, or Name for Xake's form; to be removed in a later release")>]
+    let getFullName (f:File) = f.SysName
     /// Returns true if the file exists on disk.
-    let exists (f:File) = BclFile.Exists f.FullName
+    let exists (f:File) = BclFile.Exists f.SysName
     /// Returns the last write time of the file.
-    let getLastWriteTime (f:File) = BclFile.GetLastWriteTime f.FullName
+    let getLastWriteTime (f:File) = BclFile.GetLastWriteTime f.SysName

@@ -14,7 +14,7 @@ Breaking changes:
    Filesets ignore case by default on every OS; `casesensitive` in `fileset { }`
    (`FilesetOptions.CaseSensitive`) restores a case-sensitive search. Rules, targets and `File`
    stay ordinal, with no option. On Windows and macOS filesets behave as before; on Linux they
-   become case-insensitive. Two spellings of one file in a run: an error for targets, a warning
+   become case-insensitive. `Path.matches` ignores case on every OS too, as filesets do. Two spellings of one file in a run: an error for targets, a warning
    otherwise.
 2. **`File`.** `File.undefined` is removed. `Name` is the absolute path (the engine's own output
    is relative to the project root). `File.make` normalises: a trailing separator is dropped and,

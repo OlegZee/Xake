@@ -332,7 +332,9 @@ let matchGroups (pattern:string) rootPath =
 /// `.` and `..` in the file path are resolved first. Raises `PatternAst.PatternException` for an
 /// invalid mask.
 let matches filePattern rootPath =
-    fun file -> PatternMatch.matchMask RuleImpl.windows rootPath filePattern (collapse file) false
+    // case ignored on every OS, as a fileset's default (B4)
+    let m = PatternMatch.maskMatcher RuleImpl.windows true rootPath filePattern
+    fun file -> m (collapse file) false
 
 /// Specificity of a rule pattern (spec 5.8, see the `Specificity` type), memoized per pattern
 /// string. Raises `PatternAst.PatternException` for an invalid pattern.

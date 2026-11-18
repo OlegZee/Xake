@@ -22,8 +22,8 @@ absolute path" and that phase 1 has one root (`openDb root`, `ProjectRoot` only;
 
 **Implementation (2026-11-18, separate session).** Phase 1 with A1-A9, then B1-B3, the review
 fixes R1-R4 and R7, the simplifications a-j and the review's test gaps are committed; all tests
-green, `build.fsx build test pack` green. **Next step:** the starting session reviews again; R6
-(`Path.matches` case mode) waits for the owner; then push and the PR.
+green, `build.fsx build test pack` green. B4 (`Path.matches` ignores case on every OS) is in.
+**Next step:** the starting session reviews again; then push and the PR.
 
 Measured (2026-11-18): synthetic 1000 results x 30 file dependencies (mean path 118 B): 0.6
 3 960 017 B, 0.7 196 590 B (20.1x). A real 0.6 database of 88 564 308 B (84.5 MB) upgrades to
@@ -31,7 +31,7 @@ Measured (2026-11-18): synthetic 1000 results x 30 file dependencies (mean path 
 2.9 s (1.3 s with the mutable path table of the first version: the immutable maps of B1).
 
 Notes from the implementation:
-- `Path.matches` (public mask test) keeps its 4.0 case mode (R6, owner).
+- `Path.matches` ignores case on every OS, as filesets (B4).
 - A fileset ignoring case on a Unix host lists directories instead of probing literal names; a
   probe hit takes the spelling on disk, an ordinal search drops a hit spelt otherwise (R2).
 - `Target.Display root` is the engine's output name; `ShortName` (the absolute path) stays in the

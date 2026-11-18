@@ -351,7 +351,7 @@ module XakeScriptBuilder =
             Logger = engine.RootLogger
             HeldResources = []
             Spellings = ExecCore.newSpellings ()
-            RunEpoch = 0L
+            RunEpoch = 0
         }
 
         /// Starts a XakeEngine from a fully assembled XakeScript.

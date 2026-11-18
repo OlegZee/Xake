@@ -237,13 +237,15 @@ let maskText = impl.maskText
 /// preceding name; repeated separators removed; the root (`/`, `C:`) kept, a `..` above it dropped; a
 /// trailing separator dropped (except the root's); a leading `//` (UNC) kept when `windows`; case
 /// kept except a Windows drive letter (upper-cased); no symlink resolution. `File.make` and rule/mask matching use it.
+/// A leading Windows drive letter upper-cased (A6): `c:` and `C:` name one root. Applied to paths
+/// by `collapseWith` and to rule patterns by `matchRule`.
+let internal upperDrive (windows: bool) (p: string) =
+    if windows && p.Length >= 2 && p.[1] = ':' && System.Char.IsLower p.[0] then
+        string (System.Char.ToUpperInvariant p.[0]) + p.Substring 1
+    else p
+
 let internal collapseWith (windows: bool) (path: string) =
-    let p = if windows then path.Replace('\\', '/') else path
-    // a Windows drive letter is upper-cased (A6): `c:` and `C:` name one root
-    let p =
-        if windows && p.Length >= 2 && p.[1] = ':' && System.Char.IsLower p.[0] then
-            string (System.Char.ToUpperInvariant p.[0]) + p.Substring 1
-        else p
+    let p = upperDrive windows (if windows then path.Replace('\\', '/') else path)
     let isDrive (s: string) = s.Length = 2 && s.[1] = ':'
     if p.IndexOf("/.", System.StringComparison.Ordinal) < 0 && not (p.StartsWith "./") && p <> "."
        && p.IndexOf("//", System.StringComparison.Ordinal) < 0
@@ -269,10 +271,6 @@ let internal collapseWith (windows: bool) (path: string) =
 let internal collapse (path: string) = collapseWith (not Env.isUnix) path
 
 module private RuleImpl =
-
-    /// `\` is a path separator and a UNC root matches on Windows (D11, D24); case is ordinal on
-    /// every OS (5.0).
-    let windows = not Env.isUnix
 
     let private isMeta (s: string) = s.IndexOfAny([| '*'; '?'; '['; '{'; '('; '\\' |]) >= 0
 
@@ -309,11 +307,11 @@ module private RuleImpl =
 /// named groups in pattern order) and the evidence codes of the match (XP119). Raises
 /// `PatternAst.PatternException` for an invalid pattern.
 let internal matchRule (pattern: string) (rootPath: string) : string -> ((string * string) list * string list) option =
-    let pattern = RuleImpl.collapsePrefix pattern
+    let pattern = RuleImpl.collapsePrefix (upperDrive (not Env.isUnix) pattern)
     // a non-empty root is normalised as the file is (C2); the phony root "" stays
     let rootPath = if rootPath = "" then "" else collapse rootPath
     fun file ->
-        match PatternMatch.matchRule RuleImpl.windows rootPath pattern (collapse file) with
+        match PatternMatch.matchRule rootPath pattern (collapse file) with
         | None -> None
         | Some m ->
             let positional =
@@ -335,7 +333,7 @@ let matchGroups (pattern:string) rootPath =
 /// invalid mask.
 let matches filePattern rootPath =
     // case ignored on every OS, as a fileset's default (B4)
-    let m = PatternMatch.maskMatcher RuleImpl.windows true (if rootPath = "" then "" else collapse rootPath) filePattern
+    let m = PatternMatch.maskMatcher true (if rootPath = "" then "" else collapse rootPath) filePattern
     fun file -> m (collapse file) false
 
 /// Specificity of a rule pattern (spec 5.8, see the `Specificity` type), memoized per pattern

@@ -49,7 +49,7 @@ let ``round-trips every record kind``() =
     let result =
         { Targets = [ FileTarget (f "out/a.dll"); FileTarget (f "out/a.pdb") ]
           Built = System.DateTime(2026, 11, 18, 10, 20, 30)
-          Epoch = 42L
+          Epoch = 42
           Depends =
             [ FileDep (f "src/a.cs"); FileDep outside; FileDep (f "top.txt")
               TargetDep (FileTarget (f "out/b.dll")); TargetDep (PhonyAction "gen")
@@ -60,12 +60,12 @@ let ``round-trips every record kind``() =
           Steps = [ newStepInfo ("compile", 217); newStepInfo ("link", 471) ]
           StaticCount = 3 }
     let states =
-        [ f "src/a.cs", { Stamp = System.DateTime(2026, 1, 2, 3, 4, 5); Size = 1234L; Hash = Some 0xDEADBEEFCAFEF00DUL; Changed = 7L }
-          outside, { Stamp = System.DateTime(2025, 1, 1); Size = -1L; Hash = None; Changed = 1L }
-          f "top.txt", { Stamp = System.DateTime(2025, 1, 1); Size = 0L; Hash = Some 0UL; Changed = 300L } ]
-    let recs = (states |> List.map DbRecord.FileState) @ [ DbRecord.Result result; DbRecord.Result { result with Epoch = 43L; StaticCount = 0 } ]
+        [ f "src/a.cs", { Stamp = System.DateTime(2026, 1, 2, 3, 4, 5); Size = 1234L; Hash = Some 0xDEADBEEFCAFEF00DUL; Changed = 7 }
+          outside, { Stamp = System.DateTime(2025, 1, 1); Size = -1L; Hash = None; Changed = 1 }
+          f "top.txt", { Stamp = System.DateTime(2025, 1, 1); Size = 0L; Hash = Some 0UL; Changed = 300 } ]
+    let recs = (states |> List.map DbRecord.FileState) @ [ DbRecord.Result result; DbRecord.Result { result with Epoch = 43; StaticCount = 0 } ]
     let bytes, read = DbFormat.roundTrip root recs
-    let expected = (states |> List.map DbRecord.FileState) @ [ DbRecord.Result result; DbRecord.Result { result with Epoch = 43L; StaticCount = 0 } ]
+    let expected = (states |> List.map DbRecord.FileState) @ [ DbRecord.Result result; DbRecord.Result { result with Epoch = 43; StaticCount = 0 } ]
     Assert.AreEqual(expected, read.Records)
     Assert.IsFalse(read.Torn)
     // the root's value is never written; a path outside the root stays absolute
@@ -277,10 +277,10 @@ let ``database 0.7 is at least 5x smaller than 0.6 on a synthetic database``() =
         w.Flush()
         ms.Length
     let recs =
-        [ for f in results |> List.collect snd |> List.distinct -> DbRecord.FileState (f, { Stamp = stamp; Size = 4096L; Hash = None; Changed = 1L }) ]
+        [ for f in results |> List.collect snd |> List.distinct -> DbRecord.FileState (f, { Stamp = stamp; Size = 4096L; Hash = None; Changed = 1 }) ]
         @ [ for r, deps in results ->
               DbRecord.Result
-                  { Targets = [ FileTarget (File.make (root </> sprintf "out/obj-%04d.dll" r)) ]; Built = stamp; Epoch = 1L
+                  { Targets = [ FileTarget (File.make (root </> sprintf "out/obj-%04d.dll" r)) ]; Built = stamp; Epoch = 1
                     Depends = deps |> List.map FileDep; Steps = [ newStepInfo ("all", 10) ]; StaticCount = 0 } ]
     let bytes, _ = DbFormat.roundTrip root recs
     let ratio = float old / float bytes.Length
@@ -347,8 +347,8 @@ let ``the upgrade takes the stamp of the latest built result``() =
         convert [ res "late.o" (t0.AddHours 2.0) (t0.AddMinutes 1.0)
                   res "early.o" (t0.AddHours 1.0) (t0.AddMinutes 5.0)
                   { res "none.o" (t0.AddHours 3.0) System.DateTime.MinValue with ODepends = [ OldArtifact2 (mkFileTarget "x.o", System.DateTime.MinValue) ] } ]
-    Assert.AreEqual([ f, { Stamp = t0.AddMinutes 1.0; Size = -1L; Hash = None; Changed = 1L } ], files)
-    Assert.AreEqual([ 1L; 0L; 0L ], results |> List.map (fun r -> r.Epoch))
+    Assert.AreEqual([ f, { Stamp = t0.AddMinutes 1.0; Size = -1L; Hash = None; Changed = 1 } ], files)
+    Assert.AreEqual([ 1; 0; 0 ], results |> List.map (fun r -> r.Epoch))
 
 /// A5: a failed open releases the lock; a reader of a missing file gets nothing.
 [<Test>]
@@ -367,6 +367,6 @@ let ``a failed open releases the lock``() =
 let ``a path table at a file-system root round-trips``() =
     let root = if Env.isUnix then "/" else @"C:\"
     let f = File.make (root </> "src" </> "a.c")
-    let state = { Stamp = System.DateTime(2026, 1, 1); Size = 1L; Hash = None; Changed = 1L }
+    let state = { Stamp = System.DateTime(2026, 1, 1); Size = 1L; Hash = None; Changed = 1 }
     let _, read = DbFormat.roundTrip root [ DbRecord.FileState (f, state) ]
     Assert.AreEqual([ DbRecord.FileState (f, state) ], read.Records)

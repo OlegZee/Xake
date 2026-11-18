@@ -315,7 +315,7 @@ let ruleMatches : RuleVector list = [
     rv Os.Windows "" "RM-218" "5.5" @"c:\**\*.c" @"c:\abc\def\a.c" (m [ "1", "abc/def"; "2", "a" ]) [] "unchanged; PathTests.MaskTests"
     rv Os.Windows "" "RM-219" "5.5" @"c:\**\*.*" @"c:\a.c" (m [ "1", ""; "2", "a"; "3", "c" ]) xp119 "PathTests.MaskTests: 3.x Path.matches true; matchGroups would refuse it (item 12)"
     rv Os.Windows "" "RM-220" "5.1" @"c:\*\?.c" @"c:\!\a.c" (m [ "1", "!"; "2", "a" ]) [] "unchanged; PathTests.MaskTests"
-    rw "RM-221" "5.1" "C:/x/(n:*).dll" @"c:\x\A.dll" no [] "changed in 5.0: rule matching is ordinal on every OS"
+    rw "RM-221" "5.1" "C:/x/(n:*).dll" @"c:\x\A.dll" (m [ "n", "A"; "1", "A" ]) [] "5.0: a drive letter is upper-cased in paths and patterns, the rest ordinal"
     rv Os.Windows @"C:\proj" "RM-222" "9.2" "out/(n:*).dll" @"C:\proj\out\a.dll" (m [ "n", "a"; "1", "a" ]) [] "unchanged; a root and a target with backslashes; \"0\" = C:/proj/out/a.dll"
     rv Os.Windows "c:/proj" "RM-223" "5.4" "out/*.dll" "C:/PROJ/out/a.dll" no [] "changed in 5.0: rule matching is ordinal on every OS"
     rw "RM-224" "4.2" "//srv/sh/(n:*).dll" @"\\srv\sh\a.dll" (m [ "n", "a"; "1", "a" ]) [] "D24: a UNC root matches on Windows; \"0\" = //srv/sh/a.dll"
@@ -338,14 +338,14 @@ let ruleMatches : RuleVector list = [
     rp "RM-243" "4.2" "c:/abc/../*.c" "c:/a.c" (m [ "1", "a" ]) [] "unchanged; PathTests.MaskWithParent"
     rv Os.Windows "" "RM-244" "4.2" @"c:\abc\def\..\..\*.c" @"c:\a.c" (m [ "1", "a" ]) [] "unchanged; PathTests.MaskWithParent"
     rv Os.Windows "" "RM-245" "4.2" @"c:\abc\..\..\*.c" @"c:\a.c" no [] "unchanged; PathTests.MaskWithParent; D34: '..' above the root stays a literal segment"
-    rp "RM-246" "9.2" "c:/*.c" "c:/abc/../a.c" no []
-        "SPEC? a '..' in the target path: the engine passes full paths, so the matcher compares the path as given; 3.x Path.matches resolved it (PathTests.MaskWithParent: true)"
+    rp "RM-246" "9.2" "c:/*.c" "c:/abc/../a.c" (m [ "1", "a" ]) []
+        "5.0: the engine gives the matcher paths in Xake's form ('..' resolved), as 3.x Path.matches did"
     rp "RM-247" "4.2" "c:/abc/../def/a.c" "c:/def/a.c" (m []) [] "unchanged; PathTests.MaskTests"
 
     // ---- separators (4.2, item 34, W1/W2) -------------------------------------------------------------
     ra "RM-250" "4.2" "a//b" "a/b" (m []) [] "changed in 4.0 (item 34): 3.x matchGroups None, Path.matches true (E1, macOS and Windows)"
-    ra "RM-251" "4.2" "a//b" "a//b" no []
-        "SPEC? a doubled separator on the path side is not collapsed (paths are normalized by File.make); 3.x matchGroups Some (E1)"
+    ra "RM-251" "4.2" "a//b" "a//b" (m []) []
+        "5.0: the engine gives the matcher paths in Xake's form (a doubled separator collapsed); 3.x matchGroups Some (E1)"
     ra "RM-252" "4.1" @"src\*.cs" "src/a.cs" (m [ "1", "a" ]) [] "unchanged meaning, XP110 at parse; 3.x Path.matches true (W2, Windows measured; macOS by source)"
     rw "RM-253" "4.1" @"src\*.cs" @"src\a.cs" (m [ "1", "a" ]) [] "unchanged; W2"
     rv Os.Windows "" "RM-254" "4.1" "src/(name:*).cs" @"src\a.cs" (m [ "name", "a"; "1", "a" ]) [] "unchanged: \"0\" reported with '/' (W2 Windows)"

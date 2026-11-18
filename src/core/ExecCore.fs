@@ -235,8 +235,8 @@ let rec execOne (ctx: ExecContext) target =
     ctx.Vars
     |> List.tryPick (fun (k, v) -> if System.String.Equals(k, "EXPLAIN_RULE", System.StringComparison.OrdinalIgnoreCase) then Some v else None)
     |> Option.iter (fun wanted ->
-        if target.ShortName = wanted || target.FullName = wanted || target.FullName.EndsWith wanted then
-            ctx.Logger.Log Message "Rule candidates for '%s' (%s):" target.FullName
+        if target.Name = wanted || target.Display ctx.Options.ProjectRoot = wanted || target.Name.EndsWith wanted then
+            ctx.Logger.Log Message "Rule candidates for '%s' (%s):" (target.Display ctx.Options.ProjectRoot)
                 (match ruleMatchMode with MostSpecific -> "most specific wins" | LastDeclared -> "last declared wins")
             candidates |> List.iteri (fun i m ->
                 let (l, d, w) = m.Specificity
@@ -265,7 +265,7 @@ let rec execOne (ctx: ExecContext) target =
                 let (l, d, w) = best.Specificity
                 ctx.Logger.Log Warning
                     "Ambiguous rules for '%s': '%s' and '%s' have equal specificity {lit=%d, **=%d, wc=%d}; last-declared '%s' chosen. Make one more specific or reorder."
-                    target.FullName bestPat (String.concat "', '" ties) l (-d) (-w) bestPat
+                    (target.Display ctx.Options.ProjectRoot) bestPat (String.concat "', '" ties) l (-d) (-w) bestPat
         | None -> ()
     | _ -> ()
 
@@ -273,7 +273,7 @@ let rec execOne (ctx: ExecContext) target =
     match selected with
     | Some { Pattern = Some pattern; Evidence = evidence } ->
         for code in evidence do
-            PatternAst.Warnings.reportEvidence "rule" pattern (Path.ruleEvidence code target.FullName)
+            PatternAst.Warnings.reportEvidence "rule" pattern (Path.ruleEvidence code target.Name)
     | _ -> ()
 
     match target, selected with
@@ -306,7 +306,7 @@ let rec execOne (ctx: ExecContext) target =
                 return target, ExecStatus.JustFile, FileDep file
             }
         | _ ->
-            let errorText = sprintf "Neither rule nor file is found for '%s'" target.FullName
+            let errorText = sprintf "Neither rule nor file is found for '%s'" (target.Display ctx.Options.ProjectRoot)
             do ctx.Logger.Log Error "%s" errorText
             raise (XakeException errorText)
 
@@ -333,12 +333,12 @@ and execNeed (ctx: ExecContext) targets : Async<ExecStatus * Dependency list> =
             | Some needed ->
                 let needing =
                     match ctx.Targets with
-                    | t :: _ -> sprintf "target '%s'" t.FullName
+                    | t :: _ -> sprintf "target '%s'" (t.Display ctx.Options.ProjectRoot)
                     | [] -> "the script"
                 let resources = held |> List.map (sprintf "'%s'") |> String.concat ", "
                 let errorText =
                     sprintf "need inside withResource: %s needs '%s' while it holds the resource %s. A dependency built under a held resource can deadlock the build. Move the need before withResource (or acquire the resource around the command only), or wrap it in allowNeed if the dependency never takes the resource."
-                        needing needed.FullName resources
+                        needing (needed.Display ctx.Options.ProjectRoot) resources
                 do ctx.Logger.Log Error "%s" errorText
                 raise (XakeException errorText)
 
@@ -474,7 +474,7 @@ let createContextCore (options: EngineOptions) (db: Agent<Storage.DatabaseApi>) 
         ShowProgress = showProgress
         HeldResources = []
         Spellings = newSpellings ()
-        RunEpoch = 0L
+        RunEpoch = 0
         }
     ctx, finalize
 

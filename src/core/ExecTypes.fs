@@ -116,7 +116,7 @@ and ExecContext = {
     Spellings: System.Collections.Concurrent.ConcurrentDictionary<string, File * bool>
     /// The epoch (run number) of the run this context belongs to, taken at `Scheduler.newRun`:
     /// a result built in the run gets it (A2).
-    RunEpoch: int64
+    RunEpoch: int
 } with
     /// Shortcut to engine options.
     member ctx.Options = ctx.Engine.Options

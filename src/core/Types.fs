@@ -10,7 +10,8 @@ module DomainTypes =
         | PhonyAction of string
 
         with
-            member internal this.ShortName =
+            /// Xake's full name: a file's `Name`, a phony's name; the identity.
+            member internal this.Name =
                 match this with
                 | FileTarget file -> file.Name
                 | PhonyAction name -> name
@@ -19,21 +20,17 @@ module DomainTypes =
                 match this with
                 | FileTarget file -> File.display root file
                 | PhonyAction name -> name
-            member internal this.FullName =
-                match this with
-                | FileTarget file -> File.getSysFileName file
-                | PhonyAction name -> name
             
             override x.Equals(yobj) =
                 match yobj with
-                | :? Target as y -> File.comparer.Equals (x.ShortName, y.ShortName)
+                | :? Target as y -> File.comparer.Equals (x.Name, y.Name)
                 | _ -> false
 
-            override x.GetHashCode() = File.comparer.GetHashCode x.ShortName
+            override x.GetHashCode() = File.comparer.GetHashCode x.Name
             interface System.IComparable with 
                 member x.CompareTo y =
                     match y with
-                    | :? Target as y -> File.comparer.Compare(x.ShortName, y.ShortName)
+                    | :? Target as y -> File.comparer.Compare(x.Name, y.Name)
                     | _ -> invalidArg "y" "cannot compare target to different types"
 
     /// Alias for System.DateTime used for file timestamps.
@@ -70,7 +67,7 @@ module DomainTypes =
     /// What the database knows of a file (database 0.7): the stat seen at its last observation
     /// and the run (epoch) in which its content was last seen to change. `Size` -1 is unknown;
     /// `Hash` is not computed before phase 3 (always None).
-    type FileState = { Stamp: Timestamp; Size: int64; Hash: uint64 option; Changed: int64 }
+    type FileState = { Stamp: Timestamp; Size: int64; Hash: uint64 option; Changed: int }
 
     /// A tracked dependency that determines whether a target needs rebuilding. A file or target
     /// dependency stores no stamp: the verdict compares the file's `Changed` (or a phony's
@@ -100,7 +97,7 @@ module DomainTypes =
           /// the wall-clock completion time
           Built : Timestamp
           /// the run (epoch) that built it; what the verdict compares
-          Epoch : int64
+          Epoch : int
           Depends : Dependency list
           Steps : StepInfo list
           /// the number of leading `Depends` entries that came from the rule header (0 in 5.0 phase 1)

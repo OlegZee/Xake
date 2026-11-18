@@ -154,9 +154,6 @@ type private Compiled =
       Groups: (string * int) list
       Xp119: int list }
 
-/// '\' in a path is a separator in Windows mode only (D37); the walker's `/` spelling of a path.
-let normalize (windows: bool) (path: string) = if windows then path.Replace('\\', '/') else path
-
 let private isAbsolute (tokens: Token list) =
     match tokens with
     | Sep :: _ -> true
@@ -164,10 +161,10 @@ let private isAbsolute (tokens: Token list) =
     | _ -> false
 
 /// Joins a relative pattern to its anchor; leading '..' segments step up the anchor (D34, 9.2).
-let private anchorPrefix (windows: bool) (anchor: string) (tokens: Token list) : string * Token list =
+let private anchorPrefix (anchor: string) (tokens: Token list) : string * Token list =
     if anchor = "" || isAbsolute tokens then "", tokens
     else
-        let mutable a = (normalize windows anchor).TrimEnd('/')
+        let mutable a = anchor.TrimEnd('/')
         let mutable ts = tokens
         let mutable stepping = true
         while stepping do
@@ -182,15 +179,14 @@ let private anchorPrefix (windows: bool) (anchor: string) (tokens: Token list) :
             | _ -> stepping <- false
         Regex.Escape a + "/", ts
 
-let private compile (ctx: PatternContext) (text: string) (anchor: string) (windows: bool) (ignoreCase: bool) : Compiled option =
+/// Paths and anchors reaching the matcher are in Xake's form (`Path.collapse`: `/`, a Windows
+/// drive upper-cased, a UNC root only on Windows), so the matcher has one flag: the case.
+let private compile (ctx: PatternContext) (text: string) (anchor: string) (ignoreCase: bool) : Compiled option =
     let tokens = match ctx with PatternContext.Rule -> Rule.parse text | PatternContext.Mask -> Mask.parse text
-    match tokens with
-    | Sep :: Sep :: _ when not windows -> None       // a UNC root matches only on Windows (D24)
-    | _ ->
     let isDirectory = ctx = PatternContext.Mask && List.tryLast tokens = Some Sep
     // the trailing separator of a directory mask is not emitted (9.2); '/' alone keeps it
     let body = if isDirectory && List.length tokens > 1 then List.take (List.length tokens - 1) tokens else tokens
-    let prefix, body = anchorPrefix windows anchor body
+    let prefix, body = anchorPrefix anchor body
     let annotated, wildcards, groups = annotate body
     let sb = StringBuilder("^")
     sb.Append(prefix) |> ignore
@@ -209,21 +205,19 @@ let private compile (ctx: PatternContext) (text: string) (anchor: string) (windo
           Groups = groups
           Xp119 = if ctx = PatternContext.Rule then xp119Candidates annotated else [] }
 
-let private cache = ConcurrentDictionary<PatternContext * string * string * bool * bool, Lazy<Compiled option>>()
+let private cache = ConcurrentDictionary<PatternContext * string * string * bool, Lazy<Compiled option>>()
 
 /// The cached matcher of a pattern (9.4): key (context, text, anchor, case mode).
-let private get (ctx: PatternContext) (text: string) (anchor: string) (windows: bool) (ignoreCase: bool) : Compiled option =
-    cache.GetOrAdd((ctx, text, anchor, windows, ignoreCase), fun _ -> lazy (compile ctx text anchor windows ignoreCase)).Value
+let private get (ctx: PatternContext) (text: string) (anchor: string) (ignoreCase: bool) : Compiled option =
+    cache.GetOrAdd((ctx, text, anchor, ignoreCase), fun _ -> lazy (compile ctx text anchor ignoreCase)).Value
 
 /// Matches a rule pattern anchored at `root` (`""` for phony) against a full target path
-/// (`Path.matchGroups`, 8.3). `windows`: `\` in the path is a separator and a UNC root matches
-/// (D11, D24); the comparison is ordinal on every OS (5.0). Raises PatternException for an
-/// invalid pattern.
-let matchRule (windows: bool) (root: string) (pattern: string) (target: string) : RuleMatch option =
-    match get PatternContext.Rule pattern root windows false with
+/// (`Path.matchGroups`, 8.3), both in Xake's form; ordinal on every OS (5.0). Raises
+/// PatternException for an invalid pattern.
+let matchRule (root: string) (pattern: string) (path: string) : RuleMatch option =
+    match get PatternContext.Rule pattern root false with
     | None -> None
     | Some c ->
-        let path = normalize windows target
         let m = c.Regex.Match path
         if not m.Success then None
         else
@@ -237,16 +231,10 @@ let matchRule (windows: bool) (root: string) (pattern: string) (target: string) 
                 if c.Xp119 |> List.exists (fun n -> value ("w" + string n) = "") then [ "XP119" ] else []
             Some { Captures = captures; Evidence = evidence }
 
-/// Matches a mask anchored at `baseDir` against one path (`Path.matches`, the walker's per-entry
-/// test). A mask with a trailing '/' matches directories only, otherwise files only (D9).
-let matchMask (windows: bool) (baseDir: string) (mask: string) (path: string) (isDirectory: bool) : bool =
-    match get PatternContext.Mask mask baseDir windows windows with
-    | None -> false
-    | Some c -> c.IsDirectory = isDirectory && c.Regex.IsMatch(normalize windows path)
-
-/// `matchMask` with the cache lookup done once: the walker's per-entry test (PatternScan), with
-/// the case mode given apart (filesets ignore case by default on every OS, 5.0).
-let maskMatcher (windows: bool) (ignoreCase: bool) (baseDir: string) (mask: string) : string -> bool -> bool =
-    match get PatternContext.Mask mask baseDir windows ignoreCase with
+/// Matches a mask anchored at `baseDir` against paths (`Path.matches`, the walker's per-entry
+/// test), both in Xake's form: a mask with a trailing '/' matches directories only, otherwise
+/// files only (D9); `ignoreCase` is a fileset's default (5.0).
+let maskMatcher (ignoreCase: bool) (baseDir: string) (mask: string) : string -> bool -> bool =
+    match get PatternContext.Mask mask baseDir ignoreCase with
     | None -> fun _ _ -> false
-    | Some c -> fun path isDirectory -> c.IsDirectory = isDirectory && c.Regex.IsMatch(normalize windows path)
+    | Some c -> fun path isDirectory -> c.IsDirectory = isDirectory && c.Regex.IsMatch path

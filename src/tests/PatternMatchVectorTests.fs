@@ -1,4 +1,4 @@
-namespace Tests
+﻿namespace Tests
 
 open System
 open NUnit.Framework
@@ -36,12 +36,17 @@ module PatternMatcherUnderTest =
         { Captures: Map<string, string>
           Evidence: string list }
 
+    /// Xake's form of a path under the OS rules of the vector (`Path.collapse`, as the engine
+    /// gives the matcher), so the Windows vectors run on every host.
+    let xakeForm (windows: bool) (path: string) = if path = "" then "" else Xake.Path.collapseWith windows path
+
     let matchRule (windows: bool) (root: string) (pattern: string) (target: string) : RuleMatch option =
-        Xake.PatternMatch.matchRule windows root pattern target
+        Xake.PatternMatch.matchRule (xakeForm windows root) (Xake.Path.upperDrive windows pattern) (xakeForm windows target)
         |> Option.map (fun r -> { Captures = r.Captures; Evidence = r.Evidence })
 
+    /// a mask follows the comparer of the vector's OS (4.0's mode: ignore case on Windows)
     let matchMask (windows: bool) (baseDir: string) (mask: string) (path: string) (isDirectory: bool) : bool =
-        Xake.PatternMatch.matchMask windows baseDir mask path isDirectory
+        Xake.PatternMatch.maskMatcher windows (xakeForm windows baseDir) mask (xakeForm windows path) isDirectory
 
     let format (named: string -> string) (positional: int -> string) (tokens: Token list) : string =
         Xake.PatternAst.format named positional tokens
@@ -67,8 +72,8 @@ module private MatchDrive =
     let join (anchor: string) (p: string) =
         if anchor = "" || isAbsolute p then p else anchor.TrimEnd('/', '\\') + "/" + p
 
-    /// The "0" capture: the full path, '\' read as '/' in Windows mode.
-    let zero windows (full: string) = if windows then full.Replace('\\', '/') else full
+    /// The "0" capture: the full path in Xake's form.
+    let zero windows (full: string) = PatternMatcherUnderTest.xakeForm windows full
 
     let lookup (pairs: ('k * string) list) (key: 'k) =
         pairs |> List.tryFind (fun (k, _) -> k = key) |> Option.map snd |> Option.defaultValue ""

@@ -98,10 +98,10 @@ let convert (results: OldResult list) : (File * FileState) list * BuildResult li
         | Plain d -> d
         | OldFile (f, _) -> FileDep f
         | OldArtifact t | OldArtifact2 (t, _) -> TargetDep t
-    [ for KeyValue (f, t) in latest -> f, { Stamp = t; Size = -1L; Hash = None; Changed = 1L } ],
+    [ for KeyValue (f, t) in latest -> f, { Stamp = t; Size = -1L; Hash = None; Changed = 1 } ],
     results |> List.map (fun r ->
         { Targets = r.OTargets; Built = r.OBuilt
-          Epoch = (if List.forall current r.ODepends then 1L else 0L)
+          Epoch = (if List.forall current r.ODepends then 1 else 0)
           Depends = r.ODepends |> List.map toDep; Steps = r.OSteps; StaticCount = 0 })
 
 /// Reads the results after the header to the end (a torn last one ends them), keeps the last per

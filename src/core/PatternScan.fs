@@ -63,7 +63,10 @@ let private osSep = Path.DirectorySeparatorChar
 [<Struct>]
 type private Loc = { Os: string; Norm: string }
 
-let private loc (os: string) = { Os = os; Norm = normalize hostWindows os }
+/// '\' is a separator on a Windows host (D37): the `/` spelling of a path.
+let private normalize (path: string) = if hostWindows then path.Replace('\\', '/') else path
+
+let private loc (os: string) = { Os = os; Norm = normalize os }
 
 let private join (d: Loc) (name: string) =
     let endsWithSep (s: string) = s.Length > 0 && (s.[s.Length - 1] = '/' || s.[s.Length - 1] = osSep)
@@ -236,7 +239,7 @@ let private readings (tokens: Token list) : string list =
         List.distinct [ text "^" tokens; text "!" tokens ]
 
 let private segment (windows: bool) (ignoreCase: bool) (tokens: Token list) : Seg =
-    let matcher (text: string) = let m = maskMatcher windows ignoreCase "" text in fun (name: string) -> m name false
+    let matcher (text: string) = let m = maskMatcher ignoreCase "" text in fun (name: string) -> m name false
     match tokens with
     | [ Lit s ] ->
         // a literal is compared with the mode's comparer (D11), no regex
@@ -340,7 +343,7 @@ let scanWith (windows: bool) (ignoreCase: bool) (baseDir: string) (fileset: (Mas
         x.Equals(y, cmpKind) || x.StartsWith(y.TrimEnd '/' + "/", cmpKind)
 
     /// The matcher of an exclude, anchored at the base directory (6.3 step 4).
-    let excludeMatchers = elements |> Array.map (fun e -> lazy (maskMatcher windows ignoreCase baseD.Norm e.Text))
+    let excludeMatchers = elements |> Array.map (fun e -> lazy (maskMatcher ignoreCase baseD.Norm e.Text))
 
     /// Pruning (6.3 step 3): `P/` for every include; `P/**` and `P/**/*` for file includes, in
     /// fileset order; the flag marks a `P/**` exclude, whose pruning is XP113 evidence (D41).
@@ -350,7 +353,7 @@ let scanWith (windows: bool) (ignoreCase: bool) (baseDir: string) (fileset: (Mas
             if e.Role = MaskRole.Exclude then
                 let covering (prefix: Token list) =
                     let _, body, _ = splitRoot (prefix @ [ Sep ])
-                    if body.IsEmpty then None else Some (maskMatcher windows ignoreCase baseD.Norm (unparse prefix + "/"))
+                    if body.IsEmpty then None else Some (maskMatcher ignoreCase baseD.Norm (unparse prefix + "/"))
                 let rev = List.rev e.Tokens
                 if e.DirMode then yield j, false, excludeMatchers.[j].Value
                 elif not dirInclude then

@@ -24,6 +24,32 @@
 | R6 / B4 `Path.matches` ignores case on every OS | done |
 | Windows CI (PR #141): C2 root normalised for matching; B5/C1 `getSysFileName`, `getFileInfo`, `FullName`/`getFullName`/`getTargetFullName` obsolete | done, Windows run by the starting session |
 
+## Next fixes for PR #141 (one commit, collected 2026-11-18): done
+
+1. Epoch as `int` (int32): `BuildResult.Epoch`, `FileState.Changed`, `ExecContext.RunEpoch`,
+   `BuildLog.Database.Epoch`; the epoch pickled with `varint` (`varint64` goes if unused). The
+   file does not change (varints); 2.1e9 runs is enough.
+2. `PatternMatch` takes one flag, `ignoreCase`; `windows` goes. Every path
+   reaching it is already in Xake's form (`Path.collapse`: `/`, drive upper-cased, UNC only on
+   Windows), so its `normalize` and the UNC guard are redundant. `matchMask` (case = OS, the 4.0
+   mode, used only by tests) folds into `maskMatcher`. The vector wrapper collapses targets with the
+   Windows rules, so the Windows vectors keep running on every host. `PatternScan` keeps its
+   `windows` flag: there it is the volume (probe vs listing, the directory comparer), not the case
+   policy, and the scan vectors simulate both volumes through it.
+3. `getFiles` (`ScriptFuncs.fs:156`) no longer observes every member: a
+   `GetFiles` dependency compares only the list, so a member's `FileRec` changes no verdict, and
+   `dependsOn`/`needFiles` observe the members they record anyway (`ExecCore.fs:305`). Drops N
+   sequential agent round trips per call (up to 2 176 members on the measured database). The
+   spelling check of the members stays. A1 in decision.md says "a `FileDep`", without "also each
+   file of a fileset result".
+4. `Target` (all members internal, so no `[<Obsolete>]` needed): remove
+   `FullName` (the OS form); rename `ShortName` to `Name` (Xake's full name, the identity used by
+   `Equals`/`GetHashCode`/`CompareTo`). Engine messages that showed `FullName` (`ExecCore`: rule
+   candidates for `EXPLAIN_RULE`, rule ties, "Neither rule nor file is found", resources) show
+   `Display ProjectRoot`; `EXPLAIN_RULE` still finds a target by its full or relative name;
+   `Path.ruleEvidence` and `WorkerPool.mapKey` take `Name` (no per-call conversion on Windows in the
+   pool's hot path).
+
 ## Later (for the owner)
 
 - **Case policy (direction, owner 2026-11-18):** work as on Windows by default, i.e. ignore case

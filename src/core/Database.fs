@@ -17,7 +17,7 @@ module BuildLog =
 
     /// In-memory build database: the last result per target, the last state per file and the
     /// last epoch (the largest in the file on load, the current run's after `NewRun`).
-    type Database = { Status : Map<Target, BuildResult>; Files : Map<File, FileState>; Epoch : int64 }
+    type Database = { Status : Map<Target, BuildResult>; Files : Map<File, FileState>; Epoch : int }
 
     (* API *)
 
@@ -25,13 +25,13 @@ module BuildLog =
     let makeResult target =
         { Targets = target
           Built = DateTime.Now
-          Epoch = 0L
+          Epoch = 0
           Depends = []
           Steps = []
           StaticCount = 0 }
 
     /// Creates a new database
-    let newDatabase() = { Database.Status = Map.empty; Files = Map.empty; Epoch = 0L }
+    let newDatabase() = { Database.Status = Map.empty; Files = Map.empty; Epoch = 0 }
 
     /// Adds result to a database
     let internal addResult db result =
@@ -78,7 +78,7 @@ module Storage =
         /// state, None for a missing file.
         | Observe of File * ObserveMode * AsyncReplyChannel<FileState option>
         /// Starts a new run: replies the next epoch; observations and recordings afresh (A2).
-        | NewRun of AsyncReplyChannel<int64>
+        | NewRun of AsyncReplyChannel<int>
         /// Observations stay in memory and nothing is appended (`--dump`, `--dryrun`, A8).
         | InMemory
         | Close
@@ -186,12 +186,12 @@ module Storage =
             let fileState =
                 wrap ((fun (stamp, size, h, changed) -> { Stamp = stamp; Size = size - 1L; Hash = h; Changed = changed }),
                       fun s -> (s.Stamp, max 0L (s.Size + 1L), s.Hash, s.Changed))
-                     (quad date varint64 (option (wrap ((fun (x: int64) -> Operators.uint64 x), (fun (x: uint64) -> Operators.int64 x)) int64)) varint64)
+                     (quad date varint64 (option (wrap ((fun (x: int64) -> Operators.uint64 x), (fun (x: uint64) -> Operators.int64 x)) int64)) varint)
             let result =
                 wrap ((fun ((epoch, built, targets, deps), (steps, staticCount)) ->
                         { Targets = targets; Built = built; Epoch = epoch; Depends = deps; Steps = steps; StaticCount = staticCount }),
                       fun r -> (r.Epoch, r.Built, r.Targets, r.Depends), (r.Steps, r.StaticCount))
-                     (pair (quad varint64 date (vlist target) (vlist dependency)) (pair (vlist step) varint))
+                     (pair (quad varint date (vlist target) (vlist dependency)) (pair (vlist step) varint))
             alt (function DirRec _ -> 0 | PathRec _ -> 1 | Data (DbRecord.FileState _) -> 2 | Data (DbRecord.Result _) -> 3)
                 [| wrap (DirRec, fun (DirRec (i, r, d) | OtherwiseFail (i, r, d)) -> i, r, d) (triple varint varint str)
                    wrap (PathRec, fun (PathRec (i, d, n) | OtherwiseFail (i, d, n)) -> i, d, n) (triple varint varint str)
@@ -461,7 +461,7 @@ module Storage =
                             try persist out [ DbRecord.Result result ]
                             with ex ->
                                 failedStores.Value <- failedStores.Value + 1
-                                let name = try (result.Targets |> List.map (fun t -> t.ShortName) |> String.concat ", ") with _ -> "?"
+                                let name = try (result.Targets |> List.map (fun t -> t.Name) |> String.concat ", ") with _ -> "?"
                                 logError "Database agent failed to store the result of '%s': %O" name ex
                                 out
                         // a dependency file without a state (a delegated result, A3) is observed
@@ -478,7 +478,7 @@ module Storage =
                     | NewRun ch ->
                         observed.Clear()
                         recorded.Clear()
-                        let db = { db with Epoch = db.Epoch + 1L }
+                        let db = { db with Epoch = db.Epoch + 1 }
                         ch.Reply db.Epoch
                         return! loop db out
                     | InMemory ->

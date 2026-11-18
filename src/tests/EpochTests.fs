@@ -1,4 +1,4 @@
-namespace Tests
+﻿namespace Tests
 
 open System.IO
 open NUnit.Framework
@@ -123,7 +123,7 @@ type ``Epoch tests``() =
                 | _ -> None)
             |> List.ofSeq
         Assert.AreEqual(2, epochs.Length)
-        Assert.AreEqual(epochs.[0] + 1L, epochs.[1])
+        Assert.AreEqual(epochs.[0] + 1, epochs.[1])
 
     [<Test>]
     member x.``a moved project keeps its database: nothing is rebuilt``() =
@@ -178,14 +178,14 @@ type ``Epoch tests``() =
             fun _ targets _ -> async {
                 Directory.CreateDirectory "out" |> ignore
                 File.WriteAllText("out/del.txt", "x")
-                return { BuildLog.makeResult targets with Epoch = 999L } }
+                return { BuildLog.makeResult targets with Epoch = 999 } }
         let rs = [ DelegatedRule (FileRule ("out/del.txt", recipe { () }), executor) ]
         let epochOf () = (x.Results ()).Status.[FileTarget (File.make "out/del.txt")].Epoch
         x.Run [ "out/del.txt" ] rs
         let first = epochOf ()
         x.Run [ "out/del.txt" ] rs
         Assert.AreEqual(first, epochOf (), "the second hit keeps the local epoch")
-        Assert.AreNotEqual(999L, first)
+        Assert.AreNotEqual(999, first)
 
     /// A2: each target group of the command line is a run of its own; overlapping engine demands
     /// get their own epochs.
@@ -194,7 +194,7 @@ type ``Epoch tests``() =
         let rs = [ "g1" => recipe { do! alwaysRerun () }; "g2" => recipe { do! alwaysRerun () } ]
         x.Run [ "g1"; "g2" ] rs
         let db = x.Results ()
-        Assert.AreEqual(db.Status.[PhonyAction "g1"].Epoch + 1L, db.Status.[PhonyAction "g2"].Epoch)
+        Assert.AreEqual(db.Status.[PhonyAction "g1"].Epoch + 1, db.Status.[PhonyAction "g2"].Epoch)
         let engine =
             RulesBuilder { x.TestOptions with IgnoreCommandLine = true; ResetDb = false; Progress = false } {
                 phony "slow" (recipe {

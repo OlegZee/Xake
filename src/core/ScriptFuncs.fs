@@ -152,8 +152,6 @@ module ScriptFuncs =
         let files = fileset |> toFileList ctx.Options.ProjectRoot
         let (Filelist found) = files
         found |> List.iter (ExecCore.checkSpelling ctx false)
-        // each member is recorded as a file dependency is (A1)
-        do! async { for f in found do do! DependencyAnalysis.observe ctx Storage.Recording f |> Async.Ignore }
         do! GetFiles (fileset,files) |> recordDependency
 
         return files

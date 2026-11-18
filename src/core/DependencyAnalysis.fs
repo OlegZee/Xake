@@ -32,7 +32,7 @@ let observe (ctx: ExecContext) (mode: ObserveMode) (file: File) =
 /// a dependee target that is itself out of date makes the dependent out of date too (4.0).
 let rec getDepState getVar getFileList (getChangedDeps: Target -> ChangeReason list)
                     (observe: File -> FileState option) (getResult: Target -> BuildResult option)
-                    (show: File -> string) (epoch: int64) x =
+                    (show: File -> string) (epoch: int) x =
     let recurse = getDepState getVar getFileList getChangedDeps observe getResult show epoch
     let transitive dependeeTarget =
         dependeeTarget |> getChangedDeps |> List.filter ((<>) ChangeReason.NotChanged)

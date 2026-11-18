@@ -1,6 +1,6 @@
 # Xake 5.0 phase 3: content cut-off — brief
 
-Status: **draft for the owner** (2026-11-18). Base: `dev` with phases 1 and 2 (OlegZee/Xake#141,
+Status: **accepted** (2026-11-18, owner's answers to Q1-Q4 relayed by the orchestrator). Base: `dev` with phases 1 and 2 (OlegZee/Xake#141,
 #142). Specs as built: [db-paths-simple](../db-paths-simple/brief.md) (database 0.7, epochs),
 [rule-header](../rule-header/brief.md) (`needs`, `StaticCount`, `noContentCutoff`),
 `docs/implnotes.md` ("Epochs"). Anything marked **Proposal** is not decided.
@@ -22,6 +22,17 @@ to the same bytes, of a touched source, or of a restored `out/` do not rerun. On
 - **`--content-cutoff=off`**: the decisions of 4.0 (a moved stat is a change, no hashing). Command
   line only, no environment form. On by default.
 - **`noContentCutoff`** on a rule: its outputs are never hashed; every rebuild changes them.
+- **Q1, dynamic dependee** (2026-11-18): a dependee finished in this run is compared exactly
+  (`changed` or `Epoch` against `e`). A dependee **running now is waited for**, then compared (the
+  body would wait for it anyway). A dependee not started in this run is unchanged iff its
+  `changed <= e` **and** it is up to date by the same no-build verdict, recursively; otherwise the
+  dependent is changed and its body builds it. So the 4.0 transitive rule is replaced for static
+  `needs` and for dependees finished (or waited for) in this run, and stays for the rest.
+- **Q2, hand-edited output** (2026-11-18): as 4.0, a change for its dependents only; the producer
+  does not rerun.
+- **Q3, eager output hashing** (2026-11-18): outputs are hashed right after every run of their
+  rule (with the pre-hash); `noContentCutoff` is the escape for large outputs.
+- **Q4** (2026-11-18): `RunSummary` and the no-change fast path are in this PR.
 
 ## The rule
 
@@ -34,7 +45,7 @@ On every observation of a file whose `FileRec` stat moved (stamp beyond 10 ms, o
 
 Hash and stat are taken together: stat, hash, stat; a stat moved during hashing stores no hash.
 
-**When files are hashed** (scope from the orchestrator; to confirm):
+**When files are hashed:**
 
 - **Outputs** (every target of a rule, `also` included): right after the rule, always, even with
   an unmoved stat. **Pre-hash:** before the body, an existing output with no hash whose stat
@@ -50,15 +61,15 @@ For a stored result of epoch `e`:
 - `FileDep f`: as phase 1 (`changed > e`), with `changed` now kept by cut-off.
 - `TargetDep` on a static `needs`: the dependee is already up to date (phase 2), so its `changed`
   (file) or `Epoch` (phony) is compared with `e`. Full cut-off.
-- `TargetDep` on a dynamic dependee (recorded from a body `need`): **Proposal** below (Q1).
-- The 4.0 transitive rule is removed where the dependee is known to be up to date (finished in
-  this run); see Q1 for the rest.
+- `TargetDep` on a dynamic dependee (recorded from a body `need`): finished in this run, or
+  running and waited for: compared exactly; not started: `changed <= e` and the dependee's own
+  no-build verdict (Q1). The transitive rule stays only for this last case.
 
-## Hazards: answers (Proposal unless marked)
+## Hazards: answers
 
 | Hazard | Answer |
 |---|---|
-| Output edited by hand between runs | Its stat moved: hash differs, `changed` = run, dependents rerun. The producer: see Q2. |
+| Output edited by hand between runs | Its stat moved: hash differs, `changed` = run, dependents rerun; the producer does not (Q2). |
 | Restored `out/` with fresh times | Hash equal: nothing reruns. An output never hashed (built before phase 3 and never rebuilt): rebuilt once. |
 | Same `(stamp, size)`, different bytes (coarse stamps) | Outputs: closed, every output is hashed after its rule. Sources: not detectable, as 4.0 (documented). |
 | Source A -> B -> A | One hash per file: the return to A is a change; a target that did not run while B was there reruns once (phase 1's "what epochs give up"). |
@@ -68,7 +79,7 @@ For a stored result of epoch `e`:
 | `off` run | Hashes nothing; a moved stat sets `changed` = run and **clears the hash** (it no longer describes the file); the next `on` run starts from there. |
 | `noContentCutoff` output | Hash stays empty; after each rebuild `changed` = run. |
 
-## Also in this phase (to confirm)
+## Also in this phase
 
 - `RunSummary` ported from the first attempt (`archive/xake5-attempt1`, tracker 1h): counters
   targets run / skipped / cut-off / files hashed / hash time / tasks scheduled; one log line;
@@ -77,23 +88,6 @@ For a stored result of epoch `e`:
   decided without scheduling a task.
 - Log: `[INF] cut-off: <target> rebuilt with the same content`.
 
-## Questions for the owner
-
-1. **Dynamic dependee not yet finished in this run.** Option B builds nothing to decide it, so the
-   dependent cannot see its new content. Proposal: unchanged iff its `changed` <= `e` **and** the
-   dependee is up to date by the same no-build verdict (recursively); otherwise changed and the
-   body builds it. This keeps the transitive rule for this case. A dependee that is running counts
-   as changed (no waiting; the first attempt's choice). Note: the orchestrator's scope says the
-   transitive rule is replaced by "a dependee is brought up to date and its `changed` compared";
-   under option B that holds only for static `needs` and dependees already finished.
-2. **Hand-edited output: does the producer rerun?** 4.0 and phase 1 do not (only a missing output
-   reruns it); the first attempt's acceptance said it does. Proposal: keep 4.0 (the edit is a
-   change for dependents only).
-3. **Outputs hashed after every rule run** (eager, closes the coarse-stamp case for outputs, costs
-   a read of every output) vs only when a dependent compares (lazy, the first attempt).
-   Proposal: eager, with `noContentCutoff` as the escape for large outputs.
-4. `RunSummary` and the fast path in this PR, or "Later"?
-
 ## Acceptance (counters, not timings)
 
 - Output rebuilt with the same bytes: dependents not rerun from its first rebuild; different bytes:
@@ -101,13 +95,14 @@ For a stored result of epoch `e`:
 - Source touched without an edit: first time dependents rerun (no hash yet), second time not; a
   following no-change run hashes 0 files.
 - Restored `out/` with fresh times and known hashes: nothing reruns.
-- Hand-edited output: dependents rerun (producer per Q2).
+- Hand-edited output: dependents rerun, the producer does not.
 - Static `needs` on a deterministic output rebuilt with the same bytes: cut-off. Dynamic dependency
   on an out-of-date rule target: the dependent reruns, nothing is built to decide it.
 - `--content-cutoff=off`: the same reruns as phase 1 on the existing rebuild tests; `files hashed`
   = 0; a following `on` run is correct (cleared hashes).
 - `noContentCutoff`: dependents rerun on every rebuild, the output is not hashed.
-- Empty database: a clean run hashes 0 files (outputs per Q3: if eager, every output once).
+- Empty database: a clean run hashes no source; every output once (Q3).
+- A dependee running when its dependent is decided: the dependent waits and gets cut-off.
 - 0.7 databases from phases 1-2 load as they are (no hashes): no rebuild on a no-change run.
 
 ## Out of scope

@@ -5,8 +5,7 @@ Task: brief with the owner -> design report -> implementation (one PR). Orchestr
 `~/.claude/orchestrators/xake/briefs/phase3-cutoff.md`.
 
 ## Where things stand
-- 2026-11-18: brief.md drafted (decisions relayed by the orchestrator; hazards answered as
-  proposals; 4 questions for the owner). Committed locally, not pushed.
+- 2026-11-18: brief accepted (Q1-Q4, Q1 changed: a running dependee is waited for). design.md written, 5 questions; no code. Committed locally, not pushed.
 
 ## Next step
-- Owner answers Q1-Q4 in brief.md; then the design report with a line budget per file.
+- Owner approves design.md (questions 1-5); then docs first, code, tests.

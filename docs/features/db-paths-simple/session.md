@@ -23,7 +23,8 @@ absolute path" and that phase 1 has one root (`openDb root`, `ProjectRoot` only;
 **Implementation (2026-11-18, separate session).** Phase 1 with A1-A9, then B1-B3, the review
 fixes R1-R4 and R7, the simplifications a-j and the review's test gaps are committed; all tests
 green, `build.fsx build test pack` green. B4 (`Path.matches` ignores case on every OS) is in.
-**Next step:** the starting session reviews again; then push and the PR.
+Re-checked by the orchestrating session (0 warnings, 1795 passed / 13 skipped / 0 failed), pushed,
+PR OlegZee/Xake#141 opened 2026-11-18. **Next step:** the owner's review and squash-merge into `dev`.
 
 Measured (2026-11-18): synthetic 1000 results x 30 file dependencies (mean path 118 B): 0.6
 3 960 017 B, 0.7 196 590 B (20.1x). A real 0.6 database of 88 564 308 B (84.5 MB) upgrades to
@@ -62,4 +63,4 @@ then code in the order 1a -> 1b -> 1c, tests, the size measurement. No push, no 
 
 | PR | Branch | Worktree |
 |---|---|---|
-| (not opened yet) | `feature/db-paths-simple` | `.claude/worktrees/db-paths-simple-39d1fe` |
+| [OlegZee/Xake#141](https://github.com/OlegZee/Xake/pull/141) | `feature/db-paths-simple` | `.claude/worktrees/db-paths-simple-39d1fe` |

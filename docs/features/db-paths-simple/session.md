@@ -14,8 +14,10 @@ owner's real 84.5 MB database: 5.75 MB as is, 3.39 MB compacted (5.0 / 3.1 MB wi
 lengths). Lists get a varint length in 0.7; the string table is Later; always upgrade, no record length.
 Questions 1-4 answered (root-relative paths with roots given in the constructor and never written,
 room for several roots; the database stays a public analysis tool; fileset case accepted, opt-out
-asked; `Fingerprints` ordinal). **Open:** confirmation of the proposals that follow from the
-answers (design.md, questions section).
+asked; `Fingerprints` ordinal). The proposals were accepted the same day with changes: `File`
+holds the absolute path (`Name` absolute), `Built` kept, filesets case-insensitive by default with a
+`casesensitive` option. **Open:** the exact reading of "`File` holds the absolute path" (asked of the
+orchestrator), then approval of the design.
 
 **Next step.** Owner's answers to the open questions and approval of the design, then docs first (`docs/` + release notes "5.0.0 (unreleased)"),
 then code in the order 1a -> 1b -> 1c, tests, the size measurement. No push, no PR without the owner.

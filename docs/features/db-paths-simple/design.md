@@ -57,6 +57,18 @@ Status: **for the owner's approval** (no code written); decisions recorded below
   - **3, filesets case-sensitive with rules on every OS:** accepted; an opt-out is asked for
     (proposal in 1a).
   - **4, `Fingerprints.fs` ordinal:** accepted.
+- 2026-11-18, **the proposals following from answers 1-4 accepted**, with these changes:
+  - **`File` holds the absolute path** (as agreed with the orchestrator): `Name` gives the absolute
+    path, nothing in `File` depends on the current directory; paths relative to the project root
+    are only shown by the engine (`File.display root f`). (Exact reading to be confirmed with the
+    orchestrator: see the questions.)
+  - **`Built` stays** a time next to `Epoch`.
+  - **Filesets ignore case by default, on every OS**; `casesensitive` in `fileset { }`
+    (`FilesetOptions.CaseSensitive`) restores a case-sensitive search. Rules, targets and `File`
+    stay ordinal, with no option. Release note: on Windows and macOS filesets behave as before, on
+    Linux they become case-insensitive, and `casesensitive` exists.
+  - Also accepted: the root numbers in `DirRec`, the public read API, cutting off a torn last
+    record.
 
 ### Why the epoch is per run, not per event
 
@@ -112,12 +124,12 @@ module File =
   collapsed; repeated separators removed; root (`/`, `C:`) kept; a trailing separator dropped (new,
   except the root); case kept; lexical. A leading `//` (UNC) is kept on Windows (today's
   `collapsePath` loses it; fixed in the same function, 1 line).
-- **Display relative to the project root** (answer 1): the engine's output (`Target.ShortName`,
-  change reasons, `--dump`) shows `File.display ProjectRoot f`, the root coming from the context.
-  `File` itself stays a rootless absolute path (the agreed file-type brief: no root inside), so the
-  `Name` property, which has no root at hand, keeps the path relative to the current directory (the
-  project root by default) for scripts and Xake.Dotnet (about 200 `.Name` reads). Release note:
-  `Name` is no longer "the string as given".
+- **`File` holds the absolute path** (decision 2026-11-18): `Name` gives the absolute path (with
+  `/`), `FullName` the same in the OS form; nothing in `File` depends on the current directory or a
+  root. The engine's output (`Target.ShortName`, change reasons, `--dump`) shows
+  `File.display ProjectRoot f`, the root coming from the context. Xake.Dotnet's `.Name` reads (about
+  200) then see absolute paths: correct for tools, longer in its messages. Release note: `Name` is
+  no longer "the string as given" but the absolute path.
 - `undefined` removed. Xake.Dotnet uses it in `Csc`/`Fsc` settings (`Out`, `Doc`); it moves to
   `File option` there at its 5.0 (noted as a breaking change for Xake.Dotnet, not done here).
 
@@ -127,18 +139,21 @@ module File =
 |---|---|---|
 | `File` (`File.fs`) | ignore-case on Unix (inverted), hash inconsistent | `File.comparer` (ordinal) |
 | `Target` (`Types.fs`) | `OrdinalIgnoreCase` on Windows | `File.comparer` |
-| rule / mask matching (`PatternMatch.fs:201`, `PatternScan.fs:243,317-318`) | ignore-case on Windows | ordinal; `windows` keeps meaning `\` separator and UNC only |
+| rule matching (`PatternMatch.fs:201`) | ignore-case on Windows | ordinal; `windows` keeps meaning `\` separator and UNC only |
+| fileset search (`PatternScan.fs:243,317-318`) | ignore-case on Windows | ignore-case on every OS, ordinal with `casesensitive` (a separate flag from `windows`) |
 | `WorkerPool.mapKey` | `Target.FullName` string key (F# `Map`, ordinal) | unchanged, already ordinal once `FullName` is normalised |
 | `Fingerprints.fs:81,130` | ignore-case on Windows | `File.comparer` (2 lines; in core, so in scope; flag if you disagree) |
 
-### Opt-out for filesets (proposal, answer 3)
+### Filesets ignore case by default (decision 2026-11-18)
 
-A fileset is a query to the disk, so it can match names without case without touching identity:
-`FilesetOptions.IgnoreCase` (default false) and the builder operation `ignorecase` in
-`fileset { }`. The scan compares names with `OrdinalIgnoreCase`; the files found keep their
-spelling on disk and compare ordinally as every `File`. Rules and targets have no opt-out (that
-would make the identity of a target depend on a setting). The flag is part of the fileset recorded
-in `GetFiles`. About 5 lines in `Fileset.fs`, the scan's comparer already exists (`PatternScan`).
+A fileset is a query to the disk, so it can match names without case without touching identity.
+By default the search compares names with `OrdinalIgnoreCase` on every OS; `casesensitive` in
+`fileset { }` (`FilesetOptions.CaseSensitive`, default false) makes it ordinal. The files found keep
+their spelling on disk and compare ordinally as every `File`. Rules, targets and `File` have no
+option (that would make the identity of a target depend on a setting). The flag is part of the
+fileset recorded in `GetFiles`. On Linux a fileset can now find both `a.cs` and `A.cs`: two real
+files, and the two-spellings check warns about them (they would collide on Windows and macOS).
+About 5 lines in `Fileset.fs`; the scan's comparer exists (`PatternScan`).
 
 ### Two spellings of one file
 
@@ -306,7 +321,7 @@ Always upgrade (decision 2026-11-18):
   one major version;
 - a database of a newer version than this Xake knows is recreated with the message "database
   written by a newer Xake (version X), recreating" instead of today's "Failed to read database";
-- (proposal) a torn last record (end of file inside it, after a killed process) is cut off and the
+- a torn last record (end of file inside it, after a killed process) is cut off and the
   records before it are kept, instead of recreating the whole database; about 5 lines. Records in
   the middle are never repaired.
 
@@ -329,11 +344,12 @@ read-only open. (The lock is now in, by the decision above.)
 
 ## Public breaking changes (release notes "5.0.0 (unreleased)")
 
-1. Path case: ordinal on every OS for `File`, `Target`, rules and filesets. On Linux `A.cs`/`a.cs`
-   are now two files (they were one!); on Windows/macOS rule masks and filesets become
-   case-sensitive. Two spellings in one run: error for targets, warning for sources.
-2. `File`: `undefined` removed; `Name` means the path relative to the current directory (the
-   engine's own output is relative to the project root); `make`
+1. Path case: ordinal on every OS for `File`, `Target` and rules. On Linux `A.cs`/`a.cs` are now
+   two files (they were one!); on Windows/macOS rule masks become case-sensitive. Filesets: on
+   Windows and macOS they behave as before, on Linux they become case-insensitive; `casesensitive`
+   restores a case-sensitive search. Two spellings in one run: error for targets, warning for sources.
+2. `File`: `undefined` removed; `Name` is the absolute path (the engine's own output is relative
+   to the project root); `make`
    normalises (trailing separator dropped, `\` -> `/` internally on Windows); `File.display`,
    `File.comparer` added.
 3. `Dependency`: `FileDep of File` and `TargetDep of Target` (no stamp); `ArtifactDep` and
@@ -342,7 +358,7 @@ read-only open. (The lock is now in, by the decision above.)
 4. `Storage.openDb roots dbpath logger` (new `roots` parameter); the database is exclusive
    (`.xake.lock`); `DatabaseApi` gains `Observe`. `Storage.resultPU` is replaced by the public
    read API `Storage.readRecords` / `Storage.readDatabase`.
-5. (proposal) `FilesetOptions.IgnoreCase` and the `ignorecase` fileset operation added.
+5. `FilesetOptions.CaseSensitive` and the `casesensitive` fileset operation added.
 6. `ExecContext` gains `Spellings` (record shape test updated).
 7. Database 0.7: an older Xake cannot read it (as at every bump); 0.4-0.6 load and upgrade.
 
@@ -356,7 +372,7 @@ read-only open. (The lock is now in, by the decision above.)
 | `Path.fs` | `collapse` made internal + trailing/UNC fix | +5 |
 | `PatternMatch.fs`, `PatternScan.fs` | drop ignore-case | ~0 (edits) |
 | `Types.fs` | ordinal `Target`, `Dependency` cases, `FileState`, `Epoch`, `StaticCount` | +10 |
-| `Fileset.fs`, `PatternScan.fs` | `IgnoreCase` opt-out (proposal) | +5 |
+| `Fileset.fs`, `PatternScan.fs` | case-insensitive search by default, `casesensitive` | +5 |
 | `DependencyAnalysis.fs`, `ExecCore.fs`, `ScriptFuncs.fs`, `WorkerPool.fs` | verdict by epochs (question 5), record ids, observation per run | +40 |
 | `ExecTypes.fs`, `ExecCore.fs`, `ScriptFuncs.fs` | two-spellings check | +35 |
 | `ScriptRunner.fs`, `Fingerprints.fs` | root to `openDb`, comparer | ~+3 |
@@ -382,9 +398,10 @@ lock, the 0.6 conversion and the public read API came with the 2026-11-18 decisi
   no-change run builds nothing and the file is 0.7; a 0.6 result that saw an older stamp reruns.
 - Read API: `readRecords` gives every record in order, `readDatabase` the engine's state; both read a
   database held by a running build; a torn tail ends the sequence.
-- Versions: a newer and a too-old database are recreated with their messages; (proposal) a torn
-  last record is cut off and the rest kept.
-- (proposal) `ignorecase` fileset finds `a.cs` with `*.CS`, the file keeps its spelling on disk.
+- Versions: a newer and a too-old database are recreated with their messages; a torn last record
+  is cut off and the rest kept.
+- Filesets: `*.CS` finds `a.cs` on every OS and the file keeps its spelling on disk; with
+  `casesensitive` it does not; `a.cs` and `A.cs` found together on Linux give the warning.
 - Relocation: build, copy the tree with `.xake` (times preserved) to another folder, build: nothing
   rebuilt.
 - Size: synthetic database, 1000 results x 30 file deps, paths of 114 bytes mean, 0.6 vs 0.7 bytes;
@@ -395,11 +412,9 @@ lock, the 0.6 conversion and the public read API came with the 2026-11-18 decisi
 
 ## Questions for the owner
 
-1-4. ~~`Name`, `resultPU`, fileset case, `Fingerprints`~~: answered 2026-11-18 (see Decisions).
-   Proposals following from the answers, for confirmation: the root numbers in `DirRec`; `Name`
-   relative to the current directory while the engine's output is relative to the project root;
-   the public read API; keeping `Built` as a time next to `Epoch`; the `ignorecase` fileset
-   opt-out; cutting off a torn last record.
+1-4. ~~`Name`, `resultPU`, fileset case, `Fingerprints`~~: answered and the proposals accepted
+   2026-11-18 (see Decisions). Open: the exact meaning of "`File` holds the absolute path" as
+   agreed with the orchestrator (read here as: `Name` is the absolute path).
 5. ~~Scope of phase 1 after the epoch decision~~: decided 2026-11-18, the verdict moves to epochs in
    phase 1 (see Decisions).
 6. ~~Lists with a varint length~~: decided 2026-11-18, yes, in 0.7 (`Pickler.list` for the 0.7

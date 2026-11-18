@@ -2,7 +2,7 @@
 
 | Item | Status |
 |---|---|
-| Design report (design.md) | decisions of 2026-11-18 recorded (epochs in phase 1, incremental writing checked, 0.7 measured on a real database); lists with a varint length, string table Later, always upgrade without record length, answers 1-4; proposals following from them await confirmation |
+| Design report (design.md) | decisions of 2026-11-18 recorded (epochs in phase 1, incremental writing checked, 0.7 measured on a real database); lists with a varint length, string table Later, always upgrade without record length, answers 1-4 and the proposals accepted; open: the reading of "`File` holds the absolute path" |
 | Docs + release notes 5.0.0 (unreleased) | todo |
 | 1a `File` normalised absolute path, ordinal comparer, matching ordinal | todo |
 | 1a two-spellings check | todo |
@@ -11,9 +11,10 @@
 | 1c epochs (owner 2026-11-18): `FileRec (stamp, size, hash?, changed)`, `Result.built`, dependencies by id, `TargetDep`, `StaticCount`; verdict by epochs without hashing (owner 2026-11-18) | todo |
 | Lists with a varint length in 0.7 records (owner 2026-11-18) | todo |
 | Root numbers in `DirRec`, `openDb roots` (answer 1) | todo |
-| Public read API `readRecords` / `readDatabase`, `Built` kept next to `Epoch`, `--dump` with epochs (answer 2) | proposed |
-| `ignorecase` fileset opt-out (answer 3) | proposed |
-| Version messages (newer / too old), torn last record cut off | messages todo, torn tail proposed |
+| Public read API `readRecords` / `readDatabase`, `Built` kept next to `Epoch`, `--dump` with epochs (answer 2) | todo |
+| Filesets case-insensitive by default, `casesensitive` option (owner 2026-11-18) | todo |
+| `File.Name` = absolute path (owner 2026-11-18, reading to confirm) | todo |
+| Version messages (newer / too old), torn last record cut off | todo |
 | 0.6 -> 0.7 conversion (latest stamp per file, `built = 0` for results that saw an older one) | todo |
 | Tests + size measurement (>= 5x) + explicit real-file test | todo |
 

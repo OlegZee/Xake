@@ -5,9 +5,13 @@
 strict indexer for every recipe ([brief.md](brief.md)); implemented with tests, see
 [tracker.md](tracker.md).
 
-Checked: `build.fsx build test` 1848 passed, 13 skipped (macOS); core Release 0 warnings.
+`getRuleMatch` is obsolete (owner, 2026-11-19). Checked after merging `dev` (#145):
+`build.fsx build test` 1853 passed, 13 skipped (macOS); core Release 0 warnings. Squash-merged on
+the owner's word.
 
-**Next step.** CI on the PR, then the owner's squash-merge; after it, remove the worktree and branch.
+**Next step.** Open with the owner: a strict `?` operator on `RuleMatch` (`m?cfg`), and the name
+(`matched` stays for now; `matchGroups` was asked about). After the merge, remove the worktree
+and branch.
 
 | PR | Branch | Worktree |
 |---|---|---|

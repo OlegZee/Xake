@@ -310,6 +310,8 @@ module private RuleImpl =
 /// `PatternAst.PatternException` for an invalid pattern.
 let internal matchRule (pattern: string) (rootPath: string) : string -> ((string * string) list * string list) option =
     let pattern = RuleImpl.collapsePrefix pattern
+    // a non-empty root is normalised as the file is (C2); the phony root "" stays
+    let rootPath = if rootPath = "" then "" else collapse rootPath
     fun file ->
         match PatternMatch.matchRule RuleImpl.windows rootPath pattern (collapse file) with
         | None -> None
@@ -333,7 +335,7 @@ let matchGroups (pattern:string) rootPath =
 /// invalid mask.
 let matches filePattern rootPath =
     // case ignored on every OS, as a fileset's default (B4)
-    let m = PatternMatch.maskMatcher RuleImpl.windows true rootPath filePattern
+    let m = PatternMatch.maskMatcher RuleImpl.windows true (if rootPath = "" then "" else collapse rootPath) filePattern
     fun file -> m (collapse file) false
 
 /// Specificity of a rule pattern (spec 5.8, see the `Specificity` type), memoized per pattern

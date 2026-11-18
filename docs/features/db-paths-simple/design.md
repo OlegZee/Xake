@@ -16,7 +16,7 @@ Status: **for the owner's approval** (no code written); decisions recorded below
   - **Per file, one record** `FileRec (fileId, stamp, size, hash?, changed)`, the last one wins. It is
     the stat cache (`stamp`, `size` from one stat call) and the run in which the file's content was
     last seen to change.
-  - **Per result** `built` = the epoch of the run that built it. **A dependency stores only the id**
+  - **Per result** `built` = the epoch of the run that built it (the field `BuildResult.Epoch`). **A dependency stores only the id**
     (`FileDep fileId`, `TargetDep fileId | phonyName`): no stamp, no size, no hash.
   - **Rule:** a target is up to date iff every file/target dependency has `changed <= built` (and,
     as in 4.0, a dependee target is itself up to date), and the other dependencies compare as today.
@@ -44,6 +44,19 @@ Status: **for the owner's approval** (no code written); decisions recorded below
   rewrite in place; checked in 1b "Incremental writing".
 - 2026-11-18, **lists with a varint length** in the 0.7 records (question 6); **no string table**
   now (question 7, Later).
+- 2026-11-18, **always upgrade, no record length**: an older database is read and rewritten in the
+  current format on open; no length prefix on records (its only use would be reading a newer or
+  very old database without wiping it, which a cache does not need).
+- 2026-11-18, answers to questions 1-4:
+  - **1, paths relative to the project root:** the root is given to the database (and to the
+    engine's output) in the constructor, never written, so a moved folder (a worktree, a lazy
+    branch checkout) keeps its database. Several roots must stay possible later (see 1b, "Roots").
+  - **2, the database is a public analysis tool:** an agent must be able to read it; a public read
+    API stays (1b, "Public read API"), and the data kept must be enough to analyse a build
+    (1b, "What the database keeps for analysis").
+  - **3, filesets case-sensitive with rules on every OS:** accepted; an opt-out is asked for
+    (proposal in 1a).
+  - **4, `Fingerprints.fs` ordinal:** accepted.
 
 ### Why the epoch is per run, not per event
 
@@ -99,10 +112,12 @@ module File =
   collapsed; repeated separators removed; root (`/`, `C:`) kept; a trailing separator dropped (new,
   except the root); case kept; lexical. A leading `//` (UNC) is kept on Windows (today's
   `collapsePath` loses it; fixed in the same function, 1 line).
-- **`Name` decision: kept**, as `display (current directory)`. Reason: about 200 `.Name` reads in
-  Xake.Dotnet (not all on `File`) and the engine's own logs (`Target.ShortName`); with
-  `ProjectRoot` = cwd (the default) it is exactly the project-relative display. Release note: `Name`
-  is no longer "the string as given" but the path relative to the current directory (or absolute).
+- **Display relative to the project root** (answer 1): the engine's output (`Target.ShortName`,
+  change reasons, `--dump`) shows `File.display ProjectRoot f`, the root coming from the context.
+  `File` itself stays a rootless absolute path (the agreed file-type brief: no root inside), so the
+  `Name` property, which has no root at hand, keeps the path relative to the current directory (the
+  project root by default) for scripts and Xake.Dotnet (about 200 `.Name` reads). Release note:
+  `Name` is no longer "the string as given".
 - `undefined` removed. Xake.Dotnet uses it in `Csc`/`Fsc` settings (`Out`, `Doc`); it moves to
   `File option` there at its 5.0 (noted as a breaking change for Xake.Dotnet, not done here).
 
@@ -115,6 +130,15 @@ module File =
 | rule / mask matching (`PatternMatch.fs:201`, `PatternScan.fs:243,317-318`) | ignore-case on Windows | ordinal; `windows` keeps meaning `\` separator and UNC only |
 | `WorkerPool.mapKey` | `Target.FullName` string key (F# `Map`, ordinal) | unchanged, already ordinal once `FullName` is normalised |
 | `Fingerprints.fs:81,130` | ignore-case on Windows | `File.comparer` (2 lines; in core, so in scope; flag if you disagree) |
+
+### Opt-out for filesets (proposal, answer 3)
+
+A fileset is a query to the disk, so it can match names without case without touching identity:
+`FilesetOptions.IgnoreCase` (default false) and the builder operation `ignorecase` in
+`fileset { }`. The scan compares names with `OrdinalIgnoreCase`; the files found keep their
+spelling on disk and compare ordinally as every `File`. Rules and targets have no opt-out (that
+would make the identity of a target depend on a setting). The flag is part of the fileset recorded
+in `GetFiles`. About 5 lines in `Fileset.fs`, the scan's comparer already exists (`PatternScan`).
 
 ### Two spellings of one file
 
@@ -133,10 +157,10 @@ module File =
 ```
 header  (XakeSign "XAKE", XakeVer "0.7", ScriptDate)          -- as today
 record* -- each starts with a tag byte (new in 0.7):
-  DirRec   (dirId, dir: string)                               -- before the first PathRec using it
+  DirRec   (dirId, root, dir: string)                         -- before the first PathRec using it
   PathRec  (fileId, dirId, name: string)                      -- before the first record using it
   FileRec  (fileId, stamp, size, hash: 8 bytes option, changed: epoch)   -- last per file wins
-  Result   (built: epoch, targets, deps, steps, staticCount)
+  Result   (epoch, built: time, targets, deps, steps, staticCount)
     dep:   FileDep   fileId
            TargetDep fileId | phonyName
            GetFiles  fileset, fileId list
@@ -148,7 +172,14 @@ Ids, sizes and epochs are varints; the stamp is 8 bytes (ticks).
 - Path string = `File.display ProjectRoot f` with `/`: relative under the root, absolute outside
   it. It is split at the last `/`: `DirRec` holds the directory part (one level, no parent chain;
   `""` for a file directly in the root), `PathRec` the file name and the directory id. Load:
-  `File.make (root </> dir </> name)` (an absolute directory stays absolute). Targets, `FileDep`,
+  `File.make (root </> dir </> name)` (an absolute directory stays absolute).
+- **Roots** (answer 1): `DirRec.root` is a small number, `0` = absolute (no root), `1` = the
+  project root; the values of the roots are never written. The database and the engine get the
+  roots in the constructor (`openDb roots dbpath logger`, today one root: `ProjectRoot`). A later
+  root (for example a package cache) takes the next number, chosen by the code, not by the order
+  a user writes; an old database never uses it, so adding one needs no format change. A directory
+  under several roots goes under the longest one. Cost: one byte per directory (3 KB on the
+  measured database). Targets, `FileDep`,
   `TargetDep` targets, `GetFiles` file lists, `FileRec` all go through the same `file` pickler.
   `Fileset` masks and `BaseDir` stay strings (as today).
 - Path table: writer `Dictionary<File, int>` and `Dictionary<string, int>` for directories (ids
@@ -196,13 +227,49 @@ type Dependency =
     | TargetDep of Target        // a rule's output file or a phony target
     | GetFiles of Fileset * Filelist
     | EnvVar of ... | Var of ... | SecretDep of ... | AlwaysRerun      // as today
-type BuildResult = { Targets; Built: int64 (epoch); Depends; Steps; StaticCount: int }
+type BuildResult = { Targets; Built: Timestamp; Epoch: int64; Depends; Steps; StaticCount: int }
 type Database = { Status: Map<Target, BuildResult>; Files: Map<File, FileState> }
 ```
 
-`Built` as a wall-clock time is gone: the start time is in `Steps`. Agent messages: `GetResult`,
+`Built` stays the wall-clock completion time (for analysis; 8 bytes per result, 15 KB on the
+measured database); `Epoch` is new and is what the verdict compares. Agent messages: `GetResult`,
 `Store`, plus `Observe of File * reply` (the once-per-run observation, it appends a `FileRec` when the
 state changed) and the run epoch handed out at `newRun`.
+
+### Public read API (answer 2)
+
+`Storage.resultPU` cannot serve 0.7 alone (a result refers to path ids), so it is replaced by two
+public functions over the same reader the engine uses:
+
+```fsharp
+/// Every record of the file in order (history until the next compaction), paths resolved.
+type DbRecord = Result of BuildResult | FileState of File * FileState
+val Storage.readRecords : roots: string list -> dbpath: string -> DbRecord seq
+/// The state the engine loads: the last result per target, the last state per file, the last epoch.
+val Storage.readDatabase : roots: string list -> dbpath: string -> BuildLog.Database * epoch: int64
+```
+
+They take no lock and open the file for reading with sharing, so an agent can read the database
+of a running build; a torn last record ends the sequence. `--dump` (`DumpDeps`) shows the epoch of
+each result and, for a file dependency, the file's stamp, size and `changed`.
+
+### What the database keeps for analysis (answer 2, checked)
+
+| Question an agent asks | 0.6 | 0.7 |
+|---|---|---|
+| what a target depends on (graph) | `Depends` | `Depends` (+ `StaticCount`: which came from the header) |
+| how long it took, waiting included | `Steps` | `Steps` |
+| when it was built | `Built` | `Built` |
+| which targets one run built | no | `Epoch` (all results of run `r`) |
+| when a file was last seen to change, in which run | no | `FileRec.changed` |
+| file size | no | `FileRec.size` |
+| the stamp a dependent saw | per dependency | the file's stamp at the last observation; the dependent is valid iff `changed <= Epoch`, decidable from the file alone |
+| variable values, secret digests, fileset members | as today | as today |
+| earlier versions of a result or a file | the raw file until compaction | the same (`readRecords`) |
+
+Lost: only the per-dependency stamp, replaced by the epochs. Not kept in either version: why a
+target was rebuilt (the change reasons) and the runs that built nothing; a run record would add
+them (Later).
 
 ### Picklers
 
@@ -223,12 +290,25 @@ netstandard2.0) for ids, sizes and epochs.
 legacy picklers, converted, and rewritten as 0.7 (existing "Upgrading database" path). Conversion:
 
 - per file, a `FileRec` with the latest stamp any result recorded for it, no hash, `changed = 1`;
-- per result, `built = 1` if every stamp it recorded equals its file's latest stamp (and every
-  phony dependee finished no later than recorded), else `built = 0` (it reruns, as 4.0 would:
-  it saw an older file);
-- `ArtifactDep` (0.4, no stamp): `built = 0`; the first run after the upgrade is epoch 2.
+- per result, `Epoch = 1` if every stamp it recorded equals its file's latest stamp (and every
+  phony dependee finished no later than recorded), else `Epoch = 0` (it reruns, as 4.0 would:
+  it saw an older file); `Built` keeps its time;
+- `ArtifactDep` (0.4, no stamp): `Epoch = 0`; the first run after the upgrade is epoch 2.
 
 A no-change run after the upgrade rebuilds nothing (M11).
+
+Always upgrade (decision 2026-11-18):
+
+- a new record kind or field is a new format version, and the file is rewritten on open (nearly
+  free when the old records are a subset of the new ones, as 0.4/0.5 -> 0.6);
+- a database older than `XakeDbMinReadVersion` is recreated with the message "database version X
+  is no longer read, recreating" (one full build); the reader of the previous format is kept for
+  one major version;
+- a database of a newer version than this Xake knows is recreated with the message "database
+  written by a newer Xake (version X), recreating" instead of today's "Failed to read database";
+- (proposal) a torn last record (end of file inside it, after a killed process) is cut off and the
+  records before it are kept, instead of recreating the whole database; about 5 lines. Records in
+  the middle are never repaired.
 
 ### Not done (by the brief)
 
@@ -252,36 +332,39 @@ read-only open. (The lock is now in, by the decision above.)
 1. Path case: ordinal on every OS for `File`, `Target`, rules and filesets. On Linux `A.cs`/`a.cs`
    are now two files (they were one!); on Windows/macOS rule masks and filesets become
    case-sensitive. Two spellings in one run: error for targets, warning for sources.
-2. `File`: `undefined` removed; `Name` means display relative to the current directory; `make`
+2. `File`: `undefined` removed; `Name` means the path relative to the current directory (the
+   engine's own output is relative to the project root); `make`
    normalises (trailing separator dropped, `\` -> `/` internally on Windows); `File.display`,
    `File.comparer` added.
 3. `Dependency`: `FileDep of File` and `TargetDep of Target` (no stamp); `ArtifactDep` and
-   `ArtifactDep2` removed. `BuildResult.Built` is an epoch (`int64`), `StaticCount` added.
+   `ArtifactDep2` removed. `BuildResult.Epoch` and `StaticCount` added (`Built` stays the time).
    `BuildLog.Database.Files` and `FileState` added.
-4. `Storage.openDb root dbpath logger` (new `root` parameter); the database is exclusive
-   (`.xake.lock`); `DatabaseApi` gains `Observe`. `Storage.resultPU` (public, used by tests) is
-   replaced by `Storage.resultPickler root` (string paths) for tests, or removed - see question 2.
-5. `ExecContext` gains `Spellings` (record shape test updated).
-6. Database 0.7: an older Xake cannot read it (as at every bump); 0.4-0.6 load and upgrade.
+4. `Storage.openDb roots dbpath logger` (new `roots` parameter); the database is exclusive
+   (`.xake.lock`); `DatabaseApi` gains `Observe`. `Storage.resultPU` is replaced by the public
+   read API `Storage.readRecords` / `Storage.readDatabase`.
+5. (proposal) `FilesetOptions.IgnoreCase` and the `ignorecase` fileset operation added.
+6. `ExecContext` gains `Spellings` (record shape test updated).
+7. Database 0.7: an older Xake cannot read it (as at every bump); 0.4-0.6 load and upgrade.
 
 ## Line budget (estimates, net)
 
 | File | Change | Lines |
 |---|---|---|
-| `Database.fs` | tags, path codec with `DirRec`, parameterised picklers, `FileRec` table and `Observe`, epoch, lock, 0.6 conversion, stop-on-failure, root param | **+200** |
+| `Database.fs` | tags, path codec with `DirRec` and root numbers, parameterised picklers, `FileRec` table and `Observe`, epoch, lock, 0.6 conversion, version messages, torn tail, public read API, stop-on-failure, roots param | **+225** |
 | `Pickler.fs` | `varint`, list with a varint length | +17 |
 | `File.fsi` / `File.fs` | new representation, `display`, `comparer`, `undefined` gone | +5 / -5 |
 | `Path.fs` | `collapse` made internal + trailing/UNC fix | +5 |
 | `PatternMatch.fs`, `PatternScan.fs` | drop ignore-case | ~0 (edits) |
-| `Types.fs` | ordinal `Target`, `Dependency` cases, `FileState`, `Built`, `StaticCount` | +10 |
+| `Types.fs` | ordinal `Target`, `Dependency` cases, `FileState`, `Epoch`, `StaticCount` | +10 |
+| `Fileset.fs`, `PatternScan.fs` | `IgnoreCase` opt-out (proposal) | +5 |
 | `DependencyAnalysis.fs`, `ExecCore.fs`, `ScriptFuncs.fs`, `WorkerPool.fs` | verdict by epochs (question 5), record ids, observation per run | +40 |
 | `ExecTypes.fs`, `ExecCore.fs`, `ScriptFuncs.fs` | two-spellings check | +35 |
 | `ScriptRunner.fs`, `Fingerprints.fs` | root to `openDb`, comparer | ~+3 |
-| **core total** | | **about +300** |
+| **core total** | | **about +330** |
 | tests (`FileTests`, `StorageTests`, new `DatabaseFormatTests`, epoch scenarios) | | +350 |
 
 No new source module. `Database.fs` is over the brief's +150: the `FileRec` table, the epoch, the
-lock and the 0.6 conversion came with the 2026-11-18 decisions.
+lock, the 0.6 conversion and the public read API came with the 2026-11-18 decisions.
 
 ## Tests and measurement
 
@@ -297,6 +380,11 @@ lock and the 0.6 conversion came with the 2026-11-18 decisions.
   the same database waits and fails.
 - 0.6 -> 0.7: a 0.6 file written by the 4.0 pickler (kept in the test as a fixture writer), then a
   no-change run builds nothing and the file is 0.7; a 0.6 result that saw an older stamp reruns.
+- Read API: `readRecords` gives every record in order, `readDatabase` the engine's state; both read a
+  database held by a running build; a torn tail ends the sequence.
+- Versions: a newer and a too-old database are recreated with their messages; (proposal) a torn
+  last record is cut off and the rest kept.
+- (proposal) `ignorecase` fileset finds `a.cs` with `*.CS`, the file keeps its spelling on disk.
 - Relocation: build, copy the tree with `.xake` (times preserved) to another folder, build: nothing
   rebuilt.
 - Size: synthetic database, 1000 results x 30 file deps, paths of 114 bytes mean, 0.6 vs 0.7 bytes;
@@ -307,12 +395,11 @@ lock and the 0.6 conversion came with the 2026-11-18 decisions.
 
 ## Questions for the owner
 
-1. `Name` kept as display relative to the current directory (recommended) or removed?
-2. `Storage.resultPU`: drop it from the public surface (tests use an internal) - recommended - or keep
-   a string-path pickler public?
-3. Filesets on Windows become case-sensitive with rules (as the file-type brief says for masks):
-   confirm, since `*.CS` stops finding `a.cs` there.
-4. `Fingerprints.fs` path comparisons switch to ordinal too (in core): confirm.
+1-4. ~~`Name`, `resultPU`, fileset case, `Fingerprints`~~: answered 2026-11-18 (see Decisions).
+   Proposals following from the answers, for confirmation: the root numbers in `DirRec`; `Name`
+   relative to the current directory while the engine's output is relative to the project root;
+   the public read API; keeping `Built` as a time next to `Epoch`; the `ignorecase` fileset
+   opt-out; cutting off a torn last record.
 5. ~~Scope of phase 1 after the epoch decision~~: decided 2026-11-18, the verdict moves to epochs in
    phase 1 (see Decisions).
 6. ~~Lists with a varint length~~: decided 2026-11-18, yes, in 0.7 (`Pickler.list` for the 0.7
@@ -378,4 +465,6 @@ every record of the 0.6 file read with the 0.6 pickler and sized in the 0.7 enco
 - `Fileset.BaseDir` stored relative to the root.
 - A string table for repeated strings (variable names and values, fileset masks, step and phony
   names), the same mechanism as `PathRec`: about -0.4 MB (12%) on the measured compacted database.
+- A run record (epoch, start, demanded targets, change reasons): would let an agent see why a
+  target was rebuilt and the runs that built nothing.
 - Version comparison is a string compare (`"0.10" < "0.7"`): fine until 0.10.

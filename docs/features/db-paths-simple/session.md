@@ -11,7 +11,11 @@ on every run.
 **Decided later on 2026-11-18:** the verdict moves to epochs already in phase 1 (without hashing);
 the database stays incremental (checked in design.md 1b). The decided 0.7 layout was measured on the
 owner's real 84.5 MB database: 5.75 MB as is, 3.39 MB compacted (5.0 / 3.1 MB with varint list
-lengths). Lists get a varint length in 0.7; the string table is Later. **Open:** design.md questions 1-4.
+lengths). Lists get a varint length in 0.7; the string table is Later; always upgrade, no record length.
+Questions 1-4 answered (root-relative paths with roots given in the constructor and never written,
+room for several roots; the database stays a public analysis tool; fileset case accepted, opt-out
+asked; `Fingerprints` ordinal). **Open:** confirmation of the proposals that follow from the
+answers (design.md, questions section).
 
 **Next step.** Owner's answers to the open questions and approval of the design, then docs first (`docs/` + release notes "5.0.0 (unreleased)"),
 then code in the order 1a -> 1b -> 1c, tests, the size measurement. No push, no PR without the owner.

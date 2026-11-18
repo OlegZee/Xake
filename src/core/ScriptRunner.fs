@@ -111,9 +111,9 @@ let dryRun (ctx: ExecContext) (setup: string list) (groups: string list list) =
         | Other reason ->
             print "%sReason: %s" (indent ii) reason
         | Depends t ->
-            print "%sDepends '%s' - changed target" (indent ii) t.ShortName
+            print "%sDepends '%s' - changed target" (indent ii) (t.Display options.ProjectRoot)
         | DependsMissingTarget t ->
-            print "%sDepends on '%s' - missing target" (indent ii) t.ShortName
+            print "%sDepends on '%s' - missing target" (indent ii) (t.Display options.ProjectRoot)
         | FilesChanged (file:: rest) ->
             print "%sFile is changed '%s' %s" (indent ii) file (if List.isEmpty rest then "" else sprintf " and %d more file(s)" <| List.length rest)
         | reasons ->
@@ -131,7 +131,7 @@ let dryRun (ctx: ExecContext) (setup: string list) (groups: string list list) =
             let deps = getDeps target
             if not <| List.isEmpty deps then
                 let execTimeEstimate = getExecTime ctx target
-                do ctx.Logger.Log Command "%sRebuild %A (~%Ams)" (indent ii) target.ShortName execTimeEstimate
+                do ctx.Logger.Log Command "%sRebuild %A (~%Ams)" (indent ii) (target.Display options.ProjectRoot) execTimeEstimate
                 deps |> List.iter (showDepStatus (ii+1))
                 deps |> List.iter (displayNestedDeps (ii+1))
 

@@ -150,6 +150,8 @@ module ScriptFuncs =
     let getFiles fileset = recipe {
         let! ctx = getCtx()
         let files = fileset |> toFileList ctx.Options.ProjectRoot
+        let (Filelist found) = files
+        found |> List.iter (ExecCore.checkSpelling ctx false)
         do! GetFiles (fileset,files) |> recordDependency
 
         return files

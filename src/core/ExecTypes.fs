@@ -110,6 +110,10 @@ and ExecContext = {
     /// `withResource` and `requiring` for their body. A `need` of a target that has a rule
     /// fails while it is not empty (hold-and-wait deadlock); `allowNeed` clears it.
     HeldResources: string list
+    /// The files named in this run, keyed by the path upper-cased (invariant): the first spelling
+    /// and whether it was a target. One file under two spellings is an error for two targets, a
+    /// warning otherwise (5.0). Created per run, with the run's memo.
+    Spellings: System.Collections.Concurrent.ConcurrentDictionary<string, string * bool>
 } with
     /// Shortcut to engine options.
     member ctx.Options = ctx.Engine.Options

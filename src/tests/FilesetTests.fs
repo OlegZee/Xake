@@ -191,28 +191,29 @@ let ``a trailing '/' is kept by '++', '--' and the builder``() =
         Assert.That (fileset { includes "**/*.cs"; excludes "obj/" } |> list root, Is.EqualTo ["a.cs"])
         Assert.That ((Xake.Fileset.Empty ++ "*/") |> list root, Is.EqualTo ["obj"])
 
-// --- case (D11): ignore-case on Windows, ordinal elsewhere -----------------------------------
+// --- case (5.0): filesets ignore case on every OS, `casesensitive` makes them ordinal ---------
 
 [<Test>]
-let ``wildcard and exclude segments follow the OS case rules``() =
+let ``wildcard and exclude segments ignore case on every OS``() =
     withTree edgeTree <| fun root ->
         let excluded = (!! "**/*.cs" -- "d*/**/*") |> list root
-        // "dir" always goes; "Dir2" goes only where masks ignore case (Windows)
         Assert.That (excluded, Does.Not.Contain "dir/c.cs")
-        if Env.isUnix then Assert.That (excluded, Does.Contain "Dir2/e.cs")
-        else Assert.That (excluded, Does.Not.Contain "Dir2/e.cs")
-        // a literal exclude segment is no longer case-insensitive on every OS (spec 3 item 25)
+        Assert.That (excluded, Does.Not.Contain "Dir2/e.cs")
         let literal = (!! "**/*.cs" -- "dir2/**") |> list root
-        if Env.isUnix then Assert.That (literal, Does.Contain "Dir2/e.cs")
-        else Assert.That (literal, Does.Not.Contain "Dir2/e.cs")
+        Assert.That (literal, Does.Not.Contain "Dir2/e.cs")
+        // casesensitive: the search compares names ordinally
+        let ordinal = fileset { casesensitive; includes "**/*.cs"; excludes "d*/**/*" } |> list root
+        Assert.That (ordinal, Does.Contain "Dir2/e.cs")
+        Assert.That (ordinal, Does.Not.Contain "dir/c.cs")
 
 [<Test>]
-let ``a wildcard include follows the OS case rules, not the volume``() =
-    // 3.x listed through .NET, case-insensitive on macOS even for '*.CS' (spec 3 item 25)
+let ``a wildcard include ignores case and keeps the spelling on disk``() =
     withTree [ "x/a.cs"; "x/B.CS" ] <| fun root ->
-        let found = ls "x/*.cs" |> list root
-        if Env.isUnix then Assert.That (found, Is.EqualTo ["x/a.cs"])
-        else Assert.That (found, Is.EqualTo ["x/B.CS"; "x/a.cs"])
+        Assert.That (ls "x/*.cs" |> list root, Is.EqualTo ["x/B.CS"; "x/a.cs"])
+        Assert.That (ls "x/*.CS" |> list root, Is.EqualTo ["x/B.CS"; "x/a.cs"])
+        Assert.That (ls "X/*.CS" |> list root, Is.EqualTo ["x/B.CS"; "x/a.cs"])
+        Assert.That (fileset { casesensitive; includes "x/*.CS" } |> list root, Is.EqualTo ["x/B.CS"])
+        Assert.That (fileset { casesensitive; includes "x/*.cs" } |> list root, Is.EqualTo ["x/a.cs"])
 
 [<Test>]
 let ``duplicates are removed with the OS comparer``() =

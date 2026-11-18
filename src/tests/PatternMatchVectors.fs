@@ -1,4 +1,4 @@
-/// Conformance vectors for the matcher stage (PR 3) of the pattern module
+﻿/// Conformance vectors for the matcher stage (PR 3) of the pattern module
 /// (docs/features/pattern-module/spec.md sections 3, 5, 7, 8, 9, 11; decisions D1-D35 in brief.md).
 /// DATA only: the tables below are driven by PatternMatchVectorTests.fs. Matching and formatting
 /// only; no scanner (PR 4: trees, pruning, the explicit-name rule, evidence warnings of a scan).
@@ -218,13 +218,13 @@ let ruleMatches : RuleVector list = [
     ra "RM-122" "5.1" "[a-z]*.c" "x1.c" (m [ "1", "1" ]) [] "unchanged: classes take no number"
     ra "RM-123" "5.1" "[a-z]*.c" "1x.c" no [] "unchanged"
     ru "RM-124" "5.4" "[a-z]*.c" "Q.c" no [] "unchanged on Unix (3.x matchGroups case-sensitive on macOS)"
-    rw "RM-125" "5.4" "[a-z]*.c" "Q.c" (m [ "1", "" ]) [] "unchanged on Windows: classes follow the comparer (D11)"
+    rw "RM-125" "5.4" "[a-z]*.c" "Q.c" no [] "changed in 5.0: rule matching is ordinal on every OS"
     ru "RM-126" "5.4" "[A-Z].c" "q.c" no [] "unchanged"
-    rw "RM-127" "5.4" "[A-Z].c" "q.c" (m []) [] "unchanged (3.x IgnoreCase on Windows)"
+    rw "RM-127" "5.4" "[A-Z].c" "q.c" no [] "changed in 5.0: rule matching is ordinal on every OS"
     ra "RM-128" "5.1" "[^a]*.c" "b.c" (m [ "1", "" ]) [] "unchanged (3.x regex negation)"
     ra "RM-129" "5.1" "[^a]*.c" "a.c" no [] "unchanged"
     ru "RM-130" "5.4" "[^a].c" "A.c" (m []) [] "unchanged: 'A' is not 'a' under the ordinal comparer"
-    rw "RM-131" "5.4" "[^a].c" "A.c" no [] "unchanged: a negated class follows the comparer too ('A' equals 'a' on Windows)"
+    rw "RM-131" "5.4" "[^a].c" "A.c" (m []) [] "changed in 5.0: rule matching is ordinal on every OS"
     ra "RM-132" "5.2" "[!a].c" "b.c" (m []) [] "changed in 4.0 (item 11): 3.x a class of '!' and 'a', no match; XP117 at parse"
     ra "RM-133" "5.2" "[!a].c" "!.c" (m []) [] "same result as 3.x ('!' was in the 3.x class, and is 'not a' in 4.0)"
     ra "RM-134" "5.2" "[!a].c" "a.c" no [] "changed in 4.0 (item 11): 3.x matched"
@@ -250,7 +250,7 @@ let ruleMatches : RuleVector list = [
     ra "RM-154" "5.7" "a[*]b" "a*b" (m []) [] "D34: the escape idiom is a literal"
     ra "RM-155" "5.7" "a[*]b" "axb" no [] "D34"
     ra "RM-156" "5.7" "a[?]b" "a?b" (m []) [] "D34"
-    rw "RM-157" "5.4" "[a-c]x" "Bx" (m []) [] "a range follows the comparer on Windows"
+    rw "RM-157" "5.4" "[a-c]x" "Bx" no [] "changed in 5.0: rule matching is ordinal on every OS"
     ru "RM-158" "9.3" @"a[\\]b" @"a\b" (m []) []
         "SPEC? the literal backslash idiom against a Unix name holding '\\': read here as matching (on Unix '\\' in a path is a name character, see RM-255)"
 
@@ -293,15 +293,15 @@ let ruleMatches : RuleVector list = [
 
     // ---- case (5.4, D11, item 25) -------------------------------------------------------------------
     ru "RM-200" "5.4" "src/*.cs" "Src/a.cs" no [] "3.x macOS: matchGroups None, Path.matches true (E9); item 25"
-    rw "RM-201" "5.4" "src/*.cs" "Src/a.cs" (m [ "1", "a" ]) [] "unchanged on Windows: matchGroups Some, 1 = a (E9 Windows)"
+    rw "RM-201" "5.4" "src/*.cs" "Src/a.cs" no [] "changed in 5.0: rule matching is ordinal on every OS"
     ru "RM-202" "5.4" "Src/*.cs" "src/A.cs" no [] "3.x macOS Path.matches true (E9); item 25"
-    rw "RM-203" "5.4" "SRC/a.cs" "src/a.cs" (m []) [] "unchanged on Windows (E9)"
+    rw "RM-203" "5.4" "SRC/a.cs" "src/a.cs" no [] "changed in 5.0: rule matching is ordinal on every OS"
     rv Os.Unix "" "RM-204" "5.4" "c:/a.c" "C:/A.c" no [] "changed in 4.0 on Unix (item 25): 3.x Path.matches true on every OS (PathTests.MaskTests)"
-    rv Os.Windows "" "RM-205" "5.4" "c:/a.c" "C:/A.c" (m []) [] "unchanged on Windows; PathTests.MaskTests"
-    rw "RM-206" "5.4" "(n:*).CS" "a.cs" (m [ "n", "a"; "1", "a" ]) [] "unchanged on Windows"
-    rw "RM-207" "5.4" "src/(n:*).cs" "SRC/Main.CS" (m [ "n", "Main"; "1", "Main" ]) [] "a capture keeps the path's spelling"
+    rv Os.Windows "" "RM-205" "5.4" "c:/a.c" "C:/A.c" no [] "changed in 5.0: rule matching is ordinal on every OS"
+    rw "RM-206" "5.4" "(n:*).CS" "a.cs" no [] "changed in 5.0: rule matching is ordinal on every OS"
+    rw "RM-207" "5.4" "src/(n:*).cs" "SRC/Main.CS" no [] "changed in 5.0: rule matching is ordinal on every OS"
     rv Os.Unix "/P" "RM-208" "5.4" "*.c" "/p/a.c" no [] "the root compares with the same comparer"
-    rv Os.Windows "/P" "RM-209" "5.4" "*.c" "/p/a.c" (m [ "1", "a" ]) [] "unchanged on Windows"
+    rv Os.Windows "/P" "RM-209" "5.4" "*.c" "/p/a.c" no [] "changed in 5.0: rule matching is ordinal on every OS"
 
     // ---- roots (5.1 anchoring, 4.2 roots, item 29) --------------------------------------------------
     ra "RM-210" "5.1" "/opt/(n:*).so" "/opt/x.so" (m [ "n", "x"; "1", "x" ]) [] "unchanged: an absolute pattern is not joined to the root"
@@ -315,11 +315,11 @@ let ruleMatches : RuleVector list = [
     rv Os.Windows "" "RM-218" "5.5" @"c:\**\*.c" @"c:\abc\def\a.c" (m [ "1", "abc/def"; "2", "a" ]) [] "unchanged; PathTests.MaskTests"
     rv Os.Windows "" "RM-219" "5.5" @"c:\**\*.*" @"c:\a.c" (m [ "1", ""; "2", "a"; "3", "c" ]) xp119 "PathTests.MaskTests: 3.x Path.matches true; matchGroups would refuse it (item 12)"
     rv Os.Windows "" "RM-220" "5.1" @"c:\*\?.c" @"c:\!\a.c" (m [ "1", "!"; "2", "a" ]) [] "unchanged; PathTests.MaskTests"
-    rw "RM-221" "5.1" "C:/x/(n:*).dll" @"c:\x\A.dll" (m [ "n", "A"; "1", "A" ]) [] "a drive pattern against a backslash path, case-insensitive drive"
+    rw "RM-221" "5.1" "C:/x/(n:*).dll" @"c:\x\A.dll" no [] "changed in 5.0: rule matching is ordinal on every OS"
     rv Os.Windows @"C:\proj" "RM-222" "9.2" "out/(n:*).dll" @"C:\proj\out\a.dll" (m [ "n", "a"; "1", "a" ]) [] "unchanged; a root and a target with backslashes; \"0\" = C:/proj/out/a.dll"
-    rv Os.Windows "c:/proj" "RM-223" "5.4" "out/*.dll" "C:/PROJ/out/a.dll" (m [ "1", "a" ]) [] "unchanged on Windows: the root is compared ignoring case"
+    rv Os.Windows "c:/proj" "RM-223" "5.4" "out/*.dll" "C:/PROJ/out/a.dll" no [] "changed in 5.0: rule matching is ordinal on every OS"
     rw "RM-224" "4.2" "//srv/sh/(n:*).dll" @"\\srv\sh\a.dll" (m [ "n", "a"; "1", "a" ]) [] "D24: a UNC root matches on Windows; \"0\" = //srv/sh/a.dll"
-    rw "RM-225" "4.2" "//srv/sh/(n:*).dll" "//SRV/sh/a.dll" (m [ "n", "a"; "1", "a" ]) [] "D24"
+    rw "RM-225" "4.2" "//srv/sh/(n:*).dll" "//SRV/sh/a.dll" no [] "changed in 5.0: rule matching is ordinal on every OS"
     ru "RM-226" "4.2" "//srv/sh/(n:*).dll" "//srv/sh/a.dll" no [] "D24: UNC roots parse on every OS and match only on Windows"
     rw "RM-227" "4.2" "//srv/sh/*.dll" @"\\srv\other\a.dll" no [] "D24"
     ra "RM-228" "5.1" "*.c" "/q/a.c" no [] "unchanged: a relative pattern is anchored at the root"

@@ -193,9 +193,9 @@ let private segKey = function
     | SGlob -> "G"
     | SPat p -> "P" + p.Text
 
-let private safeFilter (windows: bool) (tokens: Token list) =
-    // a case-sensitive OS filter (Linux) is not a superset of the Windows-mode comparer
-    if windows && not hostWindows then "*"
+let private safeFilter (ignoreCase: bool) (tokens: Token list) =
+    // a case-sensitive OS filter (Unix) is not a superset of an ignore-case comparer
+    if ignoreCase && not hostWindows then "*"
     else
         let safeChar (c: char) =
             (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || "._-+ ".IndexOf c >= 0
@@ -235,12 +235,12 @@ let private readings (tokens: Token list) : string list =
             |> String.concat ""
         List.distinct [ text "^" tokens; text "!" tokens ]
 
-let private segment (windows: bool) (tokens: Token list) : Seg =
-    let matcher (text: string) = let m = maskMatcher windows "" text in fun (name: string) -> m name false
+let private segment (windows: bool) (ignoreCase: bool) (tokens: Token list) : Seg =
+    let matcher (text: string) = let m = maskMatcher windows ignoreCase "" text in fun (name: string) -> m name false
     match tokens with
     | [ Lit s ] ->
         // a literal is compared with the mode's comparer (D11), no regex
-        let kind = if windows then StringComparison.OrdinalIgnoreCase else StringComparison.Ordinal
+        let kind = if ignoreCase then StringComparison.OrdinalIgnoreCase else StringComparison.Ordinal
         SLit (s, fun name -> String.Equals(s, name, kind))
     | [ Globstar ] -> SGlob
     | _ ->
@@ -249,7 +249,7 @@ let private segment (windows: bool) (tokens: Token list) : Seg =
         SPat
             { Text = text
               IsMatch = matcher text
-              Filter = (if starDotStar then "*" else safeFilter windows tokens)
+              Filter = (if starDotStar then "*" else safeFilter ignoreCase tokens)
               StarDotStar = starDotStar
               Readings = readings tokens
               Construct = tokens |> List.tryFind (function Class _ | Alt _ -> true | _ -> false) }
@@ -307,15 +307,20 @@ let private endsInGlobstar (e: Element) =
 /// removes from what was found so far. `windows`: the comparer of D11 (ignore-case; `\` in a path
 /// is a separator), it never changes the file-system calls. `baseDir`: an absolute directory,
 /// which may not exist. Raises PatternException when a mask does not parse.
-let scan (windows: bool) (baseDir: string) (fileset: (MaskRole * string) list) : ScanResult =
+/// `ignoreCase`: names are compared ignoring case (a fileset's default on every OS, 5.0); paths
+/// found keep their spelling on disk and are told apart with the `windows` comparer.
+let scanWith (windows: bool) (ignoreCase: bool) (baseDir: string) (fileset: (MaskRole * string) list) : ScanResult =
     let elements =
         fileset |> List.map (fun (role, text) ->
             let tokens = Mask.parse text
             let root, body, dirMode = splitRoot tokens
             { Role = role; Text = text; Tokens = tokens; Root = root; Body = body; DirMode = dirMode })
         |> Array.ofList
+    // paths (directories, results) by the volume's comparer; names (literals, readings) by the case mode
     let cmp = if windows then StringComparer.OrdinalIgnoreCase else StringComparer.Ordinal
     let cmpKind = if windows then StringComparison.OrdinalIgnoreCase else StringComparison.Ordinal
+    let nameKind = if ignoreCase then StringComparison.OrdinalIgnoreCase else StringComparison.Ordinal
+    let nameCmp = if ignoreCase then StringComparer.OrdinalIgnoreCase else StringComparer.Ordinal
     let baseD = baseLoc baseDir
 
     let notes = ResizeArray<ScanNote>()
@@ -335,7 +340,7 @@ let scan (windows: bool) (baseDir: string) (fileset: (MaskRole * string) list) :
         x.Equals(y, cmpKind) || x.StartsWith(y.TrimEnd '/' + "/", cmpKind)
 
     /// The matcher of an exclude, anchored at the base directory (6.3 step 4).
-    let excludeMatchers = elements |> Array.map (fun e -> lazy (maskMatcher windows baseD.Norm e.Text))
+    let excludeMatchers = elements |> Array.map (fun e -> lazy (maskMatcher windows ignoreCase baseD.Norm e.Text))
 
     /// Pruning (6.3 step 3): `P/` for every include; `P/**` and `P/**/*` for file includes, in
     /// fileset order; the flag marks a `P/**` exclude, whose pruning is XP113 evidence (D41).
@@ -345,7 +350,7 @@ let scan (windows: bool) (baseDir: string) (fileset: (MaskRole * string) list) :
             if e.Role = MaskRole.Exclude then
                 let covering (prefix: Token list) =
                     let _, body, _ = splitRoot (prefix @ [ Sep ])
-                    if body.IsEmpty then None else Some (maskMatcher windows baseD.Norm (unparse prefix + "/"))
+                    if body.IsEmpty then None else Some (maskMatcher windows ignoreCase baseD.Norm (unparse prefix + "/"))
                 let rev = List.rev e.Tokens
                 if e.DirMode then yield j, false, excludeMatchers.[j].Value
                 elif not dirInclude then
@@ -411,7 +416,7 @@ let scan (windows: bool) (baseDir: string) (fileset: (MaskRole * string) list) :
                     ids.[key] <- id
                     id
         // a globstar ending a file mask takes one segment or more: '*' here, '**' below (5.5)
-        let starNode = if e.DirMode then 0 else intern [ segment windows [ Star ] ]
+        let starNode = if e.DirMode then 0 else intern [ segment windows ignoreCase [ Star ] ]
         let zero (i: int) = match nodes.[i].Next with 0 -> starNode | n -> n
         let starts = List<Loc * List<int>>()
         for alt in expand e.Body do
@@ -425,7 +430,7 @@ let scan (windows: bool) (baseDir: string) (fileset: (MaskRole * string) list) :
                         | None -> d, segs
                     | _ -> d, segs
                 up (rootLoc e.Root baseD) segs
-            let id = intern (rest |> List.map (segment windows))
+            let id = intern (rest |> List.map (segment windows ignoreCase))
             match starts |> Seq.tryFind (fun (a, _) -> cmp.Equals(a.Norm, anchor.Norm)) with
             | Some (_, l) -> if not (l.Contains id) then l.Add id
             | None -> starts.Add((anchor, List<int>([ id ])))
@@ -443,7 +448,7 @@ let scan (windows: bool) (baseDir: string) (fileset: (MaskRole * string) list) :
             | SPat p ->
                 if p.StarDotStar && name.IndexOf '.' < 0 then warn "XP114" e (fun () -> Texts.xp114 name)
                 for r in p.Readings do
-                    if String.Equals(r, name, cmpKind) then warn "XP104" e (fun () -> Texts.xp104 p.Construct r name)
+                    if String.Equals(r, name, nameKind) then warn "XP104" e (fun () -> Texts.xp104 p.Construct r name)
             | _ -> ()
 
         /// The continuations at a directory: a globstar also applies the rest of the mask there
@@ -490,7 +495,8 @@ let scan (windows: bool) (baseDir: string) (fileset: (MaskRole * string) list) :
             if e.DirMode && depth > 0 && set.Contains 0 then emit d true
             let active = set |> Seq.filter (fun i -> i <> 0) |> Array.ofSeq
             if active.Length > 0 then
-                let needsListing = active |> Array.exists (fun i -> match nodes.[i].Head with SLit _ -> false | _ -> true)
+                // a probe finds one spelling only on a case-sensitive volume: list when ignoring case there
+                let needsListing = (ignoreCase && not windows) || active |> Array.exists (fun i -> match nodes.[i].Head with SLit _ -> false | _ -> true)
                 if needsListing then listed d depth active else probed d depth active
 
         and listed (d: Loc) (depth: int) (active: int[]) =
@@ -536,13 +542,13 @@ let scan (windows: bool) (baseDir: string) (fileset: (MaskRole * string) list) :
             let litOf (i: int) = match nodes.[i].Head with SLit (s, _) -> s | _ -> ""
             let fileNames =
                 active |> Array.filter isFileHead |> Array.map litOf
-                |> (fun names -> let seen = HashSet<string>(cmp) in names |> Array.filter seen.Add)
+                |> (fun names -> let seen = HashSet<string>(nameCmp) in names |> Array.filter seen.Add)
                 |> Array.sortWith (fun a b -> String.CompareOrdinal(a, b))
             for name in fileNames do
                 let f = join d name
                 if File.Exists f.Os then emit f false
                 elif deniedProbe f.Os then note false d
-            let dirs = Dictionary<string, List<int>>(cmp)
+            let dirs = Dictionary<string, List<int>>(nameCmp)
             let order = List<string>()
             for i in active do
                 if not (isFileHead i) then
@@ -597,7 +603,7 @@ let scan (windows: bool) (baseDir: string) (fileset: (MaskRole * string) list) :
                     let rel = if item.Norm.StartsWith(prefix, cmpKind) then item.Norm.Substring prefix.Length else item.Norm
                     for s in rel.Split '/' do
                         for r in rs do
-                            if String.Equals(r, s, cmpKind) then
+                            if String.Equals(r, s, nameKind) then
                                 let construct = segmentsOf e.Body |> List.tryPick (fun seg -> if List.contains r (readings seg) then List.tryFind (function Class _ | Alt _ -> true | _ -> false) seg else None)
                                 warn "XP104" e (fun () -> Texts.xp104 construct r s)
             let m = excludeMatchers.[k].Value
@@ -647,3 +653,7 @@ let reportWarnings (result: ScanResult) =
         | Unreadable dir ->
             Warnings.note ("unreadable\n" + dir) Level.Warning
                 (sprintf "Directory '%s' cannot be read; the fileset scan skipped it" dir)
+
+/// `scanWith` in the comparer mode of D11: names and paths ignore case in Windows mode.
+let scan (windows: bool) (baseDir: string) (fileset: (MaskRole * string) list) : ScanResult =
+    scanWith windows windows baseDir fileset

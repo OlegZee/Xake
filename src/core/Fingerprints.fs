@@ -1,4 +1,4 @@
-namespace Xake
+﻿namespace Xake
 
 open System
 open System.IO
@@ -78,7 +78,7 @@ module Fingerprints =
     let relativePath (root: string) (path: string) =
         let full = fullPath root path
         let rootFull = (Path.GetFullPath root).TrimEnd('\\', '/') + string Path.DirectorySeparatorChar
-        let cmp = if Env.isUnix then StringComparison.Ordinal else StringComparison.OrdinalIgnoreCase
+        let cmp = StringComparison.Ordinal
         let rel = if full.StartsWith(rootFull, cmp) then full.Substring rootFull.Length else full
         rel.Replace('\\', '/')
 
@@ -127,7 +127,7 @@ module Fingerprints =
 
     /// One lock object per fingerprint file (full path), shared by the whole process.
     let private fileLocks =
-        ConcurrentDictionary<string, obj>(if Env.isUnix then StringComparer.Ordinal else StringComparer.OrdinalIgnoreCase)
+        ConcurrentDictionary<string, obj>(StringComparer.Ordinal)
 
     let private withFileLock (path: string) f =
         lock (fileLocks.GetOrAdd(path, fun _ -> obj())) f

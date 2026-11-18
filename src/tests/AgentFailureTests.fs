@@ -1,4 +1,4 @@
-namespace Tests
+﻿namespace Tests
 
 open System.IO
 open System.Threading.Tasks
@@ -65,7 +65,7 @@ type AgentFailureTests() =
             Assert.IsTrue((get db (mkTarget "bad.dll")).IsSome, "the result is kept in memory for this run")
             db.PostAndReply(CloseWait, timeoutMs)
 
-            let errors = logged |> Seq.filter (fun s -> s.Contains "Database agent failed to store the result of 'bad.dll'") |> List.ofSeq
+            let errors = logged |> Seq.filter (fun s -> s.Contains "Database agent failed to store the result of '" && s.Contains "bad.dll'") |> List.ofSeq
             Assert.IsNotEmpty(errors, sprintf "no agent error logged; got %A" (List.ofSeq logged))
             StringAssert.Contains("[ERROR]", errors.Head)
             Assert.IsTrue(logged |> Seq.exists (fun s -> s.Contains "[WARN]" && s.Contains "Database not fully saved: 1 result(s)"),

@@ -3,8 +3,6 @@
 [<AutoOpen>]
 module DomainTypes =
 
-    let private stringCompare = if Env.isUnix then System.StringComparer.Ordinal else System.StringComparer.OrdinalIgnoreCase
-
     /// A build target: either a file to produce or a phony named action.
     [<CustomEquality;CustomComparison>]
     type Target =
@@ -16,6 +14,11 @@ module DomainTypes =
                 match this with
                 | FileTarget file -> file.Name
                 | PhonyAction name -> name
+            /// The name the engine shows: a file relative to `root` (`File.display`), a phony as is.
+            member internal this.Display (root: string) =
+                match this with
+                | FileTarget file -> File.display root file
+                | PhonyAction name -> name
             member internal this.FullName =
                 match this with
                 | FileTarget file -> file.FullName
@@ -23,14 +26,14 @@ module DomainTypes =
             
             override x.Equals(yobj) =
                 match yobj with
-                | :? Target as y -> stringCompare.Equals (x.FullName, y.FullName)
+                | :? Target as y -> File.comparer.Equals (x.ShortName, y.ShortName)
                 | _ -> false
 
-            override x.GetHashCode() = stringCompare.GetHashCode x.FullName
+            override x.GetHashCode() = File.comparer.GetHashCode x.ShortName
             interface System.IComparable with 
                 member x.CompareTo y =
                     match y with
-                    | :? Target as y -> stringCompare.Compare(x.FullName, y.FullName)
+                    | :? Target as y -> File.comparer.Compare(x.ShortName, y.ShortName)
                     | _ -> invalidArg "y" "cannot compare target to different types"
 
     /// Alias for System.DateTime used for file timestamps.

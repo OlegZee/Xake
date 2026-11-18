@@ -20,7 +20,7 @@ holds the absolute path (`Name` absolute), `Built` kept, filesets case-insensiti
 absolute path" and that phase 1 has one root (`openDb root`, `ProjectRoot` only; the root number in
 `DirRec` is the only room kept for more roots). The design was **approved on 2026-11-18**; the normative spec is [decision.md](decision.md).
 
-**Implementation (2026-11-18, separate session).** Step 1 (docs) committed; step 2 (1a `File`, case, two spellings) in progress.
+**Implementation (2026-11-18, separate session).** Step 1 (docs) and step 2 (1a `File`, case, two spellings) committed; step 3 (1b database 0.7) in progress. Notes: `Path.matches` (public mask test) keeps its 4.0 case mode (ignore-case on Windows only), the spec lists no change for it; a fileset ignoring case on a Unix host lists directories instead of probing literal names, so other spellings on disk are found.
 
 **Next step (original plan).** Implementation in a separate session (Opus, medium effort) on this branch and
 worktree: docs first (`docs/` + release notes "5.0.0 (unreleased)"),

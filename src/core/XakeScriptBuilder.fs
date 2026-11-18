@@ -350,6 +350,7 @@ module XakeScriptBuilder =
             Ordinal = 0
             Logger = engine.RootLogger
             HeldResources = []
+            Spellings = ExecCore.newSpellings ()
         }
 
         /// Starts a XakeEngine from a fully assembled XakeScript.

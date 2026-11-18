@@ -9,6 +9,7 @@
     <Compile Include="XakeTestBase.fs" />
     <Compile Include="RecipeTests.fs" />
     <Compile Include="PathTests.fs" />
+    <Compile Include="FileTests.fs" />
     <Compile Include="RuleMatchTests.fs" />
     <Compile Include="RuleSpecificityTests.fs" />
     <Compile Include="PatternAstTests.fs" />

@@ -52,7 +52,7 @@ let rec getDepState getVar getFileList (getChangedDeps: Target -> ChangeReason l
         let dbgInfo = File.exists a |> function
             | false -> "file does not exists"
             | _ -> sprintf "write time: %A vs %A" (File.getLastWriteTime a) wrtime
-        ChangeReason.FilesChanged [a.Name], Some dbgInfo
+        ChangeReason.FilesChanged [a.FullName], Some dbgInfo
 
     | ArtifactDep (FileTarget file) when not (File.exists file) ->
         ChangeReason.DependsMissingTarget (FileTarget file), None

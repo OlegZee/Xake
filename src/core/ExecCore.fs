@@ -122,6 +122,25 @@ let newTaskContext targets matches ctx =
         HeldResources = []
     }
 
+/// A new table for the two-spellings check of one run.
+let newSpellings () = System.Collections.Concurrent.ConcurrentDictionary<string, string * bool>(System.StringComparer.Ordinal)
+
+/// The two-spellings check (5.0): a file named in this run under another spelling of the same
+/// path (compared ignoring case). Two targets: an error (the target fails); otherwise a warning,
+/// once per pair. The case on disk is not checked.
+let checkSpelling (ctx: ExecContext) (isTarget: bool) (file: File) =
+    let name = file.Name
+    let first, firstTarget = ctx.Spellings.GetOrAdd(name.ToUpperInvariant(), (name, isTarget))
+    if not (System.String.Equals(first, name, System.StringComparison.Ordinal)) then
+        let show = File.display ctx.Options.ProjectRoot
+        let shown (n: string) = show (File.make n)
+        if isTarget && firstTarget then
+            let errorText = sprintf "target '%s' is also named '%s'" (shown first) (show file)
+            do ctx.Logger.Log Error "%s" errorText
+            raise (XakeException errorText)
+        elif ctx.Spellings.TryAdd("\u0000" + first + "\u0000" + name, (name, isTarget)) then
+            ctx.Logger.Log Warning "file '%s' is also named '%s' in this run" (shown first) (show file)
+
 /// Executes a single target: locates the matching rule, submits the work to the
 /// scheduler, and returns the target, its execution status, and a dependency record.
 /// If no rule matches but a corresponding file exists, returns JustFile status.
@@ -134,7 +153,7 @@ let rec execOne (ctx: ExecContext) target =
             match ctx.NeedRebuild targets with
             | true ->
                 let taskContext = newTaskContext targets ruleMatches ctx
-                do ctx.Logger.Log Command "Started %s as task %i" primaryTarget.ShortName taskContext.Ordinal
+                do ctx.Logger.Log Command "Started %s as task %i" (primaryTarget.Display ctx.Options.ProjectRoot) taskContext.Ordinal
 
                 do Progress.TaskStart primaryTarget |> ctx.Progress.Post
 
@@ -147,10 +166,10 @@ let rec execOne (ctx: ExecContext) target =
                 Store result |> ctx.Db.Post
 
                 do Progress.TaskComplete primaryTarget |> ctx.Progress.Post
-                do ctx.Logger.Log Command "Completed %s in %A ms (wait %A ms)" primaryTarget.ShortName (Step.lastStep result).OwnTime  (Step.lastStep result).WaitTime
+                do ctx.Logger.Log Command "Completed %s in %A ms (wait %A ms)" (primaryTarget.Display ctx.Options.ProjectRoot) (Step.lastStep result).OwnTime  (Step.lastStep result).WaitTime
                 return Succeed
             | false ->
-                do ctx.Logger.Log Command "Skipped %s (up to date)" primaryTarget.ShortName
+                do ctx.Logger.Log Command "Skipped %s (up to date)" (primaryTarget.Display ctx.Options.ProjectRoot)
                 return Skipped
         }
 
@@ -165,7 +184,7 @@ let rec execOne (ctx: ExecContext) target =
         let primaryTarget = targets |> List.head
         async {
             let taskContext = newTaskContext targets ruleMatches ctx
-            do ctx.Logger.Log Command "Started %s as delegated task %i" primaryTarget.ShortName taskContext.Ordinal
+            do ctx.Logger.Log Command "Started %s as delegated task %i" (primaryTarget.Display ctx.Options.ProjectRoot) taskContext.Ordinal
             do Progress.TaskStart primaryTarget |> ctx.Progress.Post
 
             let bodyThunk () = async {
@@ -180,7 +199,7 @@ let rec execOne (ctx: ExecContext) target =
             Store result |> ctx.Db.Post
 
             do Progress.TaskComplete primaryTarget |> ctx.Progress.Post
-            do ctx.Logger.Log Command "Completed delegated %s" primaryTarget.ShortName
+            do ctx.Logger.Log Command "Completed delegated %s" (primaryTarget.Display ctx.Options.ProjectRoot)
             return Succeed
         }
 
@@ -240,6 +259,10 @@ let rec execOne (ctx: ExecContext) target =
     | Some { Pattern = Some pattern; Evidence = evidence } ->
         for code in evidence do
             PatternAst.Warnings.reportEvidence "rule" pattern (Path.ruleEvidence code target.FullName)
+    | _ -> ()
+
+    match target, selected with
+    | FileTarget file, _ -> checkSpelling ctx selected.IsSome file
     | _ -> ()
 
     match selected with
@@ -361,15 +384,15 @@ let runBuild (ctx: ExecContext) groups =
             function
             | [] -> false, ""
             | Other reason::_        -> true, reason
-            | Depends t ::_          -> true, "Depends on target " + t.ShortName
-            | DependsMissingTarget t ::_ -> true, sprintf "Depends on target %s (missing)" t.ShortName
+            | Depends t ::_          -> true, "Depends on target " + t.Display options.ProjectRoot
+            | DependsMissingTarget t ::_ -> true, sprintf "Depends on target %s (missing)" (t.Display options.ProjectRoot)
             | FilesChanged (file::_) ::_ -> true, "File(s) changed " + file
             | reasons -> true, sprintf "Some reason %A" reasons
             >>
             function
             | false, _ -> false
             | true, reason ->
-                do ctx.Logger.Log Info "Rebuild %A: %s" target.ShortName reason
+                do ctx.Logger.Log Info "Rebuild %A: %s" (target.Display options.ProjectRoot) reason
                 true
             <| target
             // todo improve output by printing primary target
@@ -382,7 +405,7 @@ let runBuild (ctx: ExecContext) groups =
             do Scheduler.newRun ctx.Engine.Scheduler
 
             let progressSink = Progress.openProgress (getDurationDeps ctx getDeps) options.Threads targets ctx.ShowProgress
-            let stepCtx = {ctx with NeedRebuild = List.exists needRebuild; Progress = progressSink}
+            let stepCtx = {ctx with NeedRebuild = List.exists needRebuild; Progress = progressSink; Spellings = newSpellings ()}
 
             try
                 return! targets |> execParallel stepCtx
@@ -428,6 +451,7 @@ let createContextCore (options: EngineOptions) (db: Agent<Storage.DatabaseApi>) 
         Vars = vars
         ShowProgress = showProgress
         HeldResources = []
+        Spellings = newSpellings ()
         }
     ctx, finalize
 
@@ -446,7 +470,7 @@ let demandTarget (ctx: ExecContext) (targetName: string) : Async<ExecStatus> =
         let needRebuild (t: Target) =
             getDeps t |> function | [] -> false | _ -> true
         let progressSink = Progress.openProgress (getDurationDeps ctx getDeps) ctx.Engine.Options.Threads [target] ctx.ShowProgress
-        let stepCtx = {ctx with NeedRebuild = List.exists needRebuild; Progress = progressSink}
+        let stepCtx = {ctx with NeedRebuild = List.exists needRebuild; Progress = progressSink; Spellings = newSpellings ()}
         try
             let! (_, status, _) = execOne stepCtx target
             return status

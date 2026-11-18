@@ -1,4 +1,4 @@
-/// The matcher stage of the pattern module (docs/features/pattern-module/spec.md sections 5, 7.3
+﻿/// The matcher stage of the pattern module (docs/features/pattern-module/spec.md sections 5, 7.3
 /// and 9; decisions D11, D12, D18, D34, D37 in brief.md): a pattern parsed by `PatternAst` is
 /// translated to a .NET regex, cached per (context, text, anchor, case mode), and matched against
 /// one path. Internal: `Path.matchGroups` / `Path.matches` are the public adapters over
@@ -182,7 +182,7 @@ let private anchorPrefix (windows: bool) (anchor: string) (tokens: Token list) :
             | _ -> stepping <- false
         Regex.Escape a + "/", ts
 
-let private compile (ctx: PatternContext) (text: string) (anchor: string) (windows: bool) : Compiled option =
+let private compile (ctx: PatternContext) (text: string) (anchor: string) (windows: bool) (ignoreCase: bool) : Compiled option =
     let tokens = match ctx with PatternContext.Rule -> Rule.parse text | PatternContext.Mask -> Mask.parse text
     match tokens with
     | Sep :: Sep :: _ when not windows -> None       // a UNC root matches only on Windows (D24)
@@ -198,7 +198,7 @@ let private compile (ctx: PatternContext) (text: string) (anchor: string) (windo
     sb.Append(@"\z") |> ignore
     let options =
         RegexOptions.CultureInvariant ||| RegexOptions.Singleline ||| RegexOptions.ExplicitCapture
-        ||| (if windows then RegexOptions.IgnoreCase else RegexOptions.None)
+        ||| (if ignoreCase then RegexOptions.IgnoreCase else RegexOptions.None)
         // rule patterns are few and matched against every target; masks are compiled by the
         // walker's choice (PR 4), interpreted here (9.4, D18)
         ||| (if ctx = PatternContext.Rule then RegexOptions.Compiled else RegexOptions.None)
@@ -209,21 +209,23 @@ let private compile (ctx: PatternContext) (text: string) (anchor: string) (windo
           Groups = groups
           Xp119 = if ctx = PatternContext.Rule then xp119Candidates annotated else [] }
 
-let private cache = ConcurrentDictionary<PatternContext * string * string * bool, Lazy<Compiled option>>()
+let private cache = ConcurrentDictionary<PatternContext * string * string * bool * bool, Lazy<Compiled option>>()
 
 /// The cached matcher of a pattern (9.4): key (context, text, anchor, case mode).
-let private get (ctx: PatternContext) (text: string) (anchor: string) (windows: bool) : Compiled option =
-    cache.GetOrAdd((ctx, text, anchor, windows), fun _ -> lazy (compile ctx text anchor windows)).Value
+let private get (ctx: PatternContext) (text: string) (anchor: string) (windows: bool) (ignoreCase: bool) : Compiled option =
+    cache.GetOrAdd((ctx, text, anchor, windows, ignoreCase), fun _ -> lazy (compile ctx text anchor windows ignoreCase)).Value
 
-/// The regex text a pattern compiles to (diagnostics and tests only).
+/// The regex text a pattern compiles to (diagnostics and tests only); a rule is ordinal, a mask
+/// ignores case in Windows mode.
 let regexText (ctx: PatternContext) (text: string) (anchor: string) (windows: bool) : string option =
-    get ctx text anchor windows |> Option.map (fun c -> c.Regex.ToString())
+    get ctx text anchor windows (windows && ctx = PatternContext.Mask) |> Option.map (fun c -> c.Regex.ToString())
 
 /// Matches a rule pattern anchored at `root` (`""` for phony) against a full target path
-/// (`Path.matchGroups`, 8.3). `windows`: the comparer of D11 (ignore-case, `\` in the path is a
-/// separator). Raises PatternException for an invalid pattern.
+/// (`Path.matchGroups`, 8.3). `windows`: `\` in the path is a separator and a UNC root matches
+/// (D11, D24); the comparison is ordinal on every OS (5.0). Raises PatternException for an
+/// invalid pattern.
 let matchRule (windows: bool) (root: string) (pattern: string) (target: string) : RuleMatch option =
-    match get PatternContext.Rule pattern root windows with
+    match get PatternContext.Rule pattern root windows false with
     | None -> None
     | Some c ->
         let path = normalize windows target
@@ -243,12 +245,13 @@ let matchRule (windows: bool) (root: string) (pattern: string) (target: string) 
 /// Matches a mask anchored at `baseDir` against one path (`Path.matches`, the walker's per-entry
 /// test). A mask with a trailing '/' matches directories only, otherwise files only (D9).
 let matchMask (windows: bool) (baseDir: string) (mask: string) (path: string) (isDirectory: bool) : bool =
-    match get PatternContext.Mask mask baseDir windows with
+    match get PatternContext.Mask mask baseDir windows windows with
     | None -> false
     | Some c -> c.IsDirectory = isDirectory && c.Regex.IsMatch(normalize windows path)
 
-/// `matchMask` with the cache lookup done once: the walker's per-entry test (PatternScan).
-let maskMatcher (windows: bool) (baseDir: string) (mask: string) : string -> bool -> bool =
-    match get PatternContext.Mask mask baseDir windows with
+/// `matchMask` with the cache lookup done once: the walker's per-entry test (PatternScan), with
+/// the case mode given apart (filesets ignore case by default on every OS, 5.0).
+let maskMatcher (windows: bool) (ignoreCase: bool) (baseDir: string) (mask: string) : string -> bool -> bool =
+    match get PatternContext.Mask mask baseDir windows ignoreCase with
     | None -> fun _ _ -> false
     | Some c -> fun path isDirectory -> c.IsDirectory = isDirectory && c.Regex.IsMatch(normalize windows path)

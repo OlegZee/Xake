@@ -1,6 +1,5 @@
 namespace Xake
 
-open Xake.WorkerPool
 
 /// Internal message protocol for the resource agent.
 type private ResMsg =
@@ -14,10 +13,12 @@ type private ResMsg =
 /// the limit by yielding the CPU slot while a recipe waits to acquire units, so a
 /// blocked holder never pins a worker thread.
 type Resource =
-    private { Name: string; mutable Limit: int option; Agent: Agent<ResMsg> option }
+    private { Name: string; mutable Limit: int option; Agent: MailboxProcessor<ResMsg> option; Ordinal: int64 }
 
     /// The resource name (for diagnostics).
     member this.ResourceName = this.Name
+    /// The order of creation in this process: with the name, a total order to take locks in.
+    member internal this.CreationOrdinal = this.Ordinal
 
     interface System.IDisposable with
         member this.Dispose() =
@@ -28,6 +29,9 @@ type Resource =
 /// Creation and acquisition primitives for resources.
 [<RequireQualifiedAccess>]
 module Resource =
+
+    let mutable private created = 0L
+    let private nextOrdinal () = System.Threading.Interlocked.Increment &created
 
     /// Creates a bounded resource permitting at most `quantity` units concurrently.
     /// The backing agent grants units FIFO, so waiters never starve.
@@ -62,11 +66,11 @@ module Resource =
             }
             loop quantity quantity)
 
-        { Name = name; Limit = Some quantity; Agent = Some agent }
+        { Name = name; Limit = Some quantity; Agent = Some agent; Ordinal = nextOrdinal () }
 
     /// Creates an unbounded resource: acquisition never blocks and never throttles.
     let newUnbounded (name: string) : Resource =
-        { Name = name; Limit = None; Agent = None }
+        { Name = name; Limit = None; Agent = None; Ordinal = nextOrdinal () }
 
     /// Acquires `units` of the resource. Does NOT touch the CPU slot.
     /// No-op for unbounded resources.

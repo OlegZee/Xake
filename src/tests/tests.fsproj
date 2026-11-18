@@ -46,6 +46,7 @@
     <Compile Include="FingerprintsTests.fs" />
     <Compile Include="DelegatedTests.fs" />
     <Compile Include="ResourceGuardTests.fs" />
+    <Compile Include="RuleHeaderTests.fs" />
     <Compile Include="FlatScriptTests.fs" />
     <Compile Include="LibraryVarsTests.fs" />
     <Compile Include="RecordShapeTests.fs" />

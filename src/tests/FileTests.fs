@@ -101,7 +101,7 @@ type ``File type``() =
     [<Test>]
     member _.``rule lookup is ordinal``() =
         let noop = Recipe (fun (r, _) -> async { return r, () })
-        let rules = Rules [ FileRule ("out/(n:*).dll", noop); FileRule ("Src/*.cs", noop) ]
+        let rules = Rules [ FileRule (["out/(n:*).dll"], RuleHeader.Empty, noop); FileRule (["Src/*.cs"], RuleHeader.Empty, noop) ]
         let root = if Env.isUnix then "/p" else @"C:\p"
         let t (p: string) = root </> p |> File.make |> FileTarget
         Assert.IsTrue(ExecCore.locateRule rules root (t "out/A.dll") |> Option.isSome)

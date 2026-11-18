@@ -43,6 +43,7 @@
     <Compile Include="File.fsi" />
     <Compile Include="File.fs" />
     <Compile Include="Fileset.fs" />
+    <Compile Include="Resource.fs" />
     <Compile Include="Types.fs" />
     <Compile Include="CommonLib.fs" />
     <Compile Include="LegacyRead.fs" />
@@ -50,7 +51,6 @@
     <Compile Include="RecipeBuilder.fs" />
     <Compile Include="RecipeFunctions.fs" />
     <Compile Include="WorkerPool.fs" />
-    <Compile Include="Resource.fs" />
     <Compile Include="Progress.fs" />
     <Compile Include="ExecTypes.fs" />
     <Compile Include="XakeScript.fs" />

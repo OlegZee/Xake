@@ -179,7 +179,7 @@ type ``Epoch tests``() =
                 Directory.CreateDirectory "out" |> ignore
                 File.WriteAllText("out/del.txt", "x")
                 return { BuildLog.makeResult targets with Epoch = 999 } }
-        let rs = [ DelegatedRule (FileRule ("out/del.txt", recipe { () }), executor) ]
+        let rs = [ DelegatedRule (FileRule (["out/del.txt"], RuleHeader.Empty, recipe { () }), executor) ]
         let epochOf () = (x.Results ()).Status.[FileTarget (File.make "out/del.txt")].Epoch
         x.Run [ "out/del.txt" ] rs
         let first = epochOf ()

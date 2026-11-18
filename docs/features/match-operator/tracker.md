@@ -9,7 +9,7 @@ Specification: [brief.md](brief.md). Research: [research.md](research.md).
 | Tests (`MatchedTests.fs`; typed-neg case `matched-in-a-plain-recipe-is-untyped`) | done |
 | `RuleMatch.fs`: `Matched`, `RuleMatch`, `RuleRecipeBuilder` (`recipe`, `action`) | done |
 | Docs (cheatsheet, rule-header, typed-targets, overview), release notes item 11 | done |
-| Build, tests, PR | in progress |
+| Build, tests (1848 passed, 13 skipped), PR [OlegZee/Xake#144](https://github.com/OlegZee/Xake/pull/144) | done |
 
 ## Notes
 

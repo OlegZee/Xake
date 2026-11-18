@@ -1,4 +1,4 @@
-namespace Tests
+﻿namespace Tests
 
 open System.IO
 open NUnit.Framework
@@ -27,7 +27,8 @@ type ``File type``() =
         [| @"C:\a\.\x\..\b\"; "C:/a/b" |]
         [| @"C:\"; "C:/" |]
         [| @"C:\.."; "C:/.." |]
-        [| @"c:\A\b"; "c:/A/b" |]
+        [| @"c:\A\b"; "C:/A/b" |]
+        [| "c:"; "C:" |]
         [| @"\\srv\share\a.txt"; "//srv/share/a.txt" |]
         [| @"\\srv\share\x\..\a.txt"; "//srv/share/a.txt" |]
         [| "C:/a//b"; "C:/a/b" |]
@@ -61,6 +62,7 @@ type ``File type``() =
         Assert.AreEqual(Path.collapse (abs "/projx/a.dll"), show (File.make (abs "/projx/a.dll")))
         Assert.AreEqual(Path.collapse (abs "/other/a.dll"), show (File.make (abs "/other/a.dll")))
         Assert.AreEqual("a.dll", File.display (abs "/proj/") (File.make (abs "/proj/a.dll")))
+        Assert.AreEqual(Path.collapse (abs "/proj2/a.c"), show (File.make (abs "/proj2/a.c")), "the root prefix ends on a segment boundary")
 
     [<Test>]
     member _.``Equals, GetHashCode and CompareTo agree on case variants``() =

@@ -122,16 +122,15 @@ let newTaskContext targets matches ctx =
         HeldResources = []
     }
 
-/// Observes a file through the database (decision 1c); `force` re-observes a rule's output
-/// right after the rule.
-let observeFile (ctx: ExecContext) (force: bool) (file: File) =
-    ctx.Db.PostAndAsyncReply(fun ch -> Observe(file, force, ch)) |> Async.Ignore
+/// Observes a file through the database (decisions 1c, A1).
+let observeFile (ctx: ExecContext) (mode: ObserveMode) (file: File) =
+    ctx.Db.PostAndAsyncReply(fun ch -> Observe(file, mode, ch)) |> Async.Ignore
 
 /// Re-observes the file outputs of a rule that just finished.
 let private observeOutputs (ctx: ExecContext) (targets: Target list) = async {
     for t in targets do
         match t with
-        | FileTarget f -> do! observeFile ctx true f
+        | FileTarget f -> do! observeFile ctx Output f
         | PhonyAction _ -> () }
 
 /// A new table for the two-spellings check of one run.
@@ -171,8 +170,8 @@ let rec execOne (ctx: ExecContext) target =
 
                 let startResult = {BuildLog.makeResult targets with Steps = [Step.start "all"]}
                 let! (result,_) = action (startResult, taskContext)
-                // Built is the completion time; the database gives the result the run's epoch
-                let result = {Step.updateTotalDuration result with Built = System.DateTime.Now}
+                // Built is the completion time; Epoch the run the task started in (A2)
+                let result = {Step.updateTotalDuration result with Built = System.DateTime.Now; Epoch = ctx.RunEpoch}
 
                 do! observeOutputs ctx targets
                 Store result |> ctx.Db.Post
@@ -199,7 +198,9 @@ let rec execOne (ctx: ExecContext) target =
             do ctx.Logger.Log Command "Started %s as delegated task %i" (primaryTarget.Display ctx.Options.ProjectRoot) taskContext.Ordinal
             do Progress.TaskStart primaryTarget |> ctx.Progress.Post
 
+            let bodyRan = ref false
             let bodyThunk () = async {
+                bodyRan.Value <- true
                 let startResult = {BuildLog.makeResult targets with Steps = [Step.start "all"]}
                 let! (result,_) = action (startResult, taskContext)
                 return {Step.updateTotalDuration result with Built = System.DateTime.Now}
@@ -207,6 +208,14 @@ let rec execOne (ctx: ExecContext) target =
 
             let! result =
                 Scheduler.withYieldedSlot ctx.Engine.Scheduler (executor taskContext targets bodyThunk)
+            // the body's result has the run's epoch; one returned without the body keeps the epoch
+            // of the local result (A3): a foreign epoch is never stored
+            let! epoch =
+                if bodyRan.Value then async.Return ctx.RunEpoch
+                else async {
+                    let! local = ctx.Db.PostAndAsyncReply(fun ch -> GetResult(primaryTarget, ch))
+                    return local |> Option.map (fun r -> r.Epoch) |> Option.defaultValue ctx.RunEpoch }
+            let result = { result with Epoch = epoch }
 
             do! observeOutputs ctx targets
             Store result |> ctx.Db.Post
@@ -292,7 +301,7 @@ let rec execOne (ctx: ExecContext) target =
             // the dependee is built or up to date now: its file is observed (a built one already
             // was, right after its rule) and the dependency recorded by id (decision 1c)
             match target with
-            | FileTarget file -> do! observeFile ctx false file
+            | FileTarget file -> do! observeFile ctx Verdict file
             | PhonyAction _ -> ()
             return target, status, TargetDep target
         }
@@ -300,7 +309,7 @@ let rec execOne (ctx: ExecContext) target =
         target |> function
         | FileTarget file when File.exists file ->
             async {
-                do! observeFile ctx false file
+                do! observeFile ctx Recording file
                 return target, ExecStatus.JustFile, FileDep file
             }
         | _ ->
@@ -421,10 +430,10 @@ let runBuild (ctx: ExecContext) groups =
             // the change analysis below is memoized for the whole group, so the pool has to
             // treat the group as one run: a target it already built must not be built again
             do Scheduler.newRun ctx.Engine.Scheduler
-            do Storage.NewRun |> ctx.Db.Post
+            let! epoch = ctx.Db.PostAndAsyncReply Storage.NewRun
 
             let progressSink = Progress.openProgress (getDurationDeps ctx getDeps) options.Threads targets ctx.ShowProgress
-            let stepCtx = {ctx with NeedRebuild = List.exists needRebuild; Progress = progressSink; Spellings = newSpellings ()}
+            let stepCtx = {ctx with NeedRebuild = List.exists needRebuild; Progress = progressSink; Spellings = newSpellings (); RunEpoch = epoch}
 
             try
                 return! targets |> execParallel stepCtx
@@ -471,6 +480,7 @@ let createContextCore (options: EngineOptions) (db: Agent<Storage.DatabaseApi>) 
         ShowProgress = showProgress
         HeldResources = []
         Spellings = newSpellings ()
+        RunEpoch = 0L
         }
     ctx, finalize
 
@@ -485,12 +495,12 @@ let demandTarget (ctx: ExecContext) (targetName: string) : Async<ExecStatus> =
     async {
         let target = makeTarget ctx targetName
         do Scheduler.newRun ctx.Engine.Scheduler
-        do Storage.NewRun |> ctx.Db.Post
+        let! epoch = ctx.Db.PostAndAsyncReply Storage.NewRun
         let getDeps = getChangeReasons ctx |> memoizeRec
         let needRebuild (t: Target) =
             getDeps t |> function | [] -> false | _ -> true
         let progressSink = Progress.openProgress (getDurationDeps ctx getDeps) ctx.Engine.Options.Threads [target] ctx.ShowProgress
-        let stepCtx = {ctx with NeedRebuild = List.exists needRebuild; Progress = progressSink; Spellings = newSpellings ()}
+        let stepCtx = {ctx with NeedRebuild = List.exists needRebuild; Progress = progressSink; Spellings = newSpellings (); RunEpoch = epoch}
         try
             let! (_, status, _) = execOne stepCtx target
             return status

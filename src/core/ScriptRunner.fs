@@ -10,7 +10,8 @@ let toEngineOptions (opts: ExecOptions) (rules: Rules<ExecContext>) (variables: 
         | null,_ | "",_
         | _, Silent -> logger
         | logFileName,level -> CombineLogger logger (FileLogger logFileName level)
-    { ProjectRoot = opts.ProjectRoot; Threads = opts.Threads
+    // normalised once at launch (A6): the root every path is shown and stored against
+    { ProjectRoot = (File.make opts.ProjectRoot).Name; Threads = opts.Threads
       Logger = MaskingLogger logger; Teardown = opts.Teardown; Rules = rules; RuleMatch = opts.RuleMatch
       Variables = variables }
 
@@ -32,9 +33,8 @@ let createScriptContext (opts: ExecOptions) rules =
             Storage.noopDb ()
         else
             let dbPath = engineOpts.ProjectRoot </> opts.DbFileName
-            if opts.ResetDb then
-                Storage.cleanupDb dbPath engineOpts.Logger
-            Storage.openDb engineOpts.ProjectRoot dbPath engineOpts.Logger
+            // the lock first: --resetdb runs under it (A5)
+            Storage.openDbWith (System.TimeSpan.FromSeconds 30.0) opts.ResetDb engineOpts.ProjectRoot dbPath engineOpts.Logger
     let ctx, finalize = ExecCore.createContextCore engineOpts db (VarEvaluation.flatVars variables) opts.Progress
     ctx, finalize, launchErrors
 
@@ -198,9 +198,11 @@ let runScript options rules =
             exitCode <- 2
             if options.ThrowOnError then raise (XakeException errorText)
         | Dump ->
+            Storage.InMemory |> ctx.Db.Post
             do logger.Log Level.Command "Dumping dependencies for targets %A" targetLists
             targetLists |> List.iter (List.map (ExecCore.makeTarget ctx) >> (dumpDeps ctx))
         | Dryrun ->
+            Storage.InMemory |> ctx.Db.Post
             targetLists |> dryRun ctx options.Setup
         | _ ->
             let mutable reraisedError = None

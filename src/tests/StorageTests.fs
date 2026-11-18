@@ -221,11 +221,11 @@ let ``a second open waits for the lock, then fails``() =
     let first = openDb () logger
     let ex =
         Assert.Throws<XakeException>(fun () ->
-            Storage.openDbWith (System.TimeSpan.FromMilliseconds 200.0) (root ()) dbname (createStrLogger msgs) |> ignore)
+            Storage.openDbWith (System.TimeSpan.FromMilliseconds 200.0) false (root ()) dbname (createStrLogger msgs) |> ignore)
     StringAssert.Contains("another Xake run uses this database (.xake.lock)", ex.Message)
     Assert.AreEqual(1, msgs |> Seq.filter (fun s -> s.Contains "waiting for another Xake run on this database") |> Seq.length)
     first.PostAndReply CloseWait
-    let again = Storage.openDbWith (System.TimeSpan.FromMilliseconds 200.0) (root ()) dbname logger
+    let again = Storage.openDbWith (System.TimeSpan.FromMilliseconds 200.0) false (root ()) dbname logger
     again.PostAndReply CloseWait
 
 [<Test>]
@@ -234,7 +234,7 @@ let ``the read API reads a database whose lock is held``() =
     store testee (createResult "a.exe")
     store testee { (createResult "b.exe") with Depends = [ FileDep (File.make "src.c") ] }
     File.WriteAllText("src.c", "x")
-    testee.PostAndReply(fun ch -> Observe(File.make "src.c", false, ch)) |> ignore
+    testee.PostAndReply(fun ch -> Observe(File.make "src.c", Verdict, ch)) |> ignore
     let records = readRecords (root ()) dbname |> List.ofSeq
     match records with
     | [ DbRecord.Result a; DbRecord.Result b; DbRecord.FileState (f, st) ] ->
@@ -242,7 +242,7 @@ let ``the read API reads a database whose lock is held``() =
         Assert.AreEqual([ mkFileTarget "b.exe" ], b.Targets)
         Assert.AreEqual(File.make "src.c", f)
         Assert.AreEqual(1L, st.Size)
-        Assert.AreEqual(a.Epoch, st.Changed)
+        Assert.AreEqual(1L, st.Changed, "observed before any run: the next epoch")
     | other -> Assert.Fail(sprintf "unexpected %A" other)
     let db, epoch = readDatabase (root ()) dbname
     Assert.AreEqual(2, db.Status.Count)
@@ -307,3 +307,42 @@ let ``measures the upgrade of XAKE_DB_SAMPLE``() =
                 sw.ElapsedMilliseconds state.Status.Count state.Files.Count
         finally
             try Directory.Delete(dir, true) with _ -> ()
+
+// ---- amendments ------------------------------------------------------------------------------
+
+/// A1: a body's recording re-stats a file the verdict saw; a second recording leaves the record.
+[<Test>]
+let ``recording re-stats a file once per run``() =
+    File.WriteAllText("rec.c", "v1")
+    let f = File.make "rec.c"
+    let db = openDb () logger
+    let observe mode = db.PostAndReply(fun ch -> Observe(f, mode, ch)) |> Option.get
+    let run1 = db.PostAndReply NewRun
+    Assert.AreEqual(run1, (observe Verdict).Changed)
+    let run2 = db.PostAndReply NewRun
+    Assert.AreEqual(run1, (observe Verdict).Changed)
+    System.Threading.Thread.Sleep 100
+    File.WriteAllText("rec.c", "v2-longer")
+    Assert.AreEqual(run1, (observe Verdict).Changed, "a verdict's observation stays cached")
+    let recorded = observe Recording
+    Assert.AreEqual(run2, recorded.Changed, "the recording sees the move")
+    System.Threading.Thread.Sleep 100
+    File.WriteAllText("rec.c", "v3")
+    Assert.AreEqual(recorded, observe Recording, "another recording in the run leaves the record")
+    db.PostAndReply CloseWait
+    let state, _ = readDatabase (root ()) dbname
+    Assert.AreEqual(recorded, state.Files.[f])
+
+/// A7: the upgrade takes a file's stamp from the result with the latest Built; MinValue is no stamp.
+[<Test>]
+let ``the upgrade takes the stamp of the latest built result``() =
+    let f = File.make "conv.c"
+    let t0 = System.DateTime(2026, 1, 1)
+    let res name built stamp =
+        { OTargets = [ mkFileTarget name ]; OBuilt = built; ODepends = [ OldFile (f, stamp) ]; OSteps = [] }
+    let files, results =
+        convert [ res "late.o" (t0.AddHours 2.0) (t0.AddMinutes 1.0)
+                  res "early.o" (t0.AddHours 1.0) (t0.AddMinutes 5.0)
+                  { res "none.o" (t0.AddHours 3.0) System.DateTime.MinValue with ODepends = [ OldArtifact2 (mkFileTarget "x.o", System.DateTime.MinValue) ] } ]
+    Assert.AreEqual([ f, { Stamp = t0.AddMinutes 1.0; Size = -1L; Hash = None; Changed = 1L } ], files)
+    Assert.AreEqual([ 1L; 0L; 0L ], results |> List.map (fun r -> r.Epoch))

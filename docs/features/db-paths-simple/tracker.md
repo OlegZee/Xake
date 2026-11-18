@@ -18,6 +18,8 @@
 | 0.6 -> 0.7 conversion (latest stamp per file, `built = 0` for results that saw an older one) | done (steps 3+4) |
 | Tests + size measurement (>= 5x) + explicit real-file test | done (steps 3+4) |
 
+| Amendments A1-A9 (critic, 2026-11-18) | done (follow-up commit) |
+
 ## Later (for the owner)
 
 - Need groups (Shake-style dependency groups): only with a speculative mode.

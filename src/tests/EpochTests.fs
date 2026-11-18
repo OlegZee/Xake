@@ -142,3 +142,36 @@ type ``Epoch tests``() =
             Assert.AreEqual(1, runs.Value, "nothing rebuilt in the copy")
         finally
             for d in [ src; dst ] do try Directory.Delete(d, true) with _ -> ()
+
+    /// A8: a dry run observes in memory and appends nothing.
+    [<Test>]
+    member x.``a dry run appends nothing``() =
+        let runs = ref 0
+        File.WriteAllText("dry.c", "v1")
+        let rs = [ "out/dry.o" ..> recipe {
+                        do! need [ "dry.c" ]
+                        count runs
+                        do! writeText "o" } ]
+        x.Run [ "out/dry.o" ] rs
+        edit "dry.c" "v2"
+        let length = (FileInfo ".xake").Length
+        xake { x.TestOptions with Targets = [ "out/dry.o" ]; ResetDb = false; DryRun = true } { rules rs }
+        Assert.AreEqual(length, (FileInfo ".xake").Length)
+        x.Run [ "out/dry.o" ] rs
+        Assert.AreEqual(2, runs.Value)
+
+    /// A3: a delegated result returned without its body keeps the local epoch, never a foreign one.
+    [<Test>]
+    member x.``a delegated result never stores a foreign epoch``() =
+        let executor : DelegatedExecutor<ExecContext> =
+            fun _ targets _ -> async {
+                Directory.CreateDirectory "out" |> ignore
+                File.WriteAllText("out/del.txt", "x")
+                return { BuildLog.makeResult targets with Epoch = 999L } }
+        let rs = [ DelegatedRule (FileRule ("out/del.txt", recipe { () }), executor) ]
+        x.Run [ "out/del.txt" ] rs
+        x.Run [ "out/del.txt" ] rs
+        let db, last = x.Results ()
+        let epoch = db.Status.[FileTarget (File.make "out/del.txt")].Epoch
+        Assert.That(epoch, Is.LessThanOrEqualTo last)
+        Assert.AreNotEqual(999L, epoch)

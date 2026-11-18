@@ -1,4 +1,4 @@
-namespace Xake
+﻿namespace Xake
 
 open System.IO
 
@@ -30,8 +30,16 @@ module File =
 
     type private BclFile = System.IO.File
 
+    /// A rooted path as is; a relative one against the current directory; on Windows `\foo` (no
+    /// drive) and `C:foo` (drive-relative) through `GetFullPath` (A6).
     let private absolute (n: string) =
-        Xake.Path.collapse (if Path.IsPathRooted n then n else Path.Combine(Directory.GetCurrentDirectory(), n))
+        let qualified (n: string) =
+            n.StartsWith @"\\" || n.StartsWith "//" || (n.Length >= 3 && n.[1] = ':' && (n.[2] = '\\' || n.[2] = '/'))
+        let full =
+            if not (Path.IsPathRooted n) then Path.Combine(Directory.GetCurrentDirectory(), n)
+            elif Env.isUnix || qualified n then n
+            else Path.GetFullPath n
+        Xake.Path.collapse full
 
     /// Creates a File from the given path string. Fails if the name is null or whitespace.
     let make n =

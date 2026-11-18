@@ -269,24 +269,26 @@ module Storage =
             let seen = HashSet<obj>(HashIdentity.Reference)
             status |> Map.toList |> List.map snd |> List.filter (fun r -> seen.Add (box r))
 
-        /// Converts the live results of a 0.4-0.6 file (decision 1b, "Upgrade"): a `FileRec` per
-        /// file with the latest stamp recorded for it (size unknown, `changed = 1`); `Epoch = 1`
-        /// for a result whose every stamp is that latest one and whose phony dependees finished no
-        /// later than recorded, else 0.
+        /// Converts the live results of a 0.4-0.6 file (decision 1b "Upgrade", A7): a `FileRec`
+        /// per file with the stamp recorded by the result with the latest `Built` (size unknown,
+        /// `changed = 1`); `Epoch = 1` for a result whose every stamp is that one (a
+        /// `DateTime.MinValue` stamp is none) and whose phony dependees finished no later than
+        /// recorded, else 0.
         let convert (results: OldResult list) : (File * FileState) list * BuildResult list =
-            let latest = Dictionary<File, Timestamp>()
+            let latest = Dictionary<File, Timestamp * Timestamp>()   // file -> (built, stamp)
             for r in results do
                 for d in r.ODepends do
                     match d with
-                    | OldFile (f, t) | OldArtifact2 (FileTarget f, t) ->
+                    | OldFile (f, t) | OldArtifact2 (FileTarget f, t) when t <> System.DateTime.MinValue ->
                         match latest.TryGetValue f with
-                        | true, l when l >= t -> ()
-                        | _ -> latest.[f] <- t
+                        | true, (built, _) when built >= r.OBuilt -> ()
+                        | _ -> latest.[f] <- (r.OBuilt, t)
                     | _ -> ()
             let phonyBuilt =
                 results |> List.collect (fun r -> r.OTargets |> List.choose (function PhonyAction _ as t -> Some (t, r.OBuilt) | _ -> None)) |> Map.ofList
             let current = function
-                | OldFile (f, t) | OldArtifact2 (FileTarget f, t) -> abs (t - latest.[f]).TotalMilliseconds < TimeToleranceMs
+                | OldFile (_, t) | OldArtifact2 (_, t) when t = System.DateTime.MinValue -> false
+                | OldFile (f, t) | OldArtifact2 (FileTarget f, t) -> abs (t - snd latest.[f]).TotalMilliseconds < TimeToleranceMs
                 | OldArtifact2 (t, stamp) -> (match phonyBuilt.TryFind t with Some b -> b.Ticks <= stamp.Ticks | None -> false)
                 | OldArtifact _ -> false
                 | Plain _ -> true
@@ -294,7 +296,7 @@ module Storage =
                 | Plain d -> d
                 | OldFile (f, _) -> FileDep f
                 | OldArtifact t | OldArtifact2 (t, _) -> TargetDep t
-            let files = [ for kv in latest -> kv.Key, { Stamp = kv.Value; Size = -1L; Hash = None; Changed = 1L } ]
+            let files = [ for kv in latest -> kv.Key, { Stamp = snd kv.Value; Size = -1L; Hash = None; Changed = 1L } ]
             files,
             results |> List.map (fun r ->
                 { Targets = r.OTargets; Built = r.OBuilt
@@ -541,27 +543,42 @@ module Storage =
             let fi = System.IO.FileInfo f.FullName
             if fi.Exists then Some (fi.LastWriteTime, fi.Length) else None
 
+    /// Why a file is observed (decisions 1c, A1).
+    type ObserveMode =
+        /// by a verdict: once per run, then the cached state
+        | Verdict
+        /// a body records the file (`FileDep`, a fileset member): statted again; a moved stat is a
+        /// change unless another body recorded the file in this run (A1)
+        | Recording
+        /// a rule's output right after the rule: statted again
+        | Output
+
     /// Messages accepted by the database agent.
     type DatabaseApi =
         | GetResult of Target * AsyncReplyChannel<Option<BuildResult>>
-        /// Stores a result; the agent gives it the epoch of the current run.
+        /// Stores a result with its `Epoch` (the epoch of the run its task started in); files of
+        /// its dependencies without a state are observed.
         | Store of BuildResult
-        /// Observes a file (at most once per run unless `force`: a rule's output right after
-        /// the rule); replies its state, None for a missing file.
-        | Observe of File * force: bool * AsyncReplyChannel<FileState option>
-        /// Starts a new run: the next epoch, observations afresh.
-        | NewRun
+        /// Observes a file; replies its state, None for a missing file.
+        | Observe of File * ObserveMode * AsyncReplyChannel<FileState option>
+        /// Starts a new run: replies the next epoch; observations and recordings afresh (A2).
+        | NewRun of AsyncReplyChannel<int64>
+        /// Observations stay in memory and nothing is appended (`--dump`, `--dryrun`, A8).
+        | InMemory
         | Close
         | CloseWait of AsyncReplyChannel<unit>
 
     /// Every record of a database file in order, paths resolved against `root` (history until
     /// the next compaction); an older version yields its converted records. No lock: a running
-    /// build's database can be read; a torn last record ends the sequence.
+    /// build's database can be read; a torn last record ends the sequence, a missing or short file
+    /// (a compaction in progress) gives an empty sequence.
     let readRecords (root: string) (dbpath: string) : DbRecord seq =
-        if not (IOFile.Exists dbpath) then Seq.empty
-        else
-            use fs = new FileStream(dbpath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite)
+        try
+            use fs = new FileStream(dbpath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite ||| FileShare.Delete)
             (Persist.read root fs).Records |> Seq.ofList
+        with
+        | :? System.IO.FileNotFoundException | :? System.IO.DirectoryNotFoundException
+        | :? System.IO.EndOfStreamException -> Seq.empty
 
     /// The state the engine loads (the last result per target, the last state per file) and the
     /// last epoch in the file.
@@ -569,7 +586,21 @@ module Storage =
         let records = readRecords root dbpath |> List.ofSeq
         records |> List.fold Persist.apply (newDatabase()), Persist.lastEpoch records
 
+    /// Deletes the database and backup files.
+    let private cleanup dbpath (logger : ILogger) = 
+        let bkpath = impl.makeBkpath dbpath
+        [dbpath; bkpath]
+        |> List.iter (fun path ->
+            if System.IO.File.Exists(path) then
+                try
+                    System.IO.File.Delete(path)
+                    logger.Log Level.Message "Deleted database file: %s" path
+                with ex ->
+                    logger.Log Level.Warning "Failed to delete %s: %s" path (ex.Message)
+        )
+
     /// The agent over a database state; `append` writes a record (persistent) or does nothing.
+    /// `epoch0` is the last epoch in the file: the first run takes the next one.
     let private agent (logger: ILogger) (db0: Database) (epoch0: int64) (append: Persist.Rec list -> unit) (close: unit -> unit) =
         // Logging the agent's own failure must not throw out of the loop again.
         let logError fmt = Printf.kprintf (fun s -> try logger.Log Error "%s" s with _ -> ()) fmt
@@ -581,6 +612,9 @@ module Storage =
             // lookup answers "no record" (a rebuild), and close always replies.
             let failedStores = ref 0
             let observed = HashSet<File>()
+            let recorded = HashSet<File>()
+            let mutable inMemory = false
+            let append recs = if not inMemory then append recs
             let warnUnsaved () =
                 if failedStores.Value > 0 then
                     try logger.Log Warning "Database not fully saved: %d result(s) failed to store, the next build may rebuild them" failedStores.Value
@@ -590,7 +624,26 @@ module Storage =
                 do warnUnsaved ()
                 try close ()
                 with ex -> logError "Database agent failed to close: %O" ex
-            let rec loop (db: Database) (epoch: int64) (started: bool) =
+            // an observation is stamped with the newest epoch handed out (A2)
+            let observe (db: Database) (epoch: int64) (mode: ObserveMode) (file: File) =
+                let known = db.Files.TryFind file
+                if mode = Verdict && observed.Contains file then
+                    (if File.exists file then known else None), db
+                else
+                    observed.Add file |> ignore
+                    let firstRecording = mode <> Recording || recorded.Add file
+                    match impl.stat file with
+                    | None -> None, db
+                    | Some s ->
+                        let state, changed = impl.observe epoch known s
+                        if changed && (firstRecording || known.IsNone) then
+                            try append [ Persist.FileRec (file, state) ]
+                            with ex -> logError "Database agent failed to store the state of '%s': %O" file.Name ex
+                            Some state, { db with Files = Map.add file state db.Files }
+                        else (if changed then known else Some state), db
+            // the newest epoch handed out (`epoch` > `epoch0` once a run started), else the next one
+            let newest epoch = if epoch > epoch0 then epoch else epoch0 + 1L
+            let rec loop (db: Database) (epoch: int64) =
                 async {
                     let! msg = mbox.Receive()
                     match msg with
@@ -601,43 +654,42 @@ module Storage =
                                 logError "Database agent failed to look up '%s': %O" key.ShortName ex
                                 None
                         chnl.Reply found
-                        return! loop db epoch started
+                        return! loop db epoch
                     | Store result ->
-                        let result = { result with Epoch = epoch }
                         try append [ Persist.ResultRec result ]
                         with ex ->
                             failedStores.Value <- failedStores.Value + 1
                             let name = try (result.Targets |> List.map (fun t -> t.ShortName) |> String.concat ", ") with _ -> "?"
                             logError "Database agent failed to store the result of '%s': %O" name ex
                         let db' =
-                            try result |> addResult db
+                            try
+                                let db = result |> addResult db
+                                // a dependency file without a state (a delegated result, A3) is observed
+                                result.Depends
+                                |> List.choose (function FileDep f | TargetDep (FileTarget f) -> Some f | _ -> None)
+                                |> List.filter (fun f -> not (db.Files.ContainsKey f))
+                                |> List.fold (fun db f -> snd (observe db (newest epoch) Verdict f)) db
                             with ex -> logError "Database agent failed to record a result: %O" ex; db
-                        return! loop db' epoch started
-                    | Observe (file, force, chnl) ->
+                        return! loop db' epoch
+                    | Observe (file, mode, chnl) ->
                         let db' =
                             try
-                                if not force && observed.Contains file then
-                                    chnl.Reply (if File.exists file then db.Files.TryFind file else None)
-                                    db
-                                else
-                                    observed.Add file |> ignore
-                                    match impl.stat file with
-                                    | None -> chnl.Reply None; db
-                                    | Some s ->
-                                        let state, changed = impl.observe epoch (db.Files.TryFind file) s
-                                        if changed then
-                                            try append [ Persist.FileRec (file, state) ]
-                                            with ex -> logError "Database agent failed to store the state of '%s': %O" file.Name ex
-                                        chnl.Reply (Some state)
-                                        { db with Files = Map.add file state db.Files }
+                                let state, db' = observe db (newest epoch) mode file
+                                chnl.Reply state
+                                db'
                             with ex ->
                                 logError "Database agent failed to observe '%s': %O" file.Name ex
                                 (try chnl.Reply None with _ -> ())
                                 db
-                        return! loop db' epoch started
-                    | NewRun ->
+                        return! loop db' epoch
+                    | NewRun ch ->
                         observed.Clear()
-                        return! loop db (if started then epoch + 1L else epoch) true
+                        recorded.Clear()
+                        ch.Reply (epoch + 1L)
+                        return! loop db (epoch + 1L)
+                    | InMemory ->
+                        inMemory <- true
+                        return! loop db epoch
                     | Close ->
                         closeNow ()
                         return ()
@@ -646,7 +698,7 @@ module Storage =
                         ch.Reply()
                         return ()
                 }
-            loop db0 epoch0 false)
+            loop db0 epoch0)
         mbox.Error.Add (fun ex -> logError "Database agent stopped: %O" ex)
         mbox.Start()
         mbox
@@ -654,16 +706,17 @@ module Storage =
     /// <summary>
     /// Opens the database exclusively (`<dbpath>.lock`, waiting up to `lockWait` for another run).
     /// </summary>
-    let internal openDbWith (lockWait: System.TimeSpan) (root: string) (dbpath: string) (logger : ILogger) =
+    let internal openDbWith (lockWait: System.TimeSpan) (reset: bool) (root: string) (dbpath: string) (logger : ILogger) =
         let lockStream = impl.acquireLock dbpath lockWait logger
         try
+            if reset then cleanup dbpath logger
             let stopped = ref false
             let onStop (ex: exn) =
                 if not stopped.Value then
                     stopped.Value <- true
                     try logger.Log Error "Database write failed, no further records are saved in this run: %s" ex.Message with _ -> ()
             let db, epoch, writer = impl.openDatabaseFile root dbpath logger onStop
-            agent logger db (epoch + 1L) writer.Append (fun () -> try writer.Dispose() finally lockStream.Dispose())
+            agent logger db epoch writer.Append (fun () -> try writer.Dispose() finally lockStream.Dispose())
         with _ ->
             lockStream.Dispose()
             reraise ()
@@ -675,27 +728,21 @@ module Storage =
     /// <param name="dbpath">Full xake database file name</param>
     /// <param name="logger"></param>
     let openDb (root: string) (dbpath: string) (logger : ILogger) =
-        openDbWith (System.TimeSpan.FromSeconds 30.0) root dbpath logger
+        openDbWith (System.TimeSpan.FromSeconds 30.0) false root dbpath logger
 
     /// <summary>
     /// In-memory database for use when NoPersist = true.
     /// Tracks build results within the session but does not write to disk.
     /// </summary>
     let noopDb () =
-        agent (CustomLogger (fun _ -> false) ignore) (newDatabase()) 1L ignore ignore
+        agent (CustomLogger (fun _ -> false) ignore) (newDatabase()) 0L ignore ignore
 
-    /// Deletes existing database and backup files to reset the build log. Should be called before starting the build.
+    /// Deletes existing database and backup files to reset the build log, under the database
+    /// lock (`--resetdb` resets inside `openDb` instead, A5).
     let cleanupDb dbpath (logger : ILogger) =
-        let bkpath = impl.makeBkpath dbpath
-        [dbpath; bkpath]
-        |> List.iter (fun path ->
-            if System.IO.File.Exists(path) then
-                try
-                    System.IO.File.Delete(path)
-                    logger.Log Level.Message "Deleted database file: %s" path
-                with ex ->
-                    logger.Log Level.Warning "Failed to delete %s: %s" path (ex.Message)
-        )
+        let lockStream = impl.acquireLock dbpath (System.TimeSpan.FromSeconds 30.0) logger
+        try cleanup dbpath logger
+        finally lockStream.Dispose()
 
 /// Utility methods to manipulate build stats
 module internal Step =

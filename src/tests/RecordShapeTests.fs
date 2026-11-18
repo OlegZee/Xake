@@ -10,12 +10,12 @@ open Xake
 /// copy). A record expression compiled against one Xake calls the full constructor, so a field
 /// added in a 4.x minor would break a package built against an older 4.x at run time: the record
 /// stays frozen within a major (docs/features/dotnet-split/brief.md §10). Add a function instead.
-/// 5.0 added `Spellings` (the two-spellings check).
+/// 5.0 added `Spellings` (the two-spellings check) and `RunEpoch` (the run's epoch).
 [<TestFixture>]
 type ``Record shapes frozen within Xake 5``() =
 
     static member Records : obj[][] = [|
-        [| typeof<ExecContext>; [ "Engine"; "Vars"; "Progress"; "NeedRebuild"; "ShowProgress"; "Targets"; "RuleMatches"; "Ordinal"; "Logger"; "HeldResources"; "Spellings" ] |]
+        [| typeof<ExecContext>; [ "Engine"; "Vars"; "Progress"; "NeedRebuild"; "ShowProgress"; "Targets"; "RuleMatches"; "Ordinal"; "Logger"; "HeldResources"; "Spellings"; "RunEpoch" ] |]
     |]
 
     [<TestCaseSource("Records")>]
@@ -30,7 +30,7 @@ type ``Record shapes frozen within Xake 5``() =
             { Engine = Unchecked.defaultof<_>; Vars = [ "A", "1" ]; Progress = Unchecked.defaultof<_>
               NeedRebuild = (fun _ -> false); ShowProgress = false; Targets = []; RuleMatches = Map.empty
               Ordinal = 7; Logger = CustomLogger (fun _ -> false) ignore; HeldResources = []
-              Spellings = System.Collections.Concurrent.ConcurrentDictionary() }
+              Spellings = System.Collections.Concurrent.ConcurrentDictionary(); RunEpoch = 0L }
         let logger = CustomLogger (fun _ -> true) ignore
         let replaced = ExecContext.withLogger logger ctx
         Assert.That(obj.ReferenceEquals(replaced.Logger, logger))

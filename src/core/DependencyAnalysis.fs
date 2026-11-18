@@ -26,7 +26,7 @@ let getExecTime (ctx: ExecContext) target =
 
 /// Observes a file through the database (once per run): its state, None if missing.
 let observe (ctx: ExecContext) (file: File) =
-    (fun ch -> Observe(file, false, ch)) |> ctx.Db.PostAndReply
+    (fun ch -> Observe(file, Verdict, ch)) |> ctx.Db.PostAndReply
 
 /// Gets single dependency state and reason of a change, for a dependent built in run `epoch`
 /// (decision 1c): a file or target dependency changed when it was seen to change after that run;

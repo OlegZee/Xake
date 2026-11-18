@@ -26,7 +26,7 @@ Breaking changes:
    exclusive (`.xake.lock`); `DatabaseApi` gains `Observe`. `Storage.resultPU` is replaced by the
    public read API `Storage.readRecords` and `Storage.readDatabase`.
 5. **Filesets.** `FilesetOptions.CaseSensitive` and the `casesensitive` operation are added.
-6. **`ExecContext`** gains `Spellings`.
+6. **`ExecContext`** gains `Spellings` and `RunEpoch`.
 7. **Database 0.7.** Xake 4.x cannot read it. Databases 0.4-0.6 are upgraded on open, and a
    no-change run after the upgrade rebuilds nothing.
 
@@ -37,6 +37,10 @@ Also:
 - The database stores paths relative to the project root, so a moved or copied project folder
   keeps its database.
 - `--dump` shows epochs.
+- A recipe that starts Xake on the same project root (the same database) waits 30 s and fails.
+- `--resetdb` runs under the database lock; `--dump` and `--dryrun` append nothing to the database.
+- On Linux a fileset recorded by Xake 4.x is re-scanned ignoring case after the upgrade: where the
+  disk has names differing only in case, its dependent reruns once.
 
 For `Xake.Dotnet` users: `File.undefined` is removed; `Xake.Dotnet` moves to `File option` at its
 5.0.

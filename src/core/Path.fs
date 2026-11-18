@@ -236,9 +236,14 @@ let maskText = impl.maskText
 /// Normalises a path lexically (5.0): `\` -> `/` when `windows`; `.` and `..` collapsed against the
 /// preceding name; repeated separators removed; the root (`/`, `C:`) kept and never popped; a
 /// trailing separator dropped (except the root's); a leading `//` (UNC) kept when `windows`; case
-/// kept; no symlink resolution. `File.make` and rule/mask matching use it.
+/// kept except a Windows drive letter (upper-cased); no symlink resolution. `File.make` and rule/mask matching use it.
 let internal collapseWith (windows: bool) (path: string) =
     let p = if windows then path.Replace('\\', '/') else path
+    // a Windows drive letter is upper-cased (A6): `c:` and `C:` name one root
+    let p =
+        if windows && p.Length >= 2 && p.[1] = ':' && System.Char.IsLower p.[0] then
+            string (System.Char.ToUpperInvariant p.[0]) + p.Substring 1
+        else p
     let isDrive (s: string) = s.Length = 2 && s.[1] = ':'
     if p.IndexOf("/.", System.StringComparison.Ordinal) < 0 && not (p.StartsWith "./") && p <> "."
        && p.IndexOf("//", System.StringComparison.Ordinal) < 0

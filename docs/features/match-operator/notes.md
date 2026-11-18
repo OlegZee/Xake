@@ -69,3 +69,44 @@ the body), so the recipe-with-header form should keep `let! m = matched`/`getRul
 Recommendation in the summary to the owner: C (+ D if the lambda form is liked); A as a cheap
 alias; B only if "no `let!`, no `m`" is worth an ambient context in the engine. Independently:
 make `getRuleMatch` strict (5.0 allows breaking changes).
+
+## Round 2 (owner: "D is great"; look at quotations, many groups in one line, `fun m ->` as the last line)
+
+**The owner's literal last line** `recipe { ...; fun m -> do! need [..] }` cannot compile: `do!`
+inside a lambda is outside the CE (FS0750), and a bare lambda as the last line must be `unit`
+(FS0193). What works (`spike/lastline.fsx`, `lastline2.fsx`): `return! fun m -> recipe { .. }`
+with a `ReturnFrom(Map -> Recipe)` overload, after `do!` steps and after a header; `yield fun m ->`
+compiles too.
+
+**Group names from the lambda's parameter names** - many groups in one line, no `m` at all:
+`"out/(cfg:*)/(n:*).dll" ..> fun cfg n -> recipe { .. }`.
+
+- Quotation (`spike/names.fsx`, `names2.fsx`): a method parameter
+  `[<ReflectedDefinition(true)>] body: Expr<string -> string -> Recipe<..>>` - the caller writes a
+  plain lambda and the method gets the compiled value (`WithValue`) and the tree with the names.
+  Curried and tupled lambdas both give `["cfg"; "n"]`; a named function `build` is eta-expanded by
+  the compiler and gives `build`'s parameter names. Overloads by arity resolve. **But only for a
+  method call** (`Rule.file("..", fun cfg n -> ..)`): an operator does not auto-quote (FS0002).
+- Reflection on the closure (`spike/generic.fsx`): the F# closure class keeps parameter names on
+  its widest `Invoke`. `..>` as a plain generic function (`body: 'B`, dispatched when the script
+  loads: a recipe, or an F# function of the groups) takes `fun n ->`, `fun cfg n ->`,
+  `fun c a b ->` (any order), a named function, a plain recipe - no parentheses needed. The body
+  is called through the widest `Invoke` with values by name. Parameter names are checked against
+  the pattern **when the script loads**: `rule out/(cfg:*)/(n:*).bad: parameter 'nme' is not a group
+  of the pattern`. Checked in fsi `--optimize+`/`--optimize-` and in a compiled Release build
+  without PDB: same output.
+  - The SRTP `RuleBody $` dispatcher (today's `..>`) cannot take these lambdas without
+    parentheses: with more than one function overload, or a generic one, a curried lambda gives
+    FS0002 (`..> (fun cfg n -> ..)` in parentheses works). Hence the plain generic `..>`; cost:
+    a wrong body type is a load-time error, not a compile error.
+  - Unknowns: relies on how the F# compiler lays out closures (stable for years, not specified);
+    a partially applied function (`..> build "x"`) or an unused `_` parameter (`_arg1`) - the
+    latter fails the load-time check, which is the right outcome; parameter types are inferred
+    (`obj` when only interpolated) - values are passed as strings either way.
+
+**Inside a recipe with a header** (`spike/inrecipe.fsx`), all checked against a run:
+
+- `let! cfg = group` - `Bind(Group, f)` reads `f`'s parameter name: the variable's name is the
+  group's name. One group per line; `and!` loses the names (the continuation takes `_arg1`).
+- Active pattern, no reflection: `let! (G "cfg" cfg & G "n" n) = getRuleMatches ()`.
+- `return! fun n cfg -> recipe { .. }` after `needs ..` - the owner's "last line", by name.

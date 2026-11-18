@@ -36,12 +36,13 @@ module ScriptFuncs =
     /// The body must not `need` a target that has a rule (a plain file is fine): a dependency
     /// built while the units are held may wait for the same resource, which can deadlock the
     /// build, so such a `need` fails at once. Need first, then acquire; see `allowNeed`.
+    /// The time spent acquiring counts as the step's `WaitTime`, not its `OwnTime`.
     /// </summary>
     let withResource (resource: Resource) (units: int) (body: Recipe<ExecContext,'b>) : Recipe<ExecContext,'b> =
         Recipe (fun (r, ctx: ExecContext) -> async {
-            do! Scheduler.withYieldedSlot ctx.Engine.Scheduler (Resource.acquire resource units)
+            let! waited = ExecCore.acquireTimed ctx resource units
             try
-                return! A.runAction body (r, { ctx with HeldResources = resource.ResourceName :: ctx.HeldResources })
+                return! A.runAction body (Step.updateWaitTime waited r, { ctx with HeldResources = resource.ResourceName :: ctx.HeldResources })
             finally
                 Resource.release resource units
         })

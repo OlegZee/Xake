@@ -659,9 +659,10 @@ module internal Step =
     /// Adds specific amount to a wait time
     /// </summary>
     let updateWaitTime delta = updateLastStep (fun c -> {c with WaitTime = c.WaitTime + delta})
+    /// The milliseconds since `startTime`.
+    let msSince (startTime: DateTime) = int (DateTime.Now - startTime).TotalMilliseconds * 1<ms>
     let updateTotalDuration =
-        let durationSince (startTime: DateTime) = int (DateTime.Now - startTime).TotalMilliseconds * 1<ms>
-        updateLastStep (fun c -> {c with OwnTime = (durationSince c.Start) - c.WaitTime})
+        updateLastStep (fun c -> {c with OwnTime = (msSince c.Start) - c.WaitTime})
     let lastStep = function
         | {Steps = current :: _} -> current
         | _ -> start "dummy"

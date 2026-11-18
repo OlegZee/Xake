@@ -87,6 +87,20 @@ may wait for a running dependee) are outside the step: neither own nor wait.
 
 Budget for 1A + 2A + 3A: about 120 lines of code, plus tests and docs.
 
-## Decisions
+- **2C.** Keep one estimate per group, decided when the group starts (a group can change what the
+  next one finds: `clean` first, then `build`); show that the bar is the current group's
+  (3A's prefix), and the skip fix. No forecast for later groups. ~40 lines with 3A.
+  (2A, estimating every group up front, rejected by the owner: after `clean` the second group is
+  re-estimated and the bar jumps back. 2D, "full rebuild" forecasts, and 2E, group times stored in
+  the database, not taken.)
 
-(pending the owner)
+## Decisions (owner, 2026-11-19)
+
+**1A + 2C + 3A.**
+
+- A resource acquire (`requires`, `requiring`, `withResource`; the whole yielded-slot span) is
+  `WaitTime` of the current step. The task's step starts before the header's `needs`. No
+  format or type change.
+- Each group keeps its own estimate. With more than one group the status line starts with
+  `[i/n names]`, and a `Message` line `group 'names' done in N s` follows each finished group.
+- A task skipped after its verdict leaves the estimate (as a finished task).

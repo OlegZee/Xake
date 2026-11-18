@@ -146,6 +146,24 @@ The file starts with a version header (`BuildLog.XakeDbVersion`, `0.7`; `XakeDbM
   output, or a static set (file/target names, filesets) differing from the keys of the first
   `StaticCount` dependencies, makes the target out of date, and dependents see it through the memo.
 
+### Step times
+
+`BuildResult.Steps` holds `StepInfo { Name; Start; OwnTime; WaitTime }`; a task has one step,
+`"all"`, started when the task starts (before the header's `needs`). `WaitTime` is the time spent
+waiting: the header's `needs`, every `need` in the body, and every resource acquire (`requires`,
+`requiring`, `withResource`; the span includes getting the CPU slot back). `OwnTime` is the rest of
+the step: `(end - Start) - WaitTime`. So the sum of `OwnTime` over a run against its wall time is
+the build's real parallelism. The pool's queue before the task and the verdict are outside the
+step. The progress estimate takes `OwnTime` of the last run as a target's duration.
+
+### Progress
+
+Each target group of the command line is a run with its own progress (`Progress.openProgress`),
+estimated when the group starts: an earlier group can change what a later one finds (`clean`), so
+later groups are not forecast. With more than one group the status line starts with `[i/n names]`
+and each finished group logs `group 'names' done in N s`. A task that is skipped after its verdict
+counts as finished in the estimate. Engine mode shows no progress.
+
 ### Case and names
 
 `File.Name` is Xake's name of a file: the normalised absolute path with `/` (`Path.collapse`: `.`

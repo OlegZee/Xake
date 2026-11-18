@@ -69,6 +69,29 @@ The rule header ([rule-header.md](rule-header.md)):
 - A file rule with a header and no body, and a rule naming one resource twice (`requires`,
   `requiring`, an included header), are errors when the script loads.
 
+**Content cut-off** ([content-cutoff.md](content-cutoff.md)), on by default:
+
+- A file whose time moved but whose content did not is not a change: a target rebuilt to the same
+  bytes does not rerun its dependents; a touched source reruns nothing from its second move; an
+  output restored with fresh times and a known hash reruns nothing. Outputs are hashed after every
+  rule; sources when they move.
+- The 4.0 transitive rule is replaced for static `needs` and for dependees built (or being built)
+  in the run; a dependency from the body on a target not yet looked at is still not built to
+  decide: if it is out of date, the dependent reruns.
+- Static `needs` are built **before** the target is decided (they were built only when the target
+  ran).
+- `--content-cutoff=off`: the 4.0 decisions, no hashing. `noContentCutoff` in a header: no hashing
+  of that rule's outputs, every rebuild is a change.
+- **Run summary:** one line at the end of every run (targets run, skipped, tasks, cut-off, files
+  hashed); `onSummary` in `xakeScript`, `XakeEngine.LastSummary`, the `RunSummary` record. A run
+  where nothing moved schedules no task.
+- API: `ExecOptions.ContentCutoff`, `ExecOptions.SummarySink`, `IRunSummarySink`;
+  `DatabaseApi.NewRun` takes the run's `hashing` flag; `DatabaseApi.Observe` takes `since` and replies `Observation` (`Absent`, `Unchanged`,
+  `Changed`, `HashNeeded` with an opaque `HashRequest`); `Settle (request, HashResult)` is added,
+  `ObserveMode.Output` takes the cut-off flag and `PreHash` is added; `WorkerPool.TaskState` and
+  `Scheduler.query` are added; `ExecContext.NeedRebuild` is asynchronous and `ExecContext` gains
+  `UpToDate` and `Counters`.
+
 Also:
 
 - A second Xake run on the same database waits up to 30 s, then fails: "another Xake run uses this

@@ -36,6 +36,7 @@ Options:
   --dryrun            - prints dependency graph and estimates the build duration
   --dump              - prints dependency graph based on the last run
   --resetdb           - reset the database before starting the build
+  --content-cutoff=off - decide as Xake 4.0: a moved file time is a change, nothing hashed
   --progress, -p      - display progress indicator
   --noprogress, -p-   - do not display progress
 
@@ -61,6 +62,10 @@ Options:
             {optionsSoFar with DumpDeps = true}, TopLevel
         | "--resetdb" -> 
             {optionsSoFar with ResetDb = true}, TopLevel
+        | "--content-cutoff=off" ->
+            {optionsSoFar with ContentCutoff = false}, TopLevel
+        | "--content-cutoff=on" ->
+            {optionsSoFar with ContentCutoff = true}, TopLevel
         | "--progress" | "-p" -> 
             {optionsSoFar with Progress = true}, TopLevel
         | "--noprogress" | "-p-" -> 
@@ -280,6 +285,12 @@ module XakeScriptBuilder =
             let loglevel = defaultArg loglevel Verbosity.Chatty in
             XakeScript ({options with ConLogLevel =loglevel}, rules)
 
+        /// `onSummary (fun s -> ..)`: called with the summary of every run (targets run, skipped, ...).
+        [<CustomOperation("onSummary")>]
+        member __.OnSummary(XakeScript (options, rules), report: RunSummary -> unit) =
+            let sink = { new IRunSummarySink with member _.Report s = report s }
+            XakeScript ({options with SummarySink = Some sink}, rules)
+
         [<CustomOperation("ruleMatch")>]
         member __.RuleMatch(XakeScript (options, rules), mode: RuleMatchMode) =
             XakeScript ({options with RuleMatch = mode}, rules)
@@ -337,13 +348,16 @@ module XakeScriptBuilder =
         [<VolatileField>]
         let mutable stopped = false
         let inFlight = ConcurrentDictionary<string, Lazy<Task<ExecStatus>>> ()
+        [<VolatileField>]
+        let mutable lastSummary : RunSummary option = None
 
         // the demand's own vars come first: they win over the script's, the last pair of a name wins
         let makeCtx extraVars = {
             Engine = engine
             Vars = List.rev (defaultArg extraVars []) @ vars
             Progress = Progress.emptyProgress()
-            NeedRebuild = fun _ -> false
+            NeedRebuild = fun _ -> async.Return false
+            UpToDate = fun _ -> false
             ShowProgress = showProgress
             Targets = []
             RuleMatches = Map.empty
@@ -352,6 +366,7 @@ module XakeScriptBuilder =
             HeldResources = []
             Spellings = ExecCore.newSpellings ()
             RunEpoch = 0
+            Counters = RunCounters()
         }
 
         /// Starts a XakeEngine from a fully assembled XakeScript.
@@ -391,7 +406,15 @@ module XakeScriptBuilder =
             let demandCtx = makeCtx vars
             let rec tryDemand () : Task =
                 let newLazy = Lazy<_>(fun () ->
-                    let task = ExecCore.demandTarget demandCtx targetName |> Async.StartAsTask
+                    let task =
+                        async {
+                            try return! ExecCore.demandTarget demandCtx targetName
+                            finally
+                                let summary = demandCtx.Counters.Summary
+                                lastSummary <- Some summary
+                                engine.RootLogger.Log Info "%s" (RunSummary.format summary)
+                                engine.Options.SummarySink |> Option.iter (fun sink -> try sink.Report summary with _ -> ())
+                        } |> Async.StartAsTask
                     task.ContinueWith(fun (_: Task<ExecStatus>) -> inFlight.TryRemove targetName |> ignore) |> ignore
                     task
                 )
@@ -406,6 +429,9 @@ module XakeScriptBuilder =
                         return! tryDemand () |> Async.AwaitTask
                     } |> Async.StartAsTask :> Task
             tryDemand ()
+
+        /// The summary of the last finished `Demand` (None before the first).
+        member _.LastSummary : RunSummary option = lastSummary
 
         /// Stops the engine: waits for in-flight tasks, runs teardown targets, then releases resources.
         member this.StopAsync() : Task =

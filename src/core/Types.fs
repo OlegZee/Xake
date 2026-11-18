@@ -66,7 +66,8 @@ module DomainTypes =
 
     /// What the database knows of a file (database 0.7): the stat seen at its last observation
     /// and the run (epoch) in which its content was last seen to change. `Size` -1 is unknown;
-    /// `Hash` is not computed before phase 3 (always None).
+    /// `Hash` is the first 8 bytes of the SHA-256 of the content at that stat, when computed
+    /// (docs/content-cutoff.md).
     type FileState = { Stamp: Timestamp; Size: int64; Hash: uint64 option; Changed: int }
 
     /// A tracked dependency that determines whether a target needs rebuilding. A file or target

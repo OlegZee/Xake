@@ -231,10 +231,10 @@ let ``a second open waits for the lock, then fails``() =
 let ``the read API reads a database whose lock is held``() =
     File.WriteAllText("src.c", "x")
     let testee = openDb () logger
-    let run = testee.PostAndReply NewRun
+    let run = testee.PostAndReply(fun ch -> NewRun (false, ch))
     store testee { (createResult "a.exe") with Epoch = run }
     store testee { (createResult "b.exe") with Depends = [ FileDep (File.make "src.c") ]; Epoch = run }
-    testee.PostAndReply(fun ch -> Observe(File.make "src.c", Verdict, ch)) |> ignore
+    testee.PostAndReply(fun ch -> Observe(File.make "src.c", Verdict, 0, ch)) |> ignore
     let records = readRecords (root ()) dbname |> List.ofSeq
     match records with
     | [ DbRecord.Result a; DbRecord.Result b; DbRecord.FileState (f, st) ] ->
@@ -319,10 +319,10 @@ let ``recording re-stats a file once per run``() =
     File.WriteAllText("rec.c", "v1")
     let f = File.make "rec.c"
     let db = openDb () logger
-    let observe mode = db.PostAndReply(fun ch -> Observe(f, mode, ch)) |> Option.get
-    let run1 = db.PostAndReply NewRun
+    let observe mode = match db.PostAndReply(fun ch -> Observe(f, mode, 0, ch)) with Unchanged s | Changed s -> s | o -> failwithf "%A" o
+    let run1 = db.PostAndReply(fun ch -> NewRun (false, ch))
     Assert.AreEqual(run1, (observe Verdict).Changed)
-    let run2 = db.PostAndReply NewRun
+    let run2 = db.PostAndReply(fun ch -> NewRun (false, ch))
     Assert.AreEqual(run1, (observe Verdict).Changed)
     System.Threading.Thread.Sleep 100
     File.WriteAllText("rec.c", "v2-longer")
@@ -370,3 +370,55 @@ let ``a path table at a file-system root round-trips``() =
     let state = { Stamp = System.DateTime(2026, 1, 1); Size = 1L; Hash = None; Changed = 1 }
     let _, read = DbFormat.roundTrip root [ DbRecord.FileState (f, state) ]
     Assert.AreEqual([ DbRecord.FileState (f, state) ], read.Records)
+
+/// Content cut-off: `Settle` of a `HashNeeded` observation, by its result.
+[<Test>]
+let ``a settled hash keeps the run of an equal content; Unreadable is a change without a hash``() =
+    File.WriteAllText("settle.c", "v1")
+    let f = File.make "settle.c"
+    let db = openDb () logger
+    let observe since = db.PostAndReply(fun ch -> Observe(f, Verdict, since, ch))
+    let settle request result = db.PostAndReply(fun ch -> Settle(request, result, ch))
+    let run1 = db.PostAndReply(fun ch -> NewRun (true, ch))
+    match observe 0 with
+    | Changed st -> Assert.AreEqual(run1, st.Changed)
+    | o -> Assert.Fail(sprintf "first sight: %A" o)
+    // the first move: hashed, a change
+    let _ = db.PostAndReply(fun ch -> NewRun (true, ch))
+    System.Threading.Thread.Sleep 100
+    File.SetLastWriteTime("settle.c", System.DateTime.Now)
+    let stat () = let fi = FileInfo "settle.c" in fi.LastWriteTime, fi.Length
+    match observe run1 with
+    | HashNeeded request ->
+        Assert.AreEqual(f, request.File)
+        let stamp, size = stat ()
+        match settle request (Hashed (stamp, size, 42UL)) with
+        | Changed st -> Assert.AreEqual(Some 42UL, st.Hash)
+        | o -> Assert.Fail(sprintf "first move: %A" o)
+    | o -> Assert.Fail(sprintf "first move: %A" o)
+    // the second move with the same hash: unchanged after run 1... of the first move's run
+    let run3 = db.PostAndReply(fun ch -> NewRun (true, ch))
+    System.Threading.Thread.Sleep 100
+    File.SetLastWriteTime("settle.c", System.DateTime.Now)
+    match observe (run3 - 1) with
+    | HashNeeded request ->
+        let stamp, size = stat ()
+        match settle request (Hashed (stamp, size, 42UL)) with
+        | Unchanged st -> Assert.AreEqual(run3 - 1, st.Changed, "the same content keeps its run")
+        | o -> Assert.Fail(sprintf "same content: %A" o)
+        // a second settle of the same request loses the compare-and-set: the current state
+        match settle request Unreadable with
+        | Unchanged st -> Assert.AreEqual(Some 42UL, st.Hash)
+        | o -> Assert.Fail(sprintf "lost compare-and-set: %A" o)
+    | o -> Assert.Fail(sprintf "second move: %A" o)
+    // a move hashed as Unreadable: a change without a hash
+    let run4 = db.PostAndReply(fun ch -> NewRun (true, ch))
+    System.Threading.Thread.Sleep 100
+    File.SetLastWriteTime("settle.c", System.DateTime.Now)
+    match observe (run4 - 1) with
+    | HashNeeded request ->
+        match settle request Unreadable with
+        | Changed st -> Assert.AreEqual((run4, None), (st.Changed, st.Hash))
+        | o -> Assert.Fail(sprintf "unreadable: %A" o)
+    | o -> Assert.Fail(sprintf "third move: %A" o)
+    db.PostAndReply CloseWait

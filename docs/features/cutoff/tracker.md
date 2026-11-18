@@ -9,7 +9,7 @@
 - [x] Verdict: finished / running (waited, WaitGraph cycle check) / not started (transitive); Scheduler.query
 - [x] RunSummary, onSummary, LastSummary, --content-cutoff=off, fast path
 - [x] Tests (ContentCutoffTests.fs), macOS green, build.fsx green
-- [ ] Windows VM check
+- [x] Windows VM check: core 0 warnings, 1815 passed / 21 skipped; the cut-off fixture 30/30
 - [ ] Owner review; push and PR on the owner's word
 
 ## Later

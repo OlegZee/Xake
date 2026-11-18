@@ -8,7 +8,7 @@ Orchestrator brief: `~/.claude/orchestrators/xake/briefs/phase3-cutoff.md`.
 - Implemented and committed locally (not pushed, no PR): docs first (`docs/content-cutoff.md`,
   implnotes "Epochs", release notes 5.0.0), then code and `ContentCutoffTests.fs` (12 tests).
 - Core net +376 lines (budget ~+390); 0 warnings; macOS 1840 passed / 13 skipped;
-  `build.fsx build test pack` green. Windows VM: see tracker.
+  `build.fsx build test pack` green. Windows VM (win11): 1815 passed, 21 skipped, 0 failed.
 - The VM clone (`ssh win11`, `$HOME\source\repos\Xake`) got the branch from a git bundle
   (`feature/content-cutoff`), not from origin.
 

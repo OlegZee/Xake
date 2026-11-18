@@ -212,9 +212,6 @@ module internal Codec =
             Spec.fail (sprintf "%s: the outputs %s are not a record; declare one string field per output, e.g. { dll: string; xml: string }" owner (nameOf t))
         ofRecord<'T> t (stringFields owner t)
 
-/// Form B marker: `let! m = matched` inside `X.rule { ... }`.
-type Matched = Matched
-
 /// Form B, `X.rule { let! m = matched ... }`: everything of `recipe { }`, plus `let! m = matched`
 /// giving the groups of the rule being run as 'G. Its result is the rule.
 type TypedRuleBuilder<'G> internal (read: Map<string, string> -> 'G, make: Recipe<ExecContext, unit> -> ExecContext Rule) =
@@ -237,11 +234,6 @@ type TypedFileRuleBuilder<'G> internal (read: Map<string, string> -> 'G, make: R
     /// Makes the rule from the header and the recipe.
     member _.Run(Headed (header, body): Headed<ExecContext>) : ExecContext Rule = make header body
 
-/// The form B marker value.
-[<AutoOpen>]
-module TypedMatch =
-    /// `let! m = matched` inside `X.rule { ... }`: the typed groups of the rule being run.
-    let matched = Matched
 
 /// <summary>
 /// A file pattern with typed groups: the fields of 'G are exactly the pattern's named groups

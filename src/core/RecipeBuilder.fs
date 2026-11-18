@@ -159,7 +159,4 @@ module Builder =
     /// `ruleHeader ["n"] { .. }`: a header shared between rules (see `RuleHeaderBuilder`).
     let ruleHeader (groups: string list) = RuleHeaderBuilder groups
 
-    /// Backward-compatible alias for the recipe builder.
-    let action = RecipeBuilder()
-    /// The recipe computation expression builder instance.
-    let recipe = RecipeBuilder()
+    // The `recipe` instance is `RuleRecipe.recipe` (RuleMatch.fs): it adds `let! m = matched`.

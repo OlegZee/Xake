@@ -164,7 +164,7 @@ no checks, either separator. `</>` is `Path.Combine`: do not build patterns or m
 | `[abc]` `[a-z]` | one character from the set |
 | `[!abc]` `[^abc]` | one character not in the set |
 | `{a,b}` | one of the alternatives, which may hold `/` and wildcards: `src/{core,tools}/*.cs` |
-| `(name:body)` | rule patterns only: captures what `body` matches, read as `getRuleMatch "name"` or a typed field |
+| `(name:body)` | rule patterns only: captures what `body` matches, read as `m["name"]` after `let! m = matched`, or a typed field |
 | `\(` `\)` `\[` `\]` `\{` `\}` `\|` | the literal character |
 | `/` | the separator; a run of `/` is one |
 
@@ -183,7 +183,7 @@ more directories; write `*/**/*.dll` to require one). When several rules match, 
 wins ([rule selection](#rule-selection--the-most-specific-rule-wins)).
 
 ```fsharp
-"out/(cfg:*)/(name:*).dll" ..> recipe { ... }              // getRuleMatch "cfg"
+"out/(cfg:*)/(name:*).dll" ..> recipe { ... }              // let! m = matched; m["cfg"]
 "out/(fwk:*)/(ext:{dll,xml})" ..> recipe { ... }           // alternatives go inside the group
 ```
 

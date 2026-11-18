@@ -152,8 +152,8 @@ let ruleB =
     }
 ```
 
-`X.rule { ... }` is `recipe { ... }` plus `let! m = matched`, which gives the groups of the rule
-being run. `let! { name = n } = matched` destructures. The case-only pair `Rule` (form D) and
+`X.rule { ... }` is `recipe { ... }` where `let! m = matched` gives the groups of the rule being
+run as the record (in a plain `recipe { }` it gives a `RuleMatch`, read by name: `m["name"]`). `let! { name = n } = matched` destructures. The case-only pair `Rule` (form D) and
 `rule` (form B) is intentional.
 
 ## Generating paths
@@ -281,7 +281,7 @@ Target<AsmG> "out/(cfg:*)/(fwk:*)/(name:*).dll": the values cfg = "Release", fwk
 
 | When | What |
 |---|---|
-| compile time | a misspelt group (`m.fkw`), a missing or unknown field in `Format { ... }` or in the outputs record, the record of another target, `matched` outside a rule, `m.name` in a `Command<unit>` rule, the `open` order |
+| compile time | a misspelt group (`m.fkw`), a missing or unknown field in `Format { ... }` or in the outputs record, the record of another target, `m.name` in a `Command<unit>` rule, the `open` order |
 | script start | the record against the pattern (fields, types), the pattern itself (every `XPnnn` error: unclosed group, reserved character, a class or braces outside a group), the outputs' group sets, the outputs record |
 | run time | the values given to `Format`/`Paths`/`For` against the pattern (`null`, a value the pattern would not match back) |
 
@@ -304,10 +304,10 @@ The compile-time cases are tested with `dotnet fsi --typecheck-only`
 | | String API | `Xake.Typed` |
 |---|---|---|
 | declare | `"out/(name:*).o" ..> recipe { }` | `let X = Target<G> "out/(name:*).o"` |
-| read a group | `let! n = getRuleMatch "name"` (`""` when the name is unknown) | `m.name`, checked by the compiler |
+| read a group | `let! m = matched`, `m["name"]` (an unknown name fails the task); `getRuleMatch "name"` gives `""` | `m.name`, checked by the compiler |
 | path for `need` | `$"out/{n}.o"` written by hand | `X.Format { name = n }` |
 | several outputs | `[ ".dll"; ".xml" ] *..> ...`, groups read by name | `Target<G, O>`, `X.Make m` gives the labelled paths |
-| group name mismatch | silent `""` at run time | compile error / error at script start |
+| group name mismatch | an error when the rule runs (`m["x"]`), silent `""` with `getRuleMatch` | compile error / error at script start |
 | phony with groups | `"lock::(n:*)" => recipe { }` (no `AlwaysRerun`) | `Command<G>` (always runs) |
 | patterns built at run time | yes | yes (checked where created) |
 | sharing a target between scripts | strings kept in sync | a record and a value |

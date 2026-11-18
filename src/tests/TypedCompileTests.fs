@@ -10,7 +10,7 @@ open NUnit.Framework
 [<TestFixture; Category("Integration"); Category("TypeCheck")>]
 type ``Typed targets: compile-time errors``() =
 
-    let xakeDll = typeof<Xake.Typed.Matched>.Assembly.Location
+    let xakeDll = typeof<Xake.Matched>.Assembly.Location
     let workDir = Path.Combine(Path.GetTempPath(), "xake-typecheck-" + string (System.Diagnostics.Process.GetCurrentProcess().Id))
     let errorRx = Regex(@"\((\d+),\d+\): error (FS\d+)")
 

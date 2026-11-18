@@ -2,8 +2,8 @@
 
 Question from the owner: replace `let! n = getRuleMatch "n"` / `let! m = getRuleMatches ()` +
 `m.["n"]` with a prefix operator, ideally usable without `let!`
-(`do! need [ "obj/" + OP"n" + ".rsp" ]`). Base `dev` at `fa5b33b`. Spikes in `spike/`
-(`dotnet fsi`, against `src/core/bin/Debug/netstandard2.0/Xake.dll`).
+(`do! need [ "obj/" + OP"n" + ".rsp" ]`). Base `dev` at `fa5b33b`. The spikes (`dotnet fsi` scripts against the Debug `Xake.dll`) were
+throwaway and are not kept; the `spike/*.fsx` names below are for reference only.
 
 ## Facts checked
 

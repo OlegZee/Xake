@@ -47,6 +47,10 @@ Breaking changes:
 10. **A rule with several outputs** (`*..>`, `targets`, `also`) must write every one of them; one it
    did not write fails the build, naming it (in 4.0 the rule silently reran every time). When an
    output of a rule is built by another rule, the build fails naming both.
+11. **`matched` moves to `Xake`.** `Xake.Typed.Matched` is `Xake.Matched`; `let! m = matched` in a
+   plain `recipe { }` compiles (it was an error). `recipe` and `action` are `RuleRecipeBuilder`
+   values (derived from `RecipeBuilder`); the builders of `target`, `targets` and `command` derive
+   from it.
 
 The rule header ([rule-header.md](rule-header.md)):
 
@@ -68,6 +72,12 @@ The rule header ([rule-header.md](rule-header.md)):
   built by 4.x with a rule that has `needs` reruns once.
 - A file rule with a header and no body, and a rule naming one resource twice (`requires`,
   `requiring`, an included header), are errors when the script loads.
+
+**Rule groups by name:** `let! m = matched` in every recipe (`..>`, `*..>`, `=>`, `target`,
+`targets`, `command`, after a header), then `m["n"]`. Unlike `getRuleMatch`, an unknown name fails
+the task: `no group 'x' in the rule match (groups: cfg, n)`. `RuleMatch` also has `TryFind` and
+`Names`. In `X.rule { }` `matched` still gives the typed record. `getRuleMatch` and
+`getRuleMatches` are unchanged.
 
 **Content cut-off** ([content-cutoff.md](content-cutoff.md)), on by default:
 

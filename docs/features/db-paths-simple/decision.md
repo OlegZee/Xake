@@ -312,6 +312,30 @@ They win over the sections above.
   every OS, as the fileset default; no option for it in phase 1. The OS-dependent case mode of 4.0
   and the `regexText` case special case go. Release note next to the fileset line.
 
+## Decisions after the Windows CI run (owner, 2026-11-18)
+
+The first CI run of PR #141 failed 13 tests on Windows, from two causes: the normalised
+`ProjectRoot` is in Xake's `/` form while code compared it with `FullName` (the OS form), and the
+root given to rule and mask matching is not normalised while the file is (the drive letter).
+
+- **B5, Xake's name and the OS name are separate:**
+  - `Name` is Xake's name of a file: the normalised absolute path with `/`. It is the identity,
+    what Xake stores, compares and shows. Every path string Xake hands out is in this form,
+    `ProjectRoot` included.
+  - `File.getSysFileName : File -> string` gives the path in the OS form (its separators), for
+    command lines and tools; it is our own conversion (`/` -> `\` on Windows), not
+    `FileInfo.FullName`, so that the two names map one to one.
+  - `File.getFileInfo : File -> FileInfo` gives a new `FileInfo` at each call, for disk queries.
+    **Nothing is cached in `File`**: it stays a string with value equality and no disk state, as
+    the file-type brief decided (a cached `FileInfo` keeps a stale state and makes every `File`
+    heavier).
+  - `FullName`, `File.getFullName` and the recipe helper `getTargetFullName` stay for about six
+    months as `[<Obsolete>]` aliases of the OS form ("use `File.getSysFileName`, or `Name` for
+    Xake's form"), then go. Xake's own code and tests use the new names (0 warnings).
+- **C1:** `ProjectRoot` stays in Xake's form; the tests compare Xake's forms with each other.
+- **C2:** `Path.matchRule` and `Path.matches` normalise a non-empty root with the same `collapse`
+  as the file; the phony root `""` stays.
+
 ## Budget
 
 `Database.fs` about +225 lines, core about +330, tests about +350 (estimates from design.md;

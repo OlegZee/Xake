@@ -280,6 +280,35 @@ differ from the sections above, they win.
   excluded and never share the key space with paths. The `PatternMatch` compile cache key includes
   the case flag.
 
+## Decisions after the implementation (owner, 2026-11-18)
+
+Taken after reading the first implementation (budget far over: `Database.fs` net +424, core +580).
+They win over the sections above.
+
+- **B1, `PathTable` is functional.** No class: an immutable record
+  `{ Ids: Map<File,int>; Files: Map<int,File>; Dirs: Map<int * string,int> }` (or arrays where
+  measured faster) and pure functions in a module: `add : File -> PathTable -> PathTable * Rec list`
+  (the table with the file, plus its new `DirRec`/`PathRec`) and `load : Rec -> PathTable -> PathTable`.
+  Before a record is pickled, its files go through `add` (a fold); the pickler gets a pure id lookup.
+  The agent keeps the table in its loop state next to `db`. No `pending`, `TakePending` or
+  `Rollback`: when pickling fails, the new table is simply not kept. The `Writer` class becomes a
+  function as well.
+- **B2, the epoch lives in `ExecContext`.** A run starts in one function (`beginRun ctx`:
+  `Scheduler.newRun`, `NewRun`, the verdict memo, `Spellings`, `RunEpoch`), used by `runTargets`
+  and `demandTarget`. `newRun` per target group stays (since #17, 2026-09-30: the groups of the
+  command line run one after another, `xake clean build`), and the epoch advances exactly there.
+  `Store` takes `Epoch = ctx.RunEpoch` (A3 for delegated rules). The agent stamps observations
+  with the epoch of its last `NewRun` itself; no epoch travels in messages. The last epoch is a
+  field of `BuildLog.Database`; no function returns an epoch in a tuple; no `newest` helper.
+- **B3, reading old databases moves to its own module `LegacyRead`** (`src/core/LegacyRead.fs`,
+  internal, compiled after `Types.fs` and before `Database.fs`; a new module approved by the owner).
+  It holds the 0.4-0.6 picklers and the conversion (A7) and returns the converted file states and
+  results; `Database.fs` only calls it when the header version is below 0.7. It is self-contained
+  (its own copies of the small picklers it needs), so that deleting it in about a year leaves
+  `Database.fs` untouched except for that call, which then becomes "no longer read, recreating".
+  Release note: 0.4-0.6 databases are upgraded by a legacy reader that will be removed in a later
+  release.
+
 ## Budget
 
 `Database.fs` about +225 lines, core about +330, tests about +350 (estimates from design.md;

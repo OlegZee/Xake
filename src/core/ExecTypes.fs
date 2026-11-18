@@ -62,6 +62,110 @@ type VarEntry = {
     Decl: VarDecl option
 }
 
+/// What a run did (docs/content-cutoff.md): logged at its end ("Run summary: ...") and handed to
+/// `onSummary` / `XakeEngine.LastSummary`.
+type RunSummary = {
+    /// Targets whose recipe ran (delegated targets count when their executor was called).
+    TargetsRun: int
+    /// Targets found up to date.
+    TargetsSkipped: int
+    /// Targets rebuilt with the same content: their dependents did not rerun.
+    CutOff: int
+    /// Files hashed to compare content.
+    FilesHashed: int
+    /// Time spent hashing.
+    HashTime: System.TimeSpan
+    /// Tasks started in the worker pool (a target requested twice is one task).
+    TasksScheduled: int
+}
+
+/// Receives the summary of every run (`onSummary` in a script).
+type IRunSummarySink =
+    abstract Report: RunSummary -> unit
+
+/// Who waits for whom in a run (content cut-off): a target's verdict waits for a running dependee
+/// unless that would close a cycle with the `need`s and verdict waits in progress; a `need` that
+/// closes a cycle through a verdict wait cancels that wait (the dependee then counts as changed).
+[<Sealed>]
+type internal WaitGraph() =
+    let lck = obj ()
+    // waiter -> (awaited, the cancellation of a verdict wait)
+    let edges = System.Collections.Generic.Dictionary<string, ResizeArray<string * System.Threading.Tasks.TaskCompletionSource<bool> option>>()
+    let reaches (src: string) (dst: string) =
+        let seen = System.Collections.Generic.HashSet<string>()
+        let rec go k = k = dst || (seen.Add k && (match edges.TryGetValue k with | true, es -> es |> Seq.exists (fst >> go) | _ -> false))
+        go src
+    let add waiters awaited cancel =
+        for w in waiters do
+            match edges.TryGetValue w with
+            | true, es -> es.Add((awaited, cancel))
+            | _ -> edges.[w] <- ResizeArray [ (awaited, cancel) ]
+    let remove waiters awaited =
+        lock lck (fun () ->
+            for w in waiters do
+                match edges.TryGetValue w with
+                | true, es ->
+                    match Seq.tryFindIndex (fst >> (=) awaited) es with
+                    | Some i -> es.RemoveAt i
+                    | None -> ()
+                    if es.Count = 0 then edges.Remove w |> ignore
+                | _ -> ())
+    /// Registers `waiters` (the names of a task's targets) waiting in `need` for `awaited`; verdict
+    /// waits closed into a cycle are cancelled. Returns the unregistration.
+    member _.Need (waiters: string list) (awaited: string list) =
+        lock lck (fun () ->
+            for a in awaited do add waiters a None
+            for KeyValue (w, es) in edges do
+                for (a, cancel) in es do
+                    match cancel with
+                    | Some c when reaches a w -> c.TrySetResult true |> ignore
+                    | _ -> ())
+        fun () -> for a in awaited do remove waiters a
+    /// Registers a verdict wait of `waiters` for `awaited`: None when it would close a cycle, else
+    /// the cancellation (set when a later `need` closes one) and the unregistration.
+    member _.Verdict (waiters: string list) (awaited: string) =
+        lock lck (fun () ->
+            if waiters |> List.exists (reaches awaited) then None
+            else
+                let cancel = System.Threading.Tasks.TaskCompletionSource<bool>()
+                add waiters awaited (Some cancel)
+                Some (cancel, fun () -> remove waiters awaited))
+
+/// The counters of one script run, or one `Demand` in engine mode, and the state the content
+/// verdict shares across tasks. Incremented with `Interlocked` from any task.
+[<Sealed; AllowNullLiteral>]
+type RunCounters() =
+    [<DefaultValue>] val mutable private targetsRun: int
+    [<DefaultValue>] val mutable private targetsSkipped: int
+    [<DefaultValue>] val mutable private cutOff: int
+    [<DefaultValue>] val mutable private filesHashed: int
+    [<DefaultValue>] val mutable private hashTicks: int64
+    [<DefaultValue>] val mutable private tasksScheduled: int
+    member internal c.TargetRun () = System.Threading.Interlocked.Increment &c.targetsRun |> ignore
+    member internal c.TargetSkipped () = System.Threading.Interlocked.Increment &c.targetsSkipped |> ignore
+    member internal c.TargetCutOff () = System.Threading.Interlocked.Increment &c.cutOff |> ignore
+    member internal c.FileHashed (elapsed: System.TimeSpan) =
+        System.Threading.Interlocked.Increment &c.filesHashed |> ignore
+        System.Threading.Interlocked.Add (&c.hashTicks, elapsed.Ticks) |> ignore
+    member internal c.TaskScheduled () = System.Threading.Interlocked.Increment &c.tasksScheduled |> ignore
+    /// The fast path's blocking database lookups: at most as many at once as there are cores.
+    member val internal FastGate = new System.Threading.SemaphoreSlim(max 2 System.Environment.ProcessorCount) with get
+    member val internal Waits = WaitGraph() with get
+    /// The counters so far.
+    member c.Summary : RunSummary =
+        { TargetsRun = System.Threading.Volatile.Read &c.targetsRun
+          TargetsSkipped = System.Threading.Volatile.Read &c.targetsSkipped
+          CutOff = System.Threading.Volatile.Read &c.cutOff
+          FilesHashed = System.Threading.Volatile.Read &c.filesHashed
+          HashTime = System.TimeSpan.FromTicks (System.Threading.Interlocked.Read &c.hashTicks)
+          TasksScheduled = System.Threading.Volatile.Read &c.tasksScheduled }
+
+module RunSummary =
+    /// The log line of a summary.
+    let format (s: RunSummary) =
+        sprintf "Run summary: targets run %d, skipped %d, tasks %d, cut-off %d, files hashed %d (%d ms)"
+            s.TargetsRun s.TargetsSkipped s.TasksScheduled s.CutOff s.FilesHashed (int s.HashTime.TotalMilliseconds)
+
 /// Engine-level options: immutable after construction.
 type EngineOptions = {
     ProjectRoot: string
@@ -74,6 +178,10 @@ type EngineOptions = {
     /// The variable set built at launch: every key with its value, origin and declaration.
     /// Var reads, the banner and the per-demand checks look here.
     Variables: Map<string, VarEntry>
+    /// Content cut-off (docs/content-cutoff.md); false (`--content-cutoff=off`): the 4.0 decisions.
+    ContentCutoff: bool
+    /// Receives the summary of every run; None: only the log line.
+    SummarySink: IRunSummarySink option
 } with
     static member Default = {
         ProjectRoot = System.IO.Directory.GetCurrentDirectory()
@@ -83,6 +191,8 @@ type EngineOptions = {
         Rules = Rules []
         RuleMatch = MostSpecific
         Variables = Map.empty
+        ContentCutoff = true
+        SummarySink = None
     }
 
 /// Engine-level immutable state shared across all tasks.
@@ -99,7 +209,10 @@ and ExecContext = {
     // Build-level
     Vars: (string * string) list
     Progress: Agent<Progress.ProgressReport>
-    NeedRebuild: Target list -> bool
+    /// The verdict of a task's targets, after its static `needs` (waits for running dependees).
+    NeedRebuild: Target list -> Async<bool>
+    /// The run's verdict without building or waiting: true when the target is up to date.
+    UpToDate: Target -> bool
     ShowProgress: bool
     // Task-level
     Targets: Target list
@@ -117,6 +230,8 @@ and ExecContext = {
     /// The epoch (run number) of the run this context belongs to, taken at `Scheduler.newRun`:
     /// a result built in the run gets it (A2).
     RunEpoch: int
+    /// The counters of the script run (or `Demand`): `RunSummary`, and the waits of the verdict.
+    Counters: RunCounters
 } with
     /// Shortcut to engine options.
     member ctx.Options = ctx.Engine.Options

@@ -12,7 +12,7 @@ let toEngineOptions (opts: ExecOptions) (rules: Rules<ExecContext>) (variables: 
         | logFileName,level -> CombineLogger logger (FileLogger logFileName level)
     { ProjectRoot = opts.ProjectRoot; Threads = opts.Threads
       Logger = MaskingLogger logger; Teardown = opts.Teardown; Rules = rules; RuleMatch = opts.RuleMatch
-      Variables = variables }
+      Variables = variables; ContentCutoff = opts.ContentCutoff; SummarySink = opts.SummarySink }
 
 /// Active pattern that classifies ExecOptions into Dump, Dryrun, or Run execution mode.
 let (|Dump|Dryrun|Run|) (opts:ExecOptions) =
@@ -226,9 +226,17 @@ let runScript options rules =
                     false
             if setupOk then
                 let start = System.DateTime.Now
+                // one summary per script run (docs/content-cutoff.md), also when the build fails
+                let reportSummary () =
+                    let summary = ctx.Counters.Summary
+                    ctx.Logger.Log Message "%s" (RunSummary.format summary)
+                    ctx.Options.SummarySink |> Option.iter (fun sink -> sink.Report summary)
                 try
+                  try
                     targetLists |> ExecCore.runBuild ctx |> fun a -> Async.RunSynchronously(a, cancellationToken = cts.Token) |> ignore
                     ctx.Logger.Log Message "\n\n    Build completed in %A\n" (System.DateTime.Now - start)
+                  finally
+                    try reportSummary () with ex -> ctx.Logger.Log Error "The run summary failed: %s" ex.Message
                 with
                 | :? System.OperationCanceledException ->
                     // Ctrl+C: build async workflow was cancelled; fall through to teardown on main thread

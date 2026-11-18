@@ -58,15 +58,24 @@ module Storage =
         | Result of BuildResult
         | FileState of File * FileState
 
-    /// Why a file is observed (decisions 1c, A1).
+    /// Why a file is observed (decisions 1c, A1; content cut-off).
     type ObserveMode =
         /// by a verdict: once per run, then the cached state
         | Verdict
         /// a body records the file (`FileDep`, a fileset member): statted again; a moved stat is a
         /// change unless another body recorded the file in this run (A1)
         | Recording
-        /// a rule's output right after the rule: statted again
-        | Output
+        /// a rule's output right after the rule: statted again; with `cutoff` always hashed, without
+        /// (`noContentCutoff`) never hashed and changed in this run
+        | Output of cutoff: bool
+        /// an output before its rule runs: hashed if it has no hash and its stat is unchanged
+        | PreHash
+
+    /// The reply to `Observe`: the state (None for a missing file), or `Moved` with the known
+    /// state when the file must be hashed first: the caller hashes it and posts `Settle`.
+    type Observation =
+        | Known of FileState option
+        | Moved of FileState option
 
     /// Messages accepted by the database agent.
     type DatabaseApi =
@@ -74,9 +83,14 @@ module Storage =
         /// Stores a result (its `Epoch` is the run its task started in); dependency files without
         /// a state are observed (A3).
         | Store of BuildResult
-        /// Observes a file, stamping a change with the epoch of the last `NewRun`; replies its
-        /// state, None for a missing file.
-        | Observe of File * ObserveMode * AsyncReplyChannel<FileState option>
+        /// Observes a file, stamping a change with the epoch of the last `NewRun`; `hashing` false
+        /// (`--content-cutoff=off`) hashes nothing and clears the hash of a moved file. Until the
+        /// `Settle` of a `Moved` reply, other observations of the file wait.
+        | Observe of File * ObserveMode * hashing: bool * AsyncReplyChannel<Observation>
+        /// Settles a `Moved` observation with the file's hash taken at a stat (None: the stat moved
+        /// while hashing, or the file could not be read). Applied only if the record is still the
+        /// `Moved` one (compare-and-set); replies the state.
+        | Settle of File * known: FileState option * hashed: (Timestamp * int64 * uint64) option * ObserveMode * AsyncReplyChannel<FileState option>
         /// Starts a new run: replies the next epoch; observations and recordings afresh (A2).
         | NewRun of AsyncReplyChannel<int>
         /// Observations stay in memory and nothing is appended (`--dump`, `--dryrun`, A8).
@@ -428,27 +442,57 @@ module Storage =
                     with ex ->
                         logError "Database write failed, no further records are saved until it is closed: %s" ex.Message
                         table', None
-            /// One observation of a file (decision 1c, A1): a new state, an equal stat (within
-            /// 10 ms, size equal or unknown: an unknown size is filled in, `changed` kept) or a
-            /// moved stat (`changed` = the run's epoch; no hash in phase 1).
-            let observe (db: Database) out mode (file: File) =
-                let known = Map.tryFind file db.Files
-                if mode = Verdict && not (observed.Add file) then (if File.exists file then known else None), db, out
+            /// Observations waiting for the `Settle` of a file being hashed.
+            let pending = System.Collections.Generic.Dictionary<File, ResizeArray<ObserveMode * bool * AsyncReplyChannel<Observation>>>()
+            let sameStat (k: FileState) (stamp: Timestamp) size =
+                abs (stamp - k.Stamp).TotalMilliseconds < 10.0 && (k.Size < 0L || k.Size = size)
+            let store (db: Database) out (file: File) known state =
+                if Some state = known then known, db, out
                 else
-                    observed.Add file |> ignore
+                    let out = try persist out [ DbRecord.FileState (file, state) ] with ex -> logError "Database agent failed to store the state of '%s': %O" file.Name ex; out
+                    Some state, { db with Files = Map.add file state db.Files }, out
+            /// One observation of a file (decision 1c, A1; content cut-off): a new state, an equal
+            /// stat (within 10 ms, size equal or unknown: an unknown size is filled in, `changed`
+            /// kept), or a moved stat: `Moved` when it is to be hashed, else `changed` = the run's
+            /// epoch and no hash.
+            let observe (db: Database) out mode hashing (file: File) =
+                let known = Map.tryFind file db.Files
+                if mode = Verdict && not (observed.Add file) then Known (if File.exists file then known else None), db, out
+                else
+                    if mode <> PreHash then observed.Add file |> ignore
                     let first = mode <> Recording || recorded.Add file
                     let fi = File.getFileInfo file
-                    if not fi.Exists then None, db, out
+                    if not fi.Exists then Known None, db, out
                     else
-                        let state =
-                            match known with
-                            | Some k when abs (fi.LastWriteTime - k.Stamp).TotalMilliseconds < 10.0 && (k.Size < 0L || k.Size = fi.Length) -> { k with Size = fi.Length }
-                            | Some k when not first -> k    // another body recorded it in this run (A1)
-                            | _ -> { Stamp = fi.LastWriteTime; Size = fi.Length; Hash = None; Changed = db.Epoch }
-                        if Some state = known then known, db, out
-                        else
-                            let out = try persist out [ DbRecord.FileState (file, state) ] with ex -> logError "Database agent failed to store the state of '%s': %O" file.Name ex; out
-                            Some state, { db with Files = Map.add file state db.Files }, out
+                        let moved () = { Stamp = fi.LastWriteTime; Size = fi.Length; Hash = None; Changed = db.Epoch }
+                        let stored state = let s, db, out = store db out file known state in Known s, db, out
+                        match mode, known with
+                        | Output false, _ -> stored (moved ())
+                        | Output true, _ when hashing -> Moved known, db, out
+                        | PreHash, Some k when hashing && k.Hash.IsNone && sameStat k fi.LastWriteTime fi.Length -> Moved known, db, out
+                        | PreHash, _ -> Known known, db, out
+                        | _, Some k when sameStat k fi.LastWriteTime fi.Length -> stored { k with Size = fi.Length }
+                        | _, Some k when not first -> Known (Some k), db, out    // another body recorded it in this run (A1)
+                        | (Verdict | Recording), Some _ when hashing -> Moved known, db, out
+                        | _ -> stored (moved ())
+            /// Settles a `Moved` observation (compare-and-set on the record).
+            let settle (db: Database) out (file: File) known hashed mode =
+                if Map.tryFind file db.Files <> known then Map.tryFind file db.Files, db, out
+                else
+                    let fi = File.getFileInfo file
+                    match hashed, known with
+                    | None, _ when mode = PreHash -> known, db, out
+                    | None, _ when not fi.Exists -> None, db, out
+                    | None, _ -> store db out file known { Stamp = fi.LastWriteTime; Size = fi.Length; Hash = None; Changed = db.Epoch }
+                    | Some (stamp, size, h), _ ->
+                        let state = { Stamp = stamp; Size = size; Hash = Some h; Changed = db.Epoch }
+                        match mode, known with
+                        | PreHash, Some k -> if sameStat k stamp size then store db out file known { k with Hash = Some h } else known, db, out
+                        // the same content: `changed` kept (cut-off)
+                        | _, Some k when k.Hash = Some h -> store db out file known { state with Changed = k.Changed }
+                        // an output never hashed, not moved: the hash is filled in
+                        | Output _, Some k when k.Hash.IsNone && sameStat k stamp size -> store db out file known { state with Changed = k.Changed }
+                        | _ -> store db out file known state
             let rec loop (db: Database) out =
                 async {
                     let! msg = mbox.Receive()
@@ -469,11 +513,33 @@ module Storage =
                             result.Depends
                             |> List.choose (function FileDep f | TargetDep (FileTarget f) -> Some f | _ -> None)
                             |> List.filter (db.Files.ContainsKey >> not)
-                            |> List.fold (fun (db, out) f -> let _, db, out = observe db out Verdict f in db, out) (addResult db result, out)
+                            |> List.fold (fun (db, out) f -> let _, db, out = observe db out Verdict false f in db, out) (addResult db result, out)
                         return! loop db out
-                    | Observe (file, mode, chnl) ->
-                        let state, db, out = observe db out mode file
+                    | Observe (file, mode, hashing, chnl) ->
+                        match pending.TryGetValue file with
+                        | true, waiting ->
+                            waiting.Add((mode, hashing, chnl))
+                            return! loop db out
+                        | _ ->
+                            let o, db, out = observe db out mode hashing file
+                            match o with Moved _ -> pending.[file] <- ResizeArray() | Known _ -> ()
+                            chnl.Reply o
+                            return! loop db out
+                    | Settle (file, known, hashed, mode, chnl) ->
+                        let state, db, out = settle db out file known hashed mode
                         chnl.Reply state
+                        // the observations that waited are made now, against the settled record
+                        let waiting = match pending.TryGetValue file with | true, w -> List.ofSeq w | _ -> []
+                        pending.Remove file |> ignore
+                        let db, out =
+                            waiting |> List.fold (fun (db, out) (mode, hashing, ch: AsyncReplyChannel<Observation>) ->
+                                match pending.TryGetValue file with
+                                | true, w -> w.Add((mode, hashing, ch)); db, out
+                                | _ ->
+                                    let o, db, out = observe db out mode hashing file
+                                    match o with Moved _ -> pending.[file] <- ResizeArray() | Known _ -> ()
+                                    ch.Reply o
+                                    db, out) (db, out)
                         return! loop db out
                     | NewRun ch ->
                         observed.Clear()

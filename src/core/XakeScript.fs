@@ -84,6 +84,13 @@ module XakeScript =
 
         /// Rule selection strategy among the rules that match a target.
         RuleMatch: RuleMatchMode
+
+        /// Content cut-off (docs/content-cutoff.md); `--content-cutoff=off` on the command line
+        /// sets false: the decisions of Xake 4.0, no hashing.
+        ContentCutoff: bool
+
+        /// Receives the summary of every run (`onSummary` in a script); None: only the log line.
+        SummarySink: IRunSummarySink option
     } with
         static member Default = {
             ProjectRoot = System.IO.Directory.GetCurrentDirectory()
@@ -113,6 +120,8 @@ module XakeScript =
             ShowHelp = false
             VarSchema = []
             RuleMatch = MostSpecific
+            ContentCutoff = true
+            SummarySink = None
         }
     end
 

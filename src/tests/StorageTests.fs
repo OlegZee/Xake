@@ -234,7 +234,7 @@ let ``the read API reads a database whose lock is held``() =
     let run = testee.PostAndReply NewRun
     store testee { (createResult "a.exe") with Epoch = run }
     store testee { (createResult "b.exe") with Depends = [ FileDep (File.make "src.c") ]; Epoch = run }
-    testee.PostAndReply(fun ch -> Observe(File.make "src.c", Verdict, ch)) |> ignore
+    testee.PostAndReply(fun ch -> Observe(File.make "src.c", Verdict, false, ch)) |> ignore
     let records = readRecords (root ()) dbname |> List.ofSeq
     match records with
     | [ DbRecord.Result a; DbRecord.Result b; DbRecord.FileState (f, st) ] ->
@@ -319,7 +319,7 @@ let ``recording re-stats a file once per run``() =
     File.WriteAllText("rec.c", "v1")
     let f = File.make "rec.c"
     let db = openDb () logger
-    let observe mode = db.PostAndReply(fun ch -> Observe(f, mode, ch)) |> Option.get
+    let observe mode = match db.PostAndReply(fun ch -> Observe(f, mode, false, ch)) with Known (Some s) -> s | o -> failwithf "%A" o
     let run1 = db.PostAndReply NewRun
     Assert.AreEqual(run1, (observe Verdict).Changed)
     let run2 = db.PostAndReply NewRun

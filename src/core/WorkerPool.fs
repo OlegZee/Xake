@@ -9,6 +9,12 @@ type ExecMessage<'r> =
     /// Marks the boundary between one run and the next
     | NewRun
 
+/// The state of a target's task in the current run (`Scheduler.query`).
+type TaskState<'r> =
+    | NotStarted
+    | Running of Async<'r>
+    | Finished
+
 /// Internal worker pool that deduplicates and throttles parallel task execution.
 module internal WorkerPool =
 
@@ -27,6 +33,16 @@ module internal WorkerPool =
 
     // Logging the agent's own failure must not throw out of the loop again.
     let logError fmt = Printf.kprintf (fun s -> try log Error "%s" s with _ -> ()) fmt
+
+    // the maps after the last message, read by `query` without going through the mailbox (a
+    // `Run` may hold the loop while it waits for a slot)
+    let snapshot = ref (Map.empty, Map.empty)
+    let query (artifact: Target) =
+        let running, finished = System.Threading.Volatile.Read &snapshot.contents
+        match Map.tryFind (mapKey artifact) running with
+        | Some r -> Running r
+        | None when Map.containsKey (mapKey artifact) finished -> Finished
+        | None -> NotStarted
 
     let agent = new MailboxProcessor<_>(fun mbox ->
 
@@ -96,18 +112,19 @@ module internal WorkerPool =
                       logError "WorkerPool agent failed on %s: %O" (match msg with Done _ -> "Done" | _ -> "NewRun") ex
                   return state
             }
+          System.Threading.Volatile.Write(&snapshot.contents, next)
           return! loop next
         }
         loop (Map.empty, Map.empty) )
     agent.Error.Add (fun ex -> logError "WorkerPool agent stopped: %O" ex)
     agent.Start()
-    throttler, agent
+    throttler, agent, query
 
 open System.Threading
 
 /// Scheduler combining a throttle semaphore and a worker pool mailbox.
 type Scheduler<'s> =
-    private { Throttle: SemaphoreSlim; Pool: Agent<ExecMessage<'s>> }
+    private { Throttle: SemaphoreSlim; Pool: Agent<ExecMessage<'s>>; Query: Target -> TaskState<'s> }
     interface System.IDisposable with
         member this.Dispose() = this.Throttle.Dispose()
 
@@ -116,11 +133,14 @@ module Scheduler =
 
     /// Creates a new Scheduler with the given thread limit.
     let create logger maxThreads : Scheduler<_> =
-        let throttler, pool = WorkerPool.create logger maxThreads
-        { Throttle = throttler; Pool = pool }
+        let throttler, pool, query = WorkerPool.create logger maxThreads
+        { Throttle = throttler; Pool = pool; Query = query }
 
     /// Returns the underlying mailbox processor for posting work items.
     let pool s = s.Pool
+
+    /// The state of a target's task in this run: running (its result), finished, or not started.
+    let query s target = s.Query target
 
     /// Starts a new run: a target an earlier run finished is looked at afresh, through the
     /// database, rather than answered from the pool.

@@ -234,7 +234,7 @@ let parse = impl.parse false
 let maskText = impl.maskText
 
 /// Normalises a path lexically (5.0): `\` -> `/` when `windows`; `.` and `..` collapsed against the
-/// preceding name; repeated separators removed; the root (`/`, `C:`) kept and never popped; a
+/// preceding name; repeated separators removed; the root (`/`, `C:`) kept, a `..` above it dropped; a
 /// trailing separator dropped (except the root's); a leading `//` (UNC) kept when `windows`; case
 /// kept except a Windows drive letter (upper-cased); no symlink resolution. `File.make` and rule/mask matching use it.
 let internal collapseWith (windows: bool) (path: string) =
@@ -254,10 +254,10 @@ let internal collapseWith (windows: bool) (path: string) =
         segs |> Array.iteri (fun i s ->
             match s with
             | "" when i = 0 -> out.Add ""
-            | "" when i = 1 && windows && segs.Length > 2 && segs.[2] <> "" -> out.Add ""   // UNC
+            | "" when i = 1 && windows && segs.[0] = "" && segs.Length > 2 && segs.[2] <> "" -> out.Add ""   // UNC (R1)
             | "" | "." -> ()
-            | ".." when out.Count > 0 && (let top = out.[out.Count - 1] in top <> ".." && top <> "" && not (isDrive top)) ->
-                out.RemoveAt(out.Count - 1)
+            | ".." when out.Count > 0 && (let top = out.[out.Count - 1] in top = "" || isDrive top) -> ()   // above a root (R7)
+            | ".." when out.Count > 0 && out.[out.Count - 1] <> ".." -> out.RemoveAt(out.Count - 1)
             | s -> out.Add s)
         match List.ofSeq out with
         | [ "" ] | [ ""; "" ] -> "/"

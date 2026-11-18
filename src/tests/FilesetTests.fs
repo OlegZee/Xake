@@ -216,6 +216,13 @@ let ``a wildcard include ignores case and keeps the spelling on disk``() =
         Assert.That (fileset { casesensitive; includes "x/*.cs" } |> list root, Is.EqualTo ["x/a.cs"])
 
 [<Test>]
+let ``a literal segment found ignoring case keeps the spelling on disk``() =
+    withTree [ "src/a.cs" ] <| fun root ->
+        Assert.That (ls "Src/*.cs" |> list root, Is.EqualTo ["src/a.cs"])
+        Assert.That (fileset { casesensitive; includes "Src/*.cs" } |> list root, Is.Empty)
+        Assert.That (fileset { casesensitive; includes "src/*.cs" } |> list root, Is.EqualTo ["src/a.cs"])
+
+[<Test>]
 let ``duplicates are removed with the OS comparer``() =
     withTree [ "x/a.cs" ] <| fun root ->
         // two explicit names differing in case: one file on Windows, two names elsewhere

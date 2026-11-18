@@ -538,6 +538,17 @@ let scanWith (windows: bool) (ignoreCase: bool) (baseDir: string) (fileset: (Mas
                                 if isLink && globs.Length > 0 then note true sub
                                 if next.Count > 0 then visit sub (depth + 1) next
 
+        /// The spelling on disk of a name a probe found (a case-insensitive volume finds other
+        /// spellings): None when an ordinal search finds it spelt otherwise (R2).
+        and onDisk (d: Loc) (name: string) =
+            let found =
+                try DirectoryInfo(d.Os).EnumerateFileSystemInfos(name) |> Seq.tryHead |> Option.map (fun e -> e.Name)
+                with _ -> None
+            match found with
+            | Some n when ignoreCase || String.Equals(n, name, StringComparison.Ordinal) -> Some n
+            | Some _ -> None
+            | None -> Some name
+
         and probed (d: Loc) (depth: int) (active: int[]) =
             let litOf (i: int) = match nodes.[i].Head with SLit (s, _) -> s | _ -> ""
             let fileNames =
@@ -546,7 +557,7 @@ let scanWith (windows: bool) (ignoreCase: bool) (baseDir: string) (fileset: (Mas
                 |> Array.sortWith (fun a b -> String.CompareOrdinal(a, b))
             for name in fileNames do
                 let f = join d name
-                if File.Exists f.Os then emit f false
+                if File.Exists f.Os then onDisk d name |> Option.iter (fun n -> emit (join d n) false)
                 elif deniedProbe f.Os then note false d
             let dirs = Dictionary<string, List<int>>(nameCmp)
             let order = List<string>()
@@ -565,7 +576,7 @@ let scanWith (windows: bool) (ignoreCase: bool) (baseDir: string) (fileset: (Mas
                 | Some (j, true, _) -> prunedEvidence j sub dirs.[name]
                 | Some _ -> ()
                 | None ->
-                    if Directory.Exists sub.Os then visit sub (depth + 1) dirs.[name]
+                    if Directory.Exists sub.Os then onDisk d name |> Option.iter (fun n -> visit (join d n) (depth + 1) dirs.[name])
                     elif deniedProbe sub.Os then note false d
 
         for anchor, ids in starts do visit anchor 0 ids

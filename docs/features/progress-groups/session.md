@@ -1,10 +1,20 @@
 # Session: progress-groups
 
-Branch `feature/progress-groups`, from `dev` at fa5b33b.
+Branch `feature/progress-groups`, from `dev` at fa5b33b. Not pushed, no PR.
 
-**Where things stand (2026-11-18).** Investigation done, findings and options in
-[brief.md](brief.md). Nothing in code yet.
+**Where things stand (2026-11-19).** The owner chose 1A + 2C + 3A ([brief.md](brief.md)); it is
+implemented, documented and tested (`src/tests/StepTimeTests.fs`); macOS release build 0 warnings,
+all tests green, `build.fsx build test pack` green. Windows VM green (1821 passed, 21 skipped).
 
-**Next step.** The owner picks among 1A/1B, 2A/2B, 3A/3B (recommended 1A + 2A + 3A, plus the
-header-needs `OwnTime` bug and the skipped-task estimate fix); then docs, code, tests, the
-Windows VM.
+What changed in code:
+
+- `ExecCore.headerNeeds` returns the task's step, started before the needs, their time as its
+  wait; `run` adds the verdict's time to it; `runBody` adds each lock's acquire
+  (`acquireTimed`); `withResource` (`ScriptFuncs.fs`) and `requiring` (`XakeScript.wrapRecipe`)
+  add theirs to the current step. `Step.msSince` in `Database.fs`.
+- `runBuild`: per group a label `[i/n names] ` (more than one group) for
+  `Progress.openProgress` (new `label` parameter) and `ConsoleSink.formatStatus`, and
+  `group 'names' done in N s` at `Message`.
+- A task skipped after its verdict posts `TaskComplete`.
+
+**Next step.** The owner's word to push and open the PR into `dev` (squash).

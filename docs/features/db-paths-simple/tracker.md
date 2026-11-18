@@ -2,7 +2,7 @@
 
 | Item | Status |
 |---|---|
-| Design report (design.md) | decisions of 2026-11-18 recorded (epochs in phase 1, incremental writing checked, 0.7 measured on a real database); lists with a varint length, string table Later, always upgrade without record length, answers 1-4 and the proposals accepted; reading of "`File` holds the absolute path" confirmed; awaiting approval of the design |
+| Design report (design.md) | decisions of 2026-11-18 recorded (epochs in phase 1, incremental writing checked, 0.7 measured on a real database); lists with a varint length, string table Later, always upgrade without record length, answers 1-4 and the proposals accepted; reading of "`File` holds the absolute path" confirmed; approved 2026-11-18; spec in decision.md |
 | Docs + release notes 5.0.0 (unreleased) | todo |
 | 1a `File` normalised absolute path, ordinal comparer, matching ordinal | todo |
 | 1a two-spellings check | todo |

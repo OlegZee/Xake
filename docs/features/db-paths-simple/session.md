@@ -18,7 +18,20 @@ asked; `Fingerprints` ordinal). The proposals were accepted the same day with ch
 holds the absolute path (`Name` absolute), `Built` kept, filesets case-insensitive by default with a
 `casesensitive` option. The orchestrator confirmed the reading of "`File` holds the
 absolute path" and that phase 1 has one root (`openDb root`, `ProjectRoot` only; the root number in
-`DirRec` is the only room kept for more roots). **Open:** approval of the design.
+`DirRec` is the only room kept for more roots). The design was **approved on 2026-11-18**; the normative spec is [decision.md](decision.md).
 
-**Next step.** The owner's approval of the design, then docs first (`docs/` + release notes "5.0.0 (unreleased)"),
+**Next step.** Implementation in a separate session (Opus, medium effort) on this branch and
+worktree: docs first (`docs/` + release notes "5.0.0 (unreleased)"),
 then code in the order 1a -> 1b -> 1c, tests, the size measurement. No push, no PR without the owner.
+
+## Orchestration (2026-11-18)
+
+- Implementation: a separate session in this worktree, on `feature/db-paths-simple`, spec
+  [decision.md](decision.md); it commits per step, no push.
+- Critic of brief + decision: a subagent on a stronger model; correctness bugs go to the
+  implementation, the rest to Later.
+- Code review of the implementation when it reports; then push and the PR for phase 1.
+
+| PR | Branch | Worktree |
+|---|---|---|
+| (not opened yet) | `feature/db-paths-simple` | `.claude/worktrees/db-paths-simple-39d1fe` |

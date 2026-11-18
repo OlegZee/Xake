@@ -103,18 +103,27 @@ The file starts with a version header (`BuildLog.XakeDbVersion`, `0.7`; `XakeDbM
   (existence, write time, length) is compared with the `FileRec`: no record gives `changed` = the
   run's epoch and no hash; an unknown size is filled in with `changed` kept. `--dump` and
   `--dryrun` observe in memory only and append nothing.
+- **Observing with `since`.** `Observe (file, mode, hashing, since)` replies `Absent`,
+  `Unchanged state` or `Changed state` (content changed after the run `since`), or
+  `HashNeeded request`. The "changed after run `e`" comparison lives only in the database: the
+  verdict passes the dependent's epoch, `observeOutputs` passes `RunEpoch - 1` (changed in this
+  run); calls that only update the record use `DependencyAnalysis.observe` (`since` = max).
 - **Hashing (5.0 phase 3, docs/content-cutoff.md).** The agent decides, the caller hashes: when a
-  moved stat (or an output) needs a hash, `Observe` replies `Moved` without touching the record;
-  `DependencyAnalysis.observe` hashes (stat, SHA-256, stat; first 8 bytes) off the agent and posts
-  `Settle (file, known, hashed, mode)`, applied only if the record is still `known`
-  (compare-and-set). Until then other observations of the file wait in the agent, so a move is
-  hashed once.
+  moved stat (or an output) needs a hash, `Observe` replies `HashNeeded` with an opaque
+  `HashRequest` (only its `File` is visible; it carries the known record, the mode and `since`)
+  without touching the record. `DependencyAnalysis.observeSince` hashes (stat, SHA-256, stat;
+  first 8 bytes) off the agent and posts `Settle (request, result)`, `result` = `Hashed (stamp,
+  size, hash)` or `Unreadable` (the file could not be read, or its stat moved while it was hashed:
+  its content was not stable, so it is a change without a hash). `Settle` applies only if the
+  record is still the request's (compare-and-set); otherwise it replies the current state. Its
+  reply is `Observe`'s, never `HashNeeded`. Until then other observations of the file wait in the
+  agent, so a move is hashed once.
   Moved with a hash: equal keeps `changed`, else `changed` = run. Moved without a hash: `changed` =
   run and the new hash stored. `Output true` hashes every output after its rule, even with an equal
   stat (coarse time stamps); `Output false` (`noContentCutoff`) stores no hash and sets `changed` =
   run; `PreHash` hashes an output with no hash and an equal stat before its rule runs. With
-  `--content-cutoff=off` (`ExecOptions.ContentCutoff`, passed in the mode) nothing is hashed and a
-  moved stat clears the hash.
+  `--content-cutoff=off` (`ExecOptions.ContentCutoff`, the `hashing` flag of `Observe`) nothing is
+  hashed and a moved stat clears the hash.
 - Verdict for a target with a stored result of epoch `e`: `FileDep f` is stale when `f` is missing
   or `changed > e`. `TargetDep t`: the worker pool is asked (`Query`) whether `t` finished in this
   run, is running, or has not started. Finished: compared exactly (`changed > e` for a file,

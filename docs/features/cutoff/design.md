@@ -162,7 +162,7 @@ Core +460 / -84 lines, **net +376** (budget about +390):
 Tests: `ContentCutoffTests.fs` (12 tests, 271 lines), `RecordShapeTests`, `StorageTests` adapted.
 Differences from the design above:
 
-- **Hash dedup is in the agent**, not a per-run map: while a `Moved` observation is unsettled,
+- **Hash dedup is in the agent**, not a per-run map: while a `HashNeeded` observation is unsettled,
   other `Observe`s of that file queue in the agent and are answered after the `Settle`. One move
   is hashed once; no `RunState` map is needed.
 - **No separate run state:** `ExecContext.Counters` (`RunCounters`, per script run or `Demand`)
@@ -175,3 +175,18 @@ Differences from the design above:
   asked), so the decisions are exactly those of phase 1.
 - A verdict wait cancelled by the cycle check, or refused, counts the dependee as running (a
   change); a dependee that fails while waited for fails the dependent.
+
+### Owner's review of PR #143 (2026-11-18): the agent API
+
+- `Moved` became `HashNeeded of HashRequest`; `HashRequest` is opaque (internal constructor, only
+  `File` public) and carries the known record, the mode and `since`, so a `Settle` cannot be
+  given another mode.
+- `Settle (request, result)`, `result = Hashed (stamp, size, hash) | Unreadable`. A stat that
+  moved while hashing is `Unreadable` (the content was not stable: a change without a hash, as
+  before). The reply is `Observe`'s, never `HashNeeded`; a lost compare-and-set replies the
+  current state.
+- `Observe (file, mode, hashing, since)` replies `Absent | Unchanged | Changed | HashNeeded`: the
+  "changed after run `since`" comparison is only in the database. `getDepState` passes the
+  dependent's epoch, `observeOutputs` `RunEpoch - 1`; record-only calls use `observe`
+  (`since` = max). The `hashing` flag (`--content-cutoff=off`) stays a field of `Observe`, keeping
+  the agent option-free. The phony comparison (`Epoch > e`) is unchanged.

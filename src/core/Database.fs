@@ -71,11 +71,32 @@ module Storage =
         /// an output before its rule runs: hashed if it has no hash and its stat is unchanged
         | PreHash
 
-    /// The reply to `Observe`: the state (None for a missing file), or `Moved` with the known
-    /// state when the file must be hashed first: the caller hashes it and posts `Settle`.
+    /// A file `Observe` wants hashed before it decides: given back with `Settle`. Opaque: it
+    /// carries the observation it settles (the known record, the mode, `since`).
+    [<Sealed>]
+    type HashRequest internal (file: File, known: FileState option, mode: ObserveMode, since: int) =
+        /// The file to hash.
+        member _.File = file
+        member internal _.Known = known
+        member internal _.Mode = mode
+        member internal _.Since = since
+
+    /// What hashing a file for `Settle` gave.
+    type HashResult =
+        /// the stat the hash was taken at (unchanged before and after hashing) and the hash
+        | Hashed of stamp: Timestamp * size: int64 * hash: uint64
+        /// the file could not be read, or its stat moved while it was hashed (its content was not
+        /// stable): a change without a hash
+        | Unreadable
+
+    /// The reply to `Observe` (and to `Settle`, which never replies `HashNeeded`): the file is
+    /// missing, or its state with whether its content changed after the run `since`, or the file
+    /// must be hashed first: the caller hashes it and posts `Settle`.
     type Observation =
-        | Known of FileState option
-        | Moved of FileState option
+        | Absent
+        | Unchanged of FileState
+        | Changed of FileState
+        | HashNeeded of HashRequest
 
     /// Messages accepted by the database agent.
     type DatabaseApi =
@@ -83,14 +104,15 @@ module Storage =
         /// Stores a result (its `Epoch` is the run its task started in); dependency files without
         /// a state are observed (A3).
         | Store of BuildResult
-        /// Observes a file, stamping a change with the epoch of the last `NewRun`; `hashing` false
+        /// Observes a file, stamping a change with the epoch of the last `NewRun`; the reply says
+        /// whether its content changed after the run `since`. `hashing` false
         /// (`--content-cutoff=off`) hashes nothing and clears the hash of a moved file. Until the
-        /// `Settle` of a `Moved` reply, other observations of the file wait.
-        | Observe of File * ObserveMode * hashing: bool * AsyncReplyChannel<Observation>
-        /// Settles a `Moved` observation with the file's hash taken at a stat (None: the stat moved
-        /// while hashing, or the file could not be read). Applied only if the record is still the
-        /// `Moved` one (compare-and-set); replies the state.
-        | Settle of File * known: FileState option * hashed: (Timestamp * int64 * uint64) option * ObserveMode * AsyncReplyChannel<FileState option>
+        /// `Settle` of a `HashNeeded` reply, other observations of the file wait.
+        | Observe of File * ObserveMode * hashing: bool * since: int * AsyncReplyChannel<Observation>
+        /// Settles a `HashNeeded` observation with the hash of the file. Applied only if the record
+        /// is still the one the request was made against (compare-and-set); otherwise the current
+        /// state is replied.
+        | Settle of HashRequest * HashResult * AsyncReplyChannel<Observation>
         /// Starts a new run: replies the next epoch; observations and recordings afresh (A2).
         | NewRun of AsyncReplyChannel<int>
         /// Observations stay in memory and nothing is appended (`--dump`, `--dryrun`, A8).
@@ -417,6 +439,8 @@ module Storage =
 
     /// The agent over a database state, its path table and the stream it appends to (None: in
     /// memory only); `close` releases the stream and the lock.
+    type private Seen = Seen of FileState option | Hash of known: FileState option
+
     let private agent (logger: ILogger) (db0: Database) (table0: Persist.PathTable) (stream0: Stream option) (close: unit -> unit) =
         // Logging the agent's own failure must not throw out of the loop again.
         let logError fmt = Printf.kprintf (fun s -> try logger.Log Error "%s" s with _ -> ()) fmt
@@ -443,7 +467,12 @@ module Storage =
                         logError "Database write failed, no further records are saved until it is closed: %s" ex.Message
                         table', None
             /// Observations waiting for the `Settle` of a file being hashed.
-            let pending = System.Collections.Generic.Dictionary<File, ResizeArray<ObserveMode * bool * AsyncReplyChannel<Observation>>>()
+            let pending = System.Collections.Generic.Dictionary<File, ResizeArray<ObserveMode * bool * int * AsyncReplyChannel<Observation>>>()
+            /// The reply for a state: changed after the run `since`, or not.
+            let classify since = function
+                | None -> Absent
+                | Some (st: FileState) when st.Changed > since -> Changed st
+                | Some st -> Unchanged st
             let sameStat (k: FileState) (stamp: Timestamp) size =
                 abs (stamp - k.Stamp).TotalMilliseconds < 10.0 && (k.Size < 0L || k.Size = size)
             let store (db: Database) out (file: File) known state =
@@ -457,26 +486,35 @@ module Storage =
             /// epoch and no hash.
             let observe (db: Database) out mode hashing (file: File) =
                 let known = Map.tryFind file db.Files
-                if mode = Verdict && not (observed.Add file) then Known (if File.exists file then known else None), db, out
+                if mode = Verdict && not (observed.Add file) then Seen (if File.exists file then known else None), db, out
                 else
                     if mode <> PreHash then observed.Add file |> ignore
                     let first = mode <> Recording || recorded.Add file
                     let fi = File.getFileInfo file
-                    if not fi.Exists then Known None, db, out
+                    if not fi.Exists then Seen None, db, out
                     else
                         let moved () = { Stamp = fi.LastWriteTime; Size = fi.Length; Hash = None; Changed = db.Epoch }
-                        let stored state = let s, db, out = store db out file known state in Known s, db, out
+                        let stored state = let s, db, out = store db out file known state in Seen s, db, out
                         match mode, known with
                         | Output false, _ -> stored (moved ())
-                        | Output true, _ when hashing -> Moved known, db, out
-                        | PreHash, Some k when hashing && k.Hash.IsNone && sameStat k fi.LastWriteTime fi.Length -> Moved known, db, out
-                        | PreHash, _ -> Known known, db, out
+                        | Output true, _ when hashing -> Hash known, db, out
+                        | PreHash, Some k when hashing && k.Hash.IsNone && sameStat k fi.LastWriteTime fi.Length -> Hash known, db, out
+                        | PreHash, _ -> Seen known, db, out
                         | _, Some k when sameStat k fi.LastWriteTime fi.Length -> stored { k with Size = fi.Length }
-                        | _, Some k when not first -> Known (Some k), db, out    // another body recorded it in this run (A1)
-                        | (Verdict | Recording), Some _ when hashing -> Moved known, db, out
+                        | _, Some k when not first -> Seen (Some k), db, out    // another body recorded it in this run (A1)
+                        | (Verdict | Recording), Some _ when hashing -> Hash known, db, out
                         | _ -> stored (moved ())
-            /// Settles a `Moved` observation (compare-and-set on the record).
-            let settle (db: Database) out (file: File) known hashed mode =
+            /// Observes and turns the result into the reply; a file to hash becomes pending.
+            let observeReply db out mode hashing since (file: File) =
+                match observe db out mode hashing file with
+                | Seen state, db, out -> classify since state, db, out
+                | Hash known, db, out ->
+                    pending.[file] <- ResizeArray()
+                    HashNeeded (HashRequest (file, known, mode, since)), db, out
+            /// Settles a `HashNeeded` observation (compare-and-set on the record).
+            let settle (db: Database) out (request: HashRequest) result =
+                let file, known, mode = request.File, request.Known, request.Mode
+                let hashed = match result with Hashed (stamp, size, h) -> Some (stamp, size, h) | Unreadable -> None
                 if Map.tryFind file db.Files <> known then Map.tryFind file db.Files, db, out
                 else
                     let fi = File.getFileInfo file
@@ -515,29 +553,28 @@ module Storage =
                             |> List.filter (db.Files.ContainsKey >> not)
                             |> List.fold (fun (db, out) f -> let _, db, out = observe db out Verdict false f in db, out) (addResult db result, out)
                         return! loop db out
-                    | Observe (file, mode, hashing, chnl) ->
+                    | Observe (file, mode, hashing, since, chnl) ->
                         match pending.TryGetValue file with
                         | true, waiting ->
-                            waiting.Add((mode, hashing, chnl))
+                            waiting.Add((mode, hashing, since, chnl))
                             return! loop db out
                         | _ ->
-                            let o, db, out = observe db out mode hashing file
-                            match o with Moved _ -> pending.[file] <- ResizeArray() | Known _ -> ()
+                            let o, db, out = observeReply db out mode hashing since file
                             chnl.Reply o
                             return! loop db out
-                    | Settle (file, known, hashed, mode, chnl) ->
-                        let state, db, out = settle db out file known hashed mode
-                        chnl.Reply state
+                    | Settle (request, result, chnl) ->
+                        let file = request.File
+                        let state, db, out = settle db out request result
+                        chnl.Reply (classify request.Since state)
                         // the observations that waited are made now, against the settled record
                         let waiting = match pending.TryGetValue file with | true, w -> List.ofSeq w | _ -> []
                         pending.Remove file |> ignore
                         let db, out =
-                            waiting |> List.fold (fun (db, out) (mode, hashing, ch: AsyncReplyChannel<Observation>) ->
+                            waiting |> List.fold (fun (db, out) (mode, hashing, since, ch: AsyncReplyChannel<Observation>) ->
                                 match pending.TryGetValue file with
-                                | true, w -> w.Add((mode, hashing, ch)); db, out
+                                | true, w -> w.Add((mode, hashing, since, ch)); db, out
                                 | _ ->
-                                    let o, db, out = observe db out mode hashing file
-                                    match o with Moved _ -> pending.[file] <- ResizeArray() | Known _ -> ()
+                                    let o, db, out = observeReply db out mode hashing since file
                                     ch.Reply o
                                     db, out) (db, out)
                         return! loop db out

@@ -86,7 +86,8 @@ The rule header ([rule-header.md](rule-header.md)):
   hashed); `onSummary` in `xakeScript`, `XakeEngine.LastSummary`, the `RunSummary` record. A run
   where nothing moved schedules no task.
 - API: `ExecOptions.ContentCutoff`, `ExecOptions.SummarySink`, `IRunSummarySink`;
-  `DatabaseApi.Observe` replies `Observation` (`Known` / `Moved`), `Settle` is added,
+  `DatabaseApi.Observe` takes `since` and replies `Observation` (`Absent`, `Unchanged`,
+  `Changed`, `HashNeeded` with an opaque `HashRequest`); `Settle (request, HashResult)` is added,
   `ObserveMode.Output` takes the cut-off flag and `PreHash` is added; `WorkerPool.TaskState` and
   `Scheduler.query` are added; `ExecContext.NeedRebuild` is asynchronous and `ExecContext` gains
   `UpToDate` and `Counters`.

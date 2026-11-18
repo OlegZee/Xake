@@ -144,10 +144,11 @@ let private observeOutputs (ctx: ExecContext) (cutoff: bool) (targets: Target li
     for t in targets do
         match t with
         | FileTarget f ->
-            let! state = observe ctx (Output cutoff) f
+            // changed in this run, or not
+            let! state = observeSince ctx (Output cutoff) (ctx.RunEpoch - 1) f
             match state with
-            | Some st when st.Changed < ctx.RunEpoch -> ()
-            | _ -> same <- false
+            | Unchanged _ -> ()
+            | Changed _ | Absent | HashNeeded _ -> same <- false
         | PhonyAction _ -> same <- false
     return same }
 
@@ -156,7 +157,7 @@ let private observeOutputs (ctx: ExecContext) (cutoff: bool) (targets: Target li
 let private preHash (ctx: ExecContext) (targets: Target list) = async {
     for t in targets do
         match t with
-        | FileTarget f -> do! observe ctx PreHash f |> Async.Ignore
+        | FileTarget f -> do! observe ctx PreHash f
         | PhonyAction _ -> () }
 
 /// Whether a rule's outputs take part in content cut-off (`noContentCutoff` opts out).
@@ -370,7 +371,7 @@ let rec execOne (ctx: ExecContext) target =
             // the dependee is built or up to date now: its file is observed (a built one already
             // was, right after its rule) and the dependency recorded by id (decision 1c)
             match target with
-            | FileTarget file -> do! observe ctx Verdict file |> Async.Ignore
+            | FileTarget file -> do! observe ctx Verdict file
             | PhonyAction _ -> ()
             return target, status, TargetDep target
         }
@@ -378,7 +379,7 @@ let rec execOne (ctx: ExecContext) target =
         target |> function
         | FileTarget file when File.exists file ->
             async {
-                do! observe ctx Recording file |> Async.Ignore
+                do! observe ctx Recording file
                 return target, ExecStatus.JustFile, FileDep file
             }
         | _ ->

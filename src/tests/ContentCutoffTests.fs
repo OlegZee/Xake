@@ -217,12 +217,12 @@ type ``Content cut-off tests``() =
                     do! need [ "out/wait.d" ]
                     do! writeText (File.ReadAllText "out/wait.d")
                 } ]
-        let parallel o = { o with Threads = 4 }
-        x.RunWith parallel [ "out/wait.d;out/wait.k" ] rs |> ignore
+        let threads4 (o: ExecOptions) = { o with Threads = 4 }
+        x.RunWith threads4 [ "out/wait.d;out/wait.k" ] rs |> ignore
         Assert.AreEqual((1, 1), (dRuns.Value, kRuns.Value))
         edit "wait.c" "// v2\nint x;"
         File.Delete "out/wait.slow"
-        x.RunWith parallel [ "out/wait.d;out/wait.k" ] rs |> ignore
+        x.RunWith threads4 [ "out/wait.d;out/wait.k" ] rs |> ignore
         Assert.AreEqual((2, 1), (dRuns.Value, kRuns.Value), "k waited for d and saw the same content")
 
     [<Test>]
@@ -240,7 +240,7 @@ type ``Content cut-off tests``() =
                     do! need [ "out/rev.d" ]
                     do! writeText "k"
                 } ]
-        x.RunWith (fun o -> { o with Threads = 4 }) [ "out/rev.k" ] first |> ignore
+        x.RunWith (fun (o: ExecOptions) -> { o with Threads = 4 }) [ "out/rev.k" ] first |> ignore
         // now d needs k, and k no longer needs d
         let second =
             [ "out/rev.d" ..> recipe {
@@ -255,7 +255,7 @@ type ``Content cut-off tests``() =
                     do! writeText "k2"
                 } ]
         edit "rev.c" "v2"
-        let run = System.Threading.Tasks.Task.Run(fun () -> x.RunWith (fun o -> { o with Threads = 4 }) [ "out/rev.d;out/rev.k" ] second |> ignore)
+        let run = System.Threading.Tasks.Task.Run(fun () -> x.RunWith (fun (o: ExecOptions) -> { o with Threads = 4 }) [ "out/rev.d;out/rev.k" ] second |> ignore)
         Assert.IsTrue(run.Wait(System.TimeSpan.FromSeconds 30.0), "the run finished")
         Assert.AreEqual((2, 2), (dRuns.Value, kRuns.Value))
 

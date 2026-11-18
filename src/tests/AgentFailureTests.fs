@@ -1,4 +1,4 @@
-namespace Tests
+﻿namespace Tests
 
 open System.IO
 open System.Threading.Tasks
@@ -52,7 +52,7 @@ type AgentFailureTests() =
         let mkTarget name = name |> File.make |> FileTarget
         let get (db: Agent<DatabaseApi>) t = db.PostAndReply((fun ch -> GetResult(t, ch)), timeoutMs)
         try
-            let db = openDb dbpath logger
+            let db = openDb dir dbpath logger
             let good1 = { makeResult [mkTarget "good1.dll"] with Depends = [ Var("A", Some "1") ] }
             // a null variable name makes the pickler throw (BinaryWriter.Write(null: string))
             // half way through the record
@@ -65,7 +65,7 @@ type AgentFailureTests() =
             Assert.IsTrue((get db (mkTarget "bad.dll")).IsSome, "the result is kept in memory for this run")
             db.PostAndReply(CloseWait, timeoutMs)
 
-            let errors = logged |> Seq.filter (fun s -> s.Contains "Database agent failed to store the result of 'bad.dll'") |> List.ofSeq
+            let errors = logged |> Seq.filter (fun s -> s.Contains "Database agent failed to store the result of '" && s.Contains "bad.dll'") |> List.ofSeq
             Assert.IsNotEmpty(errors, sprintf "no agent error logged; got %A" (List.ofSeq logged))
             StringAssert.Contains("[ERROR]", errors.Head)
             Assert.IsTrue(logged |> Seq.exists (fun s -> s.Contains "[WARN]" && s.Contains "Database not fully saved: 1 result(s)"),
@@ -73,7 +73,7 @@ type AgentFailureTests() =
 
             // reopen: the good records read back, the failed one left nothing in the file
             logged.Clear()
-            let db2 = openDb dbpath logger
+            let db2 = openDb dir dbpath logger
             Assert.AreEqual(Some good1.Depends, get db2 (mkTarget "good1.dll") |> Option.map (fun r -> r.Depends))
             Assert.AreEqual(Some good2.Depends, get db2 (mkTarget "good2.dll") |> Option.map (fun r -> r.Depends))
             Assert.IsTrue((get db2 (mkTarget "bad.dll")).IsNone)

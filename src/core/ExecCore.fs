@@ -52,18 +52,17 @@ let explainMatch (Rules rules) projectRoot target : RuleMatchInfo<_> list =
     let rec matchRule index rule =
         match rule, target with
 
-        |FileConditionRule (meetCondition,_), FileTarget file when file |> File.getFullName |> meetCondition ->
+        |FileConditionRule (meetCondition,_), FileTarget file when file |> File.getSysFileName |> meetCondition ->
             // TODO let condition rule extracting named groups
             Some { Rule = rule; Groups = []; Targets = [target]; Pattern = None; Specificity = conditionSpecificity; Index = index; Evidence = [] }
 
         |FileRule (pattern,_), FileTarget file ->
-            file
-            |> File.getFullName
+            file.Name
             |> matchRulePattern pattern projectRoot
             |> Option.map (fun (groups, evidence) -> { Rule = rule; Groups = groups; Targets = [target]; Pattern = Some pattern; Specificity = specificityOf pattern; Index = index; Evidence = evidence })
 
         |MultiFileRule (patterns, _), FileTarget file ->
-            let fname = file |> File.getFullName
+            let fname = file.Name
             patterns
             |> List.tryPick(fun pattern ->
                 matchRulePattern pattern projectRoot fname
@@ -122,6 +121,30 @@ let newTaskContext targets matches ctx =
         HeldResources = []
     }
 
+/// Re-observes the file outputs of a rule that just finished.
+let private observeOutputs (ctx: ExecContext) (targets: Target list) = async {
+    for t in targets do
+        match t with
+        | FileTarget f -> do! observe ctx Output f |> Async.Ignore
+        | PhonyAction _ -> () }
+
+/// A new table for the two-spellings check of one run.
+let newSpellings () = System.Collections.Concurrent.ConcurrentDictionary<string, File * bool>(System.StringComparer.Ordinal)
+
+/// The two-spellings check (5.0): a file named in this run under another spelling of the same
+/// path (compared ignoring case). Two targets: an error (the target fails); otherwise a warning,
+/// once per pair. The case on disk is not checked.
+let checkSpelling (ctx: ExecContext) (isTarget: bool) (file: File) =
+    let first, firstTarget = ctx.Spellings.GetOrAdd(file.Name.ToUpperInvariant(), (file, isTarget))
+    if first <> file then
+        let show = File.display ctx.Options.ProjectRoot
+        if isTarget && firstTarget then
+            let errorText = sprintf "target '%s' is also named '%s'" (show first) (show file)
+            do ctx.Logger.Log Error "%s" errorText
+            raise (XakeException errorText)
+        elif ctx.Spellings.TryAdd("\u0000" + first.Name + "\u0000" + file.Name, (file, isTarget)) then
+            ctx.Logger.Log Warning "file '%s' is also named '%s' in this run" (show first) (show file)
+
 /// Executes a single target: locates the matching rule, submits the work to the
 /// scheduler, and returns the target, its execution status, and a dependency record.
 /// If no rule matches but a corresponding file exists, returns JustFile status.
@@ -134,23 +157,23 @@ let rec execOne (ctx: ExecContext) target =
             match ctx.NeedRebuild targets with
             | true ->
                 let taskContext = newTaskContext targets ruleMatches ctx
-                do ctx.Logger.Log Command "Started %s as task %i" primaryTarget.ShortName taskContext.Ordinal
+                do ctx.Logger.Log Command "Started %s as task %i" (primaryTarget.Display ctx.Options.ProjectRoot) taskContext.Ordinal
 
                 do Progress.TaskStart primaryTarget |> ctx.Progress.Post
 
                 let startResult = {BuildLog.makeResult targets with Steps = [Step.start "all"]}
                 let! (result,_) = action (startResult, taskContext)
-                // Built is the completion time: it is the change stamp of a phony target
-                // (see Dependency.ArtifactDep2 and DependencyAnalysis.getChangeStamp)
-                let result = {Step.updateTotalDuration result with Built = System.DateTime.Now}
+                // Built is the completion time; Epoch the run the task started in (A2)
+                let result = {Step.updateTotalDuration result with Built = System.DateTime.Now; Epoch = ctx.RunEpoch}
 
+                do! observeOutputs ctx targets
                 Store result |> ctx.Db.Post
 
                 do Progress.TaskComplete primaryTarget |> ctx.Progress.Post
-                do ctx.Logger.Log Command "Completed %s in %A ms (wait %A ms)" primaryTarget.ShortName (Step.lastStep result).OwnTime  (Step.lastStep result).WaitTime
+                do ctx.Logger.Log Command "Completed %s in %A ms (wait %A ms)" (primaryTarget.Display ctx.Options.ProjectRoot) (Step.lastStep result).OwnTime  (Step.lastStep result).WaitTime
                 return Succeed
             | false ->
-                do ctx.Logger.Log Command "Skipped %s (up to date)" primaryTarget.ShortName
+                do ctx.Logger.Log Command "Skipped %s (up to date)" (primaryTarget.Display ctx.Options.ProjectRoot)
                 return Skipped
         }
 
@@ -165,10 +188,12 @@ let rec execOne (ctx: ExecContext) target =
         let primaryTarget = targets |> List.head
         async {
             let taskContext = newTaskContext targets ruleMatches ctx
-            do ctx.Logger.Log Command "Started %s as delegated task %i" primaryTarget.ShortName taskContext.Ordinal
+            do ctx.Logger.Log Command "Started %s as delegated task %i" (primaryTarget.Display ctx.Options.ProjectRoot) taskContext.Ordinal
             do Progress.TaskStart primaryTarget |> ctx.Progress.Post
 
+            let bodyRan = ref false
             let bodyThunk () = async {
+                bodyRan.Value <- true
                 let startResult = {BuildLog.makeResult targets with Steps = [Step.start "all"]}
                 let! (result,_) = action (startResult, taskContext)
                 return {Step.updateTotalDuration result with Built = System.DateTime.Now}
@@ -176,11 +201,20 @@ let rec execOne (ctx: ExecContext) target =
 
             let! result =
                 Scheduler.withYieldedSlot ctx.Engine.Scheduler (executor taskContext targets bodyThunk)
+            // the body's result has the run's epoch; one returned without the body keeps the epoch
+            // of the local result (A3): a foreign epoch is never stored
+            let! epoch =
+                if bodyRan.Value then async.Return ctx.RunEpoch
+                else async {
+                    let! local = ctx.Db.PostAndAsyncReply(fun ch -> GetResult(primaryTarget, ch))
+                    return local |> Option.map (fun r -> r.Epoch) |> Option.defaultValue ctx.RunEpoch }
+            let result = { result with Epoch = epoch }
 
+            do! observeOutputs ctx targets
             Store result |> ctx.Db.Post
 
             do Progress.TaskComplete primaryTarget |> ctx.Progress.Post
-            do ctx.Logger.Log Command "Completed delegated %s" primaryTarget.ShortName
+            do ctx.Logger.Log Command "Completed delegated %s" (primaryTarget.Display ctx.Options.ProjectRoot)
             return Succeed
         }
 
@@ -201,8 +235,8 @@ let rec execOne (ctx: ExecContext) target =
     ctx.Vars
     |> List.tryPick (fun (k, v) -> if System.String.Equals(k, "EXPLAIN_RULE", System.StringComparison.OrdinalIgnoreCase) then Some v else None)
     |> Option.iter (fun wanted ->
-        if target.ShortName = wanted || target.FullName = wanted || target.FullName.EndsWith wanted then
-            ctx.Logger.Log Message "Rule candidates for '%s' (%s):" target.FullName
+        if target.Name = wanted || target.Display ctx.Options.ProjectRoot = wanted || target.Name.EndsWith wanted then
+            ctx.Logger.Log Message "Rule candidates for '%s' (%s):" (target.Display ctx.Options.ProjectRoot)
                 (match ruleMatchMode with MostSpecific -> "most specific wins" | LastDeclared -> "last declared wins")
             candidates |> List.iteri (fun i m ->
                 let (l, d, w) = m.Specificity
@@ -231,7 +265,7 @@ let rec execOne (ctx: ExecContext) target =
                 let (l, d, w) = best.Specificity
                 ctx.Logger.Log Warning
                     "Ambiguous rules for '%s': '%s' and '%s' have equal specificity {lit=%d, **=%d, wc=%d}; last-declared '%s' chosen. Make one more specific or reorder."
-                    target.FullName bestPat (String.concat "', '" ties) l (-d) (-w) bestPat
+                    (target.Display ctx.Options.ProjectRoot) bestPat (String.concat "', '" ties) l (-d) (-w) bestPat
         | None -> ()
     | _ -> ()
 
@@ -239,7 +273,11 @@ let rec execOne (ctx: ExecContext) target =
     match selected with
     | Some { Pattern = Some pattern; Evidence = evidence } ->
         for code in evidence do
-            PatternAst.Warnings.reportEvidence "rule" pattern (Path.ruleEvidence code target.FullName)
+            PatternAst.Warnings.reportEvidence "rule" pattern (Path.ruleEvidence code target.Name)
+    | _ -> ()
+
+    match target, selected with
+    | FileTarget file, _ -> checkSpelling ctx selected.IsSome file
     | _ -> ()
 
     match selected with
@@ -253,17 +291,22 @@ let rec execOne (ctx: ExecContext) target =
         async {
             let! waitTask = (fun channel -> Run(target, targets, taskAction, channel)) |> (Scheduler.pool ctx.Engine.Scheduler).PostAndAsyncReply
             let! status = waitTask
-            // the dependee is built or up to date now: record its change stamp, so a later run
-            // sees a rebuild done in between, by another run or target group (S66)
-            let stamp = getChangeStamp ctx target |> Option.defaultValue System.DateTime.MinValue
-            return target, status, ArtifactDep2 (target, stamp)
+            // the dependee is built or up to date now: its file is observed (a built one already
+            // was, right after its rule) and the dependency recorded by id (decision 1c)
+            match target with
+            | FileTarget file -> do! observe ctx Verdict file |> Async.Ignore
+            | PhonyAction _ -> ()
+            return target, status, TargetDep target
         }
     | None ->
         target |> function
         | FileTarget file when File.exists file ->
-            async.Return <| (target, ExecStatus.JustFile, FileDep (file, File.getLastWriteTime file))
+            async {
+                do! observe ctx Recording file |> Async.Ignore
+                return target, ExecStatus.JustFile, FileDep file
+            }
         | _ ->
-            let errorText = sprintf "Neither rule nor file is found for '%s'" target.FullName
+            let errorText = sprintf "Neither rule nor file is found for '%s'" (target.Display ctx.Options.ProjectRoot)
             do ctx.Logger.Log Error "%s" errorText
             raise (XakeException errorText)
 
@@ -290,12 +333,12 @@ and execNeed (ctx: ExecContext) targets : Async<ExecStatus * Dependency list> =
             | Some needed ->
                 let needing =
                     match ctx.Targets with
-                    | t :: _ -> sprintf "target '%s'" t.FullName
+                    | t :: _ -> sprintf "target '%s'" (t.Display ctx.Options.ProjectRoot)
                     | [] -> "the script"
                 let resources = held |> List.map (sprintf "'%s'") |> String.concat ", "
                 let errorText =
                     sprintf "need inside withResource: %s needs '%s' while it holds the resource %s. A dependency built under a held resource can deadlock the build. Move the need before withResource (or acquire the resource around the command only), or wrap it in allowNeed if the dependency never takes the resource."
-                        needing needed.FullName resources
+                        needing (needed.Display ctx.Options.ProjectRoot) resources
                 do ctx.Logger.Log Error "%s" errorText
                 raise (XakeException errorText)
 
@@ -347,6 +390,14 @@ let rec runSeq<'r> :Async<'r> list -> Async<'r list> =
 /// Maps a function over the result of an async computation.
 let asyncMap f c = async.Bind(c, f >> async.Return)
 
+/// Starts a run (B2): the pool's run boundary, the next epoch, the verdict memo of the run and
+/// its table of spellings. Every target group of the command line and every demand is a run.
+let beginRun (ctx: ExecContext) = async {
+    do Scheduler.newRun ctx.Engine.Scheduler
+    let! epoch = ctx.Db.PostAndAsyncReply Storage.NewRun
+    let ctx = { ctx with Spellings = newSpellings (); RunEpoch = epoch }
+    return ctx, getChangeReasons ctx |> memoizeRec }
+
 /// Runs the full build pipeline for the given target groups.
 /// Each group is executed sequentially; targets within a group run in parallel.
 /// Returns the combined list of target/status/dependency results.
@@ -354,32 +405,24 @@ let runBuild (ctx: ExecContext) groups =
     let options = ctx.Options
 
     let runTargets ctx targets =
-        let getDeps = getChangeReasons ctx |> memoizeRec
-
-        let needRebuild (target: Target) =
-            getDeps >>
-            function
-            | [] -> false, ""
-            | Other reason::_        -> true, reason
-            | Depends t ::_          -> true, "Depends on target " + t.ShortName
-            | DependsMissingTarget t ::_ -> true, sprintf "Depends on target %s (missing)" t.ShortName
-            | FilesChanged (file::_) ::_ -> true, "File(s) changed " + file
-            | reasons -> true, sprintf "Some reason %A" reasons
-            >>
-            function
-            | false, _ -> false
-            | true, reason ->
-                do ctx.Logger.Log Info "Rebuild %A: %s" target.ShortName reason
-                true
-            <| target
-            // todo improve output by printing primary target
-
         async {
             do ctx.Logger.Log Info "Build target list %A" targets
 
-            // the change analysis below is memoized for the whole group, so the pool has to
-            // treat the group as one run: a target it already built must not be built again
-            do Scheduler.newRun ctx.Engine.Scheduler
+            // the change analysis is memoized for the whole group, so the group is one run
+            let! ctx, getDeps = beginRun ctx
+            let needRebuild (target: Target) =
+                match getDeps target with
+                | [] -> false
+                | reasons ->
+                    let reason =
+                        match reasons with
+                        | Other reason :: _ -> reason
+                        | Depends t :: _ -> "Depends on target " + t.Display options.ProjectRoot
+                        | DependsMissingTarget t :: _ -> sprintf "Depends on target %s (missing)" (t.Display options.ProjectRoot)
+                        | FilesChanged (file :: _) :: _ -> "File(s) changed " + file
+                        | reasons -> sprintf "Some reason %A" reasons
+                    do ctx.Logger.Log Info "Rebuild %A: %s" (target.Display options.ProjectRoot) reason
+                    true
 
             let progressSink = Progress.openProgress (getDurationDeps ctx getDeps) options.Threads targets ctx.ShowProgress
             let stepCtx = {ctx with NeedRebuild = List.exists needRebuild; Progress = progressSink}
@@ -398,6 +441,8 @@ let runBuild (ctx: ExecContext) groups =
 /// Creates the shared execution context and returns it together with a finalize callback.
 /// The finalize callback closes the database, disposes the scheduler, and flushes logs.
 let createContextCore (options: EngineOptions) (db: Agent<Storage.DatabaseApi>) vars showProgress =
+    // the root every path is shown and stored against, normalised once (A6, R3)
+    let options = { options with ProjectRoot = (File.make options.ProjectRoot).Name }
     let logger = options.Logger
     let scheduler = Scheduler.create logger options.Threads
     // pattern warnings (spec 7.3) and fileset scan notes (6.5, 6.6), including those buffered at
@@ -428,6 +473,8 @@ let createContextCore (options: EngineOptions) (db: Agent<Storage.DatabaseApi>) 
         Vars = vars
         ShowProgress = showProgress
         HeldResources = []
+        Spellings = newSpellings ()
+        RunEpoch = 0
         }
     ctx, finalize
 
@@ -441,8 +488,7 @@ let createContext (options: EngineOptions) vars =
 let demandTarget (ctx: ExecContext) (targetName: string) : Async<ExecStatus> =
     async {
         let target = makeTarget ctx targetName
-        do Scheduler.newRun ctx.Engine.Scheduler
-        let getDeps = getChangeReasons ctx |> memoizeRec
+        let! ctx, getDeps = beginRun ctx
         let needRebuild (t: Target) =
             getDeps t |> function | [] -> false | _ -> true
         let progressSink = Progress.openProgress (getDurationDeps ctx getDeps) ctx.Engine.Options.Threads [target] ctx.ShowProgress

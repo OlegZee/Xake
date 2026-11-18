@@ -233,28 +233,44 @@ let parse = impl.parse false
 /// parses when a fileset is evaluated.
 let maskText = impl.maskText
 
+/// Normalises a path lexically (5.0): `\` -> `/` when `windows`; `.` and `..` collapsed against the
+/// preceding name; repeated separators removed; the root (`/`, `C:`) kept, a `..` above it dropped; a
+/// trailing separator dropped (except the root's); a leading `//` (UNC) kept when `windows`; case
+/// kept except a Windows drive letter (upper-cased); no symlink resolution. `File.make` and rule/mask matching use it.
+/// A leading Windows drive letter upper-cased (A6): `c:` and `C:` name one root. Applied to paths
+/// by `collapseWith` and to rule patterns by `matchRule`.
+let internal upperDrive (windows: bool) (p: string) =
+    if windows && p.Length >= 2 && p.[1] = ':' && System.Char.IsLower p.[0] then
+        string (System.Char.ToUpperInvariant p.[0]) + p.Substring 1
+    else p
+
+let internal collapseWith (windows: bool) (path: string) =
+    let p = upperDrive windows (if windows then path.Replace('\\', '/') else path)
+    let isDrive (s: string) = s.Length = 2 && s.[1] = ':'
+    if p.IndexOf("/.", System.StringComparison.Ordinal) < 0 && not (p.StartsWith "./") && p <> "."
+       && p.IndexOf("//", System.StringComparison.Ordinal) < 0
+       && (p.Length < 2 || not (p.EndsWith "/") || (p.Length = 3 && isDrive (p.Substring(0, 2)))) then p
+    else
+        let segs = p.Split('/')
+        let out = System.Collections.Generic.List<string>()
+        segs |> Array.iteri (fun i s ->
+            match s with
+            | "" when i = 0 -> out.Add ""
+            | "" when i = 1 && windows && segs.[0] = "" && segs.Length > 2 && segs.[2] <> "" -> out.Add ""   // UNC (R1)
+            | "" | "." -> ()
+            | ".." when out.Count > 0 && (let top = out.[out.Count - 1] in top = "" || isDrive top) -> ()   // above a root (R7)
+            | ".." when out.Count > 0 && out.[out.Count - 1] <> ".." -> out.RemoveAt(out.Count - 1)
+            | s -> out.Add s)
+        match List.ofSeq out with
+        | [ "" ] | [ ""; "" ] -> "/"
+        | [ d ] when isDrive d && p.Length > 2 -> d + "/"
+        | [] -> "."
+        | xs -> System.String.Join("/", xs)
+
+/// `collapseWith` with this OS's rule.
+let internal collapse (path: string) = collapseWith (not Env.isUnix) path
+
 module private RuleImpl =
-
-    /// The comparer of D11: ignore-case and `\` a path separator on Windows, ordinal elsewhere.
-    let windows = not Env.isUnix
-
-    /// Collapses "." and ".." against the preceding name and runs of separators, as `File.make`
-    /// does for a target path; a root ("", "C:") is never popped. `\` is a separator on Windows.
-    let collapsePath (path: string) =
-        let p = if windows then path.Replace('\\', '/') else path
-        if p.IndexOf("/.", System.StringComparison.Ordinal) < 0 && not (p.StartsWith "./")
-           && (p.Length < 2 || p.IndexOf("//", 1, System.StringComparison.Ordinal) < 0) then p
-        else
-            let segs = p.Split('/')
-            let out = System.Collections.Generic.List<string>()
-            segs |> Array.iteri (fun i s ->
-                match s with
-                | "" when i > 0 && i < segs.Length - 1 -> ()
-                | "." when segs.Length > 1 -> ()
-                | ".." when out.Count > 0 && (let top = out.[out.Count - 1] in top <> ".." && top <> "" && not (top.Length = 2 && top.[1] = ':')) ->
-                    out.RemoveAt(out.Count - 1)
-                | s -> out.Add s)
-            System.String.Join("/", out)
 
     let private isMeta (s: string) = s.IndexOfAny([| '*'; '?'; '['; '{'; '('; '\\' |]) >= 0
 
@@ -291,9 +307,11 @@ module private RuleImpl =
 /// named groups in pattern order) and the evidence codes of the match (XP119). Raises
 /// `PatternAst.PatternException` for an invalid pattern.
 let internal matchRule (pattern: string) (rootPath: string) : string -> ((string * string) list * string list) option =
-    let pattern = RuleImpl.collapsePrefix pattern
+    let pattern = RuleImpl.collapsePrefix (upperDrive (not Env.isUnix) pattern)
+    // a non-empty root is normalised as the file is (C2); the phony root "" stays
+    let rootPath = if rootPath = "" then "" else collapse rootPath
     fun file ->
-        match PatternMatch.matchRule RuleImpl.windows rootPath pattern (RuleImpl.collapsePath file) with
+        match PatternMatch.matchRule rootPath pattern (collapse file) with
         | None -> None
         | Some m ->
             let positional =
@@ -314,7 +332,9 @@ let matchGroups (pattern:string) rootPath =
 /// `.` and `..` in the file path are resolved first. Raises `PatternAst.PatternException` for an
 /// invalid mask.
 let matches filePattern rootPath =
-    fun file -> PatternMatch.matchMask RuleImpl.windows rootPath filePattern (RuleImpl.collapsePath file) false
+    // case ignored on every OS, as a fileset's default (B4)
+    let m = PatternMatch.maskMatcher true (if rootPath = "" then "" else collapse rootPath) filePattern
+    fun file -> m (collapse file) false
 
 /// Specificity of a rule pattern (spec 5.8, see the `Specificity` type), memoized per pattern
 /// string. Raises `PatternAst.PatternException` for an invalid pattern.

@@ -32,9 +32,8 @@ let createScriptContext (opts: ExecOptions) rules =
             Storage.noopDb ()
         else
             let dbPath = engineOpts.ProjectRoot </> opts.DbFileName
-            if opts.ResetDb then
-                Storage.cleanupDb dbPath engineOpts.Logger
-            Storage.openDb dbPath engineOpts.Logger
+            // the lock first: --resetdb runs under it (A5)
+            Storage.openDbWith (System.TimeSpan.FromSeconds 30.0) opts.ResetDb engineOpts.ProjectRoot dbPath engineOpts.Logger
     let ctx, finalize = ExecCore.createContextCore engineOpts db (VarEvaluation.flatVars variables) opts.Progress
     ctx, finalize, launchErrors
 
@@ -111,9 +110,9 @@ let dryRun (ctx: ExecContext) (setup: string list) (groups: string list list) =
         | Other reason ->
             print "%sReason: %s" (indent ii) reason
         | Depends t ->
-            print "%sDepends '%s' - changed target" (indent ii) t.ShortName
+            print "%sDepends '%s' - changed target" (indent ii) (t.Display options.ProjectRoot)
         | DependsMissingTarget t ->
-            print "%sDepends on '%s' - missing target" (indent ii) t.ShortName
+            print "%sDepends on '%s' - missing target" (indent ii) (t.Display options.ProjectRoot)
         | FilesChanged (file:: rest) ->
             print "%sFile is changed '%s' %s" (indent ii) file (if List.isEmpty rest then "" else sprintf " and %d more file(s)" <| List.length rest)
         | reasons ->
@@ -131,7 +130,7 @@ let dryRun (ctx: ExecContext) (setup: string list) (groups: string list list) =
             let deps = getDeps target
             if not <| List.isEmpty deps then
                 let execTimeEstimate = getExecTime ctx target
-                do ctx.Logger.Log Command "%sRebuild %A (~%Ams)" (indent ii) target.ShortName execTimeEstimate
+                do ctx.Logger.Log Command "%sRebuild %A (~%Ams)" (indent ii) (target.Display options.ProjectRoot) execTimeEstimate
                 deps |> List.iter (showDepStatus (ii+1))
                 deps |> List.iter (displayNestedDeps (ii+1))
 
@@ -198,9 +197,13 @@ let runScript options rules =
             exitCode <- 2
             if options.ThrowOnError then raise (XakeException errorText)
         | Dump ->
+            Storage.InMemory |> ctx.Db.Post
+            ctx.Db.PostAndReply Storage.NewRun |> ignore
             do logger.Log Level.Command "Dumping dependencies for targets %A" targetLists
             targetLists |> List.iter (List.map (ExecCore.makeTarget ctx) >> (dumpDeps ctx))
         | Dryrun ->
+            Storage.InMemory |> ctx.Db.Post
+            ctx.Db.PostAndReply Storage.NewRun |> ignore
             targetLists |> dryRun ctx options.Setup
         | _ ->
             let mutable reraisedError = None

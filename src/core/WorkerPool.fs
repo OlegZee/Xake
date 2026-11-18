@@ -23,7 +23,7 @@ module internal WorkerPool =
     let throttler = new SemaphoreSlim (maxThreads)
     let log = logger.Log
 
-    let mapKey (artifact:Target) = artifact.FullName
+    let mapKey (artifact:Target) = artifact.Name
 
     // Logging the agent's own failure must not throw out of the loop again.
     let logError fmt = Printf.kprintf (fun s -> try log Error "%s" s with _ -> ()) fmt
@@ -41,19 +41,19 @@ module internal WorkerPool =
               // run that produced them
               match running |> Map.tryFind mkey |> Option.orElse (finished |> Map.tryFind mkey) with
               | Some result ->
-                  log Never "Task found for '%s'" artifact.ShortName
+                  log Never "Task found for '%s'" artifact.Name
                   chnl.Reply result
                   return running, finished
 
               | None ->
-                  do log Info "Task queued '%s'" artifact.ShortName
+                  do log Info "Task queued '%s'" artifact.Name
                   do! throttler.WaitAsync(-1) |> Async.AwaitTask |> Async.Ignore
                   acquired := true
                   let keys = targets |> List.map mapKey
                   let task = Async.StartAsTask (async {
                       try
                           let! buildResult = action
-                          do log Info "Task done '%s'" artifact.ShortName
+                          do log Info "Task done '%s'" artifact.Name
                           return buildResult
                       finally
                           throttler.Release() |> ignore
@@ -88,7 +88,7 @@ module internal WorkerPool =
                   if acquired.Value then throttler.Release() |> ignore
                   match msg with
                   | Run(artifact, _, _, chnl) ->
-                      let text = sprintf "WorkerPool agent failed to schedule '%s': %s" (try artifact.ShortName with _ -> "?") ex.Message
+                      let text = sprintf "WorkerPool agent failed to schedule '%s': %s" (try artifact.Name with _ -> "?") ex.Message
                       logError "%s" text
                       let error = XakeException text
                       try chnl.Reply (async { return raise error }) with _ -> ()

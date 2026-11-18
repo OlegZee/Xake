@@ -3,8 +3,6 @@
 [<AutoOpen>]
 module DomainTypes =
 
-    let private stringCompare = if Env.isUnix then System.StringComparer.Ordinal else System.StringComparer.OrdinalIgnoreCase
-
     /// A build target: either a file to produce or a phony named action.
     [<CustomEquality;CustomComparison>]
     type Target =
@@ -12,25 +10,27 @@ module DomainTypes =
         | PhonyAction of string
 
         with
-            member internal this.ShortName =
+            /// Xake's full name: a file's `Name`, a phony's name; the identity.
+            member internal this.Name =
                 match this with
                 | FileTarget file -> file.Name
                 | PhonyAction name -> name
-            member internal this.FullName =
+            /// The name the engine shows: a file relative to `root` (`File.display`), a phony as is.
+            member internal this.Display (root: string) =
                 match this with
-                | FileTarget file -> file.FullName
+                | FileTarget file -> File.display root file
                 | PhonyAction name -> name
             
             override x.Equals(yobj) =
                 match yobj with
-                | :? Target as y -> stringCompare.Equals (x.FullName, y.FullName)
+                | :? Target as y -> File.comparer.Equals (x.Name, y.Name)
                 | _ -> false
 
-            override x.GetHashCode() = stringCompare.GetHashCode x.FullName
+            override x.GetHashCode() = File.comparer.GetHashCode x.Name
             interface System.IComparable with 
                 member x.CompareTo y =
                     match y with
-                    | :? Target as y -> stringCompare.Compare(x.FullName, y.FullName)
+                    | :? Target as y -> File.comparer.Compare(x.Name, y.Name)
                     | _ -> invalidArg "y" "cannot compare target to different types"
 
     /// Alias for System.DateTime used for file timestamps.
@@ -64,21 +64,24 @@ module DomainTypes =
         /// the variable was set; HMAC-SHA256 of its UTF-8 value keyed by a random salt kept with it
         | SecretHmac of salt: byte[] * hmac: byte[]
 
-    /// A tracked dependency that determines whether a target needs rebuilding.
+    /// What the database knows of a file (database 0.7): the stat seen at its last observation
+    /// and the run (epoch) in which its content was last seen to change. `Size` -1 is unknown;
+    /// `Hash` is not computed before phase 3 (always None).
+    type FileState = { Stamp: Timestamp; Size: int64; Hash: uint64 option; Changed: int }
+
+    /// A tracked dependency that determines whether a target needs rebuilding. A file or target
+    /// dependency stores no stamp: the verdict compares the file's `Changed` (or a phony's
+    /// `Epoch`) with the dependent's `Epoch`.
     type Dependency =
-        | FileDep of File * Timestamp // regular file (such as source code file), triggers when file date/time is changed
-        /// Other target, recorded by Xake databases before version 0.5 (no change stamp).
-        /// Still read from old databases; judged as changed once so it is re-recorded as ArtifactDep2.
-        | ArtifactDep of Target
-        /// Other target (a target that has a rule) with its change stamp as observed when the
-        /// dependent recorded the dependency, right after the dependee was built or found up to date:
-        /// for a FileTarget the file's last write time, for a PhonyAction the completion time of
-        /// its last build (BuildResult.Built). Triggers when the stamp moves or the dependee is out of date.
-        | ArtifactDep2 of Target * Timestamp
+        /// a file without a rule (such as a source file)
+        | FileDep of File
+        /// a rule's output file or a phony target
+        | TargetDep of Target
+        /// depends on set of files. Triggers when resulting filelist is changed
+        | GetFiles of Fileset * Filelist
         | EnvVar of string * string option // environment variable
         | Var of string * string option // any other data such as compiler version (not used yet)
         | AlwaysRerun // trigger always
-        | GetFiles of Fileset * Filelist // depends on set of files. Triggers when resulting filelist is changed
         /// A secret variable (database 0.6): its name, source and a digest, never its value.
         /// Triggers when the digest no longer matches the current value.
         | SecretDep of name: string * source: SecretSource * digest: SecretDigest
@@ -91,9 +94,14 @@ module DomainTypes =
     /// Recorded result of building one or more targets, including dependencies and step timings.
     type BuildResult =
         { Targets : Target list
+          /// the wall-clock completion time
           Built : Timestamp
+          /// the run (epoch) that built it; what the verdict compares
+          Epoch : int
           Depends : Dependency list
-          Steps : StepInfo list }
+          Steps : StepInfo list
+          /// the number of leading `Depends` entries that came from the rule header (0 in 5.0 phase 1)
+          StaticCount : int }
 
     /// An async build action that threads BuildResult state through its execution.
     type Recipe<'a,'b> = Recipe of (BuildResult * 'a -> Async<BuildResult * 'b>)

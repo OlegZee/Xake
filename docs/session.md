@@ -1,5 +1,13 @@
 # Session notes
 
+## Xake 5.0 in phases (2026-11-18)
+
+5.0 is built in three phases, one squash-merged PR each, the 5.0 tag only at the end. Phase 1
+(`File`, database 0.7, epochs) is OlegZee/Xake#141, folder
+[features/db-paths-simple](features/db-paths-simple/session.md); phase 2 (rule header, `also`) and
+phase 3 (hashing and content cut-off) follow. The release notes collect it under "5.0.0
+(unreleased)".
+
 ## State of `dev`: the 4.0 line (2026-10-31, pattern module 2026-11-03)
 
 `dev` carries the variable rework (#111, #112) and is the line of **Xake 4.0**, a breaking release
@@ -160,6 +168,18 @@ a rule it should have skipped (the flaky `executes need only once`). The three
 file opens now retry an `IOException` up to five times with a 20 ms backoff; real corruption still
 goes to the recreate path. The `EndOfStreamException` warning in test runs is deliberate: the
 `handles broken database` and storage tests write garbage on purpose.
+
+## Traps from 5.0 phase 1 (db-paths-simple)
+
+- **Engine-mode tests stop the engine in `finally`.** An engine holds `.xake.lock` for its
+  lifetime; a test that fails before `StopAsync` leaves the lock held, and every later test in the
+  same folder waits 30 s for it and fails.
+- **Windows tests run on the VM:** `ssh win11` (PowerShell), a clone in
+  `$HOME\source\repos\Xake`; macOS does not see drive letters, `\` paths or case-insensitive
+  ordinal mismatches.
+- **Rule and mask roots are normalised with the same `Path.collapse` as the file** (and a rule
+  pattern's drive letter is upper-cased): the matcher compares Xake's forms only. A root or pattern
+  passed as given (`c:/` against a file's `C:/`) never matches on Windows.
 
 ## How to verify changes here
 

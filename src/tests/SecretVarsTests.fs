@@ -1,4 +1,4 @@
-namespace Tests
+﻿namespace Tests
 
 open System
 open System.IO
@@ -150,7 +150,7 @@ type ``Secret variables``() =
             Assert.That(logged, Has.Some.Contains "Upgrading database")
             let ver, results = OldDatabase.read ".xake"
             Assert.AreEqual(BuildLog.XakeDbVersion, ver)
-            Assert.AreEqual("0.6", ver)
+            Assert.AreEqual("0.7", ver)
             let deps = results |> List.collect (fun r -> r.Depends)
             Assert.That(deps, Does.Contain(SecretDep (name, SecretEnv, SecretPresent)))
             Assert.That(deps, Does.Contain(EnvVar ("XAKE_UNRELATED_OLD", None)))
@@ -180,12 +180,7 @@ type ``Secret variables``() =
               SecretDep ("B_SECRET", SecretArg, SecretPresent)
               SecretDep ("C_SECRET", SecretEnv, SecretHmac ([| 1uy; 2uy; 3uy |], Array.init 32 byte)) ]
         let result = { BuildLog.makeResult [PhonyAction "x"] with Depends = deps }
-        use stream = new MemoryStream()
-        use w = new BinaryWriter(stream)
-        Storage.resultPU.pickle result w
-        stream.Position <- 0L
-        use r = new BinaryReader(stream)
-        Assert.AreEqual(result, Storage.resultPU.unpickle r)
+        Assert.AreEqual(result, DbFormat.result result)
 
     [<Test>]
     member x.``--dryrun shows the reason without the value``() =

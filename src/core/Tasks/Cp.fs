@@ -61,7 +61,7 @@ module CpImpl =
         let! ctx = getCtx()
 
         let copyFile target getRelativePath file =
-            let fullname = file |> Xake.File.getFullName
+            let fullname = file |> Xake.File.getSysFileName
             let tofile = target </> (getRelativePath file)
 
             ctx.Logger.Log
@@ -100,7 +100,7 @@ module CpImpl =
                 if flatten then Xake.File.getFileName
                 else
                     let baseFullPath = impl.getBasedirFullPath projectRoot fileset
-                    Xake.File.getFullName >> (impl.makeRelPath baseFullPath)
+                    Xake.File.getSysFileName >> (impl.makeRelPath baseFullPath)
 
             ctx.Logger.Log Level.Debug "[copy] materializing fileset %A at folder %s" fileset projectRoot
             let (Filelist files) = fileset |> (toFileList projectRoot)
@@ -136,7 +136,8 @@ module CpImpl =
     /// Requests the file and writes under specific name
     /// </summary>
     let copyFrom (src: string) = recipe {
-        let! tgt = getTargetFullName()
+        let! target = getTargetFile()
+        let tgt = Xake.File.getSysFileName target
         do! copyFile src tgt
     }
 

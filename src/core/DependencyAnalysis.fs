@@ -13,7 +13,6 @@ type ChangeReason =
     | FilesChanged of string list
     | Other of string
 
-let TimeCompareToleranceMs = 10.0
 
 /// <summary>
 /// Gets target execution time in the last run
@@ -24,65 +23,51 @@ let getExecTime (ctx: ExecContext) target =
     (fun ch -> Storage.GetResult(target, ch)) |> ctx.Db.PostAndReply
     |> Option.fold (fun _ r -> r.Steps |> List.sumBy (fun s -> s.OwnTime)) 0<ms>
 
-/// <summary>
-/// Gets the current change stamp of a target that has a rule (see Dependency.ArtifactDep2):
-/// for a file target its last write time (None if the file is missing), for a phony target
-/// the completion time of its last build as stored in the database (None if never built).
-/// </summary>
-let getChangeStamp (ctx: ExecContext) = function
-    | FileTarget file -> if File.exists file then Some (File.getLastWriteTime file) else None
-    | PhonyAction _ as target ->
-        (fun ch -> GetResult(target, ch)) |> ctx.Db.PostAndReply
-        |> Option.map (fun r -> r.Built)
+/// Observes a file through the database (decisions 1c, A1): its state, None if missing.
+let observe (ctx: ExecContext) (mode: ObserveMode) (file: File) =
+    ctx.Db.PostAndAsyncReply(fun ch -> Observe(file, mode, ch))
 
-/// Tells whether the dependee's change stamp differs from the one the dependent recorded.
-/// A file stamp is a write time: any move beyond the tolerance (a restored older file too) is a change.
-/// A phony stamp is a completion time: only a later one is a change.
-let private stampMoved target (recorded: Timestamp) (current: Timestamp option) =
-    match target, current with
-    | _, None -> true
-    | FileTarget _, Some current -> abs((current - recorded).TotalMilliseconds) >= TimeCompareToleranceMs
-    | PhonyAction _, Some current -> current.Ticks > recorded.Ticks
-
-/// Gets single dependency state and reason of a change.
-/// `getStamp` gives the dependee's current change stamp (see getChangeStamp).
-let rec getDepState getVar getFileList (getChangedDeps: Target -> ChangeReason list) (getStamp: Target -> Timestamp option) x = 
-    match x with
-    | FileDep (a:File, wrtime) when not((File.exists a) && abs((File.getLastWriteTime a - wrtime).TotalMilliseconds) < TimeCompareToleranceMs) ->
-        let dbgInfo = File.exists a |> function
-            | false -> "file does not exists"
-            | _ -> sprintf "write time: %A vs %A" (File.getLastWriteTime a) wrtime
-        ChangeReason.FilesChanged [a.Name], Some dbgInfo
-
-    | ArtifactDep (FileTarget file) when not (File.exists file) ->
-        ChangeReason.DependsMissingTarget (FileTarget file), None
-
-    | ArtifactDep dependeeTarget ->
-        // recorded by Xake before database 0.5: there is no stamp to tell whether the dependee
-        // was rebuilt by an earlier separate run (S66), so it counts as changed once and the
-        // rebuild records ArtifactDep2
-        ChangeReason.Depends dependeeTarget, Some "dependency recorded by an older Xake (no change stamp)"
-
-    | ArtifactDep2 (FileTarget file, _) when not (File.exists file) ->
-        ChangeReason.DependsMissingTarget (FileTarget file), None
-
-    | ArtifactDep2 (dependeeTarget, recorded) when stampMoved dependeeTarget recorded (getStamp dependeeTarget) ->
-        ChangeReason.Depends dependeeTarget,
-            Some (sprintf "dependee changed since recorded: %A -> %A" recorded (getStamp dependeeTarget))
-
-    | ArtifactDep2 (dependeeTarget, _) ->
+/// Gets single dependency state and reason of a change, for a dependent built in run `epoch`
+/// (decision 1c): a file or target dependency changed when it was seen to change after that run;
+/// a dependee target that is itself out of date makes the dependent out of date too (4.0).
+let rec getDepState getVar getFileList (getChangedDeps: Target -> ChangeReason list)
+                    (observe: File -> FileState option) (getResult: Target -> BuildResult option)
+                    (show: File -> string) (epoch: int) x =
+    let recurse = getDepState getVar getFileList getChangedDeps observe getResult show epoch
+    let transitive dependeeTarget =
         dependeeTarget |> getChangedDeps |> List.filter ((<>) ChangeReason.NotChanged)
         |> function
             |  [] -> NotChanged, None
             |item::_ ->
                 ChangeReason.Depends dependeeTarget, Some (sprintf "E.g. %A..." item)
+    match x with
+    | FileDep file ->
+        (match observe file with
+         | None -> ChangeReason.FilesChanged [show file], Some "file does not exist"
+         | Some st when st.Changed > epoch ->
+            ChangeReason.FilesChanged [show file], Some (sprintf "changed in run %d, after run %d (stamp %A, size %d)" st.Changed epoch st.Stamp st.Size)
+         | Some _ -> NotChanged, None)
+
+    | TargetDep (FileTarget file as t) ->
+        (match observe file with
+         | None -> ChangeReason.DependsMissingTarget t, None
+         | Some st when st.Changed > epoch ->
+            ChangeReason.Depends t, Some (sprintf "dependee changed in run %d, after run %d" st.Changed epoch)
+         | Some _ -> transitive t)
+
+    | TargetDep (PhonyAction _ as t) ->
+        (match getResult t with
+         | None -> ChangeReason.Depends t, Some "the dependee has no result"
+         | Some r when r.Epoch > epoch ->
+            ChangeReason.Depends t, Some (sprintf "dependee built in run %d, after run %d" r.Epoch epoch)
+         | Some _ -> transitive t)
 
     // a clear-value record of a name declared secret is judged as its digest, never printed
     | EnvVar (name, value) when Secrets.isSecret name ->
-        getDepState getVar getFileList getChangedDeps getStamp (Secrets.scrub x)
+        recurse (Secrets.scrub x)
 
     | Var (name, value) when Secrets.isSecret name ->
-        getDepState getVar getFileList getChangedDeps getStamp (Secrets.scrub x)
+        recurse (Secrets.scrub x)
 
     | SecretDep (name, source, digest) ->
         let current =
@@ -111,7 +96,8 @@ let rec getDepState getVar getFileList (getChangedDeps: Target -> ChangeReason l
             NotChanged, None
         else
             Other <| sprintf "File list is changed for fileset %A" fileset, Some (sprintf "The diff list is %A" diff)
-    | _ -> NotChanged, None
+
+    | EnvVar _ | Var _ -> NotChanged, None
 
 
 /// <summary>
@@ -137,8 +123,11 @@ let getChangeReasons (ctx: ExecContext) getTargetDeps target =
     | Some {BuildResult.Depends = []} ->
         [ChangeReason.Other "No dependencies", Some "It means target is not \"pure\" and depends on something beyond our control (oracle)"]
 
-    | Some {BuildResult.Depends = depends; Targets = result} ->
-        let depState = getDepState (Util.getVar ctx.Vars) (toFileList ctx.Options.ProjectRoot) getTargetDeps (getChangeStamp ctx)
+    | Some {BuildResult.Depends = depends; Targets = result; Epoch = epoch} ->
+        let getResult t = (fun ch -> GetResult(t, ch)) |> ctx.Db.PostAndReply
+        let depState =
+            getDepState (Util.getVar ctx.Vars) (toFileList ctx.Options.ProjectRoot) getTargetDeps
+                        (observe ctx Verdict >> Async.RunSynchronously) getResult (File.display ctx.Options.ProjectRoot) epoch
 
         depends
             |> List.map depState
@@ -177,31 +166,27 @@ let dumpDeps (ctx: ExecContext) (target: Target list) =
     // the dump goes to stdout, past the loggers: mask the values of secret variables here
     let printfn fmt = Printf.kprintf (SecretMask.apply >> System.Console.WriteLine) fmt
 
+    let show = File.display ctx.Options.ProjectRoot
+    let state (f: File) =
+        match observe ctx Verdict f |> Async.RunSynchronously with
+        | Some st -> sprintf "stamp %A, size %d, changed in run %d" st.Stamp st.Size st.Changed
+        | None -> "NOT EXISTS"
+
     let rec displayNestedDeps ii =
         function
-        | ArtifactDep dependeeTarget ->
-            printfn "%sArtifact: %A (no stamp, recorded by an older Xake)" (indent ii) dependeeTarget.FullName
-            showTargetStatus (ii+1) dependeeTarget
-        | ArtifactDep2 (dependeeTarget, stamp) ->
-            let changed =
-                match getChangeStamp ctx dependeeTarget with
-                | Some current when current = stamp -> ""
-                | current -> sprintf " CHANGED (now %A)" current
-            printfn "%sArtifact: %A %A%s" (indent ii) dependeeTarget.FullName stamp changed
+        | TargetDep dependeeTarget ->
             showTargetStatus (ii+1) dependeeTarget
         | _ -> ()
     and showDepStatus ii (d: Dependency) =
         match d with
         | AlwaysRerun ->
             printfn "%sAlways Rerun" (indent ii)
-        | FileDep (a:File, wrtime) ->
-            let changed = File.exists a |> function
-                | true when abs((File.getLastWriteTime a - wrtime).TotalMilliseconds) >= TimeCompareToleranceMs ->
-                    sprintf "CHANGED (%A <> %A)" wrtime (File.getLastWriteTime a)
-                | false ->
-                    "NOT EXISTS"
-                | _ -> ""
-            printfn "%sFile '%s' %A %s" (indent ii) a.Name wrtime changed
+        | FileDep file ->
+            printfn "%sFile '%s' %s" (indent ii) (show file) (state file)
+        | TargetDep (FileTarget file) ->
+            printfn "%sTarget file '%s' %s" (indent ii) (show file) (state file)
+        | TargetDep (PhonyAction name) ->
+            printfn "%sTarget '%s'" (indent ii) name
 
         | EnvVar (name, _) | Var (name, _) when Secrets.isSecret name ->
             showDepStatus ii (Secrets.scrub d)
@@ -227,15 +212,14 @@ let dumpDeps (ctx: ExecContext) (target: Target list) =
 
         | GetFiles (fileset, _) ->
             printfn "%sGetFiles: %A" (indent ii) fileset
-        | _ ->
-            ()
     and showTargetStatus ii (target: Target) =
         if not <| doneTargets.ContainsKey(target) then
             doneTargets.Add(target, 1)
 
-            printfn "%sTarget %A" (indent ii) target.ShortName
-
             let lastResult = (fun ch -> GetResult(target, ch)) |> ctx.Db.PostAndReply
+            let built = match lastResult with Some r -> sprintf " (built in run %d)" r.Epoch | None -> ""
+            printfn "%sTarget %A%s" (indent ii) (target.Display ctx.Options.ProjectRoot) built
+
             match lastResult with
             | Some {BuildResult.Depends = []} ->
                 printfn "%sno dependencies" (indent ii)

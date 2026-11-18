@@ -308,6 +308,9 @@ They win over the sections above.
   `Database.fs` untouched except for that call, which then becomes "no longer read, recreating".
   Release note: 0.4-0.6 databases are upgraded by a legacy reader that will be removed in a later
   release.
+- **B4, `Path.matches` follows filesets** (code review R6): the public mask test ignores case on
+  every OS, as the fileset default; no option for it in phase 1. The OS-dependent case mode of 4.0
+  and the `regexText` case special case go. Release note next to the fileset line.
 
 ## Budget
 

@@ -206,8 +206,11 @@ let rec execOne (ctx: ExecContext) target =
         async {
             ctx.Counters.TaskScheduled ()
             let taskContext = newTaskContext targets ruleMatches ctx
-            let! needs = headerNeeds taskContext header
+            let! headerDeps, step = headerNeeds taskContext header
+            let verdictStarted = System.DateTime.Now
             let! rebuild = ctx.NeedRebuild targets
+            // the verdict may wait for a running dependee: the step's wait, as the needs
+            let needs = headerDeps, { step with WaitTime = step.WaitTime + Step.msSince verdictStarted }
             match rebuild with
             | true ->
                 do ctx.Logger.Log Command "Started %s as task %i" (primaryTarget.Display ctx.Options.ProjectRoot) taskContext.Ordinal
@@ -233,6 +236,8 @@ let rec execOne (ctx: ExecContext) target =
                 return Succeed
             | false ->
                 ctx.Counters.TargetSkipped ()
+                // its predicted duration leaves the estimate
+                do Progress.TaskComplete primaryTarget |> ctx.Progress.Post
                 do ctx.Logger.Log Command "Skipped %s (up to date)" (primaryTarget.Display ctx.Options.ProjectRoot)
                 return Skipped
         }
@@ -458,30 +463,36 @@ and resolveNeeds (ctx: ExecContext) (groups: Map<string, string>) (patterns: str
     (resolved |> List.collect fst |> List.distinct), (resolved |> List.collect snd)
 
 /// The header's static `needs` of a task, requested together (before its verdict): the
-/// dependencies recorded and the time waited.
-and private headerNeeds (ctx: ExecContext) (header: RuleHeader) : Async<Dependency list * int<ms>> = async {
-    let started = System.DateTime.Now
+/// dependencies recorded and the task's step, started before them, their time as its wait.
+and private headerNeeds (ctx: ExecContext) (header: RuleHeader) : Async<Dependency list * StepInfo> = async {
+    let step = Step.start "all"
     let! headerDeps = async {
         match resolveNeeds ctx ctx.RuleMatches header.Needs with
         | [], filesetDeps -> return filesetDeps
         | targets, filesetDeps ->
             let! _, deps = execNeed ctx targets
             return filesetDeps @ deps }
-    return headerDeps, int (System.DateTime.Now - started).TotalMilliseconds * 1<ms> }
+    return headerDeps, { step with WaitTime = Step.msSince step.Start } }
+
+/// Acquires `units` of `resource`, yielding the CPU slot meanwhile; the time it took (the slot
+/// taken back included), counted as the step's wait.
+and acquireTimed (ctx: ExecContext) (resource: Resource) units : Async<int<ms>> = async {
+    let started = System.DateTime.Now
+    do! Scheduler.withYieldedSlot ctx.Engine.Scheduler (Resource.acquire resource units)
+    return Step.msSince started }
 
 /// A task's body (docs/rule-header.md) after its `needs`: its locks in `Locks` order, yielding the
 /// CPU slot while waiting; then the body on a fresh result, holding them. The header's entries go
 /// first (`StaticCount`), whatever the body records.
-and private runBody (ctx: ExecContext) (header: RuleHeader) action targets (headerDeps: Dependency list, waited: int<ms>) : Async<BuildResult> = async {
-    let start = { BuildLog.makeResult targets with Steps = [Step.start "all"] } |> Step.updateWaitTime waited
-    let rec holding (held: string list) rest = async {
+and private runBody (ctx: ExecContext) (header: RuleHeader) action targets (headerDeps: Dependency list, step: StepInfo) : Async<BuildResult> = async {
+    let rec holding (start: BuildResult) (held: string list) rest = async {
         match rest with
         | [] -> return! action (start, { ctx with HeldResources = held @ ctx.HeldResources })
         | (resource: Resource, units) :: rest ->
-            do! Scheduler.withYieldedSlot ctx.Engine.Scheduler (Resource.acquire resource units)
-            try return! holding (held @ [ resource.ResourceName ]) rest
+            let! waited = acquireTimed ctx resource units
+            try return! holding (Step.updateWaitTime waited start) (held @ [ resource.ResourceName ]) rest
             finally Resource.release resource units }
-    let! (result, _) = holding [] header.Locks
+    let! (result, _) = holding { BuildLog.makeResult targets with Steps = [step] } [] header.Locks
     return { Step.updateTotalDuration result with
                 Built = System.DateTime.Now; Depends = headerDeps @ result.Depends; StaticCount = headerDeps.Length } }
 
@@ -590,23 +601,31 @@ let beginRun (ctx: ExecContext) = async {
 let runBuild (ctx: ExecContext) groups =
     let options = ctx.Options
 
-    let runTargets ctx targets =
+    let count = List.length groups
+    // each group is estimated when it starts: an earlier one can change what it finds (`clean`)
+    let runTargets ctx index (names: string list) =
         async {
+            let targets = names |> List.map (makeTarget ctx)
             do ctx.Logger.Log Info "Build target list %A" targets
+            let name = String.concat ";" names
+            let label = if count > 1 then sprintf "[%d/%d %s] " (index + 1) count name else ""
+            let started = System.DateTime.Now
 
             // the change analysis is memoized for the whole group, so the group is one run
             let! ctx, getDeps = beginRun ctx
-            let progressSink = Progress.openProgress (getDurationDeps ctx getDeps) options.Threads targets ctx.ShowProgress
+            let progressSink = Progress.openProgress (getDurationDeps ctx getDeps) options.Threads targets label ctx.ShowProgress
             let stepCtx = {ctx with Progress = progressSink}
 
             try
-                return! targets |> execParallel stepCtx
+                let! results = targets |> execParallel stepCtx
+                if count > 1 then
+                    do ctx.Logger.Log Message "group '%s' done in %.1f s" name (System.DateTime.Now - started).TotalSeconds
+                return results
             finally
                 do Progress.Finish |> progressSink.Post
         }
 
-    groups |> List.map
-        (List.map (makeTarget ctx) >> (runTargets ctx))
+    groups |> List.mapi (runTargets ctx)
     |> runSeq
     |> asyncMap (Array.concat >> List.ofArray)
 
@@ -663,7 +682,7 @@ let demandTarget (ctx: ExecContext) (targetName: string) : Async<ExecStatus> =
     async {
         let target = makeTarget ctx targetName
         let! ctx, getDeps = beginRun ctx
-        let progressSink = Progress.openProgress (getDurationDeps ctx getDeps) ctx.Engine.Options.Threads [target] ctx.ShowProgress
+        let progressSink = Progress.openProgress (getDurationDeps ctx getDeps) ctx.Engine.Options.Threads [target] "" ctx.ShowProgress
         let stepCtx = {ctx with Progress = progressSink}
         try
             let! (_, status, _) = execOne stepCtx target
@@ -680,8 +699,7 @@ let need targets = recipe {
     let! ctx = getCtx()
     let! _,deps = targets |> execNeed ctx
 
-    let totalDuration = int (System.DateTime.Now - startTime).TotalMilliseconds * 1<ms>
     let! result = getResult()
-    let result' = {result with Depends = result.Depends @ deps} |> (Step.updateWaitTime totalDuration)
+    let result' = {result with Depends = result.Depends @ deps} |> (Step.updateWaitTime (Step.msSince startTime))
     do! setResult result'
 }

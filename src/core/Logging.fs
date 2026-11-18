@@ -231,7 +231,8 @@ module private ConsoleSink =
 
     let spinnerFrames = [|"⠋";"⠙";"⠹";"⠸";"⠼";"⠴";"⠦";"⠧";"⠇";"⠏"|]
 
-    let formatStatus (timeLeft:System.TimeSpan, pct, activeTasks) =
+    /// The status line: `label` (the target group, or empty), the bar, the running tasks, the time left.
+    let formatStatus (label: string, timeLeft:System.TimeSpan, pct, activeTasks) =
         match pct with
         | a when a >= 100 || a < 0 || timeLeft.TotalMilliseconds < 100.0 -> None
         | _ ->
@@ -241,7 +242,7 @@ module private ConsoleSink =
             let partial = filledSubunits % 8
             let emptyLen = ProgressBarLen - fullBlocks - (if partial > 0 then 1 else 0)
             let bar = sprintf "%s%s%s" (String.replicate fullBlocks "█") partialChars.[partial] (String.replicate emptyLen " ") // '░'
-            let head = sprintf "%3d%% [%s]  " pct bar
+            let head = sprintf "%s%3d%% [%s]  " label pct bar
             let tail = sprintf " · %s left" (fmtTs timeLeft)
             match isInteractiveConsole with
             | true ->

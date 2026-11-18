@@ -95,13 +95,6 @@ module private PicklerImpl =
 
     open Pickler
 
-    /// database 0.4-0.6: no case flag
-    let filesetoptions6 =
-        wrap(
-            (fun(foe,bdir) -> {FilesetOptions.FailOnEmpty = foe; BaseDir = bdir; CaseSensitive = false}),
-            fun o -> (o.FailOnEmpty, o.BaseDir))
-            (pair bool (option str))
-
     let filesetoptions =
         wrap(
             (fun(foe,bdir,cs) -> {FilesetOptions.FailOnEmpty = foe; BaseDir = bdir; CaseSensitive = cs}),
@@ -119,15 +112,12 @@ module private PicklerImpl =
     let fileinfo = wrap(File.make, File.getFullName) str
 
     let fileset  = wrap(Fileset, fun (Fileset (o,l)) -> o,l) (pair filesetoptions (list filesetElement))
-    let fileset6 = wrap(Fileset, fun (Fileset (o,l)) -> o,l) (pair filesetoptions6 (list filesetElement))
     let filelist = wrap(Filelist, fun (Filelist l) -> l) (list fileinfo)
 
 open Impl
 
 /// Gets the pickler for fileset type (database 0.7: with the case flag)
 let filesetPickler = PicklerImpl.fileset
-/// The fileset pickler of databases 0.4-0.6 (no case flag)
-let internal filesetPickler6 = PicklerImpl.fileset6
 /// Gets the pickler for filelist type
 let filelistPickler = PicklerImpl.filelist
 

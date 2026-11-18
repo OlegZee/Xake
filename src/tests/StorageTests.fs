@@ -6,7 +6,7 @@ open NUnit.Framework
 open Xake
 open Xake.BuildLog
 open Xake.Storage
-open Xake.Storage.Persist
+open Xake.LegacyRead
 open Tests
 
 module private impl =
@@ -63,12 +63,11 @@ let ``round-trips every record kind``() =
         [ f "src/a.cs", { Stamp = System.DateTime(2026, 1, 2, 3, 4, 5); Size = 1234L; Hash = Some 0xDEADBEEFCAFEF00DUL; Changed = 7L }
           outside, { Stamp = System.DateTime(2025, 1, 1); Size = -1L; Hash = None; Changed = 1L }
           f "top.txt", { Stamp = System.DateTime(2025, 1, 1); Size = 0L; Hash = Some 0UL; Changed = 300L } ]
-    let recs = (states |> List.map FileRec) @ [ ResultRec result; ResultRec { result with Epoch = 43L; StaticCount = 0 } ]
+    let recs = (states |> List.map DbRecord.FileState) @ [ DbRecord.Result result; DbRecord.Result { result with Epoch = 43L; StaticCount = 0 } ]
     let bytes, read = DbFormat.roundTrip root recs
     let expected = (states |> List.map DbRecord.FileState) @ [ DbRecord.Result result; DbRecord.Result { result with Epoch = 43L; StaticCount = 0 } ]
     Assert.AreEqual(expected, read.Records)
     Assert.IsFalse(read.Torn)
-    Assert.AreEqual(2, read.ResultCount)
     // the root's value is never written; a path outside the root stays absolute
     let text = System.Text.Encoding.UTF8.GetString bytes
     Assert.IsFalse(text.Contains (File.make root).Name, "the root is not in the file")
@@ -102,7 +101,7 @@ let ``compresses database when limit is reached``() =
     printfn "old size: %A, new size: %A" oldLen newLen
     Assert.Less((int newLen), (int oldLen) / 3)
     Assert.That(msgs, IsAny().Contains("Compacting database"))
-    let db, _ = readDatabase (root ()) dbname
+    let db = readDatabase (root ()) dbname
     Assert.AreEqual(20, db.Status.Count)
 
 [<Test>]
@@ -230,10 +229,11 @@ let ``a second open waits for the lock, then fails``() =
 
 [<Test>]
 let ``the read API reads a database whose lock is held``() =
-    let testee = openDb () logger
-    store testee (createResult "a.exe")
-    store testee { (createResult "b.exe") with Depends = [ FileDep (File.make "src.c") ] }
     File.WriteAllText("src.c", "x")
+    let testee = openDb () logger
+    let run = testee.PostAndReply NewRun
+    store testee { (createResult "a.exe") with Epoch = run }
+    store testee { (createResult "b.exe") with Depends = [ FileDep (File.make "src.c") ]; Epoch = run }
     testee.PostAndReply(fun ch -> Observe(File.make "src.c", Verdict, ch)) |> ignore
     let records = readRecords (root ()) dbname |> List.ofSeq
     match records with
@@ -242,12 +242,14 @@ let ``the read API reads a database whose lock is held``() =
         Assert.AreEqual([ mkFileTarget "b.exe" ], b.Targets)
         Assert.AreEqual(File.make "src.c", f)
         Assert.AreEqual(1L, st.Size)
-        Assert.AreEqual(1L, st.Changed, "observed before any run: the next epoch")
+        Assert.AreEqual(run, st.Changed)
+        Assert.AreEqual(run, a.Epoch)
     | other -> Assert.Fail(sprintf "unexpected %A" other)
-    let db, epoch = readDatabase (root ()) dbname
+    let db = readDatabase (root ()) dbname
+    let epoch = db.Epoch
     Assert.AreEqual(2, db.Status.Count)
     Assert.AreEqual(1, db.Files.Count)
-    Assert.AreEqual(1L, epoch)
+    Assert.AreEqual(run, epoch)
     testee.PostAndReply CloseWait
 
 // ---- size --------------------------------------------------------------------------------------
@@ -268,17 +270,18 @@ let ``database 0.7 is at least 5x smaller than 0.6 on a synthetic database``() =
         use ms = new MemoryStream()
         use w = new BinaryWriter(ms)
         Pickler.triple Pickler.str Pickler.str Pickler.date |> fun pu -> pu.pickle ("XAKE", "0.6", stamp) w
-        let pu = legacyResult root
+        let pu = LegacyRead.result root
         for r, deps in results do
             pu.pickle { OTargets = [ FileTarget (File.make (root </> sprintf "out/obj-%04d.dll" r)) ]; OBuilt = stamp
                         ODepends = deps |> List.map (fun f -> OldFile (f, stamp)); OSteps = [ newStepInfo ("all", 10) ] } w
         w.Flush()
         ms.Length
     let recs =
-        [ for f in results |> List.collect snd |> List.distinct -> FileRec (f, { Stamp = stamp; Size = 4096L; Hash = None; Changed = 1L }) ]
+        [ for f in results |> List.collect snd |> List.distinct -> DbRecord.FileState (f, { Stamp = stamp; Size = 4096L; Hash = None; Changed = 1L }) ]
         @ [ for r, deps in results ->
-              ResultRec { Targets = [ FileTarget (File.make (root </> sprintf "out/obj-%04d.dll" r)) ]; Built = stamp; Epoch = 1L
-                          Depends = deps |> List.map FileDep; Steps = [ newStepInfo ("all", 10) ]; StaticCount = 0 } ]
+              DbRecord.Result
+                  { Targets = [ FileTarget (File.make (root </> sprintf "out/obj-%04d.dll" r)) ]; Built = stamp; Epoch = 1L
+                    Depends = deps |> List.map FileDep; Steps = [ newStepInfo ("all", 10) ]; StaticCount = 0 } ]
     let bytes, _ = DbFormat.roundTrip root recs
     let ratio = float old / float bytes.Length
     printfn "synthetic: mean path %.1f B, 0.6 %d B, 0.7 %d B, %.1fx" meanPath old bytes.Length ratio
@@ -301,7 +304,7 @@ let ``measures the upgrade of XAKE_DB_SAMPLE``() =
             let db = Storage.openDb (Path.GetDirectoryName (Path.GetFullPath sample)) copy (CustomLogger (fun _ -> false) ignore)
             db.PostAndReply CloseWait
             let after = (FileInfo copy).Length
-            let state, _ = readDatabase (Path.GetDirectoryName (Path.GetFullPath sample)) copy
+            let state = readDatabase (Path.GetDirectoryName (Path.GetFullPath sample)) copy
             printfn "sample: %s %d B -> %s %d B (%.1fx) in %d ms; %d results, %d files"
                 (OldDatabase.version sample) before (OldDatabase.version copy) after (float before / float after)
                 sw.ElapsedMilliseconds state.Status.Count state.Files.Count
@@ -330,7 +333,7 @@ let ``recording re-stats a file once per run``() =
     File.WriteAllText("rec.c", "v3")
     Assert.AreEqual(recorded, observe Recording, "another recording in the run leaves the record")
     db.PostAndReply CloseWait
-    let state, _ = readDatabase (root ()) dbname
+    let state = readDatabase (root ()) dbname
     Assert.AreEqual(recorded, state.Files.[f])
 
 /// A7: the upgrade takes a file's stamp from the result with the latest Built; MinValue is no stamp.

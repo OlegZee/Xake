@@ -397,6 +397,14 @@ let rec runSeq<'r> :Async<'r> list -> Async<'r list> =
 /// Maps a function over the result of an async computation.
 let asyncMap f c = async.Bind(c, f >> async.Return)
 
+/// Starts a run (B2): the pool's run boundary, the next epoch, the verdict memo of the run and
+/// its table of spellings. Every target group of the command line and every demand is a run.
+let beginRun (ctx: ExecContext) = async {
+    do Scheduler.newRun ctx.Engine.Scheduler
+    let! epoch = ctx.Db.PostAndAsyncReply Storage.NewRun
+    let ctx = { ctx with Spellings = newSpellings (); RunEpoch = epoch }
+    return ctx, getChangeReasons ctx |> memoizeRec }
+
 /// Runs the full build pipeline for the given target groups.
 /// Each group is executed sequentially; targets within a group run in parallel.
 /// Returns the combined list of target/status/dependency results.
@@ -404,36 +412,27 @@ let runBuild (ctx: ExecContext) groups =
     let options = ctx.Options
 
     let runTargets ctx targets =
-        let getDeps = getChangeReasons ctx |> memoizeRec
-
-        let needRebuild (target: Target) =
-            getDeps >>
-            function
-            | [] -> false, ""
-            | Other reason::_        -> true, reason
-            | Depends t ::_          -> true, "Depends on target " + t.Display options.ProjectRoot
-            | DependsMissingTarget t ::_ -> true, sprintf "Depends on target %s (missing)" (t.Display options.ProjectRoot)
-            | FilesChanged (file::_) ::_ -> true, "File(s) changed " + file
-            | reasons -> true, sprintf "Some reason %A" reasons
-            >>
-            function
-            | false, _ -> false
-            | true, reason ->
-                do ctx.Logger.Log Info "Rebuild %A: %s" (target.Display options.ProjectRoot) reason
-                true
-            <| target
-            // todo improve output by printing primary target
-
         async {
             do ctx.Logger.Log Info "Build target list %A" targets
 
-            // the change analysis below is memoized for the whole group, so the pool has to
-            // treat the group as one run: a target it already built must not be built again
-            do Scheduler.newRun ctx.Engine.Scheduler
-            let! epoch = ctx.Db.PostAndAsyncReply Storage.NewRun
+            // the change analysis is memoized for the whole group, so the group is one run
+            let! ctx, getDeps = beginRun ctx
+            let needRebuild (target: Target) =
+                match getDeps target with
+                | [] -> false
+                | reasons ->
+                    let reason =
+                        match reasons with
+                        | Other reason :: _ -> reason
+                        | Depends t :: _ -> "Depends on target " + t.Display options.ProjectRoot
+                        | DependsMissingTarget t :: _ -> sprintf "Depends on target %s (missing)" (t.Display options.ProjectRoot)
+                        | FilesChanged (file :: _) :: _ -> "File(s) changed " + file
+                        | reasons -> sprintf "Some reason %A" reasons
+                    do ctx.Logger.Log Info "Rebuild %A: %s" (target.Display options.ProjectRoot) reason
+                    true
 
             let progressSink = Progress.openProgress (getDurationDeps ctx getDeps) options.Threads targets ctx.ShowProgress
-            let stepCtx = {ctx with NeedRebuild = List.exists needRebuild; Progress = progressSink; Spellings = newSpellings (); RunEpoch = epoch}
+            let stepCtx = {ctx with NeedRebuild = List.exists needRebuild; Progress = progressSink}
 
             try
                 return! targets |> execParallel stepCtx
@@ -449,6 +448,8 @@ let runBuild (ctx: ExecContext) groups =
 /// Creates the shared execution context and returns it together with a finalize callback.
 /// The finalize callback closes the database, disposes the scheduler, and flushes logs.
 let createContextCore (options: EngineOptions) (db: Agent<Storage.DatabaseApi>) vars showProgress =
+    // the root every path is shown and stored against, normalised once (A6, R3)
+    let options = { options with ProjectRoot = (File.make options.ProjectRoot).Name }
     let logger = options.Logger
     let scheduler = Scheduler.create logger options.Threads
     // pattern warnings (spec 7.3) and fileset scan notes (6.5, 6.6), including those buffered at
@@ -494,13 +495,11 @@ let createContext (options: EngineOptions) vars =
 let demandTarget (ctx: ExecContext) (targetName: string) : Async<ExecStatus> =
     async {
         let target = makeTarget ctx targetName
-        do Scheduler.newRun ctx.Engine.Scheduler
-        let! epoch = ctx.Db.PostAndAsyncReply Storage.NewRun
-        let getDeps = getChangeReasons ctx |> memoizeRec
+        let! ctx, getDeps = beginRun ctx
         let needRebuild (t: Target) =
             getDeps t |> function | [] -> false | _ -> true
         let progressSink = Progress.openProgress (getDurationDeps ctx getDeps) ctx.Engine.Options.Threads [target] ctx.ShowProgress
-        let stepCtx = {ctx with NeedRebuild = List.exists needRebuild; Progress = progressSink; Spellings = newSpellings (); RunEpoch = epoch}
+        let stepCtx = {ctx with NeedRebuild = List.exists needRebuild; Progress = progressSink}
         try
             let! (_, status, _) = execOne stepCtx target
             return status

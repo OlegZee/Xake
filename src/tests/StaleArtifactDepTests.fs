@@ -10,7 +10,7 @@ open Xake.Tasks
 /// Writes `.xake` files the way Xake 4.x did (databases 0.4-0.6, the legacy pickler kept in
 /// Xake for the upgrade) and reads any version through the public read API.
 module internal OldDatabase =
-    open Xake.Storage.Persist
+    open Xake.LegacyRead
 
     let private headerPU = Pickler.triple Pickler.str Pickler.str Pickler.date
     let private root () = Directory.GetCurrentDirectory()
@@ -30,7 +30,7 @@ module internal OldDatabase =
     let writeOld (path: string) (ver: string) (results: OldResult list) =
         use w = new BinaryWriter(File.Create path)
         headerPU.pickle ("XAKE", ver, System.DateTime.Now) w
-        let pu = legacyResult (root ())
+        let pu = result (root ())
         results |> List.iter (fun r -> pu.pickle r w)
 
     /// writes a 0.4-0.6 file of results without file or target dependencies
@@ -44,17 +44,17 @@ module internal DbFormat =
     open Xake.Storage.Persist
 
     /// writes the records to a fresh 0.7 stream and reads them back (paths against `root`)
-    let roundTrip (root: string) (recs: Rec list) =
+    let roundTrip (root: string) (recs: Storage.DbRecord list) =
         use stream = new MemoryStream()
         writeHeader stream
-        let writer = Writer(PathTable root, stream, raise)
-        recs |> List.iter (fun r -> writer.Append [ r ])
-        let bytes = stream.ToArray()
-        bytes, read root (new MemoryStream(bytes))
+        let _, bytes = encode (PathTable.empty root) recs
+        stream.Write(bytes, 0, bytes.Length)
+        let all = stream.ToArray()
+        all, read root (new MemoryStream(all))
 
     /// a result written and read back
     let result (r: BuildResult) =
-        match (roundTrip "/p" [ ResultRec r ] |> snd).Records with
+        match (roundTrip "/p" [ Storage.DbRecord.Result r ] |> snd).Records with
         | [ Storage.DbRecord.Result r ] -> r
         | other -> failwithf "unexpected %A" other
 
@@ -233,28 +233,28 @@ type ``StaleArtifactDep tests``() =
         // the same state as Xake 4.x would have written it: stamps of the files as they are
         let stamp (p: string) = File.GetLastWriteTime p
         let file (p: string) = File.make (Directory.GetCurrentDirectory() </> p)
-        let res targets deps = { Storage.Persist.OTargets = targets; Storage.Persist.OBuilt = System.DateTime.Now; Storage.Persist.ODepends = deps; Storage.Persist.OSteps = [] }
+        let res targets deps = { LegacyRead.OTargets = targets; LegacyRead.OBuilt = System.DateTime.Now; LegacyRead.ODepends = deps; LegacyRead.OSteps = [] }
         let a, b = file "out/up_a.txt", file "out/up_b.txt"
         let old06 artifact =
             [ res [ PhonyAction "deploy" ] [ artifact (FileTarget b) ]
-              res [ FileTarget a ] [ Storage.Persist.OldFile (file "up_in.txt", stamp "up_in.txt") ]
+              res [ FileTarget a ] [ LegacyRead.OldFile (file "up_in.txt", stamp "up_in.txt") ]
               res [ FileTarget b ] [ artifact (FileTarget a) ] ]
-        let artifact2 t = match t with FileTarget f -> Storage.Persist.OldArtifact2 (t, stamp f.FullName) | _ -> failwith "file"
+        let artifact2 t = match t with FileTarget f -> LegacyRead.OldArtifact2 (t, stamp f.FullName) | _ -> failwith "file"
         OldDatabase.writeOld ".xake" "0.6" (old06 artifact2)
         do script x.TestOptions "up_" aRuns bRuns ["deploy"]
         Assert.AreEqual((1, 1), (aRuns.Value, bRuns.Value), "a no-change run after the upgrade rebuilds nothing")
         Assert.AreEqual(BuildLog.XakeDbVersion, OldDatabase.version ".xake")
 
         // a 0.6 result that saw an older stamp reruns
-        let older t = match t with FileTarget f -> Storage.Persist.OldArtifact2 (t, (stamp f.FullName).AddSeconds -5.0) | _ -> failwith "file"
+        let older t = match t with FileTarget f -> LegacyRead.OldArtifact2 (t, (stamp f.FullName).AddSeconds -5.0) | _ -> failwith "file"
         OldDatabase.writeOld ".xake" "0.6" [ res [ PhonyAction "deploy" ] [ artifact2 (FileTarget b) ]
-                                             res [ FileTarget a ] [ Storage.Persist.OldFile (file "up_in.txt", stamp "up_in.txt") ]
+                                             res [ FileTarget a ] [ LegacyRead.OldFile (file "up_in.txt", stamp "up_in.txt") ]
                                              res [ FileTarget b ] [ older (FileTarget a) ] ]
         do script x.TestOptions "up_" aRuns bRuns ["deploy"]
         Assert.AreEqual((1, 2), (aRuns.Value, bRuns.Value), "b saw an older a: rerun")
 
         // 0.4: stampless ArtifactDep, the dependent reruns once
-        OldDatabase.writeOld ".xake" "0.4" (old06 Storage.Persist.OldArtifact)
+        OldDatabase.writeOld ".xake" "0.4" (old06 LegacyRead.OldArtifact)
         do script x.TestOptions "up_" aRuns bRuns ["deploy"]
         Assert.AreEqual((1, 3), (aRuns.Value, bRuns.Value), "old ArtifactDep counts as changed once; a is not rebuilt")
         let _, results = OldDatabase.read ".xake"

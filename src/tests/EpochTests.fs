@@ -48,7 +48,8 @@ type ``Epoch tests``() =
         x.Run [ "out/nc.app" ] rs
         Assert.AreEqual((2, 2), (oRuns.Value, aRuns.Value))
         Assert.AreEqual("v2", File.ReadAllText "out/nc.app")
-        let db, last = x.Results ()
+        let db = x.Results ()
+        let last = db.Epoch
         let app = db.Status.[FileTarget (File.make "out/nc.app")]
         Assert.AreEqual(last, app.Epoch, "the rebuild has the run's epoch")
 
@@ -108,9 +109,9 @@ type ``Epoch tests``() =
                 start
             }
         engine.Demand("always").Wait()
-        let first = (fst (x.Results ())).Status.[PhonyAction "always"].Epoch
+        let first = (x.Results ()).Status.[PhonyAction "always"].Epoch
         engine.Demand("always").Wait()
-        let second = (fst (x.Results ())).Status.[PhonyAction "always"].Epoch
+        let second = (x.Results ()).Status.[PhonyAction "always"].Epoch
         engine.StopAsync().Wait()
         Assert.AreEqual(first + 1L, second)
 
@@ -171,7 +172,8 @@ type ``Epoch tests``() =
         let rs = [ DelegatedRule (FileRule ("out/del.txt", recipe { () }), executor) ]
         x.Run [ "out/del.txt" ] rs
         x.Run [ "out/del.txt" ] rs
-        let db, last = x.Results ()
+        let db = x.Results ()
+        let last = db.Epoch
         let epoch = db.Status.[FileTarget (File.make "out/del.txt")].Epoch
         Assert.That(epoch, Is.LessThanOrEqualTo last)
         Assert.AreNotEqual(999L, epoch)

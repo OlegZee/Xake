@@ -23,12 +23,14 @@ Breaking changes:
    `ArtifactDep2` are removed. `BuildResult` gains `Epoch` and `StaticCount` (`Built` stays the
    time). `BuildLog.Database` gains `Files` and `FileState` is added.
 4. **Storage API.** `Storage.openDb root dbpath logger` takes the project root; the database is
-   exclusive (`.xake.lock`); `DatabaseApi` gains `Observe`. `Storage.resultPU` is replaced by the
-   public read API `Storage.readRecords` and `Storage.readDatabase`.
+   exclusive (`.xake.lock`); `DatabaseApi` gains `Observe`, `NewRun` and `InMemory`.
+   `Storage.resultPU` is replaced by the public read API `Storage.readRecords` and
+   `Storage.readDatabase` (the database with its last epoch, `BuildLog.Database.Epoch`).
 5. **Filesets.** `FilesetOptions.CaseSensitive` and the `casesensitive` operation are added.
 6. **`ExecContext`** gains `Spellings` and `RunEpoch`.
 7. **Database 0.7.** Xake 4.x cannot read it. Databases 0.4-0.6 are upgraded on open, and a
-   no-change run after the upgrade rebuilds nothing.
+   no-change run after the upgrade rebuilds nothing. The 0.4-0.6 databases are upgraded by a legacy reader that will
+   be removed in a later release.
 
 Also:
 

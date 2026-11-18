@@ -11,12 +11,13 @@ module BuildLog =
     /// a `FileRec` per file, epochs instead of per-dependency stamps, varint ids and lengths.
     let XakeDbVersion = "0.7"
 
-    /// Oldest database version this Xake still reads. A database of 0.4-0.6 is read with the
-    /// legacy picklers, converted and rewritten as the current version on open.
+    /// Oldest database version this Xake still reads. A database of 0.4-0.6 is read by
+    /// `LegacyRead`, converted and rewritten as the current version on open.
     let XakeDbMinReadVersion = "0.4"
 
-    /// In-memory build database: the last result per target and the last state per file.
-    type Database = { Status : Map<Target, BuildResult>; Files : Map<File, FileState> }
+    /// In-memory build database: the last result per target, the last state per file and the
+    /// last epoch (the largest in the file on load, the current run's after `NewRun`).
+    type Database = { Status : Map<Target, BuildResult>; Files : Map<File, FileState>; Epoch : int64 }
 
     (* API *)
 
@@ -30,11 +31,12 @@ module BuildLog =
           StaticCount = 0 }
 
     /// Creates a new database
-    let newDatabase() = { Database.Status = Map.empty; Files = Map.empty }
+    let newDatabase() = { Database.Status = Map.empty; Files = Map.empty; Epoch = 0L }
 
     /// Adds result to a database
     let internal addResult db result =
-        { db with Status = result.Targets |> List.fold (fun m i -> Map.add i result m) db.Status }
+        { db with Status = result.Targets |> List.fold (fun m i -> Map.add i result m) db.Status
+                  Epoch = max db.Epoch result.Epoch }
 
 /// Type alias for MailboxProcessor used as a message-passing agent.
 type 't Agent = 't MailboxProcessor
@@ -42,9 +44,9 @@ type 't Agent = 't MailboxProcessor
 module Storage =
     open Xake
     open BuildLog
-    open System.Collections.Generic
 
     type private IOFile = System.IO.File
+    type private Stream = System.IO.Stream
     type private FileStream = System.IO.FileStream
     type private FileMode = System.IO.FileMode
     type private FileAccess = System.IO.FileAccess
@@ -56,132 +58,111 @@ module Storage =
         | Result of BuildResult
         | FileState of File * FileState
 
-    /// Two stamps within this many milliseconds are equal.
-    let internal TimeToleranceMs = 10.0
+    /// Why a file is observed (decisions 1c, A1).
+    type ObserveMode =
+        /// by a verdict: once per run, then the cached state
+        | Verdict
+        /// a body records the file (`FileDep`, a fileset member): statted again; a moved stat is a
+        /// change unless another body recorded the file in this run (A1)
+        | Recording
+        /// a rule's output right after the rule: statted again
+        | Output
+
+    /// Messages accepted by the database agent.
+    type DatabaseApi =
+        | GetResult of Target * AsyncReplyChannel<Option<BuildResult>>
+        /// Stores a result (its `Epoch` is the run its task started in); dependency files without
+        /// a state are observed (A3).
+        | Store of BuildResult
+        /// Observes a file, stamping a change with the epoch of the last `NewRun`; replies its
+        /// state, None for a missing file.
+        | Observe of File * ObserveMode * AsyncReplyChannel<FileState option>
+        /// Starts a new run: replies the next epoch; observations and recordings afresh (A2).
+        | NewRun of AsyncReplyChannel<int64>
+        /// Observations stay in memory and nothing is appended (`--dump`, `--dryrun`, A8).
+        | InMemory
+        | Close
+        | CloseWait of AsyncReplyChannel<unit>
 
     module internal Persist =
         open Pickler
 
-        type DatabaseHeader =
-            { XakeSign : string
-              XakeVer : string
-              ScriptDate : Timestamp }
+        type DatabaseHeader = { XakeSign : string; XakeVer : string; ScriptDate : Timestamp }
 
         let dbHeader =
-            wrap
-                ((fun (sign, ver, scriptDate) -> { DatabaseHeader.XakeSign = sign; XakeVer = ver; ScriptDate = scriptDate }),
-                 fun h -> (h.XakeSign, h.XakeVer, h.ScriptDate))
-                (triple str str date)
+            wrap ((fun (sign, ver, scriptDate) -> { XakeSign = sign; XakeVer = ver; ScriptDate = scriptDate }),
+                  fun h -> (h.XakeSign, h.XakeVer, h.ScriptDate))
+                 (triple str str date)
 
-        let step =
-            wrap
-                ((fun (n, s, o, w) -> {StepInfo.Name = n; Start = s; OwnTime = o * 1<ms>; WaitTime = w * 1<ms>}),
-                 fun ({StepInfo.Name = n; Start = s; OwnTime = o; WaitTime = w}) -> (n, s, o / 1<ms>, w / 1<ms>)) (quad str date int int)
-
-        let bytes =
-            { pickle = (fun (b: byte[]) (st: OutState) -> st.Write(b.Length); st.Write(b))
-              unpickle = fun (st: InState) -> st.ReadBytes(st.ReadInt32()) }
-
-        let secretSource =
-            alt (function SecretEnv -> 0 | SecretArg -> 1) [| wrap0 SecretEnv; wrap0 SecretArg |]
-
-        let secretDigest =
-            alt (function SecretAbsent -> 0 | SecretPresent -> 1 | SecretHmac _ -> 2)
-                [| wrap0 SecretAbsent
-                   wrap0 SecretPresent
-                   wrap (SecretHmac, fun (SecretHmac (salt, h) | OtherwiseFail (salt, h)) -> salt, h) (pair bytes bytes) |]
-
-        let envVar = wrap (EnvVar, fun (EnvVar(n, v) | OtherwiseFail (n,v)) -> n, v) (pair str (option str))
-        let var = wrap (Var, fun (Var(n, v)| OtherwiseFail (n,v)) -> n, v) (pair str (option str))
-        let secretDep = wrap (SecretDep, fun (SecretDep(n, src, d) | OtherwiseFail (n, src, d)) -> (n, src, d)) (triple str secretSource secretDigest)
-
-        // ---- 0.7 --------------------------------------------------------------------------
-
-        /// A record of a 0.7 file. `DirRec`/`PathRec` make the path table; the last `FileRec`
-        /// per file and the last `ResultRec` per target win.
+        /// A record of a 0.7 file: `DirRec`/`PathRec` make the path table; of the data the last
+        /// state per file and the last result per target win.
         type Rec =
             | DirRec of dirId: int * root: int * dir: string
             | PathRec of fileId: int * dirId: int * name: string
-            | FileRec of File * FileState
-            | ResultRec of BuildResult
+            | Data of DbRecord
 
-        /// The path table: a file is `File.display root` split at the last '/', its directory a
-        /// `DirRec` (root 1 = the project root, 0 = an absolute directory) and its name a
-        /// `PathRec`. The root's value is never written. Ids allocated by pickling are kept as
-        /// pending records until the writer puts them out (or rolls them back).
-        type PathTable(root: string) =
-            let show = File.display root
-            let rootName = (File.make root).Name
-            let fileIds = Dictionary<File, int>()
-            let files = ResizeArray<File>()
-            let dirIds = Dictionary<string, int>(System.StringComparer.Ordinal)
-            let dirs = ResizeArray<int * string>()
-            let pending = ResizeArray<Rec>()
-            let dirKey (r: Core.int) (d: string) = Operators.string r + d
+        /// The path table (B1): a file is `File.display Root` split at the last '/', its directory
+        /// a `DirRec` (root 1 = the project root, 0 = an absolute directory) and its name a
+        /// `PathRec`. The root's value is never written.
+        type PathTable =
+            { Root: string; RootPrefix: string
+              Ids: Map<File, int>; Files: Map<int, File>
+              Dirs: Map<int * string, int>; DirPrefix: Map<int, string> }
 
-            member _.Id (f: File) : int =
-                match fileIds.TryGetValue f with
-                | true, id -> id
-                | _ ->
-                    let s = show f
-                    let r = if System.String.Equals(s, f.Name, System.StringComparison.Ordinal) then 0 else 1
+        module PathTable =
+            let empty root =
+                let n = (File.make root).Name
+                { Root = root; RootPrefix = (if n.EndsWith "/" then n else n + "/")
+                  Ids = Map.empty; Files = Map.empty; Dirs = Map.empty; DirPrefix = Map.empty }
+
+            let private addDir (r, dir) t =
+                match Map.tryFind (r, dir) t.Dirs with
+                | Some d -> t, d, []
+                | None ->
+                    let d = t.Dirs.Count
+                    let prefix = match r, dir with 1, "" -> t.RootPrefix | 1, _ -> t.RootPrefix + dir + "/" | _ -> dir + "/"
+                    { t with Dirs = Map.add (r, dir) d t.Dirs; DirPrefix = Map.add d prefix t.DirPrefix }, d, [ DirRec (d, r, dir) ]
+
+            let private addFile f id t = { t with Ids = Map.add f id t.Ids; Files = Map.add id f t.Files }
+
+            /// The table with the file, and its new `DirRec`/`PathRec`.
+            let add (f: File) (t: PathTable) : PathTable * Rec list =
+                if t.Ids.ContainsKey f then t, []
+                else
+                    let s = File.display t.Root f
                     let i = s.LastIndexOf '/'
-                    let dir, name = if i < 0 then "", s else s.Substring(0, i), s.Substring(i + 1)
-                    let dirId =
-                        match dirIds.TryGetValue (dirKey r dir) with
-                        | true, d -> d
-                        | _ ->
-                            let d = dirs.Count
-                            dirs.Add((r, dir))
-                            dirIds.[dirKey r dir] <- d
-                            pending.Add(DirRec (d, r, dir))
-                            d
-                    let id = files.Count
-                    files.Add f
-                    fileIds.[f] <- id
-                    pending.Add(PathRec (id, dirId, name))
-                    id
+                    let t, d, recs = addDir ((if s = f.Name then 0 else 1), (if i < 0 then "" else s.Substring(0, i))) t
+                    let id = t.Ids.Count
+                    addFile f id t, recs @ [ PathRec (id, d, s.Substring(i + 1)) ]
 
-            member _.File (id: int) =
-                if id < 0 || id >= files.Count then failwithf "unknown file id %d" id
-                files.[id]
+            /// The table after a record read from the file.
+            let load (t: PathTable) = function
+                | DirRec (d, r, dir) when d = t.Dirs.Count && (r = 0 || r = 1) -> let t, _, _ = addDir (r, dir) t in t
+                | PathRec (id, d, name) when id = t.Ids.Count && t.DirPrefix.ContainsKey d -> addFile (File.make (t.DirPrefix.[d] + name)) id t
+                | Data _ -> t
+                | r -> failwithf "unexpected path record %A" r
 
-            member _.AddDir (id: int, r: int, dir: string) =
-                if id <> dirs.Count || (r <> 0 && r <> 1) then failwithf "unexpected directory record %d" id
-                dirs.Add((r, dir))
-                dirIds.[dirKey r dir] <- id
+        let private bytes =
+            { pickle = (fun (b: byte[]) (st: OutState) -> st.Write(b.Length); st.Write(b))
+              unpickle = fun (st: InState) -> st.ReadBytes(st.ReadInt32()) }
 
-            member _.AddPath (id: int, dirId: int, name: string) =
-                if id <> files.Count || dirId < 0 || dirId >= dirs.Count then failwithf "unexpected path record %d" id
-                let r, dir = dirs.[dirId]
-                let full =
-                    match r, dir with
-                    | 1, "" -> rootName + "/" + name
-                    | 1, d -> rootName + "/" + d + "/" + name
-                    | _, d -> d + "/" + name
-                let f = File.make full
-                files.Add f
-                fileIds.[f] <- id
-
-            /// The DirRec/PathRec records allocated since the last call.
-            member _.TakePending () = let xs = List.ofSeq pending in pending.Clear(); xs
-
-            /// Forgets the ids allocated since the last `TakePending` (a record failed to pickle).
-            member _.Rollback () =
-                for p in Seq.rev (List.ofSeq pending) do
-                    match p with
-                    | PathRec (id, _, _) -> fileIds.Remove files.[id] |> ignore; files.RemoveAt id
-                    | DirRec (id, r, d) -> dirIds.Remove (dirKey r d) |> ignore; dirs.RemoveAt id
-                    | _ -> ()
-                pending.Clear()
-
-        /// The 0.7 record pickler over a path table.
-        let record (table: PathTable) =
-            let file = { pickle = (fun f st -> varint.pickle (table.Id f) st); unpickle = fun st -> table.File (varint.unpickle st) }
+        /// The 0.7 record pickler; files are ids of the table `table ()` gives at the time.
+        let record (table: unit -> PathTable) =
+            let file =
+                { pickle = (fun f st -> varint.pickle (table ()).Ids.[f] st)
+                  unpickle = fun st -> let id = varint.unpickle st in match (table ()).Files.TryFind id with Some f -> f | None -> failwithf "unknown file id %d" id }
             let target =
                 alt (function FileTarget _ -> 0 | PhonyAction _ -> 1)
                     [| wrap (FileTarget, fun (FileTarget f | OtherwiseFail f) -> f) file
                        wrap (PhonyAction, fun (PhonyAction a | OtherwiseFail a) -> a) str |]
+            let step =
+                wrap ((fun (n, s, o, w) -> { StepInfo.Name = n; Start = s; OwnTime = o * 1<ms>; WaitTime = w * 1<ms> }),
+                      fun s -> (s.Name, s.Start, s.OwnTime / 1<ms>, s.WaitTime / 1<ms>)) (quad str date int int)
+            let secretDigest =
+                alt (function SecretAbsent -> 0 | SecretPresent -> 1 | SecretHmac _ -> 2)
+                    [| wrap0 SecretAbsent
+                       wrap0 SecretPresent
+                       wrap (SecretHmac, fun (SecretHmac (salt, h) | OtherwiseFail (salt, h)) -> salt, h) (pair bytes bytes) |]
             let dependency =
                 alt (function
                     | FileDep _ -> 0
@@ -197,222 +178,89 @@ module Storage =
                        wrap (PhonyAction >> TargetDep, fun (TargetDep (PhonyAction p) | OtherwiseFail p) -> p) str
                        wrap (GetFiles, fun (GetFiles (fs, fl) | OtherwiseFail (fs, fl)) -> fs, fl)
                            (pair filesetPickler (wrap (Filelist, fun (Filelist l) -> l) (vlist file)))
-                       envVar
-                       var
+                       wrap (EnvVar, fun (EnvVar (n, v) | OtherwiseFail (n, v)) -> n, v) (pair str (option str))
+                       wrap (Var, fun (Var (n, v) | OtherwiseFail (n, v)) -> n, v) (pair str (option str))
                        wrap0 AlwaysRerun
-                       secretDep |]
-            let hash = option (wrap ((fun (x: int64) -> Operators.uint64 x), (fun (x: uint64) -> Operators.int64 x)) int64)
+                       wrap (SecretDep, fun (SecretDep (n, src, d) | OtherwiseFail (n, src, d)) -> (n, src, d))
+                           (triple str (alt (function SecretEnv -> 0 | SecretArg -> 1) [| wrap0 SecretEnv; wrap0 SecretArg |]) secretDigest) |]
             let fileState =
                 wrap ((fun (stamp, size, h, changed) -> { Stamp = stamp; Size = size - 1L; Hash = h; Changed = changed }),
                       fun s -> (s.Stamp, max 0L (s.Size + 1L), s.Hash, s.Changed))
-                     (quad date varint64 hash varint64)
+                     (quad date varint64 (option (wrap ((fun (x: int64) -> Operators.uint64 x), (fun (x: uint64) -> Operators.int64 x)) int64)) varint64)
             let result =
                 wrap ((fun ((epoch, built, targets, deps), (steps, staticCount)) ->
                         { Targets = targets; Built = built; Epoch = epoch; Depends = deps; Steps = steps; StaticCount = staticCount }),
                       fun r -> (r.Epoch, r.Built, r.Targets, r.Depends), (r.Steps, r.StaticCount))
                      (pair (quad varint64 date (vlist target) (vlist dependency)) (pair (vlist step) varint))
-            alt (function DirRec _ -> 0 | PathRec _ -> 1 | FileRec _ -> 2 | ResultRec _ -> 3)
+            alt (function DirRec _ -> 0 | PathRec _ -> 1 | Data (DbRecord.FileState _) -> 2 | Data (DbRecord.Result _) -> 3)
                 [| wrap (DirRec, fun (DirRec (i, r, d) | OtherwiseFail (i, r, d)) -> i, r, d) (triple varint varint str)
                    wrap (PathRec, fun (PathRec (i, d, n) | OtherwiseFail (i, d, n)) -> i, d, n) (triple varint varint str)
-                   wrap (FileRec, fun (FileRec (f, s) | OtherwiseFail (f, s)) -> f, s) (pair file fileState)
-                   wrap (ResultRec, fun (ResultRec r | OtherwiseFail r) -> r) result |]
+                   wrap (DbRecord.FileState >> Data, fun (Data (DbRecord.FileState (f, s)) | OtherwiseFail (f, s)) -> f, s) (pair file fileState)
+                   wrap (DbRecord.Result >> Data, fun (Data (DbRecord.Result r) | OtherwiseFail r) -> r) result |]
 
-        // ---- 0.4-0.6 (read, and written by the tests' fixture) ---------------------------
-
-        /// A dependency as databases 0.4-0.6 recorded it.
-        type OldDep =
-            | Plain of Dependency
-            /// FileDep (file, stamp)
-            | OldFile of File * Timestamp
-            /// ArtifactDep (0.4, no stamp)
-            | OldArtifact of Target
-            /// ArtifactDep2 (target, stamp)
-            | OldArtifact2 of Target * Timestamp
-
-        type OldResult = { OTargets: Target list; OBuilt: Timestamp; ODepends: OldDep list; OSteps: StepInfo list }
-
-        /// The 0.4-0.6 result pickler: paths are strings, joined with the root (an absolute one
-        /// stays as is); a pickled file is its absolute path.
-        let legacyResult (root: string) =
-            let file = wrap ((fun s -> File.make (root </> s)), fun (f: File) -> f.FullName) str
-            let target =
-                alt (function FileTarget _ -> 0 | PhonyAction _ -> 1)
-                    [| wrap (FileTarget, fun (FileTarget f | OtherwiseFail f) -> f) file
-                       wrap (PhonyAction, fun (PhonyAction a | OtherwiseFail a) -> a) str |]
-            let plain (pu: PU<Dependency>) = wrap (Plain, fun (Plain d | OtherwiseFail d) -> d) pu
-            let dependency =
-                alt (function
-                    | OldArtifact _ -> 0
-                    | OldFile _ -> 1
-                    | Plain (EnvVar _) -> 2
-                    | Plain (Var _) -> 3
-                    | Plain AlwaysRerun -> 4
-                    | Plain (GetFiles _) -> 5
-                    | OldArtifact2 _ -> 6
-                    | Plain (SecretDep _) -> 7
-                    | d -> failwithf "not a 0.6 dependency: %A" d)
-                    [| wrap (OldArtifact, fun (OldArtifact t | OtherwiseFail t) -> t) target
-                       wrap (OldFile, fun (OldFile (f, ts) | OtherwiseFail (f, ts)) -> (f, ts)) (pair file date)
-                       plain envVar
-                       plain var
-                       plain (wrap0 AlwaysRerun)
-                       plain (wrap (GetFiles, fun (GetFiles (fs, fl) | OtherwiseFail (fs, fl)) -> fs, fl)
-                                   (pair filesetPickler6 (wrap (Filelist, fun (Filelist l) -> l) (list file))))
-                       wrap (OldArtifact2, fun (OldArtifact2 (t, ts) | OtherwiseFail (t, ts)) -> (t, ts)) (pair target date)
-                       plain secretDep |]
-            wrap ((fun (t, b, d, s) -> { OTargets = t; OBuilt = b; ODepends = d; OSteps = s }),
-                  fun r -> (r.OTargets, r.OBuilt, r.ODepends, r.OSteps))
-                 (quad (list target) date (list dependency) (list step))
-
-        /// The distinct results of a target -> result map (a multi-target result once).
-        let distinctResults (status: Map<Target, 'r>) =
-            let seen = HashSet<obj>(HashIdentity.Reference)
-            status |> Map.toList |> List.map snd |> List.filter (fun r -> seen.Add (box r))
-
-        /// Converts the live results of a 0.4-0.6 file (decision 1b "Upgrade", A7): a `FileRec`
-        /// per file with the stamp recorded by the result with the latest `Built` (size unknown,
-        /// `changed = 1`); `Epoch = 1` for a result whose every stamp is that one (a
-        /// `DateTime.MinValue` stamp is none) and whose phony dependees finished no later than
-        /// recorded, else 0.
-        let convert (results: OldResult list) : (File * FileState) list * BuildResult list =
-            let latest = Dictionary<File, Timestamp * Timestamp>()   // file -> (built, stamp)
-            for r in results do
-                for d in r.ODepends do
+        /// The files a record refers to.
+        let filesOf = function
+            | DbRecord.FileState (f, _) -> [ f ]
+            | DbRecord.Result r ->
+                [ for t in r.Targets do match t with FileTarget f -> yield f | _ -> ()
+                  for d in r.Depends do
                     match d with
-                    | OldFile (f, t) | OldArtifact2 (FileTarget f, t) when t <> System.DateTime.MinValue ->
-                        match latest.TryGetValue f with
-                        | true, (built, _) when built >= r.OBuilt -> ()
-                        | _ -> latest.[f] <- (r.OBuilt, t)
-                    | _ -> ()
-            let phonyBuilt =
-                results |> List.collect (fun r -> r.OTargets |> List.choose (function PhonyAction _ as t -> Some (t, r.OBuilt) | _ -> None)) |> Map.ofList
-            let current = function
-                | OldFile (_, t) | OldArtifact2 (_, t) when t = System.DateTime.MinValue -> false
-                | OldFile (f, t) | OldArtifact2 (FileTarget f, t) -> abs (t - snd latest.[f]).TotalMilliseconds < TimeToleranceMs
-                | OldArtifact2 (t, stamp) -> (match phonyBuilt.TryFind t with Some b -> b.Ticks <= stamp.Ticks | None -> false)
-                | OldArtifact _ -> false
-                | Plain _ -> true
-            let toDep = function
-                | Plain d -> d
-                | OldFile (f, _) -> FileDep f
-                | OldArtifact t | OldArtifact2 (t, _) -> TargetDep t
-            let files = [ for kv in latest -> kv.Key, { Stamp = snd kv.Value; Size = -1L; Hash = None; Changed = 1L } ]
-            files,
-            results |> List.map (fun r ->
-                { Targets = r.OTargets; Built = r.OBuilt
-                  Epoch = (if List.forall current r.ODepends then 1L else 0L)
-                  Depends = r.ODepends |> List.map toDep; Steps = r.OSteps; StaticCount = 0 })
+                    | FileDep f | TargetDep (FileTarget f) -> yield f
+                    | GetFiles (_, Filelist fs) -> yield! fs
+                    | _ -> () ]
 
-        // ---- reading -----------------------------------------------------------------------
+        /// The bytes of records, the `DirRec`/`PathRec`s of their new files in front, and the
+        /// table with those files. Raises when a record does not pickle (the caller keeps its table).
+        let encode (t: PathTable) (recs: DbRecord list) =
+            let paths, t = recs |> List.collect filesOf |> List.mapFold (fun t f -> let t, rs = PathTable.add f t in rs, t) t
+            let pu = record (fun () -> t)
+            use ms = new System.IO.MemoryStream()
+            use w = new System.IO.BinaryWriter(ms)
+            for r in List.concat paths @ List.map Data recs do pu.pickle r w
+            w.Flush()
+            t, ms.ToArray()
 
-        exception VersionTooNew of string
-        exception VersionTooOld of string
-
-        type ReadResult =
-            { Version: string
-              /// the records in file order (an older version: converted)
-              Records: DbRecord list
-              Table: PathTable
-              /// the number of `Result` records in the file
-              ResultCount: int
-              /// the end of the last whole record
-              GoodEnd: int64
-              Torn: bool }
-
-        /// Reads a database stream. A torn last record (end of file inside it) ends the records;
-        /// any other failure raises.
-        let read (root: string) (stream: System.IO.Stream) : ReadResult =
-            use reader = new System.IO.BinaryReader(stream, System.Text.Encoding.UTF8, true)
-            let header = dbHeader.unpickle reader
-            let v = header.XakeVer
-            if v > XakeDbVersion then raise (VersionTooNew v)
-            if v < XakeDbMinReadVersion then raise (VersionTooOld v)
-            let table = PathTable root
-            let records = ResizeArray<DbRecord>()
-            let mutable goodEnd = stream.Position
-            let mutable torn = false
-            let mutable count = 0
-            if v < XakeDbVersion then
-                let pu = legacyResult root
-                let mutable status = Map.empty
-                while not torn && stream.Position < stream.Length do
-                    try
-                        let r = pu.unpickle reader
-                        status <- r.OTargets |> List.fold (fun m t -> Map.add t r m) status
-                        count <- count + 1
-                        goodEnd <- stream.Position
-                    with :? System.IO.EndOfStreamException -> torn <- true
-                let files, results = convert (distinctResults status)
-                files |> List.iter (DbRecord.FileState >> records.Add)
-                results |> List.iter (DbRecord.Result >> records.Add)
-            else
-                let pu = record table
-                while not torn && stream.Position < stream.Length do
-                    try
-                        match pu.unpickle reader with
-                        | DirRec (i, r, d) -> table.AddDir (i, r, d)
-                        | PathRec (i, d, n) -> table.AddPath (i, d, n)
-                        | FileRec (f, s) -> records.Add (DbRecord.FileState (f, s))
-                        | ResultRec r -> records.Add (DbRecord.Result r); count <- count + 1
-                        goodEnd <- stream.Position
-                    with :? System.IO.EndOfStreamException -> torn <- true
-            { Version = v; Records = List.ofSeq records; Table = table; ResultCount = count; GoodEnd = goodEnd; Torn = torn }
-
-        /// Applies a record to the in-memory database.
-        let apply (db: Database) = function
-            | DbRecord.Result r -> addResult db r
-            | DbRecord.FileState (f, s) -> { db with Files = Map.add f s db.Files }
-
-        /// The largest epoch of the records (0 for none).
-        let lastEpoch (records: DbRecord seq) =
-            records |> Seq.fold (fun m r -> match r with DbRecord.Result r -> max m r.Epoch | DbRecord.FileState (_, s) -> max m s.Changed) 0L
-
-        // ---- writing -----------------------------------------------------------------------
-
-        /// Appends records to a 0.7 stream: each call is pickled into a buffer, its new
-        /// DirRec/PathRec in front, and written with one Write. A record that fails to pickle
-        /// raises and writes nothing (its ids are rolled back); a failed write stops every later
-        /// append (logged once by the caller through `onStop`).
-        type Writer(table: PathTable, stream: System.IO.Stream, onStop: exn -> unit) =
-            let pu = record table
-            let mutable stopped = false
-            member _.Stopped = stopped
-            member _.Append (recs: Rec list) =
-                if not stopped then
-                    use body = new System.IO.MemoryStream()
-                    use bw = new System.IO.BinaryWriter(body)
-                    try
-                        recs |> List.iter (fun r -> pu.pickle r bw)
-                        bw.Flush()
-                    with _ ->
-                        table.Rollback()
-                        reraise ()
-                    use all = new System.IO.MemoryStream()
-                    use aw = new System.IO.BinaryWriter(all)
-                    table.TakePending () |> List.iter (fun r -> pu.pickle r aw)
-                    aw.Write(body.ToArray())
-                    aw.Flush()
-                    try
-                        stream.Write(all.ToArray(), 0, Operators.int all.Length)
-                        stream.Flush()
-                    with ex ->
-                        stopped <- true
-                        onStop ex
-            member _.Dispose () = stream.Dispose()
-
-        let writeHeader (stream: System.IO.Stream) =
+        let writeHeader (stream: Stream) =
             use w = new System.IO.BinaryWriter(stream, System.Text.Encoding.UTF8, true)
             dbHeader.pickle { XakeSign = "XAKE"; XakeVer = XakeDbVersion; ScriptDate = System.DateTime.Now } w
             w.Flush()
 
-        /// The files a result refers to (targets and dependencies).
-        let filesOf (r: BuildResult) =
-            [ for t in r.Targets do match t with FileTarget f -> yield f | _ -> ()
-              for d in r.Depends do
-                match d with
-                | FileDep f | TargetDep (FileTarget f) -> yield f
-                | GetFiles (_, Filelist fs) -> yield! fs
-                | _ -> () ]
+        exception VersionTooNew of string
+        exception VersionTooOld of string
+
+        /// The records of a file in order with the table they built; `GoodEnd` is the end of the
+        /// last whole record, `Torn` tells that a record after it was cut short.
+        type Contents = { Version: string; Records: DbRecord list; Table: PathTable; Torn: bool; GoodEnd: int64 }
+
+        /// Reads a database stream; an older version through `LegacyRead`.
+        let read (root: string) (stream: Stream) : Contents =
+            use reader = new System.IO.BinaryReader(stream, System.Text.Encoding.UTF8, true)
+            let v = (dbHeader.unpickle reader).XakeVer
+            if v > XakeDbVersion then raise (VersionTooNew v)
+            if v < XakeDbMinReadVersion then raise (VersionTooOld v)
+            if v < XakeDbVersion then
+                let files, results = LegacyRead.read root reader
+                { Version = v; Table = PathTable.empty root; Torn = false; GoodEnd = stream.Position
+                  Records = List.map DbRecord.FileState files @ List.map DbRecord.Result results }
+            else
+                let mutable t = PathTable.empty root
+                let pu = record (fun () -> t)
+                let records = ResizeArray<DbRecord>()
+                let mutable goodEnd, torn = stream.Position, false
+                while not torn && stream.Position < stream.Length do
+                    try
+                        match pu.unpickle reader with
+                        | Data d -> records.Add d
+                        | r -> t <- PathTable.load t r
+                        goodEnd <- stream.Position
+                    with :? System.IO.EndOfStreamException -> torn <- true
+                { Version = v; Records = List.ofSeq records; Table = t; Torn = torn; GoodEnd = goodEnd }
+
+        /// The database of records read in order.
+        let toDatabase (records: DbRecord seq) =
+            records |> Seq.fold (fun db -> function
+                | DbRecord.Result r -> addResult db r
+                | DbRecord.FileState (f, s) -> { db with Files = Map.add f s db.Files; Epoch = max db.Epoch s.Changed }) (newDatabase())
 
     module private impl =
         open Persist
@@ -425,7 +273,7 @@ module Storage =
         // returns (seen back-to-back across quick test runs); without this a perfectly
         // good database gets mistaken for a corrupt one and thrown away, which in turn
         // makes the next build think nothing was ever built.
-        let openWithRetry (openFile: unit -> #System.IO.Stream) =
+        let openWithRetry (openFile: unit -> #Stream) =
             let maxAttempts = 5
             let rec attempt n =
                 try
@@ -453,22 +301,9 @@ module Storage =
                     raise (XakeException (sprintf "another Xake run uses this database (%s)" (System.IO.Path.GetFileName lockPath)))
             attempt false
 
-        /// Writes a fresh 0.7 file: the header, the `FileRec`s of the files the results refer
-        /// to, the results. Returns the table and the stream open for appending.
-        let rewrite (root: string) (dbpath: string) (db: Database) (results: BuildResult list) onStop =
-            let stream = openWithRetry (fun () -> new FileStream(dbpath, FileMode.CreateNew, FileAccess.Write, FileShare.Read))
-            writeHeader stream
-            let table = PathTable root
-            let writer = new Writer(table, stream, onStop)
-            let files = results |> List.collect filesOf |> List.distinct
-            for f in files do
-                match db.Files.TryFind f with
-                | Some s -> writer.Append [ FileRec (f, s) ]
-                | None -> ()
-            for r in results do writer.Append [ ResultRec r ]
-            writer
-
-        let openDatabaseFile (root: string) dbpath (logger : ILogger) onStop =
+        /// Loads the database file (upgrading, scrubbing or compacting it when needed): the
+        /// database, its path table and the stream to append to (None when a rewrite failed).
+        let openDatabaseFile (root: string) dbpath (logger : ILogger) =
             let log = logger.Log
             let bkpath = makeBkpath dbpath
             // if exists backup restore
@@ -481,14 +316,14 @@ module Storage =
                 if not (IOFile.Exists dbpath) then None
                 else
                     try
-                        let r =
+                        let c =
                             use fs = openWithRetry (fun () -> new FileStream(dbpath, FileMode.Open, FileAccess.Read, FileShare.Read))
                             read root fs
-                        if r.Torn then
+                        if c.Torn then
                             log Level.Message "The last record of the database was incomplete (an interrupted run); it is cut off"
                             use fs = openWithRetry (fun () -> new FileStream(dbpath, FileMode.Open, FileAccess.Write, FileShare.Read))
-                            fs.SetLength r.GoodEnd
-                        Some r
+                            fs.SetLength c.GoodEnd
+                        Some c
                     with
                     | VersionTooNew v ->
                         log Level.Message "database written by a newer Xake (version %s), recreating" v
@@ -499,8 +334,8 @@ module Storage =
                     | ex ->
                         log Warning "Failed to read database, so recreating. Got \"%s\"" <| ex.ToString()
                         recreate (); None
-            let db0 = match loaded with Some r -> r.Records |> List.fold apply (newDatabase()) | None -> newDatabase()
-            let epoch = match loaded with Some r -> lastEpoch r.Records | None -> 0L
+            let records = loaded |> Option.map (fun c -> c.Records) |> Option.defaultValue []
+            let db0 = toDatabase records
             // a clear value recorded (by an older Xake, or before the name was declared secret)
             // for a variable now declared secret becomes its digest, and the file is rewritten
             let scrubbed =
@@ -510,63 +345,34 @@ module Storage =
             let hasClearSecrets =
                 db0.Status |> Map.exists (fun key r -> not (obj.ReferenceEquals(r, scrubbed.[key])))
             let db = { db0 with Status = scrubbed }
-            let live = distinctResults db.Status
-            let isOld = match loaded with Some r -> r.Version < XakeDbVersion | None -> false
-            let resultCount = match loaded with Some r -> r.ResultCount | None -> 0
-            let writer =
-                if isOld || hasClearSecrets || resultCount > live.Length * 5 then
-                    if isOld then log Level.Message "Upgrading database to version %s" XakeDbVersion
-                    elif hasClearSecrets then log Level.Message "Removing the values of secret variables from the database"
-                    else log Level.Message "Compacting database"
-                    IOFile.Move(dbpath, bkpath)
-                    let w = rewrite root dbpath db live onStop
+            let seen = System.Collections.Generic.HashSet<obj>(HashIdentity.Reference)
+            let live = db.Status |> Map.toList |> List.map snd |> List.filter (box >> seen.Add)
+            let isOld = loaded |> Option.exists (fun c -> c.Version < XakeDbVersion)
+            let resultCount = records |> List.sumBy (function DbRecord.Result _ -> 1 | _ -> 0)
+            if isOld || hasClearSecrets || resultCount > live.Length * 5 then
+                if isOld then log Level.Message "Upgrading database to version %s" XakeDbVersion
+                elif hasClearSecrets then log Level.Message "Removing the values of secret variables from the database"
+                else log Level.Message "Compacting database"
+                IOFile.Move(dbpath, bkpath)
+                let stream = openWithRetry (fun () -> new FileStream(dbpath, FileMode.CreateNew, FileAccess.Write, FileShare.Read))
+                // the live results and the states of the files they refer to
+                let states = live |> List.collect (DbRecord.Result >> filesOf) |> List.distinct |> List.choose (fun f -> db.Files.TryFind f |> Option.map (fun s -> DbRecord.FileState (f, s)))
+                try
+                    writeHeader stream
+                    let table, bytes = encode (PathTable.empty root) (states @ List.map DbRecord.Result live)
+                    stream.Write(bytes, 0, bytes.Length)
+                    stream.Flush()
                     IOFile.Delete(bkpath)
-                    w
-                else
-                    let stream = openWithRetry (fun () -> new FileStream(dbpath, FileMode.Append, FileAccess.Write, FileShare.Read))
-                    if stream.Position = 0L then writeHeader stream
-                    let table = match loaded with Some r -> r.Table | None -> PathTable root
-                    new Writer(table, stream, onStop)
-            db, epoch, writer
-
-        /// One observation of a file (decision 1c): a new record, an equal stat (within the
-        /// tolerance, size equal or unknown: an unknown size is filled in, `changed` kept) or a
-        /// moved stat (`changed = epoch`; no hash in phase 1). Returns the state and whether it
-        /// is to be appended.
-        let observe (epoch: int64) (known: FileState option) (stamp: Timestamp, size: int64) =
-            match known with
-            | Some k when abs (stamp - k.Stamp).TotalMilliseconds < TimeToleranceMs && (k.Size < 0L || k.Size = size) ->
-                if k.Size < 0L then { k with Size = size }, true else k, false
-            | _ -> { Stamp = stamp; Size = size; Hash = None; Changed = epoch }, true
-
-        let stat (f: File) =
-            let fi = System.IO.FileInfo f.FullName
-            if fi.Exists then Some (fi.LastWriteTime, fi.Length) else None
-
-    /// Why a file is observed (decisions 1c, A1).
-    type ObserveMode =
-        /// by a verdict: once per run, then the cached state
-        | Verdict
-        /// a body records the file (`FileDep`, a fileset member): statted again; a moved stat is a
-        /// change unless another body recorded the file in this run (A1)
-        | Recording
-        /// a rule's output right after the rule: statted again
-        | Output
-
-    /// Messages accepted by the database agent.
-    type DatabaseApi =
-        | GetResult of Target * AsyncReplyChannel<Option<BuildResult>>
-        /// Stores a result with its `Epoch` (the epoch of the run its task started in); files of
-        /// its dependencies without a state are observed.
-        | Store of BuildResult
-        /// Observes a file; replies its state, None for a missing file.
-        | Observe of File * ObserveMode * AsyncReplyChannel<FileState option>
-        /// Starts a new run: replies the next epoch; observations and recordings afresh (A2).
-        | NewRun of AsyncReplyChannel<int64>
-        /// Observations stay in memory and nothing is appended (`--dump`, `--dryrun`, A8).
-        | InMemory
-        | Close
-        | CloseWait of AsyncReplyChannel<unit>
+                    db, table, Some (stream :> Stream)
+                with ex ->
+                    // the backup stays: the next open restores it (R4)
+                    log Error "Database rewrite failed, the backup is kept: %s" ex.Message
+                    stream.Dispose()
+                    db, PathTable.empty root, None
+            else
+                let stream = openWithRetry (fun () -> new FileStream(dbpath, FileMode.Append, FileAccess.Write, FileShare.Read))
+                if stream.Position = 0L then writeHeader stream
+                db, (loaded |> Option.map (fun c -> c.Table) |> Option.defaultValue (PathTable.empty root)), Some (stream :> Stream)
 
     /// Every record of a database file in order, paths resolved against `root` (history until
     /// the next compaction); an older version yields its converted records. No lock: a running
@@ -580,143 +386,127 @@ module Storage =
         | :? System.IO.FileNotFoundException | :? System.IO.DirectoryNotFoundException
         | :? System.IO.EndOfStreamException -> Seq.empty
 
-    /// The state the engine loads (the last result per target, the last state per file) and the
+    /// The state the engine loads: the last result per target, the last state per file and the
     /// last epoch in the file.
-    let readDatabase (root: string) (dbpath: string) : BuildLog.Database * int64 =
-        let records = readRecords root dbpath |> List.ofSeq
-        records |> List.fold Persist.apply (newDatabase()), Persist.lastEpoch records
+    let readDatabase (root: string) (dbpath: string) : BuildLog.Database =
+        readRecords root dbpath |> Persist.toDatabase
 
     /// Deletes the database and backup files.
-    let private cleanup dbpath (logger : ILogger) = 
-        let bkpath = impl.makeBkpath dbpath
-        [dbpath; bkpath]
-        |> List.iter (fun path ->
-            if System.IO.File.Exists(path) then
+    let private cleanup dbpath (logger : ILogger) =
+        for path in [ dbpath; impl.makeBkpath dbpath ] do
+            if IOFile.Exists(path) then
                 try
-                    System.IO.File.Delete(path)
+                    IOFile.Delete(path)
                     logger.Log Level.Message "Deleted database file: %s" path
                 with ex ->
                     logger.Log Level.Warning "Failed to delete %s: %s" path (ex.Message)
-        )
 
-    /// The agent over a database state; `append` writes a record (persistent) or does nothing.
-    /// `epoch0` is the last epoch in the file: the first run takes the next one.
-    let private agent (logger: ILogger) (db0: Database) (epoch0: int64) (append: Persist.Rec list -> unit) (close: unit -> unit) =
+    /// The agent over a database state, its path table and the stream it appends to (None: in
+    /// memory only); `close` releases the stream and the lock.
+    let private agent (logger: ILogger) (db0: Database) (table0: Persist.PathTable) (stream0: Stream option) (close: unit -> unit) =
         // Logging the agent's own failure must not throw out of the loop again.
         let logError fmt = Printf.kprintf (fun s -> try logger.Log Error "%s" s with _ -> ()) fmt
         let mbox = new MailboxProcessor<_>(fun mbox ->
             // An exception escaping the loop would kill the agent silently and every later
-            // PostAndReply (GetResult, CloseWait) would wait forever. So each message is
-            // guarded: a failed store is logged, nothing of it reaches the file and the result
-            // is kept in memory for this run (the next run rebuilds that target), a failed
-            // lookup answers "no record" (a rebuild), and close always replies.
+            // PostAndReply (GetResult, CloseWait) would wait forever. So a failed store is
+            // logged, nothing of it reaches the file and the result is kept in memory for this
+            // run (the next run rebuilds that target), and close always replies.
             let failedStores = ref 0
-            let observed = HashSet<File>()
-            let recorded = HashSet<File>()
-            let mutable inMemory = false
-            let append recs = if not inMemory then append recs
-            let warnUnsaved () =
-                if failedStores.Value > 0 then
-                    try logger.Log Warning "Database not fully saved: %d result(s) failed to store, the next build may rebuild them" failedStores.Value
-                    with _ -> ()
-            let closeNow () =
-                do (try logger.Log Info "Closing database" with _ -> ())
-                do warnUnsaved ()
-                try close ()
-                with ex -> logError "Database agent failed to close: %O" ex
-            // an observation is stamped with the newest epoch handed out (A2)
-            let observe (db: Database) (epoch: int64) (mode: ObserveMode) (file: File) =
-                let known = db.Files.TryFind file
-                if mode = Verdict && observed.Contains file then
-                    (if File.exists file then known else None), db
+            let observed = System.Collections.Generic.HashSet<File>()
+            let recorded = System.Collections.Generic.HashSet<File>()
+            /// Appends records. A record that fails to pickle raises and leaves the table as it
+            /// was; a failed write stops appending until the database is closed (A4).
+            let persist (table, stream) recs =
+                match stream with
+                | None -> table, stream
+                | Some (s: Stream) ->
+                    let table', bytes = Persist.encode table recs
+                    try
+                        s.Write(bytes, 0, bytes.Length)
+                        s.Flush()
+                        table', stream
+                    with ex ->
+                        logError "Database write failed, no further records are saved until it is closed: %s" ex.Message
+                        table', None
+            /// One observation of a file (decision 1c, A1): a new state, an equal stat (within
+            /// 10 ms, size equal or unknown: an unknown size is filled in, `changed` kept) or a
+            /// moved stat (`changed` = the run's epoch; no hash in phase 1).
+            let observe (db: Database) out mode (file: File) =
+                let known = Map.tryFind file db.Files
+                if mode = Verdict && not (observed.Add file) then (if File.exists file then known else None), db, out
                 else
                     observed.Add file |> ignore
-                    let firstRecording = mode <> Recording || recorded.Add file
-                    match impl.stat file with
-                    | None -> None, db
-                    | Some s ->
-                        let state, changed = impl.observe epoch known s
-                        if changed && (firstRecording || known.IsNone) then
-                            try append [ Persist.FileRec (file, state) ]
-                            with ex -> logError "Database agent failed to store the state of '%s': %O" file.Name ex
-                            Some state, { db with Files = Map.add file state db.Files }
-                        else (if changed then known else Some state), db
-            // the newest epoch handed out (`epoch` > `epoch0` once a run started), else the next one
-            let newest epoch = if epoch > epoch0 then epoch else epoch0 + 1L
-            let rec loop (db: Database) (epoch: int64) =
+                    let first = mode <> Recording || recorded.Add file
+                    let fi = System.IO.FileInfo file.FullName
+                    if not fi.Exists then None, db, out
+                    else
+                        let state =
+                            match known with
+                            | Some k when abs (fi.LastWriteTime - k.Stamp).TotalMilliseconds < 10.0 && (k.Size < 0L || k.Size = fi.Length) -> { k with Size = fi.Length }
+                            | Some k when not first -> k    // another body recorded it in this run (A1)
+                            | _ -> { Stamp = fi.LastWriteTime; Size = fi.Length; Hash = None; Changed = db.Epoch }
+                        if Some state = known then known, db, out
+                        else
+                            let out = try persist out [ DbRecord.FileState (file, state) ] with ex -> logError "Database agent failed to store the state of '%s': %O" file.Name ex; out
+                            Some state, { db with Files = Map.add file state db.Files }, out
+            let rec loop (db: Database) out =
                 async {
                     let! msg = mbox.Receive()
                     match msg with
                     | GetResult(key, chnl) ->
-                        let found =
-                            try db.Status |> Map.tryFind key
-                            with ex ->
-                                logError "Database agent failed to look up '%s': %O" key.ShortName ex
-                                None
-                        chnl.Reply found
-                        return! loop db epoch
+                        chnl.Reply (Map.tryFind key db.Status)
+                        return! loop db out
                     | Store result ->
-                        try append [ Persist.ResultRec result ]
-                        with ex ->
-                            failedStores.Value <- failedStores.Value + 1
-                            let name = try (result.Targets |> List.map (fun t -> t.ShortName) |> String.concat ", ") with _ -> "?"
-                            logError "Database agent failed to store the result of '%s': %O" name ex
-                        let db' =
-                            try
-                                let db = result |> addResult db
-                                // a dependency file without a state (a delegated result, A3) is observed
-                                result.Depends
-                                |> List.choose (function FileDep f | TargetDep (FileTarget f) -> Some f | _ -> None)
-                                |> List.filter (fun f -> not (db.Files.ContainsKey f))
-                                |> List.fold (fun db f -> snd (observe db (newest epoch) Verdict f)) db
-                            with ex -> logError "Database agent failed to record a result: %O" ex; db
-                        return! loop db' epoch
-                    | Observe (file, mode, chnl) ->
-                        let db' =
-                            try
-                                let state, db' = observe db (newest epoch) mode file
-                                chnl.Reply state
-                                db'
+                        let out =
+                            try persist out [ DbRecord.Result result ]
                             with ex ->
-                                logError "Database agent failed to observe '%s': %O" file.Name ex
-                                (try chnl.Reply None with _ -> ())
-                                db
-                        return! loop db' epoch
+                                failedStores.Value <- failedStores.Value + 1
+                                let name = try (result.Targets |> List.map (fun t -> t.ShortName) |> String.concat ", ") with _ -> "?"
+                                logError "Database agent failed to store the result of '%s': %O" name ex
+                                out
+                        // a dependency file without a state (a delegated result, A3) is observed
+                        let db, out =
+                            result.Depends
+                            |> List.choose (function FileDep f | TargetDep (FileTarget f) -> Some f | _ -> None)
+                            |> List.filter (db.Files.ContainsKey >> not)
+                            |> List.fold (fun (db, out) f -> let _, db, out = observe db out Verdict f in db, out) (addResult db result, out)
+                        return! loop db out
+                    | Observe (file, mode, chnl) ->
+                        let state, db, out = observe db out mode file
+                        chnl.Reply state
+                        return! loop db out
                     | NewRun ch ->
                         observed.Clear()
                         recorded.Clear()
-                        ch.Reply (epoch + 1L)
-                        return! loop db (epoch + 1L)
+                        let db = { db with Epoch = db.Epoch + 1L }
+                        ch.Reply db.Epoch
+                        return! loop db out
                     | InMemory ->
-                        inMemory <- true
-                        return! loop db epoch
-                    | Close ->
-                        closeNow ()
-                        return ()
-                    | CloseWait ch ->
-                        closeNow ()
-                        ch.Reply()
-                        return ()
+                        return! loop db (fst out, None)
+                    | Close | CloseWait _ ->
+                        do (try logger.Log Info "Closing database" with _ -> ())
+                        if failedStores.Value > 0 then
+                            try logger.Log Warning "Database not fully saved: %d result(s) failed to store, the next build may rebuild them" failedStores.Value
+                            with _ -> ()
+                        try close ()
+                        with ex -> logError "Database agent failed to close: %O" ex
+                        match msg with CloseWait ch -> ch.Reply() | _ -> ()
                 }
-            loop db0 epoch0)
+            loop db0 (table0, stream0))
         mbox.Error.Add (fun ex -> logError "Database agent stopped: %O" ex)
         mbox.Start()
         mbox
 
     /// <summary>
-    /// Opens the database exclusively (`<dbpath>.lock`, waiting up to `lockWait` for another run).
+    /// Opens the database exclusively (`<dbpath>.lock`, waiting up to `lockWait` for another run);
+    /// `reset` (`--resetdb`) deletes it first, under the lock (A5).
     /// </summary>
     let internal openDbWith (lockWait: System.TimeSpan) (reset: bool) (root: string) (dbpath: string) (logger : ILogger) =
         let lockStream = impl.acquireLock dbpath lockWait logger
         try
             if reset then cleanup dbpath logger
-            let stopped = ref false
-            let onStop (ex: exn) =
-                if not stopped.Value then
-                    stopped.Value <- true
-                    try logger.Log Error "Database write failed, no further records are saved in this run: %s" ex.Message with _ -> ()
-            let db, epoch, writer = impl.openDatabaseFile root dbpath logger onStop
-            agent logger db epoch writer.Append (fun () -> try writer.Dispose() finally lockStream.Dispose())
+            let db, table, stream = impl.openDatabaseFile root dbpath logger
+            agent logger db table stream (fun () -> try stream |> Option.iter (fun s -> s.Dispose()) finally lockStream.Dispose())
         with _ ->
             lockStream.Dispose()
             reraise ()
@@ -735,7 +525,7 @@ module Storage =
     /// Tracks build results within the session but does not write to disk.
     /// </summary>
     let noopDb () =
-        agent (CustomLogger (fun _ -> false) ignore) (newDatabase()) 0L ignore ignore
+        agent (CustomLogger (fun _ -> false) ignore) (newDatabase()) (Persist.PathTable.empty ".") None ignore
 
     /// Deletes existing database and backup files to reset the build log, under the database
     /// lock (`--resetdb` resets inside `openDb` instead, A5).

@@ -10,8 +10,7 @@ let toEngineOptions (opts: ExecOptions) (rules: Rules<ExecContext>) (variables: 
         | null,_ | "",_
         | _, Silent -> logger
         | logFileName,level -> CombineLogger logger (FileLogger logFileName level)
-    // normalised once at launch (A6): the root every path is shown and stored against
-    { ProjectRoot = (File.make opts.ProjectRoot).Name; Threads = opts.Threads
+    { ProjectRoot = opts.ProjectRoot; Threads = opts.Threads
       Logger = MaskingLogger logger; Teardown = opts.Teardown; Rules = rules; RuleMatch = opts.RuleMatch
       Variables = variables }
 
@@ -199,10 +198,12 @@ let runScript options rules =
             if options.ThrowOnError then raise (XakeException errorText)
         | Dump ->
             Storage.InMemory |> ctx.Db.Post
+            ctx.Db.PostAndReply Storage.NewRun |> ignore
             do logger.Log Level.Command "Dumping dependencies for targets %A" targetLists
             targetLists |> List.iter (List.map (ExecCore.makeTarget ctx) >> (dumpDeps ctx))
         | Dryrun ->
             Storage.InMemory |> ctx.Db.Post
+            ctx.Db.PostAndReply Storage.NewRun |> ignore
             targetLists |> dryRun ctx options.Setup
         | _ ->
             let mutable reraisedError = None

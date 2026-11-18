@@ -8,9 +8,10 @@ exclusive database, built-in SHA-256 truncated to 8 bytes, no history). The per-
 per-event counter shown in the discussion: the per-event one reruns dependents of a dynamic `need`
 on every run.
 
-**Open:** design.md questions 1-5; question 5 (move the verdict to epochs, without hashing, already
-in phase 1) changes the scope of the brief.
+**Decided later on 2026-11-18:** the verdict moves to epochs already in phase 1 (without hashing);
+the database stays incremental (checked in design.md 1b). The decided 0.7 layout was measured on the
+owner's real 84.5 MB database: 5.75 MB as is, 3.39 MB compacted (5.0 / 3.1 MB with varint list
+lengths). **Open:** design.md questions 1-4, 6 (varint list lengths), 7 (string table, Later?).
 
-**Next step.** The owner moves on to database storage optimisation (what remains after paths and
-epochs); then approval of the design, then docs first (`docs/` + release notes "5.0.0 (unreleased)"),
+**Next step.** Owner's answers to the open questions and approval of the design, then docs first (`docs/` + release notes "5.0.0 (unreleased)"),
 then code in the order 1a -> 1b -> 1c, tests, the size measurement. No push, no PR without the owner.

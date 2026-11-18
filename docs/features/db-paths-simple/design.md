@@ -37,6 +37,11 @@ Status: **for the owner's approval** (no code written); decisions recorded below
   - What epochs give up against a hash in each dependency: A->B->A when the intermediate B was
     observed by another target: one extra rebuild of the nearest dependent, stopped there by
     cut-off (phase 3). Never a missed rebuild.
+- 2026-11-18, **epochs in phase 1** (question 5): the engine's verdict moves to epochs already in
+  phase 1, without hashing (a moved stat is a change; the 4.0 transitive rule stays), which gives
+  4.0's decisions. Phase 3 adds hashing and cut-off without a format change.
+- 2026-11-18, **the database stays incremental** (owner's requirement): epochs must not need any
+  rewrite in place; checked in 1b "Incremental writing".
 
 ### Why the epoch is per run, not per event
 
@@ -155,6 +160,25 @@ Ids, sizes and epochs are varints; the stamp is 8 bytes (ticks).
   "count and continue" and avoids ids that were allocated but never written.
 - Compaction / upgrade rewrites with a fresh table of live paths and the `FileRec`s that live
   results reference. The compaction trigger counts `Result` records only.
+- **Incremental writing** (owner's requirement, checked against epochs):
+  - Every record is appended and the last one wins (`Result` per target, `FileRec` per file);
+    `DirRec`/`PathRec` are written once, before the first record that uses them. The header is
+    written once.
+  - The epoch is not stored anywhere: on load it is the largest value in the file + 1, so a new run
+    updates nothing in place.
+  - Records go out as events happen: a `Result` when a target finishes, a `FileRec` when an
+    observation finds a new state. A no-change run appends nothing; a target judged up to date
+    appends nothing (the history design had to re-append such a dependent's record).
+  - No order between records is needed for safety. A crash after a dependent's `Result` (built
+    `r`) and before a dependee's `FileRec` (changed `r`): the next run sees the moved stat, sets
+    `changed = r + 1`, the dependent reruns once. A crash after the `FileRec` and before the
+    `Result`: the dependent's old `built` is smaller, it reruns. Never a missed rebuild.
+  - Compaction may drop the records that carry the largest epoch; the next epoch is still larger
+    than every value that stays, which is all the rule compares.
+  - The only rewrites are today's: compaction and the upgrade of an older version (both through
+    the `.bak` file).
+- **Lists** are written with a varint length in front instead of today's marker byte per element
+  (question 6): 9-13% of the file on the measured database.
 - **Lock** (decision 2026-11-18): the database is opened exclusively for the run (engine mode: for
   the engine's lifetime). A separate `.xake.lock` next to `.xake`, opened `FileShare.None`, so the
   database file can still be moved for compaction and a held lock is never taken for a corrupt
@@ -243,7 +267,7 @@ read-only open. (The lock is now in, by the decision above.)
 | File | Change | Lines |
 |---|---|---|
 | `Database.fs` | tags, path codec with `DirRec`, parameterised picklers, `FileRec` table and `Observe`, epoch, lock, 0.6 conversion, stop-on-failure, root param | **+200** |
-| `Pickler.fs` | `varint` | +12 |
+| `Pickler.fs` | `varint`, list with a varint length | +17 |
 | `File.fsi` / `File.fs` | new representation, `display`, `comparer`, `undefined` gone | +5 / -5 |
 | `Path.fs` | `collapse` made internal + trailing/UNC fix | +5 |
 | `PatternMatch.fs`, `PatternScan.fs` | drop ignore-case | ~0 (edits) |
@@ -287,11 +311,14 @@ lock and the 0.6 conversion came with the 2026-11-18 decisions.
 3. Filesets on Windows become case-sensitive with rules (as the file-type brief says for masks):
    confirm, since `*.CS` stops finding `a.cs` there.
 4. `Fingerprints.fs` path comparisons switch to ordinal too (in core): confirm.
-5. **Scope of phase 1 after the epoch decision.** Dependencies no longer carry stamps, so the
-   engine cannot keep the 4.0 verdict on 0.7 records: phase 1 moves the verdict to epochs without
-   hashing (a moved stat is a change, the 4.0 transitive rule stays), which gives 4.0's decisions.
-   Phase 3 then adds hashing and cut-off without a format change. The brief said "stored, not used";
-   recommended: accept the move in phase 1.
+5. ~~Scope of phase 1 after the epoch decision~~: decided 2026-11-18, the verdict moves to epochs in
+   phase 1 (see Decisions).
+6. Lists with a varint length instead of a marker byte per element (`Pickler.list` for the 0.7
+   records only; the 0.6 reader keeps the old one): -0.3 MB compacted, -0.75 MB as is on the
+   measured database, about 5 lines. Recommended: yes, in 0.7.
+7. A string table for the repeated strings (variable names and values, fileset masks, step and
+   phony names), the same mechanism as `PathRec`: about -0.4 MB compacted (12%), one record kind
+   and about 15 lines. Recommended: Later; the file is already about 17 times smaller as is.
 
 ## Measurement on a real 0.6 database (2026-11-18)
 
@@ -311,9 +338,35 @@ file written):
 | flat table | 8.9 + 2.8 = 11.7 MB (7.2x) | 5.9 MB (6.1x) |
 | `DirRec` + `PathRec (id, dirId, name)` | 8.9 + 0.2 + 1.0 = 10.2 MB (8.3x) | 4.4 MB (8.2x) |
 
-These rows still count a stamp and a size per reference. With epochs a dependency is a tag and an id
-(about 3 bytes instead of about 14): at least 4.5 MB less as is, plus a `FileRec` table of about
-0.5 MB; estimate about 6 MB as is and about 3 MB compacted (not measured).
+These rows still count a stamp and a size per reference.
+
+**The decided 0.7 layout, measured on the same file (2026-11-18, script outside the repository):**
+every record of the 0.6 file read with the 0.6 pickler and sized in the 0.7 encoding (epochs as
+2-byte varints, `FileRec` with the real file size from disk, no hash). 506 405 dependencies as is,
+218 155 live.
+
+| Part | as is | compacted |
+|---|---|---|
+| `PathRec` (24 829 files) | 1.06 MB | 1.06 MB |
+| `DirRec` (3 249 directories) | 0.25 MB | 0.25 MB |
+| `FileRec` (24 691 files) | 0.41 MB | 0.41 MB |
+| `FileDep` | 1.27 MB | 0.57 MB |
+| `TargetDep` | 0.20 MB | 0.07 MB |
+| `GetFiles`: masks / file ids | 0.52 / 0.47 MB | 0.24 / 0.19 MB |
+| `Var` / `EnvVar` / `SecretDep` | 0.64 MB | 0.22 MB |
+| result: tag, epoch, targets, steps, `StaticCount` | 0.16 MB | 0.06 MB |
+| list markers (today's encoding) | 0.77 MB | 0.31 MB |
+| **total** | **5.75 MB (15x)** | **3.39 MB** |
+| total with varint list lengths (question 6) | 5.00 MB (17.7x) | 3.08 MB |
+| + 8-byte hash in every `FileRec` (phase 3) | +0.20 MB | +0.20 MB |
+
+- The path table (`DirRec` + `PathRec` + `FileRec`) is 1.7 MB, written once and not growing with
+  runs; it is half of the compacted file.
+- What grows per run is a rebuilt target's `Result`: about 3 bytes per file dependency (1.27 MB
+  for 407 775 `FileDep`s as is), plus today's marker byte per list element.
+- The variable records are 9 410 live records of only 13 distinct (name, value) pairs, and the
+  fileset masks repeat in the same way: that is what a string table would remove (question 7).
+- `GetFiles`: 1 176 live records, 81 569 file references, up to 2 176 in one record.
 
 ## Later (not in this phase)
 

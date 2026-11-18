@@ -50,54 +50,81 @@ The file starts with a version header (`BuildLog.XakeDbVersion`, `0.7`; `XakeDbM
 - A file target is stored as a file id, a phony target by name. `FileDep` holds a file id;
   `TargetDep` has a file form and a phony form; `GetFiles` holds the fileset (with
   `CaseSensitive`) and file ids.
-- Each record, with its new `DirRec`/`PathRec`, is pickled into a buffer and written with one
-  `Write`. A failed write stops further appends for the run (logged once); results stay in memory.
+- Each record, with its new `DirRec`/`PathRec`, is pickled into one buffer and written with one
+  `Write`. The path table is an immutable value in the database agent's state: a record that fails
+  to pickle writes nothing and leaves the table as it was; a failed write stops appending until
+  the database is closed (logged once), results stay in memory.
 - Nothing is rewritten in place. Compaction runs when the `Result` records exceed 5 x the live
-  results: it rewrites a fresh path table, the live results and the `FileRec`s they reference.
-  Compaction and the upgrade go through the `.bak` file.
-- Opening takes a lock, `<db>.lock` (`.xake.lock`), held until the database is closed. A second
-  opener waits up to 30 s, then fails with "another Xake run uses this database (.xake.lock)".
-  `noopDb` takes no lock.
+  results: it rewrites a fresh path table, the live results and the `FileRec`s they refer to.
+  Compaction and the upgrade go through the `.bak` file; when the rewrite fails the backup is kept
+  and the next open restores it.
+- The lock, `<db>.lock` (`.xake.lock`), is taken first, before the `.bak` restore and before
+  `--resetdb` deletes anything, and is held until the database is closed (engine mode: the
+  engine's lifetime). A second opener waits up to 30 s, then fails with "another Xake run uses
+  this database (.xake.lock)". The lock file is never deleted (deleting it would let two runs hold
+  two different files); a failed open releases it. `noopDb` takes no lock. A recipe that starts
+  Xake on the same project root waits and fails.
 - A newer version is recreated ("database written by a newer Xake (version X), recreating"), as is
   one older than `XakeDbMinReadVersion` ("database version X is no longer read, recreating") or
   one that fails to read. An end of file inside the last record (a killed process) cuts the file
-  back to the end of the previous record and keeps everything before it.
-- Upgrade of 0.4-0.6: read with the legacy pickler, converted, rewritten as 0.7. Per file a
-  `FileRec` with the latest stamp any result recorded, unknown size, no hash, `changed = 1`. A
-  result gets `Epoch = 1` if every file stamp it recorded equals that file's latest stamp (10 ms
-  tolerance) and every phony dependee finished no later than the stamp recorded for it, else
-  `Epoch = 0`; a 0.4 `ArtifactDep` gives `Epoch = 0`. `Built` keeps its time. `ArtifactDep` and
-  `ArtifactDep2` become `TargetDep`; the secret scrub stays. A no-change run after the upgrade
-  rebuilds nothing.
+  back to the end of the last whole record and keeps everything before it.
+- Databases 0.4-0.6 are read by the module `LegacyRead` (its own picklers and the conversion),
+  converted and rewritten as 0.7. Per file a `FileRec` with the stamp recorded by the result with
+  the latest `Built` (`DateTime.MinValue` is no stamp), unknown size, `changed = 1`. A result gets
+  `Epoch = 1` when every stamp it recorded is that one and every phony dependee finished no later
+  than recorded, else 0 (it reruns once). A no-change run after the upgrade rebuilds nothing.
+  `LegacyRead` is meant to be removed in a later release; its one call in `Database.fs` then
+  becomes "no longer read, recreating".
 - `Storage.openDb root dbpath logger` takes the project root. The public read API is
   `Storage.readRecords root dbpath` (every `DbRecord`, `Result` or `FileState`, in file order) and
-  `Storage.readDatabase root dbpath` (the last state and the last epoch). They take no lock, read
-  with `FileShare.ReadWrite`, and a torn last record ends the sequence.
+  `Storage.readDatabase root dbpath` (the last result per target, the last state per file, the
+  last epoch in `Database.Epoch`). They take no lock and open with `FileShare.ReadWrite |||
+  FileShare.Delete`, so the database of a running build can be read; a torn last record ends the
+  sequence, a missing or short file (a compaction in progress) gives an empty one.
 
 ### Epochs
 
-- The epoch is the run number: the largest `Result.epoch` or `FileRec.changed` in the file + 1 on
-  load (1 for an empty file); in engine mode each run takes the next. It is not stored on its own.
-  A result built in run `r` has `Epoch = r`.
-- A file is observed through the database agent at most once per run, except a rule's output, which
-  is observed again right after its rule finishes. The stat (existence, write time, length) is
-  compared with the `FileRec`: no record, or a moved stamp or size, gives `changed = r` and a new
-  record; an unknown size is filled in with `changed` kept. There is no hashing yet (`Hash = None`).
+- The epoch is the run number. On load the database's `Epoch` is the largest `Result.epoch` or
+  `FileRec.changed` in the file (it is not stored on its own). Every run starts in
+  `ExecCore.beginRun` (each target group of the command line, each `demandTarget`: setup,
+  teardown, engine `Demand`), which takes the next epoch from the agent (`NewRun`) and keeps it in
+  `ExecContext.RunEpoch`, with a fresh verdict memo and spelling table.
+- One epoch per run, not per event: everything built in run `r` has `Epoch = r` and everything
+  seen changed in run `r` has `changed = r`, so a target that `need`s a dependee rebuilt in the
+  same run (a dynamic need) is up to date on the next run (`r <= r`). A per-event counter would
+  make it look out of date on every run.
+- Runs may overlap in engine mode (`Demand` of different names): an observation is stamped with
+  the newest epoch handed out, a result with the epoch its task started in. A delegated result
+  that did not run its body keeps the local result's epoch; a foreign epoch is never stored.
+- A file is observed through the database agent (`Observe` with a mode): by a verdict at most once
+  per run (then cached); when a body records it as a `FileDep` it is statted again, and a moved
+  stat counts as a change unless another body already recorded it in this run; a rule's outputs
+  (every output of a multi-output rule) are statted again right after the rule. The stat
+  (existence, write time, length) is compared with the `FileRec`: no record, or a moved stamp or
+  size, gives `changed` = the run's epoch and a new record; an unknown size is filled in with
+  `changed` kept. There is no hashing yet (`Hash = None`). `--dump` and `--dryrun` observe in
+  memory only and append nothing.
 - Verdict for a target with a stored result of epoch `e`: `FileDep f` is stale when `f` is missing
   or `changed > e`; `TargetDep (FileTarget f)` when `f` is missing, `changed > e`, or the dependee
   itself has change reasons (the 4.0 transitive rule); `TargetDep (PhonyAction p)` when it has no
-  result, its `Epoch > e`, or the same transitive rule. `GetFiles`, `EnvVar`, `Var`, `SecretDep`
-  and `AlwaysRerun` are as before.
+  result, its `Epoch > e`, or the same transitive rule. `GetFiles` compares only the file list;
+  `EnvVar`, `Var`, `SecretDep` and `AlwaysRerun` are as before.
 - `StaticCount`, the number of leading dependencies from the rule header, is 0 in phase 1 and
   round-trips.
 
-### Case
+### Case and names
 
-`File`, `Target` and rule matching compare ordinally on every OS. Filesets ignore case by default;
-`FilesetOptions.CaseSensitive` (`casesensitive`) makes the search ordinal, and files found keep their
-spelling on disk. Per run `ExecContext.Spellings` maps the upper-cased path to its first spelling:
-a second spelling of one file is an error when both are targets and a warning (once per pair)
-otherwise.
+`File.Name` is Xake's name of a file: the normalised absolute path with `/` (`Path.collapse`: `.`
+and `..` resolved, repeated separators removed, a Windows drive letter upper-cased, a UNC root kept
+on Windows). Every path string Xake hands out is in this form, `ProjectRoot` included;
+`File.getSysFileName` gives the OS form for tools. Rule and mask roots, and a rule pattern's drive
+letter, are normalised the same way, so the matcher compares Xake's forms only.
+
+`File`, `Target` and rule matching compare ordinally on every OS. Filesets and `Path.matches`
+ignore case by default; `FilesetOptions.CaseSensitive` (`casesensitive`) makes a fileset's search
+ordinal, and files found keep their spelling on disk. Per run `ExecContext.Spellings` maps the
+upper-cased path to its first spelling: a second spelling of one file is an error when both are
+targets that matched a rule and a warning (once per pair) otherwise.
 
 ## Rules and scheduling
 

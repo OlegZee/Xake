@@ -170,10 +170,129 @@ type ``Epoch tests``() =
                 File.WriteAllText("out/del.txt", "x")
                 return { BuildLog.makeResult targets with Epoch = 999L } }
         let rs = [ DelegatedRule (FileRule ("out/del.txt", recipe { () }), executor) ]
+        let epochOf () = (x.Results ()).Status.[FileTarget (File.make "out/del.txt")].Epoch
         x.Run [ "out/del.txt" ] rs
+        let first = epochOf ()
         x.Run [ "out/del.txt" ] rs
+        Assert.AreEqual(first, epochOf (), "the second hit keeps the local epoch")
+        Assert.AreNotEqual(999L, first)
+
+    /// A2: each target group of the command line is a run of its own; overlapping engine demands
+    /// get their own epochs.
+    [<Test>]
+    member x.``target groups and overlapping demands take their own epochs``() =
+        let rs = [ "g1" => recipe { do! alwaysRerun () }; "g2" => recipe { do! alwaysRerun () } ]
+        x.Run [ "g1"; "g2" ] rs
         let db = x.Results ()
-        let last = db.Epoch
-        let epoch = db.Status.[FileTarget (File.make "out/del.txt")].Epoch
-        Assert.That(epoch, Is.LessThanOrEqualTo last)
-        Assert.AreNotEqual(999L, epoch)
+        Assert.AreEqual(db.Status.[PhonyAction "g1"].Epoch + 1L, db.Status.[PhonyAction "g2"].Epoch)
+        let engine =
+            RulesBuilder { x.TestOptions with IgnoreCommandLine = true; ResetDb = false; Progress = false } {
+                phony "slow" (recipe {
+                    do! Async.Sleep 200
+                    do! alwaysRerun () })
+                phony "fast" (recipe { do! alwaysRerun () })
+                start
+            }
+        let slow = engine.Demand "slow"
+        let fast = engine.Demand "fast"
+        System.Threading.Tasks.Task.WaitAll [| slow; fast |]
+        engine.StopAsync().Wait()
+        let db = x.Results ()
+        Assert.AreNotEqual(db.Status.[PhonyAction "slow"].Epoch, db.Status.[PhonyAction "fast"].Epoch)
+
+    /// A1 end to end: a file without a rule rewritten during a run by another rule is recorded
+    /// with that run's change; the next run rebuilds nothing.
+    [<Test>]
+    member x.``a generated file without a rule rewritten in a run does not rebuild twice``() =
+        let yRuns = ref 0
+        File.WriteAllText("a1.src", "v1")
+        let rs =
+            [ "out/a1.x" ..> recipe {
+                do! need [ "a1.src" ]
+                File.WriteAllText("a1.gen", File.ReadAllText "a1.src")    // a side output, no rule
+                do! writeText "x" }
+              "out/a1.y" ..> recipe {
+                do! need [ "out/a1.x" ]
+                do! need [ "a1.gen" ]
+                count yRuns
+                do! writeText (File.ReadAllText "a1.gen") } ]
+        x.Run [ "out/a1.y" ] rs
+        edit "a1.src" "v2"
+        x.Run [ "out/a1.y" ] rs
+        Assert.AreEqual(2, yRuns.Value)
+        Assert.AreEqual("v2", File.ReadAllText "out/a1.y")
+        x.Run [ "out/a1.y" ] rs
+        Assert.AreEqual(2, yRuns.Value, "no second rebuild")
+
+    /// A8: --dump appends nothing; a multi-output rule re-observes all its outputs.
+    [<Test>]
+    member x.``dump appends nothing; a multi-output rule re-observes every output``() =
+        let runs = ref 0
+        File.WriteAllText("mo.src", "v1")
+        let rs =
+            [ [ "out/mo.dll"; "out/mo.xml" ] *..> recipe {
+                do! need [ "mo.src" ]
+                count runs
+                File.WriteAllText("out/mo.dll", "d")
+                File.WriteAllText("out/mo.xml", "x") }
+              "out/mo.zip" ..> recipe {
+                do! need [ "out/mo.xml" ]
+                do! writeText "z" } ]
+        x.Run [ "out/mo.zip" ] rs
+        let db = x.Results ()
+        let built = db.Status.[FileTarget (File.make "out/mo.dll")].Epoch
+        for f in [ "out/mo.dll"; "out/mo.xml" ] do
+            Assert.AreEqual(built, db.Files.[File.make f].Changed, f)
+        let length = (FileInfo ".xake").Length
+        edit "mo.src" "v2"
+        xake { x.TestOptions with Targets = [ "out/mo.zip" ]; ResetDb = false; DumpDeps = true } { rules rs }
+        Assert.AreEqual(length, (FileInfo ".xake").Length)
+
+    /// A5: --resetdb runs under the lock and starts afresh.
+    [<Test>]
+    member x.``resetdb deletes the database and rebuilds``() =
+        let runs = ref 0
+        File.WriteAllText("rs.c", "c")
+        let rs = [ "out/rs.o" ..> recipe {
+                        do! need [ "rs.c" ]
+                        count runs
+                        do! writeText "o" } ]
+        x.Run [ "out/rs.o" ] rs
+        x.Run [ "out/rs.o" ] rs
+        xake { x.TestOptions with Targets = [ "out/rs.o" ]; ResetDb = true } { rules rs }
+        Assert.AreEqual(2, runs.Value)
+        Assert.IsFalse(File.Exists ".xake.bak")
+
+    /// A6: drive-relative and rooted paths without a drive (Windows), a lowercase drive.
+    [<Test>]
+    member _.``File.make resolves Windows partial roots``() =
+        if Env.isUnix then Assert.Ignore "Windows paths"
+        let cwd = Directory.GetCurrentDirectory()
+        let drive = cwd.Substring(0, 2).ToUpperInvariant()
+        Assert.AreEqual(drive + "/foo", (File.make @"\foo").Name)
+        Assert.AreEqual(Path.collapse (cwd </> "foo"), (File.make (drive + "foo")).Name)
+        Assert.AreEqual(File.make (drive.ToLowerInvariant() + @"\x"), File.make (drive + @"\x"))
+
+    /// A7: an upgraded fileset is searched ignoring case; with names differing in case on a
+    /// case-sensitive volume (Linux) its dependent reruns once.
+    [<Test>]
+    member x.``an upgraded fileset is re-scanned ignoring case``() =
+        Directory.CreateDirectory "cs7" |> ignore
+        File.WriteAllText("cs7/a.cs", "")
+        File.WriteAllText("cs7/A.cs", "")
+        if Directory.GetFiles "cs7" |> Array.length < 2 then Assert.Ignore "the volume ignores case"
+        let runs = ref 0
+        let rs = [ "out/cs7.o" ..> recipe {
+                        let! _ = getFiles (fileset { includes "cs7/*.cs" })
+                        count runs
+                        do! writeText "o" } ]
+        let fs = fileset { includes "cs7/*.cs" }
+        let old =
+            { LegacyRead.OTargets = [ FileTarget (File.make "out/cs7.o") ]; LegacyRead.OBuilt = System.DateTime.Now
+              LegacyRead.ODepends = [ LegacyRead.Plain (GetFiles (fs, Filelist [ File.make "cs7/a.cs" ])) ]; LegacyRead.OSteps = [] }
+        Directory.CreateDirectory "out" |> ignore
+        File.WriteAllText("out/cs7.o", "o")
+        OldDatabase.writeOld ".xake" "0.6" [ old ]
+        x.Run [ "out/cs7.o" ] rs
+        x.Run [ "out/cs7.o" ] rs
+        Assert.AreEqual(1, runs.Value, "reruns once")

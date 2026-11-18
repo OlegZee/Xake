@@ -349,3 +349,24 @@ let ``the upgrade takes the stamp of the latest built result``() =
                   { res "none.o" (t0.AddHours 3.0) System.DateTime.MinValue with ODepends = [ OldArtifact2 (mkFileTarget "x.o", System.DateTime.MinValue) ] } ]
     Assert.AreEqual([ f, { Stamp = t0.AddMinutes 1.0; Size = -1L; Hash = None; Changed = 1L } ], files)
     Assert.AreEqual([ 1L; 0L; 0L ], results |> List.map (fun r -> r.Epoch))
+
+/// A5: a failed open releases the lock; a reader of a missing file gets nothing.
+[<Test>]
+let ``a failed open releases the lock``() =
+    Directory.CreateDirectory "dbdir" |> ignore
+    let path = "dbdir"     // a directory: the database file cannot be opened
+    let openIt () = Storage.openDbWith (System.TimeSpan.FromMilliseconds 200.0) false (root ()) path logger |> ignore
+    let first = Assert.Catch(fun () -> openIt ())
+    let second = Assert.Catch(fun () -> openIt ())
+    Assert.IsNotInstanceOf<XakeException>(second, "not the lock: it was released")
+    Assert.AreEqual(first.GetType(), second.GetType())
+    Assert.IsEmpty(readRecords (root ()) "no-such.xake")
+
+/// A6: a project at a file-system root loads its paths back (no '//').
+[<Test>]
+let ``a path table at a file-system root round-trips``() =
+    let root = if Env.isUnix then "/" else @"C:\"
+    let f = File.make (root </> "src" </> "a.c")
+    let state = { Stamp = System.DateTime(2026, 1, 1); Size = 1L; Hash = None; Changed = 1L }
+    let _, read = DbFormat.roundTrip root [ DbRecord.FileState (f, state) ]
+    Assert.AreEqual([ DbRecord.FileState (f, state) ], read.Records)

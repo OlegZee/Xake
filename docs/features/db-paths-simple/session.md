@@ -20,7 +20,9 @@ holds the absolute path (`Name` absolute), `Built` kept, filesets case-insensiti
 absolute path" and that phase 1 has one root (`openDb root`, `ProjectRoot` only; the root number in
 `DirRec` is the only room kept for more roots). The design was **approved on 2026-11-18**; the normative spec is [decision.md](decision.md).
 
-**Next step.** Implementation in a separate session (Opus, medium effort) on this branch and
+**Implementation (2026-11-18, separate session).** Step 1 (docs) committed; step 2 (1a `File`, case, two spellings) in progress.
+
+**Next step (original plan).** Implementation in a separate session (Opus, medium effort) on this branch and
 worktree: docs first (`docs/` + release notes "5.0.0 (unreleased)"),
 then code in the order 1a -> 1b -> 1c, tests, the size measurement. No push, no PR without the owner.
 

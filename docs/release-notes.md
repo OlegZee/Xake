@@ -5,6 +5,42 @@ The `Xake` package: the engine (up to 3.15 it also carried `Xake.Dotnet`). From 
 [OlegZee/Xake.Dotnet](https://github.com/OlegZee/Xake.Dotnet), with their own notes; the entries below about them up to
 4.0 are the history. Links to their docs point to that repository.
 
+## 5.0.0 (unreleased)
+
+Breaking changes:
+
+1. **Path case.** `File`, `Target` and rule matching are ordinal on every OS. On Linux `A.cs` and
+   `a.cs` are now two files (they were one); on Windows and macOS rule masks become case-sensitive.
+   Filesets ignore case by default on every OS; `casesensitive` in `fileset { }`
+   (`FilesetOptions.CaseSensitive`) restores a case-sensitive search. Rules, targets and `File`
+   stay ordinal, with no option. On Windows and macOS filesets behave as before; on Linux they
+   become case-insensitive. Two spellings of one file in a run: an error for targets, a warning
+   otherwise.
+2. **`File`.** `File.undefined` is removed. `Name` is the absolute path (the engine's own output
+   is relative to the project root). `File.make` normalises: a trailing separator is dropped and,
+   on Windows, `\` becomes `/` internally. `File.display` and `File.comparer` are added.
+3. **`Dependency`.** `FileDep of File` and `TargetDep of Target` carry no stamp; `ArtifactDep` and
+   `ArtifactDep2` are removed. `BuildResult` gains `Epoch` and `StaticCount` (`Built` stays the
+   time). `BuildLog.Database` gains `Files` and `FileState` is added.
+4. **Storage API.** `Storage.openDb root dbpath logger` takes the project root; the database is
+   exclusive (`.xake.lock`); `DatabaseApi` gains `Observe`. `Storage.resultPU` is replaced by the
+   public read API `Storage.readRecords` and `Storage.readDatabase`.
+5. **Filesets.** `FilesetOptions.CaseSensitive` and the `casesensitive` operation are added.
+6. **`ExecContext`** gains `Spellings`.
+7. **Database 0.7.** Xake 4.x cannot read it. Databases 0.4-0.6 are upgraded on open, and a
+   no-change run after the upgrade rebuilds nothing.
+
+Also:
+
+- A second Xake run on the same database waits up to 30 s, then fails: "another Xake run uses this
+  database (.xake.lock)".
+- The database stores paths relative to the project root, so a moved or copied project folder
+  keeps its database.
+- `--dump` shows epochs.
+
+For `Xake.Dotnet` users: `File.undefined` is removed; `Xake.Dotnet` moves to `File option` at its
+5.0.
+
 ## 4.0.0 (2026-11-03)
 
 ### Summary

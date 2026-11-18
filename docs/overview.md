@@ -170,7 +170,9 @@ no checks, either separator. `</>` is `Path.Combine`: do not build patterns or m
 
 Bare wildcards (`*`, `**`, `?`) are captured by position too: `"1"`, `"2"`, ... left to right, at
 any depth (`"0"` is the whole path). Groups are greedy and leftmost: `(a:*)-(b:*)` on `x-y-z`
-gives `a = x-y`. Case follows the OS: ordinal on Linux and macOS, ignore-case on Windows.
+gives `a = x-y`. Case is ordinal on every OS for `File`, targets and rule patterns; filesets ignore case by default
+(`casesensitive` in `fileset { }` makes the search ordinal). Two spellings of one file in a run are an
+error for targets and a warning otherwise.
 
 ### Rule patterns
 
@@ -282,7 +284,8 @@ The 4.0 grammar is stricter. What to look at in a script:
 
 Also changed: results of a scan are ordered and duplicate-free; `**` skips directory symlinks;
 a literal exclude segment is no longer case-insensitive on Linux and macOS (and a wildcard
-include no longer ignores case on macOS); `Path.matchesPattern`, `Fileset.toFileList1` and the
+include no longer ignores case on macOS; 5.0 makes filesets ignore case on every OS again,
+with `casesensitive` to opt out, and keeps rules and targets ordinal); `Path.matchesPattern`, `Fileset.toFileList1` and the
 `FileSystem` adapter are removed. The full list, with what each change gives a build, is the
 4.0 section of the [release notes](release-notes.md).
 

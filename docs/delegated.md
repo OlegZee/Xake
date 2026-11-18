@@ -176,7 +176,7 @@ rules [
     body still works but may briefly exceed the local `Threads` count during the wait, since
     `withYieldedSlot` would release a slot the detached body does not hold.)
 - The returned `BuildResult` is still **stored in the local `.xake` database**, so downstream
-  targets that `need` this one resolve their `ArtifactDep2` as built (stamped with the file write time, or the stored `Built` for a phony target).
+  targets that `need` this one record a `TargetDep` on it; the verdict compares the dependee's file `changed` epoch (or, for a phony target, its stored `Epoch`) with the dependent's epoch.
 
 ### Two independent dedup layers
 

@@ -19,5 +19,9 @@ Orchestrator brief: `~/.claude/orchestrators/xake/briefs/phase3-cutoff.md`.
   `HashRequest`, `Settle` with `HashResult`; design.md "Owner's review"). Core net +419 over `dev`;
   macOS 1841 passed, build.fsx green, Windows VM 1816 passed / 21 skipped; pushed to the PR.
 
+- 2026-11-18: the worktree moved to `.claude/worktrees/content-cutoff` (the old folder
+  `db-paths-ced680` was cleaned up by the app). Owner's second review point: `hashing` moved from
+  `Observe` to `NewRun`.
+
 ## Next step
 - Owner review; CI on the PR; squash-merge into `dev` by the owner.

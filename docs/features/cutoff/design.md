@@ -185,8 +185,12 @@ Differences from the design above:
   moved while hashing is `Unreadable` (the content was not stable: a change without a hash, as
   before). The reply is `Observe`'s, never `HashNeeded`; a lost compare-and-set replies the
   current state.
-- `Observe (file, mode, hashing, since)` replies `Absent | Unchanged | Changed | HashNeeded`: the
+- `Observe (file, mode, since)` replies `Absent | Unchanged | Changed | HashNeeded`: the
   "changed after run `since`" comparison is only in the database. `getDepState` passes the
   dependent's epoch, `observeOutputs` `RunEpoch - 1`; record-only calls use `observe`
-  (`since` = max). The `hashing` flag (`--content-cutoff=off`) stays a field of `Observe`, keeping
-  the agent option-free. The phony comparison (`Epoch > e`) is unchanged.
+  (`since` = max). The phony comparison (`Epoch > e`) is unchanged.
+- Second round (2026-11-18): the `hashing` flag moved from `Observe` to `NewRun (hashing, reply)`:
+  the run decides once whether it hashes (`beginRun`, `--dump`, `--dryrun` pass
+  `ContentCutoff`); nothing is hashed before the first `NewRun`. `ContentCutoff` is an engine
+  option (`EngineOptions`), so overlapping runs of one engine (`Demand`s of different names) always
+  set the same value; two engines cannot share a database (`.xake.lock`).

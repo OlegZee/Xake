@@ -48,7 +48,7 @@ module Content =
 /// content changed after the run `since`. A file the agent asks to hash (`HashNeeded`) is hashed
 /// here, off the agent, and settled.
 let observeSince (ctx: ExecContext) (mode: ObserveMode) (since: int) (file: File) = async {
-    let! o = ctx.Db.PostAndAsyncReply(fun ch -> Observe(file, mode, ctx.Options.ContentCutoff, since, ch))
+    let! o = ctx.Db.PostAndAsyncReply(fun ch -> Observe(file, mode, since, ch))
     match o with
     | HashNeeded request ->
         let watch = System.Diagnostics.Stopwatch.StartNew()

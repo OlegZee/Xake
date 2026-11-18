@@ -105,16 +105,17 @@ module Storage =
         /// a state are observed (A3).
         | Store of BuildResult
         /// Observes a file, stamping a change with the epoch of the last `NewRun`; the reply says
-        /// whether its content changed after the run `since`. `hashing` false
-        /// (`--content-cutoff=off`) hashes nothing and clears the hash of a moved file. Until the
-        /// `Settle` of a `HashNeeded` reply, other observations of the file wait.
-        | Observe of File * ObserveMode * hashing: bool * since: int * AsyncReplyChannel<Observation>
+        /// whether its content changed after the run `since`. Until the `Settle` of a `HashNeeded`
+        /// reply, other observations of the file wait.
+        | Observe of File * ObserveMode * since: int * AsyncReplyChannel<Observation>
         /// Settles a `HashNeeded` observation with the hash of the file. Applied only if the record
         /// is still the one the request was made against (compare-and-set); otherwise the current
         /// state is replied.
         | Settle of HashRequest * HashResult * AsyncReplyChannel<Observation>
         /// Starts a new run: replies the next epoch; observations and recordings afresh (A2).
-        | NewRun of AsyncReplyChannel<int>
+        /// `hashing` false (`--content-cutoff=off`): the run hashes nothing, and a moved file loses
+        /// its hash. It holds until the next `NewRun` (nothing is hashed before the first).
+        | NewRun of hashing: bool * AsyncReplyChannel<int>
         /// Observations stay in memory and nothing is appended (`--dump`, `--dryrun`, A8).
         | InMemory
         | Close
@@ -467,7 +468,9 @@ module Storage =
                         logError "Database write failed, no further records are saved until it is closed: %s" ex.Message
                         table', None
             /// Observations waiting for the `Settle` of a file being hashed.
-            let pending = System.Collections.Generic.Dictionary<File, ResizeArray<ObserveMode * bool * int * AsyncReplyChannel<Observation>>>()
+            let pending = System.Collections.Generic.Dictionary<File, ResizeArray<ObserveMode * int * AsyncReplyChannel<Observation>>>()
+            /// Whether the current run hashes (set by `NewRun`).
+            let hashing = ref false
             /// The reply for a state: changed after the run `since`, or not.
             let classify since = function
                 | None -> Absent
@@ -505,8 +508,8 @@ module Storage =
                         | (Verdict | Recording), Some _ when hashing -> Hash known, db, out
                         | _ -> stored (moved ())
             /// Observes and turns the result into the reply; a file to hash becomes pending.
-            let observeReply db out mode hashing since (file: File) =
-                match observe db out mode hashing file with
+            let observeReply db out mode since (file: File) =
+                match observe db out mode hashing.Value file with
                 | Seen state, db, out -> classify since state, db, out
                 | Hash known, db, out ->
                     pending.[file] <- ResizeArray()
@@ -553,13 +556,13 @@ module Storage =
                             |> List.filter (db.Files.ContainsKey >> not)
                             |> List.fold (fun (db, out) f -> let _, db, out = observe db out Verdict false f in db, out) (addResult db result, out)
                         return! loop db out
-                    | Observe (file, mode, hashing, since, chnl) ->
+                    | Observe (file, mode, since, chnl) ->
                         match pending.TryGetValue file with
                         | true, waiting ->
-                            waiting.Add((mode, hashing, since, chnl))
+                            waiting.Add((mode, since, chnl))
                             return! loop db out
                         | _ ->
-                            let o, db, out = observeReply db out mode hashing since file
+                            let o, db, out = observeReply db out mode since file
                             chnl.Reply o
                             return! loop db out
                     | Settle (request, result, chnl) ->
@@ -570,15 +573,16 @@ module Storage =
                         let waiting = match pending.TryGetValue file with | true, w -> List.ofSeq w | _ -> []
                         pending.Remove file |> ignore
                         let db, out =
-                            waiting |> List.fold (fun (db, out) (mode, hashing, since, ch: AsyncReplyChannel<Observation>) ->
+                            waiting |> List.fold (fun (db, out) (mode, since, ch: AsyncReplyChannel<Observation>) ->
                                 match pending.TryGetValue file with
-                                | true, w -> w.Add((mode, hashing, since, ch)); db, out
+                                | true, w -> w.Add((mode, since, ch)); db, out
                                 | _ ->
-                                    let o, db, out = observeReply db out mode hashing since file
+                                    let o, db, out = observeReply db out mode since file
                                     ch.Reply o
                                     db, out) (db, out)
                         return! loop db out
-                    | NewRun ch ->
+                    | NewRun (hashes, ch) ->
+                        hashing.Value <- hashes
                         observed.Clear()
                         recorded.Clear()
                         let db = { db with Epoch = db.Epoch + 1 }

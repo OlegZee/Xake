@@ -103,7 +103,7 @@ The file starts with a version header (`BuildLog.XakeDbVersion`, `0.7`; `XakeDbM
   (existence, write time, length) is compared with the `FileRec`: no record gives `changed` = the
   run's epoch and no hash; an unknown size is filled in with `changed` kept. `--dump` and
   `--dryrun` observe in memory only and append nothing.
-- **Observing with `since`.** `Observe (file, mode, hashing, since)` replies `Absent`,
+- **Observing with `since`.** `Observe (file, mode, since)` replies `Absent`,
   `Unchanged state` or `Changed state` (content changed after the run `since`), or
   `HashNeeded request`. The "changed after run `e`" comparison lives only in the database: the
   verdict passes the dependent's epoch, `observeOutputs` passes `RunEpoch - 1` (changed in this
@@ -122,7 +122,8 @@ The file starts with a version header (`BuildLog.XakeDbVersion`, `0.7`; `XakeDbM
   run and the new hash stored. `Output true` hashes every output after its rule, even with an equal
   stat (coarse time stamps); `Output false` (`noContentCutoff`) stores no hash and sets `changed` =
   run; `PreHash` hashes an output with no hash and an equal stat before its rule runs. With
-  `--content-cutoff=off` (`ExecOptions.ContentCutoff`, the `hashing` flag of `Observe`) nothing is
+  `--content-cutoff=off` (`ExecOptions.ContentCutoff`, given to `NewRun (hashing, reply)`: the run decides once; it is
+  an engine option, so overlapping engine runs agree) nothing is
   hashed and a moved stat clears the hash.
 - Verdict for a target with a stored result of epoch `e`: `FileDep f` is stale when `f` is missing
   or `changed > e`. `TargetDep t`: the worker pool is asked (`Query`) whether `t` finished in this

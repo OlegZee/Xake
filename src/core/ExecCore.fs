@@ -579,7 +579,7 @@ let private verdict (ctx: ExecContext) getDeps (targets: Target list) = async {
 /// line and every demand is a run.
 let beginRun (ctx: ExecContext) = async {
     do Scheduler.newRun ctx.Engine.Scheduler
-    let! epoch = ctx.Db.PostAndAsyncReply Storage.NewRun
+    let! epoch = ctx.Db.PostAndAsyncReply(fun ch -> Storage.NewRun (ctx.Options.ContentCutoff, ch))
     let ctx = { ctx with Spellings = newSpellings (); RunEpoch = epoch }
     let getDeps = getChangeReasons ctx (currentRule ctx) |> memoizeRec
     return { ctx with NeedRebuild = verdict ctx getDeps; UpToDate = getDeps >> List.isEmpty }, getDeps }

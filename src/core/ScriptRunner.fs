@@ -198,12 +198,12 @@ let runScript options rules =
             if options.ThrowOnError then raise (XakeException errorText)
         | Dump ->
             Storage.InMemory |> ctx.Db.Post
-            ctx.Db.PostAndReply Storage.NewRun |> ignore
+            ctx.Db.PostAndReply(fun ch -> Storage.NewRun (ctx.Options.ContentCutoff, ch)) |> ignore
             do logger.Log Level.Command "Dumping dependencies for targets %A" targetLists
             targetLists |> List.iter (List.map (ExecCore.makeTarget ctx) >> (dumpDeps ctx (ExecCore.currentRule ctx)))
         | Dryrun ->
             Storage.InMemory |> ctx.Db.Post
-            ctx.Db.PostAndReply Storage.NewRun |> ignore
+            ctx.Db.PostAndReply(fun ch -> Storage.NewRun (ctx.Options.ContentCutoff, ch)) |> ignore
             targetLists |> dryRun ctx options.Setup
         | _ ->
             let mutable reraisedError = None

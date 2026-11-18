@@ -107,7 +107,8 @@ The file starts with a version header (`BuildLog.XakeDbVersion`, `0.7`; `XakeDbM
   moved stat (or an output) needs a hash, `Observe` replies `Moved` without touching the record;
   `DependencyAnalysis.observe` hashes (stat, SHA-256, stat; first 8 bytes) off the agent and posts
   `Settle (file, known, hashed, mode)`, applied only if the record is still `known`
-  (compare-and-set). Concurrent observers of one file share one hash (per-run dedup in `RunState`).
+  (compare-and-set). Until then other observations of the file wait in the agent, so a move is
+  hashed once.
   Moved with a hash: equal keeps `changed`, else `changed` = run. Moved without a hash: `changed` =
   run and the new hash stored. `Output true` hashes every output after its rule, even with an equal
   stat (coarse time stamps); `Output false` (`noContentCutoff`) stores no hash and sets `changed` =
@@ -118,7 +119,7 @@ The file starts with a version header (`BuildLog.XakeDbVersion`, `0.7`; `XakeDbM
   or `changed > e`. `TargetDep t`: the worker pool is asked (`Query`) whether `t` finished in this
   run, is running, or has not started. Finished: compared exactly (`changed > e` for a file,
   `Epoch > e` for a phony). Running: the target's own verdict waits for it, then compares; a
-  waits-for map (`RunState.Waits`, set around the verdict wait and `execNeed`) stops a wait that
+  waits-for map (`RunCounters.Waits`, `WaitGraph`, set around the verdict wait and `execNeed`) stops a wait that
   would close a cycle (the dependee counts as changed). Not started: `changed`/`Epoch > e`, or the
   dependee's own no-build verdict non-empty (the 4.0 transitive rule, kept only here). The no-build
   verdict (memoised per run) never waits: inside it a running dependee is a change. It serves the

@@ -87,7 +87,9 @@ The rule header ([rule-header.md](rule-header.md)):
   where nothing moved schedules no task.
 - API: `ExecOptions.ContentCutoff`, `ExecOptions.SummarySink`, `IRunSummarySink`;
   `DatabaseApi.Observe` replies `Observation` (`Known` / `Moved`), `Settle` is added,
-  `ObserveMode.Output` takes the cut-off flag and `PreHash` is added; `ExecContext` gains `Run`.
+  `ObserveMode.Output` takes the cut-off flag and `PreHash` is added; `WorkerPool.TaskState` and
+  `Scheduler.query` are added; `ExecContext.NeedRebuild` is asynchronous and `ExecContext` gains
+  `UpToDate` and `Counters`.
 
 Also:
 

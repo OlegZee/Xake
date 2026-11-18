@@ -145,3 +145,33 @@ acceptance tests by counters; `dotnet build src/core -c Release` 0 warnings, `do
 4. Section 3: inside the no-build recursion a running dependee counts as changed (only the target's
    own direct dependees are waited for): OK?
 5. Section 3: running/finished from a `WorkerPool.Query` message rather than a parallel set?
+
+## As built (2026-11-18)
+
+Core +460 / -84 lines, **net +376** (budget about +390):
+
+| File | Added / removed |
+|---|---|
+| `Database.fs` | +91 / -25 |
+| `DependencyAnalysis.fs` | +50 / -12 |
+| `ExecCore.fs` | +129 / -38 |
+| `ExecTypes.fs` | +118 / -1 |
+| `WorkerPool.fs` | +24 / -4 |
+| `XakeScriptBuilder.fs`, `XakeScript.fs`, `ScriptRunner.fs`, `Types.fs` | +48 / -4 |
+
+Tests: `ContentCutoffTests.fs` (12 tests, 271 lines), `RecordShapeTests`, `StorageTests` adapted.
+Differences from the design above:
+
+- **Hash dedup is in the agent**, not a per-run map: while a `Moved` observation is unsettled,
+  other `Observe`s of that file queue in the agent and are answered after the `Settle`. One move
+  is hashed once; no `RunState` map is needed.
+- **No separate run state:** `ExecContext.Counters` (`RunCounters`, per script run or `Demand`)
+  holds the counters, the fast-path gate and the `WaitGraph`; the memo lives in the closures that
+  `beginRun` puts in `NeedRebuild` (full verdict, async) and `UpToDate` (no-build verdict).
+- `Scheduler.query` reads a snapshot of the pool's maps published after every message, not a
+  mailbox message: a `Run` may hold the pool's loop while it waits for a CPU slot, and a verdict
+  must not wait behind it.
+- With `--content-cutoff=off` every dependee goes through the transitive rule (the pool is not
+  asked), so the decisions are exactly those of phase 1.
+- A verdict wait cancelled by the cycle check, or refused, counts the dependee as running (a
+  change); a dependee that fails while waited for fails the dependent.

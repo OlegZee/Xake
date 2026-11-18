@@ -113,13 +113,15 @@ type internal WaitGraph() =
     /// Registers `waiters` (the names of a task's targets) waiting in `need` for `awaited`; verdict
     /// waits closed into a cycle are cancelled. Returns the unregistration.
     member _.Need (waiters: string list) (awaited: string list) =
-        lock lck (fun () ->
-            for a in awaited do add waiters a None
-            for KeyValue (w, es) in edges do
-                for (a, cancel) in es do
-                    match cancel with
-                    | Some c when reaches a w -> c.TrySetResult true |> ignore
-                    | _ -> ())
+        let cancels =
+            lock lck (fun () ->
+                for a in awaited do add waiters a None
+                [ for KeyValue (w, es) in edges do
+                    for (a, cancel) in es do
+                        match cancel with
+                        | Some c when reaches a w -> yield c
+                        | _ -> () ])
+        for c in cancels do c.TrySetResult true |> ignore
         fun () -> for a in awaited do remove waiters a
     /// Registers a verdict wait of `waiters` for `awaited`: None when it would close a cycle, else
     /// the cancellation (set when a later `need` closes one) and the unregistration.
@@ -127,7 +129,7 @@ type internal WaitGraph() =
         lock lck (fun () ->
             if waiters |> List.exists (reaches awaited) then None
             else
-                let cancel = System.Threading.Tasks.TaskCompletionSource<bool>()
+                let cancel = System.Threading.Tasks.TaskCompletionSource<bool>(System.Threading.Tasks.TaskCreationOptions.RunContinuationsAsynchronously)
                 add waiters awaited (Some cancel)
                 Some (cancel, fun () -> remove waiters awaited))
 

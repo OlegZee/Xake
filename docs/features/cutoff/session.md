@@ -12,5 +12,8 @@ Orchestrator brief: `~/.claude/orchestrators/xake/briefs/phase3-cutoff.md`.
 - The VM clone (`ssh win11`, `$HOME\source\repos\Xake`) got the branch from a git bundle
   (`feature/content-cutoff`), not from origin.
 
+- PR https://github.com/OlegZee/Xake/pull/143 open into `dev` (pushed on the owner's word,
+  2026-11-18); not merged.
+
 ## Next step
-- Owner: review, then push and PR into `dev` (squash) when the owner says so.
+- Owner review; CI on the PR; squash-merge into `dev` by the owner.

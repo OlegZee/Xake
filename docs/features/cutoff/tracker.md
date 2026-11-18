@@ -10,7 +10,8 @@
 - [x] RunSummary, onSummary, LastSummary, --content-cutoff=off, fast path
 - [x] Tests (ContentCutoffTests.fs), macOS green, build.fsx green
 - [x] Windows VM check: core 0 warnings, 1815 passed / 21 skipped; the cut-off fixture 30/30
-- [ ] Owner review; push and PR on the owner's word
+- [x] Pushed, PR OlegZee/Xake#143 open (2026-11-18)
+- [ ] Owner review, CI, squash-merge
 
 ## Later
 - The no-build verdict's memo holds one lock (CommonLib.memoize): hashing a moved source inside

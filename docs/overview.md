@@ -306,7 +306,7 @@ let files = !! mask
 ## Typed targets
 
 Rules with groups can declare them as record fields (`open Xake.Typed` after `open Xake`): `m.cfg`
-instead of `getRuleMatch "cfg"`, and paths for `need` generated from the pattern. See
+instead of `m["cfg"]`, and paths for `need` generated from the pattern. See
 [typed-targets.md](typed-targets.md), which also covers the migration from the string API.
 
 ## Useful links

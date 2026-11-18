@@ -26,8 +26,8 @@ type ``Parent-dir target patterns``() =
 
                 "../out/(name:*).txt" ..> action {
                     needExecuteCount <- needExecuteCount + 1
-                    let! name = getRuleMatch "name"
-                    Assert.AreEqual("lib", name)
+                    let! m = matched
+                    Assert.AreEqual("lib", m["name"])
                     do! writeText "hello from parent dir rule"
                 }
             ]

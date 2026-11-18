@@ -104,8 +104,8 @@ recipe {
 ```
 
 Capture groups of the rule's pattern (file or phony): `let! m = matched`, then `m["name"]` (an
-unknown name fails the task, listing the groups), `m.TryFind "name"`, `m.Names`. Older forms:
-`let! name = getRuleMatch "name"` (`""` when absent), `let! all = getRuleMatches ()` (a map). Also `getVar`, `getEnv`, `getCtxOptions`,
+unknown name fails the task, listing the groups), `m.TryFind "name"`, `m.Names`. Also
+`let! all = getRuleMatches ()` (a map); `getRuleMatch "name"` (`""` when absent) is obsolete. Also `getVar`, `getEnv`, `getCtxOptions`,
 `getTargetFile` (file rules only; `File.getSysFileName` gives its OS path, `.Name` Xake's `/`
 form), `alwaysRerun ()`.
 `let! known = hasRule "out/a.dll"`: whether a rule would build a target (resolved as `need`

@@ -76,8 +76,8 @@ The rule header ([rule-header.md](rule-header.md)):
 **Rule groups by name:** `let! m = matched` in every recipe (`..>`, `*..>`, `=>`, `target`,
 `targets`, `command`, after a header), then `m["n"]`. Unlike `getRuleMatch`, an unknown name fails
 the task: `no group 'x' in the rule match (groups: cfg, n)`. `RuleMatch` also has `TryFind` and
-`Names`. In `X.rule { }` `matched` still gives the typed record. `getRuleMatch` and
-`getRuleMatches` are unchanged.
+`Names`. In `X.rule { }` `matched` still gives the typed record. `getRuleMatch` is obsolete;
+`getRuleMatches` is unchanged.
 
 **Content cut-off** ([content-cutoff.md](content-cutoff.md)), on by default:
 

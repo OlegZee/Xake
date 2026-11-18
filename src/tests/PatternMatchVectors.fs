@@ -137,7 +137,7 @@ let ruleMatches : RuleVector list = [
     rp "RM-044" "5.6" "(root:*/*-a).ss" "subd1/x86-a.ss" (m [ "root", "subd1/x86-a"; "1", "subd1"; "2", "x86" ]) [] "unchanged; XakeScriptTests 'group across parts'"
     rp "RM-045" "5.6" "(name:(plat:*)-a.ss)" "x86-a.ss" (m [ "name", "x86-a.ss"; "plat", "x86"; "1", "x86" ]) [] "unchanged; XakeScriptTests 'Nested groups'"
     rp "RM-046" "11" "(name:[(]*).ss" "(abc.ss" (m [ "name", "(abc"; "1", "abc" ]) [] "unchanged; XakeScriptTests 'Escaped brackets', example 7 (XP105 at parse)"
-    rp "RM-047" "5.6" "*/(plat:*)-a.ss" "subd1/x86-a.ss" (m [ "1", "subd1"; "plat", "x86"; "2", "x86" ]) [] "unchanged; XakeScriptTests getRuleMatch"
+    rp "RM-047" "5.6" "*/(plat:*)-a.ss" "subd1/x86-a.ss" (m [ "1", "subd1"; "plat", "x86"; "2", "x86" ]) [] "unchanged; XakeScriptTests matched"
     rp "RM-048" "5.6" "gen/*/(name:*)-?.txt" "gen/x/lib-9.txt" (m [ "1", "x"; "name", "lib"; "2", "lib"; "3", "9" ]) [] "unchanged; 5.6 numbering at any depth; prototype PatternAstTests"
     rp "RM-049" "5.6" "**/(n:*)/?*.(ext:c?)" "a/b/core/x1.cs"
         (m [ "1", "a/b"; "n", "core"; "2", "core"; "3", "x"; "4", "1"; "ext", "cs"; "5", "s" ]) [] "unchanged for matchGroups; prototype PatternAstTests"

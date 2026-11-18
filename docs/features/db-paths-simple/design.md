@@ -60,8 +60,11 @@ Status: **for the owner's approval** (no code written); decisions recorded below
 - 2026-11-18, **the proposals following from answers 1-4 accepted**, with these changes:
   - **`File` holds the absolute path** (as agreed with the orchestrator): `Name` gives the absolute
     path, nothing in `File` depends on the current directory; paths relative to the project root
-    are only shown by the engine (`File.display root f`). (Exact reading to be confirmed with the
-    orchestrator: see the questions.)
+    are only shown by the engine (`File.display root f`). Confirmed by the orchestrator
+    2026-11-18 (owner-approved file-type brief and the owner's word in the orchestrator).
+  - **One root in phase 1** (orchestrator, 2026-11-18): `openDb` takes `ProjectRoot` only; named
+    or extra roots stay out of phase 1 (brief: "no named roots"). The owner's "room for several
+    roots later" is kept only as the root number in `DirRec` (1b, "Roots"), with one value used.
   - **`Built` stays** a time next to `Epoch`.
   - **Filesets ignore case by default, on every OS**; `casesensitive` in `fileset { }`
     (`FilesetOptions.CaseSensitive`) restores a case-sensitive search. Rules, targets and `File`
@@ -189,12 +192,11 @@ Ids, sizes and epochs are varints; the stamp is 8 bytes (ticks).
   `""` for a file directly in the root), `PathRec` the file name and the directory id. Load:
   `File.make (root </> dir </> name)` (an absolute directory stays absolute).
 - **Roots** (answer 1): `DirRec.root` is a small number, `0` = absolute (no root), `1` = the
-  project root; the values of the roots are never written. The database and the engine get the
-  roots in the constructor (`openDb roots dbpath logger`, today one root: `ProjectRoot`). A later
-  root (for example a package cache) takes the next number, chosen by the code, not by the order
-  a user writes; an old database never uses it, so adding one needs no format change. A directory
-  under several roots goes under the longest one. Cost: one byte per directory (3 KB on the
-  measured database). Targets, `FileDep`,
+  project root; the value of the root is never written. Phase 1 has one root: the database gets
+  `ProjectRoot` in the constructor (`openDb root dbpath logger`). The number is the room the owner
+  asked for: a later root (for example a package cache) would take the next number, chosen by the
+  code, and an old database never uses it, so adding one needs no format change. Cost: one byte
+  per directory (3 KB on the measured database). Targets, `FileDep`,
   `TargetDep` targets, `GetFiles` file lists, `FileRec` all go through the same `file` pickler.
   `Fileset` masks and `BaseDir` stay strings (as today).
 - Path table: writer `Dictionary<File, int>` and `Dictionary<string, int>` for directories (ids
@@ -259,9 +261,9 @@ public functions over the same reader the engine uses:
 ```fsharp
 /// Every record of the file in order (history until the next compaction), paths resolved.
 type DbRecord = Result of BuildResult | FileState of File * FileState
-val Storage.readRecords : roots: string list -> dbpath: string -> DbRecord seq
+val Storage.readRecords : root: string -> dbpath: string -> DbRecord seq
 /// The state the engine loads: the last result per target, the last state per file, the last epoch.
-val Storage.readDatabase : roots: string list -> dbpath: string -> BuildLog.Database * epoch: int64
+val Storage.readDatabase : root: string -> dbpath: string -> BuildLog.Database * epoch: int64
 ```
 
 They take no lock and open the file for reading with sharing, so an agent can read the database
@@ -355,7 +357,7 @@ read-only open. (The lock is now in, by the decision above.)
 3. `Dependency`: `FileDep of File` and `TargetDep of Target` (no stamp); `ArtifactDep` and
    `ArtifactDep2` removed. `BuildResult.Epoch` and `StaticCount` added (`Built` stays the time).
    `BuildLog.Database.Files` and `FileState` added.
-4. `Storage.openDb roots dbpath logger` (new `roots` parameter); the database is exclusive
+4. `Storage.openDb root dbpath logger` (new `root` parameter); the database is exclusive
    (`.xake.lock`); `DatabaseApi` gains `Observe`. `Storage.resultPU` is replaced by the public
    read API `Storage.readRecords` / `Storage.readDatabase`.
 5. `FilesetOptions.CaseSensitive` and the `casesensitive` fileset operation added.
@@ -366,7 +368,7 @@ read-only open. (The lock is now in, by the decision above.)
 
 | File | Change | Lines |
 |---|---|---|
-| `Database.fs` | tags, path codec with `DirRec` and root numbers, parameterised picklers, `FileRec` table and `Observe`, epoch, lock, 0.6 conversion, version messages, torn tail, public read API, stop-on-failure, roots param | **+225** |
+| `Database.fs` | tags, path codec with `DirRec` and root numbers, parameterised picklers, `FileRec` table and `Observe`, epoch, lock, 0.6 conversion, version messages, torn tail, public read API, stop-on-failure, root param | **+225** |
 | `Pickler.fs` | `varint`, list with a varint length | +17 |
 | `File.fsi` / `File.fs` | new representation, `display`, `comparer`, `undefined` gone | +5 / -5 |
 | `Path.fs` | `collapse` made internal + trailing/UNC fix | +5 |
@@ -413,8 +415,8 @@ lock, the 0.6 conversion and the public read API came with the 2026-11-18 decisi
 ## Questions for the owner
 
 1-4. ~~`Name`, `resultPU`, fileset case, `Fingerprints`~~: answered and the proposals accepted
-   2026-11-18 (see Decisions). Open: the exact meaning of "`File` holds the absolute path" as
-   agreed with the orchestrator (read here as: `Name` is the absolute path).
+   2026-11-18 (see Decisions); the reading of "`File` holds the absolute path" confirmed by the
+   orchestrator, with one root in phase 1.
 5. ~~Scope of phase 1 after the epoch decision~~: decided 2026-11-18, the verdict moves to epochs in
    phase 1 (see Decisions).
 6. ~~Lists with a varint length~~: decided 2026-11-18, yes, in 0.7 (`Pickler.list` for the 0.7

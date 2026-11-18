@@ -16,8 +16,9 @@ Questions 1-4 answered (root-relative paths with roots given in the constructor 
 room for several roots; the database stays a public analysis tool; fileset case accepted, opt-out
 asked; `Fingerprints` ordinal). The proposals were accepted the same day with changes: `File`
 holds the absolute path (`Name` absolute), `Built` kept, filesets case-insensitive by default with a
-`casesensitive` option. **Open:** the exact reading of "`File` holds the absolute path" (asked of the
-orchestrator), then approval of the design.
+`casesensitive` option. The orchestrator confirmed the reading of "`File` holds the
+absolute path" and that phase 1 has one root (`openDb root`, `ProjectRoot` only; the root number in
+`DirRec` is the only room kept for more roots). **Open:** approval of the design.
 
-**Next step.** Owner's answers to the open questions and approval of the design, then docs first (`docs/` + release notes "5.0.0 (unreleased)"),
+**Next step.** The owner's approval of the design, then docs first (`docs/` + release notes "5.0.0 (unreleased)"),
 then code in the order 1a -> 1b -> 1c, tests, the size measurement. No push, no PR without the owner.

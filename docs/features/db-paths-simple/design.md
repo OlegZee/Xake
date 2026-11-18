@@ -42,6 +42,8 @@ Status: **for the owner's approval** (no code written); decisions recorded below
   4.0's decisions. Phase 3 adds hashing and cut-off without a format change.
 - 2026-11-18, **the database stays incremental** (owner's requirement): epochs must not need any
   rewrite in place; checked in 1b "Incremental writing".
+- 2026-11-18, **lists with a varint length** in the 0.7 records (question 6); **no string table**
+  now (question 7, Later).
 
 ### Why the epoch is per run, not per event
 
@@ -178,7 +180,7 @@ Ids, sizes and epochs are varints; the stamp is 8 bytes (ticks).
   - The only rewrites are today's: compaction and the upgrade of an older version (both through
     the `.bak` file).
 - **Lists** are written with a varint length in front instead of today's marker byte per element
-  (question 6): 9-13% of the file on the measured database.
+  (decision 2026-11-18): 9-13% of the file on the measured database.
 - **Lock** (decision 2026-11-18): the database is opened exclusively for the run (engine mode: for
   the engine's lifetime). A separate `.xake.lock` next to `.xake`, opened `FileShare.None`, so the
   database file can still be moved for compaction and a held lock is never taken for a corrupt
@@ -313,12 +315,9 @@ lock and the 0.6 conversion came with the 2026-11-18 decisions.
 4. `Fingerprints.fs` path comparisons switch to ordinal too (in core): confirm.
 5. ~~Scope of phase 1 after the epoch decision~~: decided 2026-11-18, the verdict moves to epochs in
    phase 1 (see Decisions).
-6. Lists with a varint length instead of a marker byte per element (`Pickler.list` for the 0.7
-   records only; the 0.6 reader keeps the old one): -0.3 MB compacted, -0.75 MB as is on the
-   measured database, about 5 lines. Recommended: yes, in 0.7.
-7. A string table for the repeated strings (variable names and values, fileset masks, step and
-   phony names), the same mechanism as `PathRec`: about -0.4 MB compacted (12%), one record kind
-   and about 15 lines. Recommended: Later; the file is already about 17 times smaller as is.
+6. ~~Lists with a varint length~~: decided 2026-11-18, yes, in 0.7 (`Pickler.list` for the 0.7
+   records only; the 0.6 reader keeps the old one): -0.3 MB compacted, -0.75 MB as is.
+7. ~~String table~~: decided 2026-11-18, Later (about -0.4 MB compacted, 12%).
 
 ## Measurement on a real 0.6 database (2026-11-18)
 
@@ -377,4 +376,6 @@ every record of the 0.6 file read with the 0.6 pickler and sized in the 0.7 enco
   never read. If a speculative mode comes, it adds them with a database version bump.
 - Hashing and the cut-off verdict (phase 3; the format is ready).
 - `Fileset.BaseDir` stored relative to the root.
+- A string table for repeated strings (variable names and values, fileset masks, step and phony
+  names), the same mechanism as `PathRec`: about -0.4 MB (12%) on the measured compacted database.
 - Version comparison is a string compare (`"0.10" < "0.7"`): fine until 0.10.

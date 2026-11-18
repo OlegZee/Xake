@@ -1,4 +1,4 @@
-namespace Tests
+﻿namespace Tests
 
 open System
 open System.IO
@@ -38,7 +38,7 @@ module PatternScannerUnderTest =
           Log: ScanLog list }
 
     let scan (windows: bool) (baseDir: string) (fileset: (MaskRole * string) list) : ScanResult =
-        let r = Xake.PatternScan.scan windows baseDir fileset
+        let r = Xake.PatternScan.scanWith windows windows baseDir fileset
         { Files = r.Files
           Warnings = r.Warnings |> List.map (fun w -> w.Code, w.Use, w.Pattern)
           Log =

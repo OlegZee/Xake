@@ -13,7 +13,6 @@ type ChangeReason =
     | FilesChanged of string list
     | Other of string
 
-let TimeCompareToleranceMs = 10.0
 
 /// <summary>
 /// Gets target execution time in the last run
@@ -24,9 +23,9 @@ let getExecTime (ctx: ExecContext) target =
     (fun ch -> Storage.GetResult(target, ch)) |> ctx.Db.PostAndReply
     |> Option.fold (fun _ r -> r.Steps |> List.sumBy (fun s -> s.OwnTime)) 0<ms>
 
-/// Observes a file through the database (once per run): its state, None if missing.
-let observe (ctx: ExecContext) (file: File) =
-    (fun ch -> Observe(file, Verdict, ch)) |> ctx.Db.PostAndReply
+/// Observes a file through the database (decisions 1c, A1): its state, None if missing.
+let observe (ctx: ExecContext) (mode: ObserveMode) (file: File) =
+    ctx.Db.PostAndAsyncReply(fun ch -> Observe(file, mode, ch))
 
 /// Gets single dependency state and reason of a change, for a dependent built in run `epoch`
 /// (decision 1c): a file or target dependency changed when it was seen to change after that run;
@@ -43,14 +42,11 @@ let rec getDepState getVar getFileList (getChangedDeps: Target -> ChangeReason l
                 ChangeReason.Depends dependeeTarget, Some (sprintf "E.g. %A..." item)
     match x with
     | FileDep file ->
-        (match (if File.exists file then observe file else None) with
+        (match observe file with
          | None -> ChangeReason.FilesChanged [show file], Some "file does not exist"
          | Some st when st.Changed > epoch ->
             ChangeReason.FilesChanged [show file], Some (sprintf "changed in run %d, after run %d (stamp %A, size %d)" st.Changed epoch st.Stamp st.Size)
          | Some _ -> NotChanged, None)
-
-    | TargetDep (FileTarget file as t) when not (File.exists file) ->
-        ChangeReason.DependsMissingTarget t, None
 
     | TargetDep (FileTarget file as t) ->
         (match observe file with
@@ -131,7 +127,7 @@ let getChangeReasons (ctx: ExecContext) getTargetDeps target =
         let getResult t = (fun ch -> GetResult(t, ch)) |> ctx.Db.PostAndReply
         let depState =
             getDepState (Util.getVar ctx.Vars) (toFileList ctx.Options.ProjectRoot) getTargetDeps
-                        (observe ctx) getResult (File.display ctx.Options.ProjectRoot) epoch
+                        (observe ctx Verdict >> Async.RunSynchronously) getResult (File.display ctx.Options.ProjectRoot) epoch
 
         depends
             |> List.map depState
@@ -172,7 +168,7 @@ let dumpDeps (ctx: ExecContext) (target: Target list) =
 
     let show = File.display ctx.Options.ProjectRoot
     let state (f: File) =
-        match observe ctx f with
+        match observe ctx Verdict f |> Async.RunSynchronously with
         | Some st -> sprintf "stamp %A, size %d, changed in run %d" st.Stamp st.Size st.Changed
         | None -> "NOT EXISTS"
 

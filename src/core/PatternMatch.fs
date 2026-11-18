@@ -215,11 +215,6 @@ let private cache = ConcurrentDictionary<PatternContext * string * string * bool
 let private get (ctx: PatternContext) (text: string) (anchor: string) (windows: bool) (ignoreCase: bool) : Compiled option =
     cache.GetOrAdd((ctx, text, anchor, windows, ignoreCase), fun _ -> lazy (compile ctx text anchor windows ignoreCase)).Value
 
-/// The regex text a pattern compiles to (diagnostics and tests only); a rule is ordinal, a mask
-/// ignores case in Windows mode.
-let regexText (ctx: PatternContext) (text: string) (anchor: string) (windows: bool) : string option =
-    get ctx text anchor windows (windows && ctx = PatternContext.Mask) |> Option.map (fun c -> c.Regex.ToString())
-
 /// Matches a rule pattern anchored at `root` (`""` for phony) against a full target path
 /// (`Path.matchGroups`, 8.3). `windows`: `\` in the path is a separator and a UNC root matches
 /// (D11, D24); the comparison is ordinal on every OS (5.0). Raises PatternException for an

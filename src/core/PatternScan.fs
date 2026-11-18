@@ -664,7 +664,3 @@ let reportWarnings (result: ScanResult) =
         | Unreadable dir ->
             Warnings.note ("unreadable\n" + dir) Level.Warning
                 (sprintf "Directory '%s' cannot be read; the fileset scan skipped it" dir)
-
-/// `scanWith` in the comparer mode of D11: names and paths ignore case in Windows mode.
-let scan (windows: bool) (baseDir: string) (fileset: (MaskRole * string) list) : ScanResult =
-    scanWith windows windows baseDir fileset

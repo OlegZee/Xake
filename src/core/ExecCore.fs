@@ -122,35 +122,29 @@ let newTaskContext targets matches ctx =
         HeldResources = []
     }
 
-/// Observes a file through the database (decisions 1c, A1).
-let observeFile (ctx: ExecContext) (mode: ObserveMode) (file: File) =
-    ctx.Db.PostAndAsyncReply(fun ch -> Observe(file, mode, ch)) |> Async.Ignore
-
 /// Re-observes the file outputs of a rule that just finished.
 let private observeOutputs (ctx: ExecContext) (targets: Target list) = async {
     for t in targets do
         match t with
-        | FileTarget f -> do! observeFile ctx Output f
+        | FileTarget f -> do! observe ctx Output f |> Async.Ignore
         | PhonyAction _ -> () }
 
 /// A new table for the two-spellings check of one run.
-let newSpellings () = System.Collections.Concurrent.ConcurrentDictionary<string, string * bool>(System.StringComparer.Ordinal)
+let newSpellings () = System.Collections.Concurrent.ConcurrentDictionary<string, File * bool>(System.StringComparer.Ordinal)
 
 /// The two-spellings check (5.0): a file named in this run under another spelling of the same
 /// path (compared ignoring case). Two targets: an error (the target fails); otherwise a warning,
 /// once per pair. The case on disk is not checked.
 let checkSpelling (ctx: ExecContext) (isTarget: bool) (file: File) =
-    let name = file.Name
-    let first, firstTarget = ctx.Spellings.GetOrAdd(name.ToUpperInvariant(), (name, isTarget))
-    if not (System.String.Equals(first, name, System.StringComparison.Ordinal)) then
+    let first, firstTarget = ctx.Spellings.GetOrAdd(file.Name.ToUpperInvariant(), (file, isTarget))
+    if first <> file then
         let show = File.display ctx.Options.ProjectRoot
-        let shown (n: string) = show (File.make n)
         if isTarget && firstTarget then
-            let errorText = sprintf "target '%s' is also named '%s'" (shown first) (show file)
+            let errorText = sprintf "target '%s' is also named '%s'" (show first) (show file)
             do ctx.Logger.Log Error "%s" errorText
             raise (XakeException errorText)
-        elif ctx.Spellings.TryAdd("\u0000" + first + "\u0000" + name, (name, isTarget)) then
-            ctx.Logger.Log Warning "file '%s' is also named '%s' in this run" (shown first) (show file)
+        elif ctx.Spellings.TryAdd("\u0000" + first.Name + "\u0000" + file.Name, (file, isTarget)) then
+            ctx.Logger.Log Warning "file '%s' is also named '%s' in this run" (show first) (show file)
 
 /// Executes a single target: locates the matching rule, submits the work to the
 /// scheduler, and returns the target, its execution status, and a dependency record.
@@ -301,7 +295,7 @@ let rec execOne (ctx: ExecContext) target =
             // the dependee is built or up to date now: its file is observed (a built one already
             // was, right after its rule) and the dependency recorded by id (decision 1c)
             match target with
-            | FileTarget file -> do! observeFile ctx Verdict file
+            | FileTarget file -> do! observe ctx Verdict file |> Async.Ignore
             | PhonyAction _ -> ()
             return target, status, TargetDep target
         }
@@ -309,7 +303,7 @@ let rec execOne (ctx: ExecContext) target =
         target |> function
         | FileTarget file when File.exists file ->
             async {
-                do! observeFile ctx Recording file
+                do! observe ctx Recording file |> Async.Ignore
                 return target, ExecStatus.JustFile, FileDep file
             }
         | _ ->

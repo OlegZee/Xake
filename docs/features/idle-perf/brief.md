@@ -90,6 +90,13 @@ What changed is the cost per dependency:
   owner said it is **not accepted**. The design (design.md, d6522fe) stays as a candidate only.
 - 2026-11-20, the owner: **get rid of `Async.RunSynchronously` on the dependency path** (async all
   the way, no blocking waits on the agent).
+- 2026-11-20, the owner: **the database does no file I/O for observation.** The caller stats
+  the file (existence, write time, size) off the agent and sends the result; the agent only
+  compares it with the `FileRec`, decides and persists. This applies to every mode (Verdict,
+  Recording, Output, PreHash, `Settle`'s re-stat, `Store`'s observation of files without a
+  state). Hashing is already outside.
+- 2026-11-20, the owner: a batch of a target's files (about 150) in one request is an acceptable
+  size.
 - Open, with the owner in this session: the direction (A: per-target batch for reads and
   `Recording` writes; B: reads bypass the agent through a table only the agent writes; C: no agent
   for the file table, a concurrent dictionary and a lazy hash per file, the agent only persists);

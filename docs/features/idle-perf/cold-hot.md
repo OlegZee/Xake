@@ -144,3 +144,40 @@ Xake's own share on top of the generic pattern: ~0.9 KB per call (the `observeSi
 The owner's point holds: apart from the messaging, the per-file work is about what 4.0 paid.
 About two-thirds of the 5.0 cost is transport. Most of the remaining third is the agent's
 thread-hopping penalty on the same stat and lookups.
+
+## The full build (2026-11-20, measured)
+
+Same bench, empty database, `-t 16`: 5.0 takes 5.5-8.0 s against 0.40-0.47 s on 4.0. Temporary
+timers ran in the agent (per message kind: count, busy time, queue length at dequeue; time spent
+in `Receive`) and at the caller (latency of `observe ctx Recording`, `ExecCore.fs:387`). Two
+runs:
+
+| Agent messages | n | busy per message | busy total | avg queue at dequeue |
+|---|---|---|---|---|
+| `Observe Recording` | 178,200 | 3.9-4.7 us | 695-833 ms | 245-310 |
+| `Store` (with `persist`) | 1,195 | 190-320 us | 232-387 ms | 140-275 |
+| `Settle` | 1,188 | 30-47 us | 35-56 ms | 117-128 |
+| `GetResult` | 4,783 | 1.8-2.5 us | 9-12 ms | |
+| `Observe` Verdict/Output/PreHash | 3 x 1,188 | 3.4-6.8 us | ~20 ms | |
+| `persist` (one `Write` + `Flush` per record) | 5,628 | | 301-438 ms | |
+
+- The agent's own work is about 1.1-1.3 s. 4.0 had none of it: a `need` of a file without a
+  rule took the file's time on the calling thread.
+- The agent spends 4.2-6.7 s in `Receive`. Almost all of that is in 118-184 waits longer than
+  100 us, together 4.1-4.7 s, about 25-40 ms each. When the agent resumes after one of them,
+  100-140 messages are already queued.
+- So the agent is not waiting for messages. It is ready and waiting for a thread: its loop runs
+  as one work item on the shared thread pool, and the pool's queue holds the build's own flood
+  of continuations (1,188 targets x 150 parallel `need` items, each posting a `Recording`). Each
+  time the agent loop goes back to the pool, it waits behind that flood.
+- The likely trigger is the F# async trampoline, which hands a long-running async loop back to
+  the pool every few hundred binds; a profiler has not confirmed it.
+- At the caller, a `Recording` takes 1.9-3.0 ms on average, against the agent's 4 us of work.
+
+What this means for the fix:
+- Fewer messages (a batch per `need` list: 1,188 instead of 178,200) shrinks both the flood and
+  the agent's queue.
+- Keeping the file table out of the agent (direction C) removes the dependency on the agent's
+  scheduling altogether.
+- Giving the agent its own thread instead of the pool would remove the parking, but not the
+  round-trip cost per message.

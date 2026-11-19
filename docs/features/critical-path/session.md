@@ -1,6 +1,6 @@
 # Session: critical-path
 
-Branch `feature/critical-path`, from `dev` at 7018d64 (Xake 5.0 phases 1-3, unreleased). Not pushed, no PR.
+Branch `feature/critical-path`, from `dev` at 7018d64 (Xake 5.0 phases 1-3, unreleased). PR [OlegZee/Xake#147](https://github.com/OlegZee/Xake/pull/147), open into `dev`.
 
 **Where things stand (2026-11-19).** The owner approved [design.md](design.md) as proposed
 (recorded in [brief.md](brief.md)). Implemented, documented, tested; committed locally.
@@ -24,4 +24,4 @@ Branch `feature/critical-path`, from `dev` at 7018d64 (Xake 5.0 phases 1-3, unre
   in 50 s with either default; `build.fsx build test pack` green (it runs on the published
   engine 3.15.0, so it does not measure the new order).
 
-**Next step.** The owner's go to push; then a PR into `dev` (squash), CI, Windows VM if asked.
+**Next step.** CI on #147, the owner's review, squash merge into `dev`; then the worktree removal command to the owner.

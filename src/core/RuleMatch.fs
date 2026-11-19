@@ -21,6 +21,10 @@ type RuleMatch internal (groups: Map<string, string>) =
                 failwithf "no group '%s' in the rule match (groups: %s)" name
                     (match names with [] -> "none" | _ -> String.concat ", " names)
 
+    /// `m?n`: the value of the group `n`, as strict as `m["n"]`. A member of `RuleMatch`, so it
+    /// claims no global `?`.
+    static member (?) (m: RuleMatch, name: string) : string = m.[name]
+
     /// The value of a group, or None.
     member _.TryFind(name: string) : string option = Map.tryFind name groups
 

@@ -94,6 +94,30 @@ type ``Matched in a recipe``() =
         Assert.That(failed.Value, Does.Contain "no group 'name' in the rule match (groups: cfg, n)")
 
     [<Test>]
+    member x.``m?n reads a group, also inside an interpolated string``() =
+        let failed =
+            x.Build [ "out/dbg/core.txt" ] [
+                "out/(cfg:*)/(n:*).txt" ..> recipe {
+                    let! m = matched
+                    do! writeText $"{m?cfg} {m?n}"
+                }
+            ]
+        Assert.That(failed, Is.EqualTo None)
+        Assert.That(File.ReadAllText "out/dbg/core.txt", Is.EqualTo "dbg core")
+
+    [<Test>]
+    member x.``m?name is as strict as m["name"]``() =
+        let failed =
+            x.Build [ "out/dbg/core.txt" ] [
+                "out/(cfg:*)/(n:*).txt" ..> recipe {
+                    let! m = matched
+                    do! writeText m?name
+                }
+            ]
+        Assert.That(failed, Is.Not.EqualTo None)
+        Assert.That(failed.Value, Does.Contain "no group 'name' in the rule match (groups: cfg, n)")
+
+    [<Test>]
     member x.``TryFind and Names``() =
         let seen = ConcurrentQueue<string>()
         let failed =

@@ -23,8 +23,9 @@ operators, an ambient context, `m?n`, names from lambda parameters: all dropped)
     `no group 'x' in the rule match (groups: cfg, n)` (numbered groups are not listed).
   - `m.TryFind "n" : string option`.
   - `m.Names : string list`: the named groups.
-- No operator: `?` would read as a tolerant lookup, which is not wanted.
-- Unchanged: `getRuleMatches ()` (the map) and `getRuleMatch "n"` (`""` when absent).
+- `m?n`: the same strict lookup as `m["n"]` (added later, owner 2026-11-19, branch
+  `feature/match-strict-op`); a static member of `RuleMatch`, so no global `?` is claimed.
+- `getRuleMatches ()` (the map) is unchanged; `getRuleMatch "n"` (`""` when absent) is obsolete.
 - Outside a rule (a recipe run with no match) `matched` gives an empty `RuleMatch`.
 
 ## Breaking

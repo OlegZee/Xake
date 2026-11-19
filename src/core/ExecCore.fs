@@ -265,7 +265,7 @@ let rec execOne (ctx: ExecContext) target =
             ctx.Counters.TaskScheduled ()
             ctx.Counters.TargetRun ()
             let! result =
-                Scheduler.withYieldedSlot ctx.Engine.Scheduler (executor taskContext targets bodyThunk)
+                Scheduler.withYieldedSlot ctx.Engine.Scheduler targets (executor taskContext targets bodyThunk)
             // the body's result has the run's epoch; one returned without the body keeps the epoch
             // of the local result (A3): a foreign epoch is never stored
             let! epoch =
@@ -393,7 +393,12 @@ let rec execOne (ctx: ExecContext) target =
             raise (XakeException errorText)
 
 /// Executes multiple targets in parallel and collects their results.
-and execParallel ctx = List.map (execOne ctx) >> Seq.ofList >> Async.Parallel
+/// The targets are requested in the order of their critical-path keys (equal keys as given); the
+/// results come back in the order given, so the recorded dependencies do not depend on the keys.
+and execParallel ctx targets = async {
+    let order = targets |> List.indexed |> List.sortByDescending (fun (_, t) -> Scheduler.key ctx.Engine.Scheduler [t])
+    let! results = order |> List.map (snd >> execOne ctx) |> Async.Parallel
+    return Array.zip (order |> List.map fst |> Array.ofList) results |> Array.sortBy fst |> Array.map snd }
 
 /// Executes dependency targets in parallel, yielding the current scheduler slot while waiting.
 /// Returns Succeed if at least one dependency was rebuilt, Skipped otherwise,
@@ -430,7 +435,7 @@ and execNeed (ctx: ExecContext) targets : Async<ExecStatus * Dependency list> =
         // the wait is known to the verdicts' cycle check (WaitGraph)
         let unregister = ctx.Counters.Waits.Need (ctx.Targets |> List.map (fun t -> t.Name)) (targets |> List.map (fun t -> t.Name))
         let! statuses =
-            try Scheduler.withYieldedSlot ctx.Engine.Scheduler (targets |> execParallel ctx)
+            try Scheduler.withYieldedSlot ctx.Engine.Scheduler ctx.Targets (targets |> execParallel ctx)
             finally unregister ()
 
         primaryTarget |> (Progress.TaskResume >> ctx.Progress.Post)
@@ -478,7 +483,7 @@ and private headerNeeds (ctx: ExecContext) (header: RuleHeader) : Async<Dependen
 /// taken back included), counted as the step's wait.
 and acquireTimed (ctx: ExecContext) (resource: Resource) units : Async<int<ms>> = async {
     let started = System.DateTime.Now
-    do! Scheduler.withYieldedSlot ctx.Engine.Scheduler (Resource.acquire resource units)
+    do! Scheduler.withYieldedSlot ctx.Engine.Scheduler ctx.Targets (Resource.acquireAt (Scheduler.key ctx.Engine.Scheduler ctx.Targets) resource units)
     return Step.msSince started }
 
 /// A task's body (docs/rule-header.md) after its `needs`: its locks in `Locks` order, yielding the
@@ -560,7 +565,7 @@ let private verdict (ctx: ExecContext) getDeps (targets: Target list) = async {
                     do ctx.Logger.Log Info "%s: not waiting for %s, which waits for it" (primary.Display ctx.Options.ProjectRoot) (d.Display ctx.Options.ProjectRoot)
                 | Some (cancel, unregister) ->
                     try
-                        do! Scheduler.withYieldedSlot ctx.Engine.Scheduler (async {
+                        do! Scheduler.withYieldedSlot ctx.Engine.Scheduler targets (async {
                                 let! _ = System.Threading.Tasks.Task.WhenAny(Async.StartAsTask task :> System.Threading.Tasks.Task, cancel.Task :> System.Threading.Tasks.Task) |> Async.AwaitTask
                                 return () })
                     finally unregister ()
@@ -595,6 +600,12 @@ let beginRun (ctx: ExecContext) = async {
     let getDeps = getChangeReasons ctx (currentRule ctx) |> memoizeRec
     return { ctx with NeedRebuild = verdict ctx getDeps; UpToDate = getDeps >> List.isEmpty }, getDeps }
 
+/// The critical-path keys of a run's targets, from the progress estimate's graph (the same memo,
+/// before any task starts); with `AsRequested` none, so every key is 0.
+let private planRun (ctx: ExecContext) getDeps targets =
+    if ctx.Options.Schedule = CriticalPath then
+        criticalPath (getDurationDeps ctx getDeps) targets |> Scheduler.setKeys ctx.Engine.Scheduler
+
 /// Runs the full build pipeline for the given target groups.
 /// Each group is executed sequentially; targets within a group run in parallel.
 /// Returns the combined list of target/status/dependency results.
@@ -613,6 +624,7 @@ let runBuild (ctx: ExecContext) groups =
 
             // the change analysis is memoized for the whole group, so the group is one run
             let! ctx, getDeps = beginRun ctx
+            planRun ctx getDeps targets
             let progressSink = Progress.openProgress (getDurationDeps ctx getDeps) options.Threads targets label ctx.ShowProgress
             let stepCtx = {ctx with Progress = progressSink}
 
@@ -682,6 +694,7 @@ let demandTarget (ctx: ExecContext) (targetName: string) : Async<ExecStatus> =
     async {
         let target = makeTarget ctx targetName
         let! ctx, getDeps = beginRun ctx
+        planRun ctx getDeps [target]
         let progressSink = Progress.openProgress (getDurationDeps ctx getDeps) ctx.Engine.Options.Threads [target] "" ctx.ShowProgress
         let stepCtx = {ctx with Progress = progressSink}
         try

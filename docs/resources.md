@@ -62,9 +62,11 @@ projects: 721 tasks started, 0 completed, no CPU.
   back and `body` runs holding **both** the slot and the units. Nothing in `body` knows that
   units are held, so a `need` in `body` yields the CPU slot (as every `need` does) but keeps
   the units.
-- **`Resource`** (`Resource.fs`): a `MailboxProcessor` with `available` and a FIFO queue of
+- **`Resource`** (`Resource.fs`): a `MailboxProcessor` with `available` and a queue of
   `(units, reply)`. `Acquire` replies at once when units are free and nobody is queued,
-  otherwise it queues. `Release` drains the queue head-first. `PostAndAsyncReply`: a waiter
+  otherwise it queues. `Release` drains the queue head-first. (From 5.0 the queue is ordered by
+  the waiter's critical-path key, FIFO among equal keys and with `--schedule=as-requested`; see
+  implnotes.md, "Critical path". The analysis below is of the FIFO queue.) `PostAndAsyncReply`: a waiter
   is a parked continuation, not a thread.
 - **`requiring r rule`** (`XakeScript.fs`) wraps the **whole** recipe of a rule the same
   way (1 unit), so any `need` in such a rule runs with the unit held.

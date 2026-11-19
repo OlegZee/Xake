@@ -37,6 +37,7 @@ Options:
   --dump              - prints dependency graph based on the last run
   --resetdb           - reset the database before starting the build
   --content-cutoff=off - decide as Xake 4.0: a moved file time is a change, nothing hashed
+  --schedule=as-requested - start ready tasks in the order of request, not longest chain first
   --progress, -p      - display progress indicator
   --noprogress, -p-   - do not display progress
 
@@ -66,6 +67,10 @@ Options:
             {optionsSoFar with ContentCutoff = false}, TopLevel
         | "--content-cutoff=on" ->
             {optionsSoFar with ContentCutoff = true}, TopLevel
+        | "--schedule=as-requested" ->
+            {optionsSoFar with Schedule = AsRequested}, TopLevel
+        | "--schedule=critical-path" ->
+            {optionsSoFar with Schedule = CriticalPath}, TopLevel
         | "--progress" | "-p" -> 
             {optionsSoFar with Progress = true}, TopLevel
         | "--noprogress" | "-p-" -> 

@@ -3,6 +3,9 @@
 open DependencyAnalysis
 
 /// Converts CLI ExecOptions into engine-level EngineOptions, constructing the logger.
+/// The scheduling mode as the banner and the run summary name it.
+let scheduleName = function CriticalPath -> "critical-path" | AsRequested -> "as-requested"
+
 let toEngineOptions (opts: ExecOptions) (rules: Rules<ExecContext>) (variables: Map<string, VarEntry>) : EngineOptions =
     let logger = CombineLogger (ConsoleLogger opts.ConLogLevel) opts.CustomLogger
     let logger =
@@ -12,7 +15,7 @@ let toEngineOptions (opts: ExecOptions) (rules: Rules<ExecContext>) (variables: 
         | logFileName,level -> CombineLogger logger (FileLogger logFileName level)
     { ProjectRoot = opts.ProjectRoot; Threads = opts.Threads
       Logger = MaskingLogger logger; Teardown = opts.Teardown; Rules = rules; RuleMatch = opts.RuleMatch
-      Variables = variables; ContentCutoff = opts.ContentCutoff; SummarySink = opts.SummarySink }
+      Variables = variables; ContentCutoff = opts.ContentCutoff; Schedule = opts.Schedule; SummarySink = opts.SummarySink }
 
 /// Active pattern that classifies ExecOptions into Dump, Dryrun, or Run execution mode.
 let (|Dump|Dryrun|Run|) (opts:ExecOptions) =
@@ -80,6 +83,7 @@ let bannerLines (options: ExecOptions) (variables: Map<string, VarEntry>) (targe
       yield sprintf "  database:     %s" db
       yield sprintf "  threads:      %d" options.Threads
       yield sprintf "  rule match:   %A" options.RuleMatch
+      yield sprintf "  schedule:     %s" (scheduleName options.Schedule)
       yield sprintf "  console log:  %A" options.ConLogLevel
       yield sprintf "  file log:     %s" fileLog
       yield sprintf "  setup:        %s" (list options.Setup)
@@ -229,7 +233,7 @@ let runScript options rules =
                 // one summary per script run (docs/content-cutoff.md), also when the build fails
                 let reportSummary () =
                     let summary = ctx.Counters.Summary
-                    ctx.Logger.Log Message "%s" (RunSummary.format summary)
+                    ctx.Logger.Log Message "%s, schedule %s" (RunSummary.format summary) (scheduleName options.Schedule)
                     ctx.Options.SummarySink |> Option.iter (fun sink -> sink.Report summary)
                 try
                   try

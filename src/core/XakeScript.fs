@@ -89,6 +89,9 @@ module XakeScript =
         /// sets false: the decisions of Xake 4.0, no hashing.
         ContentCutoff: bool
 
+        /// The order in which ready tasks start; `--schedule=as-requested` sets `AsRequested`.
+        Schedule: Schedule
+
         /// Receives the summary of every run (`onSummary` in a script); None: only the log line.
         SummarySink: IRunSummarySink option
     } with
@@ -121,6 +124,7 @@ module XakeScript =
             VarSchema = []
             RuleMatch = MostSpecific
             ContentCutoff = true
+            Schedule = CriticalPath
             SummarySink = None
         }
     end
@@ -158,7 +162,7 @@ module XakeScript =
         Recipe (fun (s, ctx: ExecContext) -> async {
             // the wait for the unit is the step's wait, not its own time
             let started = System.DateTime.Now
-            do! Scheduler.withYieldedSlot ctx.Engine.Scheduler (Resource.acquire resource 1)
+            do! Scheduler.withYieldedSlot ctx.Engine.Scheduler ctx.Targets (Resource.acquireAt (Scheduler.key ctx.Engine.Scheduler ctx.Targets) resource 1)
             try
                 return! A.runAction body (Step.updateWaitTime (Step.msSince started) s, { ctx with HeldResources = resource.ResourceName :: ctx.HeldResources })
             finally

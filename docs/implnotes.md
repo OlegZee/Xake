@@ -154,7 +154,7 @@ waiting: the header's `needs`, every `need` in the body, and every resource acqu
 `requiring`, `withResource`; the span includes getting the CPU slot back). `OwnTime` is the rest of
 the step: `(end - Start) - WaitTime`. So the sum of `OwnTime` over a run against its wall time is
 the build's real parallelism. The pool's queue before the task and the verdict are outside the
-step. The progress estimate takes `OwnTime` of the last run as a target's duration.
+step. The progress estimate takes `OwnTime` of the last run as a target's duration, and so does the critical path.
 
 ### Progress
 
@@ -185,6 +185,24 @@ targets that matched a rule and a warning (once per pair) otherwise.
 - worker count defaults to CPU core count and can be overridden by `-t`
 
 Parallel execution still respects dependency order.
+
+### Critical path
+
+When more tasks are ready than slots, the one with the largest **key** starts first: its own
+expected time plus the largest key among the targets that depend on it in this run. At the start
+of each run (target group, demand) the engine walks the progress estimate's graph
+(`getDurationDeps` on the run's verdict memo: `OwnTime` of the last result, and the dependees that
+will rebuild) from the run's targets and hands the keys to the scheduler
+(`DependencyAnalysis.criticalPath`, `Scheduler.newRun`). A target without a record, or new in this
+run, has key 0; so without history the order is the order of request.
+
+The key orders three queues: the pool's (`WorkerPool.Gate`: a slot goes to the waiter with the
+largest key, equal keys in arrival order; a task taking its slot back after a yield waits there by
+its own key), a resource's waiters (head-of-line: the best waiter must fit before anyone behind it
+is granted, so a large request is not starved), and `need [..]` (sorted by key before its children
+are requested). A queued task is still `NotStarted` for `Scheduler.query`: the verdict does not
+see it as running. `--schedule=as-requested` (`ExecOptions.Schedule = AsRequested`) makes every
+key 0: the queues are FIFO, as before 5.0. Only the order changes, never what runs.
 
 ## Filesets
 

@@ -84,16 +84,17 @@ What changed is the cost per dependency:
    the agent (no state shared outside it). Together they gain little: after either, the cost left
    is the `File.exists` per dependency. One is enough.
 
-## Decisions (2026-11-19, the owner; not reopened)
+## Decisions
 
-- **Option 4, the batched verdict query per target.** Every database read stays in the agent (no
-  state shared outside it), it brings the no-change run back to 4.0's time, and it is small.
-  Design: [design.md](design.md).
-- Option 1 (a per-run view read off the agent): rejected; it shares agent state with callers, for
-  ~0.2-0.3 s more.
-- Option 2 (existence cached per run): rejected; a behaviour change for ~0.4 s.
-- Option 3: the same as option 4 (it was its first estimate).
-- A batch over a whole group: rejected; the walk finds dependees as it goes.
+- 2026-11-19: option 4 (the batched verdict query) was recorded here as chosen; on 2026-11-20 the
+  owner said it is **not accepted**. The design (design.md, d6522fe) stays as a candidate only.
+- 2026-11-20, the owner: **get rid of `Async.RunSynchronously` on the dependency path** (async all
+  the way, no blocking waits on the agent).
+- Open, with the owner in this session: the direction (A: per-target batch for reads and
+  `Recording` writes; B: reads bypass the agent through a table only the agent writes; C: no agent
+  for the file table, a concurrent dictionary and a lazy hash per file, the agent only persists);
+  existence re-checked per dependency or one stat per file per run; the full-build regression
+  (cold-hot.md).
 
 ## Also: recursive recipes and FS0041
 

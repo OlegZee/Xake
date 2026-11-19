@@ -84,9 +84,16 @@ What changed is the cost per dependency:
    the agent (no state shared outside it). Together they gain little: after either, the cost left
    is the `File.exists` per dependency. One is enough.
 
-## Decisions
+## Decisions (2026-11-19, the owner; not reopened)
 
-- (pending the owner) option 1.
+- **Option 4, the batched verdict query per target.** Every database read stays in the agent (no
+  state shared outside it), it brings the no-change run back to 4.0's time, and it is small.
+  Design: [design.md](design.md).
+- Option 1 (a per-run view read off the agent): rejected; it shares agent state with callers, for
+  ~0.2-0.3 s more.
+- Option 2 (existence cached per run): rejected; a behaviour change for ~0.4 s.
+- Option 3: the same as option 4 (it was its first estimate).
+- A batch over a whole group: rejected; the walk finds dependees as it goes.
 
 ## Also: recursive recipes and FS0041
 

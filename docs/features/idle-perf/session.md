@@ -17,6 +17,8 @@ Branch `feature/idle-perf` from `5afb94b` (= `v5.0.0-preview.2`).
 
 ## Next step
 
-Wait for the owner's choice: option 1 (shared per-run view) or option 4 (batched query per target), both prototyped. Then implement option 1 without the static (the view on
-the agent's handle or in the `NewRun` reply), add a guard, write the release notes (fix + FS0041
-line), run `dotnet test src/tests`, and re-run the bench against 4.0.0.
+The owner chose option 4, the batched verdict query (brief.md, Decisions). The design and the
+critic's 13 remarks with proposals are in design.md (§8). Wait for the owner to accept the design
+and the remarks; then implement per design.md §1-§7 as amended by §8, the tests of §5 and §8,
+the release notes (the fix; FS0041 in its own commit), `dotnet test src/tests`, and the bench
+against 4.0.0 (gate: within 1.5x).

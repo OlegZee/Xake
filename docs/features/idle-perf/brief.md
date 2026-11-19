@@ -100,6 +100,11 @@ What changed is the cost per dependency:
 - 2026-11-20, the owner: **existence is checked per dependency**, as in 4.0: every verdict
   observation carries a fresh stat taken by the caller (a file deleted during a run is seen by
   the next verdict that depends on it).
+- 2026-11-20, the owner: **the observation API lives in the database module.** `Storage`
+  offers the method (e.g. `observeMany db mode since files : Async<Observation[]>`) that takes
+  the stats on the calling thread, sends one batch request to the agent and returns the batch
+  reply; hashing and `Settle` stay behind it. Callers (`DependencyAnalysis`, `ExecCore`) use the
+  method, not the messages.
 - Direction: the decisions above amount to A (a batch per target for reads and `Recording`, the
   agent the only owner of the file table), with the stats taken by the caller. Design:
   [design.md](design.md) (rewritten 2026-11-20; the 2026-11-19 design is d6522fe). Not accepted

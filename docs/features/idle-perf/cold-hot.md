@@ -72,3 +72,75 @@ dependencies (about 0.42 s), plus about 0.15 s of other verdict work.
 - **The batch** (option 4, measured 0.66-0.93 s) removes the round trips but keeps the stat and
   the map lookup in the agent for each dependency. With the agent's repeat path made a
   dictionary lookup with no stat, the batch would also come close to about 0.2 s.
+
+## The agent's 1.1 s, broken down (2026-11-20, measured)
+
+Temporary timers ran inside the agent and around the walk on this branch (= preview.2). For
+comparison, 4.0.0 was built from source with timers around its walk. Hot run, 3 runs each.
+
+### 5.0, per message (177,331 cached-path verdicts + 4,433 first observations)
+
+| Step | us/msg | Above 4.0? |
+|---|---|---|
+| path normalisation, `File` construction | 0 | no: the `File`s come from the loaded results, none is built in the walk |
+| `pending.TryGetValue` | 0.02 | |
+| `Map.tryFind file db.Files` (10k, `CompareOrdinal` on ~100-char paths with a common prefix) | 0.94-1.02 | yes: 4.0 had the stamp in the result, with no lookup |
+| `observed.Add` (`HashSet`, ordinal hash of the path) | 0.23 | yes: 4.0 had none |
+| `File.exists` | 2.9-3.3 | about the same as 4.0's two stats (2.3-2.8), for one stat |
+| `classify` (epoch compare) | 0.03 | no |
+| first observation (`FileInfo`, `sameStat`, `FileRec`): 4,433 of them | total 17-18 ms | no |
+| `chnl.Reply` (wakes the caller) | 1.43-1.54 | yes: transport |
+| handler total | 5.8-6.3 | |
+| from the handler's end to the next `Receive` (the `return! loop` async machinery) | 3.0-3.7 | yes: transport |
+| allocated in the handler | 346 B | |
+
+The same calls are about 2x slower in the agent than on one thread (`micro.fsx`, `micro2.fsx`):
+
+| Call | Calling thread, tight loop | Inside an agent fed one message at a time |
+|---|---|---|
+| `File.exists` | 1.1-1.7 us | 2.3 us (`micro2.fsx`), 2.9-3.3 us (the real agent) |
+| `Map.tryFind` | 0.45-0.54 us | 0.94-1.02 us |
+
+So the agent's own lookups are cheap: 1.2 us in a tight loop. The doubling looks like the cost of
+running each message on whichever thread-pool thread wakes up: the caches are cold, and on this
+machine the thread may also move between cores. This is generic: a trivial agent shows it too. It
+is not verified with a profiler.
+
+### The walk as a whole
+
+| | 4.0.0 (from source) | 5.0 |
+|---|---|---|
+| walk | 468-558 ms | 2,271-2,356 ms |
+| per file dependency | 2.3-2.8 us (two stats, the whole check) | 12.1-12.6 us per `Observe` round trip, measured at the caller |
+| allocated during the walk | 13 MB (82 B/dep) | 528 MB (3,089 B/dep) |
+| GCs during the walk | 0 | gen0 +10..15, gen1 +1..2, gen2 +1 |
+
+### One mailbox round trip (micro2.fsx, a trivial agent)
+
+| Pattern | us | B/call |
+|---|---|---|
+| `PostAndReply` | 6.8-6.9 | 1,213-1,218 |
+| `PostAndAsyncReply |> Async.RunSynchronously` (ours) | 7.3-7.5 | 1,765 |
+| `async { let! x = PostAndAsyncReply ... }` then `RunSynchronously` (`observeSince`'s shape) | 6.4-6.6 | 2,168 |
+| `async { return 1 } |> Async.RunSynchronously`, no agent | 4.5-4.9 | 728 |
+
+The round trip is the generic F# `MailboxProcessor` plus `RunSynchronously` pattern, not anything
+specific to Xake's agent. A trivial agent costs 6.8-7.5 us. Most of that is
+`Async.RunSynchronously` (4.5 us and 728 B even with no agent), plus two thread wake-ups.
+Xake's own share on top of the generic pattern: ~0.9 KB per call (the `observeSince` closures, the
+`Observation`, the handler's tuples), and the slower stat and lookup in the agent.
+
+### Accounting for 12.4 us per dependency (5.0) against 2.5 us (4.0)
+
+- The work 4.0 also did, one stat instead of two: 2.9-3.3 us in the agent, versus 2.3-2.8 us for
+  4.0's two stats on the calling thread. This is equal or more because of where it runs, not
+  because of what it does.
+- New lookups: `Map.tryFind` + `HashSet.Add` + pending, about 1.2 us. In a tight loop they would
+  be 0.6 us.
+- Transport: the reply (1.5 us), the loop back to `Receive` (3.0-3.7 us) and the caller's
+  post/wait (`RunSynchronously`), about 3 us. About 8 us in all, plus 3 KB allocated and the GCs
+  that follow.
+
+The owner's point holds: apart from the messaging, the per-file work is about what 4.0 paid.
+About two-thirds of the 5.0 cost is transport. Most of the remaining third is the agent's
+thread-hopping penalty on the same stat and lookups.

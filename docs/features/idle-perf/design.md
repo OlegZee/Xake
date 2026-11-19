@@ -234,3 +234,55 @@ the move of every stat out of the agent, including `Recording`.
   per file). It interacts with the "a failed record leaves the table as it was" rule.
 - `FastGate`, the semaphore that limits blocking lookups on the fast path, may no longer be
   needed once nothing there blocks.
+
+## 10. Amendments: the owner's API decision and the critic's remarks (2026-11-20)
+
+### The API in the database module (owner, brief.md)
+
+- `Storage` offers `observeMany db mode since files : Async<Observation[]>`, plus `getResult`,
+  `store` and `storeDelegated`.
+- `observeMany` does the whole sequence: it takes the stats on the calling thread, sends one
+  batch to the agent, hashes and settles in parallel, re-asks the files another caller is
+  hashing, and cleans up with try/finally.
+- The messages, `FileStat` and `Content.hash` move into the database module, and the hash
+  counter becomes a callback. `DependencyAnalysis` and `ExecCore` never post to the agent
+  directly. §2 and §4 read with this in mind.
+
+### Critic's remarks (fresh-eyes review, Opus) and proposals
+
+| # | Remark | Proposal |
+|---|---|---|
+| B1 | "Ask alone" is undefined: a list of one in `pending` replies `None` again, so the caller spins; a file whose observation throws replies `None` forever. | Accept. The batch reply per file becomes `Observed o \| Busy \| Failed msg`, and an internal `ObserveWait (file, stat, ...)` parks in `pending` as today's `Observe` does. `observeMany` sends it only for `Busy`, with a fresh stat. `Failed` is logged and counts as `Absent`, so the target rebuilds or fails "Neither rule nor file", never loops. |
+| B2 | The cycle guard checks only the caller's path, so two parallel entries into one cycle (A at A, B at B) deadlock on each other's `Lazy<Task>`. | Accept. The memo keeps a wait-for map: before awaiting another target's in-flight verdict it registers the edge, and an edge that would close a cycle counts as changed (the same rule as `WaitGraph.Verdict`). ~15 lines. Test: two entries into one cycle at once, with a timeout. |
+| M3 | A stat taken earlier can overwrite a newer record (two observations of one file arriving in reverse order), so a stamp goes back in time and the next run rebuilds dependents. §5's claim is wrong. | Accept. A `Verdict`/`Recording` stat that differs from a record already stored in this run answers from the record and stores nothing: A1's "another body recorded it" generalised. `Output` (taken by the rule's own task right after it) always applies. `ObserveWait` takes a fresh stat. Test: stats in reverse order. §5 corrected. |
+| M4 | The warm walk misses callers: `planRun` walks only for `CriticalPath`, while `openProgress` (as-requested) and `dryRun` (ScriptRunner.fs:101, its own memo) also walk; `getExecTime` is a blocking `PostAndReply` per target at every group start and progress refresh. | Accept. `beginRun` warms regardless of schedule; `dryRun` uses the same memo and warm; the memo entry keeps the `GetResult` the verdict fetched, and durations read from it (no `getExecTime`). Test: as-requested plus the progress estimate; `--dryrun`. |
+| M5 | The full-build estimate (about 1 s) fails the stated gate (2x of 4.0, 0.80-0.94 s); it assumes batching ends the agent's thread-pool parking, which is unmeasured; the parallel warm walk is a new flood on the same pool. | Accept. Prototype the batches first and measure the agent's `Receive` waits in both runs. If parking remains, the agent gets its own thread in this change (moved from §9). Gates fixed after the prototype; targets stay "hot no-change no slower than 4.0", "full build within 2x". |
+| M6 | `Store` with a reply on every task puts the agent's queue and `persist` on every task's completion; its follow-up switches from `Verdict` without hashing to `Recording` with hashing, which touches `recorded` (A1) and may hash. | Accept. `Store` stays a fire-and-forget `Post`. `storeDelegated` (used only by `runDelegated`) replies with the files that have no state; the caller stats them and observes them in today's mode, `Verdict` with no hashing. |
+| M7 | The plain-file split can serialise (rule dependees wait for the plain batch), changes when "Neither rule nor file" fires, and must keep `EXPLAIN_RULE`; the hold-and-wait check (`locateRule`) and the split (`selectRule`) may disagree under `LastDeclared`. | Accept the first three: rule selection and the missing-file check for every target happen before anything starts (the error fires as today), `EXPLAIN_RULE` stays, and the plain batch is one more branch of `Async.Parallel`. The `locateRule`/`selectRule` disagreement exists today; not changed here, noted in Later. |
+| M8 | The `Verdict` observation after a dependee (ExecCore.fs:379) is per (dependent, dependee) edge, also on the fast path, so test 4's count is wrong. | Accept: test 4 counts per edge. Batching those per `execParallel` call: Later, if measured. |
+| m9 | A cancelled caller or a dead agent between reply and `Settle` can leave `pending` entries. | Partly accept: F# `finally` also runs on cancellation, so try/finally covers it; a dead agent stops everything anyway. Clearing `pending` at `NewRun` would break overlapping engine runs' hashes, so no. Test: a cancelled run leaves no pending file. |
+| m10 | The `UpToDate` default (XakeScriptBuilder.fs:365) changes type. | Accept: listed in the release notes' API changes. |
+| m11 | The budget is low: async `getDepState` in two phases, the memo with cycle detection, the warm walk, `observeMany`, `dryRun`, `dumpDeps`, 12 test call sites of `Observe`. | Accept: code about 400 lines, tests about 350. |
+| m12 | Missing tests: two entries into one cycle, reverse-order stats, as-requested plus progress, `dryRun`, overlapping `demandTarget` runs, a re-ask of a failed file ends. | Accept, all six. |
+| n13 | `dumpDeps` builds a memo it never uses. | Accept: drop it. |
+| n14 | "Existence per dependency" is met per target over its distinct files. | Accept: §5 says so. |
+
+**The critic's simpler alternative.** Keep the synchronous walk under `memoize`'s single lock,
+but send one batch per target with the caller's stats. This drops the async memo, B2 and the
+parallel walk's parking risk, and costs about 0.27 s of stats + 0.2 s of agent + transport,
+serial. It still blocks: one `PostAndReply` per target (about 1,188 instead of 181,764), which
+contradicts the owner's "no blocking waits". The owner decides. This session's recommendation
+is to keep async, with B2's fix.
+
+### Revised budget
+
+| Where | Lines (about) |
+|---|---|
+| `Database.fs` (the API, messages, batch fold, `ObserveWait`, the M3 rule, one write per batch, `storeDelegated`) | 140 |
+| `DependencyAnalysis.fs` (async verdict in two phases, memo with wait-for map, warm, durations from the memo) | 150 |
+| `ExecCore.fs`, `ScriptRunner.fs` (`dryRun`), `ExecTypes.fs` | 110 |
+| tests | 350 |
+| docs, release notes | 30 |
+
+Code about 400 lines; the order of work: the batch with caller stats and a prototype measurement
+(M5) first, then the async verdict and memo.

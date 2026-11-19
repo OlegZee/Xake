@@ -17,8 +17,8 @@ Branch `feature/idle-perf` from `5afb94b` (= `v5.0.0-preview.2`).
 
 ## Next step
 
-The owner chose option 4, the batched verdict query (brief.md, Decisions). The design and the
-critic's 13 remarks with proposals are in design.md (§8). Wait for the owner to accept the design
-and the remarks; then implement per design.md §1-§7 as amended by §8, the tests of §5 and §8,
-the release notes (the fix; FS0041 in its own commit), `dotnet test src/tests`, and the bench
-against 4.0.0 (gate: within 1.5x).
+The owner is discussing the fix in this session. Decisions so far are in brief.md (no
+RunSynchronously on the dependency path; the database does no file I/O; a batch per target;
+existence per dependency). design.md was rewritten on 2026-11-20 to follow them (batches with
+the caller's stats, async verdict and memo). It is not accepted yet. Next: the owner's review of
+design.md (and a critic, if he wants one), then the implementation.

@@ -97,11 +97,13 @@ What changed is the cost per dependency:
   state). Hashing is already outside.
 - 2026-11-20, the owner: a batch of a target's files (about 150) in one request is an acceptable
   size.
-- Open, with the owner in this session: the direction (A: per-target batch for reads and
-  `Recording` writes; B: reads bypass the agent through a table only the agent writes; C: no agent
-  for the file table, a concurrent dictionary and a lazy hash per file, the agent only persists);
-  existence re-checked per dependency or one stat per file per run; the full-build regression
-  (cold-hot.md).
+- 2026-11-20, the owner: **existence is checked per dependency**, as in 4.0: every verdict
+  observation carries a fresh stat taken by the caller (a file deleted during a run is seen by
+  the next verdict that depends on it).
+- Direction: the decisions above amount to A (a batch per target for reads and `Recording`, the
+  agent the only owner of the file table), with the stats taken by the caller. Design:
+  [design.md](design.md) (rewritten 2026-11-20; the 2026-11-19 design is d6522fe). Not accepted
+  yet.
 
 ## Also: recursive recipes and FS0041
 

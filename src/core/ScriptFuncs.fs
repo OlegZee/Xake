@@ -21,7 +21,7 @@ module ScriptFuncs =
         recipe {
             let! ctx = getCtx()
             let! r0 = getResult()
-            let! (r', b) = Scheduler.withYieldedSlot ctx.Engine.Scheduler (A.runAction body (r0, ctx))
+            let! (r', b) = Scheduler.withYieldedSlot ctx.Engine.Scheduler ctx.Targets (A.runAction body (r0, ctx))
             do! setResult r'
             return b
         }

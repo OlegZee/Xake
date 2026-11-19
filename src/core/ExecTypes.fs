@@ -182,6 +182,8 @@ type EngineOptions = {
     Variables: Map<string, VarEntry>
     /// Content cut-off (docs/content-cutoff.md); false (`--content-cutoff=off`): the 4.0 decisions.
     ContentCutoff: bool
+    /// The order in which ready tasks start (docs/implnotes.md, "Critical path").
+    Schedule: Schedule
     /// Receives the summary of every run; None: only the log line.
     SummarySink: IRunSummarySink option
 } with
@@ -194,6 +196,7 @@ type EngineOptions = {
         RuleMatch = MostSpecific
         Variables = Map.empty
         ContentCutoff = true
+        Schedule = CriticalPath
         SummarySink = None
     }
 

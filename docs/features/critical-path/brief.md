@@ -1,5 +1,12 @@
 # Brief: start the longest chains first (Xake 5.x)
 
+**Approved 2026-11-19** by the owner as proposed in [design.md](design.md): a priority gate instead of
+the semaphore (non-blocking pool agent), a keyed resource queue, a sorted `need` fan-out, the key from
+the progress estimate's walk (own time + the longest key of the dependents, 0 without history),
+`Schedule = CriticalPath | AsRequested` with `--schedule=`, default `CriticalPath` if this
+repository's build and tests show no regression (the measurement reported either way),
+`priority <int>` Later, acceptance checked by start order.
+
 Audience: the agent working in the Xake repository. Xake is public: this brief names no product or company of the
 consumer. Engine facts are from `dev` (7018d64, Xake 5.0 unreleased): `src/core/ExecCore.fs`, `src/core/WorkerPool.fs`,
 `src/core/Progress.fs`.

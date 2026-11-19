@@ -50,6 +50,7 @@
     <Compile Include="RuleHeaderTests.fs" />
     <Compile Include="MatchedTests.fs" />
     <Compile Include="StepTimeTests.fs" />
+    <Compile Include="CriticalPathTests.fs" />
     <Compile Include="FlatScriptTests.fs" />
     <Compile Include="LibraryVarsTests.fs" />
     <Compile Include="RecordShapeTests.fs" />

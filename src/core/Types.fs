@@ -282,6 +282,13 @@ module DomainTypes =
         /// Restored by `ruleMatch LastDeclared` in the script; deprecated, removed after one minor.
         | LastDeclared
 
+    /// The order in which ready tasks start (docs/implnotes.md, "Critical path").
+    type Schedule =
+        /// The longest expected remaining chain first, from the last run's times (default).
+        | CriticalPath
+        /// The order of request (`--schedule=as-requested`).
+        | AsRequested
+
     /// Defines common exception type
     exception XakeException of string
 

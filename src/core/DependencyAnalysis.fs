@@ -223,6 +223,37 @@ let getDurationDeps ctx getDeps t =
 //        printfn "For task %A duration:%A deps:%A" t tt dd
 //        (tt,dd)
 
+/// The critical-path key (ms) of every target the run's estimate reaches from `goals`: its own
+/// time plus the largest key of the targets that depend on it in this run (docs/implnotes.md).
+let criticalPath (getDurationDeps: Target -> int<ms> * Target list) (goals: Target list) =
+    let own = System.Collections.Generic.Dictionary<string, int>()
+    let dependents = System.Collections.Generic.Dictionary<string, ResizeArray<string>>()
+    let rec visit (t: Target) =
+        if not (own.ContainsKey t.Name) then
+            let duration, dependees = getDurationDeps t
+            own.[t.Name] <- int duration
+            for d in dependees do
+                match dependents.TryGetValue d.Name with
+                | true, ds -> ds.Add t.Name
+                | _ -> dependents.[d.Name] <- ResizeArray [t.Name]
+                visit d
+    goals |> List.iter visit
+    let keys = System.Collections.Generic.Dictionary<string, int>()
+    // a cycle is impossible in a finished run's records; an edge closing one counts 0
+    let rec key visiting name =
+        match keys.TryGetValue name with
+        | true, k -> k
+        | _ when Set.contains name visiting -> 0
+        | _ ->
+            let up =
+                match dependents.TryGetValue name with
+                | true, ds -> ds |> Seq.fold (fun m d -> max m (key (Set.add name visiting) d)) 0
+                | _ -> 0
+            let k = own.[name] + up
+            keys.[name] <- k
+            k
+    own.Keys |> List.ofSeq |> List.map (fun n -> n, key Set.empty n)
+
 /// Dumps all dependencies for particular target
 let dumpDeps (ctx: ExecContext) current (target: Target list) =
 

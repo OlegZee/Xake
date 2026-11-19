@@ -120,6 +120,12 @@ Also:
 - **Progress with several target groups:** the status line names the group (`[2/3 test]`), each
   finished group logs its time, and a task skipped by content cut-off leaves the estimate.
 
+- **Critical path:** when more tasks are ready than `-t` allows, the one with the longest expected
+  remaining chain starts first (its own time plus the longest chain of its dependents, from the
+  last run's times); the same order applies to resource waiters and to `need [..]`. Without
+  history the order is as before. `--schedule=as-requested` (`ExecOptions.Schedule = AsRequested`)
+  keeps the order of request. The banner and the run summary name the mode.
+
 For `Xake.Dotnet` users: `File.undefined` is removed; `Xake.Dotnet` moves to `File option` at its
 5.0.
 

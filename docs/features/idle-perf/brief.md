@@ -68,6 +68,22 @@ What changed is the cost per dependency:
    dependency). Removes the round-trip half only; the agent's serial ~1.1 s stays. Expected
    ~1.2 s. ~30 lines, a new message. Worse than 1.
 
+4. **Batched verdict query per target (prototyped, the owner's question).** One message
+   `ObserveVerdicts (files, since, reply)` carries every file dependency of a target; the agent
+   runs the usual verdict observation for each and replies at once. A file being hashed by
+   someone else replies "ask alone" (the caller falls back to `Observe` and waits); a first
+   observation that needs a hash comes back as `HashNeeded` and the caller hashes and `Settle`s it
+   as today. Measured: 0.66-0.93 s (1,188 messages instead of 181,764). ~25 lines, a new message,
+   no behaviour or format change. A batch over a whole group is not practical: the walk finds a
+   target's dependees as it goes (memoised recursion), so the per-target batch is the natural
+   unit, and it already removes almost all messages. Option 3 above is this same idea.
+
+   Against option 1: both remove the round trips; the batch keeps the per-file work (map lookup,
+   stat) serial in the agent, option 1 does it on the caller (still one thread in the walk). Option
+   1 is ~0.2-0.3 s faster here and keeps the message set as it is; the batch keeps every read in
+   the agent (no state shared outside it). Together they gain little: after either, the cost left
+   is the `File.exists` per dependency. One is enough.
+
 ## Decisions
 
 - (pending the owner) option 1.

@@ -59,7 +59,9 @@ is running (`Scheduler.query`), and L7 submits tasks to it.
   - `Store (result)`: replies once the result is in memory.
   - `NewRun`: increments the epoch and replies with it.
   - `InMemory`: nothing more is written to disk.
-  - `Close` / `CloseWait`.
+  - `Close` / `CloseWait`: drains the writer, closes the file, releases the lock. Afterwards the
+    agent answers a further close at once and ignores the rest. `Db.Dispose` is a synchronous
+    close (the first one; a second does nothing), then disposes the agent.
 - **The snapshot.** After every message the agent publishes `Db.Snapshot` (`Storage.Database`:
   immutable `Map`s behind a volatile field). Readers never post: `Db.tryGetResult`, a file's
   record, the epoch.

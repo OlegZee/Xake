@@ -34,3 +34,5 @@ section 7. One decision per line, with its date. Decisions are not re-litigated.
 - 2026-11-20 (topic 2): names, option 4b: one namespace `Xake.Storage` over DatabaseFormat.fs and
   Database.fs, a module `Db` with the functions; `BuildLog` and `DatabaseApi` go as public names.
   `FileTracker.observeFiles` -> `FileTracker.observe`, `ObserveContext` -> `FileTracker.Context`.
+- 2026-11-20 (topic 2, question 1): `Db.Dispose` = a synchronous close (drain, file, lock); closing
+  again is harmless.

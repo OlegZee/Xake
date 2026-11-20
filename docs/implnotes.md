@@ -56,7 +56,8 @@ The file starts with a version header (`Storage.Db.formatVersion`, `0.7`; `Persi
   the conflicts), `Store` (a result; replies once it is in memory), `NewRun`, `InMemory` and
   `Close`. After every message it publishes a snapshot (`Db.Snapshot`: `Status`, `Files`,
   `Epoch`), read without a message (`Db.tryGetResult`); the engine posts through the internal functions
-  `Db.apply`, `Db.store`, `Db.newRun`, `Db.keepInMemory`, `Db.close`. It hands the records to the writer
+  `Db.apply`, `Db.store`, `Db.newRun`, `Db.keepInMemory`, `Db.close` (closing twice is
+  harmless; `Dispose` closes synchronously). It hands the records to the writer
   in its order and does not wait for it.
 - The writer owns the path table and the stream. Each batch, with its new `DirRec`/`PathRec`, is
   pickled into one buffer and written with one `Write`. The path table is an immutable value in

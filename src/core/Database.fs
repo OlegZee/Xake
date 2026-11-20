@@ -269,6 +269,14 @@ module internal DbAgent =
                     | Close | CloseWait _ ->
                         do! write.PostAndAsyncReply Drain
                         match msg with CloseWait ch -> ch.Reply() | _ -> ()
+                        return! closed ()
+                }
+            // closed: a later close replies at once (closing twice is harmless); the rest is ignored
+            and closed () =
+                async {
+                    let! msg = mbox.Receive()
+                    match msg with CloseWait ch -> ch.Reply() | _ -> ()
+                    return! closed ()
                 }
             loop cell.Value)
         mbox.Error.Add (fun ex -> logError "Database agent stopped: %O" ex)
@@ -279,6 +287,7 @@ module internal DbAgent =
 /// and the snapshot it publishes. An opaque handle: the engine reaches it through `Db`'s functions.
 [<Sealed>]
 type Db internal (agent: MailboxProcessor<DatabaseApi>, cell: DbAgent.SnapshotCell) =
+    let disposed = ref 0
     /// The records after the agent's last message; reading it posts nothing.
     member _.Snapshot : Database = cell.Value
     member internal _.Post (msg: DatabaseApi) = agent.Post msg
@@ -287,8 +296,13 @@ type Db internal (agent: MailboxProcessor<DatabaseApi>, cell: DbAgent.SnapshotCe
         | Some t -> agent.PostAndReply(build, t)
         | None -> agent.PostAndReply build
     member internal _.PostAndAsyncReply (build: AsyncReplyChannel<'r> -> DatabaseApi) = agent.PostAndAsyncReply build
+    /// Closes the database (as `Db.close`: drains the writer, closes the file, releases the lock),
+    /// then disposes the agent. Closing before is harmless; a second `Dispose` does nothing.
     interface System.IDisposable with
-        member _.Dispose() = (agent :> System.IDisposable).Dispose()
+        member _.Dispose() =
+            if System.Threading.Interlocked.Exchange(&disposed.contents, 1) = 0 then
+                try agent.PostAndReply CloseWait
+                finally (agent :> System.IDisposable).Dispose()
 
 /// The database's functions: the read API (public) and the engine's operations (internal).
 module Db =
@@ -362,5 +376,5 @@ module Db =
     /// From now on records stay in memory and nothing is appended (`--dump`, `--dryrun`, A8).
     let internal keepInMemory (db: Db) = db.Post InMemory
 
-    /// Drains the writer, closes the file and releases the lock.
+    /// Drains the writer, closes the file and releases the lock; closing again replies at once.
     let internal close (db: Db) = db.PostAndAsyncReply CloseWait

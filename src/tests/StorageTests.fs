@@ -573,3 +573,32 @@ let ``closing drains the writer, in order``() =
         |> Seq.choose (function DbRecord.Result r -> Some (r.Targets.Head.Display (root ())) | _ -> None)
         |> List.ofSeq
     Assert.AreEqual(names, stored)
+
+/// Disposing the database closes it: the writer is drained and the lock released.
+[<Test>]
+let ``disposing the database closes it``() =
+    let names = [ for i in 1 .. 50 -> sprintf "d%03d.exe" i ]
+    do
+        use db = openDb () logger
+        for n in names do store db (createResult n)
+    // the lock is free: a second open does not wait for it
+    let again = Db.openWith (System.TimeSpan.FromMilliseconds 200.0) false (root ()) dbname logger
+    again.PostAndReply CloseWait
+    let stored =
+        Db.readRecords (root ()) dbname
+        |> Seq.choose (function DbRecord.Result r -> Some (r.Targets.Head.Display (root ())) | _ -> None)
+        |> List.ofSeq
+    Assert.AreEqual(names, stored)
+
+/// Closing twice, or closing and then disposing (twice), does not hang.
+[<Test>]
+let ``closing again and disposing after close return``() =
+    let db = openDb () logger
+    store db (createResult "c.exe")
+    let all = async {
+        do! Db.close db
+        do! Db.close db
+        (db :> System.IDisposable).Dispose()
+        (db :> System.IDisposable).Dispose() }
+    let finished = Async.StartAsTask all
+    Assert.IsTrue(finished.Wait(System.TimeSpan.FromSeconds 10.0), "close or dispose did not return")

@@ -15,8 +15,9 @@
   full 1.52-1.77 s, no-change 0.94-1.13 s; after topic 2 full 1.55-1.84 s, no-change 0.91-1.02 s.
 - `architecture.html` (Russian render) is stale.
 
-**Next step.** Open from topic 2: question 1, `Db.Dispose` disposes only the agent's mailbox
-(no drain, the stream and `.xake.lock` stay open); proposal `Dispose` = synchronous `close`, or
-drop `IDisposable`. Then the owner picks the next topic from architecture.md section 7
+- `Db.Dispose` closes the database synchronously (drain, file, lock); a second close or dispose
+  returns at once. Two tests; full suite 1,891 passed, 0 failed.
+
+**Next step.** The owner picks the next topic from architecture.md section 7
 (candidate 3, the per-run memo of observations, is noted in tracker.md). PR into
 `feature/idle-perf` only on the owner's word.

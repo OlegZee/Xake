@@ -22,6 +22,10 @@
   `Verdicts.verdictWaits`; `Fresh` registers no edges. Full suite 1,893 passed, 0 failed; bench
   full 1.46-1.87 s, no-change 0.90-0.99 s.
 
-**Next step.** Topic 5 is queued: simplify `FileRule.decide` (tracker.md). Then the owner picks
-from architecture.md section 7 (candidate 3, the per-run memo of observations, is noted). PR into
+- Topic 5 done: `FileRule` split per mode (`input`/`inputHashed`, `output`/`outputHashed`,
+  `preHash`/`preHashed`), `SeenByVerdict` removed, `PreHash` and `LegacyRead` kept. Full suite
+  1,893 passed, 0 failed; bench full 1.47-1.80 s, no-change 0.93-0.97 s.
+
+**Next step.** Proposed next: how `observe` uses the decision (states, `Db.apply`, conflict rounds;
+candidate 9, decide.md section 4). Or the owner picks from architecture.md section 7 (candidate 3, the per-run memo of observations, is noted). PR into
 `feature/idle-perf` only on the owner's word.

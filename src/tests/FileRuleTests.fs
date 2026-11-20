@@ -9,15 +9,13 @@ open Xake
 open Xake.Storage
 open Xake.FileProbe
 open Xake.FileTracker
-open Xake.FileProbe
-open Xake.FileTracker
 open Xake.FileTracker.FileRule
 
 let private t0 = System.DateTime(2026, 1, 1)
 let private record changed hash = { Stamp = t0; Size = 10L; Hash = hash; Changed = changed }
 let private same = Present (t0.AddMilliseconds 5.0, 10L)        // within 10 ms, the same size
 let private moved = Present (t0.AddSeconds 1.0, 12L)
-let private rc = { Epoch = 7; Hashing = false; SeenByVerdict = false; RecordedBefore = false }
+let private rc = { Epoch = 7; Hashing = false; RecordedBefore = false }
 let private hashing = { rc with Hashing = true }
 let private movedState hash changed = { Stamp = t0.AddSeconds 1.0; Size = 12L; Hash = hash; Changed = changed }
 
@@ -27,12 +25,6 @@ let private modes = [ Verdict; Recording; Output true; Output false; PreHash ]
 let ``a missing file is absent in every mode``() =
     for mode in modes do
         Assert.AreEqual(Keep None, decide (Some (record 1 None)) Missing mode hashing, sprintf "%A" mode)
-
-[<Test>]
-let ``a verdict that already saw the file answers from the record``() =
-    let k = record 1 None
-    Assert.AreEqual(Keep (Some k), decide (Some k) moved Verdict { hashing with SeenByVerdict = true })
-    Assert.AreEqual(Keep None, decide None moved Verdict { rc with SeenByVerdict = true })
 
 [<Test>]
 let ``an output without cut-off is written as changed in this run, without a hash``() =
@@ -67,6 +59,15 @@ let ``an equal stat keeps the record, filling in an unknown size``() =
 let ``a moved stat recorded again in the run is not a change (A1)``() =
     let k = record 1 None
     Assert.AreEqual(Keep (Some k), decide (Some k) moved Recording { hashing with RecordedBefore = true })
+    // only a body's recording reads A1
+    Assert.AreEqual(NeedHash, decide (Some k) moved Verdict { hashing with RecordedBefore = true })
+
+[<Test>]
+let ``an output with cut-off in a run that does not hash is decided as an input``() =
+    let k = record 1 (Some 5UL)
+    Assert.AreEqual(Keep (Some k), decide (Some k) same (Output true) rc)
+    Assert.AreEqual(Write (movedState None 7), decide (Some k) moved (Output true) rc)
+    Assert.AreEqual(Write (movedState None 7), decide None moved (Output true) rc)
 
 [<Test>]
 let ``a moved stat is hashed when the run hashes, else changed in this run``() =

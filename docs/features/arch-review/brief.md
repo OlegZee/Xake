@@ -43,3 +43,6 @@ section 7. One decision per line, with its date. Decisions are not re-litigated.
 - 2026-11-20 (topic 4, [wait-for.md](wait-for.md)): option a: two maps (task waits; verdict waits:
   no cycle can run through both), one shared primitive `WaitFor`, `Fresh` registers no edges,
   names `TaskWaits` and `verdictWaits`.
+- 2026-11-20 (topic 5, [decide.md](decide.md)): `FileRule` split per mode (`input`, `output`,
+  `preHash`, each with its `...Hashed` next to it); `SeenByVerdict` removed; `PreHash` kept;
+  the continuation in `NeedHash` not now. `LegacyRead` (and the unknown size) stays for now.

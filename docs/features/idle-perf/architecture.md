@@ -39,7 +39,7 @@ is running (`Scheduler.query`), and L7 submits tasks to it.
 | Part | Owns | Does not |
 |---|---|---|
 | `FileStat.take`, `Content.hash` (L0) | nothing; read the file system | keep state |
-| `FileRule` (L1) | the decision for one observation: `decide known stat mode ctx`, `decideHashed`, `classify since` | I/O, mutation |
+| `FileRule` (L1) | the decision for one observation: `decide known stat mode ctx`, `decideHashed`, `classify since`; one pair of rules per kind of observation (`input` for `Verdict`/`Recording`, `output`, `preHash`, each with its rule after hashing), none depending on another's order | I/O, mutation |
 | Database agent (L2) | the records in memory (`Status`, `Files`, `Epoch`), the snapshot | read project files, decide, wait |
 | Writer (L2) | the path table, the `.xake` stream, encoding, failure counts | touch the records in memory |
 | `Hasher` (L3) | the hashes being computed, keyed by (file, stat) | know records, epochs, runs |

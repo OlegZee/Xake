@@ -29,7 +29,9 @@ module FileTracker =
         | Changed of FileState
 
     /// The decision about one observation of a file, without I/O or state (docs/features/idle-perf,
-    /// L1): the rules of decision 1c, A1 and content cut-off (docs/implnotes.md, "Epochs").
+    /// L1): the rules of decision 1c, A1 and content cut-off (docs/implnotes.md, "Epochs"). One
+    /// pair of functions per kind of observation, the rule before hashing and the one after it;
+    /// no rule depends on another mode's (docs/features/arch-review/decide.md).
     module internal FileRule =
         /// What the run knows about the file besides its record.
         type RuleContext = {
@@ -37,9 +39,8 @@ module FileTracker =
             Epoch: int
             /// The run hashes (`--content-cutoff` on).
             Hashing: bool
-            /// A verdict already observed the file in this run: its record is the answer.
-            SeenByVerdict: bool
             /// A body already recorded the file in this run (A1): a moved stat is not a change.
+            /// Only `Recording` reads it.
             RecordedBefore: bool }
 
         type Decision =
@@ -56,42 +57,83 @@ module FileTracker =
 
         let private write (known: FileState option) state = if Some state = known then Keep known else Write state
 
-        /// One observation of a file with the record `known` and the stat taken now: a new state,
-        /// an equal stat (an unknown size filled in, `changed` kept), or a moved stat (to hash, or
-        /// changed in this epoch without a hash).
+        /// A change in this run, without a hash.
+        let private changed stamp size (rc: RuleContext) = { Stamp = stamp; Size = size; Hash = None; Changed = rc.Epoch }
+
+        /// After hashing failed: absent when the file is gone, else a change without a hash.
+        let private unreadable known stat rc =
+            match stat with
+            | Missing -> Keep None
+            | Present (stamp, size) -> write known (changed stamp size rc)
+
+        // -- input: a file the run reads (`Verdict`, `Recording`)
+
+        /// An equal stat keeps the record (an unknown size filled in); a moved stat is not a change
+        /// when another body recorded the file in this run (A1), else it is hashed (the run hashes)
+        /// or a change.
+        let private input recordedBefore known stamp size rc =
+            match known with
+            | Some k when sameStat k stamp size -> write known { k with Size = size }
+            | Some _ when recordedBefore -> Keep known
+            | Some _ when rc.Hashing -> NeedHash
+            | _ -> write known (changed stamp size rc)
+
+        /// The same content keeps the run it changed in (cut-off); other content is a change.
+        let private inputHashed known hashed rc =
+            match hashed with
+            | Unreadable stat -> unreadable known stat rc
+            | Hashed (stamp, size, h) ->
+                let state = { Stamp = stamp; Size = size; Hash = Some h; Changed = rc.Epoch }
+                match known with
+                | Some k when k.Hash = Some h -> write known { state with Changed = k.Changed }
+                | _ -> write known state
+
+        // -- output: a rule's output right after the rule
+
+        /// Without cut-off a change; with cut-off hashed when the run hashes, else as an input.
+        let private output cutoff known stamp size rc =
+            if not cutoff then write known (changed stamp size rc)
+            elif rc.Hashing then NeedHash
+            else input false known stamp size rc
+
+        /// As an input, and a record never hashed with an equal stat gets its hash, its run kept.
+        let private outputHashed known hashed rc =
+            match hashed, known with
+            | Hashed (stamp, size, h), Some k when k.Hash.IsNone && sameStat k stamp size ->
+                write known { Stamp = stamp; Size = size; Hash = Some h; Changed = k.Changed }
+            | _ -> inputHashed known hashed rc
+
+        // -- pre-hash: a rule's output before the rule runs
+
+        /// A record without a hash and an equal stat is hashed (the run hashes); else kept.
+        let private preHash known stamp size rc =
+            match known with
+            | Some k when rc.Hashing && k.Hash.IsNone && sameStat k stamp size -> NeedHash
+            | _ -> Keep known
+
+        /// Only the hash is written, and only for an equal stat; anything else keeps the record.
+        let private preHashed known hashed =
+            match hashed, known with
+            | Hashed (stamp, size, h), Some k when sameStat k stamp size -> write known { k with Hash = Some h }
+            | _ -> Keep known
+
+        /// One observation of a file with the record `known` and the stat taken now.
         let decide (known: FileState option) (stat: FileStat) (mode: ObserveMode) (rc: RuleContext) =
             match stat with
             | Missing -> Keep None
-            | Present _ when mode = Verdict && rc.SeenByVerdict -> Keep known
             | Present (stamp, size) ->
-                let moved () = { Stamp = stamp; Size = size; Hash = None; Changed = rc.Epoch }
-                match mode, known with
-                | Output false, _ -> write known (moved ())
-                | Output true, _ when rc.Hashing -> NeedHash
-                | PreHash, Some k when rc.Hashing && k.Hash.IsNone && sameStat k stamp size -> NeedHash
-                | PreHash, _ -> Keep known
-                | _, Some k when sameStat k stamp size -> write known { k with Size = size }
-                | Recording, Some k when rc.RecordedBefore -> Keep (Some k)   // another body recorded it in this run (A1)
-                | (Verdict | Recording), Some _ when rc.Hashing -> NeedHash
-                | _ -> write known (moved ())
+                match mode with
+                | Verdict -> input false known stamp size rc
+                | Recording -> input rc.RecordedBefore known stamp size rc
+                | Output cutoff -> output cutoff known stamp size rc
+                | PreHash -> preHash known stamp size rc
 
         /// The decision after hashing, against the same `known` record.
         let decideHashed (known: FileState option) (hashed: HashResult) (mode: ObserveMode) (rc: RuleContext) =
-            match hashed, known with
-            | Unreadable _, _ when mode = PreHash -> Keep known
-            | Unreadable stat, _ ->
-                match stat with
-                | Missing -> Keep None
-                | Present (stamp, size) -> write known { Stamp = stamp; Size = size; Hash = None; Changed = rc.Epoch }
-            | Hashed (stamp, size, h), _ ->
-                let state = { Stamp = stamp; Size = size; Hash = Some h; Changed = rc.Epoch }
-                match mode, known with
-                | PreHash, Some k -> if sameStat k stamp size then write known { k with Hash = Some h } else Keep known
-                // the same content: `changed` kept (cut-off)
-                | _, Some k when k.Hash = Some h -> write known { state with Changed = k.Changed }
-                // an output never hashed, not moved: the hash is filled in
-                | Output _, Some k when k.Hash.IsNone && sameStat k stamp size -> write known { state with Changed = k.Changed }
-                | _ -> write known state
+            match mode with
+            | Verdict | Recording -> inputHashed known hashed rc
+            | Output _ -> outputHashed known hashed rc
+            | PreHash -> preHashed known hashed
 
         /// The reply for a state: changed after the run `since`, or not.
         let classify since = function
@@ -152,7 +194,7 @@ module FileTracker =
             let rec settle (round: int) (pending: (File * bool * FileState option * FileStat) list) = async {
                 if not pending.IsEmpty then
                     let epoch = oc.Db.Snapshot.Epoch
-                    let rc recordedBefore = { FileRule.Epoch = epoch; FileRule.Hashing = oc.Hashing; FileRule.SeenByVerdict = false; FileRule.RecordedBefore = recordedBefore }
+                    let rc recordedBefore = { FileRule.Epoch = epoch; FileRule.Hashing = oc.Hashing; FileRule.RecordedBefore = recordedBefore }
                     // decided here; only the files to hash go through the hasher, in parallel
                     let first = [| for f, rb, known, stat in pending -> f, rb, known, stat, FileRule.decide known stat mode (rc rb) |]
                     let! hashed =

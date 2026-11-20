@@ -99,7 +99,7 @@ Three private steps, joined by `observe` (arch-review, topic 6):
 
 ### Verdicts (`DependencyAnalysis.Verdicts`, one per run)
 
-- **`Of t`** is the memoised no-build verdict (`Lazy<Task>` per target). It is decided in two
+- **`Planned t`** (was `Of`) is the memoised no-build verdict (`Lazy<Task>` per target). It is decided in two
   phases:
   1. One `observeMany Verdict epoch` over the target's files, then, in parallel, the verdicts of
      the dependees the transitive rule needs. These are the dependees whose file is unchanged, or
@@ -108,8 +108,9 @@ Three private steps, joined by `observe` (arch-review, topic 6):
 - **Waiting on another verdict.** Before a verdict awaits another target's verdict that is still
   in progress, it registers the edge in `verdictWaits` (a `WaitFor`). An edge that would close a
   cycle is refused, and that dependee counts as changed.
-- **`Fresh t`** is the task's own verdict, decided again after the task waited for its running
-  dependees. Its dependees still come through the memo. Nothing waits for `Fresh`, so it registers
+- **`ForTask targets`** is a starting task's own verdict: it waits for the dependees running now
+  (`TaskWaits`), then decides again (its private step `fresh`). Its dependees still come through
+  the memo. Nothing waits for `fresh`, so it registers
   no edges.
 - **Two wait-for maps, one primitive.** Tasks wait for tasks (`need`, a task's verdict waiting for
   a running dependee) in `RunCounters.TaskWaits`; verdicts wait for verdicts in `verdictWaits`.
@@ -148,12 +149,12 @@ Three private steps, joined by `observe` (arch-review, topic 6):
 ```
 beginRun:  NewRun -> agent (epoch+1, publish)          new RunFiles, new Verdicts
 planRun:   Verdicts.Warm goals                          (parallel over targets)
-  Of t:    snapshot.Status[t]                           no message
+  Planned t: snapshot.Status[t]                           no message
            observe Verdict e [t's files]
              first claim of f:  stat (thread) -> decide: equal stat -> Keep  (no Apply)
              later claims of f: wait first -> File.exists -> snapshot.Files[f]
            dependees' Of (memo, parallel)  -> getDepState -> []
-execParallel goals -> prepareOne t -> fast path: UpToDate t = Of t (done) -> Skipped
+execParallel goals -> prepareOne t -> fast path: UpToDate t = Planned t (done) -> Skipped
            observe Verdict [t's output] (seen: File.exists + snapshot)
 Store of the phony goals -> agent -> writer
 ```
@@ -165,9 +166,9 @@ On the bench, the agent receives one `NewRun` and the `Store`s of the 7 phony ta
 ### A full build (empty database)
 
 ```
-Warm:      Of t -> no result -> "Not built yet" (no observation)
+Warm:      Planned t -> no result -> "Not built yet" (no observation)
 execOne t -> pool (slot by key) -> run:
-  needs, Fresh t (rebuild), preHash: observe PreHash [out] (missing -> Keep)
+  needs, ForTask (rebuild), preHash: observe PreHash [out] (missing -> Keep)
   body: need [150 files] -> execParallel -> prepareOne each (rule? exists?)
         plain files -> one observe Recording [150]:
           claim, recordedBefore, stat -> decide: no record -> Write (changed = epoch)
@@ -230,10 +231,9 @@ API changes for code that used `DatabaseApi` directly.
 ## 7. Candidates for review (looks accidental, over-complex or hard to explain)
 
 1. **Two wait-for maps.** Done (arch-review, topic 4): two maps by design, one `WaitFor`
-   primitive, `TaskWaits` and `verdictWaits`; `Fresh` registers no edges (section 1).
-2. **Two verdict entry points.** `Of` is memoised and never waits for running tasks; `Fresh` is a
-   task's own verdict after it waited. The difference is real (implnotes, "Epochs"), but nothing in
-   the types says which one a caller needs.
+   primitive, `TaskWaits` and `verdictWaits`; `fresh` registers no edges (section 1).
+2. **Two verdict entry points.** Done (arch-review, topic 8): `Planned` and `ForTask`, both in
+   `Verdicts`, with the reason for two in its doc comment.
 3. **`RunFiles` claims do two jobs.** Settled (arch-review, topic 6): a claim is an ordering
    barrier, not a cache of answers; a memo of the first answer would be stale when a rule rewrites
    the file in the run. The reasons are now in the comments on `RunFiles` and `claim`.

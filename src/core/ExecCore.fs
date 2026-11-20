@@ -564,51 +564,6 @@ let rec runSeq<'r> :Async<'r> list -> Async<'r list> =
 /// Maps a function over the result of an async computation.
 let asyncMap f c = async.Bind(c, f >> async.Return)
 
-/// The verdict of a task's targets (content cut-off): after its static `needs`, it waits for the
-/// running dependees recorded by its last result (unless the wait would close a cycle), then
-/// decides with `getDeps` (the run's memo) for the dependees.
-let private verdict (ctx: ExecContext) (verdicts: Verdicts) (targets: Target list) = async {
-    let names = targets |> List.map (fun t -> t.Name)
-    let primary = List.head targets
-    if ctx.Options.ContentCutoff then
-        let last = Db.tryGetResult ctx.Db primary
-        let dependees = last |> Option.map (fun r -> r.Depends |> List.choose (function TargetDep t -> Some t | _ -> None)) |> Option.defaultValue []
-        for d in dependees do
-            match Scheduler.query ctx.Engine.Scheduler d with
-            | Running task ->
-                match ctx.Run.Counters.TaskWaits.Verdict names d.Name with
-                | None ->
-                    do ctx.Logger.Log Info "%s: not waiting for %s, which waits for it" (primary.Display ctx.Options.ProjectRoot) (d.Display ctx.Options.ProjectRoot)
-                | Some (cancel, unregister) ->
-                    try
-                        do! Scheduler.withYieldedSlot ctx.Engine.Scheduler targets (async {
-                                let! _ = System.Threading.Tasks.Task.WhenAny(Async.StartAsTask task :> System.Threading.Tasks.Task, cancel.Task :> System.Threading.Tasks.Task) |> Async.AwaitTask
-                                return () })
-                    finally unregister ()
-                    if cancel.Task.IsCompleted then
-                        do ctx.Logger.Log Info "%s: stopped waiting for %s, which waits for it" (primary.Display ctx.Options.ProjectRoot) (d.Display ctx.Options.ProjectRoot)
-                    else
-                        // a failed dependee fails the dependent, as its body would
-                        do! task |> Async.Ignore
-            | _ -> ()
-    let rebuild (target: Target) = async {
-        let! reasons = verdicts.Fresh target
-        match reasons with
-        | [] -> return false
-        | reasons ->
-            let reason =
-                match reasons with
-                | Other reason :: _ -> reason
-                | Depends t :: _ -> "Depends on target " + t.Display ctx.Options.ProjectRoot
-                | DependsMissingTarget t :: _ -> sprintf "Depends on target %s (missing)" (t.Display ctx.Options.ProjectRoot)
-                | FilesChanged (file :: _) :: _ -> "File(s) changed " + file
-                | reasons -> sprintf "Some reason %A" reasons
-            do ctx.Logger.Log Info "Rebuild %A: %s" (target.Display ctx.Options.ProjectRoot) reason
-            return true }
-    let rec anyRebuild = function
-        | [] -> async.Return false
-        | t :: rest -> async { let! r = rebuild t in if r then return true else return! anyRebuild rest }
-    return! anyRebuild targets }
 
 /// Starts a run (B2): the pool's run boundary, the next epoch, the verdict memo of the run and
 /// its table of spellings; the context's verdicts use the memo. Every target group of the command
@@ -618,8 +573,8 @@ let beginRun (ctx: ExecContext) = async {
     let! epoch = Db.newRun ctx.Db
     let ctx = { ctx with Run = { ctx.Run with Spellings = newSpellings (); RunFiles = FileTracker.RunFiles (); RunEpoch = epoch } }
     let verdicts = Verdicts(ctx, currentRule ctx)
-    let upToDate t = async { let! reasons = verdicts.Of t in return List.isEmpty reasons }
-    return { ctx with Run = { ctx.Run with NeedRebuild = verdict ctx verdicts; UpToDate = upToDate } }, verdicts }
+    let upToDate t = async { let! reasons = verdicts.Planned t in return List.isEmpty reasons }
+    return { ctx with Run = { ctx.Run with NeedRebuild = verdicts.ForTask; UpToDate = upToDate } }, verdicts }
 
 /// Decides, in parallel, the verdicts the progress estimate and the critical path read (whatever
 /// the schedule), then the critical-path keys of a run's targets, before any task starts; with

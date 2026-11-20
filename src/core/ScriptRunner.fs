@@ -104,7 +104,7 @@ let dryRun (ctx: ExecContext) (setup: string list) (groups: string list list) =
     let getDeps t =
         match verdicts.Ready t with
         | Some reasons -> reasons
-        | None -> verdicts.Of t |> Async.RunSynchronously
+        | None -> verdicts.Planned t |> Async.RunSynchronously
 
     // getPlainDeps getDeps (getExecTime ctx)
     if not setup.IsEmpty then

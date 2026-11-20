@@ -232,9 +232,11 @@ and RunState = internal {
     /// The progress sink of the run (`openProgress`), or the empty one.
     Progress: Agent<Progress.ProgressReport>
     ShowProgress: bool
-    /// The verdict of a task's targets, after its static `needs` (waits for running dependees).
+    /// The verdict of a task's targets, after its static `needs` (`Verdicts.ForTask`: waits for
+    /// running dependees).
     NeedRebuild: Target list -> Async<bool>
-    /// The run's verdict without building or waiting: true when the target is up to date.
+    /// The run's verdict without building or waiting (`Verdicts.Planned`): true when the target is
+    /// up to date.
     UpToDate: Target -> Async<bool>
     /// The files named in this run, keyed by the path upper-cased (invariant): the first spelling
     /// (the `File`) and whether it was a target. One file under two spellings is an error for two targets, a

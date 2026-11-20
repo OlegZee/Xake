@@ -36,5 +36,8 @@
   fields. Full suite 1,893 passed, 0 failed; bench full 1.44-1.55 s, no-change 0.89-0.99 s.
 - dd3f1ad (FileProbe and Db internal, `DbReader` the read API) was made outside this session.
 
-**Next step.** The owner picks from architecture.md section 7 (open: 2, 8, 10-16). PR into
+- Topic 8 done: `Verdicts.Planned` (was `Of`), `Verdicts.ForTask` (was `ExecCore.verdict` +
+  `Fresh`). Full suite 1,893 passed, 0 failed; bench full 1.41-1.82 s, no-change 0.88-0.96 s.
+
+**Next step.** The owner picks from architecture.md section 7 (open: 8, 10-16). PR into
 `feature/idle-perf` only on the owner's word.

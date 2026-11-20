@@ -44,7 +44,7 @@ let ``a target depending on itself finishes``() =
     try
         store ctx (phony "self" [ TargetDep (PhonyAction "self") ])
         let verdicts = Verdicts(ctx, fun _ -> None)
-        let task = verdicts.Of (PhonyAction "self") |> Async.StartAsTask
+        let task = verdicts.Planned (PhonyAction "self") |> Async.StartAsTask
         Assert.IsTrue(task.Wait 10000)
     finally finalize ()
 

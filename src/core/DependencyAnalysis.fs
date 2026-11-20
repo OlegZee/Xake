@@ -233,6 +233,12 @@ let getDurationDeps ctx getDeps t =
 /// close a cycle is refused and the dependee counts as changed (two entries into one cycle cannot
 /// wait for each other). A verdict never waits for a task, so these edges and the tasks' own
 /// (`TaskWaits`) cannot form one cycle (docs/features/arch-review/wait-for.md).
+///
+/// Two entry points (docs/features/arch-review/of-fresh.md): `Planned` is decided early, often
+/// before any task runs, and never waits for a task; `ForTask` is a starting task's own verdict,
+/// after the dependees running now have finished. With content cut-off a dependee rebuilt to the
+/// same content is not a change, so the planned verdict can be stale by the time the task
+/// starts, and `ForTask` decides again.
 [<Sealed>]
 type Verdicts(ctx: ExecContext, current: Target -> (Target list * Set<StaticKey>) option) =
     let memo = System.Collections.Concurrent.ConcurrentDictionary<Target, Lazy<System.Threading.Tasks.Task<ChangeReason list>>>()
@@ -248,12 +254,58 @@ type Verdicts(ctx: ExecContext, current: Target -> (Target list * Set<StaticKey>
             else
                 try return! Async.AwaitTask task
                 finally lock verdictWaits (fun () -> verdictWaits.Remove [ waiter.Name ] d.Name) }
-    /// The run's no-build verdict of a target (memoised).
-    member _.Of (target: Target) = Async.AwaitTask (taskOf target)
-    /// The verdict decided afresh (a task's own verdict, after waiting for its running dependees),
-    /// its dependees through the memo. Nothing waits for it, so its waits close no cycle and are
-    /// not registered.
-    member _.Fresh (target: Target) = getChangeReasons ctx current (taskOf >> Async.AwaitTask) target
+    /// The decision afresh, the dependees through the memo: the second half of `ForTask`. Nothing
+    /// waits for it, so its waits close no cycle and are not registered.
+    let fresh (target: Target) = getChangeReasons ctx current (taskOf >> Async.AwaitTask) target
+    /// The run's no-build verdict of a target, memoised: never waits for a task. For planning
+    /// (`Warm`, the estimate), the fast path (`ctx.Run.UpToDate`) and `--dryrun`.
+    member _.Planned (target: Target) = Async.AwaitTask (taskOf target)
+    /// A starting task's verdict (`ctx.Run.NeedRebuild`): true to build. With content cut-off it
+    /// first waits for the dependees its last result recorded that are running now (through
+    /// `TaskWaits`, refused or cancelled when the wait would close a cycle), then decides afresh,
+    /// the dependees through the memo.
+    member this.ForTask (targets: Target list) = async {
+        let names = targets |> List.map (fun t -> t.Name)
+        let primary = List.head targets
+        if ctx.Options.ContentCutoff then
+            let last = Db.tryGetResult ctx.Db primary
+            let dependees = last |> Option.map (fun r -> r.Depends |> List.choose (function TargetDep t -> Some t | _ -> None)) |> Option.defaultValue []
+            for d in dependees do
+                match Scheduler.query ctx.Engine.Scheduler d with
+                | Running task ->
+                    match ctx.Run.Counters.TaskWaits.Verdict names d.Name with
+                    | None ->
+                        do ctx.Logger.Log Info "%s: not waiting for %s, which waits for it" (primary.Display ctx.Options.ProjectRoot) (d.Display ctx.Options.ProjectRoot)
+                    | Some (cancel, unregister) ->
+                        try
+                            do! Scheduler.withYieldedSlot ctx.Engine.Scheduler targets (async {
+                                    let! _ = System.Threading.Tasks.Task.WhenAny(Async.StartAsTask task :> System.Threading.Tasks.Task, cancel.Task :> System.Threading.Tasks.Task) |> Async.AwaitTask
+                                    return () })
+                        finally unregister ()
+                        if cancel.Task.IsCompleted then
+                            do ctx.Logger.Log Info "%s: stopped waiting for %s, which waits for it" (primary.Display ctx.Options.ProjectRoot) (d.Display ctx.Options.ProjectRoot)
+                        else
+                            // a failed dependee fails the dependent, as its body would
+                            do! task |> Async.Ignore
+                | _ -> ()
+        let rebuild (target: Target) = async {
+            let! reasons = fresh target
+            match reasons with
+            | [] -> return false
+            | reasons ->
+                let reason =
+                    match reasons with
+                    | Other reason :: _ -> reason
+                    | Depends t :: _ -> "Depends on target " + t.Display ctx.Options.ProjectRoot
+                    | DependsMissingTarget t :: _ -> sprintf "Depends on target %s (missing)" (t.Display ctx.Options.ProjectRoot)
+                    | FilesChanged (file :: _) :: _ -> "File(s) changed " + file
+                    | reasons -> sprintf "Some reason %A" reasons
+                do ctx.Logger.Log Info "Rebuild %A: %s" (target.Display ctx.Options.ProjectRoot) reason
+                return true }
+        let rec anyRebuild = function
+            | [] -> async.Return false
+            | t :: rest -> async { let! r = rebuild t in if r then return true else return! anyRebuild rest }
+        return! anyRebuild targets }
     /// The verdict when it is decided already.
     member _.Ready (target: Target) =
         match memo.TryGetValue target with
@@ -265,7 +317,7 @@ type Verdicts(ctx: ExecContext, current: Target -> (Target list * Set<StaticKey>
         let visited = System.Collections.Concurrent.ConcurrentDictionary<Target, byte>()
         let rec visit t = async {
             if visited.TryAdd(t, 0uy) then
-                let! reasons = this.Of t
+                let! reasons = this.Planned t
                 let dependees = reasons |> List.collect (function Depends d | DependsMissingTarget d -> [d] | _ -> [])
                 do! dependees |> List.map visit |> Async.Parallel |> Async.Ignore }
         do! goals |> List.map visit |> Async.Parallel |> Async.Ignore }

@@ -9,4 +9,4 @@
 | 5 | Simplify `FileRule.decide` (owner, via a side session): drop the dead `SeenByVerdict` branch, one small function per mode with its `decideHashed` next to it; optional: drop `PreHash`; then how `observe` uses the decision | done: split per mode, `SeenByVerdict` removed, `PreHash` kept ([decide.md](decide.md)) |
 | 6 | How `observe` uses the decision (candidates 3, 4, 9) | done ([observe.md](observe.md)) |
 | 7 | Engine state in `ExecContext` (candidate 7) | done: `ExecContext.Run` (`RunState`); `FileTracker`, `RunCounters` internal |
-| 8 | Two verdict entry points, `Of` and `Fresh` (candidate 2) | proposed, [of-fresh.md](of-fresh.md); waiting for the owner |
+| 8 | Two verdict entry points, `Of` and `Fresh` (candidate 2) | done: `Verdicts.Planned`, `Verdicts.ForTask` |

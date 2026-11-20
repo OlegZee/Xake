@@ -137,6 +137,12 @@ Also:
   history the order is as before. `--schedule=as-requested` (`ExecOptions.Schedule = AsRequested`)
   keeps the order of request. The banner and the run summary name the mode.
 
+- **A recursive recipe may need a type annotation.** `recipe { }` has more `Bind` overloads in
+  5.0 (a header, `matched`, tasks), so a recipe that calls itself, such as
+  `let rec f n = recipe { if n < 3 then do! f (n + 1) }`, can fail with FS0041 ("A unique
+  overload for method 'Bind' could not be determined"). Annotate its return type:
+  `let rec f n : Recipe<ExecContext, unit> = recipe { ... }`.
+
 For `Xake.Dotnet` users: `File.undefined` is removed; `Xake.Dotnet` moves to `File option` at its
 5.0.
 

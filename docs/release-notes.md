@@ -27,12 +27,15 @@ Breaking changes:
 3. **`Dependency`.** `FileDep of File` and `TargetDep of Target` carry no stamp; `ArtifactDep` and
    `ArtifactDep2` are removed. `BuildResult` gains `Epoch` and `StaticCount` (`Built` stays the
    time). `BuildLog.Database` gains `Files` and `FileState` is added.
-4. **Storage API.** `Storage.openDb root dbpath logger` takes the project root; the database is
-   exclusive (`.xake.lock`); `DatabaseApi` gains `Observe`, `NewRun` and `InMemory`.
+4. **Storage API.** `Storage.openDb root dbpath logger` takes the project root and returns a
+   `Storage.Db`; the database is exclusive (`.xake.lock`). Its agent accepts `Apply`, `Store`
+   (with a reply), `NewRun`, `InMemory` and `Close`; reads go through `Db.Snapshot` and
+   `Storage.tryGetResult`, file observations through `Storage.observeFiles` (`FileStat`,
+   `RunFiles`, `ObserveContext`); `GetResult` is removed.
    `Storage.resultPU` is replaced by the public read API `Storage.readRecords` and
    `Storage.readDatabase` (the database with its last epoch, `BuildLog.Database.Epoch`).
 5. **Filesets.** `FilesetOptions.CaseSensitive` and the `casesensitive` operation are added.
-6. **`ExecContext`** gains `Spellings` and `RunEpoch`.
+6. **`ExecContext`** gains `Spellings`, `RunEpoch` and `RunFiles`.
 7. **Database 0.7.** Xake 4.x cannot read it. Databases 0.4-0.6 are upgraded on open, and a
    no-change run after the upgrade rebuilds nothing. The 0.4-0.6 databases are upgraded by a legacy reader that will
    be removed in a later release.
@@ -96,11 +99,11 @@ The rule header ([rule-header.md](rule-header.md)):
   hashed); `onSummary` in `xakeScript`, `XakeEngine.LastSummary`, the `RunSummary` record. A run
   where nothing moved schedules no task.
 - API: `ExecOptions.ContentCutoff`, `ExecOptions.SummarySink`, `IRunSummarySink`;
-  `DatabaseApi.NewRun` takes the run's `hashing` flag; `DatabaseApi.Observe` takes `since` and replies `Observation` (`Absent`, `Unchanged`,
-  `Changed`, `HashNeeded` with an opaque `HashRequest`); `Settle (request, HashResult)` is added,
+  `Storage.observeFiles` replies `Observation` (`Absent`, `Unchanged`, `Changed`) per file;
+  hashes go through `Storage.Hasher` (`HashResult`: `Hashed`, `Unreadable` with the stat);
   `ObserveMode.Output` takes the cut-off flag and `PreHash` is added; `WorkerPool.TaskState` and
-  `Scheduler.query` are added; `ExecContext.NeedRebuild` is asynchronous and `ExecContext` gains
-  `UpToDate` and `Counters`.
+  `Scheduler.query` are added; `ExecContext.NeedRebuild` and `ExecContext.UpToDate` are
+  asynchronous, and `ExecContext` gains `UpToDate` and `Counters`.
 
 Also:
 
@@ -120,6 +123,14 @@ Also:
 - **Progress with several target groups:** the status line names the group (`[2/3 test]`), each
   finished group logs its time, and a task skipped by content cut-off leaves the estimate.
 
+- **Speed of a run where nothing changed** (preview.2 regression, docs/features/idle-perf): a
+  no-change run of a large build took about twice as long as on 4.x, because every file
+  dependency was a round trip to the database agent, which also read the file. Now the build's
+  own threads read the files and decide (a pure rule), the database only keeps and writes the
+  records (one request per group of files, and only for changes), hashes have their own queue, and
+  the verdicts at a group's start are decided in parallel. On a synthetic build of 1,188 targets
+  with 150 file dependencies each, a no-change run takes 0.19-0.22 s (4.0: 0.59-0.64 s, preview.2:
+  2.3 s) and a full build 0.59-0.83 s (4.0: 0.47-0.54 s, preview.2: 5.5-8 s).
 - **Critical path:** when more tasks are ready than `-t` allows, the one with the longest expected
   remaining chain starts first (its own time plus the longest chain of its dependents, from the
   last run's times); the same order applies to resource waiters and to `need [..]`. Without

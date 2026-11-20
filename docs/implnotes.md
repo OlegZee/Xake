@@ -50,10 +50,18 @@ The file starts with a version header (`BuildLog.XakeDbVersion`, `0.7`; `XakeDbM
 - A file target is stored as a file id, a phony target by name. `FileDep` holds a file id;
   `TargetDep` has a file form and a phony form; `GetFiles` holds the fileset (with
   `CaseSensitive`) and file ids.
-- Each record, with its new `DirRec`/`PathRec`, is pickled into one buffer and written with one
-  `Write`. The path table is an immutable value in the database agent's state: a record that fails
-  to pickle writes nothing and leaves the table as it was; a failed write stops appending until
-  the database is closed (logged once), results stay in memory.
+- The database (`Storage.Db`, docs/features/idle-perf) is an agent and a writer. The agent keeps
+  the records in memory and decides nothing: it accepts `Apply` (file records, each written only
+  if the record is still the one the caller decided against: compare-and-set per file; replies
+  the conflicts), `Store` (a result; replies once it is in memory), `NewRun`, `InMemory` and
+  `Close`. After every message it publishes a snapshot (`Db.Snapshot`: `Status`, `Files`,
+  `Epoch`), read without a message (`Storage.tryGetResult`). It hands the records to the writer
+  in its order and does not wait for it.
+- The writer owns the path table and the stream. Each batch, with its new `DirRec`/`PathRec`, is
+  pickled into one buffer and written with one `Write`. The path table is an immutable value in
+  the writer's state: a record that fails to pickle writes nothing and leaves the table as it
+  was; a failed write stops appending until the database is closed (logged once), results stay
+  in memory. `Close` drains the writer before the stream and the lock are released.
 - Nothing is rewritten in place. Compaction runs when the `Result` records exceed 5 x the live
   results: it rewrites a fresh path table, the live results and the `FileRec`s they refer to.
   Compaction and the upgrade go through the `.bak` file; when the rewrite fails the backup is kept
@@ -88,7 +96,8 @@ The file starts with a version header (`BuildLog.XakeDbVersion`, `0.7`; `XakeDbM
   `FileRec.changed` in the file (it is not stored on its own). Every run starts in
   `ExecCore.beginRun` (each target group of the command line, each `demandTarget`: setup,
   teardown, engine `Demand`), which takes the next epoch from the agent (`NewRun`) and keeps it in
-  `ExecContext.RunEpoch`, with a fresh verdict memo and spelling table.
+  `ExecContext.RunEpoch`, with a fresh verdict memo (`Verdicts`), spelling table and
+  `ExecContext.RunFiles` (the files observed and recorded in the run).
 - One epoch per run, not per event: everything built in run `r` has `Epoch = r` and everything
   seen changed in run `r` has `changed = r`, so a target that `need`s a dependee rebuilt in the
   same run (a dynamic need) is up to date on the next run (`r <= r`). A per-event counter would
@@ -96,35 +105,39 @@ The file starts with a version header (`BuildLog.XakeDbVersion`, `0.7`; `XakeDbM
 - Runs may overlap in engine mode (`Demand` of different names): an observation is stamped with
   the newest epoch handed out, a result with the epoch its task started in. A delegated result
   that did not run its body keeps the local result's epoch; a foreign epoch is never stored.
-- A file is observed through the database agent (`Observe` with a mode): by a verdict at most once
-  per run (then cached); when a body records it as a `FileDep` it is statted again, and a moved
-  stat counts as a change unless another body already recorded it in this run; a rule's outputs
-  (every output of a multi-output rule) are statted again right after the rule. The stat
-  (existence, write time, length) is compared with the `FileRec`: no record gives `changed` = the
-  run's epoch and no hash; an unknown size is filled in with `changed` kept. `--dump` and
-  `--dryrun` observe in memory only and append nothing.
-- **Observing with `since`.** `Observe (file, mode, since)` replies `Absent`,
-  `Unchanged state` or `Changed state` (content changed after the run `since`), or
-  `HashNeeded request`. The "changed after run `e`" comparison lives only in the database: the
-  verdict passes the dependent's epoch, `observeOutputs` passes `RunEpoch - 1` (changed in this
-  run); calls that only update the record use `DependencyAnalysis.observe` (`since` = max).
-- **Hashing (5.0 phase 3, docs/content-cutoff.md).** The agent decides, the caller hashes: when a
-  moved stat (or an output) needs a hash, `Observe` replies `HashNeeded` with an opaque
-  `HashRequest` (only its `File` is visible; it carries the known record, the mode and `since`)
-  without touching the record. `DependencyAnalysis.observeSince` hashes (stat, SHA-256, stat;
-  first 8 bytes) off the agent and posts `Settle (request, result)`, `result` = `Hashed (stamp,
-  size, hash)` or `Unreadable` (the file could not be read, or its stat moved while it was hashed:
-  its content was not stable, so it is a change without a hash). `Settle` applies only if the
-  record is still the request's (compare-and-set); otherwise it replies the current state. Its
-  reply is `Observe`'s, never `HashNeeded`. Until then other observations of the file wait in the
-  agent, so a move is hashed once.
+- A file is observed through `Storage.observeFiles` (`DependencyAnalysis.observeMany`), a group
+  of files at a time, in a mode: by a verdict once per run, then answered from the record; when a
+  body records it as a `FileDep` it is statted again, and a moved stat counts as a change unless
+  another body already recorded it in this run; a rule's outputs (every output of a multi-output
+  rule) are statted again right after the rule. The sequence, on the caller's thread:
+  1. the stats (existence, write time, length), taken by the caller;
+  2. the rule `Storage.FileRule.decide` against the snapshot's record (pure: no I/O, no state),
+     with the run's facts from `RunFiles`;
+  3. the hashes the rule asks for, through the hasher;
+  4. every write in one `Apply`;
+  5. a conflict decided again on a fresh stat (at most 3 times), so an older stat never moves a
+     record back.
+  No record gives `changed` = the run's epoch and no hash; an unknown size is filled in with
+  `changed` kept. A verdict's later observation of a file in the run waits for the first one, then
+  answers from the record if the file exists now (existence is checked per dependency). `--dump`
+  and `--dryrun` observe in memory only and append nothing.
+- **Observing with `since`.** Each file's reply is `Absent`, `Unchanged state` or
+  `Changed state` (content changed after the run `since`, `FileRule.classify`). The verdict passes
+  the dependent's epoch, `observeOutputs` passes `RunEpoch - 1` (changed in this run); calls that
+  only update the record use `DependencyAnalysis.observe` (`since` = max).
+- **Hashing (docs/content-cutoff.md).** The rule decides, the caller hashes: a moved stat (or an
+  output) that needs a hash is hashed through `Storage.Hasher`, a mailbox that computes one hash
+  per (file, stat) while it runs (every other asker gets the same result), at most one per core
+  at once, off the agent. The result is `Hashed (stamp, size, hash)` (stat, SHA-256, stat; first
+  8 bytes) or `Unreadable stat` (the file could not be read, or its stat moved while it was
+  hashed: its content was not stable, so it is a change without a hash), and
+  `FileRule.decideHashed` decides against the same record.
   Moved with a hash: equal keeps `changed`, else `changed` = run. Moved without a hash: `changed` =
   run and the new hash stored. `Output true` hashes every output after its rule, even with an equal
   stat (coarse time stamps); `Output false` (`noContentCutoff`) stores no hash and sets `changed` =
   run; `PreHash` hashes an output with no hash and an equal stat before its rule runs. With
-  `--content-cutoff=off` (`ExecOptions.ContentCutoff`, given to `NewRun (hashing, reply)`: the run decides once; it is
-  an engine option, so overlapping engine runs agree) nothing is
-  hashed and a moved stat clears the hash.
+  `--content-cutoff=off` (`ExecOptions.ContentCutoff`, an engine option, so overlapping engine runs
+  agree) nothing is hashed and a moved stat clears the hash.
 - Verdict for a target with a stored result of epoch `e`: `FileDep f` is stale when `f` is missing
   or `changed > e`. `TargetDep t`: the worker pool is asked (`Query`) whether `t` finished in this
   run, is running, or has not started. Finished: compared exactly (`changed > e` for a file,
@@ -132,11 +145,16 @@ The file starts with a version header (`BuildLog.XakeDbVersion`, `0.7`; `XakeDbM
   waits-for map (`RunCounters.Waits`, `WaitGraph`, set around the verdict wait and `execNeed`) stops a wait that
   would close a cycle (the dependee counts as changed). Not started: `changed`/`Epoch > e`, or the
   dependee's own no-build verdict non-empty (the 4.0 transitive rule, kept only here). The no-build
-  verdict (memoised per run) never waits: inside it a running dependee is a change. It serves the
-  recursion, the fast path and the progress estimate. `GetFiles` compares only the file list;
+  verdict (`DependencyAnalysis.Verdicts`, memoised per run, async) never waits for a running
+  dependee: inside it a running dependee is a change. It is decided in two phases: the target's
+  files in one observation and the dependees' verdicts it needs, in parallel; then the rule
+  (`getDepState`, pure). A verdict waiting for a dependee's verdict still in progress registers the
+  edge; an edge that would close a cycle is refused and the dependee counts as changed. It serves
+  the recursion, the fast path (`ExecContext.UpToDate`, async) and the progress estimate. `GetFiles` compares only the file list;
   `EnvVar`, `Var`, `SecretDep` and `AlwaysRerun` are as before.
 - Order in a task (`execOne.run`): static `needs`, the verdict, the pre-hash, the locks, the body,
-  the outputs. The fast path: a target that is not running or finished in this run and whose
+  the outputs, the `Store` (awaited: a dependent that sees the task finished sees its result).
+  The plain files of a `need` list are recorded in one observation, next to the rule targets. The fast path: a target that is not running or finished in this run and whose
   no-build verdict is empty is skipped without a task. `RunCounters` (per run) feed `RunSummary`.
 - `StaticCount`, the number of leading dependencies from the rule header. `execOne` builds the
   header's `needs` (before the verdict), runs the body on a fresh result and stores `headerDeps @ bodyDeps`, so the
@@ -190,9 +208,10 @@ Parallel execution still respects dependency order.
 
 When more tasks are ready than slots, the one with the largest **key** starts first: its own
 expected time plus the largest key among the targets that depend on it in this run. At the start
-of each run (target group, demand) the engine walks the progress estimate's graph
-(`getDurationDeps` on the run's verdict memo: `OwnTime` of the last result, and the dependees that
-will rebuild) from the run's targets and hands the keys to the scheduler
+of each run (target group, demand) the engine decides, in parallel, the verdicts of the progress
+estimate's graph (`Verdicts.Warm`, whatever the schedule), then walks it (`Verdicts.Estimate`:
+`OwnTime` of the last result, and the dependees that will rebuild) from the run's targets and
+hands the keys to the scheduler
 (`DependencyAnalysis.criticalPath`, `Scheduler.newRun`). A target without a record, or new in this
 run, has key 0; so without history the order is the order of request.
 

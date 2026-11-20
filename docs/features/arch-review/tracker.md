@@ -10,3 +10,4 @@
 | 6 | How `observe` uses the decision (candidates 3, 4, 9) | done ([observe.md](observe.md)) |
 | 7 | Engine state in `ExecContext` (candidate 7) | done: `ExecContext.Run` (`RunState`); `FileTracker`, `RunCounters` internal |
 | 8 | Two verdict entry points, `Of` and `Fresh` (candidate 2) | done: `Verdicts.Planned`, `Verdicts.ForTask` |
+| 9 | `FastGate` (candidate 13) | measured, [fastgate.md](fastgate.md); waiting for the owner |

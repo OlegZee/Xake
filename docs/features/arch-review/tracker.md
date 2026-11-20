@@ -7,3 +7,4 @@
 | 3 | Per-run memo of observations in place of `RunFiles` claims (candidate 3) | open, owner's topic later |
 | 4 | Two wait-for maps (candidate 1) | done, option a ([wait-for.md](wait-for.md)) |
 | 5 | Simplify `FileRule.decide` (owner, via a side session): drop the dead `SeenByVerdict` branch, one small function per mode with its `decideHashed` next to it; optional: drop `PreHash`; then how `observe` uses the decision | done: split per mode, `SeenByVerdict` removed, `PreHash` kept ([decide.md](decide.md)) |
+| 6 | How `observe` uses the decision (candidates 3, 4, 9) | proposed, [observe.md](observe.md); waiting for the owner |

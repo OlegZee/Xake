@@ -266,7 +266,8 @@ and ExecContext = {
     member internal ctx.Observe =
         { FileTracker.Context.Db = ctx.Engine.Db; FileTracker.Context.Hasher = ctx.Engine.Hasher
           FileTracker.Context.Run = ctx.RunFiles; FileTracker.Context.Hashing = ctx.Engine.Options.ContentCutoff
-          FileTracker.Context.OnHashed = match ctx.Counters with null -> ignore | c -> c.FileHashed }
+          FileTracker.Context.OnHashed = match ctx.Counters with null -> ignore | c -> c.FileHashed
+          FileTracker.Context.Log = ctx.Logger }
 
 /// Functions over the execution context for code outside this assembly. A record copy
 /// (`{ ctx with ... }`) compiled in another assembly calls the full constructor and breaks

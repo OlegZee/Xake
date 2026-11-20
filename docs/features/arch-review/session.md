@@ -26,6 +26,9 @@
   `preHash`/`preHashed`), `SeenByVerdict` removed, `PreHash` and `LegacyRead` kept. Full suite
   1,893 passed, 0 failed; bench full 1.47-1.80 s, no-change 0.93-0.97 s.
 
-**Next step.** Proposed next: how `observe` uses the decision (states, `Db.apply`, conflict rounds;
-candidate 9, decide.md section 4). Or the owner picks from architecture.md section 7 (candidate 3, the per-run memo of observations, is noted). PR into
+- Topic 6 done: `observe` in steps `claim`/`settle`/`answerLater` over a `Pending` record;
+  `FileRule.Outcome`; `maxRounds` with a Debug line. Full suite 1,893 passed, 0 failed; bench full
+  1.59-1.79 s, no-change 0.89-0.97 s.
+
+**Next step.** The owner picks from architecture.md section 7 (open: 2, 7, 8, 10-16). PR into
 `feature/idle-perf` only on the owner's word.

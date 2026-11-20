@@ -46,3 +46,6 @@ section 7. One decision per line, with its date. Decisions are not re-litigated.
 - 2026-11-20 (topic 5, [decide.md](decide.md)): `FileRule` split per mode (`input`, `output`,
   `preHash`, each with its `...Hashed` next to it); `SeenByVerdict` removed; `PreHash` kept;
   the continuation in `NeedHash` not now. `LegacyRead` (and the unknown size) stays for now.
+- 2026-11-20 (topic 6, [observe.md](observe.md)): accepted: `Outcome` (`decideHashed` ends in
+  `Keep | Write`), `Pending` and the steps `claim`/`settle`/`answerLater`, comments on the claims,
+  `maxRounds` with a Debug line (`Context.Log`). No test for the log line (it needs a fake `Db`).

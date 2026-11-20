@@ -73,19 +73,26 @@ is running (`Scheduler.query`), and L7 submits tasks to it.
 
 ### The observation sequence (`FileTracker.observe oc mode since files`)
 
-1. **Claims.** Each distinct file is claimed in `RunFiles`, except in `PreHash` mode.
+Three private steps, joined by `observe` (arch-review, topic 6):
+
+1. **`claim`.** Each distinct file is claimed in `RunFiles`, except in `PreHash` mode (its record
+   is the one before the rule runs; a verdict waiting for it would read a stale record).
    - The first observer of the file in the run holds a completion and sets it when done.
    - A later `Verdict` observation waits on that completion.
-   - Later `Recording`/`Output` observations decide again.
+   - Later `Recording`/`Output` observations decide again (they follow writes made in this run);
+     they claim so that a verdict after them waits for their write.
    - `Recording` also tests and sets "recorded before" (A1).
-2. **Stats.** A full stat (`FileStat.take`) is taken for every file this call decides, on the
-   calling thread.
-3. **Decisions.** `FileRule.decide` runs against the snapshot's record and the snapshot's epoch.
-4. **Hashes.** `NeedHash` goes through the hasher, the hashes of one call in parallel, then
-   `decideHashed`.
-5. **Writes.** Every `Write` goes in one `Apply`. A conflict is decided again on a fresh stat
-   against the current record, up to 3 rounds; after that the current record is the answer.
-6. **Completion.** The claims are completed (`finally`).
+   - Each file decided here becomes a `Pending` (file, A1, record, stat): the record is read from
+     the snapshot, then the full stat (`FileStat.take`) taken, on the calling thread.
+2. **`settle`**, in rounds:
+   - `FileRule.decide` against the record and the snapshot's epoch: `Decided (Keep | Write)` or
+     `NeedHash`;
+   - `NeedHash` goes through the hasher, the hashes of one call in parallel, then `decideHashed`,
+     which always ends in `Keep | Write` (`Outcome`);
+   - every `Write` in one `Db.apply`; a conflict is decided again on a fresh stat against the
+     current record, up to `maxRounds` (3); after that the current record is the answer, and a
+     Debug line names the file.
+3. **Completion.** The claims are completed (`finally`, also when `settle` fails).
 7. **Later verdict observations.** Each waits for the first observation, then answers from the
    current record if `File.exists` (existence is checked per dependency).
 8. **Reply.** `classify since` per file, in the order given.
@@ -227,12 +234,11 @@ API changes for code that used `DatabaseApi` directly.
 2. **Two verdict entry points.** `Of` is memoised and never waits for running tasks; `Fresh` is a
    task's own verdict after it waited. The difference is real (implnotes, "Epochs"), but nothing in
    the types says which one a caller needs.
-3. **`RunFiles` claims do two jobs.** They cache the verdict ("seen once per run") and they order
-   the first write before later reads. `Recording`/`Output` also claim but never wait. This is
-   asymmetric and needs a comment to understand.
-4. **Two kinds of stat in one call.** The first observation takes a full stat; a later verdict
-   observation takes only `File.exists`. This is correct, but it is a performance shortcut
-   visible in the logic.
+3. **`RunFiles` claims do two jobs.** Settled (arch-review, topic 6): a claim is an ordering
+   barrier, not a cache of answers; a memo of the first answer would be stale when a rule rewrites
+   the file in the run. The reasons are now in the comments on `RunFiles` and `claim`.
+4. **Two kinds of stat in one call.** Settled with 3: the later verdict needs only existence.
+   `answerLater` is its own step.
 5. **`Database.fs` holds everything.** Done (arch-review, topic 1): `DatabaseFormat.fs`,
    `Database.fs`, `FileProbe.fs`, `FileTracker.fs`, section 1.
 6. **`Db` exposes its raw mailbox.** Done (arch-review, topic 2): `DatabaseApi` and `Db.Post*`
@@ -243,8 +249,8 @@ API changes for code that used `DatabaseApi` directly.
 8. **`ExecContext.Observe`** (internal) builds a `FileTracker.Context` on every call. The A3 observation in
    `ExecCore.storeResult` overrides `Hashing = false` and uses `Verdict` mode, so it claims the
    files in `RunFiles` as a verdict would. This is correct, but subtle.
-9. **The conflict retry limit of 3 is arbitrary.** After 3 rounds the current record is taken as
-   is, and nothing is logged.
+9. **The conflict retry limit of 3 is arbitrary.** Done (topic 6): `maxRounds`, and a Debug line
+   when it is reached.
 10. **`prepareOne` returns `Choice<File, Async<...>>`.** A named union (`PlainFile` | `Task`)
     would read better.
 11. **The `Store`-before-`Done` ordering (C2) is implicit.** It holds because `storeResult` is

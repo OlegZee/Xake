@@ -43,12 +43,17 @@ module FileTracker =
             /// Only `Recording` reads it.
             RecordedBefore: bool }
 
-        type Decision =
+        /// What an observation ends in.
+        type Outcome =
             /// answer from this state; nothing to write
             | Keep of FileState option
             /// write this state (it differs from the known one)
             | Write of FileState
-            /// hash the file, then `decideHashed`
+
+        /// The decision before hashing: an outcome, or hash the file and then `decideHashed`
+        /// (which always ends in an outcome).
+        type Decision =
+            | Decided of Outcome
             | NeedHash
 
         /// Equal within 10 ms, the size equal or unknown.
@@ -73,10 +78,10 @@ module FileTracker =
         /// or a change.
         let private input recordedBefore known stamp size rc =
             match known with
-            | Some k when sameStat k stamp size -> write known { k with Size = size }
-            | Some _ when recordedBefore -> Keep known
+            | Some k when sameStat k stamp size -> Decided (write known { k with Size = size })
+            | Some _ when recordedBefore -> Decided (Keep known)
             | Some _ when rc.Hashing -> NeedHash
-            | _ -> write known (changed stamp size rc)
+            | _ -> Decided (write known (changed stamp size rc))
 
         /// The same content keeps the run it changed in (cut-off); other content is a change.
         let private inputHashed known hashed rc =
@@ -92,7 +97,7 @@ module FileTracker =
 
         /// Without cut-off a change; with cut-off hashed when the run hashes, else as an input.
         let private output cutoff known stamp size rc =
-            if not cutoff then write known (changed stamp size rc)
+            if not cutoff then Decided (write known (changed stamp size rc))
             elif rc.Hashing then NeedHash
             else input false known stamp size rc
 
@@ -109,7 +114,7 @@ module FileTracker =
         let private preHash known stamp size rc =
             match known with
             | Some k when rc.Hashing && k.Hash.IsNone && sameStat k stamp size -> NeedHash
-            | _ -> Keep known
+            | _ -> Decided (Keep known)
 
         /// Only the hash is written, and only for an equal stat; anything else keeps the record.
         let private preHashed known hashed =
@@ -120,7 +125,7 @@ module FileTracker =
         /// One observation of a file with the record `known` and the stat taken now.
         let decide (known: FileState option) (stat: FileStat) (mode: ObserveMode) (rc: RuleContext) =
             match stat with
-            | Missing -> Keep None
+            | Missing -> Decided (Keep None)
             | Present (stamp, size) ->
                 match mode with
                 | Verdict -> input false known stamp size rc
@@ -142,8 +147,14 @@ module FileTracker =
             | Some st -> Unchanged st
 
     /// What a run knows about files besides their records (docs/features/idle-perf, L4): the
-    /// files observed in it (a verdict's later observation of one answers from the record, after
-    /// the first observation has written it) and the files a body recorded (A1). One per run.
+    /// files observed in it and the files a body recorded (A1). One per run.
+    ///
+    /// A claim is an ordering barrier, not a cache of answers: the first observation of a file in
+    /// the run holds it until its record is written; a later verdict waits for it and then answers
+    /// from the record as it is then (a rule may have rewritten the file in this run since), taking
+    /// only `File.exists` instead of a full stat. `Recording` and `Output` claim too, so that a
+    /// verdict after them waits for their write, but never wait themselves: they follow writes made
+    /// in this run and must stat again (docs/features/arch-review/observe.md).
     [<Sealed>]
     type RunFiles internal () =
         let observed = System.Collections.Concurrent.ConcurrentDictionary<File, System.Threading.Tasks.Task>()
@@ -161,72 +172,98 @@ module FileTracker =
         member internal _.RecordedBefore (file: File) = not (recorded.TryAdd(file, 0uy))
 
     /// Where an observation runs: the database, the hasher, the run's files, whether the run
-    /// hashes, and the counter of hashes computed.
-    type internal Context = { Db: Db; Hasher: Hasher; Run: RunFiles; Hashing: bool; OnHashed: System.TimeSpan -> unit }
+    /// hashes, the counter of hashes computed, and the log.
+    type internal Context = { Db: Db; Hasher: Hasher; Run: RunFiles; Hashing: bool; OnHashed: System.TimeSpan -> unit; Log: ILogger }
 
-    /// Observes a group of files (docs/features/idle-perf, L5): their stats on this thread, the
-    /// rule against one snapshot, the hashes (in parallel, through the hasher), every write in one
-    /// `Apply`, a conflict decided again on a fresh stat (at most 3 times). Replies per file, in
-    /// the order given, whether its content changed after the run `since`. A verdict's later
-    /// observation of a file in the run waits for the first one and answers from the record.
-    let internal observe (oc: Context) (mode: ObserveMode) (since: int) (files: File list) = async {
-        let distinct = files |> List.distinct
+    /// A file this observation decides: whether another body recorded it in this run (A1), the
+    /// record it is decided against, and its stat.
+    type private Pending = { File: File; RecordedBefore: bool; Known: FileState option; Stat: FileStat }
+
+    /// The rounds of deciding and writing before the current record is taken as the answer: a
+    /// conflict needs another observer to write the same file between our read and our write.
+    let private maxRounds = 3
+
+    /// Claims the files (step 1-2): the completions this call holds, the verdicts that wait for an
+    /// earlier observation, and the files decided here with their stats. `PreHash` claims nothing:
+    /// its record is the one before the rule runs, and a verdict waiting for it would read a stale
+    /// record.
+    let private claim (oc: Context) (mode: ObserveMode) (files: File list) =
         let firsts = ResizeArray<System.Threading.Tasks.TaskCompletionSource<unit>>()
         let waits = ResizeArray<File * System.Threading.Tasks.Task>()
-        let todo = ResizeArray<File * bool>()
-        for f in distinct do
-            let seen =
+        let pending = ResizeArray<Pending>()
+        let snapshot = oc.Db.Snapshot
+        for f in List.distinct files do
+            let earlier =
                 if mode = PreHash then None
                 else
                     match oc.Run.Claim f with
                     | Choice1Of2 tcs -> firsts.Add tcs; None
                     | Choice2Of2 task -> if mode = Verdict then Some task else None
-            match seen with
+            match earlier with
             | Some task -> waits.Add((f, task))
-            | None -> todo.Add((f, mode = Recording && oc.Run.RecordedBefore f))
-        let states = System.Collections.Generic.Dictionary<File, FileState option>()
-        let stats = System.Collections.Generic.Dictionary<File, FileStat>()
-        // the full stat for the files decided here; a verdict's later observation needs only
-        // whether the file exists (below)
-        for f, _ in todo do stats.[f] <- FileStat.take f
-        try
-            // decides the files against their records and writes the changed ones
-            let rec settle (round: int) (pending: (File * bool * FileState option * FileStat) list) = async {
-                if not pending.IsEmpty then
-                    let epoch = oc.Db.Snapshot.Epoch
-                    let rc recordedBefore = { FileRule.Epoch = epoch; FileRule.Hashing = oc.Hashing; FileRule.RecordedBefore = recordedBefore }
-                    // decided here; only the files to hash go through the hasher, in parallel
-                    let first = [| for f, rb, known, stat in pending -> f, rb, known, stat, FileRule.decide known stat mode (rc rb) |]
-                    let! hashed =
-                        [ for f, rb, known, stat, d in first do
-                            if d = FileRule.NeedHash then
-                                yield async {
-                                    let! h = oc.Hasher.Hash f stat oc.OnHashed
-                                    return f, FileRule.decideHashed known h mode (rc rb) } ]
-                        |> function [] -> async.Return [||] | hs -> Async.Parallel hs
-                    let hashedBy = dict hashed
-                    let decided = [| for f, rb, known, _, d in first -> f, rb, known, (if d = FileRule.NeedHash then hashedBy.[f] else d) |]
-                    let writes = ResizeArray()
-                    for f, _, known, d in decided do
-                        match d with
-                        | FileRule.Keep st -> states.[f] <- st
-                        | FileRule.Write st -> states.[f] <- Some st; writes.Add((f, known, st))
-                        | FileRule.NeedHash -> states.[f] <- known   // decideHashed never asks again
-                    if writes.Count > 0 then
-                        let! conflicts = Db.apply oc.Db (List.ofSeq writes)
-                        if round >= 3 then
-                            for f, current in conflicts do states.[f] <- current
-                        else
-                            let byFile = decided |> Array.map (fun (f, rb, _, _) -> f, rb) |> dict
-                            let again = [ for f, current in conflicts -> f, byFile.[f], current, FileStat.take f ]
-                            do! settle (round + 1) again }
-            let snapshot = oc.Db.Snapshot
-            do! settle 1 [ for f, rb in todo -> f, rb, Map.tryFind f snapshot.Files, stats.[f] ]
-        finally
-            for tcs in firsts do tcs.TrySetResult () |> ignore
-        // a verdict's later observation: after the first one, the record now if the file exists now
+            | None ->
+                pending.Add { File = f; RecordedBefore = (mode = Recording && oc.Run.RecordedBefore f)
+                              Known = Map.tryFind f snapshot.Files; Stat = FileStat.take f }
+        List.ofSeq firsts, List.ofSeq waits, List.ofSeq pending
+
+    /// Decides the files and writes the changed ones (step 3): the rule against each record, the
+    /// hashes the rule asks for (in parallel), every write in one `Db.apply`; a conflict is decided
+    /// again on a fresh stat against the current record, for at most `maxRounds` rounds. The
+    /// answer per file.
+    let private settle (oc: Context) (mode: ObserveMode) (pending: Pending list) = async {
+        let answers = System.Collections.Generic.Dictionary<File, FileState option>()
+        let rec round n (pending: Pending list) = async {
+            if not pending.IsEmpty then
+                let epoch = oc.Db.Snapshot.Epoch
+                let rc (p: Pending) = { FileRule.Epoch = epoch; FileRule.Hashing = oc.Hashing; FileRule.RecordedBefore = p.RecordedBefore }
+                let decided = [ for p in pending -> p, FileRule.decide p.Known p.Stat mode (rc p) ]
+                // only the files to hash go through the hasher, in parallel
+                let! hashed =
+                    [ for p, d in decided do
+                        if d = FileRule.NeedHash then
+                            yield async {
+                                let! h = oc.Hasher.Hash p.File p.Stat oc.OnHashed
+                                return p.File, FileRule.decideHashed p.Known h mode (rc p) } ]
+                    |> function [] -> async.Return [||] | hs -> Async.Parallel hs
+                let hashedBy = dict hashed
+                let outcomes = [ for p, d in decided -> p, (match d with FileRule.Decided o -> o | FileRule.NeedHash -> hashedBy.[p.File]) ]
+                let writes =
+                    [ for p, o in outcomes do
+                        match o with
+                        | FileRule.Keep st -> answers.[p.File] <- st
+                        | FileRule.Write st -> answers.[p.File] <- Some st; yield p.File, p.Known, st ]
+                if not writes.IsEmpty then
+                    let! conflicts = Db.apply oc.Db writes
+                    if n >= maxRounds then
+                        for f, current in conflicts do
+                            oc.Log.Log Debug "%s: still conflicting after %d rounds, the current record is the answer (%A)" f.Name n current
+                            answers.[f] <- current
+                    else
+                        let byFile = pending |> List.map (fun p -> p.File, p) |> dict
+                        do! round (n + 1) [ for f, current in conflicts -> { byFile.[f] with Known = current; Stat = FileStat.take f } ] }
+        do! round 1 pending
+        return answers }
+
+    /// A verdict's later observation (step 5): after the first one, the record now if the file
+    /// exists now.
+    let private answerLater (oc: Context) (waits: (File * System.Threading.Tasks.Task) list) = async {
+        let answers = System.Collections.Generic.Dictionary<File, FileState option>()
         for f, task in waits do
             if not task.IsCompleted then
                 do! (try Async.AwaitTask (task :?> System.Threading.Tasks.Task<unit>) with _ -> async.Return ())
-            states.[f] <- (if File.exists f then Map.tryFind f oc.Db.Snapshot.Files else None)
-        return [| for f in files -> FileRule.classify since states.[f] |] }
+            answers.[f] <- (if File.exists f then Map.tryFind f oc.Db.Snapshot.Files else None)
+        return answers }
+
+    /// Observes a group of files (docs/features/idle-perf, L5): claims them, decides and writes the
+    /// ones decided here, completes the claims (also on failure, so no verdict waits forever),
+    /// answers the later verdicts. Replies per file, in the order given, whether its content
+    /// changed after the run `since`.
+    let internal observe (oc: Context) (mode: ObserveMode) (since: int) (files: File list) = async {
+        let firsts, waits, pending = claim oc mode files
+        let! decided =
+            async {
+                try return! settle oc mode pending
+                finally for tcs in firsts do tcs.TrySetResult () |> ignore }
+        let! later = answerLater oc waits
+        let answerOf f = match decided.TryGetValue f with | true, st -> st | _ -> later.[f]
+        return [| for f in files -> FileRule.classify since (answerOf f) |] }

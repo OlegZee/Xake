@@ -393,6 +393,21 @@ let ``a large path table round-trips with its counters``() =
     Assert.AreEqual(read.Table.Dirs.Count, read.Table.NDirs)
     Assert.AreEqual(500, read.Table.NDirs)
 
+/// A record that refers to a file id with no `PathRec` before it fails the read.
+[<Test>]
+let ``a file id without its path record fails the read``() =
+    let state = { Stamp = System.DateTime(2026, 1, 1); Size = 1L; Hash = None; Changed = 1 }
+    let recs = [ DbRecord.FileState (File.make "/p/a.c", state) ]
+    // a table that already holds the file: the second encode writes no path records
+    let table, _ = Persist.encode (Persist.PathTable.empty "/p") recs
+    let _, bytes = Persist.encode table recs
+    use stream = new MemoryStream()
+    Persist.writeHeader stream
+    stream.Write(bytes, 0, bytes.Length)
+    stream.Position <- 0L
+    let ex = Assert.Catch(fun () -> Persist.read "/p" stream |> ignore)
+    StringAssert.Contains("unknown file id 0", ex.Message)
+
 /// Content cut-off through the facade: a moved file is hashed; the same content keeps its run,
 /// other content is a change.
 [<Test>]

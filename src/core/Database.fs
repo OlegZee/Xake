@@ -271,11 +271,12 @@ module Storage =
             { pickle = (fun (b: byte[]) (st: OutState) -> st.Write(b.Length); st.Write(b))
               unpickle = fun (st: InState) -> st.ReadBytes(st.ReadInt32()) }
 
-        /// The 0.7 record pickler; files are ids of the table `table ()` gives at the time.
-        let record (table: unit -> PathTable) =
+        /// The 0.7 record pickler; a file is written as `fileId f` and read back as `fileAt id`
+        /// (raising for an unknown id), both against the table at the time.
+        let record (fileId: File -> int) (fileAt: int -> File) =
             let file =
-                { pickle = (fun f st -> varint.pickle (table ()).Ids.[f] st)
-                  unpickle = fun st -> let id = varint.unpickle st in match (table ()).Files.TryFind id with Some f -> f | None -> failwithf "unknown file id %d" id }
+                { pickle = (fun f st -> varint.pickle (fileId f) st)
+                  unpickle = fun st -> fileAt (varint.unpickle st) }
             let target =
                 alt (function FileTarget _ -> 0 | PhonyAction _ -> 1)
                     [| wrap (FileTarget, fun (FileTarget f | OtherwiseFail f) -> f) file
@@ -338,7 +339,7 @@ module Storage =
         /// table with those files. Raises when a record does not pickle (the caller keeps its table).
         let encode (t: PathTable) (recs: DbRecord list) =
             let paths, t = recs |> List.collect filesOf |> List.mapFold (fun t f -> let t, rs = PathTable.add f t in rs, t) t
-            let pu = record (fun () -> t)
+            let pu = record (fun f -> t.Ids.[f]) (fun id -> match t.Files.TryFind id with Some f -> f | None -> failwithf "unknown file id %d" id)
             use ms = new System.IO.MemoryStream()
             use w = new System.IO.BinaryWriter(ms)
             for r in List.concat paths @ List.map Data recs do pu.pickle r w
@@ -369,14 +370,19 @@ module Storage =
                   Records = List.map DbRecord.FileState files @ List.map DbRecord.Result results }
             else
                 let mutable t = PathTable.empty root
-                let pu = record (fun () -> t)
+                // the files by id while reading: an index, not a `Map` lookup per file reference
+                let byId = ResizeArray<File>()
+                let fileAt id = if id >= 0 && id < byId.Count then byId.[id] else failwithf "unknown file id %d" id
+                let pu = record (fun f -> t.Ids.[f]) fileAt
                 let records = ResizeArray<DbRecord>()
                 let mutable goodEnd, torn = stream.Position, false
                 while not torn && stream.Position < stream.Length do
                     try
                         match pu.unpickle reader with
                         | Data d -> records.Add d
-                        | r -> t <- PathTable.load t r
+                        | r ->
+                            t <- PathTable.load t r
+                            match r with PathRec (id, _, _) -> byId.Add t.Files.[id] | _ -> ()
                         goodEnd <- stream.Position
                     with :? System.IO.EndOfStreamException -> torn <- true
                 { Version = v; Records = List.ofSeq records; Table = t; Torn = torn; GoodEnd = goodEnd }

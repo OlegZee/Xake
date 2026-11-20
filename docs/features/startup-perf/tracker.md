@@ -10,4 +10,6 @@
 - [x] Q1: the consumer's run with the marks build: `database open` 2.72 s at 17.3 MB, the rest ms; Q1 = Q2
 - [x] Owner: fix A (2026-11-20)
 - [x] Fix A: `PathTable.NFiles`/`NDirs`, test `a large path table round-trips with its counters`, release notes
-- [ ] Owner: C, and a compaction policy (B1-B3)
+- [x] Owner: fix C (2026-11-20)
+- [x] Fix C: `Persist.record fileId fileAt`, an id array in `Persist.read`; test `a file id without its path record fails the read`
+- [ ] Owner: a compaction policy (B1-B3)

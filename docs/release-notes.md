@@ -134,8 +134,9 @@ Also:
 - **Opening the database** (preview.1-3 regression, docs/features/startup-perf): the path table
   counted its entries with `Map.Count` once per path, so the load grew with the square of the
   number of files; a 12.5 MB database of 28,000 files took 1.3-1.8 s to open (a 4.x database of
-  88 MB about 0.3 s). It now keeps the counts: 0.8-0.9 s for that database, about half; the
-  compaction rewrite and the upgrade of a 4.x database gain the same way.
+  88 MB about 0.3 s). It now keeps the counts, and reading looks a file up by its id in an array:
+  0.5-0.6 s to the first recipe for that database (a script with one rule), 0.3 s once it is
+  compacted; the compaction rewrite and the upgrade of a 4.x database gain too.
 - **Critical path:** when more tasks are ready than `-t` allows, the one with the longest expected
   remaining chain starts first (its own time plus the longest chain of its dependents, from the
   last run's times); the same order applies to resource waiters and to `need [..]`. Without

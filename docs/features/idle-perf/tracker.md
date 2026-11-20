@@ -16,4 +16,6 @@
 - [ ] Tests per layer and the bench gates
 - [x] Release notes "5.0.0 (unreleased)": the fix; the FS0041 line for recursive recipes (own commit)
 - [x] docs/implnotes.md: the layers
-- [ ] PR to dev
+- [x] PR to dev: OlegZee/Xake#148
+- [ ] CI green, owner's review, squash merge
+- [ ] The consumer re-runs its large build on the next preview

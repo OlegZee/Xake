@@ -33,4 +33,7 @@ design.md (third version, by layers); the owner said "go async"; each step stops
   path table and the stream, encodes and appends in the agent's order; `Close` drains it. Full
   build 0.59-0.83 s (4.0.0: 0.47-0.54 s), no-change 0.19-0.22 s (4.0.0: 0.59-0.64 s); process
   wall times in cold-hot.md. Full suite: 1,887 passed, 0 failed.
-- Then: release notes (the fix; FS0041 in its own commit), docs/implnotes.md, the PR.
+- Release notes (4373335; FS0041 in its own commit cf1ac65) and docs/implnotes.md done.
+- PR: OlegZee/Xake#148 (feature/idle-perf -> dev, squash). Next: CI green, the owner's review
+  and merge; then ask the consumer to re-run their large build (no-change and full) on the next
+  preview.

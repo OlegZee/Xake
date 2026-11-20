@@ -11,12 +11,9 @@ yet). Analysis and measurement only; no engine code changed.
   C (id array while reading, ~10-15 lines) takes a further ~0.15 s.
 - Q3: the growth is history (4 full rebuilds x ~2.1 MB); compaction at open, results > 5 x live,
   is not due yet. Options B1-B3 change when it runs.
-- Q1: open. The consumer's window starts at `XAKE build tool` (before the database opens) and
-  ends at the first flush of their setup target `info`; the load is in it on both versions and
-  costs about the same on both (their 4.x database is 361 MB), so 5.0's extra ~1 s is elsewhere.
-  A marks build, `Xake 5.0.0-preview.3.marks1` in the local feed `~/xake-profiling/feed`
-  (`marks2.diff` in the notes folder), was handed to the consumer's session for one run. Their permission check blocked running a
-  build from the local feed; it waits for the owner's word in that session (2026-11-20).
+- Q1: closed. The consumer ran the marks build (`Xake 5.0.0-preview.3.marks1`, local feed
+  `~/xake-profiling/feed`, `marks2.diff` in the notes folder): `database open` is 2.72 s of their
+  window at 17.3 MB; everything else before the first recipe takes milliseconds. Q1 is Q2.
 - Not in the repository (session notes folder of the orchestrator, `startup-perf/`): the
   harness (`harness-Program.fs`, `harness-prof.fsproj`: a console app with AssemblyName `tests`
   so it sees the internals), `toy.fsx` and `run.sh`, the prototype diffs `fixA.diff`,
@@ -25,6 +22,4 @@ yet). Analysis and measurement only; no engine code changed.
 
 ## Next step
 
-The owner reads findings.md and decides: fix A (and C?), and a compaction policy (B1, B2 or B3).
-When the consumer's `[mark]` lines arrive: find the phase with ~1 s on 5.0, reproduce it here,
-and add it to findings.md, Q1.
+The owner reads findings.md and decides on A, C and the compaction policy (B1-B3).

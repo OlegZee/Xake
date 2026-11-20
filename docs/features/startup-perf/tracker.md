@@ -7,5 +7,5 @@
 - [x] Q3: contents by kind and epoch; compaction rule (results > 5 x live) not due, history only
 - [x] Q1: Stopwatch marks on the bench: banner -> first recipe ~20 ms; the toy reproduces +1.07 s, all in `openDb`
 - [x] Q1: the consumer's measurement points: `XAKE build tool` -> first flush of `info`; the load is inside on both
-- [ ] Q1: the consumer's run with the marks build (`5.0.0-preview.3.marks1`)
+- [x] Q1: the consumer's run with the marks build: `database open` 2.72 s at 17.3 MB, the rest ms; Q1 = Q2
 - [ ] Owner: choose among A, C, B1-B3

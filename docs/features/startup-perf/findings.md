@@ -14,7 +14,7 @@ by an environment variable, and `docs/features/idle-perf/bench/build.fsx`.
 |---|---|
 | Q2 load of 12 MB takes ~1.4 s | **Quadratic path table**: `PathTable.load`/`add` read `Map.Count` (O(n) on an F# `Map`) once per path record. 28,384 files cost 1.2-2.0 s of a 1.33-1.79 s `openDb`. |
 | Q3 growth 4.7 -> 12 MB | **History, by design**: 6,996 results, 1,833 live; each full rebuild appends ~2.1 MB. Compaction runs at open when results > 5 x live (9,165 here), so it has not fired yet; it would at about two more full rebuilds (~17 MB). |
-| Q1 +1.1 s between banner and first recipe | **Open.** The consumer's "banner" is `XAKE build tool` (printed in `ApplyCommandLine`, before the database opens), so their window holds the load on both versions; the load costs about the same on both (their 4.x database is 361 MB). 5.0's extra ~1 s is elsewhere in their script's launch; not reproduced on the bench. A marks build was handed to the consumer. |
+| Q1 +1.1 s between banner and first recipe | **It is the database load (Q2).** The consumer's run with a marks build: `database open` 2.72 s of the window (17.3 MB database by then); variables, engine options, banner and the setup demand take milliseconds. Their 4.x run loaded a 361 MB database in about 1.4 s, so 5.0's slower reader is the difference. |
 
 ## Q2. Database load
 
@@ -191,10 +191,32 @@ recipe). Candidates specific to their script: the first rule match (`makeTarget`
 against all of their rules and patterns), the verdict of `info`, the variables (19 declarations,
 one secret), or `info`'s own work before its first flush (several `git` runs; output buffering
 differs between versions). A build of preview.3 with Stopwatch marks
-(`Xake 5.0.0-preview.3.marks1`, local feed, marks on stderr with `XAKE_MARKS=1`: the
-`XAKE build tool` line, variables, engine options, database open, banner, setup demand:
-makeTarget / planned / done, each group planned) was handed to the consumer for one no-change
-run.
+(`Xake 5.0.0-preview.3.marks1`, local feed, marks on stderr with `XAKE_MARKS=1`) was run once by
+the consumer (no-change run, `-t 16`, 1,438 targets, "Build completed" 1.88 s; the database had
+grown to 17.3 MB):
+
+| Mark | ms since process start | Step |
+|---|---|---|
+| script body evaluated (Run) | 3,525 | |
+| `XAKE build tool` line printed | 3,527 | 2 |
+| variables evaluated | 3,531 | 4 |
+| engine options (rules) | 3,533 | 2 |
+| **database open** | **6,258** | **2,725** |
+| context created | 6,260 | 2 |
+| banner printed | 6,276 | 16 |
+| setup `info`: makeTarget, begin, planned | 6,277-6,297 | 21 |
+| setup `info` done (its own work: `git` runs) | 6,512 | 215 |
+| group `build` planned (verdict walk) | 7,356 | 841 |
+| group `pack::...` planned | 8,222 | 284 |
+
+The run before (a rebuild of 602 targets) opened the database in 2.04 s. So the extra second
+is the load, which on 5.0 takes longer for a 17 MB file than 4.x took for 361 MB, and grows with
+the file (Q3). Variables, rule registration, rule headers and the first rule match cost
+milliseconds.
+
+The 17.3 MB copy here: 10,515 results, 2,545 live (compaction at 12,725, still not due);
+`openDb`'s decode 1.75 s (1.19 s of it with fix A). Toy script to the first recipe:
+preview.3 1.80-1.88 s, fix A 0.89-1.16 s, fix A + C 0.66-0.74 s.
 
 With fixes A + C the load share of the window falls from ~1.4 s to ~0.5 s on 5.0, whatever the
 rest turns out to be.

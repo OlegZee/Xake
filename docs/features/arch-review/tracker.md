@@ -11,3 +11,4 @@
 | 7 | Engine state in `ExecContext` (candidate 7) | done: `ExecContext.Run` (`RunState`); `FileTracker`, `RunCounters` internal |
 | 8 | Two verdict entry points, `Of` and `Fresh` (candidate 2) | done: `Verdicts.Planned`, `Verdicts.ForTask` |
 | 9 | `FastGate` (candidate 13) | done: kept, reason stated, in `RunState` with `TaskWaits` |
+| 10 | Test gaps (candidate 16); C12 hole: a failed stat in `claim` leaves claims open | proposed, [test-gaps.md](test-gaps.md); waiting for the owner |

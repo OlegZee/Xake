@@ -1,7 +1,8 @@
 # How the engine observes files and decides (as of v5.0.0-preview.3)
 
-This describes the system as it is at `v5.0.0-preview.3` (407765f, feature/idle-perf), not the
-history of the change. The history and the measurements are in [brief.md](brief.md),
+This describes the system as it is at `v5.0.0-preview.3` (407765f, feature/idle-perf), with the
+file layout of the architecture review (feature/arch-review, topic 1), not the history of the
+change. The history and the measurements are in [brief.md](brief.md),
 [design.md](design.md) and [cold-hot.md](cold-hot.md). Section 7 lists candidates for review.
 
 ## 1. Layers and who owns what
@@ -9,14 +10,29 @@ history of the change. The history and the measurements are in [brief.md](brief.
 ```
  L7  ExecCore            tasks, need, outputs, store       (ExecCore.fs)
  L6  Verdicts            verdict + memo per run, Warm      (DependencyAnalysis.fs)
- L5  observeFiles        stat -> rule -> hash -> Apply     (Database.fs, Storage)
- L4  RunFiles            per-run sets                      (Database.fs, in ExecContext)
- L3  Hasher              one hash per (file, stat)         (Database.fs, mailbox)
+ L5  observeFiles        stat -> rule -> hash -> Apply     (FileStaleness.fs)
+ L4  RunFiles            per-run sets                      (FileStaleness.fs, in ExecContext)
+ L3  Hasher              one hash per (file, stat)         (FileProbe.fs, mailbox, in EngineState)
  L2  Db: agent + writer  records, snapshot, .xake          (Database.fs, 2 mailboxes)
- L1  FileRule            pure decision                     (Database.fs, internal)
- L0  FileStat, Content   stat, SHA-256                     (Database.fs)
+     format              header, picklers, path table      (DatabaseFormat.fs, internal Persist)
+ L1  FileRule            pure decision                     (FileStaleness.fs, internal)
+ L0  FileStat, Content   stat, SHA-256                     (FileProbe.fs)
      Scheduler/WorkerPool  tasks once per run, slots by key (WorkerPool.fs, mailbox)
 ```
+
+The files and their modules, in compile order:
+
+| File | Module | Holds | Uses |
+|---|---|---|---|
+| `DatabaseFormat.fs` | `BuildLog` | the format version, `Database` (the records in memory), `DbRecord` | `Types` |
+| | `Persist` (internal) | the 0.7 header and picklers, the path table, `read`, `encode`, `toDatabase` | `BuildLog`, `Pickler`, `LegacyRead` |
+| `Database.fs` | `Storage` | `DatabaseApi`, the file lifecycle (lock, backup, upgrade, compaction), the agent, the writer, `Db`, `openDb`/`noopDb`/`cleanupDb`, `readRecords`/`readDatabase`, `tryGetResult`, `storeResult` | `Persist` |
+| `FileProbe.fs` | `FileProbe` | `FileStat`, `HashResult`, `Content.hash`, `Hasher`: I/O only | `Types` |
+| `FileStaleness.fs` | `FileStaleness` | `ObserveMode`, `Observation`, `FileRule` (internal, pure), `RunFiles`, `ObserveContext`, `observeFiles` | `Storage`, `FileProbe` |
+
+`Database.fs` uses nothing of `FileProbe` or `FileStaleness`; they use `Storage` only through
+`Db.Snapshot` and `Apply`. `makeResult` and `Step` are in `Types.fs`, the `Agent` alias in
+`Prelude.fs`.
 
 A layer calls only layers below it. The scheduler sits beside them: L6 asks it whether a dependee
 is running (`Scheduler.query`), and L7 submits tasks to it.
@@ -53,7 +69,7 @@ is running (`Scheduler.query`), and L7 submits tasks to it.
 - **Format.** The format is unchanged from preview.2: database 0.7, the same picklers. Each
   version opens the other's file without a rebuild (checked on the bench).
 
-### The observation sequence (`Storage.observeFiles oc mode since files`)
+### The observation sequence (`FileStaleness.observeFiles oc mode since files`)
 
 1. **Claims.** Each distinct file is claimed in `RunFiles`, except in `PreHash` mode.
    - The first observer of the file in the run holds a completion and sets it when done.
@@ -96,7 +112,7 @@ is running (`Scheduler.query`), and L7 submits tasks to it.
 |---|---|---|---|
 | Database agent | per `Db` (one per engine) | record updates and snapshot publishing | top level only (`CloseWait`, `NewRun` in `--dump` and `--dryrun`) |
 | Writer | per `Db` | encoding and appends | the agent awaits `Drain` at close |
-| Hasher | per `Db` | the waiters per (file, stat); hashing itself runs outside, at most one per core (semaphore) | none |
+| Hasher | per engine (`EngineState.Hasher`) | the waiters per (file, stat); hashing itself runs outside, at most one per core (semaphore) | none |
 | WorkerPool | per scheduler | the queued/running/finished maps (a snapshot for `query`) | none |
 | Resource | per resource | the resource's waiters | none |
 | Progress | per run | the estimate refreshes | none |
@@ -173,14 +189,19 @@ Close: agent -> Drain -> writer flushes the rest, closes, releases the lock
 ## 5. Public API and internals
 
 - **Public (`Xake.Storage`):**
-  - `Db` (`Snapshot`, `Hasher`, `Post`, `PostAndReply`, `PostAndAsyncReply`, `IDisposable`) and
+  - `Db` (`Snapshot`, `Post`, `PostAndReply`, `PostAndAsyncReply`, `IDisposable`) and
     `DatabaseApi` (`Apply`, `Store`, `NewRun`, `InMemory`, `Close`, `CloseWait`);
-  - `FileStat`, `HashResult`, `Observation`, `ObserveMode`, `Content.hash`, `Hasher`, `RunFiles`
-    (its `Claim`/`RecordedBefore` are internal), `ObserveContext`;
-  - `tryGetResult`, `storeResult`, `observeFiles`;
-  - `openDb`, `noopDb`, `cleanupDb`, `readRecords`, `readDatabase`, `DbRecord`.
+  - `tryGetResult`, `storeResult`;
+  - `openDb`, `noopDb`, `cleanupDb`, `readRecords`, `readDatabase`.
+- **Public (`Xake.BuildLog`):** `XakeDbVersion`, `XakeDbMinReadVersion`, `Database`,
+  `newDatabase`, `DbRecord`.
+- **Public (`Xake.FileProbe`):** `FileStat`, `HashResult`, `Content.hash`, `Hasher`.
+- **Public (`Xake.FileStaleness`):** `ObserveMode`, `Observation`, `RunFiles` (its
+  `Claim`/`RecordedBefore` are internal), `ObserveContext` (`Db`, `Hasher`, `Run`, `Hashing`,
+  `OnHashed`), `observeFiles`.
 - **Public elsewhere:** `ExecContext` (a record, frozen within 5.x by `RecordShapeTests`) with
-  `UpToDate: Target -> Async<bool>`, `NeedRebuild`, `RunFiles`, `Counters`; `RunSummary`;
+  `UpToDate: Target -> Async<bool>`, `NeedRebuild`, `RunFiles`, `Counters`; `EngineState` (with
+  `Db` and `Hasher`); `RunSummary`;
   `Scheduler`, `TaskState`, `ExecMessage`.
 - **Internal:** `FileRule`, `Persist` (format, path table), `LegacyRead`, the agent and the
   writer functions, `SnapshotCell`, `Db.Create`; the whole `DependencyAnalysis` module
@@ -206,9 +227,8 @@ API changes for code that used `DatabaseApi` directly.
 4. **Two kinds of stat in one call.** The first observation takes a full stat; a later verdict
    observation takes only `File.exists`. This is correct, but it is a performance shortcut
    visible in the logic.
-5. **`Database.fs` holds everything.** It contains the format and the path table, the rule, the
-   hashing, the hasher, `RunFiles` and the facade (about 860 lines). A split by layer
-   (`FileRule.fs`, `Observation.fs`, `Database.fs`) would match the layers above.
+5. **`Database.fs` holds everything.** Done (arch-review, topic 1): `DatabaseFormat.fs`,
+   `Database.fs`, `FileProbe.fs`, `FileStaleness.fs`, section 1.
 6. **`Db` exposes its raw mailbox** (`Post`/`PostAndReply` with `DatabaseApi`) publicly, so a
    caller can bypass `observeFiles` and the rule. Tests use it. `DatabaseApi` could become
    internal.

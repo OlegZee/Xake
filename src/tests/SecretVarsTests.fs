@@ -133,7 +133,7 @@ type ``Secret variables``() =
         let value = "old-clear-value-0001"
         let schema = named (Var.secret<string>(envVar = name))
         let old =
-            { BuildLog.makeResult [PhonyAction "main"] with
+            { makeResult [PhonyAction "main"] with
                 Depends = [ EnvVar (name, Some value); EnvVar ("XAKE_UNRELATED_OLD", None) ] }
         OldDatabase.write ".xake" "0.5" [old]
         withEnv name "a-rotated-value-0002" (fun () ->
@@ -161,7 +161,7 @@ type ``Secret variables``() =
     member x.``a 0.4 database without secrets still loads``() =
         let logged = Collections.Generic.List<string>()
         let old =
-            { BuildLog.makeResult [PhonyAction "main"] with Depends = [ EnvVar ("XAKE_OLD_04_VAR", None) ] }
+            { makeResult [PhonyAction "main"] with Depends = [ EnvVar ("XAKE_OLD_04_VAR", None) ] }
         OldDatabase.write ".xake" "0.4" [old]
         let runs = ref 0
         do xake (x.Opts logged) {
@@ -179,7 +179,7 @@ type ``Secret variables``() =
             [ SecretDep ("A_SECRET", SecretEnv, SecretAbsent)
               SecretDep ("B_SECRET", SecretArg, SecretPresent)
               SecretDep ("C_SECRET", SecretEnv, SecretHmac ([| 1uy; 2uy; 3uy |], Array.init 32 byte)) ]
-        let result = { BuildLog.makeResult [PhonyAction "x"] with Depends = deps }
+        let result = { makeResult [PhonyAction "x"] with Depends = deps }
         Assert.AreEqual(result, DbFormat.result result)
 
     [<Test>]

@@ -119,7 +119,7 @@ type ``Epoch tests``() =
         let epochs =
             Storage.readRecords x.TestOptions.ProjectRoot ".xake"
             |> Seq.choose (function
-                | Storage.DbRecord.Result r when r.Targets = [ PhonyAction "always" ] -> Some r.Epoch
+                | BuildLog.DbRecord.Result r when r.Targets = [ PhonyAction "always" ] -> Some r.Epoch
                 | _ -> None)
             |> List.ofSeq
         Assert.AreEqual(2, epochs.Length)
@@ -178,7 +178,7 @@ type ``Epoch tests``() =
             fun _ targets _ -> async {
                 Directory.CreateDirectory "out" |> ignore
                 File.WriteAllText("out/del.txt", "x")
-                return { BuildLog.makeResult targets with Epoch = 999 } }
+                return { makeResult targets with Epoch = 999 } }
         let rs = [ DelegatedRule (FileRule (["out/del.txt"], RuleHeader.Empty, recipe { () }), executor) ]
         let epochOf () = (x.Results ()).Status.[FileTarget (File.make "out/del.txt")].Epoch
         x.Run [ "out/del.txt" ] rs

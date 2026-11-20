@@ -30,8 +30,10 @@ Breaking changes:
 4. **Storage API.** `Storage.openDb root dbpath logger` takes the project root and returns a
    `Storage.Db`; the database is exclusive (`.xake.lock`). Its agent accepts `Apply`, `Store`
    (with a reply), `NewRun`, `InMemory` and `Close`; reads go through `Db.Snapshot` and
-   `Storage.tryGetResult`, file observations through `Storage.observeFiles` (`FileStat`,
-   `RunFiles`, `ObserveContext`); `GetResult` is removed.
+   `Storage.tryGetResult`, file observations through `FileStaleness.observeFiles`
+   (`FileStaleness.RunFiles`, `FileStaleness.ObserveContext`, `FileProbe.FileStat`); `GetResult` is
+   removed. `Storage.DbRecord` is `BuildLog.DbRecord`, `BuildLog.makeResult` is `makeResult`
+   (`DomainTypes`), and the `Db` holds no hasher (`EngineState.Hasher`).
    `Storage.resultPU` is replaced by the public read API `Storage.readRecords` and
    `Storage.readDatabase` (the database with its last epoch, `BuildLog.Database.Epoch`).
 5. **Filesets.** `FilesetOptions.CaseSensitive` and the `casesensitive` operation are added.
@@ -99,8 +101,8 @@ The rule header ([rule-header.md](rule-header.md)):
   hashed); `onSummary` in `xakeScript`, `XakeEngine.LastSummary`, the `RunSummary` record. A run
   where nothing moved schedules no task.
 - API: `ExecOptions.ContentCutoff`, `ExecOptions.SummarySink`, `IRunSummarySink`;
-  `Storage.observeFiles` replies `Observation` (`Absent`, `Unchanged`, `Changed`) per file;
-  hashes go through `Storage.Hasher` (`HashResult`: `Hashed`, `Unreadable` with the stat);
+  `FileStaleness.observeFiles` replies `Observation` (`Absent`, `Unchanged`, `Changed`) per file;
+  hashes go through `FileProbe.Hasher` (`HashResult`: `Hashed`, `Unreadable` with the stat);
   `ObserveMode.Output` takes the cut-off flag and `PreHash` is added; `WorkerPool.TaskState` and
   `Scheduler.query` are added; `ExecContext.NeedRebuild` and `ExecContext.UpToDate` are
   asynchronous, and `ExecContext` gains `UpToDate` and `Counters`.

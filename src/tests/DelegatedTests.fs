@@ -32,7 +32,7 @@ type ``Delegated and resource tests``() =
         enter, leave, peak
 
     let emptyResult targets : BuildResult =
-        { BuildLog.makeResult targets with Built = System.DateTime.Now }
+        { makeResult targets with Built = System.DateTime.Now }
 
     // An in-memory fake of Qualhalla's delegated executor: a run-scoped result store keyed
     // by a fixed identity, with in-flight dedup. Returns (executor, bodyRunCount, store, key).

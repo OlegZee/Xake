@@ -7,6 +7,8 @@ open NUnit.Framework
 
 open Xake
 open Xake.Storage
+open Xake.FileProbe
+open Xake.FileStaleness
 open Xake.DependencyAnalysis
 
 let private newContext () =
@@ -16,7 +18,7 @@ let private newContext () =
 let private store (ctx: ExecContext) result = ctx.Db.PostAndReply(fun ch -> Store (result, ch))
 
 let private phony name deps =
-    { BuildLog.makeResult [ PhonyAction name ] with Depends = deps; Epoch = 1 }
+    { makeResult [ PhonyAction name ] with Depends = deps; Epoch = 1 }
 
 /// Two entries into one cycle of records at once: neither waits for the other; the edge that
 /// would close the cycle counts as a change.
@@ -54,7 +56,7 @@ let ``the estimate reads the warmed verdicts``() =
     try
         let out = FileTarget (File.make "est.o")
         let step = { StepInfo.Empty with Name = "all"; OwnTime = 300<ms> }
-        store ctx { BuildLog.makeResult [ out ] with Depends = [ FileDep (File.make "no-such-source.c") ]; Epoch = 1; Steps = [ step ] }
+        store ctx { makeResult [ out ] with Depends = [ FileDep (File.make "no-such-source.c") ]; Epoch = 1; Steps = [ step ] }
         let verdicts = Verdicts(ctx, fun _ -> None)
         Assert.AreEqual((0<ms>, ([]: Target list)), verdicts.Estimate out, "not warmed")
         verdicts.Warm [ out ] |> Async.RunSynchronously

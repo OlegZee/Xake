@@ -7,7 +7,11 @@ open NUnit.Framework
 
 open Xake
 open Xake.Storage
-open Xake.Storage.FileRule
+open Xake.FileProbe
+open Xake.FileStaleness
+open Xake.FileProbe
+open Xake.FileStaleness
+open Xake.FileStaleness.FileRule
 
 let private t0 = System.DateTime(2026, 1, 1)
 let private record changed hash = { Stamp = t0; Size = 10L; Hash = hash; Changed = changed }

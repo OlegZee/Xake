@@ -13,4 +13,11 @@ section 7. One decision per line, with its date. Decisions are not re-litigated.
 
 ## Decisions
 
-(none yet; topic 1 proposal in [database-layout.md](database-layout.md))
+- 2026-11-20 (topic 1): the database format (`Persist`: header, picklers, path table, read,
+  encode) moves to its own file, `DatabaseFormat.fs`.
+- 2026-11-20 (topic 1): `Agent` to Prelude.fs, `makeResult` and `Step` to Types.fs: agreed.
+- 2026-11-20 (topic 1): layout A: `FileProbe.fs` (stat, hash, hasher: I/O only) and
+  `FileStaleness.fs` (`FileRule`, `RunFiles`, `observeFiles`: the epoch/staleness logic as one
+  part); the hasher leaves `Db`. Renames of functions are left for the public-API topic.
+- 2026-11-20 (topic 1): a per-run memo of observations in place of the `RunFiles` claims is a
+  separate topic (candidate 3), not part of the move.

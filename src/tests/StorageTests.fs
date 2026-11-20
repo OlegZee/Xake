@@ -6,6 +6,8 @@ open NUnit.Framework
 open Xake
 open Xake.BuildLog
 open Xake.Storage
+open Xake.FileProbe
+open Xake.FileStaleness
 open Xake.LegacyRead
 open Tests
 
@@ -32,9 +34,11 @@ module private impl =
     let store (a : Db) r = a.PostAndReply(fun ch -> Store (r, ch))
     /// Starts a run: its epoch and its files (docs/features/idle-perf, L4).
     let newRun (a : Db) = a.PostAndReply NewRun, RunFiles ()
+    /// The hasher the observations share, as an engine does (L3).
+    let hasher = Hasher()
     /// Observes one file through the facade (L5).
     let observeIn (a : Db) run hashing mode since f =
-        (Storage.observeFiles { Db = a; Run = run; Hashing = hashing; OnHashed = ignore } mode since [ f ] |> Async.RunSynchronously).[0]
+        (FileStaleness.observeFiles { Db = a; Hasher = hasher; Run = run; Hashing = hashing; OnHashed = ignore } mode since [ f ] |> Async.RunSynchronously).[0]
     // Is.Any predicate for assertions
     let IsAny() = Is.Not.All.Not
 
@@ -517,10 +521,10 @@ let ``a batch observes like single observations``() =
         for f in [ dbname; dbname + ".bak" ] do try File.Delete f with _ -> ()
         let db = openDb () logger
         let epoch, run = newRun db
-        let oc = { Db = db; Run = run; Hashing = false; OnHashed = ignore }
+        let oc = { Db = db; Hasher = Hasher(); Run = run; Hashing = false; OnHashed = ignore }
         let replies =
-            if single then [ for f in files -> (Storage.observeFiles oc Recording 0 [ f ] |> Async.RunSynchronously).[0] ]
-            else Storage.observeFiles oc Recording 0 files |> Async.RunSynchronously |> List.ofArray
+            if single then [ for f in files -> (FileStaleness.observeFiles oc Recording 0 [ f ] |> Async.RunSynchronously).[0] ]
+            else FileStaleness.observeFiles oc Recording 0 files |> Async.RunSynchronously |> List.ofArray
         let state = db.Snapshot.Files
         db.PostAndReply CloseWait
         replies, [ for f in files -> state.TryFind f ], epoch
@@ -536,10 +540,10 @@ let ``racing observations of a new file write one record, and an unchanged file 
     let f = File.make "race.c"
     let db = openDb () logger
     let _, run = newRun db
-    let oc = { Db = db; Run = run; Hashing = false; OnHashed = ignore }
-    [ for _ in 1 .. 16 -> Storage.observeFiles oc Recording 0 [ f ] ] |> Async.Parallel |> Async.RunSynchronously |> ignore
+    let oc = { Db = db; Hasher = Hasher(); Run = run; Hashing = false; OnHashed = ignore }
+    [ for _ in 1 .. 16 -> FileStaleness.observeFiles oc Recording 0 [ f ] ] |> Async.Parallel |> Async.RunSynchronously |> ignore
     let _, run2 = newRun db
-    Storage.observeFiles { oc with Run = run2 } Verdict 0 [ f ] |> Async.RunSynchronously |> ignore
+    FileStaleness.observeFiles { oc with Run = run2 } Verdict 0 [ f ] |> Async.RunSynchronously |> ignore
     db.PostAndReply CloseWait
     let fileRecords = readRecords (root ()) dbname |> Seq.filter (function DbRecord.FileState (g, _) -> g = f | _ -> false) |> Seq.length
     Assert.AreEqual(1, fileRecords)

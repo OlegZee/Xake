@@ -204,6 +204,8 @@ type EngineOptions = {
 and EngineState = {
     Options: EngineOptions
     Db: Storage.Db
+    /// Hashes file contents, one computation per (file, stat); shared across runs.
+    Hasher: FileProbe.Hasher
     Scheduler: Scheduler<ExecStatus>
     RootLogger: ILogger
 }
@@ -234,7 +236,7 @@ and ExecContext = {
     Spellings: System.Collections.Concurrent.ConcurrentDictionary<string, File * bool>
     /// The files observed and recorded in this run (docs/features/idle-perf, L4). Created per run,
     /// with the run's memo.
-    RunFiles: Storage.RunFiles
+    RunFiles: FileStaleness.RunFiles
     /// The epoch (run number) of the run this context belongs to, taken at `Scheduler.newRun`:
     /// a result built in the run gets it (A2).
     RunEpoch: int
@@ -247,8 +249,9 @@ and ExecContext = {
     member ctx.Db = ctx.Engine.Db
     /// Where this context's file observations run: its database, its run, whether it hashes.
     member ctx.Observe =
-        { Storage.ObserveContext.Db = ctx.Engine.Db; Storage.ObserveContext.Run = ctx.RunFiles; Storage.ObserveContext.Hashing = ctx.Engine.Options.ContentCutoff
-          Storage.ObserveContext.OnHashed = match ctx.Counters with null -> ignore | c -> c.FileHashed }
+        { FileStaleness.ObserveContext.Db = ctx.Engine.Db; FileStaleness.ObserveContext.Hasher = ctx.Engine.Hasher
+          FileStaleness.ObserveContext.Run = ctx.RunFiles; FileStaleness.ObserveContext.Hashing = ctx.Engine.Options.ContentCutoff
+          FileStaleness.ObserveContext.OnHashed = match ctx.Counters with null -> ignore | c -> c.FileHashed }
 
 /// Functions over the execution context for code outside this assembly. A record copy
 /// (`{ ctx with ... }`) compiled in another assembly calls the full constructor and breaks

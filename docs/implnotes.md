@@ -81,7 +81,7 @@ The file starts with a version header (`BuildLog.XakeDbVersion`, `0.7`; `XakeDbM
   the latest `Built` (`DateTime.MinValue` is no stamp), unknown size, `changed = 1`. A result gets
   `Epoch = 1` when every stamp it recorded is that one and every phony dependee finished no later
   than recorded, else 0 (it reruns once). A no-change run after the upgrade rebuilds nothing.
-  `LegacyRead` is meant to be removed in a later release; its one call in `Database.fs` then
+  `LegacyRead` is meant to be removed in a later release; its one call in `DatabaseFormat.fs` then
   becomes "no longer read, recreating".
 - `Storage.openDb root dbpath logger` takes the project root. The public read API is
   `Storage.readRecords root dbpath` (every `DbRecord`, `Result` or `FileState`, in file order) and
@@ -105,13 +105,13 @@ The file starts with a version header (`BuildLog.XakeDbVersion`, `0.7`; `XakeDbM
 - Runs may overlap in engine mode (`Demand` of different names): an observation is stamped with
   the newest epoch handed out, a result with the epoch its task started in. A delegated result
   that did not run its body keeps the local result's epoch; a foreign epoch is never stored.
-- A file is observed through `Storage.observeFiles` (`DependencyAnalysis.observeMany`), a group
+- A file is observed through `FileStaleness.observeFiles` (`DependencyAnalysis.observeMany`), a group
   of files at a time, in a mode: by a verdict once per run, then answered from the record; when a
   body records it as a `FileDep` it is statted again, and a moved stat counts as a change unless
   another body already recorded it in this run; a rule's outputs (every output of a multi-output
   rule) are statted again right after the rule. The sequence, on the caller's thread:
   1. the stats (existence, write time, length), taken by the caller;
-  2. the rule `Storage.FileRule.decide` against the snapshot's record (pure: no I/O, no state),
+  2. the rule `FileStaleness.FileRule.decide` against the snapshot's record (pure: no I/O, no state),
      with the run's facts from `RunFiles`;
   3. the hashes the rule asks for, through the hasher;
   4. every write in one `Apply`;
@@ -126,7 +126,7 @@ The file starts with a version header (`BuildLog.XakeDbVersion`, `0.7`; `XakeDbM
   the dependent's epoch, `observeOutputs` passes `RunEpoch - 1` (changed in this run); calls that
   only update the record use `DependencyAnalysis.observe` (`since` = max).
 - **Hashing (docs/content-cutoff.md).** The rule decides, the caller hashes: a moved stat (or an
-  output) that needs a hash is hashed through `Storage.Hasher`, a mailbox that computes one hash
+  output) that needs a hash is hashed through `FileProbe.Hasher`, a mailbox that computes one hash
   per (file, stat) while it runs (every other asker gets the same result), at most one per core
   at once, off the agent. The result is `Hashed (stamp, size, hash)` (stat, SHA-256, stat; first
   8 bytes) or `Unreadable stat` (the file could not be read, or its stat moved while it was

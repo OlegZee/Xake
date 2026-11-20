@@ -7,6 +7,8 @@ open NUnit.Framework
 open Xake
 open Xake.BuildLog
 open Xake.Storage
+open Xake.FileProbe
+open Xake.FileStaleness
 
 /// An exception inside a MailboxProcessor loop used to kill the agent silently, leaving every
 /// later request waiting forever at 0 % CPU. These tests inject such a failure and require the

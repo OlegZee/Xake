@@ -47,7 +47,10 @@
     <Compile Include="Types.fs" />
     <Compile Include="CommonLib.fs" />
     <Compile Include="LegacyRead.fs" />
+    <Compile Include="DatabaseFormat.fs" />
     <Compile Include="Database.fs" />
+    <Compile Include="FileProbe.fs" />
+    <Compile Include="FileStaleness.fs" />
     <Compile Include="RecipeBuilder.fs" />
     <Compile Include="RecipeFunctions.fs" />
     <Compile Include="WorkerPool.fs" />

@@ -24,7 +24,7 @@ module internal OldDatabase =
     /// header version and the results in file order (an older version: converted)
     let read (path: string) =
         version path,
-        Storage.readRecords (root ()) path |> Seq.choose (function Storage.DbRecord.Result r -> Some r | _ -> None) |> List.ofSeq
+        Storage.readRecords (root ()) path |> Seq.choose (function BuildLog.DbRecord.Result r -> Some r | _ -> None) |> List.ofSeq
 
     /// writes a 0.4-0.6 file of the given results with their old dependencies
     let writeOld (path: string) (ver: string) (results: OldResult list) =
@@ -41,10 +41,10 @@ module internal OldDatabase =
 
 /// The 0.7 format in memory: records written by the engine's writer and read back.
 module internal DbFormat =
-    open Xake.Storage.Persist
+    open Xake.Persist
 
     /// writes the records to a fresh 0.7 stream and reads them back (paths against `root`)
-    let roundTrip (root: string) (recs: Storage.DbRecord list) =
+    let roundTrip (root: string) (recs: BuildLog.DbRecord list) =
         use stream = new MemoryStream()
         writeHeader stream
         let _, bytes = encode (PathTable.empty root) recs
@@ -54,8 +54,8 @@ module internal DbFormat =
 
     /// a result written and read back
     let result (r: BuildResult) =
-        match (roundTrip "/p" [ Storage.DbRecord.Result r ] |> snd).Records with
-        | [ Storage.DbRecord.Result r ] -> r
+        match (roundTrip "/p" [ BuildLog.DbRecord.Result r ] |> snd).Records with
+        | [ BuildLog.DbRecord.Result r ] -> r
         | other -> failwithf "unexpected %A" other
 
 /// S66: a dependent must be rebuilt when its dependee (a rule-built file) was rebuilt

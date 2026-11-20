@@ -17,15 +17,24 @@ Branch `feature/idle-perf` from `5afb94b` (= `v5.0.0-preview.2`).
 
 ## Next step
 
-design.md (third version, by layers) is the working design; the owner said "go async". Work
-goes step by step, each stopping for the owner's review:
-- Step 1 (L0-L1) done (6473eff): the pure `Storage.FileRule`, table tests.
-- Step 2 (L2-L5) done: `Storage.Db` (the agent with `Apply`/`Store`/`NewRun` only, a published
-  snapshot, the hasher), `Storage.RunFiles` in `ExecContext` (per run), the facade
-  `Storage.observeFiles`; callers in DependencyAnalysis/ExecCore use it; `Store` is awaited and
-  the A3 observation moved to the caller. Measured (cold-hot.md, "Step 2 measured"): full build
-  5.5-8.0 s -> 1.51 s, no-change 2.3 s -> 0.87-0.92 s (4.0.0: 0.41-0.45 s and 0.58-0.63 s).
-  Full suite: 1,883 passed, 0 failed.
-- Next, after the owner's review of step 2: step 3 (L6-L7): the async verdict and memo with the
-  wait-for map, `Warm` on several threads, durations from the snapshot, `dryRun`, async
-  `UpToDate`, one `observeFiles Recording` per `need` list.
+design.md (third version, by layers); the owner said "go async"; each step stops for review.
+- Step 1 (L0-L1) 6473eff: pure `Storage.FileRule`.
+- Step 2 (L2-L5) bc86f35: `Storage.Db` (snapshot, `Apply`, `Store` awaited, `NewRun`), hasher,
+  `RunFiles`, the facade `Storage.observeFiles`.
+- Step 3 (L6-L7) done: `DependencyAnalysis.Verdicts` (async verdict in two phases, memo per run
+  with a wait-for map against cycles, `Warm` in parallel, `Ready`, `Estimate` from the snapshot),
+  `ExecContext.UpToDate` async, `planRun` warms whatever the schedule, `dryRun` on `Verdicts`,
+  plain files of a `need` list in one `observeFiles Recording` (`prepareOne`/`execParallel`).
+  Tests: VerdictsTests.fs (two entries into one cycle, self-dependency, estimate); they hang
+  without the guard. Full suite: 1,886 passed, 0 failed.
+- Measured (cold-hot.md, "Step 3 measured"): no-change 0.16-0.19 s (4.0.0: 0.59-0.66 s); full
+  build 0.97-1.34 s (4.0.0: 0.41-0.47 s), over the 2x gate.
+- Open for the owner: the full build. The agent is the serial bottleneck through `Persist.encode`
+  (about 0.3 ms per result: path-table lookups in an immutable `Map`). Options:
+  (a) reply to `Store`/`Apply` once the snapshot is published, then encode and write (the task
+      no longer waits for the encode; the agent stays serial), about 5 lines;
+  (b) a separate writer mailbox that owns the path table and the stream: the agent only
+      publishes and replies, the writer encodes; `Close` drains it, about 30 lines;
+  (c) a faster encode: build the pickler once, path-table ids in a mutable dictionary with
+      rollback on a failed pickle, about 30 lines.
+- Then: release notes (the fix; FS0041 in its own commit), docs/implnotes.md, the PR.

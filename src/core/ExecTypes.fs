@@ -217,7 +217,7 @@ and ExecContext = {
     /// The verdict of a task's targets, after its static `needs` (waits for running dependees).
     NeedRebuild: Target list -> Async<bool>
     /// The run's verdict without building or waiting: true when the target is up to date.
-    UpToDate: Target -> bool
+    UpToDate: Target -> Async<bool>
     ShowProgress: bool
     // Task-level
     Targets: Target list

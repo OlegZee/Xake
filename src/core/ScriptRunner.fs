@@ -98,7 +98,13 @@ let bannerLines (options: ExecOptions) (variables: Map<string, VarEntry>) (targe
 /// Displays estimated build time and parallelism degree.
 let dryRun (ctx: ExecContext) (setup: string list) (groups: string list list) =
     let options = ctx.Options
-    let getDeps = getChangeReasons ctx (ExecCore.currentRule ctx) |> memoizeRec
+    // the verdicts of every group, decided in parallel before anything is printed (dry run: the
+    // top level, not a build's dependency path)
+    let verdicts = Verdicts(ctx, ExecCore.currentRule ctx)
+    let getDeps t =
+        match verdicts.Ready t with
+        | Some reasons -> reasons
+        | None -> verdicts.Of t |> Async.RunSynchronously
 
     // getPlainDeps getDeps (getExecTime ctx)
     if not setup.IsEmpty then
@@ -139,6 +145,7 @@ let dryRun (ctx: ExecContext) (setup: string list) (groups: string list list) =
                 deps |> List.iter (displayNestedDeps (ii+1))
 
     let targetGroups = ExecCore.makeTarget ctx |> List.map |> List.map <| groups
+    verdicts.Warm (List.concat targetGroups) |> Async.RunSynchronously
     let toSec v = float (v / 1<ms>) * 0.001
     let endTime = Progress.estimateEndTime (getDurationDeps ctx getDeps) options.Threads targetGroups |> toSec
 

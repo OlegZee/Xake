@@ -244,3 +244,28 @@ dependency (`File.Exists`, about 2 us, the owner's decision) and one `Map` looku
 against the snapshot, both on the one thread of the walk. Claims cost 0.08 s and the decisions
 0.01 s. In a no-change run the agent receives one `NewRun` and the `Store`s of the phony targets,
 and nothing else. Step 3 runs the walk on several threads.
+
+## Step 3 measured (2026-11-20, design.md L6-L7)
+
+The async verdict and its memo with the wait-for map, the parallel `Warm`, durations from the
+snapshot, async `UpToDate`, and one `observeFiles Recording` per `need` list. Same bench, `-t 16`:
+
+| Run | preview.2 | Step 2 | Step 3 | 4.0.0 (same session) |
+|---|---|---|---|---|
+| no-change | 2.24-2.38 s | 0.87-0.92 s | **0.16-0.19 s** | 0.59-0.66 s |
+| no-change, `--schedule=as-requested` | 2.28-2.33 s | | 0.16 s | |
+| no-change, `--content-cutoff=off` | 2.34-2.44 s | | 0.20 s | |
+| full build | 5.5-8.0 s | 1.51 s | 0.97-1.34 s | 0.41-0.47 s |
+
+A no-change run is now about 3.5x faster than 4.0.0. The full build is 2.1-2.9x 4.0.0, which
+misses the 2x gate. Temporary timers in the agent during a full build:
+- the thread-pool parking is gone: 8-22 long waits for a thread, instead of 118-184;
+- the agent is busy 0.75-0.9 s, serially:
+  - `Store`: 1,195 messages, 0.49-0.65 s;
+  - `Apply`: 1,640-2,040 messages, 0.23-0.24 s;
+- almost all of that busy time is `Persist.encode`: 0.63-0.81 s for about 2,570 encodes, about
+  0.3 ms for a result with 150 dependencies. The write and the flush are cheap (12 ms in all).
+
+The encode does two lookups in the path table's immutable `Map<File, int>` per file, plus the
+pickler built per call. Since step 2 every task waits for its `Store`, so this serial cost sits
+on the build's critical path. Options are in session.md.

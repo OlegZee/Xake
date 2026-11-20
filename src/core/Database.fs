@@ -229,23 +229,26 @@ module Storage =
         type PathTable =
             { Root: string; RootPrefix: string
               Ids: Map<File, int>; Files: Map<int, File>
-              Dirs: Map<int * string, int>; DirPrefix: Map<int, string> }
+              Dirs: Map<int * string, int>; DirPrefix: Map<int, string>
+              /// the next file id and dir id: counted here, since `Map.Count` walks the whole map
+              /// (once per path record made the load quadratic, docs/features/startup-perf)
+              NFiles: int; NDirs: int }
 
         module PathTable =
             let empty root =
                 let n = (File.make root).Name
                 { Root = root; RootPrefix = (if n.EndsWith "/" then n else n + "/")
-                  Ids = Map.empty; Files = Map.empty; Dirs = Map.empty; DirPrefix = Map.empty }
+                  Ids = Map.empty; Files = Map.empty; Dirs = Map.empty; DirPrefix = Map.empty; NFiles = 0; NDirs = 0 }
 
             let private addDir (r, dir) t =
                 match Map.tryFind (r, dir) t.Dirs with
                 | Some d -> t, d, []
                 | None ->
-                    let d = t.Dirs.Count
+                    let d = t.NDirs
                     let prefix = match r, dir with 1, "" -> t.RootPrefix | 1, _ -> t.RootPrefix + dir + "/" | _ -> dir + "/"
-                    { t with Dirs = Map.add (r, dir) d t.Dirs; DirPrefix = Map.add d prefix t.DirPrefix }, d, [ DirRec (d, r, dir) ]
+                    { t with Dirs = Map.add (r, dir) d t.Dirs; DirPrefix = Map.add d prefix t.DirPrefix; NDirs = d + 1 }, d, [ DirRec (d, r, dir) ]
 
-            let private addFile f id t = { t with Ids = Map.add f id t.Ids; Files = Map.add id f t.Files }
+            let private addFile f id t = { t with Ids = Map.add f id t.Ids; Files = Map.add id f t.Files; NFiles = id + 1 }
 
             /// The table with the file, and its new `DirRec`/`PathRec`.
             let add (f: File) (t: PathTable) : PathTable * Rec list =
@@ -254,13 +257,13 @@ module Storage =
                     let s = File.display t.Root f
                     let i = s.LastIndexOf '/'
                     let t, d, recs = addDir ((if s = f.Name then 0 else 1), (if i < 0 then "" else s.Substring(0, i))) t
-                    let id = t.Ids.Count
+                    let id = t.NFiles
                     addFile f id t, recs @ [ PathRec (id, d, s.Substring(i + 1)) ]
 
             /// The table after a record read from the file.
             let load (t: PathTable) = function
-                | DirRec (d, r, dir) when d = t.Dirs.Count && (r = 0 || r = 1) -> let t, _, _ = addDir (r, dir) t in t
-                | PathRec (id, d, name) when id = t.Ids.Count && t.DirPrefix.ContainsKey d -> addFile (File.make (t.DirPrefix.[d] + name)) id t
+                | DirRec (d, r, dir) when d = t.NDirs && (r = 0 || r = 1) -> let t, _, _ = addDir (r, dir) t in t
+                | PathRec (id, d, name) when id = t.NFiles && t.DirPrefix.ContainsKey d -> addFile (File.make (t.DirPrefix.[d] + name)) id t
                 | Data _ -> t
                 | r -> failwithf "unexpected path record %A" r
 
@@ -268,11 +271,12 @@ module Storage =
             { pickle = (fun (b: byte[]) (st: OutState) -> st.Write(b.Length); st.Write(b))
               unpickle = fun (st: InState) -> st.ReadBytes(st.ReadInt32()) }
 
-        /// The 0.7 record pickler; files are ids of the table `table ()` gives at the time.
-        let record (table: unit -> PathTable) =
+        /// The 0.7 record pickler; a file is written as `fileId f` and read back as `fileAt id`
+        /// (raising for an unknown id), both against the table at the time.
+        let record (fileId: File -> int) (fileAt: int -> File) =
             let file =
-                { pickle = (fun f st -> varint.pickle (table ()).Ids.[f] st)
-                  unpickle = fun st -> let id = varint.unpickle st in match (table ()).Files.TryFind id with Some f -> f | None -> failwithf "unknown file id %d" id }
+                { pickle = (fun f st -> varint.pickle (fileId f) st)
+                  unpickle = fun st -> fileAt (varint.unpickle st) }
             let target =
                 alt (function FileTarget _ -> 0 | PhonyAction _ -> 1)
                     [| wrap (FileTarget, fun (FileTarget f | OtherwiseFail f) -> f) file
@@ -335,7 +339,7 @@ module Storage =
         /// table with those files. Raises when a record does not pickle (the caller keeps its table).
         let encode (t: PathTable) (recs: DbRecord list) =
             let paths, t = recs |> List.collect filesOf |> List.mapFold (fun t f -> let t, rs = PathTable.add f t in rs, t) t
-            let pu = record (fun () -> t)
+            let pu = record (fun f -> t.Ids.[f]) (fun id -> match t.Files.TryFind id with Some f -> f | None -> failwithf "unknown file id %d" id)
             use ms = new System.IO.MemoryStream()
             use w = new System.IO.BinaryWriter(ms)
             for r in List.concat paths @ List.map Data recs do pu.pickle r w
@@ -366,14 +370,19 @@ module Storage =
                   Records = List.map DbRecord.FileState files @ List.map DbRecord.Result results }
             else
                 let mutable t = PathTable.empty root
-                let pu = record (fun () -> t)
+                // the files by id while reading: an index, not a `Map` lookup per file reference
+                let byId = ResizeArray<File>()
+                let fileAt id = if id >= 0 && id < byId.Count then byId.[id] else failwithf "unknown file id %d" id
+                let pu = record (fun f -> t.Ids.[f]) fileAt
                 let records = ResizeArray<DbRecord>()
                 let mutable goodEnd, torn = stream.Position, false
                 while not torn && stream.Position < stream.Length do
                     try
                         match pu.unpickle reader with
                         | Data d -> records.Add d
-                        | r -> t <- PathTable.load t r
+                        | r ->
+                            t <- PathTable.load t r
+                            match r with PathRec (id, _, _) -> byId.Add t.Files.[id] | _ -> ()
                         goodEnd <- stream.Position
                     with :? System.IO.EndOfStreamException -> torn <- true
                 { Version = v; Records = List.ofSeq records; Table = t; Torn = torn; GoodEnd = goodEnd }

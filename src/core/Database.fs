@@ -71,33 +71,6 @@ module Storage =
         /// an output before its rule runs: hashed if it has no hash and its stat is unchanged
         | PreHash
 
-    /// A file `Observe` wants hashed before it decides: given back with `Settle`. Opaque: it
-    /// carries the observation it settles (the known record, the mode, `since`).
-    [<Sealed>]
-    type HashRequest internal (file: File, known: FileState option, mode: ObserveMode, since: int) =
-        /// The file to hash.
-        member _.File = file
-        member internal _.Known = known
-        member internal _.Mode = mode
-        member internal _.Since = since
-
-    /// What hashing a file for `Settle` gave.
-    type HashResult =
-        /// the stat the hash was taken at (unchanged before and after hashing) and the hash
-        | Hashed of stamp: Timestamp * size: int64 * hash: uint64
-        /// the file could not be read, or its stat moved while it was hashed (its content was not
-        /// stable): a change without a hash
-        | Unreadable
-
-    /// The reply to `Observe` (and to `Settle`, which never replies `HashNeeded`): the file is
-    /// missing, or its state with whether its content changed after the run `since`, or the file
-    /// must be hashed first: the caller hashes it and posts `Settle`.
-    type Observation =
-        | Absent
-        | Unchanged of FileState
-        | Changed of FileState
-        | HashNeeded of HashRequest
-
     /// A file's stat: missing, or its write time and length (docs/features/idle-perf, L0).
     type FileStat =
         | Missing
@@ -108,6 +81,41 @@ module Storage =
         let take (file: File) =
             let fi = File.getFileInfo file
             if fi.Exists then Present (fi.LastWriteTime, fi.Length) else Missing
+
+    /// What hashing a file gave.
+    type HashResult =
+        /// the stat the hash was taken at (unchanged before and after hashing) and the hash
+        | Hashed of stamp: Timestamp * size: int64 * hash: uint64
+        /// the file could not be read, or its stat moved while it was hashed (its content was not
+        /// stable): a change without a hash; the stat taken after the attempt
+        | Unreadable of FileStat
+
+    /// An observation of a file: missing, or its state with whether its content changed after
+    /// the run `since`.
+    type Observation =
+        | Absent
+        | Unchanged of FileState
+        | Changed of FileState
+
+    /// Content hashes (docs/content-cutoff.md; docs/features/idle-perf, L0).
+    module Content =
+        /// The file's stat and the first 8 bytes of the SHA-256 of its content, taken together:
+        /// stat, hash, stat. `Unreadable` when the stat moved meanwhile, or the file cannot be read.
+        let hash (file: File) =
+            try
+                let before = File.getFileInfo file
+                if not before.Exists then Unreadable Missing
+                else
+                    let bytes =
+                        use sha = System.Security.Cryptography.SHA256.Create()
+                        use stream = new System.IO.FileStream(before.FullName, System.IO.FileMode.Open, System.IO.FileAccess.Read,
+                                                              System.IO.FileShare.ReadWrite ||| System.IO.FileShare.Delete)
+                        sha.ComputeHash stream
+                    match FileStat.take file with
+                    | Present (stamp, size) when stamp = before.LastWriteTime && size = before.Length ->
+                        Hashed (before.LastWriteTime, before.Length, System.BitConverter.ToUInt64(bytes, 0))
+                    | after -> Unreadable after
+            with _ -> Unreadable (try FileStat.take file with _ -> Missing)
 
     /// The decision about one observation of a file, without I/O or state (docs/features/idle-perf,
     /// L1): the rules of decision 1c, A1 and content cut-off (docs/implnotes.md, "Epochs").
@@ -156,12 +164,11 @@ module Storage =
                 | (Verdict | Recording), Some _ when rc.Hashing -> NeedHash
                 | _ -> write known (moved ())
 
-        /// The decision after hashing, against the same `known` record. `stat` is the file's stat
-        /// now, used only when the hash is `Unreadable`.
-        let decideHashed (known: FileState option) (hashed: HashResult) (stat: FileStat) (mode: ObserveMode) (rc: RuleContext) =
+        /// The decision after hashing, against the same `known` record.
+        let decideHashed (known: FileState option) (hashed: HashResult) (mode: ObserveMode) (rc: RuleContext) =
             match hashed, known with
-            | Unreadable, _ when mode = PreHash -> Keep known
-            | Unreadable, _ ->
+            | Unreadable _, _ when mode = PreHash -> Keep known
+            | Unreadable stat, _ ->
                 match stat with
                 | Missing -> Keep None
                 | Present (stamp, size) -> write known { Stamp = stamp; Size = size; Hash = None; Changed = rc.Epoch }
@@ -181,25 +188,20 @@ module Storage =
             | Some (st: FileState) when st.Changed > since -> Changed st
             | Some st -> Unchanged st
 
-    /// Messages accepted by the database agent.
+    /// Messages accepted by the database agent (docs/features/idle-perf, L2). The agent keeps the
+    /// records and writes them; it decides nothing and reads no project file. Reads go through
+    /// the snapshot it publishes after every message (`Db.Snapshot`).
     type DatabaseApi =
-        | GetResult of Target * AsyncReplyChannel<Option<BuildResult>>
-        /// Stores a result (its `Epoch` is the run its task started in); dependency files without
-        /// a state are observed (A3).
-        | Store of BuildResult
-        /// Observes a file, stamping a change with the epoch of the last `NewRun`; the reply says
-        /// whether its content changed after the run `since`. Until the `Settle` of a `HashNeeded`
-        /// reply, other observations of the file wait.
-        | Observe of File * ObserveMode * since: int * AsyncReplyChannel<Observation>
-        /// Settles a `HashNeeded` observation with the hash of the file. Applied only if the record
-        /// is still the one the request was made against (compare-and-set); otherwise the current
-        /// state is replied.
-        | Settle of HashRequest * HashResult * AsyncReplyChannel<Observation>
-        /// Starts a new run: replies the next epoch; observations and recordings afresh (A2).
-        /// `hashing` false (`--content-cutoff=off`): the run hashes nothing, and a moved file loses
-        /// its hash. It holds until the next `NewRun` (nothing is hashed before the first).
-        | NewRun of hashing: bool * AsyncReplyChannel<int>
-        /// Observations stay in memory and nothing is appended (`--dump`, `--dryrun`, A8).
+        /// Writes file records, each only if the record is still the one the caller decided
+        /// against (compare-and-set, per file), in one append; replies with the conflicts: the
+        /// file and its current record.
+        | Apply of (File * FileState option * FileState) list * AsyncReplyChannel<(File * FileState option) list>
+        /// Stores a result (its `Epoch` is the run its task started in); replies once the
+        /// snapshot holds it.
+        | Store of BuildResult * AsyncReplyChannel<unit>
+        /// Starts a new run: replies the next epoch.
+        | NewRun of AsyncReplyChannel<int>
+        /// Records stay in memory and nothing is appended (`--dump`, `--dryrun`, A8).
         | InMemory
         | Close
         | CloseWait of AsyncReplyChannel<unit>
@@ -521,21 +523,24 @@ module Storage =
                 with ex ->
                     logger.Log Level.Warning "Failed to delete %s: %s" path (ex.Message)
 
-    /// The agent over a database state, its path table and the stream it appends to (None: in
-    /// memory only); `close` releases the stream and the lock.
-    type private Seen = Seen of FileState option | Hash of known: FileState option
+    /// The snapshot the agent publishes: the database value after its last message.
+    [<Sealed>]
+    type private SnapshotCell(db0: Database) =
+        [<VolatileField>]
+        let mutable value = db0
+        member _.Value with get () = value and set v = value <- v
 
-    let private agent (logger: ILogger) (db0: Database) (table0: Persist.PathTable) (stream0: Stream option) (close: unit -> unit) =
+    /// The agent over a database state, its path table and the stream it appends to (None: in
+    /// memory only); `close` releases the stream and the lock (docs/features/idle-perf, L2).
+    let private agent (logger: ILogger) (cell: SnapshotCell) (table0: Persist.PathTable) (stream0: Stream option) (close: unit -> unit) =
         // Logging the agent's own failure must not throw out of the loop again.
         let logError fmt = Printf.kprintf (fun s -> try logger.Log Error "%s" s with _ -> ()) fmt
         let mbox = new MailboxProcessor<_>(fun mbox ->
             // An exception escaping the loop would kill the agent silently and every later
-            // PostAndReply (GetResult, CloseWait) would wait forever. So a failed store is
-            // logged, nothing of it reaches the file and the result is kept in memory for this
-            // run (the next run rebuilds that target), and close always replies.
+            // PostAndReply (Store, CloseWait) would wait forever. So a failed store is logged,
+            // nothing of it reaches the file and the result is kept in memory for this run (the
+            // next run rebuilds that target), and close always replies.
             let failedStores = ref 0
-            let observed = System.Collections.Generic.HashSet<File>()
-            let recorded = System.Collections.Generic.HashSet<File>()
             /// Appends records. A record that fails to pickle raises and leaves the table as it
             /// was; a failed write stops appending until the database is closed (A4).
             let persist (table, stream) recs =
@@ -550,55 +555,25 @@ module Storage =
                     with ex ->
                         logError "Database write failed, no further records are saved until it is closed: %s" ex.Message
                         table', None
-            /// Observations waiting for the `Settle` of a file being hashed.
-            let pending = System.Collections.Generic.Dictionary<File, ResizeArray<ObserveMode * int * AsyncReplyChannel<Observation>>>()
-            /// Whether the current run hashes (set by `NewRun`).
-            let hashing = ref false
-            let classify = FileRule.classify
-            let store (db: Database) out (file: File) known state =
-                if Some state = known then known, db, out
-                else
-                    let out = try persist out [ DbRecord.FileState (file, state) ] with ex -> logError "Database agent failed to store the state of '%s': %O" file.Name ex; out
-                    Some state, { db with Files = Map.add file state db.Files }, out
-            /// The outcome of a rule decision: the answer (and the record written), or a hash.
-            let apply (db: Database) out (file: File) known = function
-                | FileRule.Keep state -> Seen state, db, out
-                | FileRule.Write state -> let s, db, out = store db out file known state in Seen s, db, out
-                | FileRule.NeedHash -> Hash known, db, out
-            /// One observation of a file: the run's sets, a stat, the rule (FileRule.decide).
-            let observe (db: Database) out mode hashing (file: File) =
-                let known = Map.tryFind file db.Files
-                let seenByVerdict = mode = Verdict && not (observed.Add file)
-                if not seenByVerdict && mode <> PreHash then observed.Add file |> ignore
-                let recordedBefore = mode = Recording && not (recorded.Add file)
-                let rc = { FileRule.Epoch = db.Epoch; FileRule.Hashing = hashing; FileRule.SeenByVerdict = seenByVerdict; FileRule.RecordedBefore = recordedBefore }
-                FileRule.decide known (FileStat.take file) mode rc |> apply db out file known
-            /// Observes and turns the result into the reply; a file to hash becomes pending.
-            let observeReply db out mode since (file: File) =
-                match observe db out mode hashing.Value file with
-                | Seen state, db, out -> classify since state, db, out
-                | Hash known, db, out ->
-                    pending.[file] <- ResizeArray()
-                    HashNeeded (HashRequest (file, known, mode, since)), db, out
-            /// Settles a `HashNeeded` observation (compare-and-set on the record).
-            let settle (db: Database) out (request: HashRequest) result =
-                let file, known, mode = request.File, request.Known, request.Mode
-                if Map.tryFind file db.Files <> known then Map.tryFind file db.Files, db, out
-                else
-                    let stat = match result with Unreadable when mode <> PreHash -> FileStat.take file | _ -> Missing
-                    let rc = { FileRule.Epoch = db.Epoch; FileRule.Hashing = true; FileRule.SeenByVerdict = false; FileRule.RecordedBefore = false }
-                    match FileRule.decideHashed known result stat mode rc with
-                    | FileRule.Keep state -> state, db, out
-                    | FileRule.Write state -> store db out file known state
-                    | FileRule.NeedHash -> known, db, out   // decideHashed never asks again
+            let publish db = cell.Value <- db
             let rec loop (db: Database) out =
                 async {
                     let! msg = mbox.Receive()
                     match msg with
-                    | GetResult(key, chnl) ->
-                        chnl.Reply (Map.tryFind key db.Status)
+                    | Apply (writes, ch) ->
+                        let accepted, conflicts = writes |> List.partition (fun (f, expected, _) -> Map.tryFind f db.Files = expected)
+                        let out =
+                            if accepted.IsEmpty then out
+                            else
+                                try persist out [ for f, _, st in accepted -> DbRecord.FileState (f, st) ]
+                                with ex ->
+                                    logError "Database agent failed to store the state of %d file(s): %O" accepted.Length ex
+                                    out
+                        let db = { db with Files = accepted |> List.fold (fun m (f, _, st) -> Map.add f st m) db.Files }
+                        publish db
+                        ch.Reply [ for f, _, _ in conflicts -> f, Map.tryFind f db.Files ]
                         return! loop db out
-                    | Store result ->
+                    | Store (result, ch) ->
                         let out =
                             try persist out [ DbRecord.Result result ]
                             with ex ->
@@ -606,43 +581,13 @@ module Storage =
                                 let name = try (result.Targets |> List.map (fun t -> t.Name) |> String.concat ", ") with _ -> "?"
                                 logError "Database agent failed to store the result of '%s': %O" name ex
                                 out
-                        // a dependency file without a state (a delegated result, A3) is observed
-                        let db, out =
-                            result.Depends
-                            |> List.choose (function FileDep f | TargetDep (FileTarget f) -> Some f | _ -> None)
-                            |> List.filter (db.Files.ContainsKey >> not)
-                            |> List.fold (fun (db, out) f -> let _, db, out = observe db out Verdict false f in db, out) (addResult db result, out)
+                        let db = addResult db result
+                        publish db
+                        ch.Reply ()
                         return! loop db out
-                    | Observe (file, mode, since, chnl) ->
-                        match pending.TryGetValue file with
-                        | true, waiting ->
-                            waiting.Add((mode, since, chnl))
-                            return! loop db out
-                        | _ ->
-                            let o, db, out = observeReply db out mode since file
-                            chnl.Reply o
-                            return! loop db out
-                    | Settle (request, result, chnl) ->
-                        let file = request.File
-                        let state, db, out = settle db out request result
-                        chnl.Reply (classify request.Since state)
-                        // the observations that waited are made now, against the settled record
-                        let waiting = match pending.TryGetValue file with | true, w -> List.ofSeq w | _ -> []
-                        pending.Remove file |> ignore
-                        let db, out =
-                            waiting |> List.fold (fun (db, out) (mode, since, ch: AsyncReplyChannel<Observation>) ->
-                                match pending.TryGetValue file with
-                                | true, w -> w.Add((mode, since, ch)); db, out
-                                | _ ->
-                                    let o, db, out = observeReply db out mode since file
-                                    ch.Reply o
-                                    db, out) (db, out)
-                        return! loop db out
-                    | NewRun (hashes, ch) ->
-                        hashing.Value <- hashes
-                        observed.Clear()
-                        recorded.Clear()
+                    | NewRun ch ->
                         let db = { db with Epoch = db.Epoch + 1 }
+                        publish db
                         ch.Reply db.Epoch
                         return! loop db out
                     | InMemory ->
@@ -656,10 +601,168 @@ module Storage =
                         with ex -> logError "Database agent failed to close: %O" ex
                         match msg with CloseWait ch -> ch.Reply() | _ -> ()
                 }
-            loop db0 (table0, stream0))
+            loop cell.Value (table0, stream0))
         mbox.Error.Add (fun ex -> logError "Database agent stopped: %O" ex)
         mbox.Start()
         mbox
+
+    type private HasherMsg =
+        | HashFile of File * FileStat * onComputed: (System.TimeSpan -> unit) * AsyncReplyChannel<HashResult>
+        | Hashed' of File * FileStat * HashResult
+
+    /// Hashes behind their own mailbox (docs/features/idle-perf, L3): one computation per (file,
+    /// stat) while it runs, every other asker gets the same result; at most as many hashes at
+    /// once as there are cores. It knows nothing of records, epochs or runs.
+    [<Sealed>]
+    type Hasher() =
+        let slots = new System.Threading.SemaphoreSlim(System.Environment.ProcessorCount)
+        let mbox = MailboxProcessor<HasherMsg>.Start(fun mbox ->
+            let running = System.Collections.Generic.Dictionary<File * FileStat, ResizeArray<AsyncReplyChannel<HashResult>>>(HashIdentity.Structural)
+            let rec loop () = async {
+                let! msg = mbox.Receive()
+                match msg with
+                | HashFile (file, stat, onComputed, ch) ->
+                    match running.TryGetValue ((file, stat)) with
+                    | true, waiters -> waiters.Add ch
+                    | _ ->
+                        running.[(file, stat)] <- ResizeArray [ ch ]
+                        Async.Start (async {
+                            do! slots.WaitAsync() |> Async.AwaitTask
+                            let result =
+                                try
+                                    let watch = System.Diagnostics.Stopwatch.StartNew()
+                                    let r = Content.hash file
+                                    (try onComputed watch.Elapsed with _ -> ())
+                                    r
+                                finally slots.Release() |> ignore
+                            mbox.Post (Hashed' (file, stat, result)) })
+                | Hashed' (file, stat, result) ->
+                    match running.TryGetValue ((file, stat)) with
+                    | true, waiters ->
+                        running.Remove ((file, stat)) |> ignore
+                        for ch in waiters do ch.Reply result
+                    | _ -> ()
+                return! loop () }
+            loop ())
+        /// The hash of the file as it is at `stat`; `onComputed` gets the time of a hash this
+        /// request computed (not of one it shared).
+        member _.Hash (file: File) (stat: FileStat) (onComputed: System.TimeSpan -> unit) =
+            mbox.PostAndAsyncReply(fun ch -> HashFile (file, stat, onComputed, ch))
+
+    /// The build database: the agent that keeps and writes the records, the snapshot it
+    /// publishes and the hasher (docs/features/idle-perf, L2-L3).
+    [<Sealed>]
+    type Db private (agent: MailboxProcessor<DatabaseApi>, cell: SnapshotCell, hasher: Hasher) =
+        static member internal Create (logger: ILogger) (db0: Database) table stream close =
+            let cell = SnapshotCell db0
+            new Db(agent logger cell table stream close, cell, Hasher())
+        /// The records after the agent's last message; reading it posts nothing.
+        member _.Snapshot : Database = cell.Value
+        member _.Hasher = hasher
+        member _.Post (msg: DatabaseApi) = agent.Post msg
+        member _.PostAndReply (build: AsyncReplyChannel<'r> -> DatabaseApi, ?timeout: int) =
+            match timeout with
+            | Some t -> agent.PostAndReply(build, t)
+            | None -> agent.PostAndReply build
+        member _.PostAndAsyncReply (build: AsyncReplyChannel<'r> -> DatabaseApi) = agent.PostAndAsyncReply build
+        interface System.IDisposable with
+            member _.Dispose() = (agent :> System.IDisposable).Dispose()
+
+    /// What a run knows about files besides their records (docs/features/idle-perf, L4): the
+    /// files observed in it (a verdict's later observation of one answers from the record, after
+    /// the first observation has written it) and the files a body recorded (A1). One per run.
+    [<Sealed>]
+    type RunFiles() =
+        let observed = System.Collections.Concurrent.ConcurrentDictionary<File, System.Threading.Tasks.Task>()
+        let recorded = System.Collections.Concurrent.ConcurrentDictionary<File, byte>()
+        /// Claims the file's first observation in this run: `Choice1Of2` the completion to set
+        /// once its record is written; `Choice2Of2` the first observation's task.
+        member internal _.Claim (file: File) =
+            match observed.TryGetValue file with
+            | true, task -> Choice2Of2 task
+            | _ ->
+                let tcs = System.Threading.Tasks.TaskCompletionSource<unit>(System.Threading.Tasks.TaskCreationOptions.RunContinuationsAsynchronously)
+                if observed.TryAdd(file, tcs.Task :> System.Threading.Tasks.Task) then Choice1Of2 tcs
+                else Choice2Of2 observed.[file]
+        /// Whether a body already recorded the file in this run (and marks it recorded).
+        member internal _.RecordedBefore (file: File) = not (recorded.TryAdd(file, 0uy))
+
+    /// Where an observation runs: the database, the run's files, whether the run hashes, and the
+    /// counter of hashes computed.
+    type ObserveContext = { Db: Db; Run: RunFiles; Hashing: bool; OnHashed: System.TimeSpan -> unit }
+
+    /// The record of a target from the snapshot (no message).
+    let tryGetResult (db: Db) (target: Target) = Map.tryFind target db.Snapshot.Status
+
+    /// Stores a result; completes once the snapshot holds it.
+    let storeResult (db: Db) (result: BuildResult) = db.PostAndAsyncReply(fun ch -> Store (result, ch))
+
+    /// Observes a group of files (docs/features/idle-perf, L5): their stats on this thread, the
+    /// rule against one snapshot, the hashes (in parallel, through the hasher), every write in one
+    /// `Apply`, a conflict decided again on a fresh stat (at most 3 times). Replies per file, in
+    /// the order given, whether its content changed after the run `since`. A verdict's later
+    /// observation of a file in the run waits for the first one and answers from the record.
+    let observeFiles (oc: ObserveContext) (mode: ObserveMode) (since: int) (files: File list) = async {
+        let distinct = files |> List.distinct
+        let firsts = ResizeArray<System.Threading.Tasks.TaskCompletionSource<unit>>()
+        let waits = ResizeArray<File * System.Threading.Tasks.Task>()
+        let todo = ResizeArray<File * bool>()
+        for f in distinct do
+            let seen =
+                if mode = PreHash then None
+                else
+                    match oc.Run.Claim f with
+                    | Choice1Of2 tcs -> firsts.Add tcs; None
+                    | Choice2Of2 task -> if mode = Verdict then Some task else None
+            match seen with
+            | Some task -> waits.Add((f, task))
+            | None -> todo.Add((f, mode = Recording && oc.Run.RecordedBefore f))
+        let states = System.Collections.Generic.Dictionary<File, FileState option>()
+        let stats = System.Collections.Generic.Dictionary<File, FileStat>()
+        // the full stat for the files decided here; a verdict's later observation needs only
+        // whether the file exists (below)
+        for f, _ in todo do stats.[f] <- FileStat.take f
+        try
+            // decides the files against their records and writes the changed ones
+            let rec settle (round: int) (pending: (File * bool * FileState option * FileStat) list) = async {
+                if not pending.IsEmpty then
+                    let epoch = oc.Db.Snapshot.Epoch
+                    let rc recordedBefore = { FileRule.Epoch = epoch; FileRule.Hashing = oc.Hashing; FileRule.SeenByVerdict = false; FileRule.RecordedBefore = recordedBefore }
+                    // decided here; only the files to hash go through the hasher, in parallel
+                    let first = [| for f, rb, known, stat in pending -> f, rb, known, stat, FileRule.decide known stat mode (rc rb) |]
+                    let! hashed =
+                        [ for f, rb, known, stat, d in first do
+                            if d = FileRule.NeedHash then
+                                yield async {
+                                    let! h = oc.Db.Hasher.Hash f stat oc.OnHashed
+                                    return f, FileRule.decideHashed known h mode (rc rb) } ]
+                        |> function [] -> async.Return [||] | hs -> Async.Parallel hs
+                    let hashedBy = dict hashed
+                    let decided = [| for f, rb, known, _, d in first -> f, rb, known, (if d = FileRule.NeedHash then hashedBy.[f] else d) |]
+                    let writes = ResizeArray()
+                    for f, _, known, d in decided do
+                        match d with
+                        | FileRule.Keep st -> states.[f] <- st
+                        | FileRule.Write st -> states.[f] <- Some st; writes.Add((f, known, st))
+                        | FileRule.NeedHash -> states.[f] <- known   // decideHashed never asks again
+                    if writes.Count > 0 then
+                        let! conflicts = oc.Db.PostAndAsyncReply(fun ch -> Apply (List.ofSeq writes, ch))
+                        if round >= 3 then
+                            for f, current in conflicts do states.[f] <- current
+                        else
+                            let byFile = decided |> Array.map (fun (f, rb, _, _) -> f, rb) |> dict
+                            let again = [ for f, current in conflicts -> f, byFile.[f], current, FileStat.take f ]
+                            do! settle (round + 1) again }
+            let snapshot = oc.Db.Snapshot
+            do! settle 1 [ for f, rb in todo -> f, rb, Map.tryFind f snapshot.Files, stats.[f] ]
+        finally
+            for tcs in firsts do tcs.TrySetResult () |> ignore
+        // a verdict's later observation: after the first one, the record now if the file exists now
+        for f, task in waits do
+            if not task.IsCompleted then
+                do! (try Async.AwaitTask (task :?> System.Threading.Tasks.Task<unit>) with _ -> async.Return ())
+            states.[f] <- (if File.exists f then Map.tryFind f oc.Db.Snapshot.Files else None)
+        return [| for f in files -> FileRule.classify since states.[f] |] }
 
     /// <summary>
     /// Opens the database exclusively (`<dbpath>.lock`, waiting up to `lockWait` for another run);
@@ -670,7 +773,7 @@ module Storage =
         try
             if reset then cleanup dbpath logger
             let db, table, stream = impl.openDatabaseFile root dbpath logger
-            agent logger db table stream (fun () -> try stream |> Option.iter (fun s -> s.Dispose()) finally lockStream.Dispose())
+            Db.Create logger db table stream (fun () -> try stream |> Option.iter (fun s -> s.Dispose()) finally lockStream.Dispose())
         with _ ->
             lockStream.Dispose()
             reraise ()
@@ -689,7 +792,7 @@ module Storage =
     /// Tracks build results within the session but does not write to disk.
     /// </summary>
     let noopDb () =
-        agent (CustomLogger (fun _ -> false) ignore) (newDatabase()) (Persist.PathTable.empty ".") None ignore
+        Db.Create (CustomLogger (fun _ -> false) ignore) (newDatabase()) (Persist.PathTable.empty ".") None ignore
 
     /// Deletes existing database and backup files to reset the build log, under the database
     /// lock (`--resetdb` resets inside `openDb` instead, A5).

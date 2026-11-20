@@ -370,6 +370,7 @@ module XakeScriptBuilder =
             Logger = engine.RootLogger
             HeldResources = []
             Spellings = ExecCore.newSpellings ()
+            RunFiles = Storage.RunFiles ()
             RunEpoch = 0
             Counters = RunCounters()
         }

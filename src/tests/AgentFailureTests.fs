@@ -50,7 +50,7 @@ type AgentFailureTests() =
         Directory.CreateDirectory dir |> ignore
         let dbpath = dir </> ".xake"
         let mkTarget name = name |> File.make |> FileTarget
-        let get (db: Agent<DatabaseApi>) t = db.PostAndReply((fun ch -> GetResult(t, ch)), timeoutMs)
+        let get (db: Db) t = Storage.tryGetResult db t
         try
             let db = openDb dir dbpath logger
             let good1 = { makeResult [mkTarget "good1.dll"] with Depends = [ Var("A", Some "1") ] }
@@ -58,9 +58,7 @@ type AgentFailureTests() =
             // half way through the record
             let bad = { makeResult [mkTarget "bad.dll"] with Depends = [ Var("B", Some "2"); Var(null, None) ] }
             let good2 = { makeResult [mkTarget "good2.dll"] with Depends = [ Var("C", Some "3") ] }
-            Store good1 |> db.Post
-            Store bad |> db.Post
-            Store good2 |> db.Post
+            for r in [ good1; bad; good2 ] do db.PostAndReply((fun ch -> Store (r, ch)), timeoutMs)
 
             Assert.IsTrue((get db (mkTarget "bad.dll")).IsSome, "the result is kept in memory for this run")
             db.PostAndReply(CloseWait, timeoutMs)

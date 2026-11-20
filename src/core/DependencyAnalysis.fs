@@ -21,45 +21,22 @@ type ChangeReason =
 /// <param name="ctx"></param>
 /// <param name="target"></param>
 let getExecTime (ctx: ExecContext) target =
-    (fun ch -> Storage.GetResult(target, ch)) |> ctx.Db.PostAndReply
+    Storage.tryGetResult ctx.Db target
     |> Option.fold (fun _ r -> r.Steps |> List.sumBy (fun s -> s.OwnTime)) 0<ms>
 
-/// Content hashes (docs/content-cutoff.md).
-module Content =
-    /// The file's stat and the first 8 bytes of the SHA-256 of its content, taken together: stat,
-    /// hash, stat. `Unreadable` when the stat moved meanwhile, or the file cannot be read.
-    let hash (file: File) =
-        try
-            let before = File.getFileInfo file
-            if not before.Exists then Unreadable
-            else
-                let bytes =
-                    use sha = System.Security.Cryptography.SHA256.Create()
-                    use stream = new System.IO.FileStream(before.FullName, System.IO.FileMode.Open, System.IO.FileAccess.Read,
-                                                          System.IO.FileShare.ReadWrite ||| System.IO.FileShare.Delete)
-                    sha.ComputeHash stream
-                let after = File.getFileInfo file
-                if after.Exists && after.LastWriteTime = before.LastWriteTime && after.Length = before.Length
-                then Hashed (before.LastWriteTime, before.Length, System.BitConverter.ToUInt64(bytes, 0))
-                else Unreadable
-        with _ -> Unreadable
+/// Observes a group of files (Storage.observeFiles) in the context's run: per file, in the
+/// order given, missing or whether its content changed after the run `since`.
+let observeMany (ctx: ExecContext) (mode: ObserveMode) (since: int) (files: File list) =
+    if files.IsEmpty then async.Return [||] else Storage.observeFiles ctx.Observe mode since files
 
-/// Observes a file through the database (decisions 1c, A1): missing, or its state and whether its
-/// content changed after the run `since`. A file the agent asks to hash (`HashNeeded`) is hashed
-/// here, off the agent, and settled.
+/// Observes one file (docs/features/idle-perf, L5).
 let observeSince (ctx: ExecContext) (mode: ObserveMode) (since: int) (file: File) = async {
-    let! o = ctx.Db.PostAndAsyncReply(fun ch -> Observe(file, mode, since, ch))
-    match o with
-    | HashNeeded request ->
-        let watch = System.Diagnostics.Stopwatch.StartNew()
-        let hashed = Content.hash request.File
-        match ctx.Counters with null -> () | c -> c.FileHashed watch.Elapsed
-        return! ctx.Db.PostAndAsyncReply(fun ch -> Settle(request, hashed, ch))
-    | o -> return o }
+    let! o = observeMany ctx mode since [ file ]
+    return o.[0] }
 
-/// Observes a file where only the record matters, not the reply.
-let observe (ctx: ExecContext) (mode: ObserveMode) (file: File) =
-    observeSince ctx mode System.Int32.MaxValue file |> Async.Ignore
+/// Observes files where only the record matters, not the reply.
+let observe (ctx: ExecContext) (mode: ObserveMode) (files: File list) =
+    observeMany ctx mode System.Int32.MaxValue files |> Async.Ignore
 
 /// Gets single dependency state and reason of a change, for a dependent built in run `epoch`
 /// (decision 1c): a file or target dependency changed when it was seen to change after that run.
@@ -87,14 +64,14 @@ let rec getDepState getVar getFileList (getChangedDeps: Target -> ChangeReason l
          | Changed st ->
             ChangeReason.FilesChanged [show file], Some (sprintf "changed in run %d, after run %d (stamp %A, size %d)" st.Changed epoch st.Stamp st.Size)
          | Unchanged _ -> NotChanged, None
-         | Absent | HashNeeded _ -> ChangeReason.FilesChanged [show file], Some "file does not exist")
+         | Absent -> ChangeReason.FilesChanged [show file], Some "file does not exist")
 
     | TargetDep (FileTarget file as t) ->
         (match observe epoch file with
          | Changed st ->
             ChangeReason.Depends t, Some (sprintf "dependee changed in run %d, after run %d" st.Changed epoch)
          | Unchanged _ -> transitive t
-         | Absent | HashNeeded _ -> ChangeReason.DependsMissingTarget t, None)
+         | Absent -> ChangeReason.DependsMissingTarget t, None)
 
     | TargetDep (PhonyAction _ as t) ->
         (match getResult t with
@@ -170,19 +147,24 @@ let getChangeReasons (ctx: ExecContext) (current: Target -> (Target list * Set<S
         filesChanged @ other |> List.rev
 
 
-    let lastBuild = (fun ch -> GetResult(target, ch)) |> ctx.Db.PostAndReply
+    let lastBuild = Storage.tryGetResult ctx.Db target
 
     match lastBuild with
     | Some {BuildResult.Depends = []} ->
         [ChangeReason.Other "No dependencies", Some "It means target is not \"pure\" and depends on something beyond our control (oracle)"]
 
     | Some ({BuildResult.Depends = depends; Targets = result; Epoch = epoch} as built) ->
-        let getResult t = (fun ch -> GetResult(t, ch)) |> ctx.Db.PostAndReply
+        let getResult t = Storage.tryGetResult ctx.Db t
         // with cut-off off every dependee goes through the transitive rule, as in phase 1 (4.0)
         let taskState t = if ctx.Options.ContentCutoff then Scheduler.query ctx.Engine.Scheduler t else NotStarted
+        // the target's files in one observation (docs/features/idle-perf, L5)
+        let observed =
+            let files = depends |> List.choose (function FileDep f | TargetDep (FileTarget f) -> Some f | _ -> None) |> List.distinct
+            let replies = observeMany ctx Verdict epoch files |> Async.RunSynchronously
+            Seq.zip files replies |> dict
         let depState =
             getDepState (Util.getVar ctx.Vars) (toFileList ctx.Options.ProjectRoot) getTargetDeps taskState
-                        (fun since f -> observeSince ctx Verdict since f |> Async.RunSynchronously) getResult (File.display ctx.Options.ProjectRoot) epoch
+                        (fun _ f -> observed.[f]) getResult (File.display ctx.Options.ProjectRoot) epoch
 
         // the rule now (M9): a current output missing (an `also` added since included), or a static
         // set other than the recorded one
@@ -268,7 +250,7 @@ let dumpDeps (ctx: ExecContext) current (target: Target list) =
     let state (f: File) =
         match observeSince ctx Verdict System.Int32.MaxValue f |> Async.RunSynchronously with
         | Unchanged st | Changed st -> sprintf "stamp %A, size %d, changed in run %d" st.Stamp st.Size st.Changed
-        | Absent | HashNeeded _ -> "NOT EXISTS"
+        | Absent -> "NOT EXISTS"
 
     let rec displayNestedDeps ii =
         function
@@ -314,7 +296,7 @@ let dumpDeps (ctx: ExecContext) current (target: Target list) =
         if not <| doneTargets.ContainsKey(target) then
             doneTargets.Add(target, 1)
 
-            let lastResult = (fun ch -> GetResult(target, ch)) |> ctx.Db.PostAndReply
+            let lastResult = Storage.tryGetResult ctx.Db target
             let built = match lastResult with Some r -> sprintf " (built in run %d)" r.Epoch | None -> ""
             printfn "%sTarget %A%s" (indent ii) (target.Display ctx.Options.ProjectRoot) built
 

@@ -203,7 +203,7 @@ type EngineOptions = {
 /// Engine-level immutable state shared across all tasks.
 and EngineState = {
     Options: EngineOptions
-    Db: Agent<Storage.DatabaseApi>
+    Db: Storage.Db
     Scheduler: Scheduler<ExecStatus>
     RootLogger: ILogger
 }
@@ -232,6 +232,9 @@ and ExecContext = {
     /// (the `File`) and whether it was a target. One file under two spellings is an error for two targets, a
     /// warning otherwise (5.0). Created per run, with the run's memo.
     Spellings: System.Collections.Concurrent.ConcurrentDictionary<string, File * bool>
+    /// The files observed and recorded in this run (docs/features/idle-perf, L4). Created per run,
+    /// with the run's memo.
+    RunFiles: Storage.RunFiles
     /// The epoch (run number) of the run this context belongs to, taken at `Scheduler.newRun`:
     /// a result built in the run gets it (A2).
     RunEpoch: int
@@ -240,8 +243,12 @@ and ExecContext = {
 } with
     /// Shortcut to engine options.
     member ctx.Options = ctx.Engine.Options
-    /// Shortcut to the build database agent.
+    /// Shortcut to the build database.
     member ctx.Db = ctx.Engine.Db
+    /// Where this context's file observations run: its database, its run, whether it hashes.
+    member ctx.Observe =
+        { Storage.ObserveContext.Db = ctx.Engine.Db; Storage.ObserveContext.Run = ctx.RunFiles; Storage.ObserveContext.Hashing = ctx.Engine.Options.ContentCutoff
+          Storage.ObserveContext.OnHashed = match ctx.Counters with null -> ignore | c -> c.FileHashed }
 
 /// Functions over the execution context for code outside this assembly. A record copy
 /// (`{ ctx with ... }`) compiled in another assembly calls the full constructor and breaks

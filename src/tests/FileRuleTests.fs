@@ -81,34 +81,34 @@ let ``after hashing: the same content keeps its run``() =
     let k = record 3 (Some 5UL)
     let stamp, size = t0.AddSeconds 1.0, 12L
     Assert.AreEqual(Write { movedState (Some 5UL) 3 with Stamp = stamp; Size = size },
-                    decideHashed (Some k) (Hashed (stamp, size, 5UL)) Missing Verdict hashing)
+                    decideHashed (Some k) (Hashed (stamp, size, 5UL)) Verdict hashing)
 
 [<Test>]
 let ``after hashing: other content is a change in this run``() =
     let k = record 3 (Some 5UL)
     Assert.AreEqual(Write (movedState (Some 6UL) 7),
-                    decideHashed (Some k) (Hashed (t0.AddSeconds 1.0, 12L, 6UL)) Missing Recording hashing)
+                    decideHashed (Some k) (Hashed (t0.AddSeconds 1.0, 12L, 6UL)) Recording hashing)
     Assert.AreEqual(Write (movedState (Some 6UL) 7),
-                    decideHashed None (Hashed (t0.AddSeconds 1.0, 12L, 6UL)) Missing Verdict hashing)
+                    decideHashed None (Hashed (t0.AddSeconds 1.0, 12L, 6UL)) Verdict hashing)
 
 [<Test>]
 let ``after hashing: an output never hashed and not moved gets its hash, changed kept``() =
     let k = record 3 None
     Assert.AreEqual(Write { k with Hash = Some 6UL; Stamp = t0.AddMilliseconds 5.0 },
-                    decideHashed (Some k) (Hashed (t0.AddMilliseconds 5.0, 10L, 6UL)) Missing (Output true) hashing)
+                    decideHashed (Some k) (Hashed (t0.AddMilliseconds 5.0, 10L, 6UL)) (Output true) hashing)
 
 [<Test>]
 let ``after hashing: pre-hash writes only the hash, and only for an equal stat``() =
     let k = record 3 None
-    Assert.AreEqual(Write { k with Hash = Some 6UL }, decideHashed (Some k) (Hashed (t0.AddMilliseconds 5.0, 10L, 6UL)) Missing PreHash hashing)
-    Assert.AreEqual(Keep (Some k), decideHashed (Some k) (Hashed (t0.AddSeconds 1.0, 12L, 6UL)) Missing PreHash hashing)
-    Assert.AreEqual(Keep (Some k), decideHashed (Some k) Unreadable moved PreHash hashing)
+    Assert.AreEqual(Write { k with Hash = Some 6UL }, decideHashed (Some k) (Hashed (t0.AddMilliseconds 5.0, 10L, 6UL)) PreHash hashing)
+    Assert.AreEqual(Keep (Some k), decideHashed (Some k) (Hashed (t0.AddSeconds 1.0, 12L, 6UL)) PreHash hashing)
+    Assert.AreEqual(Keep (Some k), decideHashed (Some k) (Unreadable moved) PreHash hashing)
 
 [<Test>]
 let ``after hashing: unreadable is a change without a hash, or absent when the file is gone``() =
     let k = record 3 (Some 5UL)
-    Assert.AreEqual(Write (movedState None 7), decideHashed (Some k) Unreadable moved Verdict hashing)
-    Assert.AreEqual(Keep None, decideHashed (Some k) Unreadable Missing Recording hashing)
+    Assert.AreEqual(Write (movedState None 7), decideHashed (Some k) (Unreadable moved) Verdict hashing)
+    Assert.AreEqual(Keep None, decideHashed (Some k) (Unreadable Missing) Recording hashing)
 
 [<Test>]
 let ``classify compares the run a state changed in with since``() =

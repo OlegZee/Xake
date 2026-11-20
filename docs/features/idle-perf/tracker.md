@@ -10,7 +10,7 @@
 - [x] Design rewritten (design.md, 2026-11-20)
 - [x] Owner: go async; design by layers (design.md, third version)
 - [x] Step 1: pure FileRule (L0-L1), agent calls it, table tests
-- [ ] Step 2: snapshot, Apply, hasher, RunFiles, Storage.observe (L2-L5); measure
+- [x] Step 2: snapshot, Apply, hasher, RunFiles, Storage.observeFiles (L2-L5); measured
 - [ ] Step 3: async verdict and memo, Warm, callers (L6-L7)
 - [ ] Tests per layer and the bench gates
 - [ ] Release notes "5.0.0 (unreleased)": the fix; the FS0041 line for recursive recipes

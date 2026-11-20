@@ -140,25 +140,29 @@ let newTaskContext targets matches ctx =
 /// Re-observes (and hashes, with `cutoff`) the file outputs of a rule that just finished; true when
 /// every output kept the content it had (content cut-off).
 let private observeOutputs (ctx: ExecContext) (cutoff: bool) (targets: Target list) = async {
-    let mutable same = true
-    for t in targets do
-        match t with
-        | FileTarget f ->
-            // changed in this run, or not
-            let! state = observeSince ctx (Output cutoff) (ctx.RunEpoch - 1) f
-            match state with
-            | Unchanged _ -> ()
-            | Changed _ | Absent | HashNeeded _ -> same <- false
-        | PhonyAction _ -> same <- false
-    return same }
+    let files = targets |> List.choose (function FileTarget f -> Some f | PhonyAction _ -> None)
+    // changed in this run, or not: one observation for the task's outputs
+    let! states = observeMany ctx (Output cutoff) (ctx.RunEpoch - 1) files
+    let phony = targets |> List.exists (function PhonyAction _ -> true | _ -> false)
+    return not phony && states |> Array.forall (function Unchanged _ -> true | Changed _ | Absent -> false) }
 
 /// Hashes the outputs of a rule about to run that have no hash and were not touched since they
 /// were recorded, so that cut-off works from their first rebuild.
-let private preHash (ctx: ExecContext) (targets: Target list) = async {
-    for t in targets do
-        match t with
-        | FileTarget f -> do! observe ctx PreHash f
-        | PhonyAction _ -> () }
+let private preHash (ctx: ExecContext) (targets: Target list) =
+    observe ctx PreHash (targets |> List.choose (function FileTarget f -> Some f | PhonyAction _ -> None))
+
+/// Stores a task's result and waits until the snapshot holds it (docs/features/idle-perf, L2);
+/// then its dependency files without a record (a delegated result, A3) are observed, without
+/// hashing, as the agent did on `Store` before.
+let private storeResult (ctx: ExecContext) (result: BuildResult) = async {
+    do! Storage.storeResult ctx.Db result
+    let files = ctx.Db.Snapshot.Files
+    let missing =
+        result.Depends
+        |> List.choose (function FileDep f | TargetDep (FileTarget f) -> Some f | _ -> None)
+        |> List.filter (files.ContainsKey >> not) |> List.distinct
+    if not missing.IsEmpty then
+        do! Storage.observeFiles { ctx.Observe with Hashing = false } Verdict System.Int32.MaxValue missing |> Async.Ignore }
 
 /// Whether a rule's outputs take part in content cut-off (`noContentCutoff` opts out).
 let private ruleCutoff (header: RuleHeader) = header.ContentCutoff <> Some false
@@ -225,7 +229,7 @@ let rec execOne (ctx: ExecContext) target =
 
                 checkOutputsWritten targets
                 let! same = observeOutputs ctx cutoff targets
-                Store result |> ctx.Db.Post
+                do! storeResult ctx result
                 ctx.Counters.TargetRun ()
                 if same && cutoff && ctx.Options.ContentCutoff then
                     ctx.Counters.TargetCutOff ()
@@ -271,13 +275,13 @@ let rec execOne (ctx: ExecContext) target =
             let! epoch =
                 if bodyRan.Value then async.Return ctx.RunEpoch
                 else async {
-                    let! local = ctx.Db.PostAndAsyncReply(fun ch -> GetResult(primaryTarget, ch))
+                    let local = Storage.tryGetResult ctx.Db primaryTarget
                     return local |> Option.map (fun r -> r.Epoch) |> Option.defaultValue ctx.RunEpoch }
             let result = { result with Epoch = epoch }
 
             checkOutputsWritten targets
             let! _ = observeOutputs ctx (ruleCutoff header) targets
-            Store result |> ctx.Db.Post
+            do! storeResult ctx result
 
             do Progress.TaskComplete primaryTarget |> ctx.Progress.Post
             do ctx.Logger.Log Command "Completed delegated %s" (primaryTarget.Display ctx.Options.ProjectRoot)
@@ -376,7 +380,7 @@ let rec execOne (ctx: ExecContext) target =
             // the dependee is built or up to date now: its file is observed (a built one already
             // was, right after its rule) and the dependency recorded by id (decision 1c)
             match target with
-            | FileTarget file -> do! observe ctx Verdict file
+            | FileTarget file -> do! observe ctx Verdict [ file ]
             | PhonyAction _ -> ()
             return target, status, TargetDep target
         }
@@ -384,7 +388,7 @@ let rec execOne (ctx: ExecContext) target =
         target |> function
         | FileTarget file when File.exists file ->
             async {
-                do! observe ctx Recording file
+                do! observe ctx Recording [ file ]
                 return target, ExecStatus.JustFile, FileDep file
             }
         | _ ->
@@ -555,7 +559,7 @@ let private verdict (ctx: ExecContext) getDeps (targets: Target list) = async {
     let names = targets |> List.map (fun t -> t.Name)
     let primary = List.head targets
     if ctx.Options.ContentCutoff then
-        let! last = ctx.Db.PostAndAsyncReply(fun ch -> GetResult(primary, ch))
+        let last = Storage.tryGetResult ctx.Db primary
         let dependees = last |> Option.map (fun r -> r.Depends |> List.choose (function TargetDep t -> Some t | _ -> None)) |> Option.defaultValue []
         for d in dependees do
             match Scheduler.query ctx.Engine.Scheduler d with
@@ -595,8 +599,8 @@ let private verdict (ctx: ExecContext) getDeps (targets: Target list) = async {
 /// line and every demand is a run.
 let beginRun (ctx: ExecContext) = async {
     do Scheduler.newRun ctx.Engine.Scheduler
-    let! epoch = ctx.Db.PostAndAsyncReply(fun ch -> Storage.NewRun (ctx.Options.ContentCutoff, ch))
-    let ctx = { ctx with Spellings = newSpellings (); RunEpoch = epoch }
+    let! epoch = ctx.Db.PostAndAsyncReply Storage.NewRun
+    let ctx = { ctx with Spellings = newSpellings (); RunFiles = Storage.RunFiles (); RunEpoch = epoch }
     let getDeps = getChangeReasons ctx (currentRule ctx) |> memoizeRec
     return { ctx with NeedRebuild = verdict ctx getDeps; UpToDate = getDeps >> List.isEmpty }, getDeps }
 
@@ -643,7 +647,7 @@ let runBuild (ctx: ExecContext) groups =
 
 /// Creates the shared execution context and returns it together with a finalize callback.
 /// The finalize callback closes the database, disposes the scheduler, and flushes logs.
-let createContextCore (options: EngineOptions) (db: Agent<Storage.DatabaseApi>) vars showProgress =
+let createContextCore (options: EngineOptions) (db: Storage.Db) vars showProgress =
     // the root every path is shown and stored against, normalised once (A6, R3)
     let options = { options with ProjectRoot = (File.make options.ProjectRoot).Name }
     let logger = options.Logger
@@ -678,6 +682,7 @@ let createContextCore (options: EngineOptions) (db: Agent<Storage.DatabaseApi>) 
         ShowProgress = showProgress
         HeldResources = []
         Spellings = newSpellings ()
+        RunFiles = Storage.RunFiles ()
         RunEpoch = 0
         Counters = RunCounters()
         }

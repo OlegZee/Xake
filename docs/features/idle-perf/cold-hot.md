@@ -226,3 +226,21 @@ Findings:
 - The micro-benchmark does not reproduce the full build's thread-pool parking. Its flood of
   180,000 requests drains in 0.3-0.6 s, because nothing else competes for the pool; in the real
   build the recipes' own continuations do.
+
+## Step 2 measured (2026-11-20, design.md L2-L5)
+
+The `Storage.observeFiles` facade, the snapshot, `Apply`, the hasher and `RunFiles`. The verdict
+is still synchronous, with one `RunSynchronously` per target instead of per file, and the
+`need` of plain files is still one facade call per file (step 3 changes both). Same bench, `-t 16`:
+
+| Run | Before (preview.2) | Step 2 | 4.0.0 (same session) |
+|---|---|---|---|
+| full build | 5.5-8.0 s | 1.51 s (2 runs) | 0.41-0.45 s |
+| no-change | 2.24-2.38 s | 0.87-0.92 s (3 runs) | 0.58-0.63 s |
+
+Split of the no-change walk (temporary timers): the facade takes 0.71-0.81 s of a 0.85-0.96 s
+walk, for 2,388 calls and 181,764 files. The cost is almost all in the existence check per
+dependency (`File.Exists`, about 2 us, the owner's decision) and one `Map` lookup per file
+against the snapshot, both on the one thread of the walk. Claims cost 0.08 s and the decisions
+0.01 s. In a no-change run the agent receives one `NewRun` and the `Store`s of the phony targets,
+and nothing else. Step 3 runs the walk on several threads.

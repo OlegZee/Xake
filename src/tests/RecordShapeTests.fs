@@ -16,7 +16,7 @@ open Xake
 type ``Record shapes frozen within Xake 5``() =
 
     static member Records : obj[][] = [|
-        [| typeof<ExecContext>; [ "Engine"; "Vars"; "Progress"; "NeedRebuild"; "UpToDate"; "ShowProgress"; "Targets"; "RuleMatches"; "Ordinal"; "Logger"; "HeldResources"; "Spellings"; "RunEpoch"; "Counters" ] |]
+        [| typeof<ExecContext>; [ "Engine"; "Vars"; "Progress"; "NeedRebuild"; "UpToDate"; "ShowProgress"; "Targets"; "RuleMatches"; "Ordinal"; "Logger"; "HeldResources"; "Spellings"; "RunFiles"; "RunEpoch"; "Counters" ] |]
     |]
 
     [<TestCaseSource("Records")>]
@@ -31,7 +31,7 @@ type ``Record shapes frozen within Xake 5``() =
             { Engine = Unchecked.defaultof<_>; Vars = [ "A", "1" ]; Progress = Unchecked.defaultof<_>
               NeedRebuild = (fun _ -> async.Return false); UpToDate = (fun _ -> false); ShowProgress = false; Targets = []; RuleMatches = Map.empty
               Ordinal = 7; Logger = CustomLogger (fun _ -> false) ignore; HeldResources = []
-              Spellings = System.Collections.Concurrent.ConcurrentDictionary(); RunEpoch = 0; Counters = null }
+              Spellings = System.Collections.Concurrent.ConcurrentDictionary(); RunFiles = Storage.RunFiles (); RunEpoch = 0; Counters = null }
         let logger = CustomLogger (fun _ -> true) ignore
         let replaced = ExecContext.withLogger logger ctx
         Assert.That(obj.ReferenceEquals(replaced.Logger, logger))

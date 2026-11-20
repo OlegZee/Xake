@@ -144,7 +144,7 @@ The file starts with a version header (`Storage.DbReader.formatVersion`, `0.7`; 
   or `changed > e`. `TargetDep t`: the worker pool is asked (`Query`) whether `t` finished in this
   run, is running, or has not started. Finished: compared exactly (`changed > e` for a file,
   `Epoch > e` for a phony). Running: the target's own verdict waits for it, then compares; a
-  waits-for map (`RunCounters.Waits`, `WaitGraph`, set around the verdict wait and `execNeed`) stops a wait that
+  waits-for map (`RunCounters.TaskWaits`, a `WaitFor`, set around the verdict wait and `execNeed`) stops a wait that
   would close a cycle (the dependee counts as changed). Not started: `changed`/`Epoch > e`, or the
   dependee's own no-build verdict non-empty (the 4.0 transitive rule, kept only here). The no-build
   verdict (`DependencyAnalysis.Verdicts`, memoised per run, async) never waits for a running

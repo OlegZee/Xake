@@ -448,8 +448,8 @@ and execNeed (ctx: ExecContext) targets : Async<ExecStatus * Dependency list> =
         let primaryTarget = ctx.Targets |> List.head
         primaryTarget |> (Progress.TaskSuspend >> ctx.Progress.Post)
 
-        // the wait is known to the verdicts' cycle check (WaitGraph)
-        let unregister = ctx.Counters.Waits.Need (ctx.Targets |> List.map (fun t -> t.Name)) (targets |> List.map (fun t -> t.Name))
+        // the wait is known to the task verdicts' cycle check (TaskWaits)
+        let unregister = ctx.Counters.TaskWaits.Need (ctx.Targets |> List.map (fun t -> t.Name)) (targets |> List.map (fun t -> t.Name))
         let! statuses =
             try Scheduler.withYieldedSlot ctx.Engine.Scheduler ctx.Targets (targets |> execParallel ctx)
             finally unregister ()
@@ -576,7 +576,7 @@ let private verdict (ctx: ExecContext) (verdicts: Verdicts) (targets: Target lis
         for d in dependees do
             match Scheduler.query ctx.Engine.Scheduler d with
             | Running task ->
-                match ctx.Counters.Waits.Verdict names d.Name with
+                match ctx.Counters.TaskWaits.Verdict names d.Name with
                 | None ->
                     do ctx.Logger.Log Info "%s: not waiting for %s, which waits for it" (primary.Display ctx.Options.ProjectRoot) (d.Display ctx.Options.ProjectRoot)
                 | Some (cancel, unregister) ->

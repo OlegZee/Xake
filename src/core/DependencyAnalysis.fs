@@ -229,40 +229,31 @@ let getDurationDeps ctx getDeps t =
 
 /// The verdicts of one run (docs/features/idle-perf, L6): each target's no-build verdict is
 /// decided once, and everyone who asks awaits the same task. A verdict that waits for a
-/// dependee's verdict still in progress registers the edge; an edge that would close a cycle is
-/// refused and the dependee counts as changed (two entries into one cycle cannot wait for each
-/// other).
+/// dependee's verdict still in progress registers the edge in `verdictWaits`; an edge that would
+/// close a cycle is refused and the dependee counts as changed (two entries into one cycle cannot
+/// wait for each other). A verdict never waits for a task, so these edges and the tasks' own
+/// (`TaskWaits`) cannot form one cycle (docs/features/arch-review/wait-for.md).
 [<Sealed>]
 type Verdicts(ctx: ExecContext, current: Target -> (Target list * Set<StaticKey>) option) =
     let memo = System.Collections.Concurrent.ConcurrentDictionary<Target, Lazy<System.Threading.Tasks.Task<ChangeReason list>>>()
-    let waits = System.Collections.Generic.Dictionary<string, System.Collections.Generic.HashSet<string>>()
-    let reaches (src: string) (dst: string) =
-        let seen = System.Collections.Generic.HashSet<string>()
-        let rec go k = k = dst || (seen.Add k && (match waits.TryGetValue k with | true, es -> es |> Seq.exists go | _ -> false))
-        go src
+    let verdictWaits = WaitFor<unit>()
     let rec taskOf (t: Target) =
         memo.GetOrAdd(t, fun t -> lazy (Async.StartAsTask (getChangeReasons ctx current (dependee t) t))).Value
     and dependee (waiter: Target) (d: Target) = async {
         let task = taskOf d
         if task.IsCompleted then return! Async.AwaitTask task
         else
-            let edge =
-                lock waits (fun () ->
-                    if reaches d.Name waiter.Name then false
-                    else
-                        match waits.TryGetValue waiter.Name with
-                        | true, es -> es.Add d.Name |> ignore
-                        | _ -> waits.[waiter.Name] <- System.Collections.Generic.HashSet [ d.Name ]
-                        true)
+            let edge = lock verdictWaits (fun () -> verdictWaits.TryAdd [ waiter.Name ] d.Name ())
             if not edge then return [ ChangeReason.Depends d ]
             else
                 try return! Async.AwaitTask task
-                finally lock waits (fun () -> match waits.TryGetValue waiter.Name with | true, es -> es.Remove d.Name |> ignore | _ -> ()) }
+                finally lock verdictWaits (fun () -> verdictWaits.Remove [ waiter.Name ] d.Name) }
     /// The run's no-build verdict of a target (memoised).
     member _.Of (target: Target) = Async.AwaitTask (taskOf target)
     /// The verdict decided afresh (a task's own verdict, after waiting for its running dependees),
-    /// its dependees through the memo.
-    member _.Fresh (target: Target) = getChangeReasons ctx current (dependee target) target
+    /// its dependees through the memo. Nothing waits for it, so its waits close no cycle and are
+    /// not registered.
+    member _.Fresh (target: Target) = getChangeReasons ctx current (taskOf >> Async.AwaitTask) target
     /// The verdict when it is decided already.
     member _.Ready (target: Target) =
         match memo.TryGetValue target with

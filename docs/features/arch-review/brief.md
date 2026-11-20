@@ -40,3 +40,6 @@ section 7. One decision per line, with its date. Decisions are not re-litigated.
   `EngineState` gets an internal representation; `FileProbe` is internal; `Db` (handle and
   module) is internal; the public read API is the module `DbReader`. `RunFiles` leaves
   `ExecContext` with candidate 7.
+- 2026-11-20 (topic 4, [wait-for.md](wait-for.md)): option a: two maps (task waits; verdict waits:
+  no cycle can run through both), one shared primitive `WaitFor`, `Fresh` registers no edges,
+  names `TaskWaits` and `verdictWaits`.

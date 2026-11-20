@@ -18,6 +18,10 @@
 - `Db.Dispose` closes the database synchronously (drain, file, lock); a second close or dispose
   returns at once. Two tests; full suite 1,891 passed, 0 failed.
 
-**Next step.** The owner picks the next topic from architecture.md section 7
-(candidate 3, the per-run memo of observations, is noted in tracker.md). PR into
+- Topic 4 done (option a): `WaitFor` primitive (ExecTypes.fs), `RunCounters.TaskWaits`,
+  `Verdicts.verdictWaits`; `Fresh` registers no edges. Full suite 1,893 passed, 0 failed; bench
+  full 1.46-1.87 s, no-change 0.90-0.99 s.
+
+**Next step.** Topic 5 is queued: simplify `FileRule.decide` (tracker.md). Then the owner picks
+from architecture.md section 7 (candidate 3, the per-run memo of observations, is noted). PR into
 `feature/idle-perf` only on the owner's word.

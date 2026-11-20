@@ -83,55 +83,70 @@ type RunSummary = {
 type IRunSummarySink =
     abstract Report: RunSummary -> unit
 
-/// Who waits for whom in a run (content cut-off): a target's verdict waits for a running dependee
-/// unless that would close a cycle with the `need`s and verdict waits in progress; a `need` that
-/// closes a cycle through a verdict wait cancels that wait (the dependee then counts as changed).
+/// Who waits for whom, by target name: edges `waiter -> awaited`, each with a payload. A pure
+/// data structure without a lock: its owner locks. Used twice, for two kinds of waiter that can
+/// never form one cycle together (docs/features/arch-review/wait-for.md): tasks (`TaskWaits`) and
+/// verdict computations (`Verdicts`).
 [<Sealed>]
-type internal WaitGraph() =
-    let lck = obj ()
-    // waiter -> (awaited, the cancellation of a verdict wait)
-    let edges = System.Collections.Generic.Dictionary<string, ResizeArray<string * System.Threading.Tasks.TaskCompletionSource<bool> option>>()
-    let reaches (src: string) (dst: string) =
+type internal WaitFor<'p>() =
+    let edges = System.Collections.Generic.Dictionary<string, ResizeArray<string * 'p>>()
+    /// Whether `dst` is reachable from `src` (`src` itself included).
+    member _.Reaches (src: string) (dst: string) =
         let seen = System.Collections.Generic.HashSet<string>()
         let rec go k = k = dst || (seen.Add k && (match edges.TryGetValue k with | true, es -> es |> Seq.exists (fst >> go) | _ -> false))
         go src
-    let add waiters awaited cancel =
+    /// Adds the edge of every waiter to `awaited`.
+    member _.Add (waiters: string list) (awaited: string) (payload: 'p) =
         for w in waiters do
             match edges.TryGetValue w with
-            | true, es -> es.Add((awaited, cancel))
-            | _ -> edges.[w] <- ResizeArray [ (awaited, cancel) ]
-    let remove waiters awaited =
-        lock lck (fun () ->
-            for w in waiters do
-                match edges.TryGetValue w with
-                | true, es ->
-                    match Seq.tryFindIndex (fst >> (=) awaited) es with
-                    | Some i -> es.RemoveAt i
-                    | None -> ()
-                    if es.Count = 0 then edges.Remove w |> ignore
-                | _ -> ())
+            | true, es -> es.Add((awaited, payload))
+            | _ -> edges.[w] <- ResizeArray [ (awaited, payload) ]
+    /// Adds the edges unless one would close a cycle (`awaited` reaches a waiter); false then.
+    member this.TryAdd (waiters: string list) (awaited: string) (payload: 'p) =
+        if waiters |> List.exists (this.Reaches awaited) then false
+        else this.Add waiters awaited payload; true
+    /// Removes one edge of every waiter to `awaited`.
+    member _.Remove (waiters: string list) (awaited: string) =
+        for w in waiters do
+            match edges.TryGetValue w with
+            | true, es ->
+                match Seq.tryFindIndex (fst >> (=) awaited) es with
+                | Some i -> es.RemoveAt i
+                | None -> ()
+                if es.Count = 0 then edges.Remove w |> ignore
+            | _ -> ()
+    /// Every edge: waiter, awaited, payload.
+    member _.Edges = seq { for KeyValue (w, es) in edges do for (a, p) in es -> w, a, p }
+
+/// Who waits for whom among the tasks of a run (content cut-off): a task's verdict waits for a
+/// running dependee unless that would close a cycle with the `need`s and verdict waits in
+/// progress; a `need` that closes a cycle through a verdict wait cancels that wait (the dependee
+/// then counts as changed). Verdict computations have their own map (`Verdicts`): they never
+/// wait for a task, so no cycle runs through both.
+[<Sealed>]
+type internal TaskWaits() =
+    let lck = obj ()
+    // the payload: the cancellation of a verdict wait (None for a `need`)
+    let graph = WaitFor<System.Threading.Tasks.TaskCompletionSource<bool> option>()
     /// Registers `waiters` (the names of a task's targets) waiting in `need` for `awaited`; verdict
     /// waits closed into a cycle are cancelled. Returns the unregistration.
     member _.Need (waiters: string list) (awaited: string list) =
         let cancels =
             lock lck (fun () ->
-                for a in awaited do add waiters a None
-                [ for KeyValue (w, es) in edges do
-                    for (a, cancel) in es do
-                        match cancel with
-                        | Some c when reaches a w -> yield c
-                        | _ -> () ])
+                for a in awaited do graph.Add waiters a None
+                [ for w, a, cancel in graph.Edges do
+                    match cancel with
+                    | Some c when graph.Reaches a w -> yield c
+                    | _ -> () ])
         for c in cancels do c.TrySetResult true |> ignore
-        fun () -> for a in awaited do remove waiters a
+        fun () -> lock lck (fun () -> for a in awaited do graph.Remove waiters a)
     /// Registers a verdict wait of `waiters` for `awaited`: None when it would close a cycle, else
     /// the cancellation (set when a later `need` closes one) and the unregistration.
     member _.Verdict (waiters: string list) (awaited: string) =
         lock lck (fun () ->
-            if waiters |> List.exists (reaches awaited) then None
-            else
-                let cancel = System.Threading.Tasks.TaskCompletionSource<bool>(System.Threading.Tasks.TaskCreationOptions.RunContinuationsAsynchronously)
-                add waiters awaited (Some cancel)
-                Some (cancel, fun () -> remove waiters awaited))
+            let cancel = System.Threading.Tasks.TaskCompletionSource<bool>(System.Threading.Tasks.TaskCreationOptions.RunContinuationsAsynchronously)
+            if graph.TryAdd waiters awaited (Some cancel) then Some (cancel, fun () -> lock lck (fun () -> graph.Remove waiters awaited))
+            else None)
 
 /// The counters of one script run, or one `Demand` in engine mode, and the state the content
 /// verdict shares across tasks. Incremented with `Interlocked` from any task.
@@ -152,7 +167,7 @@ type RunCounters() =
     member internal c.TaskScheduled () = System.Threading.Interlocked.Increment &c.tasksScheduled |> ignore
     /// The fast path's blocking database lookups: at most as many at once as there are cores.
     member val internal FastGate = new System.Threading.SemaphoreSlim(max 2 System.Environment.ProcessorCount) with get
-    member val internal Waits = WaitGraph() with get
+    member val internal TaskWaits = TaskWaits() with get
     /// The counters so far.
     member c.Summary : RunSummary =
         { TargetsRun = System.Threading.Volatile.Read &c.targetsRun

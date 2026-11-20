@@ -62,3 +62,25 @@ let ``the estimate reads the warmed verdicts``() =
         verdicts.Warm [ out ] |> Async.RunSynchronously
         Assert.AreEqual((300<ms>, ([]: Target list)), verdicts.Estimate out)
     finally finalize ()
+
+/// The wait-for primitive both maps use (docs/features/arch-review/wait-for.md).
+[<Test>]
+let ``a wait-for edge closing a cycle is refused``() =
+    let g = WaitFor<unit>()
+    Assert.IsTrue(g.TryAdd [ "a" ] "b" ())
+    Assert.IsTrue(g.TryAdd [ "b" ] "c" ())
+    Assert.IsFalse(g.TryAdd [ "c" ] "a" (), "c -> a closes a -> b -> c")
+    Assert.IsFalse(g.TryAdd [ "x"; "c" ] "a" (), "one waiter closing a cycle refuses all")
+    Assert.IsFalse(g.TryAdd [ "a" ] "a" (), "a self-wait is a cycle")
+    Assert.IsTrue(g.TryAdd [ "a" ] "c" ())
+
+[<Test>]
+let ``a removed wait-for edge no longer closes a cycle``() =
+    let g = WaitFor<unit>()
+    g.Add [ "a" ] "b" ()
+    g.Add [ "a" ] "b" ()
+    g.Remove [ "a" ] "b"
+    Assert.IsFalse(g.TryAdd [ "b" ] "a" (), "one of two equal edges is left")
+    g.Remove [ "a" ] "b"
+    Assert.IsTrue(g.TryAdd [ "b" ] "a" ())
+    Assert.AreEqual([ "b", "a", () ], g.Edges |> List.ofSeq)

@@ -14,7 +14,7 @@ by an environment variable, and `docs/features/idle-perf/bench/build.fsx`.
 |---|---|
 | Q2 load of 12 MB takes ~1.4 s | **Quadratic path table**: `PathTable.load`/`add` read `Map.Count` (O(n) on an F# `Map`) once per path record. 28,384 files cost 1.2-2.0 s of a 1.33-1.79 s `openDb`. |
 | Q3 growth 4.7 -> 12 MB | **History, by design**: 6,996 results, 1,833 live; each full rebuild appends ~2.1 MB. Compaction runs at open when results > 5 x live (9,165 here), so it has not fired yet; it would at about two more full rebuilds (~17 MB). |
-| Q1 +1.1 s between banner and first recipe | **Not reproduced inside that window**: the database opens *before* the banner, and between banner and the first recipe a run spends ~20 ms (bench). The toy script reproduces the consumer's whole startup excess, and it is all the database load (Q2). See Q1 for what is still open. |
+| Q1 +1.1 s between banner and first recipe | **Open.** The consumer's "banner" is `XAKE build tool` (printed in `ApplyCommandLine`, before the database opens), so their window holds the load on both versions; the load costs about the same on both (their 4.x database is 361 MB). 5.0's extra ~1 s is elsewhere in their script's launch; not reproduced on the bench. A marks build was handed to the consumer. |
 
 ## Q2. Database load
 
@@ -171,12 +171,30 @@ first recipe is ~20 ms here, the full no-change verdict walk ~100-120 ms.
 
 ### The consumer's +1.1 s
 
-The toy script on preview.3 with the consumer's 12.5 MB database reaches its first recipe 1.40 s
-later than with an empty one; 4.0.0 with their 88 MB database 0.33 s later. That difference,
-~1.07 s, matches the consumer's +1.1 s, and all of it is in `openDb`, i.e. Q2. Fix A + C would
-leave ~0.1-0.2 s of it.
+How the consumer measured (their session, 2026-11-20): stdout of `dotnet fsi build.fsx` through a
+pipe stamping each line with ms since launch. Start: Xake's `XAKE build tool <version>` line
+(`XakeScriptBuilder.ApplyCommandLine`, printed before `createScriptContext`): 3.16 s on 4.x,
+3.31 s on 5. End: the first output line of their setup target `info`: 4.41 s on 4.x, 5.66 s on 5.
+All of `info`'s lines arrived in the same millisecond, so the end is the first flush, not the
+recipe's start. Their 4.x run used a 361 MB database, the 5.0 run the 12.5 MB one.
 
-Still open: the consumer reported the window as starting at "the Xake banner", but Xake's banner
-comes after the database is open. Either the measurement started earlier than the banner
-(e.g. at the end of the script compile), or something in their script's setup costs the time.
-The consumer's session was asked how it measured; see session.md.
+So the window contains, on both versions: variable evaluation, engine options, **the database
+load**, the banner, the setup demand (rule match of `info`, its verdict) and `info`'s own work
+up to the first flush. The toy script with the same databases reaches its first recipe in
+1.37-1.49 s (4.x, 361 MB) and 1.36-1.49 s (5, 12.5 MB): the load is about the same on both, so it
+does not explain the difference. 4.x: window 1.25 s ~ load. 5: window 2.35 s = load ~1.4 s +
+~1.0 s unexplained.
+
+The bench shows nothing of that size between the `XAKE build tool` line and the first recipe
+outside the load (1-5 ms for variables and engine options, ~20 ms from the banner to the first
+recipe). Candidates specific to their script: the first rule match (`makeTarget` of `info`
+against all of their rules and patterns), the verdict of `info`, the variables (19 declarations,
+one secret), or `info`'s own work before its first flush (several `git` runs; output buffering
+differs between versions). A build of preview.3 with Stopwatch marks
+(`Xake 5.0.0-preview.3.marks1`, local feed, marks on stderr with `XAKE_MARKS=1`: the
+`XAKE build tool` line, variables, engine options, database open, banner, setup demand:
+makeTarget / planned / done, each group planned) was handed to the consumer for one no-change
+run.
+
+With fixes A + C the load share of the window falls from ~1.4 s to ~0.5 s on 5.0, whatever the
+rest turns out to be.

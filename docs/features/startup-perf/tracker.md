@@ -6,5 +6,6 @@
 - [x] Q2: compare 4.0.0 on the 88 MB database: 0.37-0.42 s to the first recipe
 - [x] Q3: contents by kind and epoch; compaction rule (results > 5 x live) not due, history only
 - [x] Q1: Stopwatch marks on the bench: banner -> first recipe ~20 ms; the toy reproduces +1.07 s, all in `openDb`
-- [ ] Q1: confirm the consumer's measurement points (asked their session)
+- [x] Q1: the consumer's measurement points: `XAKE build tool` -> first flush of `info`; the load is inside on both
+- [ ] Q1: the consumer's run with the marks build (`5.0.0-preview.3.marks1`)
 - [ ] Owner: choose among A, C, B1-B3

@@ -15,7 +15,8 @@ yet). Analysis and measurement only; no engine code changed.
   ends at the first flush of their setup target `info`; the load is in it on both versions and
   costs about the same on both (their 4.x database is 361 MB), so 5.0's extra ~1 s is elsewhere.
   A marks build, `Xake 5.0.0-preview.3.marks1` in the local feed `~/xake-profiling/feed`
-  (`marks2.diff` in the notes folder), was handed to the consumer's session for one run.
+  (`marks2.diff` in the notes folder), was handed to the consumer's session for one run. Their permission check blocked running a
+  build from the local feed; it waits for the owner's word in that session (2026-11-20).
 - Not in the repository (session notes folder of the orchestrator, `startup-perf/`): the
   harness (`harness-Program.fs`, `harness-prof.fsproj`: a console app with AssemblyName `tests`
   so it sees the internals), `toy.fsx` and `run.sh`, the prototype diffs `fixA.diff`,

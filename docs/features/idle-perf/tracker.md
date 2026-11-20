@@ -14,4 +14,6 @@
 - [x] Step 3: async verdict and memo, Warm, callers (L6-L7); no-change 0.16-0.19 s
 - [x] Full build within 2x of 4.0.0: a separate writer (owner's option b); 1.3-1.6x
 - [ ] Tests per layer and the bench gates
-- [ ] Release notes "5.0.0 (unreleased)": the fix; the FS0041 line for recursive recipes
+- [x] Release notes "5.0.0 (unreleased)": the fix; the FS0041 line for recursive recipes (own commit)
+- [x] docs/implnotes.md: the layers
+- [ ] PR to dev

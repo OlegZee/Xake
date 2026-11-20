@@ -100,18 +100,18 @@ a { color: var(--accent); }
 <pre class="mermaid">
 flowchart LR
   subgraph callers["Потоки сборки (пул)"]
-    EC["ExecCore<br/>задачи, need, fast path,<br/>выходы, Store"]
-    DA["DependencyAnalysis<br/>вердикт, оценка,<br/>хэширование"]
-    PR["Progress<br/>оценка времени"]
-    SR["ScriptRunner<br/>dry run, dump, NewRun"]
+    EC["ExecCore&lt;br/&gt;задачи, need, fast path,&lt;br/&gt;выходы, Store"]
+    DA["DependencyAnalysis&lt;br/&gt;вердикт, оценка,&lt;br/&gt;хэширование"]
+    PR["Progress&lt;br/&gt;оценка времени"]
+    SR["ScriptRunner&lt;br/&gt;dry run, dump, NewRun"]
   end
   subgraph agent["Агент базы (один поток в пуле)"]
-    DB["Storage agent<br/>Status · Files · Epoch<br/>observed · recorded · pending"]
+    DB["Storage agent&lt;br/&gt;Status · Files · Epoch&lt;br/&gt;observed · recorded · pending"]
     FS[(".xake")]
     DISK[("файлы проекта")]
   end
-  EC -- "Observe Recording / Output / PreHash / Verdict<br/>Store · GetResult" --> DB
-  DA -- "Observe Verdict (на каждый файл)<br/>Settle · GetResult" --> DB
+  EC -- "Observe Recording / Output / PreHash / Verdict&lt;br/&gt;Store · GetResult" --> DB
+  DA -- "Observe Verdict (на каждый файл)&lt;br/&gt;Settle · GetResult" --> DB
   PR -. "getDurationDeps → GetResult" .-> DA
   SR -- "NewRun · InMemory · GetResult" --> DB
   DB -- "stat (FileInfo / File.Exists)" --> DISK
@@ -205,15 +205,15 @@ sequenceDiagram
 flowchart LR
   subgraph callers["Потоки сборки"]
     EC["ExecCore"]
-    DA["DependencyAnalysis<br/>Verdicts: Of · Warm · Estimate"]
+    DA["DependencyAnalysis&lt;br/&gt;Verdicts: Of · Warm · Estimate"]
     PR["Progress"]
     subgraph facade["Модуль базы: фасад Storage"]
-      F["observeMany · getResult<br/>store · storeDelegated · newRun"]
-      ST["stat и хэш<br/>в этом же потоке"]
+      F["observeMany · getResult&lt;br/&gt;store · storeDelegated · newRun"]
+      ST["stat и хэш&lt;br/&gt;в этом же потоке"]
     end
   end
   subgraph agent["Агент базы"]
-    DB["таблицы в памяти<br/>решение по stat · pending"]
+    DB["таблицы в памяти&lt;br/&gt;решение по stat · pending"]
     FS[(".xake")]
   end
   DISK[("файлы проекта")]
@@ -223,7 +223,7 @@ flowchart LR
   PR -. "Estimate (после Warm)" .-> DA
   F --> ST
   ST --> DISK
-  F -- "Observe [(file, stat) × N]<br/>Settle · GetResult · Store" --> DB
+  F -- "Observe [(file, stat) × N]&lt;br/&gt;Settle · GetResult · Store" --> DB
   DB -- "один Write на батч" --> FS
 </pre>
     </div>
@@ -408,3 +408,14 @@ sequenceDiagram
     <p class="note">Оценка объёма: ~400 строк кода и ~350 строк тестов. Порядок работы: сначала фасад с батчем и stat в вызывающем потоке и замер, потом асинхронный вердикт и мемо.</p>
   </section>
 </main>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
+<script>
+(function () {
+  if (!window.mermaid) return;
+  var root = document.documentElement, t = root.getAttribute("data-theme");
+  var dark = t === "dark" || (t !== "light" && window.matchMedia && matchMedia("(prefers-color-scheme: dark)").matches);
+  mermaid.initialize({ startOnLoad: false, theme: dark ? "dark" : "neutral", securityLevel: "strict",
+                       fontFamily: "IBM Plex Sans, Segoe UI, sans-serif", sequence: { mirrorActors: false } });
+  mermaid.run({ querySelector: "pre.mermaid" });
+})();
+</script>

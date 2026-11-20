@@ -365,9 +365,9 @@ let rec prepareOne (ctx: ExecContext) target : Choice<File, Async<Target * ExecS
                 match rule, Scheduler.query ctx.Engine.Scheduler target with
                 | DelegatedRule _, _ -> async.Return false
                 | _, NotStarted -> async {
-                    do! ctx.Run.Counters.FastGate.WaitAsync() |> Async.AwaitTask
+                    do! ctx.Run.FastGate.WaitAsync() |> Async.AwaitTask
                     try return! ctx.Run.UpToDate target
-                    finally ctx.Run.Counters.FastGate.Release() |> ignore }
+                    finally ctx.Run.FastGate.Release() |> ignore }
                 | _ -> async.Return false
             let! status =
                 if fast then
@@ -449,7 +449,7 @@ and execNeed (ctx: ExecContext) targets : Async<ExecStatus * Dependency list> =
         primaryTarget |> (Progress.TaskSuspend >> ctx.Run.Progress.Post)
 
         // the wait is known to the task verdicts' cycle check (TaskWaits)
-        let unregister = ctx.Run.Counters.TaskWaits.Need (ctx.Targets |> List.map (fun t -> t.Name)) (targets |> List.map (fun t -> t.Name))
+        let unregister = ctx.Run.TaskWaits.Need (ctx.Targets |> List.map (fun t -> t.Name)) (targets |> List.map (fun t -> t.Name))
         let! statuses =
             try Scheduler.withYieldedSlot ctx.Engine.Scheduler ctx.Targets (targets |> execParallel ctx)
             finally unregister ()
@@ -630,7 +630,9 @@ let newRunState showProgress =
       Spellings = newSpellings ()
       RunFiles = FileTracker.RunFiles ()
       RunEpoch = 0
-      Counters = RunCounters() }
+      Counters = RunCounters()
+      TaskWaits = TaskWaits()
+      FastGate = new System.Threading.SemaphoreSlim(max 2 System.Environment.ProcessorCount) }
 
 let createContextCore (options: EngineOptions) (db: Db) vars showProgress =
     // the root every path is shown and stored against, normalised once (A6, R3)

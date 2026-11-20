@@ -39,5 +39,9 @@
 - Topic 8 done: `Verdicts.Planned` (was `Of`), `Verdicts.ForTask` (was `ExecCore.verdict` +
   `Fresh`). Full suite 1,893 passed, 0 failed; bench full 1.41-1.82 s, no-change 0.88-0.96 s.
 
-**Next step.** The owner picks from architecture.md section 7 (open: 8, 10-16). PR into
+- Topic 9 done: `FastGate` kept (measured, fastgate.md), its reason stated; it and `TaskWaits`
+  are `RunState` fields, `RunCounters` holds only counters. Full suite 1,893 passed, 0 failed;
+  bench (Xake's own time) full 0.63-0.71 s, no-change 0.14-0.20 s.
+
+**Next step.** The owner picks from architecture.md section 7 (open: 8, 10-12, 14-16). PR into
 `feature/idle-perf` only on the owner's word.

@@ -57,3 +57,6 @@ section 7. One decision per line, with its date. Decisions are not re-litigated.
   `RunCounters` are internal (no half-open modules, as dd3f1ad).
 - 2026-11-21 (topic 8, [of-fresh.md](of-fresh.md)): option a: `Verdicts.Planned` (was `Of`) and
   `Verdicts.ForTask` (was `ExecCore.verdict` + `Fresh`; `Fresh` a private step).
+- 2026-11-21 (topic 9, [fastgate.md](fastgate.md)): option a: keep `FastGate` (measured: no gain
+  without it, full builds slower and less stable), state the real reason, and move it and
+  `TaskWaits` from `RunCounters` to `RunState`.

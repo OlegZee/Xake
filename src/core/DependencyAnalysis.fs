@@ -273,7 +273,7 @@ type Verdicts(ctx: ExecContext, current: Target -> (Target list * Set<StaticKey>
             for d in dependees do
                 match Scheduler.query ctx.Engine.Scheduler d with
                 | Running task ->
-                    match ctx.Run.Counters.TaskWaits.Verdict names d.Name with
+                    match ctx.Run.TaskWaits.Verdict names d.Name with
                     | None ->
                         do ctx.Logger.Log Info "%s: not waiting for %s, which waits for it" (primary.Display ctx.Options.ProjectRoot) (d.Display ctx.Options.ProjectRoot)
                     | Some (cancel, unregister) ->

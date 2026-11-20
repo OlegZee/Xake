@@ -113,7 +113,7 @@ Three private steps, joined by `observe` (arch-review, topic 6):
   the memo. Nothing waits for `fresh`, so it registers
   no edges.
 - **Two wait-for maps, one primitive.** Tasks wait for tasks (`need`, a task's verdict waiting for
-  a running dependee) in `RunCounters.TaskWaits`; verdicts wait for verdicts in `verdictWaits`.
+  a running dependee) in `ctx.Run.TaskWaits`; verdicts wait for verdicts in `verdictWaits`.
   Both are a `WaitFor` (ExecTypes.fs: edges by target name, `TryAdd` refuses a cycle). A verdict
   never waits for a task (it only queries the scheduler, and takes a dependee into the transitive
   rule only when its task has not started), so no cycle runs through both maps
@@ -195,13 +195,13 @@ Close: agent -> Drain -> writer flushes the rest, closes, releases the lock
 | C6 | deadlock between claims | A waits for B's claim while B waits for A's | a call completes all its own claims (`finally`) before it waits for others | **no direct test** |
 | C7 | one file hashed twice | wasted work; different answers | the hasher shares one computation per (file, stat) | `the hasher computes a (file, stat) once while it runs` |
 | C8 | verdicts waiting on each other (memo) | deadlock on a cycle in the records | `verdictWaits` (`WaitFor`); an edge closing a cycle is refused (= changed) | `two entries into one cycle finish`, `a target depending on itself finishes` (both hang without the guard) |
-| C9 | a task's verdict waits for a running dependee | deadlock with `need` waits | `RunCounters.TaskWaits` (`WaitFor`): refuse or cancel a wait that closes a cycle | ContentCutoffTests (existing); `WaitFor` unit tests |
+| C9 | a task's verdict waits for a running dependee | deadlock with `need` waits | `ctx.Run.TaskWaits` (`WaitFor`): refuse or cancel a wait that closes a cycle | ContentCutoffTests (existing); `WaitFor` unit tests |
 | C10 | one target requested twice | built twice | the pool's queued/running/finished maps; `NewRun` clears finished | `builds a target requested twice in one run only once` (existing) |
 | C11 | writer order and close | records lost or reordered at exit | the agent posts in order; `Close` awaits `Drain` | `closing drains the writer, in order` |
 | C12 | a failed hash or caller between decision and completion | claims never completed, so verdicts wait forever | `finally` completes claims; the hasher releases its slot in `finally`; `Content.hash` never throws | **no direct test** |
 | C13 | overlapping engine runs | one run clears another's per-run state | `RunFiles` and `Verdicts` per run; the epoch is shared (the newest handed out) | **no direct test** |
 | C14 | hold-and-wait on resources | a silent hang | `need` of a rule target while holding a resource is refused | ResourceGuardTests (existing) |
-| C15 | the fast path floods the pool | too many verdicts at once | `RunCounters.FastGate` (a semaphore of cores) | none |
+| C15 | the fast path floods the pool | too many verdicts at once; a verdict `Warm` did not decide stats files synchronously on a pool thread | `ctx.Run.FastGate` (a semaphore of cores); measured in arch-review/fastgate.md | none |
 
 ## 5. Public API and internals
 
@@ -216,7 +216,7 @@ internal representation, so nothing internal shows through it:
   `EngineState` and `RunState` (records with internal fields: the engine's and the run's state,
   so per-run state changes without changing `ExecContext`; topic 7); `RunSummary`;
   `Scheduler`, `TaskState`, `ExecMessage`.
-- **Internal:** all of `FileProbe` and `FileTracker`; `RunCounters` (with `TaskWaits`, `FastGate`); `Db` (the handle and its module); `ExecContext.Db`; `DatabaseApi`, `Db.Post*`, `Db.openWith`/`openFile`/`memoryOnly`/`delete`,
+- **Internal:** all of `FileProbe` and `FileTracker`; `RunState`'s fields (with `TaskWaits`, `FastGate`); `RunCounters`; `Db` (the handle and its module); `ExecContext.Db`; `DatabaseApi`, `Db.Post*`, `Db.openWith`/`openFile`/`memoryOnly`/`delete`,
   `Db.apply`/`store`/`newRun`/`keepInMemory`/`close`, `Persist`, `DbFile`, `DbAgent`, `LegacyRead`;
   `FileStat`, `HashResult`, `Content.hash`, `Hasher.Hash`; `ObserveMode`, `Observation`,
   `FileRule`, `FileTracker.Context`, `FileTracker.observe`; `ExecContext.Observe`; the whole `DependencyAnalysis` module
@@ -257,8 +257,9 @@ API changes for code that used `DatabaseApi` directly.
     awaited inside the task's action. Nothing enforces it, and no test targets it.
 12. **Two epochs.** Decisions use the snapshot's epoch, the newest handed out. Results use
     `ctx.Run.RunEpoch`, the run's own. This is right for overlapping engine runs, but hard to see.
-13. **`FastGate`** was added to bound blocking database lookups on the fast path. Those lookups
-    are async now; the gate may be unnecessary.
+13. **`FastGate`** Settled (arch-review, topic 9): kept, measured (no gain without it; full builds
+    slower and less stable); the reason is the synchronous stats of a verdict `Warm` did not
+    decide. It and `TaskWaits` are in `RunState`, not in the counters.
 14. **`getDurationDeps`** still carries the comment "No clue why one method does both".
     `Estimate` wraps it, and a target that was not warmed reads as 0.
 15. **Lifetime and log wording.** The hasher is never stopped (its semaphore is not disposed),

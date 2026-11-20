@@ -148,8 +148,8 @@ type internal TaskWaits() =
             if graph.TryAdd waiters awaited (Some cancel) then Some (cancel, fun () -> lock lck (fun () -> graph.Remove waiters awaited))
             else None)
 
-/// The counters of one script run, or one `Demand` in engine mode, and the state the content
-/// verdict shares across tasks. Incremented with `Interlocked` from any task.
+/// The counters of one script run, or one `Demand` in engine mode. Incremented with `Interlocked`
+/// from any task.
 [<Sealed; AllowNullLiteral>]
 type internal RunCounters() =
     [<DefaultValue>] val mutable private targetsRun: int
@@ -165,9 +165,6 @@ type internal RunCounters() =
         System.Threading.Interlocked.Increment &c.filesHashed |> ignore
         System.Threading.Interlocked.Add (&c.hashTicks, elapsed.Ticks) |> ignore
     member internal c.TaskScheduled () = System.Threading.Interlocked.Increment &c.tasksScheduled |> ignore
-    /// The fast path's blocking database lookups: at most as many at once as there are cores.
-    member val internal FastGate = new System.Threading.SemaphoreSlim(max 2 System.Environment.ProcessorCount) with get
-    member val internal TaskWaits = TaskWaits() with get
     /// The counters so far.
     member c.Summary : RunSummary =
         { TargetsRun = System.Threading.Volatile.Read &c.targetsRun
@@ -248,8 +245,14 @@ and RunState = internal {
     /// The epoch (run number) of the run this context belongs to, taken at `Scheduler.newRun`:
     /// a result built in the run gets it (A2).
     RunEpoch: int
-    /// The counters of the script run (or `Demand`): `RunSummary`, and the waits of the verdict.
+    /// The counters of the script run (or `Demand`): `RunSummary`.
     Counters: RunCounters
+    /// Who waits for whom among the tasks (`need`, a task's verdict waiting for a running dependee).
+    TaskWaits: TaskWaits
+    /// Bounds the fast path's verdicts at once (at most the cores): a verdict `Warm` did not decide
+    /// is decided there, and its observation takes the stats synchronously on a pool thread
+    /// (docs/features/arch-review/fastgate.md).
+    FastGate: System.Threading.SemaphoreSlim
 }
 
 /// Script execution context: what a recipe sees (its targets, rule matches, variables, logger)

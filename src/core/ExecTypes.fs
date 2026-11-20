@@ -236,7 +236,7 @@ and ExecContext = {
     Spellings: System.Collections.Concurrent.ConcurrentDictionary<string, File * bool>
     /// The files observed and recorded in this run (docs/features/idle-perf, L4). Created per run,
     /// with the run's memo.
-    RunFiles: FileStaleness.RunFiles
+    RunFiles: FileTracker.RunFiles
     /// The epoch (run number) of the run this context belongs to, taken at `Scheduler.newRun`:
     /// a result built in the run gets it (A2).
     RunEpoch: int
@@ -249,9 +249,9 @@ and ExecContext = {
     member ctx.Db = ctx.Engine.Db
     /// Where this context's file observations run: its database, its run, whether it hashes.
     member ctx.Observe =
-        { FileStaleness.ObserveContext.Db = ctx.Engine.Db; FileStaleness.ObserveContext.Hasher = ctx.Engine.Hasher
-          FileStaleness.ObserveContext.Run = ctx.RunFiles; FileStaleness.ObserveContext.Hashing = ctx.Engine.Options.ContentCutoff
-          FileStaleness.ObserveContext.OnHashed = match ctx.Counters with null -> ignore | c -> c.FileHashed }
+        { FileTracker.ObserveContext.Db = ctx.Engine.Db; FileTracker.ObserveContext.Hasher = ctx.Engine.Hasher
+          FileTracker.ObserveContext.Run = ctx.RunFiles; FileTracker.ObserveContext.Hashing = ctx.Engine.Options.ContentCutoff
+          FileTracker.ObserveContext.OnHashed = match ctx.Counters with null -> ignore | c -> c.FileHashed }
 
 /// Functions over the execution context for code outside this assembly. A record copy
 /// (`{ ctx with ... }`) compiled in another assembly calls the full constructor and breaks

@@ -50,7 +50,7 @@
     <Compile Include="DatabaseFormat.fs" />
     <Compile Include="Database.fs" />
     <Compile Include="FileProbe.fs" />
-    <Compile Include="FileStaleness.fs" />
+    <Compile Include="FileTracker.fs" />
     <Compile Include="RecipeBuilder.fs" />
     <Compile Include="RecipeFunctions.fs" />
     <Compile Include="WorkerPool.fs" />

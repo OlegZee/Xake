@@ -10,12 +10,12 @@ change. The history and the measurements are in [brief.md](brief.md),
 ```
  L7  ExecCore            tasks, need, outputs, store       (ExecCore.fs)
  L6  Verdicts            verdict + memo per run, Warm      (DependencyAnalysis.fs)
- L5  observeFiles        stat -> rule -> hash -> Apply     (FileStaleness.fs)
- L4  RunFiles            per-run sets                      (FileStaleness.fs, in ExecContext)
+ L5  observeFiles        stat -> rule -> hash -> Apply     (FileTracker.fs)
+ L4  RunFiles            per-run sets                      (FileTracker.fs, in ExecContext)
  L3  Hasher              one hash per (file, stat)         (FileProbe.fs, mailbox, in EngineState)
  L2  Db: agent + writer  records, snapshot, .xake          (Database.fs, 2 mailboxes)
      format              header, picklers, path table      (DatabaseFormat.fs, internal Persist)
- L1  FileRule            pure decision                     (FileStaleness.fs, internal)
+ L1  FileRule            pure decision                     (FileTracker.fs, internal)
  L0  FileStat, Content   stat, SHA-256                     (FileProbe.fs)
      Scheduler/WorkerPool  tasks once per run, slots by key (WorkerPool.fs, mailbox)
 ```
@@ -28,9 +28,9 @@ The files and their modules, in compile order:
 | | `Persist` (internal) | the 0.7 header and picklers, the path table, `read`, `encode`, `toDatabase` | `BuildLog`, `Pickler`, `LegacyRead` |
 | `Database.fs` | `Storage` | `DatabaseApi`, the file lifecycle (lock, backup, upgrade, compaction), the agent, the writer, `Db`, `openDb`/`noopDb`/`cleanupDb`, `readRecords`/`readDatabase`, `tryGetResult`, `storeResult` | `Persist` |
 | `FileProbe.fs` | `FileProbe` | `FileStat`, `HashResult`, `Content.hash`, `Hasher`: I/O only | `Types` |
-| `FileStaleness.fs` | `FileStaleness` | `ObserveMode`, `Observation`, `FileRule` (internal, pure), `RunFiles`, `ObserveContext`, `observeFiles` | `Storage`, `FileProbe` |
+| `FileTracker.fs` | `FileTracker` | `ObserveMode`, `Observation`, `FileRule` (internal, pure), `RunFiles`, `ObserveContext`, `observeFiles` | `Storage`, `FileProbe` |
 
-`Database.fs` uses nothing of `FileProbe` or `FileStaleness`; they use `Storage` only through
+`Database.fs` uses nothing of `FileProbe` or `FileTracker`; they use `Storage` only through
 `Db.Snapshot` and `Apply`. `makeResult` and `Step` are in `Types.fs`, the `Agent` alias in
 `Prelude.fs`.
 
@@ -69,7 +69,7 @@ is running (`Scheduler.query`), and L7 submits tasks to it.
 - **Format.** The format is unchanged from preview.2: database 0.7, the same picklers. Each
   version opens the other's file without a rebuild (checked on the bench).
 
-### The observation sequence (`FileStaleness.observeFiles oc mode since files`)
+### The observation sequence (`FileTracker.observeFiles oc mode since files`)
 
 1. **Claims.** Each distinct file is claimed in `RunFiles`, except in `PreHash` mode.
    - The first observer of the file in the run holds a completion and sets it when done.
@@ -196,7 +196,7 @@ Close: agent -> Drain -> writer flushes the rest, closes, releases the lock
 - **Public (`Xake.BuildLog`):** `XakeDbVersion`, `XakeDbMinReadVersion`, `Database`,
   `newDatabase`, `DbRecord`.
 - **Public (`Xake.FileProbe`):** `FileStat`, `HashResult`, `Content.hash`, `Hasher`.
-- **Public (`Xake.FileStaleness`):** `ObserveMode`, `Observation`, `RunFiles` (its
+- **Public (`Xake.FileTracker`):** `ObserveMode`, `Observation`, `RunFiles` (its
   `Claim`/`RecordedBefore` are internal), `ObserveContext` (`Db`, `Hasher`, `Run`, `Hashing`,
   `OnHashed`), `observeFiles`.
 - **Public elsewhere:** `ExecContext` (a record, frozen within 5.x by `RecordShapeTests`) with
@@ -228,7 +228,7 @@ API changes for code that used `DatabaseApi` directly.
    observation takes only `File.exists`. This is correct, but it is a performance shortcut
    visible in the logic.
 5. **`Database.fs` holds everything.** Done (arch-review, topic 1): `DatabaseFormat.fs`,
-   `Database.fs`, `FileProbe.fs`, `FileStaleness.fs`, section 1.
+   `Database.fs`, `FileProbe.fs`, `FileTracker.fs`, section 1.
 6. **`Db` exposes its raw mailbox** (`Post`/`PostAndReply` with `DatabaseApi`) publicly, so a
    caller can bypass `observeFiles` and the rule. Tests use it. `DatabaseApi` could become
    internal.

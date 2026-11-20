@@ -5,7 +5,7 @@
 Topic 1 is done (layout A, brief.md): `DatabaseFormat.fs` (`BuildLog`: version, `Database`,
 `DbRecord`; internal `Persist`), `Database.fs` (`Storage`: agent, writer, file lifecycle, `Db`
 without a hasher), `FileProbe.fs` (`FileStat`, `HashResult`, `Content.hash`, `Hasher`),
-`FileStaleness.fs` (`ObserveMode`, `Observation`, `FileRule`, `RunFiles`, `ObserveContext` with
+`FileTracker.fs` (`ObserveMode`, `Observation`, `FileRule`, `RunFiles`, `ObserveContext` with
 `Hasher`, `observeFiles`); `EngineState.Hasher`; `makeResult` and `Step` in Types.fs, `Agent` in
 Prelude.fs. Pure move, no behaviour or format change. Full suite 1,889 passed, 0 failed. Bench
 (process wall time, 3 rounds, `-t 16`): base full 1.52-1.77 s, no-change 0.94-1.13 s; after full

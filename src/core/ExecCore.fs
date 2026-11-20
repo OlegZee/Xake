@@ -3,7 +3,7 @@
 open DependencyAnalysis
 
 open Storage
-open FileStaleness
+open FileTracker
 open WorkerPool
 
 /// Returns the current recipe execution context as a tuple of build result and execution context.
@@ -163,7 +163,7 @@ let private storeResult (ctx: ExecContext) (result: BuildResult) = async {
         |> List.choose (function FileDep f | TargetDep (FileTarget f) -> Some f | _ -> None)
         |> List.filter (files.ContainsKey >> not) |> List.distinct
     if not missing.IsEmpty then
-        do! FileStaleness.observeFiles { ctx.Observe with Hashing = false } Verdict System.Int32.MaxValue missing |> Async.Ignore }
+        do! FileTracker.observeFiles { ctx.Observe with Hashing = false } Verdict System.Int32.MaxValue missing |> Async.Ignore }
 
 /// Whether a rule's outputs take part in content cut-off (`noContentCutoff` opts out).
 let private ruleCutoff (header: RuleHeader) = header.ContentCutoff <> Some false
@@ -617,7 +617,7 @@ let private verdict (ctx: ExecContext) (verdicts: Verdicts) (targets: Target lis
 let beginRun (ctx: ExecContext) = async {
     do Scheduler.newRun ctx.Engine.Scheduler
     let! epoch = ctx.Db.PostAndAsyncReply Storage.NewRun
-    let ctx = { ctx with Spellings = newSpellings (); RunFiles = FileStaleness.RunFiles (); RunEpoch = epoch }
+    let ctx = { ctx with Spellings = newSpellings (); RunFiles = FileTracker.RunFiles (); RunEpoch = epoch }
     let verdicts = Verdicts(ctx, currentRule ctx)
     let upToDate t = async { let! reasons = verdicts.Of t in return List.isEmpty reasons }
     return { ctx with NeedRebuild = verdict ctx verdicts; UpToDate = upToDate }, verdicts }
@@ -703,7 +703,7 @@ let createContextCore (options: EngineOptions) (db: Storage.Db) vars showProgres
         ShowProgress = showProgress
         HeldResources = []
         Spellings = newSpellings ()
-        RunFiles = FileStaleness.RunFiles ()
+        RunFiles = FileTracker.RunFiles ()
         RunEpoch = 0
         Counters = RunCounters()
         }

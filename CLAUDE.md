@@ -71,7 +71,7 @@ WorkerPool (parallel execution) → Rule matching & Recipe execution → Databas
 | `src/core/Database.fs` | Build state persistence: the database agent, the writer, the file lifecycle (`Storage`) |
 | `src/core/DatabaseFormat.fs` | The database format: version, picklers, path table (`BuildLog`, `Persist`) |
 | `src/core/FileProbe.fs` | Stat, content hash and the hasher: file I/O only |
-| `src/core/FileStaleness.fs` | Whether a file is stale: the rule over records and epochs, `RunFiles`, `observeFiles` |
+| `src/core/FileTracker.fs` | Whether a file is stale: the rule over records and epochs, `RunFiles`, `observeFiles` |
 | `src/core/ExecTypes.fs` | Configuration types (`ExecOptions`) and execution context |
 | `src/core/DependencyAnalysis.fs` | Topological sorting and execution order |
 | `src/core/WorkerPool.fs` | Thread pool for parallel rule execution |

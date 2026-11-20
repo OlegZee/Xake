@@ -7,7 +7,7 @@ open Xake
 open Xake.BuildLog
 open Xake.Storage
 open Xake.FileProbe
-open Xake.FileStaleness
+open Xake.FileTracker
 open Xake.LegacyRead
 open Tests
 
@@ -38,7 +38,7 @@ module private impl =
     let hasher = Hasher()
     /// Observes one file through the facade (L5).
     let observeIn (a : Db) run hashing mode since f =
-        (FileStaleness.observeFiles { Db = a; Hasher = hasher; Run = run; Hashing = hashing; OnHashed = ignore } mode since [ f ] |> Async.RunSynchronously).[0]
+        (FileTracker.observeFiles { Db = a; Hasher = hasher; Run = run; Hashing = hashing; OnHashed = ignore } mode since [ f ] |> Async.RunSynchronously).[0]
     // Is.Any predicate for assertions
     let IsAny() = Is.Not.All.Not
 
@@ -523,8 +523,8 @@ let ``a batch observes like single observations``() =
         let epoch, run = newRun db
         let oc = { Db = db; Hasher = Hasher(); Run = run; Hashing = false; OnHashed = ignore }
         let replies =
-            if single then [ for f in files -> (FileStaleness.observeFiles oc Recording 0 [ f ] |> Async.RunSynchronously).[0] ]
-            else FileStaleness.observeFiles oc Recording 0 files |> Async.RunSynchronously |> List.ofArray
+            if single then [ for f in files -> (FileTracker.observeFiles oc Recording 0 [ f ] |> Async.RunSynchronously).[0] ]
+            else FileTracker.observeFiles oc Recording 0 files |> Async.RunSynchronously |> List.ofArray
         let state = db.Snapshot.Files
         db.PostAndReply CloseWait
         replies, [ for f in files -> state.TryFind f ], epoch
@@ -541,9 +541,9 @@ let ``racing observations of a new file write one record, and an unchanged file 
     let db = openDb () logger
     let _, run = newRun db
     let oc = { Db = db; Hasher = Hasher(); Run = run; Hashing = false; OnHashed = ignore }
-    [ for _ in 1 .. 16 -> FileStaleness.observeFiles oc Recording 0 [ f ] ] |> Async.Parallel |> Async.RunSynchronously |> ignore
+    [ for _ in 1 .. 16 -> FileTracker.observeFiles oc Recording 0 [ f ] ] |> Async.Parallel |> Async.RunSynchronously |> ignore
     let _, run2 = newRun db
-    FileStaleness.observeFiles { oc with Run = run2 } Verdict 0 [ f ] |> Async.RunSynchronously |> ignore
+    FileTracker.observeFiles { oc with Run = run2 } Verdict 0 [ f ] |> Async.RunSynchronously |> ignore
     db.PostAndReply CloseWait
     let fileRecords = readRecords (root ()) dbname |> Seq.filter (function DbRecord.FileState (g, _) -> g = f | _ -> false) |> Seq.length
     Assert.AreEqual(1, fileRecords)

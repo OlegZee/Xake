@@ -21,3 +21,7 @@ section 7. One decision per line, with its date. Decisions are not re-litigated.
   part); the hasher leaves `Db`. Renames of functions are left for the public-API topic.
 - 2026-11-20 (topic 1): a per-run memo of observations in place of the `RunFiles` claims is a
   separate topic (candidate 3), not part of the move.
+- 2026-11-20 (topic 1): `FileProbe.fs` and the staleness module stay two files (the hasher is an
+  agent of its own).
+- 2026-11-20 (topic 1): `FileStaleness` is renamed `FileTracker`: it keeps file records in line
+  with the disk, talks to the database, starts hashing and orders the observers of a run.

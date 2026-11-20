@@ -3,7 +3,7 @@
 open Xake
 open Xake.WorkerPool
 open Storage
-open FileStaleness
+open FileTracker
 
 /// <summary>
 /// Dependency state.
@@ -25,10 +25,10 @@ let getExecTime (ctx: ExecContext) target =
     Storage.tryGetResult ctx.Db target
     |> Option.fold (fun _ r -> r.Steps |> List.sumBy (fun s -> s.OwnTime)) 0<ms>
 
-/// Observes a group of files (FileStaleness.observeFiles) in the context's run: per file, in the
+/// Observes a group of files (FileTracker.observeFiles) in the context's run: per file, in the
 /// order given, missing or whether its content changed after the run `since`.
 let observeMany (ctx: ExecContext) (mode: ObserveMode) (since: int) (files: File list) =
-    if files.IsEmpty then async.Return [||] else FileStaleness.observeFiles ctx.Observe mode since files
+    if files.IsEmpty then async.Return [||] else FileTracker.observeFiles ctx.Observe mode since files
 
 /// Observes one file (docs/features/idle-perf, L5).
 let observeSince (ctx: ExecContext) (mode: ObserveMode) (since: int) (file: File) = async {

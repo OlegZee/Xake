@@ -105,13 +105,13 @@ The file starts with a version header (`BuildLog.XakeDbVersion`, `0.7`; `XakeDbM
 - Runs may overlap in engine mode (`Demand` of different names): an observation is stamped with
   the newest epoch handed out, a result with the epoch its task started in. A delegated result
   that did not run its body keeps the local result's epoch; a foreign epoch is never stored.
-- A file is observed through `FileStaleness.observeFiles` (`DependencyAnalysis.observeMany`), a group
+- A file is observed through `FileTracker.observeFiles` (`DependencyAnalysis.observeMany`), a group
   of files at a time, in a mode: by a verdict once per run, then answered from the record; when a
   body records it as a `FileDep` it is statted again, and a moved stat counts as a change unless
   another body already recorded it in this run; a rule's outputs (every output of a multi-output
   rule) are statted again right after the rule. The sequence, on the caller's thread:
   1. the stats (existence, write time, length), taken by the caller;
-  2. the rule `FileStaleness.FileRule.decide` against the snapshot's record (pure: no I/O, no state),
+  2. the rule `FileTracker.FileRule.decide` against the snapshot's record (pure: no I/O, no state),
      with the run's facts from `RunFiles`;
   3. the hashes the rule asks for, through the hasher;
   4. every write in one `Apply`;

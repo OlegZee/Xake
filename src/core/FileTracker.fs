@@ -1,9 +1,10 @@
 namespace Xake
 
-/// Whether a file is stale (docs/features/idle-perf, L1, L4, L5): the rule over a file's record,
-/// its stat and the epoch (pure), the run's files, and the observation that brings the records of
-/// a group of files up to date with the disk and answers whether each changed after a run.
-module FileStaleness =
+/// Keeps the records of files in the database in line with the disk and answers whether a file
+/// changed after a run (docs/features/idle-perf, L1, L4, L5). The pure rule `FileRule` decides;
+/// this module takes the stats, asks the hasher, writes through `Apply` and decides again on a
+/// conflict. A file is observed once per run; later observers wait for the first one.
+module FileTracker =
     open Storage
     open FileProbe
 

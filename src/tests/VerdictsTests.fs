@@ -8,7 +8,7 @@ open NUnit.Framework
 open Xake
 open Xake.Storage
 open Xake.FileProbe
-open Xake.FileStaleness
+open Xake.FileTracker
 open Xake.DependencyAnalysis
 
 let private newContext () =

@@ -112,6 +112,9 @@ What changed is the cost per dependency:
   recorded in this run, which are being hashed) is the run's, not the database's.
 - 2026-11-20, the owner: hashes are computed **behind their own mailbox** (one hash per file and
   stat, everyone else waits for it), not in the database agent.
+- 2026-11-20, the owner: **async** ("Yes, go async") for the split of responsibilities on the
+  architecture page. Work starts with step 1 of design.md (L0-L1, the pure rule, no behaviour
+  change); each step stops for the owner's review.
 - 2026-11-20, the owner: the design is reviewed **layer by layer**. design.md (rewritten a third
   time) is laid out bottom-up. Not accepted yet.
 

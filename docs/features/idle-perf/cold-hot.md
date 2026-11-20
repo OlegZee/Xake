@@ -269,3 +269,22 @@ misses the 2x gate. Temporary timers in the agent during a full build:
 The encode does two lookups in the path table's immutable `Map<File, int>` per file, plus the
 pickler built per call. Since step 2 every task waits for its `Store`, so this serial cost sits
 on the build's critical path. Options are in session.md.
+
+## The separate writer measured (2026-11-20, owner's option b)
+
+The agent applies `Apply` and `Store` to the records in memory, publishes the snapshot and
+replies. A writer mailbox owns the path table and the stream: it encodes the records the agent
+hands it, in order, and appends them. `Close` drains it. Same bench, `-t 16`, 4.0.0 in the same
+session:
+
+| Run | Step 3 | Writer | 4.0.0 |
+|---|---|---|---|
+| full build, "Build completed" | 0.97-1.34 s | 0.59-0.83 s (5 runs) | 0.47-0.54 s |
+| full build, process wall | | 1.54-1.86 s | 1.22-1.25 s |
+| no-change, "Build completed" | 0.16-0.19 s | 0.19-0.22 s (5 runs) | 0.59-0.64 s |
+| no-change, process wall | | 1.02-1.05 s | 1.51-1.54 s |
+
+- The full build is 1.3-1.6x 4.0.0, within the 2x gate. In process wall time it is 1.3-1.5x:
+  draining the writer at close adds about 0.2-0.4 s after "Build completed".
+- A no-change run is about 3x faster than 4.0.0. In process wall time it is about 0.5 s
+  shorter.

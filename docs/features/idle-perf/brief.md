@@ -115,6 +115,9 @@ What changed is the cost per dependency:
 - 2026-11-20, the owner: **async** ("Yes, go async") for the split of responsibilities on the
   architecture page. Work starts with step 1 of design.md (L0-L1, the pure rule, no behaviour
   change); each step stops for the owner's review.
+- 2026-11-20, the owner: the full build's encode goes to **a separate writer** (option b): the
+  agent publishes and replies, a writer mailbox owns the path table and the stream and encodes;
+  `Close` drains it.
 - 2026-11-20, the owner: the design is reviewed **layer by layer**. design.md (rewritten a third
   time) is laid out bottom-up. Not accepted yet.
 

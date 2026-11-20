@@ -532,14 +532,23 @@ module Storage =
 
     /// The agent over a database state, its path table and the stream it appends to (None: in
     /// memory only); `close` releases the stream and the lock (docs/features/idle-perf, L2).
-    let private agent (logger: ILogger) (cell: SnapshotCell) (table0: Persist.PathTable) (stream0: Stream option) (close: unit -> unit) =
-        // Logging the agent's own failure must not throw out of the loop again.
+    type private WriterMsg =
+        /// records to append, in the agent's order
+        | Append of DbRecord list
+        /// nothing more is appended (`InMemory`)
+        | StopWriting
+        /// appends what is queued, closes the stream and releases the lock, then replies
+        | Drain of AsyncReplyChannel<unit>
+
+    /// The writer (docs/features/idle-perf): owns the path table and the stream, encodes the
+    /// records the agent hands it, in order, and appends each batch with one write. The agent
+    /// publishes and replies without waiting for it; `Close` drains it.
+    let private writer (logger: ILogger) (table0: Persist.PathTable) (stream0: Stream option) (close: unit -> unit) =
+        // Logging the writer's own failure must not throw out of the loop again.
         let logError fmt = Printf.kprintf (fun s -> try logger.Log Error "%s" s with _ -> ()) fmt
-        let mbox = new MailboxProcessor<_>(fun mbox ->
-            // An exception escaping the loop would kill the agent silently and every later
-            // PostAndReply (Store, CloseWait) would wait forever. So a failed store is logged,
-            // nothing of it reaches the file and the result is kept in memory for this run (the
-            // next run rebuilds that target), and close always replies.
+        let mbox = new MailboxProcessor<WriterMsg>(fun mbox ->
+            // A failed store is logged and nothing of it reaches the file; the result is kept in
+            // memory for this run (the next run rebuilds that target), and close always replies.
             let failedStores = ref 0
             /// Appends records. A record that fails to pickle raises and leaves the table as it
             /// was; a failed write stops appending until the database is closed (A4).
@@ -555,53 +564,76 @@ module Storage =
                     with ex ->
                         logError "Database write failed, no further records are saved until it is closed: %s" ex.Message
                         table', None
+            let rec loop out = async {
+                let! msg = mbox.Receive()
+                match msg with
+                | Append recs ->
+                    let out =
+                        try persist out recs
+                        with ex ->
+                            match recs with
+                            | [ DbRecord.Result result ] ->
+                                failedStores.Value <- failedStores.Value + 1
+                                let name = try (result.Targets |> List.map (fun t -> t.Name) |> String.concat ", ") with _ -> "?"
+                                logError "Database agent failed to store the result of '%s': %O" name ex
+                            | _ -> logError "Database agent failed to store the state of %d file(s): %O" recs.Length ex
+                            out
+                    return! loop out
+                | StopWriting -> return! loop (fst out, None)
+                | Drain ch ->
+                    do (try logger.Log Info "Closing database" with _ -> ())
+                    if failedStores.Value > 0 then
+                        try logger.Log Warning "Database not fully saved: %d result(s) failed to store, the next build may rebuild them" failedStores.Value
+                        with _ -> ()
+                    try close ()
+                    with ex -> logError "Database agent failed to close: %O" ex
+                    ch.Reply () }
+            loop (table0, stream0))
+        mbox.Error.Add (fun ex -> logError "Database writer stopped: %O" ex)
+        mbox.Start()
+        mbox
+
+    /// The agent over a database state (docs/features/idle-perf, L2): it applies writes and results
+    /// to the records in memory, publishes the snapshot and replies; the writer appends them to the
+    /// file behind it.
+    let private agent (logger: ILogger) (cell: SnapshotCell) (table0: Persist.PathTable) (stream0: Stream option) (close: unit -> unit) =
+        // Logging the agent's own failure must not throw out of the loop again.
+        let logError fmt = Printf.kprintf (fun s -> try logger.Log Error "%s" s with _ -> ()) fmt
+        let write = writer logger table0 stream0 close
+        let mbox = new MailboxProcessor<_>(fun mbox ->
+            // An exception escaping the loop would kill the agent silently and every later
+            // PostAndReply (Store, CloseWait) would wait forever: nothing here does I/O.
             let publish db = cell.Value <- db
-            let rec loop (db: Database) out =
+            let rec loop (db: Database) =
                 async {
                     let! msg = mbox.Receive()
                     match msg with
                     | Apply (writes, ch) ->
                         let accepted, conflicts = writes |> List.partition (fun (f, expected, _) -> Map.tryFind f db.Files = expected)
-                        let out =
-                            if accepted.IsEmpty then out
-                            else
-                                try persist out [ for f, _, st in accepted -> DbRecord.FileState (f, st) ]
-                                with ex ->
-                                    logError "Database agent failed to store the state of %d file(s): %O" accepted.Length ex
-                                    out
                         let db = { db with Files = accepted |> List.fold (fun m (f, _, st) -> Map.add f st m) db.Files }
                         publish db
                         ch.Reply [ for f, _, _ in conflicts -> f, Map.tryFind f db.Files ]
-                        return! loop db out
+                        if not accepted.IsEmpty then write.Post (Append [ for f, _, st in accepted -> DbRecord.FileState (f, st) ])
+                        return! loop db
                     | Store (result, ch) ->
-                        let out =
-                            try persist out [ DbRecord.Result result ]
-                            with ex ->
-                                failedStores.Value <- failedStores.Value + 1
-                                let name = try (result.Targets |> List.map (fun t -> t.Name) |> String.concat ", ") with _ -> "?"
-                                logError "Database agent failed to store the result of '%s': %O" name ex
-                                out
                         let db = addResult db result
                         publish db
                         ch.Reply ()
-                        return! loop db out
+                        write.Post (Append [ DbRecord.Result result ])
+                        return! loop db
                     | NewRun ch ->
                         let db = { db with Epoch = db.Epoch + 1 }
                         publish db
                         ch.Reply db.Epoch
-                        return! loop db out
+                        return! loop db
                     | InMemory ->
-                        return! loop db (fst out, None)
+                        write.Post StopWriting
+                        return! loop db
                     | Close | CloseWait _ ->
-                        do (try logger.Log Info "Closing database" with _ -> ())
-                        if failedStores.Value > 0 then
-                            try logger.Log Warning "Database not fully saved: %d result(s) failed to store, the next build may rebuild them" failedStores.Value
-                            with _ -> ()
-                        try close ()
-                        with ex -> logError "Database agent failed to close: %O" ex
+                        do! write.PostAndAsyncReply Drain
                         match msg with CloseWait ch -> ch.Reply() | _ -> ()
                 }
-            loop cell.Value (table0, stream0))
+            loop cell.Value)
         mbox.Error.Add (fun ex -> logError "Database agent stopped: %O" ex)
         mbox.Start()
         mbox

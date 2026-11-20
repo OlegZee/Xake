@@ -525,3 +525,16 @@ let ``a verdict's later observation sees a deleted file``() =
     File.Delete "gone.c"
     Assert.AreEqual(Absent, observe ())
     db.PostAndReply CloseWait
+
+/// The writer appends behind the agent, in the agent's order; closing drains it.
+[<Test>]
+let ``closing drains the writer, in order``() =
+    let db = openDb () logger
+    let names = [ for i in 1 .. 200 -> sprintf "w%03d.exe" i ]
+    for n in names do store db (createResult n)
+    db.PostAndReply CloseWait
+    let stored =
+        readRecords (root ()) dbname
+        |> Seq.choose (function DbRecord.Result r -> Some (r.Targets.Head.Display (root ())) | _ -> None)
+        |> List.ofSeq
+    Assert.AreEqual(names, stored)

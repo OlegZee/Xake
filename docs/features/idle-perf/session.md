@@ -29,12 +29,8 @@ design.md (third version, by layers); the owner said "go async"; each step stops
   without the guard. Full suite: 1,886 passed, 0 failed.
 - Measured (cold-hot.md, "Step 3 measured"): no-change 0.16-0.19 s (4.0.0: 0.59-0.66 s); full
   build 0.97-1.34 s (4.0.0: 0.41-0.47 s), over the 2x gate.
-- Open for the owner: the full build. The agent is the serial bottleneck through `Persist.encode`
-  (about 0.3 ms per result: path-table lookups in an immutable `Map`). Options:
-  (a) reply to `Store`/`Apply` once the snapshot is published, then encode and write (the task
-      no longer waits for the encode; the agent stays serial), about 5 lines;
-  (b) a separate writer mailbox that owns the path table and the stream: the agent only
-      publishes and replies, the writer encodes; `Close` drains it, about 30 lines;
-  (c) a faster encode: build the pickler once, path-table ids in a mutable dictionary with
-      rollback on a failed pickle, about 30 lines.
+- Writer (owner's option b) done: the agent publishes and replies; a writer mailbox owns the
+  path table and the stream, encodes and appends in the agent's order; `Close` drains it. Full
+  build 0.59-0.83 s (4.0.0: 0.47-0.54 s), no-change 0.19-0.22 s (4.0.0: 0.59-0.64 s); process
+  wall times in cold-hot.md. Full suite: 1,887 passed, 0 failed.
 - Then: release notes (the fix; FS0041 in its own commit), docs/implnotes.md, the PR.

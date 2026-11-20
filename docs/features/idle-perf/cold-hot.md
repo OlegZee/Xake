@@ -181,3 +181,48 @@ What this means for the fix:
   scheduling altogether.
 - Giving the agent its own thread instead of the pool would remove the parking, but not the
   round-trip cost per message.
+
+## Mailbox throughput (2026-11-20, bench/mailbox.fsx)
+
+How many "the state of this file" requests an agent like the database agent answers. The agent
+holds an immutable `Map` of 10,000 files, as Xake's does, and answers from memory unless noted.
+180,000 requests per pass, 18 cores, two runs; the second run's figures in brackets.
+
+| Pattern | us/request | requests/s | files/s | B/request |
+|---|---|---|---|---|
+| one caller, `PostAndReply` | 7.3 (7.7) | 137,000 | 137,000 | 1,287 |
+| one caller, `PostAndAsyncReply` + `RunSynchronously` (Xake's verdict today) | 9.8 (8.7) | 102,000 | 102,000 | 1,924 |
+| same, the agent also runs `File.Exists` | 14.0 | 71,000 | 71,000 | 2,046 |
+| one async loop awaiting each reply, no `RunSynchronously` | 2.4 (2.2) | 418,000 | 418,000 | 1,517 |
+| 4 / 16 / 64 async callers, each awaiting its replies | 1.40 / 1.36 / 1.31 | 713,000-766,000 | same | 1,177 |
+| all requests at once, `Async.Parallel` of 150 per group | 1.5 (1.6) | 658,000 | 658,000 | 1,596 |
+| same, the agent also runs `File.Exists` (the full build's shape) | 3.6 | 281,000 | 281,000 | 1,576 |
+| `Post` without a reply, then one `Ping` (the agent's own ceiling) | 0.59 | 1,700,000 | 1,700,000 | 1,308 |
+| one caller, batch of 10, `RunSynchronously` | 13.0 | 77,000 | 772,000 | 2,472 |
+| one caller, batch of 150, `RunSynchronously` | 46 | 21,600 | 3,240,000 | 8,080 |
+| one caller, batch of 1,000, `RunSynchronously` | 237 | 4,200 | 4,210,000 | 42,080 |
+| 16 async callers, batch of 150 | 35.5 | 28,100 | 4,220,000 | 7,221 |
+| own thread (`BlockingCollection`, `Dictionary`), one caller, blocking `.Result` | 0.94 (0.85) | 1,070,000 | 1,070,000 | 152 |
+| own thread, 16 async callers | 1.03 | 967,000 | 967,000 | 777 |
+| no agent: `Map.tryFind` / `File.Exists` on one thread | 0.23 / 1.3-1.4 | | | 24 / 0 |
+
+Findings:
+- The agent itself is not slow. Answering from memory it handles 1.7 M messages/s, about 0.6
+  us each, and 0.7 M/s when callers keep its queue full.
+- The cost is the caller waiting for each reply. Synchronous waiting (`RunSynchronously`,
+  `PostAndReply`) is about 7-10 us a request, so one waiting caller gets about 100,000 answers/s.
+  The same wait inside an async loop, with no `RunSynchronously`, is 2.2-2.4 us.
+- A stat inside the agent makes it serial on the file system: 71,000/s with one caller, and
+  281,000/s with a full queue.
+- A batch of 150 costs about 46 us for one caller, about 0.3 us a file: 3.2 M files/s, and
+  4.2 M/s with 16 callers. That is about 30x one request per file with `RunSynchronously`, and
+  faster than a `Map.tryFind` loop would be with the transport added.
+- A service on its own thread (a blocking queue and a `Dictionary`) answers one waiting caller in
+  0.85-0.94 us with 152 B, about 10x the `MailboxProcessor` with `RunSynchronously`.
+- For the bench's 180,000 dependencies this gives:
+  - Xake today: about 1.8 s of transport, plus 1.4 s of stats when the agent also stats;
+  - batches of 150 from one caller: about 0.06 s;
+  - the stats, moved to the callers: about 0.25 s on one thread, less on several.
+- The micro-benchmark does not reproduce the full build's thread-pool parking. Its flood of
+  180,000 requests drains in 0.3-0.6 s, because nothing else competes for the pool; in the real
+  build the recipes' own continuations do.

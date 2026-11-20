@@ -8,4 +8,6 @@
 - [x] Q1: Stopwatch marks on the bench: banner -> first recipe ~20 ms; the toy reproduces +1.07 s, all in `openDb`
 - [x] Q1: the consumer's measurement points: `XAKE build tool` -> first flush of `info`; the load is inside on both
 - [x] Q1: the consumer's run with the marks build: `database open` 2.72 s at 17.3 MB, the rest ms; Q1 = Q2
-- [ ] Owner: choose among A, C, B1-B3
+- [x] Owner: fix A (2026-11-20)
+- [x] Fix A: `PathTable.NFiles`/`NDirs`, test `a large path table round-trips with its counters`, release notes
+- [ ] Owner: C, and a compaction policy (B1-B3)

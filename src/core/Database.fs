@@ -229,23 +229,26 @@ module Storage =
         type PathTable =
             { Root: string; RootPrefix: string
               Ids: Map<File, int>; Files: Map<int, File>
-              Dirs: Map<int * string, int>; DirPrefix: Map<int, string> }
+              Dirs: Map<int * string, int>; DirPrefix: Map<int, string>
+              /// the next file id and dir id: counted here, since `Map.Count` walks the whole map
+              /// (once per path record made the load quadratic, docs/features/startup-perf)
+              NFiles: int; NDirs: int }
 
         module PathTable =
             let empty root =
                 let n = (File.make root).Name
                 { Root = root; RootPrefix = (if n.EndsWith "/" then n else n + "/")
-                  Ids = Map.empty; Files = Map.empty; Dirs = Map.empty; DirPrefix = Map.empty }
+                  Ids = Map.empty; Files = Map.empty; Dirs = Map.empty; DirPrefix = Map.empty; NFiles = 0; NDirs = 0 }
 
             let private addDir (r, dir) t =
                 match Map.tryFind (r, dir) t.Dirs with
                 | Some d -> t, d, []
                 | None ->
-                    let d = t.Dirs.Count
+                    let d = t.NDirs
                     let prefix = match r, dir with 1, "" -> t.RootPrefix | 1, _ -> t.RootPrefix + dir + "/" | _ -> dir + "/"
-                    { t with Dirs = Map.add (r, dir) d t.Dirs; DirPrefix = Map.add d prefix t.DirPrefix }, d, [ DirRec (d, r, dir) ]
+                    { t with Dirs = Map.add (r, dir) d t.Dirs; DirPrefix = Map.add d prefix t.DirPrefix; NDirs = d + 1 }, d, [ DirRec (d, r, dir) ]
 
-            let private addFile f id t = { t with Ids = Map.add f id t.Ids; Files = Map.add id f t.Files }
+            let private addFile f id t = { t with Ids = Map.add f id t.Ids; Files = Map.add id f t.Files; NFiles = id + 1 }
 
             /// The table with the file, and its new `DirRec`/`PathRec`.
             let add (f: File) (t: PathTable) : PathTable * Rec list =
@@ -254,13 +257,13 @@ module Storage =
                     let s = File.display t.Root f
                     let i = s.LastIndexOf '/'
                     let t, d, recs = addDir ((if s = f.Name then 0 else 1), (if i < 0 then "" else s.Substring(0, i))) t
-                    let id = t.Ids.Count
+                    let id = t.NFiles
                     addFile f id t, recs @ [ PathRec (id, d, s.Substring(i + 1)) ]
 
             /// The table after a record read from the file.
             let load (t: PathTable) = function
-                | DirRec (d, r, dir) when d = t.Dirs.Count && (r = 0 || r = 1) -> let t, _, _ = addDir (r, dir) t in t
-                | PathRec (id, d, name) when id = t.Ids.Count && t.DirPrefix.ContainsKey d -> addFile (File.make (t.DirPrefix.[d] + name)) id t
+                | DirRec (d, r, dir) when d = t.NDirs && (r = 0 || r = 1) -> let t, _, _ = addDir (r, dir) t in t
+                | PathRec (id, d, name) when id = t.NFiles && t.DirPrefix.ContainsKey d -> addFile (File.make (t.DirPrefix.[d] + name)) id t
                 | Data _ -> t
                 | r -> failwithf "unexpected path record %A" r
 

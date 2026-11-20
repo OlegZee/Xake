@@ -1,7 +1,7 @@
 # Startup performance: session
 
 Branch `feature/startup-perf` from `407765f` (= `v5.0.0-preview.3`; PR #148 not merged into dev
-yet). Analysis and measurement only; no engine code changed.
+yet). Analysis and measurement; fix A implemented on the owner's word (2026-11-20).
 
 ## Where things stand (2026-11-20)
 
@@ -20,6 +20,12 @@ yet). Analysis and measurement only; no engine code changed.
   `fixA+arr-experiment.diff` (a static switch, measurement only) and `marks.diff` (Stopwatch
   marks, `XAKE_MARKS=1`). The database copies are in `~/xake-profiling/consumer-db/`.
 
+- Fix A done (owner, 2026-11-20): `PathTable` keeps `NFiles`/`NDirs`; test `a large path table
+  round-trips with its counters` (20,000 paths, 154 ms); full suite 1,888 passed. Measured with
+  the commit: `openDb` 0.79-0.87 s on the 12.5 MB copy (was 1.33-1.79 s), 1.15-1.35 s on the
+  17.3 MB copy; toy script on 17.3 MB 0.90-1.13 s (was 1.80-1.88 s). Release notes line added.
+
 ## Next step
 
-The owner reads findings.md and decides on A, C and the compaction policy (B1-B3).
+The owner decides on C (id array while reading) and the compaction policy (B1-B3); then a PR
+(feature/startup-perf -> dev, squash) when the owner says so. Nothing is pushed.

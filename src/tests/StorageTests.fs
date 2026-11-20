@@ -376,6 +376,23 @@ let ``a path table at a file-system root round-trips``() =
     let _, read = DbFormat.roundTrip root [ DbRecord.FileState (f, state) ]
     Assert.AreEqual([ DbRecord.FileState (f, state) ], read.Records)
 
+/// The path table counts its files and dirs (`Map.Count` walks the map, which made the load
+/// quadratic, docs/features/startup-perf): the counters agree with the maps after encode and read.
+[<Test>]
+let ``a large path table round-trips with its counters``() =
+    let root = "/p"
+    let state = { Stamp = System.DateTime(2026, 1, 1); Size = 1L; Hash = None; Changed = 1 }
+    let files = [ for i in 0 .. 19999 -> File.make (sprintf "/p/d%03d/f%05d.cs" (i % 500) i) ]
+    let recs = [ for f in files -> DbRecord.FileState (f, state) ]
+    let watch = System.Diagnostics.Stopwatch.StartNew()
+    let _, read = DbFormat.roundTrip root recs
+    printfn "20,000 paths in 500 dirs: encode and read %.0f ms" watch.Elapsed.TotalMilliseconds
+    Assert.AreEqual(recs, read.Records)
+    Assert.AreEqual(20000, read.Table.NFiles)
+    Assert.AreEqual(read.Table.Ids.Count, read.Table.NFiles)
+    Assert.AreEqual(read.Table.Dirs.Count, read.Table.NDirs)
+    Assert.AreEqual(500, read.Table.NDirs)
+
 /// Content cut-off through the facade: a moved file is hashed; the same content keeps its run,
 /// other content is a change.
 [<Test>]

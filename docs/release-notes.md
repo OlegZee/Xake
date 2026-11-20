@@ -131,6 +131,11 @@ Also:
   the verdicts at a group's start are decided in parallel. On a synthetic build of 1,188 targets
   with 150 file dependencies each, a no-change run takes 0.19-0.22 s (4.0: 0.59-0.64 s, preview.2:
   2.3 s) and a full build 0.59-0.83 s (4.0: 0.47-0.54 s, preview.2: 5.5-8 s).
+- **Opening the database** (preview.1-3 regression, docs/features/startup-perf): the path table
+  counted its entries with `Map.Count` once per path, so the load grew with the square of the
+  number of files; a 12.5 MB database of 28,000 files took 1.3-1.8 s to open (a 4.x database of
+  88 MB about 0.3 s). It now keeps the counts: 0.8-0.9 s for that database, about half; the
+  compaction rewrite and the upgrade of a 4.x database gain the same way.
 - **Critical path:** when more tasks are ready than `-t` allows, the one with the longest expected
   remaining chain starts first (its own time plus the longest chain of its dependents, from the
   last run's times); the same order applies to resource waiters and to `need [..]`. Without

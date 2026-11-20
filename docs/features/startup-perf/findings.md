@@ -1,6 +1,6 @@
 # Startup performance: findings (2026-11-20)
 
-Analysis and measurement only; nothing here is a decision. Base: `v5.0.0-preview.3` (407765f).
+Analysis and measurement. Decided: fix A (the owner, 2026-11-20, implemented). Base: `v5.0.0-preview.3` (407765f).
 
 Machine: Apple M5 Pro, 18 cores, macOS, .NET 8. Data: copies of a consumer's databases, kept
 outside the repository (a 5.0 database of 12.5 MB, 0.7 format; a 4.x database of 88 MB, 0.6).
@@ -78,7 +78,7 @@ measured 0.50 s), and in ~0.3 s when it holds only live records (compacted, 4.5 
 
 ### Options
 
-- **A. Counters in `PathTable` (recommended).** Two fields `NFiles`, `NDirs`, set in `addDir`
+- **A. Counters in `PathTable` (chosen, implemented).** Two fields `NFiles`, `NDirs`, set in `addDir`
   and `addFile`, read instead of `Map.Count` in `add` and `load`. ~10 lines, Database.fs only, no
   format change. Measured: `openDb` 1.33-1.79 s -> 0.73-1.06 s; toy 1.47 s -> 0.66-0.71 s; the
   compaction encode 1.42 s -> 0.91 s; the 4.x upgrade 1.91-2.18 s -> 1.42-1.62 s. The prototype

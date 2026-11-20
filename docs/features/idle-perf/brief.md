@@ -105,10 +105,15 @@ What changed is the cost per dependency:
   the stats on the calling thread, sends one batch request to the agent and returns the batch
   reply; hashing and `Settle` stay behind it. Callers (`DependencyAnalysis`, `ExecCore`) use the
   method, not the messages.
-- Direction: the decisions above amount to A (a batch per target for reads and `Recording`, the
-  agent the only owner of the file table), with the stats taken by the caller. Design:
-  [design.md](design.md) (rewritten 2026-11-20; the 2026-11-19 design is d6522fe). Not accepted
-  yet.
+- 2026-11-20, the owner: **the database decides nothing.** Deciding whether a file changed
+  (comparing the stat with the record, the epoch, the hash) is a pure rule run by the caller, as
+  4.0 did with its dependency list. The database keeps the records, applies updates atomically
+  (compare-and-set) and writes them to `.xake`. The per-run state (which files were observed or
+  recorded in this run, which are being hashed) is the run's, not the database's.
+- 2026-11-20, the owner: hashes are computed **behind their own mailbox** (one hash per file and
+  stat, everyone else waits for it), not in the database agent.
+- 2026-11-20, the owner: the design is reviewed **layer by layer**. design.md (rewritten a third
+  time) is laid out bottom-up. Not accepted yet.
 
 ## Also: recursive recipes and FS0041
 

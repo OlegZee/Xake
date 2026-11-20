@@ -1,288 +1,315 @@
-# Idle performance: design (2026-11-20)
+# Idle performance: design by layers (2026-11-20, third version)
 
-This design replaces the one of 2026-11-19 (commit d6522fe), which is kept only in the git
-history. The decisions it follows are in [brief.md](brief.md):
+This version replaces the first two: the batched query (d6522fe) and the caller stats with the
+agent deciding (057cba5, 8e03e77). Both are still in the git history.
+
+It follows the owner's decisions in [brief.md](brief.md):
+- the database decides nothing;
+- the per-run state belongs to the run;
+- hashes are computed behind their own mailbox;
 - no `Async.RunSynchronously` on the dependency path;
-- the database does no file I/O for observation;
-- a batch of a target's files per request;
-- existence is checked per dependency.
+- existence is checked per dependency;
+- the observation API lives in the database module.
 
-The measurements are in [cold-hot.md](cold-hot.md).
+The measurements are in [cold-hot.md](cold-hot.md), and the overview with diagrams is
+[architecture.html](architecture.html).
 
-## 1. What changes, in one paragraph
+The design is laid out bottom-up, one layer per section. Each layer lists:
+- what it owns;
+- its interface;
+- what it must not do;
+- its tests.
 
-A caller (a verdict, a body's `need`, a task's outputs) takes the stats of a group of files
-itself, on its own thread, and sends them in one message. The agent compares each stat with the
-file's `FileRec`, decides, appends the changed records in one write, and replies once. The
-agent no longer stats anything. Every wait on the agent becomes `PostAndAsyncReply` inside an
-async computation. The verdict becomes async, and so does its per-run memo. The start-of-group
-walk awaits the verdicts in parallel before the critical path and the progress estimate read
-them.
+A layer calls only the layers below it.
 
-## 2. Messages (`Storage`, `Database.fs`)
-
-```fsharp
-/// A file's stat, taken by the caller: missing, or its write time and length.
-type FileStat = Missing | Present of stamp: Timestamp * size: int64
-
-module FileStat =
-    /// One stat of the file, on the calling thread (never in the agent).
-    let take (file: File) : FileStat
-
-type DatabaseApi =
-    | GetResult of Target * AsyncReplyChannel<BuildResult option>
-    /// Stores a result; replies with its file dependencies that have no state (a delegated
-    /// result, A3). The caller stats those and observes them (`Recording`).
-    | Store of BuildResult * AsyncReplyChannel<File list>
-    /// Observes a group of files in one mode against the stats the caller took: one reply per
-    /// file, in the order given. `None`: the file is being hashed for another observation; ask
-    /// it again (alone), which then waits in the agent as today.
-    | Observe of (File * FileStat) list * ObserveMode * since: int * AsyncReplyChannel<Observation option list>
-    /// `HashResult.Unreadable` carries the stat the hasher took after reading.
-    | Settle of HashRequest * HashResult * AsyncReplyChannel<Observation>
-    | NewRun ... | InMemory | Close | CloseWait ...   // unchanged
+```
+L7  ExecCore             tasks, need, outputs, Store
+L6  Verdicts             the verdict of a target, its memo per run, warm, estimate
+L5  Observation facade   observe a group of files: stat, rule, hash, one batch of writes
+L4  RunFiles             per-run state: files seen by a verdict, files recorded by a body
+L3  Hasher (mailbox)     one hash per (file, stat); everyone else waits for it
+L2  Database agent       records in memory, a published snapshot, atomic batch writes, .xake
+L1  FileRule (pure)      known record + stat + mode -> keep / write / hash
+L0  Disk                 stat, content hash
 ```
 
-- `Observe` with a list replaces the single-file `Observe`. A single file is a list of one.
-  Hashing is unchanged (`HashNeeded`, `Settle`), so "ask it again alone" goes through the same
-  message.
-- `HashResult` becomes `Hashed of stamp * size * hash | Unreadable of FileStat`. `settle` today
-  re-stats a file it is told is unreadable; with this change the hasher sends that stat.
-- `DatabaseApi`, `Observe` and `Settle` were new in 5.0 and are not released, so their shapes
-  change with no compatibility layer.
+## L0. Disk
 
-## 3. The agent
+**Owns:** nothing. These are functions that read the file system.
 
-The agent's `observe` takes `(file, stat)` in place of `FileInfo`. The decisions stay exactly as
-they are today (implnotes, "Epochs"):
-- no record: new, `changed` = the run's epoch;
-- equal stat: unchanged, an unknown size filled in;
-- moved stat: `HashNeeded` when hashing, else `changed` = the run's epoch;
-- `Verdict` decides change once per run, then answers from the record, with the existence taken
-  from the stat sent (per dependency, as today's `File.exists`);
-- `Recording` and `Output` decide again, as today.
+```fsharp
+type FileStat = Missing | Present of stamp: Timestamp * size: int64
+module FileStat = val take : File -> FileStat
+module Content  = val hash : File -> HashResult   // stat, SHA-256, stat (as today)
+type HashResult = Hashed of stamp * size * hash: uint64 | Unreadable of FileStat
+```
 
-The batch is folded through the same functions:
-- A file in `pending` replies `None`.
-- A `HashNeeded` puts the file in `pending` as today.
-- The `FileRec`s a batch changes are encoded into one buffer and written with one `Write` and
-  one `Flush`, instead of one per record. The path table rule is unchanged: a batch that fails
-  to pickle writes nothing.
-- An exception for one file (for example a bad path in the record) is logged, that file replies
-  `None`, and the agent stays alive. Today the agent dies.
+**Must not:** keep state or know about records or epochs.
 
-`Store` replies with the dependency files that have no state and observes nothing.
+**Tests:** today's `Content.hash` tests, plus a test that `Unreadable` carries the stat.
 
-## 4. The callers
+## L1. FileRule (pure)
 
-`DependencyAnalysis`:
-- `observeMany ctx mode since files : Async<Observation[]>`:
-  1. Take the stats (`FileStat.take`, on the calling thread).
-  2. Send one `Observe`.
-  3. Hash every `HashNeeded`, in parallel, and settle it.
-  4. Ask each `None` alone. `None` only happens while another caller is hashing the file, so
-     this waits in the agent as today.
-  5. A failure between the reply and the last `Settle` settles the remaining requests as
-     `Unreadable` (try/finally), so no file stays pending.
-- The order matters: a caller settles its own `HashNeeded` files before it asks for anything
-  else (a `None` file, a dependee's verdict). This is what keeps two crossed batches from
-  waiting on each other.
+**Owns:** the decision that the database agent makes today in `observe` and `settle`
+(Database.fs). It moves out unchanged, as a pure function.
 
-The verdict, `getChangeReasons ctx current getDeps target : Async<ChangeReason list>`:
-1. `GetResult`, async.
-2. One `observeMany Verdict epoch` over the distinct files of its `FileDep` and
-   `TargetDep (FileTarget _)` dependencies.
-3. `GetResult` of its phony dependees, async.
-4. For each `TargetDep` whose file is unchanged and whose task has not started, the dependee's
-   own verdict through the memo (the transitive rule). These are awaited in parallel.
-5. `getDepState` stays a pure function over these lookups. Its order of reasons is unchanged.
+```fsharp
+type RuleContext = { Epoch: int; Hashing: bool; SeenByVerdict: bool; RecordedBefore: bool }
+type Decision =
+  | Keep of FileState option   // answer from the record; nothing to write
+  | Write of FileState         // the new record (applied only if the record is still `known`)
+  | NeedHash                   // hash the file, then decideHashed
 
-The memo, `beginRun`:
-- `getDeps` is a per-run `ConcurrentDictionary<Target, Lazy<Task<ChangeReason list>>>`: each
-  target's verdict starts once and every asker awaits the same task.
-- A cycle in the records cannot occur in a finished run. Even so, the recursion carries the
-  targets on its path, and a dependee already on the path counts as changed. Without this guard
-  a cycle in a hand-edited or stale database would hang; today it ends in a stack overflow.
+val decide       : known: FileState option -> FileStat -> ObserveMode -> RuleContext -> Decision
+val decideHashed : known: FileState option -> HashResult -> ObserveMode -> RuleContext -> Decision
+val classify     : since: int -> FileState option -> Observation   // Absent | Unchanged | Changed
+```
 
-The group start:
-- `beginRun` returns the memo.
-- `planRun` first awaits `warm goals`: an async walk of the same targets `getDurationDeps`
-  visits (a target, then the dependees named by its reasons), with siblings in parallel.
-- After that, `getDurationDeps` (critical path, progress estimate and its refreshes) reads the
-  completed results synchronously. A target that was not warmed reads as `[]`, which only
-  affects the estimate.
-- The walk now runs on several threads, and so do the stats.
+These are today's rules, case by case:
 
-`ExecCore`:
-- `UpToDate: Target -> Async<bool>` (`ExecContext`; it was new in 5.0). The fast path awaits it.
-- `NeedRebuild` / `verdict` await the async verdict.
-- `execParallel` takes the plain files (no rule) out of its targets: rule selection and the
-  spelling check as today, stats on the calling thread, one `observeMany Recording`. Only the
-  targets with a rule go to `execOne`. A missing plain file fails as today ("Neither rule nor
-  file is found"). Results come back in the order given.
-- `observeOutputs` and `preHash`: one `observeMany` per task over its outputs.
-- The dependee's file after its task (`ExecCore.fs:379`): one `observeMany Verdict` of one file
-  (it is per task, not per dependency).
-- `Store`: `let! missing = PostAndAsyncReply (Store ...)`, then
-  `observeMany Recording missing` when the list is not empty. In practice this happens only for
-  delegated results.
-- `dumpDeps` (`--dump`, main thread, diagnostics): one `observeMany` per target, run
-  synchronously at the top. This is not on the build path.
+| Mode | When | Today | Decision |
+|---|---|---|---|
+| any | the stat says missing | `Seen None` | `Keep None`, so `Absent` |
+| `Verdict` | a verdict already saw the file in this run | `Seen known` after `File.exists` | `Keep known`. Existence comes from the stat, which is taken per dependency |
+| `Output false` | | `stored (moved ())` | `Write` with `changed` = epoch and no hash |
+| `Output true` | hashing | `Hash` | `NeedHash` |
+| `PreHash` | hashing, no hash in the record, equal stat | `Hash` | `NeedHash`. Otherwise `Keep` |
+| any | equal stat (within 10 ms, size equal or unknown) | `stored {k with Size}` | `Keep k`. `Write` only when the size is filled in |
+| `Recording` | the file was already recorded in this run (A1) | `Seen k` | `Keep k` |
+| `Verdict`, `Recording` | moved stat, hashing on | `Hash` | `NeedHash` |
+| any | moved stat, hashing off, or no record | `stored (moved ())` | `Write` with `changed` = epoch |
 
-Blocking waits that remain: the top level (`ScriptRunner`, the main thread), the loggers'
-flushes, and `ProcessExec`'s synchronous helper. None of them is on the dependency path.
+`decideHashed` follows today's `settle` (equal hash keeps `changed`; an output never hashed and
+not moved fills in its hash; `PreHash` writes only the hash; `Unreadable` writes a change
+without a hash, or `Keep` for `PreHash`).
 
-## 5. What does not change
+**Must not:** do any I/O, mutate anything, or know about agents.
 
-- **The database format.** The same `FileRec`s are appended in the same cases; only several of
-  them now go in one write.
-- **Epochs, `since`, cut-off decisions, hashing once per file (`pending`), `--dryrun` /
-  `--dump` (`InMemory`), overlapping engine runs.**
-- **Verdict results and their reasons.** Existence is checked per dependency, as today.
-- **Ordering:** the stat is taken before the agent decides, where today the agent decides as it
-  stats. This window already exists for hashing. A file changed inside it is seen by the next
-  observation, as a change made just after today's stat would be.
+**Tests:** a table test per row and per `settle` case, ported from today's `StorageTests`
+(`Observe` and `Settle` against an agent become calls to the pure function). These are the
+fastest and most complete tests of the change semantics.
 
-## 6. Tests
+## L2. Database agent
 
-`StorageTests.fs`, agent level:
-1. **The agent does no I/O.** Send a stat for a path that does not exist on disk, saying it is
-   present, and the agent believes it. Send `Missing` for a file that exists, and the reply is
-   `Absent`.
-2. **A batch equals single observations.** Two agents on copies of one database receive the
-   same stats, one as a batch and one file by file. Cover new, unchanged, moved with hashing on
-   and off, the cached `Verdict`, and `Recording` twice. The replies are equal, and so are
-   `readDatabase` results (`Files`, `Status`).
-3. **Pending.** A moved file is `HashNeeded`. Before its `Settle`, a second batch with that
-   file gets `None`, and a single `Observe` of it is answered only after the `Settle`. A
-   duplicate file in one batch is safe.
-4. **`Store` replies the files without state.** A result whose dependencies all have records
-   gets `[]`.
-5. **One write per batch.** A batch of new files appends one buffer (count `Write` calls on a
-   test stream).
-6. **A bad file** in a batch replies `None` and the agent keeps answering.
+**Owns:**
+- the records: `Status: Map<Target, BuildResult>`, `Files: Map<File, FileState>`, `Epoch`;
+- the path table and the `.xake` stream, with the lock, compaction, upgrade, `.bak` and
+  `InMemory` handling as today.
 
-Engine level:
-1. **Crossed batches.** Two targets in parallel share two moved files listed in opposite
-   orders, with hashing on. Both finish within a timeout, each file is hashed once, and the
-   verdicts match a sequential run.
-2. **Existence per dependency.** In one run, target A's body deletes source X (A does not
-   depend on X), then target B, which depends on X, is checked (sequenced with `<<<`). B sees X
-   missing.
-3. **A cycle in the records.** Hand-written results with A depending on B and B on A: the run
-   ends (the cycle counts as a change) instead of hanging.
-4. **Message count.** `RunSummary.ObserveRequests`, a new field (`RunSummary` is new in 5.0),
-   counts `Observe` messages. A no-change run of N targets with file dependencies sends N verdict
-   batches plus one per finished dependee task, never one per dependency.
-5. **Delegated results** (the existing A3 tests) through `Store`'s reply.
-6. The existing `EpochTests`, `ContentCutoffTests`, `StaleArtifactDepTests`,
-   `CriticalPathTests`, `ProgressTests`, `DelegatedTests` and `RecordShapeTests` (with
-   `UpToDate`'s new type).
+**Gives up:** `Observe`, `Settle`, `GetResult`, `pending`, `observed`, `recorded`, `HashRequest`,
+and every stat. It makes no decisions.
 
-Performance: `bench/build.fsx`, run by hand before the release, not in CI.
+```fsharp
+type Snapshot = { Status: Map<Target, BuildResult>; Files: Map<File, FileState>; Epoch: int }
 
-| Run | Gate |
-|---|---|
-| hot no-change | no slower than 4.0.0 on the same machine |
-| full build | within 2x of 4.0.0 |
+type DatabaseApi =
+  /// Writes records if each is still the one the caller decided against (compare-and-set,
+  /// per file). Replies with the conflicts: the file and its current record.
+  | Apply   of (File * expected: FileState option * FileState) list * AsyncReplyChannel<(File * FileState option) list>
+  /// Stores a result; replies once it is in the snapshot (see "Store is awaited" below).
+  | Store   of BuildResult * AsyncReplyChannel<unit>
+  | NewRun  of AsyncReplyChannel<int>
+  | InMemory | Close | CloseWait of AsyncReplyChannel<unit>
 
-Expected:
-- **Hot no-change, about 0.3-0.4 s** (4.0.0 measured 0.56-0.64 s):
-  - the stats: about 180,000 x 1.5 us, spread over 16 threads;
-  - the agent: about 180,000 x ~1 us (a map lookup, a set insert, a compare), serial, about
-    0.2 s;
-  - plus the memo and the walk.
-- **Full build, about 1 s** (4.0.0 measured 0.40-0.47 s): 1,188 Recording batches instead of
-  178,200 messages, which takes away most of the agent's thread-pool parking, and one write per
-  batch.
+/// The current snapshot, published by the agent after every message (an immutable value
+/// behind a volatile reference). Readers never post.
+val snapshot : Db -> Snapshot
+```
 
-## 7. Docs and release notes
+- **Reads** (`getResult`, a file's record, the epoch) come from the snapshot, with no message.
+  The maps are immutable, so a reader always sees a consistent version.
+- **Writes:** one `Apply` per batch. The records that pass the compare-and-set are pickled into
+  one buffer and written with one `Write` and one `Flush`. The rule "a record that fails to pickle
+  writes nothing and leaves the table as it was" holds for the whole batch.
+- **Store is awaited.** Today a reader orders itself after a `Store` through the mailbox, which
+  is FIFO. A snapshot reader has no such ordering. So the task awaits `Store` (async, no blocking)
+  before it reports itself finished. A dependent that sees `Finished` then also sees the result.
+  This costs one round trip per built target.
+- **Epoch:** `NewRun` increments it and publishes it in the snapshot. A write's `changed` uses
+  the snapshot's epoch at decision time: the newest handed out, as today for overlapping engine
+  runs.
 
-- `docs/implnotes.md`, "Epochs":
-  - Observation is a batch with the caller's stats, and the agent does no I/O.
-  - The verdict and its memo are async, and the start-of-group walk is parallel.
-  - `Store` replies with the files that have no state.
-- `docs/release-notes.md`, "5.0.0 (unreleased)":
-  - "A no-change run and a full build check and record file dependencies in batches, one
-    database request per target, with the files' stats taken by the build's own threads; the
-    preview.2 regression (a no-change run about twice as slow as 4.x on a large build) is fixed."
-  - API: `ExecContext.UpToDate` is `Target -> Async<bool>`; `Storage.Observe` takes a list of
-    files with their stats; `Store` replies; `HashResult.Unreadable` carries a stat;
-    `FileStat`; `RunSummary.ObserveRequests`.
-  - In its own commit: the FS0041 note for recursive recipes (brief.md).
+**Must not:** read project files, decide whether something changed, or wait for anyone.
 
-## 8. Line budget
+**Tests:**
+- the compare-and-set: an equal `expected` applies, a different one is a conflict and replies
+  the current record;
+- one write per `Apply`;
+- after `Store`'s reply, the snapshot contains the result;
+- `InMemory` appends nothing;
+- every existing open, lock, compaction, upgrade and torn-record test stays.
 
-| Where | Lines changed (about) |
-|---|---|
-| `Database.fs`: `FileStat`, the messages, `observe` on a stat, the batch fold, one write per batch, `Store`'s reply | 70 |
-| `DependencyAnalysis.fs`: `observeMany`, the async verdict, the async memo and cycle guard, `warm` | 110 |
-| `ExecCore.fs`: plain files in `execParallel`, outputs/pre-hash batches, `Store`, async `UpToDate`, `planRun` | 70 |
-| `ExecTypes.fs`: `UpToDate`, `RunSummary.ObserveRequests`, counter | 10 |
-| tests | 250 |
-| docs, release notes | 30 |
+## L3. Hasher (mailbox)
 
-About 260 lines of code, of which roughly 120 are new and the rest rewritten. This is larger
-than the 2026-11-19 design (about 60). The difference is the async verdict, the async memo and
-the move of every stat out of the agent, including `Recording`.
+**Owns:** the hashes that are being computed. It replaces today's `pending` and the
+`HashNeeded`/`Settle` protocol.
 
-## 9. Later (not in this change)
+```fsharp
+/// The hash of the file as it is at `stat`; one computation per (file, stat) while it runs,
+/// every other asker gets the same result.
+val hash : Hasher -> File -> FileStat -> Async<HashResult>
+```
 
-- The agent on its own thread instead of the thread pool. Measure after this change: with about
-  1% of today's messages, the parking may be gone.
-- `db.Files` as a `Dictionary` in the agent instead of an immutable `Map` (about 1 us -> 0.12 us
-  per file). It interacts with the "a failed record leaves the table as it was" rule.
-- `FastGate`, the semaphore that limits blocking lookups on the fast path, may no longer be
-  needed once nothing there blocks.
+- The mailbox keeps a map from (file, stamp, size) to the waiting callers. The first request
+  starts the hash on the thread pool, limited to as many at once as there are cores (a
+  semaphore). Requests that arrive meanwhile wait for the same result. When the hash finishes,
+  every waiter gets the result and the entry is removed.
+- The mailbox only coordinates; the hashing itself runs in parallel. One hasher serves the
+  engine (hashes do not depend on the run), and it is closed with the database.
+- No completed-hash cache is needed: once a hash is written, its record carries it, so later
+  observations with an equal stat need no hash.
 
-## 10. Amendments: the owner's API decision and the critic's remarks (2026-11-20)
+**Must not:** know about records, epochs or runs.
 
-### The API in the database module (owner, brief.md)
+**Tests:**
+- two concurrent requests for one (file, stat) compute once;
+- a different stat computes again;
+- the concurrency limit holds;
+- a failing hash replies `Unreadable` to every waiter.
 
-- `Storage` offers `observeMany db mode since files : Async<Observation[]>`, plus `getResult`,
-  `store` and `storeDelegated`.
-- `observeMany` does the whole sequence: it takes the stats on the calling thread, sends one
-  batch to the agent, hashes and settles in parallel, re-asks the files another caller is
-  hashing, and cleans up with try/finally.
-- The messages, `FileStat` and `Content.hash` move into the database module, and the hash
-  counter becomes a callback. `DependencyAnalysis` and `ExecCore` never post to the agent
-  directly. §2 and §4 read with this in mind.
+## L4. RunFiles (per-run state)
 
-### Critic's remarks (fresh-eyes review, Opus) and proposals
+**Owns:** what today's agent keeps in `observed` and `recorded`, now per run instead of
+cleared by the next `NewRun`.
 
-| # | Remark | Proposal |
-|---|---|---|
-| B1 | "Ask alone" is undefined: a list of one in `pending` replies `None` again, so the caller spins; a file whose observation throws replies `None` forever. | Accept. The batch reply per file becomes `Observed o \| Busy \| Failed msg`, and an internal `ObserveWait (file, stat, ...)` parks in `pending` as today's `Observe` does. `observeMany` sends it only for `Busy`, with a fresh stat. `Failed` is logged and counts as `Absent`, so the target rebuilds or fails "Neither rule nor file", never loops. |
-| B2 | The cycle guard checks only the caller's path, so two parallel entries into one cycle (A at A, B at B) deadlock on each other's `Lazy<Task>`. | Accept. The memo keeps a wait-for map: before awaiting another target's in-flight verdict it registers the edge, and an edge that would close a cycle counts as changed (the same rule as `WaitGraph.Verdict`). ~15 lines. Test: two entries into one cycle at once, with a timeout. |
-| M3 | A stat taken earlier can overwrite a newer record (two observations of one file arriving in reverse order), so a stamp goes back in time and the next run rebuilds dependents. §5's claim is wrong. | Accept. A `Verdict`/`Recording` stat that differs from a record already stored in this run answers from the record and stores nothing: A1's "another body recorded it" generalised. `Output` (taken by the rule's own task right after it) always applies. `ObserveWait` takes a fresh stat. Test: stats in reverse order. §5 corrected. |
-| M4 | The warm walk misses callers: `planRun` walks only for `CriticalPath`, while `openProgress` (as-requested) and `dryRun` (ScriptRunner.fs:101, its own memo) also walk; `getExecTime` is a blocking `PostAndReply` per target at every group start and progress refresh. | Accept. `beginRun` warms regardless of schedule; `dryRun` uses the same memo and warm; the memo entry keeps the `GetResult` the verdict fetched, and durations read from it (no `getExecTime`). Test: as-requested plus the progress estimate; `--dryrun`. |
-| M5 | The full-build estimate (about 1 s) fails the stated gate (2x of 4.0, 0.80-0.94 s); it assumes batching ends the agent's thread-pool parking, which is unmeasured; the parallel warm walk is a new flood on the same pool. | Accept. Prototype the batches first and measure the agent's `Receive` waits in both runs. If parking remains, the agent gets its own thread in this change (moved from §9). Gates fixed after the prototype; targets stay "hot no-change no slower than 4.0", "full build within 2x". |
-| M6 | `Store` with a reply on every task puts the agent's queue and `persist` on every task's completion; its follow-up switches from `Verdict` without hashing to `Recording` with hashing, which touches `recorded` (A1) and may hash. | Accept. `Store` stays a fire-and-forget `Post`. `storeDelegated` (used only by `runDelegated`) replies with the files that have no state; the caller stats them and observes them in today's mode, `Verdict` with no hashing. |
-| M7 | The plain-file split can serialise (rule dependees wait for the plain batch), changes when "Neither rule nor file" fires, and must keep `EXPLAIN_RULE`; the hold-and-wait check (`locateRule`) and the split (`selectRule`) may disagree under `LastDeclared`. | Accept the first three: rule selection and the missing-file check for every target happen before anything starts (the error fires as today), `EXPLAIN_RULE` stays, and the plain batch is one more branch of `Async.Parallel`. The `locateRule`/`selectRule` disagreement exists today; not changed here, noted in Later. |
-| M8 | The `Verdict` observation after a dependee (ExecCore.fs:379) is per (dependent, dependee) edge, also on the fast path, so test 4's count is wrong. | Accept: test 4 counts per edge. Batching those per `execParallel` call: Later, if measured. |
-| m9 | A cancelled caller or a dead agent between reply and `Settle` can leave `pending` entries. | Partly accept: F# `finally` also runs on cancellation, so try/finally covers it; a dead agent stops everything anyway. Clearing `pending` at `NewRun` would break overlapping engine runs' hashes, so no. Test: a cancelled run leaves no pending file. |
-| m10 | The `UpToDate` default (XakeScriptBuilder.fs:365) changes type. | Accept: listed in the release notes' API changes. |
-| m11 | The budget is low: async `getDepState` in two phases, the memo with cycle detection, the warm walk, `observeMany`, `dryRun`, `dumpDeps`, 12 test call sites of `Observe`. | Accept: code about 400 lines, tests about 350. |
-| m12 | Missing tests: two entries into one cycle, reverse-order stats, as-requested plus progress, `dryRun`, overlapping `demandTarget` runs, a re-ask of a failed file ends. | Accept, all six. |
-| n13 | `dumpDeps` builds a memo it never uses. | Accept: drop it. |
-| n14 | "Existence per dependency" is met per target over its distinct files. | Accept: §5 says so. |
+```fsharp
+type RunFiles =
+  member SeenByVerdict : File -> bool    // test and set
+  member RecordedBefore : File -> bool   // test and set (A1)
+```
 
-**The critic's simpler alternative.** Keep the synchronous walk under `memoize`'s single lock,
-but send one batch per target with the caller's stats. This drops the async memo, B2 and the
-parallel walk's parking risk, and costs about 0.27 s of stats + 0.2 s of agent + transport,
-serial. It still blocks: one `PostAndReply` per target (about 1,188 instead of 181,764), which
-contradicts the owner's "no blocking waits". The owner decides. This session's recommendation
-is to keep async, with B2's fix.
+These are two `ConcurrentDictionary` sets, created in `beginRun` and kept in `ExecContext`. With
+overlapping engine runs, each run now has its own sets. Today the sets are shared, and a second
+run's `NewRun` clears the first run's. This is a small behaviour change, and a correction.
 
-### Revised budget
+**Must not:** hold records or results.
 
-| Where | Lines (about) |
-|---|---|
-| `Database.fs` (the API, messages, batch fold, `ObserveWait`, the M3 rule, one write per batch, `storeDelegated`) | 140 |
-| `DependencyAnalysis.fs` (async verdict in two phases, memo with wait-for map, warm, durations from the memo) | 150 |
-| `ExecCore.fs`, `ScriptRunner.fs` (`dryRun`), `ExecTypes.fs` | 110 |
-| tests | 350 |
-| docs, release notes | 30 |
+**Tests:** covered through L5.
 
-Code about 400 lines; the order of work: the batch with caller stats and a prototype measurement
-(M5) first, then the async verdict and memo.
+## L5. Observation facade (`Storage.observe`)
+
+**Owns:** the sequence for a group of files. It is the only place where L0-L4 meet.
+
+```fsharp
+val observe : ctx -> ObserveMode -> since: int -> File list -> Async<Observation[]>
+val getResult : Db -> Target -> BuildResult option        // from the snapshot
+val store : Db -> BuildResult -> Async<unit>
+```
+
+The sequence, all on the calling thread except the hashing:
+1. Take the stat of every file (L0).
+2. Take the snapshot once. For each file, run `decide` against its record (L1), using
+   `RunFiles` (L4) and the snapshot's epoch.
+3. `NeedHash`: hash the file (L3; the hashes of one batch run in parallel), then `decideHashed`.
+4. Send all `Write`s in one `Apply` (L2). No writes means no message.
+5. For each conflict: stat the file again, decide against the current record, and apply again.
+   This repeats at most 3 times, then the current record is taken as is. The fresh stat is what
+   stops an older stat from overwriting a newer record (critic's M3).
+6. Return `classify since` for each file.
+
+**Must not:** keep state of its own.
+
+**Tests:**
+- a batch equals single observations (same records afterwards);
+- two callers race on a new file, and one record wins;
+- stats arriving in reverse order never move a stamp back;
+- a moved file observed by two callers is hashed once;
+- a no-change batch sends no message to the agent.
+
+## L6. Verdicts (`DependencyAnalysis`)
+
+**Owns:** the verdict of a target and its memo per run, the warm walk and the estimate.
+
+```fsharp
+type Verdicts =
+  member Of       : Target -> Async<ChangeReason list>
+  member Warm     : Target list -> Async<unit>
+  member Estimate : Target -> int<ms> * Target list   // synchronous, after Warm
+val create : ctx -> current -> Verdicts
+```
+
+- `Of`:
+  1. `getResult` from the snapshot.
+  2. One `observe Verdict epoch` over the distinct files.
+  3. The dependees' verdicts through the memo, in parallel.
+  4. `getDepState`, unchanged and pure.
+- The memo is `Lazy<Task>` per target. A wait-for map refuses an edge that would close a cycle,
+  and that edge counts as a change (critic's B2).
+- `Warm` walks the targets `getDurationDeps` would visit, regardless of schedule. `dryRun` uses
+  it as well.
+- `Estimate` reads durations from the snapshot's results: no `getExecTime` and no message.
+
+**Must not:** stat, hash or post to the agent. It works only through L5.
+
+**Tests:**
+- two entries into one cycle at once;
+- as-requested with the progress estimate;
+- `dryRun`;
+- existing verdict, epoch and cut-off tests.
+
+## L7. ExecCore
+
+- `UpToDate: Target -> Async<bool>` and `NeedRebuild` call `Verdicts.Of`.
+- `execParallel` handles the plain files of a `need`:
+  - rule selection, the spelling check, `EXPLAIN_RULE` and the "Neither rule nor file" error,
+    all before anything starts, as today;
+  - then one `observe Recording` for all of them, as one branch of `Async.Parallel` next to the
+    rule targets.
+- The outputs and the pre-hash: one `observe` per task.
+- `store` is awaited.
+- Delegated results: after `store`, the files of their dependencies that have no record in the
+  snapshot are observed with `Verdict` and no hashing, as today. No special reply is needed
+  (this resolves the critic's M6).
+
+## What goes through the agent (benchmark)
+
+| | No-change now | No-change after | Full build now | Full build after |
+|---|---|---|---|---|
+| file observations | 181,764 messages | 0 (every stat equal, nothing to write) | 183,000 messages | about 2,400 `Apply` (only batches with writes) |
+| `GetResult` | 1,256 | 0 (snapshot) | 4,783 | 0 |
+| `Store` | 7 | 7 | 1,195 | 1,195 (awaited) |
+| hashes | 0 | 0 | 1,188 via `Settle` | 1,188 via the hasher |
+| stats inside the agent | 181,764 | 0 | about 183,000 | 0 |
+
+In a no-change run the agent receives about 8 messages, which is less than 4.0 sent. The walk
+costs a stat (1.1-1.7 us), a `Map` lookup (about 0.5 us) and the rule per dependency, spread
+over several threads. Expected: about 0.1-0.2 s, against 0.56-0.64 s on 4.0.
+
+## What does not change
+
+- The database format and the records written, case by case (L1 is today's rule).
+- Epochs, `since`, cut-off, hashing once per (file, stat).
+- `--dryrun` / `--dump` (`InMemory`).
+- Verdict reasons and their order.
+
+## What changes in behaviour (admitted)
+
+- Overlapping engine runs keep their own per-run sets (L4). Today a newer run's `NewRun` clears
+  the older run's.
+- `Store` is awaited by the task (L2): one round trip per built target. It is async, not
+  blocking.
+- API: `ExecContext.UpToDate` becomes async. `Storage.DatabaseApi` is reduced to
+  `Apply`/`Store`/`NewRun`/... . `HashRequest`, `Observe` and `Settle` disappear. New:
+  `FileStat`, `Storage.snapshot`, `Storage.observe`. All of them were new in 5.0.
+
+## Order of work
+
+1. L0-L1: the pure rule, with the ported table tests. No behaviour change yet: the agent calls
+   the rule.
+2. L2-L5: the snapshot, `Apply`, the hasher, `RunFiles` and the facade, then measure (no-change
+   and full build, the agent's `Receive` waits).
+3. L6-L7: the async verdict and memo, `Warm`, and the callers.
+
+Each step leaves the tests green and can be reviewed on its own.
+
+## Budget (rough)
+
+- **Code:** about 600 lines touched. The agent loses about 150 lines; the rule (about 120), the
+  hasher (about 60), the facade (about 80) and the async verdict (about 150) are new or
+  rewritten.
+- **Tests:** about 400 lines.
+
+## Later
+
+- `Files` as a structure faster than `Map` (an immutable hash map).
+- The agent on its own thread (measure after step 2).

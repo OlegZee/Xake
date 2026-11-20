@@ -56,7 +56,7 @@ type ``Critical path``() =
         List.ofSeq started, watch.ElapsedMilliseconds
 
     member private x.Records () =
-        (Storage.Db.readDatabase x.TestOptions.ProjectRoot ".xake").Status
+        (Storage.DbReader.readDatabase x.TestOptions.ProjectRoot ".xake").Status
         |> Map.toList |> List.map (fun (t, r) -> t.Name, (r.Targets, r.Depends, r.StaticCount))
 
     /// Phony tasks under the pool alone, `-t 4`.

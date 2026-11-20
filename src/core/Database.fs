@@ -283,32 +283,10 @@ module internal DbAgent =
         mbox.Start()
         mbox
 
-/// The build database (docs/features/idle-perf, L2): the agent that keeps and writes the records,
-/// and the snapshot it publishes. An opaque handle: the engine reaches it through `Db`'s functions.
-[<Sealed>]
-type Db internal (agent: MailboxProcessor<DatabaseApi>, cell: DbAgent.SnapshotCell) =
-    let disposed = ref 0
-    /// The records after the agent's last message; reading it posts nothing.
-    member _.Snapshot : Database = cell.Value
-    member internal _.Post (msg: DatabaseApi) = agent.Post msg
-    member internal _.PostAndReply (build: AsyncReplyChannel<'r> -> DatabaseApi, ?timeout: int) =
-        match timeout with
-        | Some t -> agent.PostAndReply(build, t)
-        | None -> agent.PostAndReply build
-    member internal _.PostAndAsyncReply (build: AsyncReplyChannel<'r> -> DatabaseApi) = agent.PostAndAsyncReply build
-    /// Closes the database (as `Db.close`: drains the writer, closes the file, releases the lock),
-    /// then disposes the agent. Closing before is harmless; a second `Dispose` does nothing.
-    interface System.IDisposable with
-        member _.Dispose() =
-            if System.Threading.Interlocked.Exchange(&disposed.contents, 1) = 0 then
-                try agent.PostAndReply CloseWait
-                finally (agent :> System.IDisposable).Dispose()
-
-/// The database's functions: the read API (public) and the engine's operations (internal).
-module Db =
+/// Reads a database file (the public read API): every record, or the database they make.
+module DbReader =
     /// The format version this Xake writes.
     let formatVersion = Persist.version
-
 
     /// Every record of a database file in order, paths resolved against `root` (history until
     /// the next compaction); an older version yields its converted records. No lock: a running
@@ -327,6 +305,29 @@ module Db =
     let readDatabase (root: string) (dbpath: string) : Database =
         readRecords root dbpath |> Persist.toDatabase
 
+/// The build database (docs/features/idle-perf, L2): the agent that keeps and writes the records,
+/// and the snapshot it publishes. Internal to the engine, reached through `Db`'s functions.
+[<Sealed>]
+type internal Db (agent: MailboxProcessor<DatabaseApi>, cell: DbAgent.SnapshotCell) =
+    let disposed = ref 0
+    /// The records after the agent's last message; reading it posts nothing.
+    member _.Snapshot : Database = cell.Value
+    member _.Post (msg: DatabaseApi) = agent.Post msg
+    member _.PostAndReply (build: AsyncReplyChannel<'r> -> DatabaseApi, ?timeout: int) =
+        match timeout with
+        | Some t -> agent.PostAndReply(build, t)
+        | None -> agent.PostAndReply build
+    member _.PostAndAsyncReply (build: AsyncReplyChannel<'r> -> DatabaseApi) = agent.PostAndAsyncReply build
+    /// Closes the database (as `Db.close`: drains the writer, closes the file, releases the lock),
+    /// then disposes the agent. Closing before is harmless; a second `Dispose` does nothing.
+    interface System.IDisposable with
+        member _.Dispose() =
+            if System.Threading.Interlocked.Exchange(&disposed.contents, 1) = 0 then
+                try agent.PostAndReply CloseWait
+                finally (agent :> System.IDisposable).Dispose()
+
+/// The engine's operations on the database.
+module internal Db =
     /// The record of a target from the snapshot (no message).
     let tryGetResult (db: Db) (target: Target) = Map.tryFind target db.Snapshot.Status
 
@@ -337,7 +338,7 @@ module Db =
     /// Opens the database exclusively (`<dbpath>.lock`, waiting up to `lockWait` for another run);
     /// `reset` (`--resetdb`) deletes it first, under the lock (A5). `root` is the project root:
     /// paths under it are stored relative to it; its value is never written.
-    let internal openWith (lockWait: System.TimeSpan) (reset: bool) (root: string) (dbpath: string) (logger : ILogger) =
+    let openWith (lockWait: System.TimeSpan) (reset: bool) (root: string) (dbpath: string) (logger : ILogger) =
         let lockStream = DbFile.acquireLock dbpath lockWait logger
         try
             if reset then DbFile.cleanup dbpath logger
@@ -348,33 +349,33 @@ module Db =
             reraise ()
 
     /// Opens the database, waiting up to 30 s for another run.
-    let internal openFile (root: string) (dbpath: string) (logger : ILogger) =
+    let openFile (root: string) (dbpath: string) (logger : ILogger) =
         openWith (System.TimeSpan.FromSeconds 30.0) false root dbpath logger
 
     /// A database that keeps its records in memory only (`NoPersist`).
-    let internal memoryOnly () =
+    let memoryOnly () =
         create (CustomLogger (fun _ -> false) ignore) Database.empty (Persist.PathTable.empty ".") None ignore
 
     /// Deletes the database and backup files, under the database lock (`--resetdb` resets
     /// inside `openWith` instead, A5).
-    let internal delete dbpath (logger : ILogger) =
+    let delete dbpath (logger : ILogger) =
         let lockStream = DbFile.acquireLock dbpath (System.TimeSpan.FromSeconds 30.0) logger
         try DbFile.cleanup dbpath logger
         finally lockStream.Dispose()
 
     /// Writes file records, each only if its record is still `expected` (compare-and-set); the
     /// conflicts with their current records.
-    let internal apply (db: Db) (writes: (File * FileState option * FileState) list) =
+    let apply (db: Db) (writes: (File * FileState option * FileState) list) =
         db.PostAndAsyncReply(fun ch -> Apply (writes, ch))
 
     /// Stores a result; completes once the snapshot holds it.
-    let internal store (db: Db) (result: BuildResult) = db.PostAndAsyncReply(fun ch -> Store (result, ch))
+    let store (db: Db) (result: BuildResult) = db.PostAndAsyncReply(fun ch -> Store (result, ch))
 
     /// Starts a new run: the next epoch.
-    let internal newRun (db: Db) = db.PostAndAsyncReply NewRun
+    let newRun (db: Db) = db.PostAndAsyncReply NewRun
 
     /// From now on records stay in memory and nothing is appended (`--dump`, `--dryrun`, A8).
-    let internal keepInMemory (db: Db) = db.Post InMemory
+    let keepInMemory (db: Db) = db.Post InMemory
 
     /// Drains the writer, closes the file and releases the lock; closing again replies at once.
-    let internal close (db: Db) = db.PostAndAsyncReply CloseWait
+    let close (db: Db) = db.PostAndAsyncReply CloseWait

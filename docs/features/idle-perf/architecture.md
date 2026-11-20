@@ -25,7 +25,7 @@ The files and their modules, in compile order:
 | File | Module | Holds | Uses |
 |---|---|---|---|
 | `DatabaseFormat.fs` | `Xake.Storage` (namespace) | `Database` (the records in memory), `DbRecord`; internal `Database` (empty, addResult) and `Persist` (version, 0.7 header and picklers, path table, `read`, `encode`, `toDatabase`) | `Types`, `Pickler`, `LegacyRead` |
-| `Database.fs` | `Xake.Storage` (namespace) | internal `DatabaseApi`, `DbFile` (lock, backup, upgrade, compaction), `DbAgent` (agent, writer, snapshot cell); the handle `Db`; the module `Db` | `Persist` |
+| `Database.fs` | `Xake.Storage` (namespace) | internal `DatabaseApi`, `DbFile` (lock, backup, upgrade, compaction), `DbAgent` (agent, writer, snapshot cell); the public `DbReader` (read API); internal `Db` (the handle and its module) | `Persist` |
 | `FileProbe.fs` | `FileProbe` | `FileStat`, `HashResult`, `Content.hash`, `Hasher`: I/O only | `Types` |
 | `FileTracker.fs` | `FileTracker` | `ObserveMode`, `Observation`, `FileRule` (pure), `RunFiles`, `Context`, `observe` | `Storage`, `FileProbe` |
 
@@ -191,17 +191,17 @@ Close: agent -> Drain -> writer flushes the rest, closes, releases the lock
 ## 5. Public API and internals
 
 The database, the tracker and the probe are engine internals (arch-review, topic 2). Public are
-the read API and opaque handles (a public type, its constructor and members internal):
+the read API and one opaque handle. A module is public or internal as a whole; `EngineState` has an
+internal representation, so nothing internal shows through it:
 
-- **`Xake.Storage`:** `Database`, `DbRecord`; the handle `Db` (`Snapshot`, `IDisposable`); the
-  module `Db`: `readRecords`, `readDatabase`, `tryGetResult`, `formatVersion`.
-- **`Xake.FileProbe`:** the handle `Hasher`.
-- **`Xake.FileTracker`:** the handle `RunFiles`.
+- **`Xake.Storage`:** `Database`, `DbRecord`; the module `DbReader`: `readRecords`, `readDatabase`,
+  `formatVersion`.
+- **`Xake.FileTracker`:** the handle `RunFiles` (in the frozen `ExecContext`; candidate 7).
 - **Public elsewhere:** `ExecContext` (a record, frozen within 5.x by `RecordShapeTests`) with
-  `UpToDate: Target -> Async<bool>`, `NeedRebuild`, `RunFiles`, `Counters`; `EngineState` (with
-  `Db` and `Hasher`); `RunSummary`;
+  `UpToDate: Target -> Async<bool>`, `NeedRebuild`, `RunFiles`, `Counters`; `EngineState` (its fields
+  internal); `RunSummary`;
   `Scheduler`, `TaskState`, `ExecMessage`.
-- **Internal:** `DatabaseApi`, `Db.Post*`, `Db.openWith`/`openFile`/`memoryOnly`/`delete`,
+- **Internal:** all of `FileProbe`; `Db` (the handle and its module); `ExecContext.Db`; `DatabaseApi`, `Db.Post*`, `Db.openWith`/`openFile`/`memoryOnly`/`delete`,
   `Db.apply`/`store`/`newRun`/`keepInMemory`/`close`, `Persist`, `DbFile`, `DbAgent`, `LegacyRead`;
   `FileStat`, `HashResult`, `Content.hash`, `Hasher.Hash`; `ObserveMode`, `Observation`,
   `FileRule`, `FileTracker.Context`, `FileTracker.observe`; `ExecContext.Observe`; the whole `DependencyAnalysis` module

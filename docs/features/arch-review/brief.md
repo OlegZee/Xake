@@ -36,3 +36,7 @@ section 7. One decision per line, with its date. Decisions are not re-litigated.
   `FileTracker.observeFiles` -> `FileTracker.observe`, `ObserveContext` -> `FileTracker.Context`.
 - 2026-11-20 (topic 2, question 1): `Db.Dispose` = a synchronous close (drain, file, lock); closing
   again is harmless.
+- 2026-11-20 (topic 2): a module is public or internal as a whole, no half-open modules.
+  `EngineState` gets an internal representation; `FileProbe` is internal; `Db` (handle and
+  module) is internal; the public read API is the module `DbReader`. `RunFiles` leaves
+  `ExecContext` with candidate 7.

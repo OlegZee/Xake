@@ -367,7 +367,7 @@ type ``Static set``() =
         xake { x.TestOptions with Targets = targets; ResetDb = false; ThrowOnError = true } { rules rules' }
 
     member private x.Result (name: string) =
-        (Storage.Db.readDatabase x.TestOptions.ProjectRoot ".xake").Status.[FileTarget (File.make name)]
+        (Storage.DbReader.readDatabase x.TestOptions.ProjectRoot ".xake").Status.[FileTarget (File.make name)]
 
     [<Test>]
     member x.``header entries come first whatever the body records``() =

@@ -3,21 +3,21 @@ namespace Xake
 /// The file system as the engine reads it (docs/features/idle-perf, L0 and L3): a stat, a content
 /// hash, and the hasher that computes one hash per (file, stat). Only I/O: no records, epochs or
 /// runs.
-module FileProbe =
+module internal FileProbe =
 
     /// A file's stat: missing, or its write time and length (docs/features/idle-perf, L0).
-    type internal FileStat =
+    type FileStat =
         | Missing
         | Present of stamp: Timestamp * size: int64
 
-    module internal FileStat =
+    module FileStat =
         /// One stat of the file.
         let take (file: File) =
             let fi = File.getFileInfo file
             if fi.Exists then Present (fi.LastWriteTime, fi.Length) else Missing
 
     /// What hashing a file gave.
-    type internal HashResult =
+    type HashResult =
         /// the stat the hash was taken at (unchanged before and after hashing) and the hash
         | Hashed of stamp: Timestamp * size: int64 * hash: uint64
         /// the file could not be read, or its stat moved while it was hashed (its content was not
@@ -25,7 +25,7 @@ module FileProbe =
         | Unreadable of FileStat
 
     /// Content hashes (docs/content-cutoff.md; docs/features/idle-perf, L0).
-    module internal Content =
+    module Content =
         /// The file's stat and the first 8 bytes of the SHA-256 of its content, taken together:
         /// stat, hash, stat. `Unreadable` when the stat moved meanwhile, or the file cannot be read.
         let hash (file: File) =
@@ -52,7 +52,7 @@ module FileProbe =
     /// stat) while it runs, every other asker gets the same result; at most as many hashes at
     /// once as there are cores. It knows nothing of records, epochs or runs.
     [<Sealed>]
-    type Hasher internal () =
+    type Hasher () =
         let slots = new System.Threading.SemaphoreSlim(System.Environment.ProcessorCount)
         let mbox = MailboxProcessor<HasherMsg>.Start(fun mbox ->
             let running = System.Collections.Generic.Dictionary<File * FileStat, ResizeArray<AsyncReplyChannel<HashResult>>>(HashIdentity.Structural)
@@ -84,5 +84,5 @@ module FileProbe =
             loop ())
         /// The hash of the file as it is at `stat`; `onComputed` gets the time of a hash this
         /// request computed (not of one it shared).
-        member internal _.Hash (file: File) (stat: FileStat) (onComputed: System.TimeSpan -> unit) =
+        member _.Hash (file: File) (stat: FileStat) (onComputed: System.TimeSpan -> unit) =
             mbox.PostAndAsyncReply(fun ch -> HashFile (file, stat, onComputed, ch))

@@ -149,7 +149,7 @@ type ``Secret variables``() =
             Assert.AreEqual(0, runs.Value, "presence unchanged: up to date")
             Assert.That(logged, Has.Some.Contains "Upgrading database")
             let ver, results = OldDatabase.read ".xake"
-            Assert.AreEqual(Storage.Db.formatVersion, ver)
+            Assert.AreEqual(Storage.DbReader.formatVersion, ver)
             Assert.AreEqual("0.7", ver)
             let deps = results |> List.collect (fun r -> r.Depends)
             Assert.That(deps, Does.Contain(SecretDep (name, SecretEnv, SecretPresent)))
@@ -171,7 +171,7 @@ type ``Secret variables``() =
             })
         }
         Assert.AreEqual(0, runs.Value)
-        Assert.AreEqual(Storage.Db.formatVersion, OldDatabase.read ".xake" |> fst)
+        Assert.AreEqual(Storage.DbReader.formatVersion, OldDatabase.read ".xake" |> fst)
 
     [<Test>]
     member x.``persists every SecretDep digest``() =

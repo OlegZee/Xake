@@ -201,7 +201,7 @@ type EngineOptions = {
     }
 
 /// Engine-level immutable state shared across all tasks.
-and EngineState = {
+and EngineState = internal {
     Options: EngineOptions
     Db: Storage.Db
     /// Hashes file contents, one computation per (file, stat); shared across runs.
@@ -246,7 +246,7 @@ and ExecContext = {
     /// Shortcut to engine options.
     member ctx.Options = ctx.Engine.Options
     /// Shortcut to the build database.
-    member ctx.Db = ctx.Engine.Db
+    member internal ctx.Db = ctx.Engine.Db
     /// Where this context's file observations run: its database, its run, whether it hashes.
     member internal ctx.Observe =
         { FileTracker.Context.Db = ctx.Engine.Db; FileTracker.Context.Hasher = ctx.Engine.Hasher

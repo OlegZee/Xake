@@ -30,7 +30,7 @@ target as `TargetDep target`; neither carries a stamp. Staleness is decided by e
 
 ### Database 0.7
 
-The file starts with a version header (`Storage.Db.formatVersion`, `0.7`; `Persist.minReadVersion` is
+The file starts with a version header (`Storage.DbReader.formatVersion`, `0.7`; `Persist.minReadVersion` is
 `0.4`). After it come tagged, append-only records; the last record per key wins.
 
 | Tag | Record | Fields |
@@ -86,8 +86,8 @@ The file starts with a version header (`Storage.Db.formatVersion`, `0.7`; `Persi
   `LegacyRead` is meant to be removed in a later release; its one call in `DatabaseFormat.fs` then
   becomes "no longer read, recreating".
 - `Db.openWith lockWait reset root dbpath logger` (internal) takes the project root. The public read API is
-  `Storage.Db.readRecords root dbpath` (every `DbRecord`, `Result` or `FileState`, in file order) and
-  `Storage.Db.readDatabase root dbpath` (the last result per target, the last state per file, the
+  `Storage.DbReader.readRecords root dbpath` (every `DbRecord`, `Result` or `FileState`, in file order) and
+  `Storage.DbReader.readDatabase root dbpath` (the last result per target, the last state per file, the
   last epoch in `Database.Epoch`). They take no lock and open with `FileShare.ReadWrite |||
   FileShare.Delete`, so the database of a running build can be read; a torn last record ends the
   sequence, a missing or short file (a compaction in progress) gives an empty one.

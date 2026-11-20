@@ -28,10 +28,11 @@ Breaking changes:
    `ArtifactDep2` are removed. `BuildResult` gains `Epoch` and `StaticCount` (`Built` stays the
    time). The database record (`Storage.Database`, was `BuildLog.Database`) gains `Files` and `FileState` is added.
 4. **Storage API.** `Xake.Storage` is a namespace and the database is engine-internal. Public
-   are the read API, `Storage.Db.readRecords root dbpath` (every `Storage.DbRecord`) and
-   `Storage.Db.readDatabase root dbpath` (a `Storage.Database` with its last epoch),
-   `Storage.Db.tryGetResult`, `Storage.Db.formatVersion`, and the opaque handles `Storage.Db`
-   (`Snapshot`), `FileProbe.Hasher` (`EngineState.Hasher`) and `FileTracker.RunFiles`.
+   is the read API, `Storage.DbReader.readRecords root dbpath` (every `Storage.DbRecord`),
+   `Storage.DbReader.readDatabase root dbpath` (a `Storage.Database` with its last epoch) and
+   `Storage.DbReader.formatVersion`; and the handle `FileTracker.RunFiles` (in `ExecContext`).
+   `EngineState`'s fields are internal (the record is public; its identity is still usable),
+   so `Storage.Db`, `ExecContext.Db` and `FileProbe` are internal.
    Opening, storing, the agent's messages (`DatabaseApi`, `Db.Post*`), file observation and
    hashing are internal. Removed: `BuildLog` (its contents are in `Storage`), `Storage.openDb`,
    `noopDb`, `cleanupDb`, `storeResult`, `GetResult`, `Storage.resultPU`; `BuildLog.makeResult`

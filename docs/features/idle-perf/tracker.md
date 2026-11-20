@@ -8,7 +8,9 @@
 - [x] Measure cold/hot, the agent's time per file, the full build (cold-hot.md)
 - [x] Owner's decisions: no RunSynchronously, no I/O in the database, batch per target, existence per dependency
 - [x] Design rewritten (design.md, 2026-11-20)
-- [ ] Owner accepts the design
-- [ ] The fix (design.md §2-§4)
-- [ ] Tests (design.md §6) and the bench gates
+- [x] Owner: go async; design by layers (design.md, third version)
+- [x] Step 1: pure FileRule (L0-L1), agent calls it, table tests
+- [ ] Step 2: snapshot, Apply, hasher, RunFiles, Storage.observe (L2-L5); measure
+- [ ] Step 3: async verdict and memo, Warm, callers (L6-L7)
+- [ ] Tests per layer and the bench gates
 - [ ] Release notes "5.0.0 (unreleased)": the fix; the FS0041 line for recursive recipes

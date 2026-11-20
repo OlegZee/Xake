@@ -28,6 +28,7 @@
     <Compile Include="StaleArtifactDepTests.fs" />
     <Compile Include="MiscTests.fs" />
     <Compile Include="StorageTests.fs" />
+    <Compile Include="FileRuleTests.fs" />
     <Compile Include="EpochTests.fs" />
     <Compile Include="ContentCutoffTests.fs" />
     <Compile Include="AgentFailureTests.fs" />

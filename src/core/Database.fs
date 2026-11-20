@@ -98,6 +98,89 @@ module Storage =
         | Changed of FileState
         | HashNeeded of HashRequest
 
+    /// A file's stat: missing, or its write time and length (docs/features/idle-perf, L0).
+    type FileStat =
+        | Missing
+        | Present of stamp: Timestamp * size: int64
+
+    module FileStat =
+        /// One stat of the file.
+        let take (file: File) =
+            let fi = File.getFileInfo file
+            if fi.Exists then Present (fi.LastWriteTime, fi.Length) else Missing
+
+    /// The decision about one observation of a file, without I/O or state (docs/features/idle-perf,
+    /// L1): the rules of decision 1c, A1 and content cut-off (docs/implnotes.md, "Epochs").
+    module internal FileRule =
+        /// What the run knows about the file besides its record.
+        type RuleContext = {
+            /// The epoch a change is stamped with (the newest run handed out).
+            Epoch: int
+            /// The run hashes (`--content-cutoff` on).
+            Hashing: bool
+            /// A verdict already observed the file in this run: its record is the answer.
+            SeenByVerdict: bool
+            /// A body already recorded the file in this run (A1): a moved stat is not a change.
+            RecordedBefore: bool }
+
+        type Decision =
+            /// answer from this state; nothing to write
+            | Keep of FileState option
+            /// write this state (it differs from the known one)
+            | Write of FileState
+            /// hash the file, then `decideHashed`
+            | NeedHash
+
+        /// Equal within 10 ms, the size equal or unknown.
+        let sameStat (k: FileState) (stamp: Timestamp) size =
+            abs (stamp - k.Stamp).TotalMilliseconds < 10.0 && (k.Size < 0L || k.Size = size)
+
+        let private write (known: FileState option) state = if Some state = known then Keep known else Write state
+
+        /// One observation of a file with the record `known` and the stat taken now: a new state,
+        /// an equal stat (an unknown size filled in, `changed` kept), or a moved stat (to hash, or
+        /// changed in this epoch without a hash).
+        let decide (known: FileState option) (stat: FileStat) (mode: ObserveMode) (rc: RuleContext) =
+            match stat with
+            | Missing -> Keep None
+            | Present _ when mode = Verdict && rc.SeenByVerdict -> Keep known
+            | Present (stamp, size) ->
+                let moved () = { Stamp = stamp; Size = size; Hash = None; Changed = rc.Epoch }
+                match mode, known with
+                | Output false, _ -> write known (moved ())
+                | Output true, _ when rc.Hashing -> NeedHash
+                | PreHash, Some k when rc.Hashing && k.Hash.IsNone && sameStat k stamp size -> NeedHash
+                | PreHash, _ -> Keep known
+                | _, Some k when sameStat k stamp size -> write known { k with Size = size }
+                | Recording, Some k when rc.RecordedBefore -> Keep (Some k)   // another body recorded it in this run (A1)
+                | (Verdict | Recording), Some _ when rc.Hashing -> NeedHash
+                | _ -> write known (moved ())
+
+        /// The decision after hashing, against the same `known` record. `stat` is the file's stat
+        /// now, used only when the hash is `Unreadable`.
+        let decideHashed (known: FileState option) (hashed: HashResult) (stat: FileStat) (mode: ObserveMode) (rc: RuleContext) =
+            match hashed, known with
+            | Unreadable, _ when mode = PreHash -> Keep known
+            | Unreadable, _ ->
+                match stat with
+                | Missing -> Keep None
+                | Present (stamp, size) -> write known { Stamp = stamp; Size = size; Hash = None; Changed = rc.Epoch }
+            | Hashed (stamp, size, h), _ ->
+                let state = { Stamp = stamp; Size = size; Hash = Some h; Changed = rc.Epoch }
+                match mode, known with
+                | PreHash, Some k -> if sameStat k stamp size then write known { k with Hash = Some h } else Keep known
+                // the same content: `changed` kept (cut-off)
+                | _, Some k when k.Hash = Some h -> write known { state with Changed = k.Changed }
+                // an output never hashed, not moved: the hash is filled in
+                | Output _, Some k when k.Hash.IsNone && sameStat k stamp size -> write known { state with Changed = k.Changed }
+                | _ -> write known state
+
+        /// The reply for a state: changed after the run `since`, or not.
+        let classify since = function
+            | None -> Absent
+            | Some (st: FileState) when st.Changed > since -> Changed st
+            | Some st -> Unchanged st
+
     /// Messages accepted by the database agent.
     type DatabaseApi =
         | GetResult of Target * AsyncReplyChannel<Option<BuildResult>>
@@ -471,42 +554,25 @@ module Storage =
             let pending = System.Collections.Generic.Dictionary<File, ResizeArray<ObserveMode * int * AsyncReplyChannel<Observation>>>()
             /// Whether the current run hashes (set by `NewRun`).
             let hashing = ref false
-            /// The reply for a state: changed after the run `since`, or not.
-            let classify since = function
-                | None -> Absent
-                | Some (st: FileState) when st.Changed > since -> Changed st
-                | Some st -> Unchanged st
-            let sameStat (k: FileState) (stamp: Timestamp) size =
-                abs (stamp - k.Stamp).TotalMilliseconds < 10.0 && (k.Size < 0L || k.Size = size)
+            let classify = FileRule.classify
             let store (db: Database) out (file: File) known state =
                 if Some state = known then known, db, out
                 else
                     let out = try persist out [ DbRecord.FileState (file, state) ] with ex -> logError "Database agent failed to store the state of '%s': %O" file.Name ex; out
                     Some state, { db with Files = Map.add file state db.Files }, out
-            /// One observation of a file (decision 1c, A1; content cut-off): a new state, an equal
-            /// stat (within 10 ms, size equal or unknown: an unknown size is filled in, `changed`
-            /// kept), or a moved stat: `Moved` when it is to be hashed, else `changed` = the run's
-            /// epoch and no hash.
+            /// The outcome of a rule decision: the answer (and the record written), or a hash.
+            let apply (db: Database) out (file: File) known = function
+                | FileRule.Keep state -> Seen state, db, out
+                | FileRule.Write state -> let s, db, out = store db out file known state in Seen s, db, out
+                | FileRule.NeedHash -> Hash known, db, out
+            /// One observation of a file: the run's sets, a stat, the rule (FileRule.decide).
             let observe (db: Database) out mode hashing (file: File) =
                 let known = Map.tryFind file db.Files
-                if mode = Verdict && not (observed.Add file) then Seen (if File.exists file then known else None), db, out
-                else
-                    if mode <> PreHash then observed.Add file |> ignore
-                    let first = mode <> Recording || recorded.Add file
-                    let fi = File.getFileInfo file
-                    if not fi.Exists then Seen None, db, out
-                    else
-                        let moved () = { Stamp = fi.LastWriteTime; Size = fi.Length; Hash = None; Changed = db.Epoch }
-                        let stored state = let s, db, out = store db out file known state in Seen s, db, out
-                        match mode, known with
-                        | Output false, _ -> stored (moved ())
-                        | Output true, _ when hashing -> Hash known, db, out
-                        | PreHash, Some k when hashing && k.Hash.IsNone && sameStat k fi.LastWriteTime fi.Length -> Hash known, db, out
-                        | PreHash, _ -> Seen known, db, out
-                        | _, Some k when sameStat k fi.LastWriteTime fi.Length -> stored { k with Size = fi.Length }
-                        | _, Some k when not first -> Seen (Some k), db, out    // another body recorded it in this run (A1)
-                        | (Verdict | Recording), Some _ when hashing -> Hash known, db, out
-                        | _ -> stored (moved ())
+                let seenByVerdict = mode = Verdict && not (observed.Add file)
+                if not seenByVerdict && mode <> PreHash then observed.Add file |> ignore
+                let recordedBefore = mode = Recording && not (recorded.Add file)
+                let rc = { FileRule.Epoch = db.Epoch; FileRule.Hashing = hashing; FileRule.SeenByVerdict = seenByVerdict; FileRule.RecordedBefore = recordedBefore }
+                FileRule.decide known (FileStat.take file) mode rc |> apply db out file known
             /// Observes and turns the result into the reply; a file to hash becomes pending.
             let observeReply db out mode since (file: File) =
                 match observe db out mode hashing.Value file with
@@ -517,23 +583,14 @@ module Storage =
             /// Settles a `HashNeeded` observation (compare-and-set on the record).
             let settle (db: Database) out (request: HashRequest) result =
                 let file, known, mode = request.File, request.Known, request.Mode
-                let hashed = match result with Hashed (stamp, size, h) -> Some (stamp, size, h) | Unreadable -> None
                 if Map.tryFind file db.Files <> known then Map.tryFind file db.Files, db, out
                 else
-                    let fi = File.getFileInfo file
-                    match hashed, known with
-                    | None, _ when mode = PreHash -> known, db, out
-                    | None, _ when not fi.Exists -> None, db, out
-                    | None, _ -> store db out file known { Stamp = fi.LastWriteTime; Size = fi.Length; Hash = None; Changed = db.Epoch }
-                    | Some (stamp, size, h), _ ->
-                        let state = { Stamp = stamp; Size = size; Hash = Some h; Changed = db.Epoch }
-                        match mode, known with
-                        | PreHash, Some k -> if sameStat k stamp size then store db out file known { k with Hash = Some h } else known, db, out
-                        // the same content: `changed` kept (cut-off)
-                        | _, Some k when k.Hash = Some h -> store db out file known { state with Changed = k.Changed }
-                        // an output never hashed, not moved: the hash is filled in
-                        | Output _, Some k when k.Hash.IsNone && sameStat k stamp size -> store db out file known { state with Changed = k.Changed }
-                        | _ -> store db out file known state
+                    let stat = match result with Unreadable when mode <> PreHash -> FileStat.take file | _ -> Missing
+                    let rc = { FileRule.Epoch = db.Epoch; FileRule.Hashing = true; FileRule.SeenByVerdict = false; FileRule.RecordedBefore = false }
+                    match FileRule.decideHashed known result stat mode rc with
+                    | FileRule.Keep state -> state, db, out
+                    | FileRule.Write state -> store db out file known state
+                    | FileRule.NeedHash -> known, db, out   // decideHashed never asks again
             let rec loop (db: Database) out =
                 async {
                     let! msg = mbox.Receive()

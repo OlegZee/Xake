@@ -17,8 +17,10 @@ Branch `feature/idle-perf` from `5afb94b` (= `v5.0.0-preview.2`).
 
 ## Next step
 
-The owner is discussing the fix in this session. Decisions so far are in brief.md (no
-RunSynchronously on the dependency path; the database does no file I/O; a batch per target;
-existence per dependency). design.md was rewritten on 2026-11-20 to follow them (batches with
-the caller's stats, async verdict and memo). It is not accepted yet. Next: the owner's review of
-design.md (and a critic, if he wants one), then the implementation.
+design.md (third version, by layers) is the working design; the owner said "go async". Work
+goes step by step, each stopping for the owner's review:
+- Step 1 (L0-L1) done: `Storage.FileStat` and the pure `Storage.FileRule` (decide,
+  decideHashed, classify) in Database.fs; the agent calls them, no behaviour change;
+  src/tests/FileRuleTests.fs (15 table tests). Full suite: 1,875 passed, 0 failed.
+- Next, after the owner's review of step 1: step 2 (L2-L5: snapshot, `Apply`, hasher, RunFiles,
+  the `Storage.observe` facade), then measure no-change and full build.

@@ -38,7 +38,10 @@ Breaking changes:
    `noopDb`, `cleanupDb`, `storeResult`, `GetResult`, `Storage.resultPU`; `BuildLog.makeResult`
    is `makeResult` (`DomainTypes`).
 5. **Filesets.** `FilesetOptions.CaseSensitive` and the `casesensitive` operation are added.
-6. **`ExecContext`** gains `Spellings`, `RunEpoch` and `RunFiles`.
+6. **`ExecContext`** keeps what a recipe reads (`Targets`, `RuleMatches`, `Vars`, `Logger`,
+   `Ordinal`, `HeldResources`, `Engine`) and gains `Run`, an opaque `RunState`: the engine's
+   per-run state (`Progress`, `ShowProgress`, `NeedRebuild`, `UpToDate`, and the new `Spellings`,
+   `RunFiles`, `RunEpoch`, `Counters`) moved there, so it can change within 5.x.
 7. **Database 0.7.** Xake 4.x cannot read it. Databases 0.4-0.6 are upgraded on open, and a
    no-change run after the upgrade rebuilds nothing. The 0.4-0.6 databases are upgraded by a legacy reader that will
    be removed in a later release.
@@ -104,8 +107,8 @@ The rule header ([rule-header.md](rule-header.md)):
 - API: `ExecOptions.ContentCutoff`, `ExecOptions.SummarySink`, `IRunSummarySink`;
   file observation (`FileTracker.observe`) and hashing (`FileProbe.Hasher`) are internal;
   `WorkerPool.TaskState` and
-  `Scheduler.query` are added; `ExecContext.NeedRebuild` and `ExecContext.UpToDate` are
-  asynchronous, and `ExecContext` gains `UpToDate` and `Counters`.
+  `Scheduler.query` are added; the run's verdicts (`NeedRebuild`,
+  `UpToDate`) are asynchronous and internal (`ExecContext.Run`).
 
 Also:
 

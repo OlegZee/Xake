@@ -151,7 +151,7 @@ type internal TaskWaits() =
 /// The counters of one script run, or one `Demand` in engine mode, and the state the content
 /// verdict shares across tasks. Incremented with `Interlocked` from any task.
 [<Sealed; AllowNullLiteral>]
-type RunCounters() =
+type internal RunCounters() =
     [<DefaultValue>] val mutable private targetsRun: int
     [<DefaultValue>] val mutable private targetsSkipped: int
     [<DefaultValue>] val mutable private cutOff: int
@@ -225,26 +225,17 @@ and EngineState = internal {
     RootLogger: ILogger
 }
 
-/// Script execution context
-and ExecContext = {
-    Engine: EngineState
-    // Build-level
-    Vars: (string * string) list
+/// The state of one run that the engine keeps for a recipe's context: an opaque part of
+/// `ExecContext`, so per-run state can change within a major without changing the public record
+/// (docs/features/arch-review/engine-state.md). `beginRun` replaces it.
+and RunState = internal {
+    /// The progress sink of the run (`openProgress`), or the empty one.
     Progress: Agent<Progress.ProgressReport>
+    ShowProgress: bool
     /// The verdict of a task's targets, after its static `needs` (waits for running dependees).
     NeedRebuild: Target list -> Async<bool>
     /// The run's verdict without building or waiting: true when the target is up to date.
     UpToDate: Target -> Async<bool>
-    ShowProgress: bool
-    // Task-level
-    Targets: Target list
-    RuleMatches: Map<string,string>
-    Ordinal: int
-    Logger: ILogger
-    /// Names of the resources the running recipe holds (innermost first), set by
-    /// `withResource` and `requiring` for their body. A `need` of a target that has a rule
-    /// fails while it is not empty (hold-and-wait deadlock); `allowNeed` clears it.
-    HeldResources: string list
     /// The files named in this run, keyed by the path upper-cased (invariant): the first spelling
     /// (the `File`) and whether it was a target. One file under two spellings is an error for two targets, a
     /// warning otherwise (5.0). Created per run, with the run's memo.
@@ -257,6 +248,24 @@ and ExecContext = {
     RunEpoch: int
     /// The counters of the script run (or `Demand`): `RunSummary`, and the waits of the verdict.
     Counters: RunCounters
+}
+
+/// Script execution context: what a recipe sees (its targets, rule matches, variables, logger)
+/// and two opaque parts, the engine and the run.
+and ExecContext = {
+    Engine: EngineState
+    /// The run's state (opaque).
+    Run: RunState
+    Vars: (string * string) list
+    // Task-level
+    Targets: Target list
+    RuleMatches: Map<string,string>
+    Ordinal: int
+    Logger: ILogger
+    /// Names of the resources the running recipe holds (innermost first), set by
+    /// `withResource` and `requiring` for their body. A `need` of a target that has a rule
+    /// fails while it is not empty (hold-and-wait deadlock); `allowNeed` clears it.
+    HeldResources: string list
 } with
     /// Shortcut to engine options.
     member ctx.Options = ctx.Engine.Options
@@ -265,8 +274,8 @@ and ExecContext = {
     /// Where this context's file observations run: its database, its run, whether it hashes.
     member internal ctx.Observe =
         { FileTracker.Context.Db = ctx.Engine.Db; FileTracker.Context.Hasher = ctx.Engine.Hasher
-          FileTracker.Context.Run = ctx.RunFiles; FileTracker.Context.Hashing = ctx.Engine.Options.ContentCutoff
-          FileTracker.Context.OnHashed = match ctx.Counters with null -> ignore | c -> c.FileHashed
+          FileTracker.Context.Run = ctx.Run.RunFiles; FileTracker.Context.Hashing = ctx.Engine.Options.ContentCutoff
+          FileTracker.Context.OnHashed = match ctx.Run.Counters with null -> ignore | c -> c.FileHashed
           FileTracker.Context.Log = ctx.Logger }
 
 /// Functions over the execution context for code outside this assembly. A record copy

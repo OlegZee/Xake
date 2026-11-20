@@ -98,8 +98,8 @@ The file starts with a version header (`Storage.DbReader.formatVersion`, `0.7`; 
   `FileRec.changed` in the file (it is not stored on its own). Every run starts in
   `ExecCore.beginRun` (each target group of the command line, each `demandTarget`: setup,
   teardown, engine `Demand`), which takes the next epoch from the agent (`NewRun`) and keeps it in
-  `ExecContext.RunEpoch`, with a fresh verdict memo (`Verdicts`), spelling table and
-  `ExecContext.RunFiles` (the files observed and recorded in the run).
+  `ExecContext.Run.RunEpoch`, with a fresh verdict memo (`Verdicts`), spelling table and
+  `ExecContext.Run.RunFiles` (the files observed and recorded in the run).
 - One epoch per run, not per event: everything built in run `r` has `Epoch = r` and everything
   seen changed in run `r` has `changed = r`, so a target that `need`s a dependee rebuilt in the
   same run (a dynamic need) is up to date on the next run (`r <= r`). A per-event counter would
@@ -152,7 +152,7 @@ The file starts with a version header (`Storage.DbReader.formatVersion`, `0.7`; 
   files in one observation and the dependees' verdicts it needs, in parallel; then the rule
   (`getDepState`, pure). A verdict waiting for a dependee's verdict still in progress registers the
   edge; an edge that would close a cycle is refused and the dependee counts as changed. It serves
-  the recursion, the fast path (`ExecContext.UpToDate`, async) and the progress estimate. `GetFiles` compares only the file list;
+  the recursion, the fast path (`ExecContext.Run.UpToDate`, async) and the progress estimate. `GetFiles` compares only the file list;
   `EnvVar`, `Var`, `SecretDep` and `AlwaysRerun` are as before.
 - Order in a task (`execOne.run`): static `needs`, the verdict, the pre-hash, the locks, the body,
   the outputs, the `Store` (awaited: a dependent that sees the task finished sees its result).
@@ -194,7 +194,7 @@ letter, are normalised the same way, so the matcher compares Xake's forms only.
 
 `File`, `Target` and rule matching compare ordinally on every OS. Filesets and `Path.matches`
 ignore case by default; `FilesetOptions.CaseSensitive` (`casesensitive`) makes a fileset's search
-ordinal, and files found keep their spelling on disk. Per run `ExecContext.Spellings` maps the
+ordinal, and files found keep their spelling on disk. Per run `ExecContext.Run.Spellings` maps the
 upper-cased path to its first spelling: a second spelling of one file is an error when both are
 targets that matched a rule and a warning (once per pair) otherwise.
 

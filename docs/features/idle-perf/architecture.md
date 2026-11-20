@@ -210,12 +210,12 @@ internal representation, so nothing internal shows through it:
 
 - **`Xake.Storage`:** `Database`, `DbRecord`; the module `DbReader`: `readRecords`, `readDatabase`,
   `formatVersion`.
-- **`Xake.FileTracker`:** the handle `RunFiles` (in the frozen `ExecContext`; candidate 7).
-- **Public elsewhere:** `ExecContext` (a record, frozen within 5.x by `RecordShapeTests`) with
-  `UpToDate: Target -> Async<bool>`, `NeedRebuild`, `RunFiles`, `Counters`; `EngineState` (its fields
-  internal); `RunSummary`;
+- **Public elsewhere:** `ExecContext` (a record, frozen within 5.x by `RecordShapeTests`):
+  `Engine`, `Run`, `Vars`, `Targets`, `RuleMatches`, `Ordinal`, `Logger`, `HeldResources`;
+  `EngineState` and `RunState` (records with internal fields: the engine's and the run's state,
+  so per-run state changes without changing `ExecContext`; topic 7); `RunSummary`;
   `Scheduler`, `TaskState`, `ExecMessage`.
-- **Internal:** all of `FileProbe`; `Db` (the handle and its module); `ExecContext.Db`; `DatabaseApi`, `Db.Post*`, `Db.openWith`/`openFile`/`memoryOnly`/`delete`,
+- **Internal:** all of `FileProbe` and `FileTracker`; `RunCounters` (with `TaskWaits`, `FastGate`); `Db` (the handle and its module); `ExecContext.Db`; `DatabaseApi`, `Db.Post*`, `Db.openWith`/`openFile`/`memoryOnly`/`delete`,
   `Db.apply`/`store`/`newRun`/`keepInMemory`/`close`, `Persist`, `DbFile`, `DbAgent`, `LegacyRead`;
   `FileStat`, `HashResult`, `Content.hash`, `Hasher.Hash`; `ObserveMode`, `Observation`,
   `FileRule`, `FileTracker.Context`, `FileTracker.observe`; `ExecContext.Observe`; the whole `DependencyAnalysis` module
@@ -244,8 +244,8 @@ API changes for code that used `DatabaseApi` directly.
 6. **`Db` exposes its raw mailbox.** Done (arch-review, topic 2): `DatabaseApi` and `Db.Post*`
    are internal; the engine uses `Db.apply`, `Db.store`, `Db.newRun`, `Db.keepInMemory`,
    `Db.close`.
-7. **Engine internals in a public record.** `RunFiles` sits in `ExecContext`, which is frozen
-   within a major. The same holds for `Counters` and `Spellings`.
+7. **Engine internals in a public record.** Done (arch-review, topic 7): they are in
+   `ExecContext.Run` (`RunState`, internal fields).
 8. **`ExecContext.Observe`** (internal) builds a `FileTracker.Context` on every call. The A3 observation in
    `ExecCore.storeResult` overrides `Hashing = false` and uses `Verdict` mode, so it claims the
    files in `RunFiles` as a verdict would. This is correct, but subtle.
@@ -256,7 +256,7 @@ API changes for code that used `DatabaseApi` directly.
 11. **The `Store`-before-`Done` ordering (C2) is implicit.** It holds because `storeResult` is
     awaited inside the task's action. Nothing enforces it, and no test targets it.
 12. **Two epochs.** Decisions use the snapshot's epoch, the newest handed out. Results use
-    `ctx.RunEpoch`, the run's own. This is right for overlapping engine runs, but hard to see.
+    `ctx.Run.RunEpoch`, the run's own. This is right for overlapping engine runs, but hard to see.
 13. **`FastGate`** was added to bound blocking database lookups on the fast path. Those lookups
     are async now; the gate may be unnecessary.
 14. **`getDurationDeps`** still carries the comment "No clue why one method does both".

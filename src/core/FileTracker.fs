@@ -4,7 +4,7 @@ namespace Xake
 /// changed after a run (docs/features/idle-perf, L1, L4, L5). The pure rule `FileRule` decides;
 /// this module takes the stats, asks the hasher, writes through `Apply` and decides again on a
 /// conflict. A file is observed once per run; later observers wait for the first one.
-module FileTracker =
+module internal FileTracker =
     open Xake.Storage
     open FileProbe
 

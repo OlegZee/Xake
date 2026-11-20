@@ -239,7 +239,7 @@ let runScript options rules =
                 let start = System.DateTime.Now
                 // one summary per script run (docs/content-cutoff.md), also when the build fails
                 let reportSummary () =
-                    let summary = ctx.Counters.Summary
+                    let summary = ctx.Run.Counters.Summary
                     ctx.Logger.Log Message "%s, schedule %s" (RunSummary.format summary) (scheduleName options.Schedule)
                     ctx.Options.SummarySink |> Option.iter (fun sink -> sink.Report summary)
                 try

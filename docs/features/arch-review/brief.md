@@ -49,3 +49,9 @@ section 7. One decision per line, with its date. Decisions are not re-litigated.
 - 2026-11-20 (topic 6, [observe.md](observe.md)): accepted: `Outcome` (`decideHashed` ends in
   `Keep | Write`), `Pending` and the steps `claim`/`settle`/`answerLater`, comments on the claims,
   `maxRounds` with a Debug line (`Context.Log`). No test for the log line (it needs a fake `Db`).
+- 2026-11-21 (topic 7, [engine-state.md](engine-state.md)): option a: `ExecContext.Run: RunState`
+  (internal representation) holds `Progress`, `ShowProgress`, `NeedRebuild`, `UpToDate`,
+  `Spellings`, `RunFiles`, `RunEpoch`, `Counters`; the public shape is `Engine`, `Run`, `Vars`,
+  `Targets`, `RuleMatches`, `Ordinal`, `Logger`, `HeldResources`.
+- 2026-11-21 (topic 7): with `RunState` opaque, `FileTracker` (the whole module) and
+  `RunCounters` are internal (no half-open modules, as dd3f1ad).

@@ -207,7 +207,7 @@ API changes for code that used `DatabaseApi` directly.
    observation takes only `File.exists`. This is correct, but it is a performance shortcut
    visible in the logic.
 5. **`Database.fs` holds everything.** It contains the format and the path table, the rule, the
-   hashing, the hasher, `RunFiles` and the facade (about 830 lines). A split by layer
+   hashing, the hasher, `RunFiles` and the facade (about 860 lines). A split by layer
    (`FileRule.fs`, `Observation.fs`, `Database.fs`) would match the layers above.
 6. **`Db` exposes its raw mailbox** (`Post`/`PostAndReply` with `DatabaseApi`) publicly, so a
    caller can bypass `observeFiles` and the rule. Tests use it. `DatabaseApi` could become

@@ -10,7 +10,7 @@ change. The history and the measurements are in [brief.md](brief.md),
 ```
  L7  ExecCore            tasks, need, outputs, store       (ExecCore.fs)
  L6  Verdicts            verdict + memo per run, Warm      (DependencyAnalysis.fs)
- L5  observeFiles        stat -> rule -> hash -> Apply     (FileTracker.fs)
+ L5  observe        stat -> rule -> hash -> Apply     (FileTracker.fs)
  L4  RunFiles            per-run sets                      (FileTracker.fs, in ExecContext)
  L3  Hasher              one hash per (file, stat)         (FileProbe.fs, mailbox, in EngineState)
  L2  Db: agent + writer  records, snapshot, .xake          (Database.fs, 2 mailboxes)
@@ -24,14 +24,13 @@ The files and their modules, in compile order:
 
 | File | Module | Holds | Uses |
 |---|---|---|---|
-| `DatabaseFormat.fs` | `BuildLog` | the format version, `Database` (the records in memory), `DbRecord` | `Types` |
-| | `Persist` (internal) | the 0.7 header and picklers, the path table, `read`, `encode`, `toDatabase` | `BuildLog`, `Pickler`, `LegacyRead` |
-| `Database.fs` | `Storage` | `DatabaseApi`, the file lifecycle (lock, backup, upgrade, compaction), the agent, the writer, `Db`, `openDb`/`noopDb`/`cleanupDb`, `readRecords`/`readDatabase`, `tryGetResult`, `storeResult` | `Persist` |
+| `DatabaseFormat.fs` | `Xake.Storage` (namespace) | `Database` (the records in memory), `DbRecord`; internal `Database` (empty, addResult) and `Persist` (version, 0.7 header and picklers, path table, `read`, `encode`, `toDatabase`) | `Types`, `Pickler`, `LegacyRead` |
+| `Database.fs` | `Xake.Storage` (namespace) | internal `DatabaseApi`, `DbFile` (lock, backup, upgrade, compaction), `DbAgent` (agent, writer, snapshot cell); the handle `Db`; the module `Db` | `Persist` |
 | `FileProbe.fs` | `FileProbe` | `FileStat`, `HashResult`, `Content.hash`, `Hasher`: I/O only | `Types` |
-| `FileTracker.fs` | `FileTracker` | `ObserveMode`, `Observation`, `FileRule` (internal, pure), `RunFiles`, `ObserveContext`, `observeFiles` | `Storage`, `FileProbe` |
+| `FileTracker.fs` | `FileTracker` | `ObserveMode`, `Observation`, `FileRule` (pure), `RunFiles`, `Context`, `observe` | `Storage`, `FileProbe` |
 
-`Database.fs` uses nothing of `FileProbe` or `FileTracker`; they use `Storage` only through
-`Db.Snapshot` and `Apply`. `makeResult` and `Step` are in `Types.fs`, the `Agent` alias in
+`Database.fs` uses nothing of `FileProbe` or `FileTracker`; they use the database only through
+`Db.Snapshot` and `Db.apply`. `makeResult` and `Step` are in `Types.fs`, the `Agent` alias in
 `Prelude.fs`.
 
 A layer calls only layers below it. The scheduler sits beside them: L6 asks it whether a dependee
@@ -45,14 +44,15 @@ is running (`Scheduler.query`), and L7 submits tasks to it.
 | Writer (L2) | the path table, the `.xake` stream, encoding, failure counts | touch the records in memory |
 | `Hasher` (L3) | the hashes being computed, keyed by (file, stat) | know records, epochs, runs |
 | `RunFiles` (L4) | per run: files observed (with the first observation's completion), files recorded by a body | hold records |
-| `observeFiles` (L5) | the sequence for a group of files | keep state of its own |
+| `observe` (L5) | the sequence for a group of files | keep state of its own |
 | `Verdicts` (L6) | per run: each target's no-build verdict (memo), the wait-for edges between verdicts, the warm walk | stat, hash, post to the agent |
 | `ExecCore` (L7) | tasks, `need`, the fast path, the task's own verdict, outputs, `Store`, the A3 observation | decide file changes |
 | Scheduler / WorkerPool | one task per target per run, the slot gate ordered by critical-path key, the running/finished maps | decide verdicts |
 
 ### The database (`Storage.Db`)
 
-- **Agent messages.**
+- **Agent messages** (internal `DatabaseApi`; the engine sends them through `Db.apply`,
+  `Db.store`, `Db.newRun`, `Db.keepInMemory`, `Db.close`).
   - `Apply (writes)`: file records, each written only if the record is still the one the caller
     decided against (compare-and-set per file). Replies with the conflicts, each with its current
     record.
@@ -60,8 +60,8 @@ is running (`Scheduler.query`), and L7 submits tasks to it.
   - `NewRun`: increments the epoch and replies with it.
   - `InMemory`: nothing more is written to disk.
   - `Close` / `CloseWait`.
-- **The snapshot.** After every message the agent publishes `Db.Snapshot` (`BuildLog.Database`:
-  immutable `Map`s behind a volatile field). Readers never post: `Storage.tryGetResult`, a file's
+- **The snapshot.** After every message the agent publishes `Db.Snapshot` (`Storage.Database`:
+  immutable `Map`s behind a volatile field). Readers never post: `Db.tryGetResult`, a file's
   record, the epoch.
 - **The writer.** The agent hands its accepted records to the writer, in its own order, and does
   not wait for it. The writer encodes each batch with the path table and appends it with one
@@ -69,7 +69,7 @@ is running (`Scheduler.query`), and L7 submits tasks to it.
 - **Format.** The format is unchanged from preview.2: database 0.7, the same picklers. Each
   version opens the other's file without a rebuild (checked on the bench).
 
-### The observation sequence (`FileTracker.observeFiles oc mode since files`)
+### The observation sequence (`FileTracker.observe oc mode since files`)
 
 1. **Claims.** Each distinct file is claimed in `RunFiles`, except in `PreHash` mode.
    - The first observer of the file in the run holds a completion and sets it when done.
@@ -119,7 +119,7 @@ is running (`Scheduler.query`), and L7 submits tasks to it.
 | File and console loggers | per log | log lines | flush at the end |
 
 - **Threads.** Every mailbox is an F# `MailboxProcessor` on the .NET thread pool; nothing has a
-  thread of its own. The engine's async code (tasks, verdicts, `observeFiles`) runs on the pool
+  thread of its own. The engine's async code (tasks, verdicts, `observe`) runs on the pool
   too. The main thread waits at the top (`runBuild |> Async.RunSynchronously`).
 - **Synchronous waits** are left only at the top level: `--dump` (`dumpDeps`), the `--dryrun`
   printing (after a parallel `Warm`), close, and `ProcessExec`'s synchronous helper. None is on
@@ -133,12 +133,12 @@ is running (`Scheduler.query`), and L7 submits tasks to it.
 beginRun:  NewRun -> agent (epoch+1, publish)          new RunFiles, new Verdicts
 planRun:   Verdicts.Warm goals                          (parallel over targets)
   Of t:    snapshot.Status[t]                           no message
-           observeFiles Verdict e [t's files]
+           observe Verdict e [t's files]
              first claim of f:  stat (thread) -> decide: equal stat -> Keep  (no Apply)
              later claims of f: wait first -> File.exists -> snapshot.Files[f]
            dependees' Of (memo, parallel)  -> getDepState -> []
 execParallel goals -> prepareOne t -> fast path: UpToDate t = Of t (done) -> Skipped
-           observeFiles Verdict [t's output] (seen: File.exists + snapshot)
+           observe Verdict [t's output] (seen: File.exists + snapshot)
 Store of the phony goals -> agent -> writer
 ```
 
@@ -151,18 +151,18 @@ On the bench, the agent receives one `NewRun` and the `Store`s of the 7 phony ta
 ```
 Warm:      Of t -> no result -> "Not built yet" (no observation)
 execOne t -> pool (slot by key) -> run:
-  needs, Fresh t (rebuild), preHash: observeFiles PreHash [out] (missing -> Keep)
+  needs, Fresh t (rebuild), preHash: observe PreHash [out] (missing -> Keep)
   body: need [150 files] -> execParallel -> prepareOne each (rule? exists?)
-        plain files -> one observeFiles Recording [150]:
+        plain files -> one observe Recording [150]:
           claim, recordedBefore, stat -> decide: no record -> Write (changed = epoch)
           Apply [150] -> agent: CAS; a file another task just wrote conflicts
                          -> fresh stat -> decide vs new record: equal -> Keep
           agent publishes, replies, Append -> writer: encode, Write, Flush
-  output written; observeFiles (Output true) [out]: NeedHash -> Hasher -> decideHashed
+  output written; observe (Output true) [out]: NeedHash -> Hasher -> decideHashed
           -> Apply -> writer
   storeResult: Store (awaited) -> agent; A3: deps with no record in the snapshot
-          -> observeFiles Verdict (no hashing) [those]  (none here)
-  pool Done -> dependents: observeFiles Verdict [out] (after the dependee)
+          -> observe Verdict (no hashing) [those]  (none here)
+  pool Done -> dependents: observe Verdict [out] (after the dependee)
 Close: agent -> Drain -> writer flushes the rest, closes, releases the lock
 ```
 
@@ -188,23 +188,21 @@ Close: agent -> Drain -> writer flushes the rest, closes, releases the lock
 
 ## 5. Public API and internals
 
-- **Public (`Xake.Storage`):**
-  - `Db` (`Snapshot`, `Post`, `PostAndReply`, `PostAndAsyncReply`, `IDisposable`) and
-    `DatabaseApi` (`Apply`, `Store`, `NewRun`, `InMemory`, `Close`, `CloseWait`);
-  - `tryGetResult`, `storeResult`;
-  - `openDb`, `noopDb`, `cleanupDb`, `readRecords`, `readDatabase`.
-- **Public (`Xake.BuildLog`):** `XakeDbVersion`, `XakeDbMinReadVersion`, `Database`,
-  `newDatabase`, `DbRecord`.
-- **Public (`Xake.FileProbe`):** `FileStat`, `HashResult`, `Content.hash`, `Hasher`.
-- **Public (`Xake.FileTracker`):** `ObserveMode`, `Observation`, `RunFiles` (its
-  `Claim`/`RecordedBefore` are internal), `ObserveContext` (`Db`, `Hasher`, `Run`, `Hashing`,
-  `OnHashed`), `observeFiles`.
+The database, the tracker and the probe are engine internals (arch-review, topic 2). Public are
+the read API and opaque handles (a public type, its constructor and members internal):
+
+- **`Xake.Storage`:** `Database`, `DbRecord`; the handle `Db` (`Snapshot`, `IDisposable`); the
+  module `Db`: `readRecords`, `readDatabase`, `tryGetResult`, `formatVersion`.
+- **`Xake.FileProbe`:** the handle `Hasher`.
+- **`Xake.FileTracker`:** the handle `RunFiles`.
 - **Public elsewhere:** `ExecContext` (a record, frozen within 5.x by `RecordShapeTests`) with
   `UpToDate: Target -> Async<bool>`, `NeedRebuild`, `RunFiles`, `Counters`; `EngineState` (with
   `Db` and `Hasher`); `RunSummary`;
   `Scheduler`, `TaskState`, `ExecMessage`.
-- **Internal:** `FileRule`, `Persist` (format, path table), `LegacyRead`, the agent and the
-  writer functions, `SnapshotCell`, `Db.Create`; the whole `DependencyAnalysis` module
+- **Internal:** `DatabaseApi`, `Db.Post*`, `Db.openWith`/`openFile`/`memoryOnly`/`delete`,
+  `Db.apply`/`store`/`newRun`/`keepInMemory`/`close`, `Persist`, `DbFile`, `DbAgent`, `LegacyRead`;
+  `FileStat`, `HashResult`, `Content.hash`, `Hasher.Hash`; `ObserveMode`, `Observation`,
+  `FileRule`, `FileTracker.Context`, `FileTracker.observe`; `ExecContext.Observe`; the whole `DependencyAnalysis` module
   (`Verdicts`, `getChangeReasons`, `getDepState`, `criticalPath`); `WorkerPool.Gate`; `ExecCore`.
 
 ## 6. What a script author sees
@@ -229,12 +227,12 @@ API changes for code that used `DatabaseApi` directly.
    visible in the logic.
 5. **`Database.fs` holds everything.** Done (arch-review, topic 1): `DatabaseFormat.fs`,
    `Database.fs`, `FileProbe.fs`, `FileTracker.fs`, section 1.
-6. **`Db` exposes its raw mailbox** (`Post`/`PostAndReply` with `DatabaseApi`) publicly, so a
-   caller can bypass `observeFiles` and the rule. Tests use it. `DatabaseApi` could become
-   internal.
+6. **`Db` exposes its raw mailbox.** Done (arch-review, topic 2): `DatabaseApi` and `Db.Post*`
+   are internal; the engine uses `Db.apply`, `Db.store`, `Db.newRun`, `Db.keepInMemory`,
+   `Db.close`.
 7. **Engine internals in a public record.** `RunFiles` sits in `ExecContext`, which is frozen
    within a major. The same holds for `Counters` and `Spellings`.
-8. **`ExecContext.Observe`** builds an `ObserveContext` on every call. The A3 observation in
+8. **`ExecContext.Observe`** (internal) builds a `FileTracker.Context` on every call. The A3 observation in
    `ExecCore.storeResult` overrides `Hashing = false` and uses `Verdict` mode, so it claims the
    files in `RunFiles` as a verdict would. This is correct, but subtle.
 9. **The conflict retry limit of 3 is arbitrary.** After 3 rounds the current record is taken as

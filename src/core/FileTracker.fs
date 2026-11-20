@@ -5,11 +5,11 @@ namespace Xake
 /// this module takes the stats, asks the hasher, writes through `Apply` and decides again on a
 /// conflict. A file is observed once per run; later observers wait for the first one.
 module FileTracker =
-    open Storage
+    open Xake.Storage
     open FileProbe
 
     /// Why a file is observed (decisions 1c, A1; content cut-off).
-    type ObserveMode =
+    type internal ObserveMode =
         /// by a verdict: once per run, then the cached state
         | Verdict
         /// a body records the file (`FileDep`, a fileset member): statted again; a moved stat is a
@@ -23,7 +23,7 @@ module FileTracker =
 
     /// An observation of a file: missing, or its state with whether its content changed after
     /// the run `since`.
-    type Observation =
+    type internal Observation =
         | Absent
         | Unchanged of FileState
         | Changed of FileState
@@ -103,7 +103,7 @@ module FileTracker =
     /// files observed in it (a verdict's later observation of one answers from the record, after
     /// the first observation has written it) and the files a body recorded (A1). One per run.
     [<Sealed>]
-    type RunFiles() =
+    type RunFiles internal () =
         let observed = System.Collections.Concurrent.ConcurrentDictionary<File, System.Threading.Tasks.Task>()
         let recorded = System.Collections.Concurrent.ConcurrentDictionary<File, byte>()
         /// Claims the file's first observation in this run: `Choice1Of2` the completion to set
@@ -120,14 +120,14 @@ module FileTracker =
 
     /// Where an observation runs: the database, the hasher, the run's files, whether the run
     /// hashes, and the counter of hashes computed.
-    type ObserveContext = { Db: Db; Hasher: Hasher; Run: RunFiles; Hashing: bool; OnHashed: System.TimeSpan -> unit }
+    type internal Context = { Db: Db; Hasher: Hasher; Run: RunFiles; Hashing: bool; OnHashed: System.TimeSpan -> unit }
 
     /// Observes a group of files (docs/features/idle-perf, L5): their stats on this thread, the
     /// rule against one snapshot, the hashes (in parallel, through the hasher), every write in one
     /// `Apply`, a conflict decided again on a fresh stat (at most 3 times). Replies per file, in
     /// the order given, whether its content changed after the run `since`. A verdict's later
     /// observation of a file in the run waits for the first one and answers from the record.
-    let observeFiles (oc: ObserveContext) (mode: ObserveMode) (since: int) (files: File list) = async {
+    let internal observe (oc: Context) (mode: ObserveMode) (since: int) (files: File list) = async {
         let distinct = files |> List.distinct
         let firsts = ResizeArray<System.Threading.Tasks.TaskCompletionSource<unit>>()
         let waits = ResizeArray<File * System.Threading.Tasks.Task>()
@@ -171,7 +171,7 @@ module FileTracker =
                         | FileRule.Write st -> states.[f] <- Some st; writes.Add((f, known, st))
                         | FileRule.NeedHash -> states.[f] <- known   // decideHashed never asks again
                     if writes.Count > 0 then
-                        let! conflicts = oc.Db.PostAndAsyncReply(fun ch -> Apply (List.ofSeq writes, ch))
+                        let! conflicts = Db.apply oc.Db (List.ofSeq writes)
                         if round >= 3 then
                             for f, current in conflicts do states.[f] <- current
                         else

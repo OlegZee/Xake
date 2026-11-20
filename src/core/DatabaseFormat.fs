@@ -1,42 +1,40 @@
-namespace Xake
+namespace Xake.Storage
 
-module BuildLog =
-    open Xake
-    open System
+open Xake
+
+/// The database in memory: the last result per target, the last state per file and the last
+/// epoch (the largest in the file on load, the current run's after a new run).
+type Database = { Status : Map<Target, BuildResult>; Files : Map<File, FileState>; Epoch : int }
+
+/// A record of a database file, paths resolved (the read API).
+[<RequireQualifiedAccess>]
+type DbRecord =
+    | Result of BuildResult
+    | FileState of File * FileState
+
+module internal Database =
+    /// The empty database.
+    let empty = { Database.Status = Map.empty; Files = Map.empty; Epoch = 0 }
+
+    /// Adds a result to a database.
+    let addResult db result =
+        { db with Status = result.Targets |> List.fold (fun m i -> Map.add i result m) db.Status
+                  Epoch = max db.Epoch result.Epoch }
+
+/// The database file format (0.7): header, picklers, the path table, reading and encoding.
+module internal Persist =
+    open Pickler
 
     /// Current database schema version, written to the header of every database file.
     /// 0.5 adds the Dependency case ArtifactDep2 (dependee target with its change stamp).
     /// 0.6 adds the Dependency case SecretDep (a secret variable's digest, never its value).
     /// 0.7 (Xake 5.0): tagged append-only records, a path table relative to the project root,
     /// a `FileRec` per file, epochs instead of per-dependency stamps, varint ids and lengths.
-    let XakeDbVersion = "0.7"
+    let version = "0.7"
 
     /// Oldest database version this Xake still reads. A database of 0.4-0.6 is read by
     /// `LegacyRead`, converted and rewritten as the current version on open.
-    let XakeDbMinReadVersion = "0.4"
-
-    /// In-memory build database: the last result per target, the last state per file and the
-    /// last epoch (the largest in the file on load, the current run's after `NewRun`).
-    type Database = { Status : Map<Target, BuildResult>; Files : Map<File, FileState>; Epoch : int }
-
-    /// Creates a new database
-    let newDatabase() = { Database.Status = Map.empty; Files = Map.empty; Epoch = 0 }
-
-    /// Adds result to a database
-    let internal addResult db result =
-        { db with Status = result.Targets |> List.fold (fun m i -> Map.add i result m) db.Status
-                  Epoch = max db.Epoch result.Epoch }
-
-    /// A record of a database file, paths resolved (the public read API).
-    [<RequireQualifiedAccess>]
-    type DbRecord =
-        | Result of BuildResult
-        | FileState of File * FileState
-
-/// The database file format (0.7): header, picklers, the path table, reading and encoding.
-module internal Persist =
-    open BuildLog
-    open Pickler
+    let minReadVersion = "0.4"
 
     type DatabaseHeader = { XakeSign : string; XakeVer : string; ScriptDate : Timestamp }
 
@@ -177,7 +175,7 @@ module internal Persist =
 
     let writeHeader (stream: System.IO.Stream) =
         use w = new System.IO.BinaryWriter(stream, System.Text.Encoding.UTF8, true)
-        dbHeader.pickle { XakeSign = "XAKE"; XakeVer = XakeDbVersion; ScriptDate = System.DateTime.Now } w
+        dbHeader.pickle { XakeSign = "XAKE"; XakeVer = version; ScriptDate = System.DateTime.Now } w
         w.Flush()
 
     exception VersionTooNew of string
@@ -191,9 +189,9 @@ module internal Persist =
     let read (root: string) (stream: System.IO.Stream) : Contents =
         use reader = new System.IO.BinaryReader(stream, System.Text.Encoding.UTF8, true)
         let v = (dbHeader.unpickle reader).XakeVer
-        if v > XakeDbVersion then raise (VersionTooNew v)
-        if v < XakeDbMinReadVersion then raise (VersionTooOld v)
-        if v < XakeDbVersion then
+        if v > version then raise (VersionTooNew v)
+        if v < minReadVersion then raise (VersionTooOld v)
+        if v < version then
             let files, results = LegacyRead.read root reader
             { Version = v; Table = PathTable.empty root; Torn = false; GoodEnd = stream.Position
               Records = List.map DbRecord.FileState files @ List.map DbRecord.Result results }
@@ -219,5 +217,5 @@ module internal Persist =
     /// The database of records read in order.
     let toDatabase (records: DbRecord seq) =
         records |> Seq.fold (fun db -> function
-            | DbRecord.Result r -> addResult db r
-            | DbRecord.FileState (f, s) -> { db with Files = Map.add f s db.Files; Epoch = max db.Epoch s.Changed }) (newDatabase())
+            | DbRecord.Result r -> Database.addResult db r
+            | DbRecord.FileState (f, s) -> { db with Files = Map.add f s db.Files; Epoch = max db.Epoch s.Changed }) Database.empty

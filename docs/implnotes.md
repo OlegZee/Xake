@@ -30,7 +30,7 @@ target as `TargetDep target`; neither carries a stamp. Staleness is decided by e
 
 ### Database 0.7
 
-The file starts with a version header (`BuildLog.XakeDbVersion`, `0.7`; `XakeDbMinReadVersion` is
+The file starts with a version header (`Storage.Db.formatVersion`, `0.7`; `Persist.minReadVersion` is
 `0.4`). After it come tagged, append-only records; the last record per key wins.
 
 | Tag | Record | Fields |
@@ -50,12 +50,13 @@ The file starts with a version header (`BuildLog.XakeDbVersion`, `0.7`; `XakeDbM
 - A file target is stored as a file id, a phony target by name. `FileDep` holds a file id;
   `TargetDep` has a file form and a phony form; `GetFiles` holds the fileset (with
   `CaseSensitive`) and file ids.
-- The database (`Storage.Db`, docs/features/idle-perf) is an agent and a writer. The agent keeps
+- The database (`Storage.Db`, Database.fs; the format in DatabaseFormat.fs; docs/features/idle-perf) is an agent and a writer. The agent keeps
   the records in memory and decides nothing: it accepts `Apply` (file records, each written only
   if the record is still the one the caller decided against: compare-and-set per file; replies
   the conflicts), `Store` (a result; replies once it is in memory), `NewRun`, `InMemory` and
   `Close`. After every message it publishes a snapshot (`Db.Snapshot`: `Status`, `Files`,
-  `Epoch`), read without a message (`Storage.tryGetResult`). It hands the records to the writer
+  `Epoch`), read without a message (`Db.tryGetResult`); the engine posts through the internal functions
+  `Db.apply`, `Db.store`, `Db.newRun`, `Db.keepInMemory`, `Db.close`. It hands the records to the writer
   in its order and does not wait for it.
 - The writer owns the path table and the stream. Each batch, with its new `DirRec`/`PathRec`, is
   pickled into one buffer and written with one `Write`. The path table is an immutable value in
@@ -70,10 +71,10 @@ The file starts with a version header (`BuildLog.XakeDbVersion`, `0.7`; `XakeDbM
   `--resetdb` deletes anything, and is held until the database is closed (engine mode: the
   engine's lifetime). A second opener waits up to 30 s, then fails with "another Xake run uses
   this database (.xake.lock)". The lock file is never deleted (deleting it would let two runs hold
-  two different files); a failed open releases it. `noopDb` takes no lock. A recipe that starts
+  two different files); a failed open releases it. `Db.memoryOnly` takes no lock. A recipe that starts
   Xake on the same project root waits and fails.
 - A newer version is recreated ("database written by a newer Xake (version X), recreating"), as is
-  one older than `XakeDbMinReadVersion` ("database version X is no longer read, recreating") or
+  one older than `Persist.minReadVersion` ("database version X is no longer read, recreating") or
   one that fails to read. An end of file inside the last record (a killed process) cuts the file
   back to the end of the last whole record and keeps everything before it.
 - Databases 0.4-0.6 are read by the module `LegacyRead` (its own picklers and the conversion),
@@ -83,9 +84,9 @@ The file starts with a version header (`BuildLog.XakeDbVersion`, `0.7`; `XakeDbM
   than recorded, else 0 (it reruns once). A no-change run after the upgrade rebuilds nothing.
   `LegacyRead` is meant to be removed in a later release; its one call in `DatabaseFormat.fs` then
   becomes "no longer read, recreating".
-- `Storage.openDb root dbpath logger` takes the project root. The public read API is
-  `Storage.readRecords root dbpath` (every `DbRecord`, `Result` or `FileState`, in file order) and
-  `Storage.readDatabase root dbpath` (the last result per target, the last state per file, the
+- `Db.openWith lockWait reset root dbpath logger` (internal) takes the project root. The public read API is
+  `Storage.Db.readRecords root dbpath` (every `DbRecord`, `Result` or `FileState`, in file order) and
+  `Storage.Db.readDatabase root dbpath` (the last result per target, the last state per file, the
   last epoch in `Database.Epoch`). They take no lock and open with `FileShare.ReadWrite |||
   FileShare.Delete`, so the database of a running build can be read; a torn last record ends the
   sequence, a missing or short file (a compaction in progress) gives an empty one.
@@ -105,7 +106,7 @@ The file starts with a version header (`BuildLog.XakeDbVersion`, `0.7`; `XakeDbM
 - Runs may overlap in engine mode (`Demand` of different names): an observation is stamped with
   the newest epoch handed out, a result with the epoch its task started in. A delegated result
   that did not run its body keeps the local result's epoch; a foreign epoch is never stored.
-- A file is observed through `FileTracker.observeFiles` (`DependencyAnalysis.observeMany`), a group
+- A file is observed through `FileTracker.observe` (`DependencyAnalysis.observeMany`), a group
   of files at a time, in a mode: by a verdict once per run, then answered from the record; when a
   body records it as a `FileDep` it is statted again, and a moved stat counts as a change unless
   another body already recorded it in this run; a rule's outputs (every output of a multi-output

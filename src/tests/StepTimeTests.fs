@@ -18,7 +18,7 @@ type ``Step times``() =
         xake { x.TestOptions with Targets = targets; Threads = threads; ThrowOnError = true } { rules rs }
 
     member private x.Step (target: Target) =
-        match (Storage.readDatabase x.TestOptions.ProjectRoot ".xake").Status.[target].Steps with
+        match (Storage.Db.readDatabase x.TestOptions.ProjectRoot ".xake").Status.[target].Steps with
         | step :: _ -> step
         | [] -> failwith "no step"
 

@@ -24,7 +24,7 @@ module internal OldDatabase =
     /// header version and the results in file order (an older version: converted)
     let read (path: string) =
         version path,
-        Storage.readRecords (root ()) path |> Seq.choose (function BuildLog.DbRecord.Result r -> Some r | _ -> None) |> List.ofSeq
+        Storage.Db.readRecords (root ()) path |> Seq.choose (function Storage.DbRecord.Result r -> Some r | _ -> None) |> List.ofSeq
 
     /// writes a 0.4-0.6 file of the given results with their old dependencies
     let writeOld (path: string) (ver: string) (results: OldResult list) =
@@ -41,10 +41,10 @@ module internal OldDatabase =
 
 /// The 0.7 format in memory: records written by the engine's writer and read back.
 module internal DbFormat =
-    open Xake.Persist
+    open Xake.Storage.Persist
 
     /// writes the records to a fresh 0.7 stream and reads them back (paths against `root`)
-    let roundTrip (root: string) (recs: BuildLog.DbRecord list) =
+    let roundTrip (root: string) (recs: Storage.DbRecord list) =
         use stream = new MemoryStream()
         writeHeader stream
         let _, bytes = encode (PathTable.empty root) recs
@@ -54,8 +54,8 @@ module internal DbFormat =
 
     /// a result written and read back
     let result (r: BuildResult) =
-        match (roundTrip "/p" [ BuildLog.DbRecord.Result r ] |> snd).Records with
-        | [ BuildLog.DbRecord.Result r ] -> r
+        match (roundTrip "/p" [ Storage.DbRecord.Result r ] |> snd).Records with
+        | [ Storage.DbRecord.Result r ] -> r
         | other -> failwithf "unexpected %A" other
 
 /// S66: a dependent must be rebuilt when its dependee (a rule-built file) was rebuilt
@@ -243,7 +243,7 @@ type ``StaleArtifactDep tests``() =
         OldDatabase.writeOld ".xake" "0.6" (old06 artifact2)
         do script x.TestOptions "up_" aRuns bRuns ["deploy"]
         Assert.AreEqual((1, 1), (aRuns.Value, bRuns.Value), "a no-change run after the upgrade rebuilds nothing")
-        Assert.AreEqual(BuildLog.XakeDbVersion, OldDatabase.version ".xake")
+        Assert.AreEqual(Storage.Db.formatVersion, OldDatabase.version ".xake")
 
         // a 0.6 result that saw an older stamp reruns
         let older t = match t with FileTarget f -> LegacyRead.OldArtifact2 (t, (stamp (Xake.File.getSysFileName f)).AddSeconds -5.0) | _ -> failwith "file"

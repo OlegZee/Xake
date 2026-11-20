@@ -32,11 +32,11 @@ let createScriptContext (opts: ExecOptions) rules =
     let engineOpts = toEngineOptions opts rules variables
     let db =
         if opts.NoPersist then
-            Storage.noopDb ()
+            Storage.Db.memoryOnly ()
         else
             let dbPath = engineOpts.ProjectRoot </> opts.DbFileName
             // the lock first: --resetdb runs under it (A5)
-            Storage.openDbWith (System.TimeSpan.FromSeconds 30.0) opts.ResetDb engineOpts.ProjectRoot dbPath engineOpts.Logger
+            Storage.Db.openWith (System.TimeSpan.FromSeconds 30.0) opts.ResetDb engineOpts.ProjectRoot dbPath engineOpts.Logger
     let ctx, finalize = ExecCore.createContextCore engineOpts db (VarEvaluation.flatVars variables) opts.Progress
     ctx, finalize, launchErrors
 
@@ -208,13 +208,13 @@ let runScript options rules =
             exitCode <- 2
             if options.ThrowOnError then raise (XakeException errorText)
         | Dump ->
-            Storage.InMemory |> ctx.Db.Post
-            ctx.Db.PostAndReply Storage.NewRun |> ignore
+            Storage.Db.keepInMemory ctx.Db
+            Storage.Db.newRun ctx.Db |> Async.RunSynchronously |> ignore
             do logger.Log Level.Command "Dumping dependencies for targets %A" targetLists
             targetLists |> List.iter (List.map (ExecCore.makeTarget ctx) >> (dumpDeps ctx (ExecCore.currentRule ctx)))
         | Dryrun ->
-            Storage.InMemory |> ctx.Db.Post
-            ctx.Db.PostAndReply Storage.NewRun |> ignore
+            Storage.Db.keepInMemory ctx.Db
+            Storage.Db.newRun ctx.Db |> Async.RunSynchronously |> ignore
             targetLists |> dryRun ctx options.Setup
         | _ ->
             let mutable reraisedError = None

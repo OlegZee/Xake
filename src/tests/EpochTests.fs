@@ -22,7 +22,7 @@ type ``Epoch tests``() =
         xake { x.TestOptions with Targets = targets; ResetDb = false } { rules rs }
 
     member x.Results () =
-        Storage.readDatabase x.TestOptions.ProjectRoot ".xake"
+        Storage.Db.readDatabase x.TestOptions.ProjectRoot ".xake"
 
     [<Test>]
     member x.``a no-change run rebuilds nothing and appends nothing; a source edit rebuilds the chain``() =
@@ -117,9 +117,9 @@ type ``Epoch tests``() =
         finally
             engine.StopAsync().Wait()
         let epochs =
-            Storage.readRecords x.TestOptions.ProjectRoot ".xake"
+            Storage.Db.readRecords x.TestOptions.ProjectRoot ".xake"
             |> Seq.choose (function
-                | BuildLog.DbRecord.Result r when r.Targets = [ PhonyAction "always" ] -> Some r.Epoch
+                | Storage.DbRecord.Result r when r.Targets = [ PhonyAction "always" ] -> Some r.Epoch
                 | _ -> None)
             |> List.ofSeq
         Assert.AreEqual(2, epochs.Length)

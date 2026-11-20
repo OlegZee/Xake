@@ -2,7 +2,7 @@
 
 open Xake
 open Xake.WorkerPool
-open Storage
+open Xake.Storage
 open FileTracker
 
 /// <summary>
@@ -22,13 +22,13 @@ type ChangeReason =
 /// <param name="ctx"></param>
 /// <param name="target"></param>
 let getExecTime (ctx: ExecContext) target =
-    Storage.tryGetResult ctx.Db target
+    Db.tryGetResult ctx.Db target
     |> Option.fold (fun _ r -> r.Steps |> List.sumBy (fun s -> s.OwnTime)) 0<ms>
 
-/// Observes a group of files (FileTracker.observeFiles) in the context's run: per file, in the
+/// Observes a group of files (FileTracker.observe) in the context's run: per file, in the
 /// order given, missing or whether its content changed after the run `since`.
 let observeMany (ctx: ExecContext) (mode: ObserveMode) (since: int) (files: File list) =
-    if files.IsEmpty then async.Return [||] else FileTracker.observeFiles ctx.Observe mode since files
+    if files.IsEmpty then async.Return [||] else FileTracker.observe ctx.Observe mode since files
 
 /// Observes one file (docs/features/idle-perf, L5).
 let observeSince (ctx: ExecContext) (mode: ObserveMode) (since: int) (file: File) = async {
@@ -149,7 +149,7 @@ let getChangeReasons (ctx: ExecContext) (current: Target -> (Target list * Set<S
         filesChanged @ other |> List.rev
 
 
-    let lastBuild = Storage.tryGetResult ctx.Db target
+    let lastBuild = Db.tryGetResult ctx.Db target
 
     let! reasons = async {
       match lastBuild with
@@ -157,7 +157,7 @@ let getChangeReasons (ctx: ExecContext) (current: Target -> (Target list * Set<S
         return [ChangeReason.Other "No dependencies", Some "It means target is not \"pure\" and depends on something beyond our control (oracle)"]
 
       | Some ({BuildResult.Depends = depends; Targets = result; Epoch = epoch} as built) ->
-        let getResult t = Storage.tryGetResult ctx.Db t
+        let getResult t = Db.tryGetResult ctx.Db t
         // with cut-off off every dependee goes through the transitive rule, as in phase 1 (4.0);
         // each dependee's state is taken once, so both phases below see the same one
         let states = System.Collections.Generic.Dictionary<Target, TaskState<ExecStatus>>()
@@ -372,7 +372,7 @@ let dumpDeps (ctx: ExecContext) current (target: Target list) =
         if not <| doneTargets.ContainsKey(target) then
             doneTargets.Add(target, 1)
 
-            let lastResult = Storage.tryGetResult ctx.Db target
+            let lastResult = Db.tryGetResult ctx.Db target
             let built = match lastResult with Some r -> sprintf " (built in run %d)" r.Epoch | None -> ""
             printfn "%sTarget %A%s" (indent ii) (target.Display ctx.Options.ProjectRoot) built
 

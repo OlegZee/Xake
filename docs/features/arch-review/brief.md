@@ -25,3 +25,12 @@ section 7. One decision per line, with its date. Decisions are not re-litigated.
   agent of its own).
 - 2026-11-20 (topic 1): `FileStaleness` is renamed `FileTracker`: it keeps file records in line
   with the disk, talks to the database, starts hashing and orders the observers of a run.
+- 2026-11-20 (topic 2, [api-review.md](api-review.md)): the four modules are engine internals.
+  Public: the read API (`readRecords`, `readDatabase`, `DbRecord`, `Database`, the format
+  version, `tryGetResult`) and opaque handles (`Db` with `Snapshot`, `Hasher`, `RunFiles`: public
+  type, internal constructor and members). Everything else internal; the raw mailbox becomes
+  functions (`newRun`, `inMemory`, `close`, `store`, `apply`); `ExecContext.Observe` internal;
+  `openDb` internal.
+- 2026-11-20 (topic 2): names, option 4b: one namespace `Xake.Storage` over DatabaseFormat.fs and
+  Database.fs, a module `Db` with the functions; `BuildLog` and `DatabaseApi` go as public names.
+  `FileTracker.observeFiles` -> `FileTracker.observe`, `ObserveContext` -> `FileTracker.Context`.

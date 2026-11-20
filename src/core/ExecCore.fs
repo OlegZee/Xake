@@ -1,9 +1,8 @@
 ﻿module internal Xake.ExecCore
 
-open DependencyAnalysis
-
-open Storage
+open Xake.Storage
 open FileTracker
+open DependencyAnalysis
 open WorkerPool
 
 /// Returns the current recipe execution context as a tuple of build result and execution context.
@@ -156,14 +155,14 @@ let private preHash (ctx: ExecContext) (targets: Target list) =
 /// then its dependency files without a record (a delegated result, A3) are observed, without
 /// hashing, as the agent did on `Store` before.
 let private storeResult (ctx: ExecContext) (result: BuildResult) = async {
-    do! Storage.storeResult ctx.Db result
+    do! Db.store ctx.Db result
     let files = ctx.Db.Snapshot.Files
     let missing =
         result.Depends
         |> List.choose (function FileDep f | TargetDep (FileTarget f) -> Some f | _ -> None)
         |> List.filter (files.ContainsKey >> not) |> List.distinct
     if not missing.IsEmpty then
-        do! FileTracker.observeFiles { ctx.Observe with Hashing = false } Verdict System.Int32.MaxValue missing |> Async.Ignore }
+        do! FileTracker.observe { ctx.Observe with Hashing = false } Verdict System.Int32.MaxValue missing |> Async.Ignore }
 
 /// Whether a rule's outputs take part in content cut-off (`noContentCutoff` opts out).
 let private ruleCutoff (header: RuleHeader) = header.ContentCutoff <> Some false
@@ -276,7 +275,7 @@ let rec prepareOne (ctx: ExecContext) target : Choice<File, Async<Target * ExecS
             let! epoch =
                 if bodyRan.Value then async.Return ctx.RunEpoch
                 else async {
-                    let local = Storage.tryGetResult ctx.Db primaryTarget
+                    let local = Db.tryGetResult ctx.Db primaryTarget
                     return local |> Option.map (fun r -> r.Epoch) |> Option.defaultValue ctx.RunEpoch }
             let result = { result with Epoch = epoch }
 
@@ -572,7 +571,7 @@ let private verdict (ctx: ExecContext) (verdicts: Verdicts) (targets: Target lis
     let names = targets |> List.map (fun t -> t.Name)
     let primary = List.head targets
     if ctx.Options.ContentCutoff then
-        let last = Storage.tryGetResult ctx.Db primary
+        let last = Db.tryGetResult ctx.Db primary
         let dependees = last |> Option.map (fun r -> r.Depends |> List.choose (function TargetDep t -> Some t | _ -> None)) |> Option.defaultValue []
         for d in dependees do
             match Scheduler.query ctx.Engine.Scheduler d with
@@ -616,7 +615,7 @@ let private verdict (ctx: ExecContext) (verdicts: Verdicts) (targets: Target lis
 /// line and every demand is a run.
 let beginRun (ctx: ExecContext) = async {
     do Scheduler.newRun ctx.Engine.Scheduler
-    let! epoch = ctx.Db.PostAndAsyncReply Storage.NewRun
+    let! epoch = Db.newRun ctx.Db
     let ctx = { ctx with Spellings = newSpellings (); RunFiles = FileTracker.RunFiles (); RunEpoch = epoch }
     let verdicts = Verdicts(ctx, currentRule ctx)
     let upToDate t = async { let! reasons = verdicts.Of t in return List.isEmpty reasons }
@@ -667,7 +666,7 @@ let runBuild (ctx: ExecContext) groups =
 
 /// Creates the shared execution context and returns it together with a finalize callback.
 /// The finalize callback closes the database, disposes the scheduler, and flushes logs.
-let createContextCore (options: EngineOptions) (db: Storage.Db) vars showProgress =
+let createContextCore (options: EngineOptions) (db: Db) vars showProgress =
     // the root every path is shown and stored against, normalised once (A6, R3)
     let options = { options with ProjectRoot = (File.make options.ProjectRoot).Name }
     let logger = options.Logger
@@ -678,7 +677,7 @@ let createContextCore (options: EngineOptions) (db: Storage.Db) vars showProgres
 
     let finalize () =
         patternWarnings.Dispose()
-        db.PostAndReply Storage.CloseWait
+        Db.close db |> Async.RunSynchronously
         (scheduler :> System.IDisposable).Dispose()
         FlushLogs()
 
@@ -711,7 +710,7 @@ let createContextCore (options: EngineOptions) (db: Storage.Db) vars showProgres
 
 /// Creates an execution context for engine/library mode with no persistence and no progress display.
 let createContext (options: EngineOptions) vars =
-    let db = Storage.noopDb ()
+    let db = Db.memoryOnly ()
     createContextCore options db vars false
 
 /// Builds a single target by name and returns its execution status.

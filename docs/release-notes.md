@@ -26,16 +26,16 @@ Breaking changes:
    to be removed in a later release.
 3. **`Dependency`.** `FileDep of File` and `TargetDep of Target` carry no stamp; `ArtifactDep` and
    `ArtifactDep2` are removed. `BuildResult` gains `Epoch` and `StaticCount` (`Built` stays the
-   time). `BuildLog.Database` gains `Files` and `FileState` is added.
-4. **Storage API.** `Storage.openDb root dbpath logger` takes the project root and returns a
-   `Storage.Db`; the database is exclusive (`.xake.lock`). Its agent accepts `Apply`, `Store`
-   (with a reply), `NewRun`, `InMemory` and `Close`; reads go through `Db.Snapshot` and
-   `Storage.tryGetResult`, file observations through `FileTracker.observeFiles`
-   (`FileTracker.RunFiles`, `FileTracker.ObserveContext`, `FileProbe.FileStat`); `GetResult` is
-   removed. `Storage.DbRecord` is `BuildLog.DbRecord`, `BuildLog.makeResult` is `makeResult`
-   (`DomainTypes`), and the `Db` holds no hasher (`EngineState.Hasher`).
-   `Storage.resultPU` is replaced by the public read API `Storage.readRecords` and
-   `Storage.readDatabase` (the database with its last epoch, `BuildLog.Database.Epoch`).
+   time). The database record (`Storage.Database`, was `BuildLog.Database`) gains `Files` and `FileState` is added.
+4. **Storage API.** `Xake.Storage` is a namespace and the database is engine-internal. Public
+   are the read API, `Storage.Db.readRecords root dbpath` (every `Storage.DbRecord`) and
+   `Storage.Db.readDatabase root dbpath` (a `Storage.Database` with its last epoch),
+   `Storage.Db.tryGetResult`, `Storage.Db.formatVersion`, and the opaque handles `Storage.Db`
+   (`Snapshot`), `FileProbe.Hasher` (`EngineState.Hasher`) and `FileTracker.RunFiles`.
+   Opening, storing, the agent's messages (`DatabaseApi`, `Db.Post*`), file observation and
+   hashing are internal. Removed: `BuildLog` (its contents are in `Storage`), `Storage.openDb`,
+   `noopDb`, `cleanupDb`, `storeResult`, `GetResult`, `Storage.resultPU`; `BuildLog.makeResult`
+   is `makeResult` (`DomainTypes`).
 5. **Filesets.** `FilesetOptions.CaseSensitive` and the `casesensitive` operation are added.
 6. **`ExecContext`** gains `Spellings`, `RunEpoch` and `RunFiles`.
 7. **Database 0.7.** Xake 4.x cannot read it. Databases 0.4-0.6 are upgraded on open, and a
@@ -101,9 +101,8 @@ The rule header ([rule-header.md](rule-header.md)):
   hashed); `onSummary` in `xakeScript`, `XakeEngine.LastSummary`, the `RunSummary` record. A run
   where nothing moved schedules no task.
 - API: `ExecOptions.ContentCutoff`, `ExecOptions.SummarySink`, `IRunSummarySink`;
-  `FileTracker.observeFiles` replies `Observation` (`Absent`, `Unchanged`, `Changed`) per file;
-  hashes go through `FileProbe.Hasher` (`HashResult`: `Hashed`, `Unreadable` with the stat);
-  `ObserveMode.Output` takes the cut-off flag and `PreHash` is added; `WorkerPool.TaskState` and
+  file observation (`FileTracker.observe`) and hashing (`FileProbe.Hasher`) are internal;
+  `WorkerPool.TaskState` and
   `Scheduler.query` are added; `ExecContext.NeedRebuild` and `ExecContext.UpToDate` are
   asynchronous, and `ExecContext` gains `UpToDate` and `Counters`.
 

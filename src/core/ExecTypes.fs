@@ -248,10 +248,10 @@ and ExecContext = {
     /// Shortcut to the build database.
     member ctx.Db = ctx.Engine.Db
     /// Where this context's file observations run: its database, its run, whether it hashes.
-    member ctx.Observe =
-        { FileTracker.ObserveContext.Db = ctx.Engine.Db; FileTracker.ObserveContext.Hasher = ctx.Engine.Hasher
-          FileTracker.ObserveContext.Run = ctx.RunFiles; FileTracker.ObserveContext.Hashing = ctx.Engine.Options.ContentCutoff
-          FileTracker.ObserveContext.OnHashed = match ctx.Counters with null -> ignore | c -> c.FileHashed }
+    member internal ctx.Observe =
+        { FileTracker.Context.Db = ctx.Engine.Db; FileTracker.Context.Hasher = ctx.Engine.Hasher
+          FileTracker.Context.Run = ctx.RunFiles; FileTracker.Context.Hashing = ctx.Engine.Options.ContentCutoff
+          FileTracker.Context.OnHashed = match ctx.Counters with null -> ignore | c -> c.FileHashed }
 
 /// Functions over the execution context for code outside this assembly. A record copy
 /// (`{ ctx with ... }`) compiled in another assembly calls the full constructor and breaks

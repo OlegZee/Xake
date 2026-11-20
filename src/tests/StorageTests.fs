@@ -4,7 +4,6 @@ open System.IO
 open NUnit.Framework
 
 open Xake
-open Xake.BuildLog
 open Xake.Storage
 open Xake.FileProbe
 open Xake.FileTracker
@@ -29,8 +28,8 @@ module private impl =
             Depends = [ TargetDep (mkFileTarget "abc.c"); Var("DEBUG", Some "false") ]
             Steps = [ newStepInfo ("compile", 217) ] }
 
-    let openDb () = Storage.openDb (root ()) dbname
-    let (<-*) (a : Db) t = Storage.tryGetResult a t
+    let openDb () = Storage.Db.openFile (root ()) dbname
+    let (<-*) (a : Db) t = Storage.Db.tryGetResult a t
     let store (a : Db) r = a.PostAndReply(fun ch -> Store (r, ch))
     /// Starts a run: its epoch and its files (docs/features/idle-perf, L4).
     let newRun (a : Db) = a.PostAndReply NewRun, RunFiles ()
@@ -38,7 +37,7 @@ module private impl =
     let hasher = Hasher()
     /// Observes one file through the facade (L5).
     let observeIn (a : Db) run hashing mode since f =
-        (FileTracker.observeFiles { Db = a; Hasher = hasher; Run = run; Hashing = hashing; OnHashed = ignore } mode since [ f ] |> Async.RunSynchronously).[0]
+        (FileTracker.observe { Db = a; Hasher = hasher; Run = run; Hashing = hashing; OnHashed = ignore } mode since [ f ] |> Async.RunSynchronously).[0]
     // Is.Any predicate for assertions
     let IsAny() = Is.Not.All.Not
 
@@ -110,7 +109,7 @@ let ``compresses database when limit is reached``() =
     printfn "old size: %A, new size: %A" oldLen newLen
     Assert.Less((int newLen), (int oldLen) / 3)
     Assert.That(msgs, IsAny().Contains("Compacting database"))
-    let db = readDatabase (root ()) dbname
+    let db = Db.readDatabase (root ()) dbname
     Assert.AreEqual(20, db.Status.Count)
 
 [<Test>]
@@ -163,7 +162,7 @@ let ``cleanupDb deletes database files``() =
     Assert.IsTrue(File.Exists(dbname), "Database file should exist before cleanup")
     let bkpath = dbname + ".bak"
     File.WriteAllText(bkpath, "backup")
-    Storage.cleanupDb dbname logger
+    Storage.Db.delete dbname logger
     Assert.IsFalse(File.Exists(dbname), "Database file should be deleted")
     Assert.IsFalse(File.Exists(bkpath), "Backup file should be deleted")
     Assert.That(msgs, IsAny().Contains("Deleted database file"))
@@ -183,7 +182,7 @@ let ``reads a 0.4 database and rewrites it as the current version``() =
     Assert.AreEqual(Some old.Depends, read |> Option.map (fun r -> r.Depends))
     Assert.That(msgs, IsAny().Contains("Upgrading database"))
     let ver, results = OldDatabase.read dbname
-    Assert.AreEqual(XakeDbVersion, ver)
+    Assert.AreEqual(Db.formatVersion, ver)
     Assert.AreEqual([old.Depends], results |> List.map (fun r -> r.Depends))
 
 [<Test>]
@@ -197,7 +196,7 @@ let ``recreates a database older than 0.4 or newer than this Xake, with a messag
         testee.PostAndReply CloseWait
         Assert.IsTrue(Option.isNone read)
         Assert.That(msgs, IsAny().Contains(text))
-        Assert.AreEqual(XakeDbVersion, OldDatabase.version dbname)
+        Assert.AreEqual(Db.formatVersion, OldDatabase.version dbname)
 
 [<Test>]
 let ``a torn last record is cut off and the rest kept``() =
@@ -213,7 +212,7 @@ let ``a torn last record is cut off and the rest kept``() =
     fs.SetLength cut
     fs.Dispose()
     // the read API stops at the torn record
-    Assert.AreEqual(1, readRecords (root ()) dbname |> Seq.length)
+    Assert.AreEqual(1, Db.readRecords (root ()) dbname |> Seq.length)
     let testee = openDb () (createStrLogger msgs)
     let first, second = testee <-* mkFileTarget "first.exe", testee <-* mkFileTarget "second.exe"
     testee.PostAndReply CloseWait
@@ -229,11 +228,11 @@ let ``a second open waits for the lock, then fails``() =
     let first = openDb () logger
     let ex =
         Assert.Throws<XakeException>(fun () ->
-            Storage.openDbWith (System.TimeSpan.FromMilliseconds 200.0) false (root ()) dbname (createStrLogger msgs) |> ignore)
+            Storage.Db.openWith (System.TimeSpan.FromMilliseconds 200.0) false (root ()) dbname (createStrLogger msgs) |> ignore)
     StringAssert.Contains("another Xake run uses this database (.xake.lock)", ex.Message)
     Assert.AreEqual(1, msgs |> Seq.filter (fun s -> s.Contains "waiting for another Xake run on this database") |> Seq.length)
     first.PostAndReply CloseWait
-    let again = Storage.openDbWith (System.TimeSpan.FromMilliseconds 200.0) false (root ()) dbname logger
+    let again = Storage.Db.openWith (System.TimeSpan.FromMilliseconds 200.0) false (root ()) dbname logger
     again.PostAndReply CloseWait
 
 [<Test>]
@@ -244,7 +243,7 @@ let ``the read API reads a database whose lock is held``() =
     store testee { (createResult "a.exe") with Epoch = run }
     store testee { (createResult "b.exe") with Depends = [ FileDep (File.make "src.c") ]; Epoch = run }
     observeIn testee files false Verdict 0 (File.make "src.c") |> ignore
-    let records = readRecords (root ()) dbname |> List.ofSeq
+    let records = Db.readRecords (root ()) dbname |> List.ofSeq
     match records with
     | [ DbRecord.Result a; DbRecord.Result b; DbRecord.FileState (f, st) ] ->
         Assert.AreEqual([ mkFileTarget "a.exe" ], a.Targets)
@@ -254,7 +253,7 @@ let ``the read API reads a database whose lock is held``() =
         Assert.AreEqual(run, st.Changed)
         Assert.AreEqual(run, a.Epoch)
     | other -> Assert.Fail(sprintf "unexpected %A" other)
-    let db = readDatabase (root ()) dbname
+    let db = Db.readDatabase (root ()) dbname
     let epoch = db.Epoch
     Assert.AreEqual(2, db.Status.Count)
     Assert.AreEqual(1, db.Files.Count)
@@ -310,10 +309,10 @@ let ``measures the upgrade of XAKE_DB_SAMPLE``() =
             File.Copy(sample, copy)
             let before = (FileInfo copy).Length
             let sw = System.Diagnostics.Stopwatch.StartNew()
-            let db = Storage.openDb (Path.GetDirectoryName (Path.GetFullPath sample)) copy (CustomLogger (fun _ -> false) ignore)
+            let db = Storage.Db.openFile (Path.GetDirectoryName (Path.GetFullPath sample)) copy (CustomLogger (fun _ -> false) ignore)
             db.PostAndReply CloseWait
             let after = (FileInfo copy).Length
-            let state = readDatabase (Path.GetDirectoryName (Path.GetFullPath sample)) copy
+            let state = Db.readDatabase (Path.GetDirectoryName (Path.GetFullPath sample)) copy
             printfn "sample: %s %d B -> %s %d B (%.1fx) in %d ms; %d results, %d files"
                 (OldDatabase.version sample) before (OldDatabase.version copy) after (float before / float after)
                 sw.ElapsedMilliseconds state.Status.Count state.Files.Count
@@ -342,7 +341,7 @@ let ``recording re-stats a file once per run``() =
     File.WriteAllText("rec.c", "v3")
     Assert.AreEqual(recorded, observe files2 Recording, "another recording in the run leaves the record")
     db.PostAndReply CloseWait
-    let state = readDatabase (root ()) dbname
+    let state = Db.readDatabase (root ()) dbname
     Assert.AreEqual(recorded, state.Files.[f])
 
 /// A7: the upgrade takes a file's stamp from the result with the latest Built; MinValue is no stamp.
@@ -364,12 +363,12 @@ let ``the upgrade takes the stamp of the latest built result``() =
 let ``a failed open releases the lock``() =
     Directory.CreateDirectory "dbdir" |> ignore
     let path = "dbdir"     // a directory: the database file cannot be opened
-    let openIt () = Storage.openDbWith (System.TimeSpan.FromMilliseconds 200.0) false (root ()) path logger |> ignore
+    let openIt () = Storage.Db.openWith (System.TimeSpan.FromMilliseconds 200.0) false (root ()) path logger |> ignore
     let first = Assert.Catch(fun () -> openIt ())
     let second = Assert.Catch(fun () -> openIt ())
     Assert.IsNotInstanceOf<XakeException>(second, "not the lock: it was released")
     Assert.AreEqual(first.GetType(), second.GetType())
-    Assert.IsEmpty(readRecords (root ()) "no-such.xake")
+    Assert.IsEmpty(Db.readRecords (root ()) "no-such.xake")
 
 /// A6: a project at a file-system root loads its paths back (no '//').
 [<Test>]
@@ -462,7 +461,7 @@ let ``Apply is a compare-and-set per file``() =
     Assert.AreEqual(Some (stateAt 2), db.Snapshot.Files.TryFind a)
     Assert.AreEqual(Some (stateAt 1), db.Snapshot.Files.TryFind b)
     db.PostAndReply CloseWait
-    let records = readRecords (root ()) dbname |> List.ofSeq
+    let records = Db.readRecords (root ()) dbname |> List.ofSeq
     Assert.AreEqual(3, records.Length, "the conflicting write appended nothing")
 
 /// L2: one `Apply` is one append, whatever the number of records.
@@ -476,7 +475,7 @@ let ``Apply appends its records in one write``() =
     let files = [ for i in 1 .. 50 -> File.make (sprintf "batch%d.c" i) ]
     Assert.IsEmpty(db.PostAndReply(fun ch -> Apply ([ for f in files -> f, None, stateAt 1 ], ch)))
     db.PostAndReply CloseWait
-    Assert.AreEqual(50, readRecords (root ()) dbname |> Seq.length)
+    Assert.AreEqual(50, Db.readRecords (root ()) dbname |> Seq.length)
     Assert.Greater((FileInfo dbname).Length, empty)
 
 /// L2: once `Store` replies, the snapshot holds the result; reads post nothing.
@@ -486,7 +485,7 @@ let ``the snapshot holds a stored result once Store replies``() =
     let epoch = db.PostAndReply NewRun
     Assert.AreEqual(epoch, db.Snapshot.Epoch)
     store db { createResult "snap.exe" with Epoch = epoch }
-    Assert.AreEqual(Some epoch, Storage.tryGetResult db (mkFileTarget "snap.exe") |> Option.map (fun r -> r.Epoch))
+    Assert.AreEqual(Some epoch, Storage.Db.tryGetResult db (mkFileTarget "snap.exe") |> Option.map (fun r -> r.Epoch))
     db.PostAndReply CloseWait
 
 /// L3: two requests for one (file, stat) while it is hashed compute it once; another request
@@ -523,8 +522,8 @@ let ``a batch observes like single observations``() =
         let epoch, run = newRun db
         let oc = { Db = db; Hasher = Hasher(); Run = run; Hashing = false; OnHashed = ignore }
         let replies =
-            if single then [ for f in files -> (FileTracker.observeFiles oc Recording 0 [ f ] |> Async.RunSynchronously).[0] ]
-            else FileTracker.observeFiles oc Recording 0 files |> Async.RunSynchronously |> List.ofArray
+            if single then [ for f in files -> (FileTracker.observe oc Recording 0 [ f ] |> Async.RunSynchronously).[0] ]
+            else FileTracker.observe oc Recording 0 files |> Async.RunSynchronously |> List.ofArray
         let state = db.Snapshot.Files
         db.PostAndReply CloseWait
         replies, [ for f in files -> state.TryFind f ], epoch
@@ -541,11 +540,11 @@ let ``racing observations of a new file write one record, and an unchanged file 
     let db = openDb () logger
     let _, run = newRun db
     let oc = { Db = db; Hasher = Hasher(); Run = run; Hashing = false; OnHashed = ignore }
-    [ for _ in 1 .. 16 -> FileTracker.observeFiles oc Recording 0 [ f ] ] |> Async.Parallel |> Async.RunSynchronously |> ignore
+    [ for _ in 1 .. 16 -> FileTracker.observe oc Recording 0 [ f ] ] |> Async.Parallel |> Async.RunSynchronously |> ignore
     let _, run2 = newRun db
-    FileTracker.observeFiles { oc with Run = run2 } Verdict 0 [ f ] |> Async.RunSynchronously |> ignore
+    FileTracker.observe { oc with Run = run2 } Verdict 0 [ f ] |> Async.RunSynchronously |> ignore
     db.PostAndReply CloseWait
-    let fileRecords = readRecords (root ()) dbname |> Seq.filter (function DbRecord.FileState (g, _) -> g = f | _ -> false) |> Seq.length
+    let fileRecords = Db.readRecords (root ()) dbname |> Seq.filter (function DbRecord.FileState (g, _) -> g = f | _ -> false) |> Seq.length
     Assert.AreEqual(1, fileRecords)
 
 /// L5: a verdict's later observation in the run sees a file deleted since: existence per
@@ -570,7 +569,7 @@ let ``closing drains the writer, in order``() =
     for n in names do store db (createResult n)
     db.PostAndReply CloseWait
     let stored =
-        readRecords (root ()) dbname
+        Db.readRecords (root ()) dbname
         |> Seq.choose (function DbRecord.Result r -> Some (r.Targets.Head.Display (root ())) | _ -> None)
         |> List.ofSeq
     Assert.AreEqual(names, stored)

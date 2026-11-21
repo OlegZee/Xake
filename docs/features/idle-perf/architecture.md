@@ -198,7 +198,7 @@ Close: agent -> Drain -> writer flushes the rest, closes, releases the lock
 | C9 | a task's verdict waits for a running dependee | deadlock with `need` waits | `ctx.Run.TaskWaits` (`WaitFor`): refuse or cancel a wait that closes a cycle | ContentCutoffTests (existing); `WaitFor` unit tests |
 | C10 | one target requested twice | built twice | the pool's queued/running/finished maps; `NewRun` clears finished | `builds a target requested twice in one run only once` (existing) |
 | C11 | writer order and close | records lost or reordered at exit | the agent posts in order; `Close` awaits `Drain` | `closing drains the writer, in order` |
-| C12 | a failed hash or caller between decision and completion | claims never completed, so verdicts wait forever | `finally` completes claims; the hasher releases its slot in `finally`; `Content.hash` never throws | **no direct test** |
+| C12 | a failed stat, hash or caller between claim and completion | claims never completed, so verdicts wait forever | `claim` completes its claims when a stat throws; `finally` completes them after `settle`; the hasher releases its slot in `finally`; `Content.hash` never throws | `a failed observation completes the claims it took` |
 | C13 | overlapping engine runs | one run clears another's per-run state | `RunFiles` and `Verdicts` per run; the epoch is shared (the newest handed out) | **no direct test** |
 | C14 | hold-and-wait on resources | a silent hang | `need` of a rule target while holding a resource is refused | ResourceGuardTests (existing) |
 | C15 | the fast path floods the pool | too many verdicts at once; a verdict `Warm` did not decide stats files synchronously on a pool thread | `ctx.Run.FastGate` (a semaphore of cores); measured in arch-review/fastgate.md | none |

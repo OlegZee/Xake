@@ -602,3 +602,18 @@ let ``closing again and disposing after close return``() =
         (db :> System.IDisposable).Dispose() }
     let finished = Async.StartAsTask all
     Assert.IsTrue(finished.Wait(System.TimeSpan.FromSeconds 10.0), "close or dispose did not return")
+
+/// A failed observation completes the claims it took (C12): a later verdict observation of a file
+/// claimed before the failure returns instead of waiting forever. A path with a NUL makes the
+/// stat throw.
+[<Test>]
+let ``a failed observation completes the claims it took``() =
+    File.WriteAllText("good.c", "x")
+    let db = openDb () logger
+    let _, run = newRun db
+    let oc = { Db = db; Hasher = hasher; Run = run; Hashing = false; OnHashed = ignore; Log = logger }
+    let good, bad = File.make "good.c", File.make "bad\000.c"
+    Assert.Catch(fun () -> FileTracker.observe oc Verdict 0 [ good; bad ] |> Async.RunSynchronously |> ignore) |> ignore
+    let later = FileTracker.observe oc Verdict 0 [ good ] |> Async.StartAsTask
+    Assert.IsTrue(later.Wait(System.TimeSpan.FromSeconds 10.0), "the claim of good.c was left open")
+    db.PostAndReply CloseWait

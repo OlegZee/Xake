@@ -184,7 +184,8 @@ module internal FileTracker =
     let private maxRounds = 3
 
     /// Claims the files (step 1-2): the completions this call holds, the verdicts that wait for an
-    /// earlier observation, and the files decided here with their stats. `PreHash` claims nothing:
+    /// earlier observation, and the files decided here with their stats. When a stat fails, the
+    /// claims taken are completed before the exception leaves. `PreHash` claims nothing:
     /// its record is the one before the rule runs, and a verdict waiting for it would read a stale
     /// record.
     let private claim (oc: Context) (mode: ObserveMode) (files: File list) =
@@ -192,18 +193,24 @@ module internal FileTracker =
         let waits = ResizeArray<File * System.Threading.Tasks.Task>()
         let pending = ResizeArray<Pending>()
         let snapshot = oc.Db.Snapshot
-        for f in List.distinct files do
-            let earlier =
-                if mode = PreHash then None
-                else
-                    match oc.Run.Claim f with
-                    | Choice1Of2 tcs -> firsts.Add tcs; None
-                    | Choice2Of2 task -> if mode = Verdict then Some task else None
-            match earlier with
-            | Some task -> waits.Add((f, task))
-            | None ->
-                pending.Add { File = f; RecordedBefore = (mode = Recording && oc.Run.RecordedBefore f)
-                              Known = Map.tryFind f snapshot.Files; Stat = FileStat.take f }
+        try
+            for f in List.distinct files do
+                let earlier =
+                    if mode = PreHash then None
+                    else
+                        match oc.Run.Claim f with
+                        | Choice1Of2 tcs -> firsts.Add tcs; None
+                        | Choice2Of2 task -> if mode = Verdict then Some task else None
+                match earlier with
+                | Some task -> waits.Add((f, task))
+                | None ->
+                    pending.Add { File = f; RecordedBefore = (mode = Recording && oc.Run.RecordedBefore f)
+                                  Known = Map.tryFind f snapshot.Files; Stat = FileStat.take f }
+        with _ ->
+            // a stat that throws (a path `FileInfo` rejects) must not leave the claims taken so far
+            // open: a later verdict would wait for them forever (C12)
+            for tcs in firsts do tcs.TrySetResult () |> ignore
+            reraise ()
         List.ofSeq firsts, List.ofSeq waits, List.ofSeq pending
 
     /// Decides the files and writes the changed ones (step 3): the rule against each record, the

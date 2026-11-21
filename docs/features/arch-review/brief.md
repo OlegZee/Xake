@@ -60,3 +60,6 @@ section 7. One decision per line, with its date. Decisions are not re-litigated.
 - 2026-11-21 (topic 9, [fastgate.md](fastgate.md)): option a: keep `FastGate` (measured: no gain
   without it, full builds slower and less stable), state the real reason, and move it and
   `TaskWaits` from `RunCounters` to `RunState`.
+- 2026-11-21 (topic 10, [test-gaps.md](test-gaps.md)): fix the C12 hole (`claim` completes the
+  claims it took when it fails) with its test; tests for C6, C4 (`claim`/`settle` internal), C13,
+  C2, `--dryrun`, the as-requested estimate.

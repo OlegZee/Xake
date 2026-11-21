@@ -21,7 +21,7 @@ module ScriptFuncs =
         recipe {
             let! ctx = getCtx()
             let! r0 = getResult()
-            let! (r', b) = Scheduler.withYieldedSlot ctx.Engine.Scheduler (A.runAction body (r0, ctx))
+            let! (r', b) = Scheduler.withYieldedSlot ctx.Engine.Scheduler ctx.Targets (A.runAction body (r0, ctx))
             do! setResult r'
             return b
         }
@@ -36,12 +36,13 @@ module ScriptFuncs =
     /// The body must not `need` a target that has a rule (a plain file is fine): a dependency
     /// built while the units are held may wait for the same resource, which can deadlock the
     /// build, so such a `need` fails at once. Need first, then acquire; see `allowNeed`.
+    /// The time spent acquiring counts as the step's `WaitTime`, not its `OwnTime`.
     /// </summary>
     let withResource (resource: Resource) (units: int) (body: Recipe<ExecContext,'b>) : Recipe<ExecContext,'b> =
         Recipe (fun (r, ctx: ExecContext) -> async {
-            do! Scheduler.withYieldedSlot ctx.Engine.Scheduler (Resource.acquire resource units)
+            let! waited = ExecCore.acquireTimed ctx resource units
             try
-                return! A.runAction body (r, { ctx with HeldResources = resource.ResourceName :: ctx.HeldResources })
+                return! A.runAction body (Step.updateWaitTime waited r, { ctx with HeldResources = resource.ResourceName :: ctx.HeldResources })
             finally
                 Resource.release resource units
         })
@@ -150,6 +151,8 @@ module ScriptFuncs =
     let getFiles fileset = recipe {
         let! ctx = getCtx()
         let files = fileset |> toFileList ctx.Options.ProjectRoot
+        let (Filelist found) = files
+        found |> List.iter (ExecCore.checkSpelling ctx false)
         do! GetFiles (fileset,files) |> recordDependency
 
         return files
@@ -201,12 +204,13 @@ module ScriptFuncs =
 
     /// <summary>
     /// Gets current target file name with full path.
-    /// Convenience function that combines getTargetFile and File.getFullName.
+    /// Convenience function that combines getTargetFile and File.getSysFileName.
     /// </summary>
     /// <returns>Recipe that returns the full path of the current target file</returns>
+    [<System.Obsolete("Use getTargetFile with File.getSysFileName for the OS form, or Name for Xake's form; to be removed in a later release")>]
     let getTargetFullName() = recipe {
         let! file = getTargetFile()
-        return File.getFullName file
+        return File.getSysFileName file
     }
 
     /// <summary>
@@ -225,6 +229,7 @@ module ScriptFuncs =
     /// </summary>
     /// <param name="key">Name of the capture group to retrieve</param>
     /// <returns>Recipe that returns the matched value or empty string</returns>
+    [<System.Obsolete("Use `let! m = matched`, then m[\"name\"] (an unknown name fails the task; m.TryFind for an optional one); to be removed in a later release")>]
     let getRuleMatch key = recipe {
         let! groups = getRuleMatches()
         return groups |> Map.tryFind key |> function |Some v -> v | None -> ""

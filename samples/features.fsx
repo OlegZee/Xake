@@ -26,7 +26,7 @@ xake ExecOptions.Default {
 
     // using wildcards and named groups when defining target
     // The following rule defines how to build any file which names matches "*/*.cs*" pattern.
-    // Round brackets specify the named groups (known from regexps), the values can be accessed via getRuleMatch function
+    // Round brackets specify the named groups (known from regexps), the values can be accessed by name after `let! m = matched`
     // e.g. for src/hello.csx the matches will be: dir=src, file=hello, ext=csx
     //
     // NOTE it is declared before the concrete rules on purpose: rules are matched in reverse
@@ -35,9 +35,8 @@ xake ExecOptions.Default {
 
     "(dir:*)/(file:*).(ext:c*)" ..> recipe {
 
-        let! dir = getRuleMatch "dir"
-        let! file = getRuleMatch "file"
-        let! ext = getRuleMatch "ext"
+        let! m = matched
+        let dir, file, ext = m["dir"], m["file"], m["ext"]
 
         // here you place regular build steps
 

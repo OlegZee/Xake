@@ -5,6 +5,158 @@ The `Xake` package: the engine (up to 3.15 it also carried `Xake.Dotnet`). From 
 [OlegZee/Xake.Dotnet](https://github.com/OlegZee/Xake.Dotnet), with their own notes; the entries below about them up to
 4.0 are the history. Links to their docs point to that repository.
 
+## 5.0.0 (2026-11-21)
+
+Breaking changes:
+
+1. **Path case.** `File`, `Target` and rule matching are ordinal on every OS. On Linux `A.cs` and
+   `a.cs` are now two files (they were one); on Windows and macOS rule masks become case-sensitive.
+   Filesets ignore case by default on every OS; `casesensitive` in `fileset { }`
+   (`FilesetOptions.CaseSensitive`) restores a case-sensitive search. Rules, targets and `File`
+   stay ordinal, with no option. On Windows and macOS filesets behave as before; on Linux they
+   become case-insensitive. `Path.matches` ignores case on every OS too, as filesets do. Two spellings of one file in a run: an error for targets, a warning
+   otherwise.
+2. **`File`.** `File.undefined` is removed. `Name` is the absolute path (the engine's own output
+   is relative to the project root). `File.make` normalises: a trailing separator is dropped and,
+   on Windows, `\` becomes `/` internally. `File.display` and `File.comparer` are added.
+   `Name` is Xake's name of a file (`/` separators), and every path string Xake hands out is in
+   that form, `ExecContext.Options.ProjectRoot` included. `File.getSysFileName` gives the OS form
+   (`\` on Windows) for command lines and tools, `File.getFileInfo` a new `FileInfo` per call.
+   `FullName`, `File.getFullName` and `getTargetFullName` are deprecated aliases of the OS form,
+   to be removed in a later release.
+3. **`Dependency`.** `FileDep of File` and `TargetDep of Target` carry no stamp; `ArtifactDep` and
+   `ArtifactDep2` are removed. `BuildResult` gains `Epoch` and `StaticCount` (`Built` stays the
+   time). The database record (`Storage.Database`, was `BuildLog.Database`) gains `Files` and `FileState` is added.
+4. **Storage API.** `Xake.Storage` is a namespace and the database is engine-internal. Public
+   is the read API, `Storage.DbReader.readRecords root dbpath` (every `Storage.DbRecord`),
+   `Storage.DbReader.readDatabase root dbpath` (a `Storage.Database` with its last epoch) and
+   `Storage.DbReader.formatVersion`; and the handle `FileTracker.RunFiles` (in `ExecContext`).
+   `EngineState`'s fields are internal (the record is public; its identity is still usable),
+   so `Storage.Db`, `ExecContext.Db` and `FileProbe` are internal.
+   Opening, storing, the agent's messages (`DatabaseApi`, `Db.Post*`), file observation and
+   hashing are internal. Removed: `BuildLog` (its contents are in `Storage`), `Storage.openDb`,
+   `noopDb`, `cleanupDb`, `storeResult`, `GetResult`, `Storage.resultPU`; `BuildLog.makeResult`
+   is `makeResult` (`DomainTypes`).
+5. **Filesets.** `FilesetOptions.CaseSensitive` and the `casesensitive` operation are added.
+6. **`ExecContext`** keeps what a recipe reads (`Targets`, `RuleMatches`, `Vars`, `Logger`,
+   `Ordinal`, `HeldResources`, `Engine`) and gains `Run`, an opaque `RunState`: the engine's
+   per-run state (`Progress`, `ShowProgress`, `NeedRebuild`, `UpToDate`, and the new `Spellings`,
+   `RunFiles`, `RunEpoch`, `Counters`) moved there, so it can change within 5.x.
+7. **Database 0.7.** Xake 4.x cannot read it. Databases 0.4-0.6 are upgraded on open, and a
+   no-change run after the upgrade rebuilds nothing. The 0.4-0.6 databases are upgraded by a legacy reader that will
+   be removed in a later release.
+
+8. **One file-rule case.** `FileRule` and `MultiFileRule` are one case,
+   `FileRule (outputs, header, recipe)`, the main output first; `FileConditionRule` carries a
+   header too. Code matching on the cases changes; scripts that use the operators and builders do
+   not. `..>`, `*..>` and `..?>` are inline operators over a recipe with or without a header; a
+   wrong right-hand side reads "No overloads match for method 'op_Dollar'".
+9. **A statement with a value inside `recipe { }` is an error** (it was warning FS0020). The common
+   case was a bug: `need ["a"]` without `do!` built nothing.
+10. **A rule with several outputs** (`*..>`, `targets`, `also`) must write every one of them; one it
+   did not write fails the build, naming it (in 4.0 the rule silently reran every time). When an
+   output of a rule is built by another rule, the build fails naming both.
+11. **`matched` moves to `Xake`.** `Xake.Typed.Matched` is `Xake.Matched`; `let! m = matched` in a
+   plain `recipe { }` compiles (it was an error). `recipe` and `action` are `RuleRecipeBuilder`
+   values (derived from `RecipeBuilder`); the builders of `target`, `targets` and `command` derive
+   from it.
+
+The rule header ([rule-header.md](rule-header.md)):
+
+- A file rule's `recipe { }` may start with declarations read when the script loads: `also` (side
+  outputs), `needs` (static inputs, built before the body and recorded first), `requires` (a lock
+  the engine takes around the body), `noContentCutoff` / `contentCutoff` (stored for content
+  cut-off). Every file-rule form takes it (`..>`, `*..>`, `..?>`, `target`, `targets`, typed
+  `X.rule`; `X.RuleWith h <| fun m -> ..` takes a `ruleHeader` value); phony forms and
+  `X.Rule <| fun m -> ..` do not. A header operation after the body, or a recipe with a header used
+  inside another recipe, does not compile. `also`, `needs`, `requires`, `noContentCutoff`,
+  `contentCutoff`, `including` are keywords at the start of a statement inside `recipe { }`.
+- **Shared headers:** `ruleHeader ["n"] { needs ..; requires .. }` makes a header value that rules
+  merge in with `including h`; the list names the groups of the including rule it uses, checked
+  when the header is made and when a rule includes it.
+- `rule |> requiring lock` on a file rule is `requires lock` in its header: the lock is taken around
+  the body only, after the static `needs`. On a phony rule it locks the whole recipe, as before.
+- A target is out of date when one of its rule's current outputs is missing (an `also` added since
+  the last run included), or when the rule's static `needs` differ from those recorded; a target
+  built by 4.x with a rule that has `needs` reruns once.
+- A file rule with a header and no body, and a rule naming one resource twice (`requires`,
+  `requiring`, an included header), are errors when the script loads.
+
+**Rule groups by name:** `let! m = matched` in every recipe (`..>`, `*..>`, `=>`, `target`,
+`targets`, `command`, after a header), then `m["n"]` or `m?n` (no quotes, so it fits inside
+`$"src/{m?cfg}/{m?n}.cs"`). Unlike `getRuleMatch`, an unknown name fails the task: `no group 'x' in the rule match (groups: cfg, n)`. `RuleMatch` also has `TryFind` and
+`Names`. In `X.rule { }` `matched` still gives the typed record. `getRuleMatch` is obsolete;
+`getRuleMatches` is unchanged.
+
+**Content cut-off** ([content-cutoff.md](content-cutoff.md)), on by default:
+
+- A file whose time moved but whose content did not is not a change: a target rebuilt to the same
+  bytes does not rerun its dependents; a touched source reruns nothing from its second move; an
+  output restored with fresh times and a known hash reruns nothing. Outputs are hashed after every
+  rule; sources when they move.
+- The 4.0 transitive rule is replaced for static `needs` and for dependees built (or being built)
+  in the run; a dependency from the body on a target not yet looked at is still not built to
+  decide: if it is out of date, the dependent reruns.
+- Static `needs` are built **before** the target is decided (they were built only when the target
+  ran).
+- `--content-cutoff=off`: the 4.0 decisions, no hashing. `noContentCutoff` in a header: no hashing
+  of that rule's outputs, every rebuild is a change.
+- **Run summary:** one line at the end of every run (targets run, skipped, tasks, cut-off, files
+  hashed); `onSummary` in `xakeScript`, `XakeEngine.LastSummary`, the `RunSummary` record. A run
+  where nothing moved schedules no task.
+- API: `ExecOptions.ContentCutoff`, `ExecOptions.SummarySink`, `IRunSummarySink`;
+  file observation (`FileTracker.observe`) and hashing (`FileProbe.Hasher`) are internal;
+  `WorkerPool.TaskState` and
+  `Scheduler.query` are added; the run's verdicts (`NeedRebuild`,
+  `UpToDate`) are asynchronous and internal (`ExecContext.Run`).
+
+Also:
+
+- A second Xake run on the same database waits up to 30 s, then fails: "another Xake run uses this
+  database (.xake.lock)".
+- The database stores paths relative to the project root, so a moved or copied project folder
+  keeps its database.
+- `--dump` shows epochs.
+- A recipe that starts Xake on the same project root (the same database) waits 30 s and fails.
+- `--resetdb` runs under the database lock; `--dump` and `--dryrun` append nothing to the database.
+- On Linux a fileset recorded by Xake 4.x is re-scanned ignoring case after the upgrade: where the
+  disk has names differing only in case, its dependent reruns once.
+
+- **Step times:** waiting for a resource (`requires`, `requiring`, `withResource`, and so the .NET
+  tasks' `CSC_JOBS`) is `WaitTime`, not `OwnTime`; a rule with header `needs` no longer gets a
+  too small (even negative) `OwnTime`. The sum of `OwnTime` now shows the real parallelism.
+- **Progress with several target groups:** the status line names the group (`[2/3 test]`), each
+  finished group logs its time, and a task skipped by content cut-off leaves the estimate.
+
+- **Speed of a run where nothing changed** (preview.2 regression, docs/features/idle-perf): a
+  no-change run of a large build took about twice as long as on 4.x, because every file
+  dependency was a round trip to the database agent, which also read the file. Now the build's
+  own threads read the files and decide (a pure rule), the database only keeps and writes the
+  records (one request per group of files, and only for changes), hashes have their own queue, and
+  the verdicts at a group's start are decided in parallel. On a synthetic build of 1,188 targets
+  with 150 file dependencies each, a no-change run takes 0.19-0.22 s (4.0: 0.59-0.64 s, preview.2:
+  2.3 s) and a full build 0.59-0.83 s (4.0: 0.47-0.54 s, preview.2: 5.5-8 s).
+- **Opening the database** (preview.1-3 regression, docs/features/startup-perf): the path table
+  counted its entries with `Map.Count` once per path, so the load grew with the square of the
+  number of files; a 12.5 MB database of 28,000 files took 1.3-1.8 s to open (a 4.x database of
+  88 MB about 0.3 s). It now keeps the counts, and reading looks a file up by its id in an array:
+  0.5-0.6 s to the first recipe for that database (a script with one rule), 0.3 s once it is
+  compacted; the compaction rewrite and the upgrade of a 4.x database gain too.
+- **Critical path:** when more tasks are ready than `-t` allows, the one with the longest expected
+  remaining chain starts first (its own time plus the longest chain of its dependents, from the
+  last run's times); the same order applies to resource waiters and to `need [..]`. Without
+  history the order is as before. `--schedule=as-requested` (`ExecOptions.Schedule = AsRequested`)
+  keeps the order of request. The banner and the run summary name the mode.
+
+- **A recursive recipe may need a type annotation.** `recipe { }` has more `Bind` overloads in
+  5.0 (a header, `matched`, tasks), so a recipe that calls itself, such as
+  `let rec f n = recipe { if n < 3 then do! f (n + 1) }`, can fail with FS0041 ("A unique
+  overload for method 'Bind' could not be determined"). Annotate its return type:
+  `let rec f n : Recipe<ExecContext, unit> = recipe { ... }`.
+
+For `Xake.Dotnet` users: `File.undefined` is removed; `Xake.Dotnet` moves to `File option` at its
+5.0.
+
 ## 4.0.0 (2026-11-03)
 
 ### Summary

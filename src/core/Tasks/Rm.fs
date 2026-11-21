@@ -1,4 +1,4 @@
-namespace Xake.Tasks
+﻿namespace Xake.Tasks
 
 open Xake
 open System.IO
@@ -56,7 +56,7 @@ module RmImpl =
                 | Files f ->
                     ctx.Logger.Log Level.Message "[rm] %A" f
                     let (Filelist files) = toFileList projectRoot f
-                    files |> List.iter (fun f -> deleteFile f.FullName)
+                    files |> List.iter (fun f -> deleteFile (File.getSysFileName f))
 
                 | File fileMask ->
                     ctx.Logger.Log Level.Message "[rm] %A" fileMask

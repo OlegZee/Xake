@@ -3,6 +3,9 @@
 open DependencyAnalysis
 
 /// Converts CLI ExecOptions into engine-level EngineOptions, constructing the logger.
+/// The scheduling mode as the banner and the run summary name it.
+let scheduleName = function CriticalPath -> "critical-path" | AsRequested -> "as-requested"
+
 let toEngineOptions (opts: ExecOptions) (rules: Rules<ExecContext>) (variables: Map<string, VarEntry>) : EngineOptions =
     let logger = CombineLogger (ConsoleLogger opts.ConLogLevel) opts.CustomLogger
     let logger =
@@ -12,7 +15,7 @@ let toEngineOptions (opts: ExecOptions) (rules: Rules<ExecContext>) (variables: 
         | logFileName,level -> CombineLogger logger (FileLogger logFileName level)
     { ProjectRoot = opts.ProjectRoot; Threads = opts.Threads
       Logger = MaskingLogger logger; Teardown = opts.Teardown; Rules = rules; RuleMatch = opts.RuleMatch
-      Variables = variables }
+      Variables = variables; ContentCutoff = opts.ContentCutoff; Schedule = opts.Schedule; SummarySink = opts.SummarySink }
 
 /// Active pattern that classifies ExecOptions into Dump, Dryrun, or Run execution mode.
 let (|Dump|Dryrun|Run|) (opts:ExecOptions) =
@@ -29,12 +32,11 @@ let createScriptContext (opts: ExecOptions) rules =
     let engineOpts = toEngineOptions opts rules variables
     let db =
         if opts.NoPersist then
-            Storage.noopDb ()
+            Storage.Db.memoryOnly ()
         else
             let dbPath = engineOpts.ProjectRoot </> opts.DbFileName
-            if opts.ResetDb then
-                Storage.cleanupDb dbPath engineOpts.Logger
-            Storage.openDb dbPath engineOpts.Logger
+            // the lock first: --resetdb runs under it (A5)
+            Storage.Db.openWith (System.TimeSpan.FromSeconds 30.0) opts.ResetDb engineOpts.ProjectRoot dbPath engineOpts.Logger
     let ctx, finalize = ExecCore.createContextCore engineOpts db (VarEvaluation.flatVars variables) opts.Progress
     ctx, finalize, launchErrors
 
@@ -81,6 +83,7 @@ let bannerLines (options: ExecOptions) (variables: Map<string, VarEntry>) (targe
       yield sprintf "  database:     %s" db
       yield sprintf "  threads:      %d" options.Threads
       yield sprintf "  rule match:   %A" options.RuleMatch
+      yield sprintf "  schedule:     %s" (scheduleName options.Schedule)
       yield sprintf "  console log:  %A" options.ConLogLevel
       yield sprintf "  file log:     %s" fileLog
       yield sprintf "  setup:        %s" (list options.Setup)
@@ -95,7 +98,13 @@ let bannerLines (options: ExecOptions) (variables: Map<string, VarEntry>) (targe
 /// Displays estimated build time and parallelism degree.
 let dryRun (ctx: ExecContext) (setup: string list) (groups: string list list) =
     let options = ctx.Options
-    let getDeps = getChangeReasons ctx |> memoizeRec
+    // the verdicts of every group, decided in parallel before anything is printed (dry run: the
+    // top level, not a build's dependency path)
+    let verdicts = Verdicts(ctx, ExecCore.currentRule ctx)
+    let getDeps t =
+        match verdicts.Ready t with
+        | Some reasons -> reasons
+        | None -> verdicts.Planned t |> Async.RunSynchronously
 
     // getPlainDeps getDeps (getExecTime ctx)
     if not setup.IsEmpty then
@@ -111,9 +120,9 @@ let dryRun (ctx: ExecContext) (setup: string list) (groups: string list list) =
         | Other reason ->
             print "%sReason: %s" (indent ii) reason
         | Depends t ->
-            print "%sDepends '%s' - changed target" (indent ii) t.ShortName
+            print "%sDepends '%s' - changed target" (indent ii) (t.Display options.ProjectRoot)
         | DependsMissingTarget t ->
-            print "%sDepends on '%s' - missing target" (indent ii) t.ShortName
+            print "%sDepends on '%s' - missing target" (indent ii) (t.Display options.ProjectRoot)
         | FilesChanged (file:: rest) ->
             print "%sFile is changed '%s' %s" (indent ii) file (if List.isEmpty rest then "" else sprintf " and %d more file(s)" <| List.length rest)
         | reasons ->
@@ -131,11 +140,12 @@ let dryRun (ctx: ExecContext) (setup: string list) (groups: string list list) =
             let deps = getDeps target
             if not <| List.isEmpty deps then
                 let execTimeEstimate = getExecTime ctx target
-                do ctx.Logger.Log Command "%sRebuild %A (~%Ams)" (indent ii) target.ShortName execTimeEstimate
+                do ctx.Logger.Log Command "%sRebuild %A (~%Ams)" (indent ii) (target.Display options.ProjectRoot) execTimeEstimate
                 deps |> List.iter (showDepStatus (ii+1))
                 deps |> List.iter (displayNestedDeps (ii+1))
 
     let targetGroups = ExecCore.makeTarget ctx |> List.map |> List.map <| groups
+    verdicts.Warm (List.concat targetGroups) |> Async.RunSynchronously
     let toSec v = float (v / 1<ms>) * 0.001
     let endTime = Progress.estimateEndTime (getDurationDeps ctx getDeps) options.Threads targetGroups |> toSec
 
@@ -198,9 +208,13 @@ let runScript options rules =
             exitCode <- 2
             if options.ThrowOnError then raise (XakeException errorText)
         | Dump ->
+            Storage.Db.keepInMemory ctx.Db
+            Storage.Db.newRun ctx.Db |> Async.RunSynchronously |> ignore
             do logger.Log Level.Command "Dumping dependencies for targets %A" targetLists
-            targetLists |> List.iter (List.map (ExecCore.makeTarget ctx) >> (dumpDeps ctx))
+            targetLists |> List.iter (List.map (ExecCore.makeTarget ctx) >> (dumpDeps ctx (ExecCore.currentRule ctx)))
         | Dryrun ->
+            Storage.Db.keepInMemory ctx.Db
+            Storage.Db.newRun ctx.Db |> Async.RunSynchronously |> ignore
             targetLists |> dryRun ctx options.Setup
         | _ ->
             let mutable reraisedError = None
@@ -223,9 +237,17 @@ let runScript options rules =
                     false
             if setupOk then
                 let start = System.DateTime.Now
+                // one summary per script run (docs/content-cutoff.md), also when the build fails
+                let reportSummary () =
+                    let summary = ctx.Run.Counters.Summary
+                    ctx.Logger.Log Message "%s, schedule %s" (RunSummary.format summary) (scheduleName options.Schedule)
+                    ctx.Options.SummarySink |> Option.iter (fun sink -> sink.Report summary)
                 try
+                  try
                     targetLists |> ExecCore.runBuild ctx |> fun a -> Async.RunSynchronously(a, cancellationToken = cts.Token) |> ignore
                     ctx.Logger.Log Message "\n\n    Build completed in %A\n" (System.DateTime.Now - start)
+                  finally
+                    try reportSummary () with ex -> ctx.Logger.Log Error "The run summary failed: %s" ex.Message
                 with
                 | :? System.OperationCanceledException ->
                     // Ctrl+C: build async workflow was cancelled; fall through to teardown on main thread

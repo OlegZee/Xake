@@ -1,4 +1,4 @@
-/// Conformance vectors for the scanner stage (PR 4) of the pattern module
+﻿/// Conformance vectors for the scanner stage (PR 4) of the pattern module
 /// (docs/features/pattern-module/spec.md sections 3, 5.3-5.6, 6, 7.3, 9.5, 11; decisions D1-D37 in
 /// brief.md). DATA only: the tables below are driven by PatternScanVectorTests.fs. A vector is a
 /// fixture tree on disk, a base directory, a fileset (includes and excludes in order), a comparer
@@ -517,18 +517,18 @@ let scanVectors : ScanVector list = [
     caseW "SC-213" "5.4" (i1 "*.CS") (ok [ "x.CS"; "y.cs" ]) "unchanged on Windows"
     caseU "SC-214" "5.4" (i1 "**/*.cs") (ok [ "y.cs"; "Lib/B.cs"; "src/a.cs" ]) "changed in 4.0 on macOS (item 25): x.CS no longer listed; 'B.cs' ends in '.cs' and matches in every mode"
     caseW "SC-215" "5.4" (i1 "**/*.cs") (ok [ "x.CS"; "y.cs"; "Lib/B.cs"; "src/a.cs" ]) "unchanged on Windows"
-    caseU "SC-216" "5.4" (i1 "SRC/*.cs") (ok [ "SRC/a.cs" ])
-        "D25: the macOS trap; the probe of 'SRC' succeeds on a case-insensitive volume and keeps the mask's spelling; 3.x the same (measurements-engine §9, measurements-windows E9: SRC/a.cs)"
+    caseU "SC-216" "5.4" (i1 "SRC/*.cs") (ok [])
+        "changed in 5.0 (R2): the probe of 'SRC' succeeds on a case-insensitive volume, the ordinal search checks the spelling on disk ('src'); 4.0 kept the mask's spelling"
         |> needs [ Need.CaseInsensitiveVolume ]
     caseU "SC-217" "5.4" (i1 "SRC/*.cs") (ok []) "D25: on a case-sensitive volume (Linux) the probe of 'SRC' fails" |> needs [ Need.CaseSensitiveVolume ]
-    caseW "SC-218" "5.4" (i1 "SRC/*.cs") (ok [ "SRC/a.cs" ]) "D25: the mask's spelling (measurements-windows E9)" |> needs [ Need.CaseInsensitiveVolume ]
+    caseW "SC-218" "5.4" (i1 "SRC/*.cs") (ok [ "src/a.cs" ]) "changed in 5.0 (R2): the disk's spelling; 4.0 kept the mask's" |> needs [ Need.CaseInsensitiveVolume ]
     case "SC-219" "5.4" (i1 "SRC/a.cs") (ok [ "SRC/a.cs" ]) "unchanged: an explicit name, as typed (measurements-engine §9)"
     caseU "SC-220" "11" (ie "SRC/a.cs" "src/**") (ok [ "SRC/a.cs" ])
         "example 15: the trap, the ordinal exclude does not remove the probe's spelling; no XP113 (nothing removed)"
     caseW "SC-221" "11" (ie "SRC/a.cs" "src/**") (okw [] [ we "XP113" "src/**" ]) "example 15 in Windows mode: removed, and XP113"
-    caseU "SC-222" "5.4" (ie "SRC/*.cs" "src/**/*") (ok [ "SRC/a.cs" ]) "D25: the trap with a probe" |> needs [ Need.CaseInsensitiveVolume ]
-    caseU "SC-223" "6.6" [ inc "src/*.cs"; inc "SRC/*.cs" ] (ok [ "src/a.cs"; "SRC/a.cs" ])
-        "D25, 6.6: two spellings of one file stay under the ordinal comparer (the trap)" |> needs [ Need.CaseInsensitiveVolume ]
+    caseU "SC-222" "5.4" (ie "SRC/*.cs" "src/**/*") (ok []) "changed in 5.0 (R2): the trap with a probe is gone" |> needs [ Need.CaseInsensitiveVolume ]
+    caseU "SC-223" "6.6" [ inc "src/*.cs"; inc "SRC/*.cs" ] (ok [ "src/a.cs" ])
+        "changed in 5.0 (R2): one spelling, the disk's" |> needs [ Need.CaseInsensitiveVolume ]
     caseW "SC-224" "6.6" [ inc "src/*.cs"; inc "SRC/*.cs" ] (ok [ "src/a.cs" ]) "6.6: a duplicate under the Windows comparer" |> needs [ Need.CaseInsensitiveVolume ]
     caseU "SC-225" "5.4" (i1 "[a-z].cs") (ok [ "y.cs" ]) "D11: classes follow the comparer"
     caseW "SC-226" "5.4" (i1 "[a-z].cs") (ok [ "x.CS"; "y.cs" ]) "D11: on Windows '[a-z]' matches upper case too"
@@ -536,8 +536,8 @@ let scanVectors : ScanVector list = [
     caseW "SC-228" "5.4" (i1 "**/b.cs") (ok [ "Lib/B.cs" ]) "D11: a listed name keeps the disk's spelling"
     caseU "SC-229" "5.4" (ie "**/*.cs" "lib/") (ok [ "y.cs"; "Lib/B.cs"; "src/a.cs" ]) "D11: the ordinal exclude does not match 'Lib', so Lib/B.cs stays"
     caseW "SC-230" "5.4" (ie "**/*.cs" "lib/") (ok [ "x.CS"; "y.cs"; "src/a.cs" ]) "D11: the Windows exclude prunes 'Lib'"
-    caseW "SC-231" "5.4" (i1 "lib/*.cs") (ok [ "lib/B.cs" ])
-        "D25: the probed segment keeps the mask's spelling, the listed name the disk's (measurements-engine §9: src/*.cs over Src/A.cs gave src/A.cs)"
+    caseW "SC-231" "5.4" (i1 "lib/*.cs") (ok [ "Lib/B.cs" ])
+        "changed in 5.0 (R2): the probed segment takes the disk's spelling too"
         |> needs [ Need.CaseInsensitiveVolume ]
     caseU "SC-232" "5.4" (i1 "Lib/*") (ok [ "Lib/B.cs" ]) "unchanged"
 

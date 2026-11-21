@@ -1,4 +1,4 @@
-namespace Tests
+﻿namespace Tests
 
 open System.Threading
 open System.Threading.Tasks
@@ -32,7 +32,7 @@ type ``Delegated and resource tests``() =
         enter, leave, peak
 
     let emptyResult targets : BuildResult =
-        { Targets = targets; Built = System.DateTime.Now; Depends = []; Steps = [] }
+        { makeResult targets with Built = System.DateTime.Now }
 
     // An in-memory fake of Qualhalla's delegated executor: a run-scoped result store keyed
     // by a fixed identity, with in-flight dedup. Returns (executor, bodyRunCount, store, key).

@@ -47,8 +47,10 @@ let ``empty mask is an error`` () =
 
 /// item 25: one comparer per OS, ignore-case on Windows only (3.x: ignore-case on every OS)
 [<Test>]
-let ``mask case follows the OS`` () =
-    Assert.AreEqual(not Env.isUnix, Path.matches "c:\\a.c" "" "C:/A.c")
+let ``mask ignores case on every OS (B4)`` () =
+    Assert.IsTrue(Path.matches "c:\\a.c" "" "C:/A.c")
+    Assert.IsTrue(Path.matches "*.CS" "/p" "/p/a.cs")
+    Assert.IsTrue(Path.matches "*.CS" "" "a.cs")
 
 [<TestCase("../subd1/a.ss", "C:/projects/Xake/bin/Debug/subd1", "C:/projects/Xake/bin/Debug/subd1/../subd1/a.ss", ExpectedResult = true)>]
 [<TestCase("subd2/a.ss", "C:/projects/Xake/bin/Debug/subd1", "C:/projects/Xake/bin/Debug/subd1/subd2/a.ss", ExpectedResult = true)>]

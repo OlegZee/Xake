@@ -173,7 +173,7 @@ Common helpers used inside `recipe`:
 - `getEnv`
 - `getCtxOptions`
 - `getTargetFile`
-- `getTargetFullName`
+- `getTargetFullName` (deprecated in 5.0: `getTargetFile` with `File.getSysFileName`)
 - `hasRule` (whether a rule would build a target, without building it)
 
 Example:
@@ -321,8 +321,8 @@ let vars = {|
   `sh "tool" { envs ["ACME_API_TOKEN", token] }`. Prefer the environment over command-line
   arguments or msbuild `-p:` properties, which tools echo in their own output.
 
-The database format is 0.6 with this change; 0.4 and 0.5 files are read and upgraded on open. An
-older Xake meeting a 0.6 database recreates it (a full rebuild).
+The database format is 0.7 (0.6 with this change); 0.4-0.6 files are read and upgraded on open. An
+older Xake meeting a 0.7 database recreates it (a full rebuild).
 
 ## Setup and teardown
 

@@ -38,7 +38,8 @@ do xakeScript {
     rules [
         // downloads: at most 3 at a time
         "download:(pkg:*)" => recipe {
-            let! pkg = getRuleMatch "pkg"
+            let! m = matched
+            let pkg = m["pkg"]
             do! withResource downloads 1 (recipe {
                 trackPeak()
                 do! simulateWork (sprintf "download %s" pkg) 300
@@ -53,13 +54,15 @@ do xakeScript {
         // the recipe must not `need` another rule's target (that fails: it could deadlock);
         // plain files are fine, and `allowNeed` lifts the check (docs/delegated.md)
         "restore:(project:*)" => recipe {
-            let! proj = getRuleMatch "project"
+            let! m = matched
+            let proj = m["project"]
             do! simulateWork (sprintf "dotnet restore %s" proj) 300
         } |> requiring restore
 
         // DB: writes serialized, reads are free
         target "db:seed-(table:*)" {
-            let! table = getRuleMatch "table"
+            let! m = matched
+            let table = m["table"]
             do! simulateWork (sprintf "INSERT INTO %s" table) 200
         } |> requiring dbWrite
 

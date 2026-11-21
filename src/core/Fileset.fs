@@ -10,8 +10,10 @@ type FilePattern = string
 /// Filesystem pattern
 type FilesetElement = | Includes of Path.PathMask | Excludes of Path.PathMask
 
-/// Options controlling fileset evaluation: base directory and empty-result behavior.
-type FilesetOptions = {FailOnEmpty:bool; BaseDir:string option}
+/// Options controlling fileset evaluation: base directory, empty-result behavior and case.
+/// `CaseSensitive` (default false): the search compares names ordinally; by default it ignores
+/// case on every OS (5.0). The files found keep their spelling on disk either way.
+type FilesetOptions = {FailOnEmpty:bool; BaseDir:string option; CaseSensitive: bool}
 
 /// A fileset definition: options plus a list of include/exclude elements.
 type Fileset = Fileset of FilesetOptions * FilesetElement list
@@ -19,7 +21,7 @@ type Fileset = Fileset of FilesetOptions * FilesetElement list
 type Filelist = Filelist of File list
 
 /// Default fileset options
-let DefaultOptions = {FilesetOptions.BaseDir = None; FailOnEmpty = false}
+let DefaultOptions = {FilesetOptions.BaseDir = None; FailOnEmpty = false; CaseSensitive = false}
 
 /// The empty fileset with default options.
 let Empty = Fileset (DefaultOptions,[])
@@ -41,8 +43,8 @@ module private Impl =
     /// Evaluates the ordered elements from `baseDir` with the pattern module's walker (spec 6.3)
     /// and reports its warnings and notes to the build log (7.3, 6.5, 6.6). Raises
     /// `PatternAst.PatternException` for an invalid mask.
-    let walk (baseDir: string) (elements: (PatternAst.MaskRole * string) list) =
-        let result = PatternScan.scan (not Env.isUnix) baseDir elements
+    let walk (caseSensitive: bool) (baseDir: string) (elements: (PatternAst.MaskRole * string) list) =
+        let result = PatternScan.scanWith (not Env.isUnix) (not caseSensitive) baseDir elements
         PatternScan.reportWarnings result
         result.Files
 
@@ -52,7 +54,7 @@ module private Impl =
     /// order per directory, duplicates removed (spec 6.3, 6.6).
     let scan root (Fileset (options,filesetItems)) =
         let baseDir = options.BaseDir |> ifNone root
-        filesetItems |> List.map element |> walk baseDir |> List.map File.make |> Filelist
+        filesetItems |> List.map element |> walk options.CaseSensitive baseDir |> List.map File.make |> Filelist
 
     /// An include or exclude element of a mask, checked when it is built (spec 7.1, 8.3): raises
     /// `PatternAst.PatternException` for an invalid mask, reports its parse-time warnings once.
@@ -72,7 +74,8 @@ module private Impl =
                 | Some _, Some _ -> failwith "Cannot combine filesets with basedirs defined in both (not implemented)"
                 | Some _, None -> o1.BaseDir
                 | _ -> o2.BaseDir
-            FailOnEmpty = o1.FailOnEmpty || o2.FailOnEmpty}
+            FailOnEmpty = o1.FailOnEmpty || o2.FailOnEmpty
+            CaseSensitive = o1.CaseSensitive || o2.CaseSensitive}
 
     // combines two filesets
     let combineWith (Fileset (o2, set2)) (Fileset (o1,set1)) = Fileset(combineOptions o1 o2, set1 @ set2)
@@ -85,6 +88,7 @@ module private Impl =
 
     let changeBasedir dir (Fileset (opts,ps)) =   Fileset ({opts with BaseDir = Some dir}, ps)
     let changeFailonEmpty f (Fileset (opts,ps)) = Fileset ({opts with FailOnEmpty = f}, ps)
+    let changeCaseSensitive (Fileset (opts,ps)) = Fileset ({opts with CaseSensitive = true}, ps)
 
 /// Fileset persistance implementation
 module private PicklerImpl =
@@ -93,9 +97,9 @@ module private PicklerImpl =
 
     let filesetoptions =
         wrap(
-            (fun(foe,bdir) -> {FilesetOptions.FailOnEmpty = foe; BaseDir = bdir}),
-            fun o -> (o.FailOnEmpty, o.BaseDir))
-            (pair bool (option str))
+            (fun(foe,bdir,cs) -> {FilesetOptions.FailOnEmpty = foe; BaseDir = bdir; CaseSensitive = cs}),
+            fun o -> (o.FailOnEmpty, o.BaseDir, o.CaseSensitive))
+            (triple bool (option str) bool)
 
     let filesetElement =
       alt
@@ -105,14 +109,14 @@ module private PicklerImpl =
           wrap (Excludes, fun (Excludes p | OtherwiseFail p) -> p) Path.pickler
         |]
 
-    let fileinfo = wrap(File.make, File.getFullName) str
+    let fileinfo = wrap(File.make, fun (f: File) -> f.Name) str
 
     let fileset  = wrap(Fileset, fun (Fileset (o,l)) -> o,l) (pair filesetoptions (list filesetElement))
     let filelist = wrap(Filelist, fun (Filelist l) -> l) (list fileinfo)
 
 open Impl
 
-/// Gets the pickler for fileset type
+/// Gets the pickler for fileset type (database 0.7: with the case flag)
 let filesetPickler = PicklerImpl.fileset
 /// Gets the pickler for filelist type
 let filelistPickler = PicklerImpl.filelist
@@ -155,7 +159,7 @@ let toFileList = Impl.scan
 /// "Materializes" file mask to a list of files/paths
 /// </summary>
 let listByMask (root:string) (mask: Path.PathMask) : string seq =
-    Impl.walk root [ PatternAst.MaskRole.Include, Path.maskText mask ] |> Seq.ofList
+    Impl.walk false root [ PatternAst.MaskRole.Include, Path.maskText mask ] |> Seq.ofList
 
 /// Describes how a file list changed: an item was added or removed.
 type ListDiffType<'a> = | Added of 'a | Removed of 'a
@@ -167,7 +171,7 @@ type ListDiffType<'a> = | Added of 'a | Removed of 'a
 /// <param name="list2"></param>
 let compareFileList (Filelist list1) (Filelist list2) =
 
-    let setOfNames = List.map File.getFullName >> Set.ofList
+    let setOfNames = List.map (fun (f: File) -> f.Name) >> Set.ofList
 
     let set1, set2 = setOfNames list1, setOfNames list2
 
@@ -205,6 +209,10 @@ type FilesetBuilder() =
 
     [<CustomOperation("failonempty")>]
     member __.FailOnEmpty(fs,f) = fs |> changeFailonEmpty f
+
+    /// Compares names ordinally in the search (by default a fileset ignores case on every OS).
+    [<CustomOperation("casesensitive")>]
+    member __.CaseSensitive(fs) = fs |> changeCaseSensitive
 
     [<CustomOperation("basedir")>]
     member __.Basedir(fs,dir) = fs |> changeBasedir dir

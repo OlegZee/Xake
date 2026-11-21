@@ -3,8 +3,6 @@
 [<AutoOpen>]
 module DomainTypes =
 
-    let private stringCompare = if Env.isUnix then System.StringComparer.Ordinal else System.StringComparer.OrdinalIgnoreCase
-
     /// A build target: either a file to produce or a phony named action.
     [<CustomEquality;CustomComparison>]
     type Target =
@@ -12,25 +10,27 @@ module DomainTypes =
         | PhonyAction of string
 
         with
-            member internal this.ShortName =
+            /// Xake's full name: a file's `Name`, a phony's name; the identity.
+            member internal this.Name =
                 match this with
                 | FileTarget file -> file.Name
                 | PhonyAction name -> name
-            member internal this.FullName =
+            /// The name the engine shows: a file relative to `root` (`File.display`), a phony as is.
+            member internal this.Display (root: string) =
                 match this with
-                | FileTarget file -> file.FullName
+                | FileTarget file -> File.display root file
                 | PhonyAction name -> name
             
             override x.Equals(yobj) =
                 match yobj with
-                | :? Target as y -> stringCompare.Equals (x.FullName, y.FullName)
+                | :? Target as y -> File.comparer.Equals (x.Name, y.Name)
                 | _ -> false
 
-            override x.GetHashCode() = stringCompare.GetHashCode x.FullName
+            override x.GetHashCode() = File.comparer.GetHashCode x.Name
             interface System.IComparable with 
                 member x.CompareTo y =
                     match y with
-                    | :? Target as y -> stringCompare.Compare(x.FullName, y.FullName)
+                    | :? Target as y -> File.comparer.Compare(x.Name, y.Name)
                     | _ -> invalidArg "y" "cannot compare target to different types"
 
     /// Alias for System.DateTime used for file timestamps.
@@ -64,21 +64,25 @@ module DomainTypes =
         /// the variable was set; HMAC-SHA256 of its UTF-8 value keyed by a random salt kept with it
         | SecretHmac of salt: byte[] * hmac: byte[]
 
-    /// A tracked dependency that determines whether a target needs rebuilding.
+    /// What the database knows of a file (database 0.7): the stat seen at its last observation
+    /// and the run (epoch) in which its content was last seen to change. `Size` -1 is unknown;
+    /// `Hash` is the first 8 bytes of the SHA-256 of the content at that stat, when computed
+    /// (docs/content-cutoff.md).
+    type FileState = { Stamp: Timestamp; Size: int64; Hash: uint64 option; Changed: int }
+
+    /// A tracked dependency that determines whether a target needs rebuilding. A file or target
+    /// dependency stores no stamp: the verdict compares the file's `Changed` (or a phony's
+    /// `Epoch`) with the dependent's `Epoch`.
     type Dependency =
-        | FileDep of File * Timestamp // regular file (such as source code file), triggers when file date/time is changed
-        /// Other target, recorded by Xake databases before version 0.5 (no change stamp).
-        /// Still read from old databases; judged as changed once so it is re-recorded as ArtifactDep2.
-        | ArtifactDep of Target
-        /// Other target (a target that has a rule) with its change stamp as observed when the
-        /// dependent recorded the dependency, right after the dependee was built or found up to date:
-        /// for a FileTarget the file's last write time, for a PhonyAction the completion time of
-        /// its last build (BuildResult.Built). Triggers when the stamp moves or the dependee is out of date.
-        | ArtifactDep2 of Target * Timestamp
+        /// a file without a rule (such as a source file)
+        | FileDep of File
+        /// a rule's output file or a phony target
+        | TargetDep of Target
+        /// depends on set of files. Triggers when resulting filelist is changed
+        | GetFiles of Fileset * Filelist
         | EnvVar of string * string option // environment variable
         | Var of string * string option // any other data such as compiler version (not used yet)
         | AlwaysRerun // trigger always
-        | GetFiles of Fileset * Filelist // depends on set of files. Triggers when resulting filelist is changed
         /// A secret variable (database 0.6): its name, source and a digest, never its value.
         /// Triggers when the digest no longer matches the current value.
         | SecretDep of name: string * source: SecretSource * digest: SecretDigest
@@ -91,9 +95,14 @@ module DomainTypes =
     /// Recorded result of building one or more targets, including dependencies and step timings.
     type BuildResult =
         { Targets : Target list
+          /// the wall-clock completion time
           Built : Timestamp
+          /// the run (epoch) that built it; what the verdict compares
+          Epoch : int
           Depends : Dependency list
-          Steps : StepInfo list }
+          Steps : StepInfo list
+          /// the number of leading `Depends` entries that came from the rule header (`needs`)
+          StaticCount : int }
 
     /// An async build action that threads BuildResult state through its execution.
     type Recipe<'a,'b> = Recipe of (BuildResult * 'a -> Async<BuildResult * 'b>)
@@ -108,12 +117,66 @@ module DomainTypes =
     type DelegatedExecutor<'ctx> =
         'ctx -> Target list -> (unit -> Async<BuildResult>) -> Async<BuildResult>
 
+    /// <summary>
+    /// The declarations of a file rule read when the script loads, without running its body: the
+    /// rule header (Xake 5.0). Written at the start of `recipe { }` with `also`, `needs`,
+    /// `requires`, `noContentCutoff`; see docs/rule-header.md.
+    /// </summary>
+    type RuleHeader =
+        { /// Outputs besides the main one (`also`), patterns over the main pattern's groups.
+          Also: string list
+          /// Static inputs (`needs`): one unordered set, built before the body.
+          Needs: string list
+          /// `Some false` for `noContentCutoff`, `Some true` for `contentCutoff`, None: the default.
+          ContentCutoff: bool option
+          /// Resources the engine holds while the body runs (`requires`), with their units.
+          Requires: (Resource * int) list
+          /// Shared headers merged in with `including`: how each is named in errors and the groups
+          /// it declares, which the including rule must have.
+          Included: (string * string list) list
+          /// True for a header written with no body (`recipe { needs .. }`): a file rule must have
+          /// a body that writes its target, so such a rule is refused when the script loads.
+          HeaderOnly: bool }
+        /// No declarations.
+        static member Empty = { Also = []; Needs = []; ContentCutoff = None; Requires = []; Included = []; HeaderOnly = false }
+        /// The resources to take, in one order for the whole process: by name, then by creation
+        /// (two resources may share a name). A rule names each resource once (`Rule.validate`).
+        member h.Locks : (Resource * int) list =
+            h.Requires |> List.sortBy (fun (r, _) -> r.ResourceName, r.CreationOrdinal)
+        /// The two headers together: lists append, a cut-off setting of the second wins.
+        static member Merge (a: RuleHeader, b: RuleHeader) =
+            { Also = a.Also @ b.Also
+              Needs = a.Needs @ b.Needs
+              ContentCutoff = (match b.ContentCutoff with Some _ -> b.ContentCutoff | None -> a.ContentCutoff)
+              Requires = a.Requires @ b.Requires
+              Included = a.Included @ b.Included
+              HeaderOnly = a.HeaderOnly || b.HeaderOnly }
+
+    /// <summary>
+    /// A header to share between rules, made with `ruleHeader ["n"] { .. }` and merged into a rule
+    /// with `including h`. `Groups` are the groups of the including rule that its patterns use.
+    /// </summary>
+    type SharedHeader =
+        internal { Name: string; Groups: string list; Items: RuleHeader }
+        /// How errors name it: `ruleHeader [n] (needs "obj/(n:*).rsp")`.
+        member h.Description = h.Name
+        /// The groups it declares.
+        member h.DeclaredGroups = h.Groups
+        /// Its header items.
+        member h.Header = h.Items
+
+    /// A rule body with its header: what `recipe { also ..; needs ..; body }` gives. Only the
+    /// file-rule forms accept it; it cannot be bound inside another recipe.
+    type Headed<'ctx> = Headed of RuleHeader * Recipe<'ctx, unit>
+
     /// A build rule that maps a target pattern to a recipe.
     type 'ctx Rule =
-        | FileRule of string * Recipe<'ctx,unit>
-        | MultiFileRule of string list * Recipe<'ctx,unit>
+        /// A file rule: its output patterns (the first is the main one; `*..>` gives several, `also`
+        /// in the header adds more), its header and its recipe.
+        | FileRule of outputs: string list * header: RuleHeader * Recipe<'ctx,unit>
         | PhonyRule of string * Recipe<'ctx,unit>
-        | FileConditionRule of (string -> bool) * Recipe<'ctx,unit>
+        /// A rule for the files a condition accepts; its header has no `also` and no groups.
+        | FileConditionRule of (string -> bool) * RuleHeader * Recipe<'ctx,unit>
         /// Wraps any inner rule, delegating its up-to-date check and execution to the
         /// caller-supplied executor. Opt-in: ordinary rules are unaffected.
         | DelegatedRule of 'ctx Rule * DelegatedExecutor<'ctx>
@@ -121,18 +184,94 @@ module DomainTypes =
     type 'ctx Rules = Rules of 'ctx Rule list
 
     module Rule =
+        /// The output patterns of a file rule, the main one first: its outputs and its header's `also`.
+        let outputs (patterns: string list) (header: RuleHeader) = patterns @ header.Also
+
+        let private fail (message: string) : 'a = raise (PatternAst.PatternException message)
+        let private showNames (names: string list) = "[" + String.concat ", " names + "]"
+
+        /// Makes a shared header (`ruleHeader groups { .. }`), checking that every group its patterns
+        /// use is declared and every declared group is used.
+        let share (groups: string list) (header: RuleHeader) : SharedHeader =
+            let items =
+                [ for p in header.Needs -> "needs", p
+                  for p in header.Also -> "also", p ]
+            let name =
+                let first = match items with (op, p) :: _ -> sprintf " (%s \"%s\"%s)" op p (if items.Length > 1 then ", ..." else "") | [] -> ""
+                sprintf "ruleHeader %s%s" (showNames groups) first
+            let used =
+                [ for op, p in items do
+                    for g in PatternAst.Rule.parse p |> PatternAst.groupNames -> op, p, g ]
+            for op, p, g in used do
+                if not (List.contains g groups) then
+                    fail (sprintf "%s: %s \"%s\" uses the group %s, which is not declared; declared: %s (write ruleHeader [\"%s\"; ..])" name op p g (showNames groups) g)
+            for g in groups do
+                if not (used |> List.exists (fun (_, _, u) -> u = g)) then
+                    fail (sprintf "%s: the group %s is declared but no pattern uses it" name g)
+            for g, n in groups |> List.countBy id do
+                if n > 1 then fail (sprintf "%s: the group %s is declared twice" name g)
+            { Name = name; Groups = groups; Items = { header with Included = [] } }
+
+        /// Checks a header against the groups its patterns may use (None: a condition rule, no groups).
+        let private checkHeader (owner: string) (groups: string list option) (header: RuleHeader) =
+            for (shared, declared) in header.Included do
+                match groups with
+                | None when not declared.IsEmpty ->
+                    fail (sprintf "%s includes %s, which uses the group%s %s; a condition rule has no pattern and no groups" owner shared (if declared.Length > 1 then "s" else "") (String.concat ", " declared))
+                | Some known ->
+                    match declared |> List.filter (fun g -> not (List.contains g known)) with
+                    | [] -> ()
+                    | missing ->
+                        fail (sprintf "%s includes %s, which uses the group%s %s; the rule has the groups %s" owner shared (if missing.Length > 1 then "s" else "") (String.concat ", " missing) (showNames known))
+                | None -> ()
+            for p in header.Needs do
+                let names = PatternAst.Rule.parse p |> PatternAst.groupNames
+                match groups with
+                | None when not names.IsEmpty ->
+                    fail (sprintf "%s: needs \"%s\" uses the groups %s, but a condition rule has no pattern and no groups; write a plain path or fileset" owner p (showNames names))
+                | Some known ->
+                    match names |> List.filter (fun n -> not (List.contains n known)) with
+                    | [] -> ()
+                    | unknown ->
+                        fail (sprintf "%s: needs \"%s\" uses the group%s %s, which the rule's pattern does not have (its groups: %s)" owner p (if unknown.Length > 1 then "s" else "") (showNames unknown) (showNames known))
+                | None -> ()
+            for (r, units) in header.Requires do
+                if units < 1 then fail (sprintf "%s: requires %s with %d units; it takes at least 1" owner r.ResourceName units)
+            match header.Requires |> List.countBy (fun (r, _) -> r.ResourceName) |> List.filter (fun (_, n) -> n > 1) with
+            | [] -> ()
+            | (name, _) :: _ ->
+                fail (sprintf "%s requires the resource %s more than once (requires, requiring or an included header); name it once, with the units it needs: requires (%s, n)" owner name name)
+
         /// Checks the patterns of a rule (spec 7.1): every pattern parses (legacy-syntax warnings are
-        /// logged once), and the outputs of a multi-output rule have the same named groups and nothing
-        /// that cannot be filled in from a match (XP013, XP014). A condition rule has no pattern.
+        /// logged once), and the outputs of a multi-output rule (`*..>` or `also`) have the same named
+        /// groups and nothing that cannot be filled in from a match (XP013, XP014). The header's
+        /// `needs` use only the main pattern's groups; a condition rule has no `also` and no groups.
         /// Raises `PatternAst.PatternException`; it is applied where every rule enters a script
         /// (`XakeScriptBuilder`), whichever way the rule was built.
         let rec validate (rule: 'ctx Rule) : unit =
             match rule with
-            | FileRule (pattern, _) | PhonyRule (pattern, _) -> PatternAst.Rule.check pattern
-            | MultiFileRule (patterns, _) ->
-                patterns |> List.iter PatternAst.Rule.check
-                PatternAst.checkOutputs patterns
-            | FileConditionRule _ -> ()
+            | PhonyRule (pattern, _) -> PatternAst.Rule.check pattern
+            | FileRule (patterns, header, _) ->
+                let all = outputs patterns header
+                match all with
+                | [] -> fail "a file rule has no output pattern"
+                | main :: _ ->
+                    all |> List.iter PatternAst.Rule.check
+                    if all.Length > 1 then PatternAst.checkOutputs all
+                    let groups = PatternAst.Rule.parse main |> PatternAst.groupNames
+                    checkHeader (sprintf "rule \"%s\"" main) (Some groups) header
+                    match header.Needs |> List.filter (fun n -> List.contains n all) with
+                    | [] -> ()
+                    | own :: _ ->
+                        fail (sprintf "rule \"%s\": needs \"%s\" names an output of the same rule; a rule cannot need what it writes" main own)
+                    if header.HeaderOnly then
+                        fail (sprintf "rule \"%s\" has a header and no body: a file rule must have a body that writes its target. To run inputs before something else, put them in the needs of the rule that uses them, or use a phony rule (=>) with need" main)
+            | FileConditionRule (_, header, _) ->
+                if not header.Also.IsEmpty then
+                    fail (sprintf "a condition rule (..?>) cannot have an also (%s): it has no pattern to name a side output from" (String.concat ", " header.Also))
+                checkHeader "a condition rule (..?>)" None header
+                if header.HeaderOnly then
+                    fail "a condition rule (..?>) has a header and no body: a file rule must have a body that writes its target"
             | DelegatedRule (inner, _) -> validate inner
 
     /// How to pick among the rules that match a target.
@@ -142,6 +281,22 @@ module DomainTypes =
         /// Legacy order: the last declared matching rule wins, specificity ignored.
         /// Restored by `ruleMatch LastDeclared` in the script; deprecated, removed after one minor.
         | LastDeclared
+
+    /// The order in which ready tasks start (docs/implnotes.md, "Critical path").
+    type Schedule =
+        /// The longest expected remaining chain first, from the last run's times (default).
+        | CriticalPath
+        /// The order of request (`--schedule=as-requested`).
+        | AsRequested
+
+    /// Creates a new build result
+    let makeResult target =
+        { Targets = target
+          Built = System.DateTime.Now
+          Epoch = 0
+          Depends = []
+          Steps = []
+          StaticCount = 0 }
 
     /// Defines common exception type
     exception XakeException of string
@@ -226,3 +381,29 @@ module internal Secrets =
         | EnvVar (name, value) when isSecret name -> toDependency SecretEnv name value
         | Var (name, value) when isSecret name -> toDependency SecretArg name value
         | d -> d
+
+/// Utility methods to manipulate build stats
+module internal Step =
+
+    type DateTime = System.DateTime
+
+    let start name = {StepInfo.Empty with Name = name; Start = DateTime.Now}
+
+    /// <summary>
+    /// Updated last (current) build step
+    /// </summary>
+    let updateLastStep fn = function
+        | {Steps = current :: rest} as result -> {result with Steps = (fn current) :: rest}
+        | result -> result
+
+    /// <summary>
+    /// Adds specific amount to a wait time
+    /// </summary>
+    let updateWaitTime delta = updateLastStep (fun c -> {c with WaitTime = c.WaitTime + delta})
+    /// The milliseconds since `startTime`.
+    let msSince (startTime: DateTime) = int (DateTime.Now - startTime).TotalMilliseconds * 1<ms>
+    let updateTotalDuration =
+        updateLastStep (fun c -> {c with OwnTime = (msSince c.Start) - c.WaitTime})
+    let lastStep = function
+        | {Steps = current :: _} -> current
+        | _ -> start "dummy"

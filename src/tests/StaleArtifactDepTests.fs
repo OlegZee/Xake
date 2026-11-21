@@ -1,4 +1,4 @@
-namespace Tests
+﻿namespace Tests
 
 open System.IO
 open System.IO.Compression
@@ -7,28 +7,56 @@ open NUnit.Framework
 open Xake
 open Xake.Tasks
 
-/// Reads and writes `.xake` files the way an older Xake did (database 0.4: no ArtifactDep2).
-module OldDatabase =
-    let private headerPU = Pickler.triple Pickler.str Pickler.str Pickler.date
+/// Writes `.xake` files the way Xake 4.x did (databases 0.4-0.6, the legacy pickler kept in
+/// Xake for the upgrade) and reads any version through the public read API.
+module internal OldDatabase =
+    open Xake.LegacyRead
 
-    /// header version and all records in file order (later records win when loaded)
-    let read (path: string) =
+    let private headerPU = Pickler.triple Pickler.str Pickler.str Pickler.date
+    let private root () = Directory.GetCurrentDirectory()
+
+    /// the version in the header
+    let version (path: string) =
         use r = new BinaryReader(File.OpenRead path)
         let (_, ver, _) = headerPU.unpickle r
-        ver, [ while r.BaseStream.Position < r.BaseStream.Length do yield Storage.resultPU.unpickle r ]
+        ver
 
-    let write (path: string) (ver: string) (results: BuildResult list) =
+    /// header version and the results in file order (an older version: converted)
+    let read (path: string) =
+        version path,
+        Storage.DbReader.readRecords (root ()) path |> Seq.choose (function Storage.DbRecord.Result r -> Some r | _ -> None) |> List.ofSeq
+
+    /// writes a 0.4-0.6 file of the given results with their old dependencies
+    let writeOld (path: string) (ver: string) (results: OldResult list) =
         use w = new BinaryWriter(File.Create path)
         headerPU.pickle ("XAKE", ver, System.DateTime.Now) w
-        results |> List.iter (fun r -> Storage.resultPU.pickle r w)
+        let pu = result (root ())
+        results |> List.iter (fun r -> pu.pickle r w)
 
-    /// rewrites a database as a 0.4 one: every ArtifactDep2 becomes the stampless ArtifactDep
-    let rewriteAs04 (path: string) =
-        let downgrade = function ArtifactDep2 (t, _) -> ArtifactDep t | d -> d
-        let _, results = read path
+    /// writes a 0.4-0.6 file of results without file or target dependencies
+    let write (path: string) (ver: string) (results: BuildResult list) =
         results
-        |> List.map (fun r -> { r with Depends = r.Depends |> List.map downgrade })
-        |> write path "0.4"
+        |> List.map (fun r -> { OTargets = r.Targets; OBuilt = r.Built; ODepends = r.Depends |> List.map Plain; OSteps = r.Steps })
+        |> writeOld path ver
+
+/// The 0.7 format in memory: records written by the engine's writer and read back.
+module internal DbFormat =
+    open Xake.Storage.Persist
+
+    /// writes the records to a fresh 0.7 stream and reads them back (paths against `root`)
+    let roundTrip (root: string) (recs: Storage.DbRecord list) =
+        use stream = new MemoryStream()
+        writeHeader stream
+        let _, bytes = encode (PathTable.empty root) recs
+        stream.Write(bytes, 0, bytes.Length)
+        let all = stream.ToArray()
+        all, read root (new MemoryStream(all))
+
+    /// a result written and read back
+    let result (r: BuildResult) =
+        match (roundTrip "/p" [ Storage.DbRecord.Result r ] |> snd).Records with
+        | [ Storage.DbRecord.Result r ] -> r
+        | other -> failwithf "unexpected %A" other
 
 /// S66: a dependent must be rebuilt when its dependee (a rule-built file) was rebuilt
 /// by an earlier, separate run. Each `xake` call below is a separate session that shares
@@ -140,8 +168,8 @@ type ``StaleArtifactDep tests``() =
                         do! need ["out/app.dll"]
                         packRuns.Value <- packRuns.Value + 1
                         let! pkg = getTargetFile()
-                        File.Delete pkg.FullName
-                        use zip = System.IO.Compression.ZipFile.Open(pkg.FullName, System.IO.Compression.ZipArchiveMode.Create)
+                        File.Delete (Xake.File.getSysFileName pkg)
+                        use zip = System.IO.Compression.ZipFile.Open(Xake.File.getSysFileName pkg, System.IO.Compression.ZipArchiveMode.Create)
                         zip.CreateEntryFromFile("out/app.dll", "lib/app.dll") |> ignore
                     }
                 ]
@@ -193,29 +221,44 @@ type ``StaleArtifactDep tests``() =
         run ["deploy"]
         Assert.AreEqual((2, 2), (genRuns.Value, cRuns.Value), "no spurious rebuilds")
 
-    /// A database written by an older Xake (0.4, stampless ArtifactDep) loads; the dependent
-    /// rebuilds once, records ArtifactDep2, and the file is rewritten as the current version.
+    /// A database written by Xake 4.x (0.6) loads and is rewritten as 0.7: a no-change run
+    /// rebuilds nothing; a 0.4 stampless ArtifactDep reruns its dependent once.
     [<Test>]
-    member x.``database 0.4 with ArtifactDep loads and is upgraded``() =
+    member x.``database 0.6 upgrades without a rebuild, a 0.4 ArtifactDep reruns once``() =
         let aRuns, bRuns = ref 0, ref 0
         prepare "up_"
         do script x.TestOptions "up_" aRuns bRuns ["deploy"]
         Assert.AreEqual((1, 1), (aRuns.Value, bRuns.Value))
 
-        OldDatabase.rewriteAs04 ".xake"
-        let ver, results = OldDatabase.read ".xake"
-        Assert.AreEqual("0.4", ver)
-        Assert.IsTrue(results |> List.exists (fun r -> r.Depends |> List.exists (function ArtifactDep _ -> true | _ -> false)))
-
+        // the same state as Xake 4.x would have written it: stamps of the files as they are
+        let stamp (p: string) = File.GetLastWriteTime p
+        let file (p: string) = File.make (Directory.GetCurrentDirectory() </> p)
+        let res targets deps = { LegacyRead.OTargets = targets; LegacyRead.OBuilt = System.DateTime.Now; LegacyRead.ODepends = deps; LegacyRead.OSteps = [] }
+        let a, b = file "out/up_a.txt", file "out/up_b.txt"
+        let old06 artifact =
+            [ res [ PhonyAction "deploy" ] [ artifact (FileTarget b) ]
+              res [ FileTarget a ] [ LegacyRead.OldFile (file "up_in.txt", stamp "up_in.txt") ]
+              res [ FileTarget b ] [ artifact (FileTarget a) ] ]
+        let artifact2 t = match t with FileTarget f -> LegacyRead.OldArtifact2 (t, stamp (Xake.File.getSysFileName f)) | _ -> failwith "file"
+        OldDatabase.writeOld ".xake" "0.6" (old06 artifact2)
         do script x.TestOptions "up_" aRuns bRuns ["deploy"]
-        Assert.AreEqual((1, 2), (aRuns.Value, bRuns.Value), "old ArtifactDep counts as changed once; a is not rebuilt")
+        Assert.AreEqual((1, 1), (aRuns.Value, bRuns.Value), "a no-change run after the upgrade rebuilds nothing")
+        Assert.AreEqual(Storage.DbReader.formatVersion, OldDatabase.version ".xake")
 
-        let ver, results = OldDatabase.read ".xake"
-        Assert.AreEqual(BuildLog.XakeDbVersion, ver)
-        let bDeps =
-            results |> List.filter (fun r -> r.Targets |> List.exists (fun t -> t.ShortName.EndsWith "up_b.txt"))
-            |> List.last |> fun r -> r.Depends
-        Assert.IsTrue(bDeps |> List.exists (function ArtifactDep2 (FileTarget f, _) -> f.Name.EndsWith "up_a.txt" | _ -> false), sprintf "%A" bDeps)
-
+        // a 0.6 result that saw an older stamp reruns
+        let older t = match t with FileTarget f -> LegacyRead.OldArtifact2 (t, (stamp (Xake.File.getSysFileName f)).AddSeconds -5.0) | _ -> failwith "file"
+        OldDatabase.writeOld ".xake" "0.6" [ res [ PhonyAction "deploy" ] [ artifact2 (FileTarget b) ]
+                                             res [ FileTarget a ] [ LegacyRead.OldFile (file "up_in.txt", stamp "up_in.txt") ]
+                                             res [ FileTarget b ] [ older (FileTarget a) ] ]
         do script x.TestOptions "up_" aRuns bRuns ["deploy"]
-        Assert.AreEqual((1, 2), (aRuns.Value, bRuns.Value), "no further rebuilds")
+        Assert.AreEqual((1, 2), (aRuns.Value, bRuns.Value), "b saw an older a: rerun")
+
+        // 0.4: stampless ArtifactDep, the dependent reruns once
+        OldDatabase.writeOld ".xake" "0.4" (old06 LegacyRead.OldArtifact)
+        do script x.TestOptions "up_" aRuns bRuns ["deploy"]
+        Assert.AreEqual((1, 3), (aRuns.Value, bRuns.Value), "old ArtifactDep counts as changed once; a is not rebuilt")
+        let _, results = OldDatabase.read ".xake"
+        let bDeps = results |> List.filter (fun r -> r.Targets = [ FileTarget b ]) |> List.last |> fun r -> r.Depends
+        Assert.AreEqual([ TargetDep (FileTarget a) ], bDeps)
+        do script x.TestOptions "up_" aRuns bRuns ["deploy"]
+        Assert.AreEqual((1, 3), (aRuns.Value, bRuns.Value), "no further rebuilds")

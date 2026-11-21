@@ -76,6 +76,22 @@ do xakeScript {
 }
 ```
 
+## Rule header (5.0)
+
+```fsharp
+"out/(n:*).dll" ..> recipe {          // also *..>, ..?>, target, targets, X.rule { } (not phony, not X.Rule)
+	also  "out/(n:*).pdb"             // side output
+	needs "obj/(n:*).rsp"             // static input, built before the body; needs ["a"; "b"] too
+	requires cscLock                  // lock held around the body; requires (lock, n)
+	noContentCutoff
+	let! m = matched                  // the body; header operations after it do not compile
+	do! need [ "src/" + m["n"] + ".cs" ]
+}
+```
+
+Shared: `let h = ruleHeader ["n"] { needs "obj/(n:*).rsp" }`, then `including h` in a header, or
+`X.RuleWith h <| fun m -> recipe { .. }`. See [rule-header.md](rule-header.md).
+
 ## Recipe helpers
 
 ```fsharp
@@ -87,9 +103,12 @@ recipe {
 }
 ```
 
-Capture groups of the rule's pattern (file or phony): `let! name = getRuleMatch "name"` (`""` when
-absent), `let! all = getRuleMatches ()` (a map). Also `getVar`, `getEnv`, `getCtxOptions`,
-`getTargetFile` (file rules only), `getTargetFullName`, `alwaysRerun ()`.
+Capture groups of the rule's pattern (file or phony): `let! m = matched`, then `m["name"]` or
+`m?name` (both strict: an unknown name fails the task, listing the groups; `m?name` needs no quotes
+inside `$"..."`), `m.TryFind "name"`, `m.Names`. Also
+`let! all = getRuleMatches ()` (a map); `getRuleMatch "name"` (`""` when absent) is obsolete. Also `getVar`, `getEnv`, `getCtxOptions`,
+`getTargetFile` (file rules only; `File.getSysFileName` gives its OS path, `.Name` Xake's `/`
+form), `alwaysRerun ()`.
 `let! known = hasRule "out/a.dll"`: whether a rule would build a target (resolved as `need`
 resolves it), without building it.
 
@@ -159,7 +178,7 @@ Rule patterns (`..>`, `*..>`, `target`, `command`) and fileset masks (`!!`, `++`
 grammar; details in the [overview](overview.md#patterns-masks-and-paths).
 
 ```fsharp
-"out/(cfg:*)/(name:*).dll" ..> recipe { let! cfg = getRuleMatch "cfg" in () }   // groups: rules only
+"out/(cfg:*)/(name:*).dll" ..> recipe { let! m = matched in () }   // groups: rules only, m["cfg"]
 "out/(fwk:*)/(ext:{dll,xml})" ..> recipe { () }       // alternatives {a,b}; classes [abc] [!a] [a-z]
 !! "src/**/*.fs" -- "src/**/obj/"                     // ** = zero or more directories; trailing / = directories
 !! @"src/Foo \(x86\)/*.cs"                            // \ escapes ( ) [ ] { } | ; write patterns as @"..."

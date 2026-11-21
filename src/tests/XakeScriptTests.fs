@@ -5,7 +5,7 @@ open NUnit.Framework
 
 open Xake
 open Xake.Tasks
-open Storage
+open Xake.Storage
 open System
 
 type Runtime = {Ver: string; Folder: string}
@@ -344,14 +344,19 @@ type ``XakeScript tests``() =
                 let! files = getTargetFiles()
                 let! options = getCtxOptions()
                 root <- options.ProjectRoot
-                fileNames <- (files |> List.map File.getFullName)
+                fileNames <- (files |> List.map (fun f -> f.Name))
+                // a rule writes every output it declares (5.0)
+                for f in files do
+                    System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName (File.getSysFileName f)) |> ignore
+                    System.IO.File.WriteAllText(File.getSysFileName f, "")
                 map := groups; matchedAny <- true
             })
         }
 
         Assert.IsTrue matchedAny
         Assert.That(fileNames, Is.All.StartsWith root)
-        let relFileNames = fileNames |> List.map (fun s -> s.Substring(root.Length + 1).Replace("\\", "/"))
+        // Xake's forms on both sides ('/'): the root and the target names (C1)
+        let relFileNames = fileNames |> List.map (fun s -> s.Substring(root.TrimEnd('/').Length + 1))
 
         Assert.That(relFileNames, expect.Split(';') |> Is.EquivalentTo)
 
@@ -359,14 +364,14 @@ type ``XakeScript tests``() =
     [<TestCase("subd1/x86-a.ss", "*/(plat:*)-a.ss", "plat", ExpectedResult = "x86", TestName="groups in various parts")>]
     [<TestCase("(abc.ss", @"[(]*.ss", "plat", ExpectedResult = "", TestName="Escaped brackets")>]
     [<TestCase("filename.ss", "*.ss", "1", ExpectedResult = "filename", TestName="Match wildcards")>]
-    member x.``getRuleMatch() matches part``(tgt,mask,tag) =
+    member x.``matched reads a part``(tgt,mask,tag) =
 
         let resultValue = ref ""
 
         do xake {x.TestOptions with Targets = [tgt]} {
             rule (mask ..> recipe {
-                let! value = getRuleMatch tag
-                resultValue := value
+                let! m = matched
+                resultValue := m.TryFind tag |> Option.defaultValue ""
             })
         }
 
@@ -520,25 +525,25 @@ type ``XakeScript tests``() =
             ]
         }
 
-        use testee = Storage.openDb "./.xake" (ConsoleLogger Verbosity.Diag)
+        use testee = Storage.Db.openFile x.TestOptions.ProjectRoot "./.xake" (ConsoleLogger Verbosity.Diag)
         try
-            match testee.PostAndReply <| fun ch -> DatabaseApi.GetResult ((PhonyAction "test"), ch) with
+            match Storage.Db.tryGetResult testee (PhonyAction "test") with
             | Some {
                     BuildResult.Targets = [PhonyAction "test"]
                     Depends = [
-                                ArtifactDep2 (PhonyAction "aaa", _); ArtifactDep2 (PhonyAction "deeplyNested", _);
-                                FileDep (fileDep, depDate)
+                                TargetDep (PhonyAction "aaa"); TargetDep (PhonyAction "deeplyNested");
+                                FileDep fileDep
                                 ]
                 }
-                when System.IO.Path.GetFileName(fileDep.Name) = "bbb.c" && depDate = cdate
+                when System.IO.Path.GetFileName(fileDep.Name) = "bbb.c"
                 -> true
             | _ -> false
             |> Assert.True
 
-            match testee.PostAndReply <| fun ch -> DatabaseApi.GetResult ((PhonyAction "test1"), ch) with
+            match Storage.Db.tryGetResult testee (PhonyAction "test1") with
             | Some {
                     Targets = [PhonyAction "test1"]
-                    Depends = [ArtifactDep2 (PhonyAction "aaa", _)]
+                    Depends = [TargetDep (PhonyAction "aaa")]
                     //BuildResult.Steps = []
                 } -> true
             | _ -> false
@@ -571,10 +576,10 @@ type ``XakeScript tests``() =
             ]
         }
 
-        let (<-*) (a:Agent<DatabaseApi>) t = a.PostAndReply(fun ch -> GetResult (t,ch))
+        let (<-*) (a: Storage.Db) t = Storage.Db.tryGetResult a t
         let logger = ConsoleLogger Verbosity.Diag
 
-        use db = Storage.openDb "./.xake" logger
+        use db = Storage.Db.openFile x.TestOptions.ProjectRoot "./.xake" logger
         try
             match db <-* (PhonyAction "main") with
             | Some {Steps = step1::_} ->

@@ -1,4 +1,4 @@
-namespace Tests
+﻿namespace Tests
 
 open System
 open System.IO
@@ -133,7 +133,7 @@ type ``Secret variables``() =
         let value = "old-clear-value-0001"
         let schema = named (Var.secret<string>(envVar = name))
         let old =
-            { BuildLog.makeResult [PhonyAction "main"] with
+            { makeResult [PhonyAction "main"] with
                 Depends = [ EnvVar (name, Some value); EnvVar ("XAKE_UNRELATED_OLD", None) ] }
         OldDatabase.write ".xake" "0.5" [old]
         withEnv name "a-rotated-value-0002" (fun () ->
@@ -149,8 +149,8 @@ type ``Secret variables``() =
             Assert.AreEqual(0, runs.Value, "presence unchanged: up to date")
             Assert.That(logged, Has.Some.Contains "Upgrading database")
             let ver, results = OldDatabase.read ".xake"
-            Assert.AreEqual(BuildLog.XakeDbVersion, ver)
-            Assert.AreEqual("0.6", ver)
+            Assert.AreEqual(Storage.DbReader.formatVersion, ver)
+            Assert.AreEqual("0.7", ver)
             let deps = results |> List.collect (fun r -> r.Depends)
             Assert.That(deps, Does.Contain(SecretDep (name, SecretEnv, SecretPresent)))
             Assert.That(deps, Does.Contain(EnvVar ("XAKE_UNRELATED_OLD", None)))
@@ -161,7 +161,7 @@ type ``Secret variables``() =
     member x.``a 0.4 database without secrets still loads``() =
         let logged = Collections.Generic.List<string>()
         let old =
-            { BuildLog.makeResult [PhonyAction "main"] with Depends = [ EnvVar ("XAKE_OLD_04_VAR", None) ] }
+            { makeResult [PhonyAction "main"] with Depends = [ EnvVar ("XAKE_OLD_04_VAR", None) ] }
         OldDatabase.write ".xake" "0.4" [old]
         let runs = ref 0
         do xake (x.Opts logged) {
@@ -171,7 +171,7 @@ type ``Secret variables``() =
             })
         }
         Assert.AreEqual(0, runs.Value)
-        Assert.AreEqual(BuildLog.XakeDbVersion, OldDatabase.read ".xake" |> fst)
+        Assert.AreEqual(Storage.DbReader.formatVersion, OldDatabase.read ".xake" |> fst)
 
     [<Test>]
     member x.``persists every SecretDep digest``() =
@@ -179,13 +179,8 @@ type ``Secret variables``() =
             [ SecretDep ("A_SECRET", SecretEnv, SecretAbsent)
               SecretDep ("B_SECRET", SecretArg, SecretPresent)
               SecretDep ("C_SECRET", SecretEnv, SecretHmac ([| 1uy; 2uy; 3uy |], Array.init 32 byte)) ]
-        let result = { BuildLog.makeResult [PhonyAction "x"] with Depends = deps }
-        use stream = new MemoryStream()
-        use w = new BinaryWriter(stream)
-        Storage.resultPU.pickle result w
-        stream.Position <- 0L
-        use r = new BinaryReader(stream)
-        Assert.AreEqual(result, Storage.resultPU.unpickle r)
+        let result = { makeResult [PhonyAction "x"] with Depends = deps }
+        Assert.AreEqual(result, DbFormat.result result)
 
     [<Test>]
     member x.``--dryrun shows the reason without the value``() =

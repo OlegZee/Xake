@@ -1,4 +1,4 @@
-module ``Command line interface``
+﻿module ``Command line interface``
 
 open System.IO
 open NUnit.Framework
@@ -46,7 +46,7 @@ let ``accepts various switches``() =
     // Engine-level assertions
     let eo = !engineOptions
     Assert.AreEqual(33, eo.Threads)
-    Assert.AreEqual(currentDir, eo.ProjectRoot)
+    Assert.AreEqual((File.make currentDir).Name, eo.ProjectRoot)    // Xake's form (C1)
 
     // CLI-level assertions: verify parsing directly
     let parsed = parseArgs args {XakeOptions with DbFileName = ".xake-vari"}
@@ -638,3 +638,36 @@ let ``end to end: -d and var read together, CLI log level, script file log path`
         // the run banner shows the effective file log: the script's path at the CLI's level
         let text = readLogEventually logFile (fun t -> t.Contains "file log:")
         Assert.That(text, Does.Contain (sprintf "%s (Chatty)" (Path.GetFullPath logFile)))
+
+/// `--dryrun` on a built project lists the target whose source changed, with the reason, and
+/// builds nothing; with nothing changed it lists nothing.
+[<Test>]
+let ``dryrun lists what a changed source would rebuild and builds nothing``() =
+    withTempRoot "cli-dryrun-plan" <| fun testRoot ->
+        let built = ref 0
+        let src = testRoot </> "dr.c"
+        File.WriteAllText(src, "v1")
+        let options = { XakeOptions with ProjectRoot = testRoot; DbFileName = ".xake-dryrun"; Nologo = true; FileLog = testRoot </> "build.log"; FileLogLevel = Chatty }
+        let script args =
+            xakeArgs args options {
+                rules [
+                    "build" => recipe { do! need [ "dr.out" ] }
+                    "dr.out" ..> recipe {
+                        do! need [ "dr.c" ]
+                        System.Threading.Interlocked.Increment built |> ignore
+                        do! writeText "out" }
+                ]
+            }
+        let dryLog () =
+            File.Delete(testRoot </> "build.log")
+            script [ "--dryrun"; "build" ]
+            File.ReadAllText(testRoot </> "build.log")
+        script [ "build" ]
+        Assert.AreEqual(1, built.Value)
+        StringAssert.DoesNotContain("Rebuild \"dr.out\"", dryLog (), "nothing changed")
+        File.WriteAllText(src, "v2")
+        File.SetLastWriteTime(src, System.DateTime.Now.AddSeconds 5.0)
+        let log = dryLog ()
+        StringAssert.Contains("Rebuild \"dr.out\"", log)
+        StringAssert.Contains("dr.c", log)
+        Assert.AreEqual(1, built.Value, "the dry run built nothing")

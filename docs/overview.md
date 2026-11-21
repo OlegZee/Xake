@@ -164,13 +164,15 @@ no checks, either separator. `</>` is `Path.Combine`: do not build patterns or m
 | `[abc]` `[a-z]` | one character from the set |
 | `[!abc]` `[^abc]` | one character not in the set |
 | `{a,b}` | one of the alternatives, which may hold `/` and wildcards: `src/{core,tools}/*.cs` |
-| `(name:body)` | rule patterns only: captures what `body` matches, read as `getRuleMatch "name"` or a typed field |
+| `(name:body)` | rule patterns only: captures what `body` matches, read as `m["name"]` after `let! m = matched`, or a typed field |
 | `\(` `\)` `\[` `\]` `\{` `\}` `\|` | the literal character |
 | `/` | the separator; a run of `/` is one |
 
 Bare wildcards (`*`, `**`, `?`) are captured by position too: `"1"`, `"2"`, ... left to right, at
 any depth (`"0"` is the whole path). Groups are greedy and leftmost: `(a:*)-(b:*)` on `x-y-z`
-gives `a = x-y`. Case follows the OS: ordinal on Linux and macOS, ignore-case on Windows.
+gives `a = x-y`. Case is ordinal on every OS for `File`, targets and rule patterns; filesets ignore case by default
+(`casesensitive` in `fileset { }` makes the search ordinal). Two spellings of one file in a run are an
+error for targets and a warning otherwise.
 
 ### Rule patterns
 
@@ -181,7 +183,7 @@ more directories; write `*/**/*.dll` to require one). When several rules match, 
 wins ([rule selection](#rule-selection--the-most-specific-rule-wins)).
 
 ```fsharp
-"out/(cfg:*)/(name:*).dll" ..> recipe { ... }              // getRuleMatch "cfg"
+"out/(cfg:*)/(name:*).dll" ..> recipe { ... }              // let! m = matched; m["cfg"]
 "out/(fwk:*)/(ext:{dll,xml})" ..> recipe { ... }           // alternatives go inside the group
 ```
 
@@ -282,7 +284,8 @@ The 4.0 grammar is stricter. What to look at in a script:
 
 Also changed: results of a scan are ordered and duplicate-free; `**` skips directory symlinks;
 a literal exclude segment is no longer case-insensitive on Linux and macOS (and a wildcard
-include no longer ignores case on macOS); `Path.matchesPattern`, `Fileset.toFileList1` and the
+include no longer ignores case on macOS; 5.0 makes filesets ignore case on every OS again,
+with `casesensitive` to opt out, and keeps rules and targets ordinal); `Path.matchesPattern`, `Fileset.toFileList1` and the
 `FileSystem` adapter are removed. The full list, with what each change gives a build, is the
 4.0 section of the [release notes](release-notes.md).
 
@@ -303,7 +306,7 @@ let files = !! mask
 ## Typed targets
 
 Rules with groups can declare them as record fields (`open Xake.Typed` after `open Xake`): `m.cfg`
-instead of `getRuleMatch "cfg"`, and paths for `need` generated from the pattern. See
+instead of `m["cfg"]`, and paths for `need` generated from the pattern. See
 [typed-targets.md](typed-targets.md), which also covers the migration from the string API.
 
 ## Useful links

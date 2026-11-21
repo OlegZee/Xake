@@ -68,13 +68,17 @@ WorkerPool (parallel execution) → Rule matching & Recipe execution → Databas
 | File | Role |
 |------|------|
 | `src/core/ExecCore.fs` | Main execution engine: rule matching, recipe execution, dependency tracking |
-| `src/core/Database.fs` | Build state persistence for incremental builds |
+| `src/core/Database.fs` | Build state persistence: the database agent, the writer, the file lifecycle (`Storage.Db`) |
+| `src/core/DatabaseFormat.fs` | The database format: version, picklers, path table (`Storage.Database`, `DbRecord`, `Persist`) |
+| `src/core/FileProbe.fs` | Stat, content hash and the hasher: file I/O only |
+| `src/core/FileTracker.fs` | Keeps file records in line with the disk: the rule over records and epochs, `RunFiles`, `observe` |
 | `src/core/ExecTypes.fs` | Configuration types (`ExecOptions`) and execution context |
 | `src/core/DependencyAnalysis.fs` | Topological sorting and execution order |
 | `src/core/WorkerPool.fs` | Thread pool for parallel rule execution |
 | `src/core/Program.fs` | CLI argument parsing |
 | `src/core/XakeScript.fs` | `xakeScript` computation expression builder |
-| `src/core/RecipeBuilder.fs` | `recipe` computation expression builder |
+| `src/core/RecipeBuilder.fs` | the recipe computation expression builder (`RecipeBuilder`, the rule header) |
+| `src/core/RuleMatch.fs` | `recipe` itself (`RuleRecipeBuilder`), `let! m = matched` and `RuleMatch` |
 | `src/core/Fileset.fs` | Ant-style file pattern matching with named capture groups |
 | `src/core/Types.fs` | Domain types (Target, Rule, Recipe, Dependency, BuildResult) |
 | `src/core/Vars.fs` | The script-facing variable API: `Var.string/int/bool/env/secret/read`, `withDefault`/`required`/`secret`, the `var`/`varschema` builder ops and the declaration reads |

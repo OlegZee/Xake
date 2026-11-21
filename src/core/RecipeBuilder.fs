@@ -84,8 +84,38 @@ module internal A =
 [<AutoOpen>]
 module Builder =
     open A
-    /// Computation expression builder for recipe { ... } blocks.
+    /// The rule header operations (Xake 5.0, docs/rule-header.md), shared by `recipe { }` and
+    /// `ruleHeader [..] { }`. The header has its own type: `Yield` starts it, every operation maps it;
+    /// in `recipe`, `For` joins it with the body into a `Headed`. An operation after `let!`/`do!` then
+    /// does not type-check, and a `Headed` cannot be bound by any of the `Bind` overloads.
+    type HeaderBuilder() =
+        /// Starts a rule header.
+        member _.Yield(()) = RuleHeader.Empty
+        /// `also "out/(n:*).pdb"`: another output of the rule.
+        [<CustomOperation("also")>]
+        member _.Also(h: RuleHeader, pattern: string) = { h with Also = h.Also @ [ pattern ] }
+        /// `needs "obj/(n:*).rsp"`: a static input, built before the body.
+        [<CustomOperation("needs")>]
+        member _.Needs(h: RuleHeader, pattern: string) = { h with Needs = h.Needs @ [ pattern ] }
+        /// `needs ["a"; "b"]`: static inputs; all `needs` of a rule are one unordered set.
+        [<CustomOperation("needs")>]
+        member _.Needs(h: RuleHeader, patterns: string list) = { h with Needs = h.Needs @ patterns }
+        /// `requires lock`: one unit of the resource, held by the engine while the body runs.
+        [<CustomOperation("requires")>]
+        member _.Requires(h: RuleHeader, resource: Resource) = { h with Requires = h.Requires @ [ resource, 1 ] }
+        /// `requires (lock, n)`: n units of the resource, held while the body runs.
+        [<CustomOperation("requires")>]
+        member _.Requires(h: RuleHeader, (resource: Resource, units: int)) = { h with Requires = h.Requires @ [ resource, units ] }
+        /// `noContentCutoff`: every rebuild of this rule's outputs is a change for its dependents.
+        [<CustomOperation("noContentCutoff")>]
+        member _.NoContentCutoff(h: RuleHeader) = { h with ContentCutoff = Some false }
+        /// `contentCutoff`: the default, for symmetry.
+        [<CustomOperation("contentCutoff")>]
+        member _.ContentCutoff(h: RuleHeader) = { h with ContentCutoff = Some true }
+
+    /// Computation expression builder for recipe { ... } blocks; it may start with a rule header.
     type RecipeBuilder() =
+        inherit HeaderBuilder()
         member this.Return(c) = returnF c
         member this.Zero()    = doneF
         member this.Delay(f)  = delayF f
@@ -102,8 +132,31 @@ module Builder =
         member this.TryWith(body, handler) = tryWithF body handler
         member this.TryFinally(body, compensation) = tryFinallyF (body) compensation
         member this.Using(disposable:#System.IDisposable, body) = usingF disposable body
+
+        /// `including h`: the items of a shared header (`ruleHeader ["n"] { .. }`), merged in place.
+        [<CustomOperation("including")>]
+        member _.Including(h: RuleHeader, shared: SharedHeader) =
+            RuleHeader.Merge (h, { shared.Header with Included = [ shared.Description, shared.DeclaredGroups ] })
+        /// Joins the header and the body; the body is delayed, so loading the script never runs it.
+        member _.For(h: RuleHeader, body: unit -> Recipe<'c, unit>) : Headed<'c> = Headed (h, delayF body)
+        /// A header with no body: the rule forms refuse it when the script loads (a file rule
+        /// must write its target).
+        member _.Delay(f: unit -> RuleHeader) : Headed<'c> = Headed ({ f () with HeaderOnly = true }, doneF)
+        member _.Delay(f: unit -> Headed<'c>) : Headed<'c> = f ()
+
+        [<CompilerMessage("The rule header (also, needs, requires, noContentCutoff) must come before the body: move it above the first let!/do!.", 3095, IsError = true)>]
+        member _.Bind(_: Recipe<'a, 'b>, _: 'b -> RuleHeader) : RuleHeader = failwith "unreachable"
+        [<CompilerMessage("A recipe with a header (also, needs, requires, ...) is a rule body: give it to a rule (..>, *..>, target, X.rule); it cannot be used inside another recipe.", 3095, IsError = true)>]
+        member _.Bind(_: Headed<'c>, _: unit -> Recipe<'c, 'b>) : Recipe<'c, 'b> = failwith "unreachable"
     
-    /// Backward-compatible alias for the recipe builder.
-    let action = RecipeBuilder()
-    /// The recipe computation expression builder instance.
-    let recipe = RecipeBuilder()
+    /// `ruleHeader ["n"] { needs ..; requires .. }`: a header shared between rules, merged in with
+    /// `including h`. The list names the groups of the including rule the header uses.
+    type RuleHeaderBuilder(groups: string list) =
+        inherit HeaderBuilder()
+        member _.Zero() = RuleHeader.Empty
+        member _.Run(h: RuleHeader) : SharedHeader = Rule.share groups h
+
+    /// `ruleHeader ["n"] { .. }`: a header shared between rules (see `RuleHeaderBuilder`).
+    let ruleHeader (groups: string list) = RuleHeaderBuilder groups
+
+    // The `recipe` instance is `RuleRecipe.recipe` (RuleMatch.fs): it adds `let! m = matched`.

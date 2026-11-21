@@ -10,7 +10,7 @@ open NUnit.Framework
 [<TestFixture; Category("Integration"); Category("TypeCheck")>]
 type ``Typed targets: compile-time errors``() =
 
-    let xakeDll = typeof<Xake.Typed.Matched>.Assembly.Location
+    let xakeDll = typeof<Xake.Matched>.Assembly.Location
     let workDir = Path.Combine(Path.GetTempPath(), "xake-typecheck-" + string (System.Diagnostics.Process.GetCurrentProcess().Id))
     let errorRx = Regex(@"\((\d+),\d+\): error (FS\d+)")
 
@@ -38,12 +38,9 @@ type ``Typed targets: compile-time errors``() =
     let referenceXake (line: string) =
         if line.StartsWith "#r " then sprintf "#r @\"%s\"" xakeDll else line
 
-    [<OneTimeTearDown>]
-    member _.Cleanup() = try Directory.Delete(workDir, true) with _ -> ()
-
-    [<Test>]
-    member _.``every case gives its error``() =
-        let lines = File.ReadAllLines(Path.Combine(__SOURCE_DIRECTORY__, "fixtures", "typed-neg", "cases.fsx")) |> List.ofArray
+    /// Every `//#case` of a fixture type-checks with exactly its error code (or none).
+    let runCases (fixture: string) =
+        let lines = File.ReadAllLines(Path.Combine(__SOURCE_DIRECTORY__, "fixtures", fixture, "cases.fsx")) |> List.ofArray
         let header = lines |> List.takeWhile (fun l -> not (l.StartsWith "//#case ")) |> List.map referenceXake
         let cases =
             lines |> List.skip header.Length
@@ -75,6 +72,17 @@ type ``Typed targets: compile-time errors``() =
             |> Async.RunSynchronously
         let problems = results |> Array.choose id
         Assert.That(problems, Is.Empty, String.concat "\n" problems)
+
+    [<OneTimeTearDown>]
+    member _.Cleanup() = try Directory.Delete(workDir, true) with _ -> ()
+
+    [<Test>]
+    member _.``every case gives its error``() = runCases "typed-neg"
+
+    /// The rule header (Xake 5.0): misplaced header operations and a recipe with a header used
+    /// inside another recipe do not compile.
+    [<Test>]
+    member _.``every rule header case gives its error``() = runCases "header-neg"
 
     [<Test>]
     member _.``the typed-targets sample type-checks``() =

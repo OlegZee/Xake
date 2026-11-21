@@ -1,5 +1,5 @@
 ﻿/// Reads databases 0.4-0.6 (Xake 3.x/4.x) for the upgrade to 0.7 (decision B3). Self-contained:
-/// removing this module leaves `Database.fs` with one call to drop ("no longer read, recreating").
+/// removing this module leaves `DatabaseFormat.fs` with one call to drop ("no longer read, recreating").
 module internal Xake.LegacyRead
 
 open Xake

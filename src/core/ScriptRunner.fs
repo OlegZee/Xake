@@ -32,11 +32,11 @@ let createScriptContext (opts: ExecOptions) rules =
     let engineOpts = toEngineOptions opts rules variables
     let db =
         if opts.NoPersist then
-            Storage.noopDb ()
+            Storage.Db.memoryOnly ()
         else
             let dbPath = engineOpts.ProjectRoot </> opts.DbFileName
             // the lock first: --resetdb runs under it (A5)
-            Storage.openDbWith (System.TimeSpan.FromSeconds 30.0) opts.ResetDb engineOpts.ProjectRoot dbPath engineOpts.Logger
+            Storage.Db.openWith (System.TimeSpan.FromSeconds 30.0) opts.ResetDb engineOpts.ProjectRoot dbPath engineOpts.Logger
     let ctx, finalize = ExecCore.createContextCore engineOpts db (VarEvaluation.flatVars variables) opts.Progress
     ctx, finalize, launchErrors
 
@@ -104,7 +104,7 @@ let dryRun (ctx: ExecContext) (setup: string list) (groups: string list list) =
     let getDeps t =
         match verdicts.Ready t with
         | Some reasons -> reasons
-        | None -> verdicts.Of t |> Async.RunSynchronously
+        | None -> verdicts.Planned t |> Async.RunSynchronously
 
     // getPlainDeps getDeps (getExecTime ctx)
     if not setup.IsEmpty then
@@ -208,13 +208,13 @@ let runScript options rules =
             exitCode <- 2
             if options.ThrowOnError then raise (XakeException errorText)
         | Dump ->
-            Storage.InMemory |> ctx.Db.Post
-            ctx.Db.PostAndReply Storage.NewRun |> ignore
+            Storage.Db.keepInMemory ctx.Db
+            Storage.Db.newRun ctx.Db |> Async.RunSynchronously |> ignore
             do logger.Log Level.Command "Dumping dependencies for targets %A" targetLists
             targetLists |> List.iter (List.map (ExecCore.makeTarget ctx) >> (dumpDeps ctx (ExecCore.currentRule ctx)))
         | Dryrun ->
-            Storage.InMemory |> ctx.Db.Post
-            ctx.Db.PostAndReply Storage.NewRun |> ignore
+            Storage.Db.keepInMemory ctx.Db
+            Storage.Db.newRun ctx.Db |> Async.RunSynchronously |> ignore
             targetLists |> dryRun ctx options.Setup
         | _ ->
             let mutable reraisedError = None
@@ -239,7 +239,7 @@ let runScript options rules =
                 let start = System.DateTime.Now
                 // one summary per script run (docs/content-cutoff.md), also when the build fails
                 let reportSummary () =
-                    let summary = ctx.Counters.Summary
+                    let summary = ctx.Run.Counters.Summary
                     ctx.Logger.Log Message "%s, schedule %s" (RunSummary.format summary) (scheduleName options.Schedule)
                     ctx.Options.SummarySink |> Option.iter (fun sink -> sink.Report summary)
                 try

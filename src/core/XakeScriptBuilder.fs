@@ -360,19 +360,12 @@ module XakeScriptBuilder =
         let makeCtx extraVars = {
             Engine = engine
             Vars = List.rev (defaultArg extraVars []) @ vars
-            Progress = Progress.emptyProgress()
-            NeedRebuild = fun _ -> async.Return false
-            UpToDate = fun _ -> async.Return false
-            ShowProgress = showProgress
+            Run = ExecCore.newRunState showProgress
             Targets = []
             RuleMatches = Map.empty
             Ordinal = 0
             Logger = engine.RootLogger
             HeldResources = []
-            Spellings = ExecCore.newSpellings ()
-            RunFiles = Storage.RunFiles ()
-            RunEpoch = 0
-            Counters = RunCounters()
         }
 
         /// Starts a XakeEngine from a fully assembled XakeScript.
@@ -387,13 +380,13 @@ module XakeScriptBuilder =
                 raise (XakeException errorText)
             try ScriptRunner.runSetupAsync ctx options.Setup |> Async.RunSynchronously
             with _ -> finalize (); reraise ()
-            XakeEngine (ctx.Engine, ctx.Vars, ctx.ShowProgress, finalize)
+            XakeEngine (ctx.Engine, ctx.Vars, ctx.Run.ShowProgress, finalize)
 
         /// Starts a XakeEngine from raw EngineOptions without a script; `options.Variables` is
         /// used as given (empty by default: no declarations).
         static member Start(options: EngineOptions) =
             let ctx, finalize = ExecCore.createContext options (VarEvaluation.flatVars options.Variables)
-            XakeEngine (ctx.Engine, ctx.Vars, ctx.ShowProgress, finalize)
+            XakeEngine (ctx.Engine, ctx.Vars, ctx.Run.ShowProgress, finalize)
 
         /// Builds a single target by name. Serializes concurrent requests for the same target:
         /// if a demand is in-flight, waits for it to complete then re-evaluates with the new context.
@@ -416,7 +409,7 @@ module XakeScriptBuilder =
                         async {
                             try return! ExecCore.demandTarget demandCtx targetName
                             finally
-                                let summary = demandCtx.Counters.Summary
+                                let summary = demandCtx.Run.Counters.Summary
                                 lastSummary <- Some summary
                                 engine.RootLogger.Log Info "%s" (RunSummary.format summary)
                                 engine.Options.SummarySink |> Option.iter (fun sink -> try sink.Report summary with _ -> ())

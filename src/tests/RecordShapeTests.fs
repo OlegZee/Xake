@@ -10,13 +10,14 @@ open Xake
 /// copy). A record expression compiled against one Xake calls the full constructor, so a field
 /// added in a 4.x minor would break a package built against an older 4.x at run time: the record
 /// stays frozen within a major (docs/features/dotnet-split/brief.md §10). Add a function instead.
-/// 5.0 added `Spellings` (the two-spellings check), `RunEpoch` (the run's epoch), `UpToDate` and
-/// `Counters` (content cut-off; `NeedRebuild` became asynchronous).
+/// 5.0 moved the engine's per-run state into `Run` (`RunState`, opaque: `Progress`, `ShowProgress`,
+/// `NeedRebuild`, `UpToDate`, `Spellings`, `RunFiles`, `RunEpoch`, `Counters`); new per-run state
+/// goes there, not into the record.
 [<TestFixture>]
 type ``Record shapes frozen within Xake 5``() =
 
     static member Records : obj[][] = [|
-        [| typeof<ExecContext>; [ "Engine"; "Vars"; "Progress"; "NeedRebuild"; "UpToDate"; "ShowProgress"; "Targets"; "RuleMatches"; "Ordinal"; "Logger"; "HeldResources"; "Spellings"; "RunFiles"; "RunEpoch"; "Counters" ] |]
+        [| typeof<ExecContext>; [ "Engine"; "Run"; "Vars"; "Targets"; "RuleMatches"; "Ordinal"; "Logger"; "HeldResources" ] |]
     |]
 
     [<TestCaseSource("Records")>]
@@ -28,10 +29,8 @@ type ``Record shapes frozen within Xake 5``() =
     [<Test>]
     member _.``withLogger replaces only the logger``() =
         let ctx : ExecContext =
-            { Engine = Unchecked.defaultof<_>; Vars = [ "A", "1" ]; Progress = Unchecked.defaultof<_>
-              NeedRebuild = (fun _ -> async.Return false); UpToDate = (fun _ -> async.Return false); ShowProgress = false; Targets = []; RuleMatches = Map.empty
-              Ordinal = 7; Logger = CustomLogger (fun _ -> false) ignore; HeldResources = []
-              Spellings = System.Collections.Concurrent.ConcurrentDictionary(); RunFiles = Storage.RunFiles (); RunEpoch = 0; Counters = null }
+            { Engine = Unchecked.defaultof<_>; Run = Unchecked.defaultof<_>; Vars = [ "A", "1" ]; Targets = []; RuleMatches = Map.empty
+              Ordinal = 7; Logger = CustomLogger (fun _ -> false) ignore; HeldResources = [] }
         let logger = CustomLogger (fun _ -> true) ignore
         let replaced = ExecContext.withLogger logger ctx
         Assert.That(obj.ReferenceEquals(replaced.Logger, logger))

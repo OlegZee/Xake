@@ -2,7 +2,8 @@
 
 open Xake
 open Xake.WorkerPool
-open Storage
+open Xake.Storage
+open FileTracker
 
 /// <summary>
 /// Dependency state.
@@ -21,13 +22,13 @@ type ChangeReason =
 /// <param name="ctx"></param>
 /// <param name="target"></param>
 let getExecTime (ctx: ExecContext) target =
-    Storage.tryGetResult ctx.Db target
+    Db.tryGetResult ctx.Db target
     |> Option.fold (fun _ r -> r.Steps |> List.sumBy (fun s -> s.OwnTime)) 0<ms>
 
-/// Observes a group of files (Storage.observeFiles) in the context's run: per file, in the
+/// Observes a group of files (FileTracker.observe) in the context's run: per file, in the
 /// order given, missing or whether its content changed after the run `since`.
 let observeMany (ctx: ExecContext) (mode: ObserveMode) (since: int) (files: File list) =
-    if files.IsEmpty then async.Return [||] else Storage.observeFiles ctx.Observe mode since files
+    if files.IsEmpty then async.Return [||] else FileTracker.observe ctx.Observe mode since files
 
 /// Observes one file (docs/features/idle-perf, L5).
 let observeSince (ctx: ExecContext) (mode: ObserveMode) (since: int) (file: File) = async {
@@ -148,7 +149,7 @@ let getChangeReasons (ctx: ExecContext) (current: Target -> (Target list * Set<S
         filesChanged @ other |> List.rev
 
 
-    let lastBuild = Storage.tryGetResult ctx.Db target
+    let lastBuild = Db.tryGetResult ctx.Db target
 
     let! reasons = async {
       match lastBuild with
@@ -156,7 +157,7 @@ let getChangeReasons (ctx: ExecContext) (current: Target -> (Target list * Set<S
         return [ChangeReason.Other "No dependencies", Some "It means target is not \"pure\" and depends on something beyond our control (oracle)"]
 
       | Some ({BuildResult.Depends = depends; Targets = result; Epoch = epoch} as built) ->
-        let getResult t = Storage.tryGetResult ctx.Db t
+        let getResult t = Db.tryGetResult ctx.Db t
         // with cut-off off every dependee goes through the transitive rule, as in phase 1 (4.0);
         // each dependee's state is taken once, so both phases below see the same one
         let states = System.Collections.Generic.Dictionary<Target, TaskState<ExecStatus>>()
@@ -228,40 +229,83 @@ let getDurationDeps ctx getDeps t =
 
 /// The verdicts of one run (docs/features/idle-perf, L6): each target's no-build verdict is
 /// decided once, and everyone who asks awaits the same task. A verdict that waits for a
-/// dependee's verdict still in progress registers the edge; an edge that would close a cycle is
-/// refused and the dependee counts as changed (two entries into one cycle cannot wait for each
-/// other).
+/// dependee's verdict still in progress registers the edge in `verdictWaits`; an edge that would
+/// close a cycle is refused and the dependee counts as changed (two entries into one cycle cannot
+/// wait for each other). A verdict never waits for a task, so these edges and the tasks' own
+/// (`TaskWaits`) cannot form one cycle (docs/features/arch-review/wait-for.md).
+///
+/// Two entry points (docs/features/arch-review/of-fresh.md): `Planned` is decided early, often
+/// before any task runs, and never waits for a task; `ForTask` is a starting task's own verdict,
+/// after the dependees running now have finished. With content cut-off a dependee rebuilt to the
+/// same content is not a change, so the planned verdict can be stale by the time the task
+/// starts, and `ForTask` decides again.
 [<Sealed>]
 type Verdicts(ctx: ExecContext, current: Target -> (Target list * Set<StaticKey>) option) =
     let memo = System.Collections.Concurrent.ConcurrentDictionary<Target, Lazy<System.Threading.Tasks.Task<ChangeReason list>>>()
-    let waits = System.Collections.Generic.Dictionary<string, System.Collections.Generic.HashSet<string>>()
-    let reaches (src: string) (dst: string) =
-        let seen = System.Collections.Generic.HashSet<string>()
-        let rec go k = k = dst || (seen.Add k && (match waits.TryGetValue k with | true, es -> es |> Seq.exists go | _ -> false))
-        go src
+    let verdictWaits = WaitFor<unit>()
     let rec taskOf (t: Target) =
         memo.GetOrAdd(t, fun t -> lazy (Async.StartAsTask (getChangeReasons ctx current (dependee t) t))).Value
     and dependee (waiter: Target) (d: Target) = async {
         let task = taskOf d
         if task.IsCompleted then return! Async.AwaitTask task
         else
-            let edge =
-                lock waits (fun () ->
-                    if reaches d.Name waiter.Name then false
-                    else
-                        match waits.TryGetValue waiter.Name with
-                        | true, es -> es.Add d.Name |> ignore
-                        | _ -> waits.[waiter.Name] <- System.Collections.Generic.HashSet [ d.Name ]
-                        true)
+            let edge = lock verdictWaits (fun () -> verdictWaits.TryAdd [ waiter.Name ] d.Name ())
             if not edge then return [ ChangeReason.Depends d ]
             else
                 try return! Async.AwaitTask task
-                finally lock waits (fun () -> match waits.TryGetValue waiter.Name with | true, es -> es.Remove d.Name |> ignore | _ -> ()) }
-    /// The run's no-build verdict of a target (memoised).
-    member _.Of (target: Target) = Async.AwaitTask (taskOf target)
-    /// The verdict decided afresh (a task's own verdict, after waiting for its running dependees),
-    /// its dependees through the memo.
-    member _.Fresh (target: Target) = getChangeReasons ctx current (dependee target) target
+                finally lock verdictWaits (fun () -> verdictWaits.Remove [ waiter.Name ] d.Name) }
+    /// The decision afresh, the dependees through the memo: the second half of `ForTask`. Nothing
+    /// waits for it, so its waits close no cycle and are not registered.
+    let fresh (target: Target) = getChangeReasons ctx current (taskOf >> Async.AwaitTask) target
+    /// The run's no-build verdict of a target, memoised: never waits for a task. For planning
+    /// (`Warm`, the estimate), the fast path (`ctx.Run.UpToDate`) and `--dryrun`.
+    member _.Planned (target: Target) = Async.AwaitTask (taskOf target)
+    /// A starting task's verdict (`ctx.Run.NeedRebuild`): true to build. With content cut-off it
+    /// first waits for the dependees its last result recorded that are running now (through
+    /// `TaskWaits`, refused or cancelled when the wait would close a cycle), then decides afresh,
+    /// the dependees through the memo.
+    member this.ForTask (targets: Target list) = async {
+        let names = targets |> List.map (fun t -> t.Name)
+        let primary = List.head targets
+        if ctx.Options.ContentCutoff then
+            let last = Db.tryGetResult ctx.Db primary
+            let dependees = last |> Option.map (fun r -> r.Depends |> List.choose (function TargetDep t -> Some t | _ -> None)) |> Option.defaultValue []
+            for d in dependees do
+                match Scheduler.query ctx.Engine.Scheduler d with
+                | Running task ->
+                    match ctx.Run.TaskWaits.Verdict names d.Name with
+                    | None ->
+                        do ctx.Logger.Log Info "%s: not waiting for %s, which waits for it" (primary.Display ctx.Options.ProjectRoot) (d.Display ctx.Options.ProjectRoot)
+                    | Some (cancel, unregister) ->
+                        try
+                            do! Scheduler.withYieldedSlot ctx.Engine.Scheduler targets (async {
+                                    let! _ = System.Threading.Tasks.Task.WhenAny(Async.StartAsTask task :> System.Threading.Tasks.Task, cancel.Task :> System.Threading.Tasks.Task) |> Async.AwaitTask
+                                    return () })
+                        finally unregister ()
+                        if cancel.Task.IsCompleted then
+                            do ctx.Logger.Log Info "%s: stopped waiting for %s, which waits for it" (primary.Display ctx.Options.ProjectRoot) (d.Display ctx.Options.ProjectRoot)
+                        else
+                            // a failed dependee fails the dependent, as its body would
+                            do! task |> Async.Ignore
+                | _ -> ()
+        let rebuild (target: Target) = async {
+            let! reasons = fresh target
+            match reasons with
+            | [] -> return false
+            | reasons ->
+                let reason =
+                    match reasons with
+                    | Other reason :: _ -> reason
+                    | Depends t :: _ -> "Depends on target " + t.Display ctx.Options.ProjectRoot
+                    | DependsMissingTarget t :: _ -> sprintf "Depends on target %s (missing)" (t.Display ctx.Options.ProjectRoot)
+                    | FilesChanged (file :: _) :: _ -> "File(s) changed " + file
+                    | reasons -> sprintf "Some reason %A" reasons
+                do ctx.Logger.Log Info "Rebuild %A: %s" (target.Display ctx.Options.ProjectRoot) reason
+                return true }
+        let rec anyRebuild = function
+            | [] -> async.Return false
+            | t :: rest -> async { let! r = rebuild t in if r then return true else return! anyRebuild rest }
+        return! anyRebuild targets }
     /// The verdict when it is decided already.
     member _.Ready (target: Target) =
         match memo.TryGetValue target with
@@ -273,7 +317,7 @@ type Verdicts(ctx: ExecContext, current: Target -> (Target list * Set<StaticKey>
         let visited = System.Collections.Concurrent.ConcurrentDictionary<Target, byte>()
         let rec visit t = async {
             if visited.TryAdd(t, 0uy) then
-                let! reasons = this.Of t
+                let! reasons = this.Planned t
                 let dependees = reasons |> List.collect (function Depends d | DependsMissingTarget d -> [d] | _ -> [])
                 do! dependees |> List.map visit |> Async.Parallel |> Async.Ignore }
         do! goals |> List.map visit |> Async.Parallel |> Async.Ignore }
@@ -371,7 +415,7 @@ let dumpDeps (ctx: ExecContext) current (target: Target list) =
         if not <| doneTargets.ContainsKey(target) then
             doneTargets.Add(target, 1)
 
-            let lastResult = Storage.tryGetResult ctx.Db target
+            let lastResult = Db.tryGetResult ctx.Db target
             let built = match lastResult with Some r -> sprintf " (built in run %d)" r.Epoch | None -> ""
             printfn "%sTarget %A%s" (indent ii) (target.Display ctx.Options.ProjectRoot) built
 

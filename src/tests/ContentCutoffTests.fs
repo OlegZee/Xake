@@ -37,7 +37,7 @@ type ``Content cut-off tests``() =
         xake (f { x.TestOptions with Targets = targets; ResetDb = false; ThrowOnError = true; SummarySink = Some sink }) { rules rs }
         x.Last.Value
 
-    member x.Files () = (Storage.readDatabase x.TestOptions.ProjectRoot ".xake").Files
+    member x.Files () = (Storage.DbReader.readDatabase x.TestOptions.ProjectRoot ".xake").Files
 
     /// src -> out/X.o (comments stripped) -> out/X.app (needs the .o in its header)
     member x.Chain (name: string) (oRuns: int ref) (aRuns: int ref) =

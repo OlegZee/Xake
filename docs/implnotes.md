@@ -30,7 +30,7 @@ target as `TargetDep target`; neither carries a stamp. Staleness is decided by e
 
 ### Database 0.7
 
-The file starts with a version header (`BuildLog.XakeDbVersion`, `0.7`; `XakeDbMinReadVersion` is
+The file starts with a version header (`Storage.DbReader.formatVersion`, `0.7`; `Persist.minReadVersion` is
 `0.4`). After it come tagged, append-only records; the last record per key wins.
 
 | Tag | Record | Fields |
@@ -50,12 +50,14 @@ The file starts with a version header (`BuildLog.XakeDbVersion`, `0.7`; `XakeDbM
 - A file target is stored as a file id, a phony target by name. `FileDep` holds a file id;
   `TargetDep` has a file form and a phony form; `GetFiles` holds the fileset (with
   `CaseSensitive`) and file ids.
-- The database (`Storage.Db`, docs/features/idle-perf) is an agent and a writer. The agent keeps
+- The database (`Storage.Db`, Database.fs; the format in DatabaseFormat.fs; docs/features/idle-perf) is an agent and a writer. The agent keeps
   the records in memory and decides nothing: it accepts `Apply` (file records, each written only
   if the record is still the one the caller decided against: compare-and-set per file; replies
   the conflicts), `Store` (a result; replies once it is in memory), `NewRun`, `InMemory` and
   `Close`. After every message it publishes a snapshot (`Db.Snapshot`: `Status`, `Files`,
-  `Epoch`), read without a message (`Storage.tryGetResult`). It hands the records to the writer
+  `Epoch`), read without a message (`Db.tryGetResult`); the engine posts through the internal functions
+  `Db.apply`, `Db.store`, `Db.newRun`, `Db.keepInMemory`, `Db.close` (closing twice is
+  harmless; `Dispose` closes synchronously). It hands the records to the writer
   in its order and does not wait for it.
 - The writer owns the path table and the stream. Each batch, with its new `DirRec`/`PathRec`, is
   pickled into one buffer and written with one `Write`. The path table is an immutable value in
@@ -70,10 +72,10 @@ The file starts with a version header (`BuildLog.XakeDbVersion`, `0.7`; `XakeDbM
   `--resetdb` deletes anything, and is held until the database is closed (engine mode: the
   engine's lifetime). A second opener waits up to 30 s, then fails with "another Xake run uses
   this database (.xake.lock)". The lock file is never deleted (deleting it would let two runs hold
-  two different files); a failed open releases it. `noopDb` takes no lock. A recipe that starts
+  two different files); a failed open releases it. `Db.memoryOnly` takes no lock. A recipe that starts
   Xake on the same project root waits and fails.
 - A newer version is recreated ("database written by a newer Xake (version X), recreating"), as is
-  one older than `XakeDbMinReadVersion` ("database version X is no longer read, recreating") or
+  one older than `Persist.minReadVersion` ("database version X is no longer read, recreating") or
   one that fails to read. An end of file inside the last record (a killed process) cuts the file
   back to the end of the last whole record and keeps everything before it.
 - Databases 0.4-0.6 are read by the module `LegacyRead` (its own picklers and the conversion),
@@ -81,11 +83,11 @@ The file starts with a version header (`BuildLog.XakeDbVersion`, `0.7`; `XakeDbM
   the latest `Built` (`DateTime.MinValue` is no stamp), unknown size, `changed = 1`. A result gets
   `Epoch = 1` when every stamp it recorded is that one and every phony dependee finished no later
   than recorded, else 0 (it reruns once). A no-change run after the upgrade rebuilds nothing.
-  `LegacyRead` is meant to be removed in a later release; its one call in `Database.fs` then
+  `LegacyRead` is meant to be removed in a later release; its one call in `DatabaseFormat.fs` then
   becomes "no longer read, recreating".
-- `Storage.openDb root dbpath logger` takes the project root. The public read API is
-  `Storage.readRecords root dbpath` (every `DbRecord`, `Result` or `FileState`, in file order) and
-  `Storage.readDatabase root dbpath` (the last result per target, the last state per file, the
+- `Db.openWith lockWait reset root dbpath logger` (internal) takes the project root. The public read API is
+  `Storage.DbReader.readRecords root dbpath` (every `DbRecord`, `Result` or `FileState`, in file order) and
+  `Storage.DbReader.readDatabase root dbpath` (the last result per target, the last state per file, the
   last epoch in `Database.Epoch`). They take no lock and open with `FileShare.ReadWrite |||
   FileShare.Delete`, so the database of a running build can be read; a torn last record ends the
   sequence, a missing or short file (a compaction in progress) gives an empty one.
@@ -96,22 +98,26 @@ The file starts with a version header (`BuildLog.XakeDbVersion`, `0.7`; `XakeDbM
   `FileRec.changed` in the file (it is not stored on its own). Every run starts in
   `ExecCore.beginRun` (each target group of the command line, each `demandTarget`: setup,
   teardown, engine `Demand`), which takes the next epoch from the agent (`NewRun`) and keeps it in
-  `ExecContext.RunEpoch`, with a fresh verdict memo (`Verdicts`), spelling table and
-  `ExecContext.RunFiles` (the files observed and recorded in the run).
+  `ExecContext.Run.RunEpoch`, with a fresh verdict memo (`Verdicts`), spelling table and
+  `ExecContext.Run.RunFiles` (the files observed and recorded in the run).
 - One epoch per run, not per event: everything built in run `r` has `Epoch = r` and everything
   seen changed in run `r` has `changed = r`, so a target that `need`s a dependee rebuilt in the
   same run (a dynamic need) is up to date on the next run (`r <= r`). A per-event counter would
   make it look out of date on every run.
-- Runs may overlap in engine mode (`Demand` of different names): an observation is stamped with
-  the newest epoch handed out, a result with the epoch its task started in. A delegated result
+- Runs may overlap in engine mode (`Demand` of different names): a change is stamped with the
+  newest epoch handed out, a result with the epoch its task started in. A run that is not the
+  newest stamps a change with a fresh epoch from the agent: with the newest, a change seen first
+  by the older run could equal the epoch of a result the newer run built from the previous
+  content, and `changed > epoch` would keep that stale result. The cost, with overlapping runs
+  only: a round trip per observation round, and at most one extra build. A delegated result
   that did not run its body keeps the local result's epoch; a foreign epoch is never stored.
-- A file is observed through `Storage.observeFiles` (`DependencyAnalysis.observeMany`), a group
+- A file is observed through `FileTracker.observe` (`DependencyAnalysis.observeMany`), a group
   of files at a time, in a mode: by a verdict once per run, then answered from the record; when a
   body records it as a `FileDep` it is statted again, and a moved stat counts as a change unless
   another body already recorded it in this run; a rule's outputs (every output of a multi-output
   rule) are statted again right after the rule. The sequence, on the caller's thread:
   1. the stats (existence, write time, length), taken by the caller;
-  2. the rule `Storage.FileRule.decide` against the snapshot's record (pure: no I/O, no state),
+  2. the rule `FileTracker.FileRule.decide` against the snapshot's record (pure: no I/O, no state),
      with the run's facts from `RunFiles`;
   3. the hashes the rule asks for, through the hasher;
   4. every write in one `Apply`;
@@ -126,7 +132,7 @@ The file starts with a version header (`BuildLog.XakeDbVersion`, `0.7`; `XakeDbM
   the dependent's epoch, `observeOutputs` passes `RunEpoch - 1` (changed in this run); calls that
   only update the record use `DependencyAnalysis.observe` (`since` = max).
 - **Hashing (docs/content-cutoff.md).** The rule decides, the caller hashes: a moved stat (or an
-  output) that needs a hash is hashed through `Storage.Hasher`, a mailbox that computes one hash
+  output) that needs a hash is hashed through `FileProbe.Hasher`, a mailbox that computes one hash
   per (file, stat) while it runs (every other asker gets the same result), at most one per core
   at once, off the agent. The result is `Hashed (stamp, size, hash)` (stat, SHA-256, stat; first
   8 bytes) or `Unreadable stat` (the file could not be read, or its stat moved while it was
@@ -142,7 +148,7 @@ The file starts with a version header (`BuildLog.XakeDbVersion`, `0.7`; `XakeDbM
   or `changed > e`. `TargetDep t`: the worker pool is asked (`Query`) whether `t` finished in this
   run, is running, or has not started. Finished: compared exactly (`changed > e` for a file,
   `Epoch > e` for a phony). Running: the target's own verdict waits for it, then compares; a
-  waits-for map (`RunCounters.Waits`, `WaitGraph`, set around the verdict wait and `execNeed`) stops a wait that
+  waits-for map (`ctx.Run.TaskWaits`, a `WaitFor`, set around the verdict wait and `execNeed`) stops a wait that
   would close a cycle (the dependee counts as changed). Not started: `changed`/`Epoch > e`, or the
   dependee's own no-build verdict non-empty (the 4.0 transitive rule, kept only here). The no-build
   verdict (`DependencyAnalysis.Verdicts`, memoised per run, async) never waits for a running
@@ -150,7 +156,7 @@ The file starts with a version header (`BuildLog.XakeDbVersion`, `0.7`; `XakeDbM
   files in one observation and the dependees' verdicts it needs, in parallel; then the rule
   (`getDepState`, pure). A verdict waiting for a dependee's verdict still in progress registers the
   edge; an edge that would close a cycle is refused and the dependee counts as changed. It serves
-  the recursion, the fast path (`ExecContext.UpToDate`, async) and the progress estimate. `GetFiles` compares only the file list;
+  the recursion, the fast path (`ExecContext.Run.UpToDate`, async) and the progress estimate. `GetFiles` compares only the file list;
   `EnvVar`, `Var`, `SecretDep` and `AlwaysRerun` are as before.
 - Order in a task (`execOne.run`): static `needs`, the verdict, the pre-hash, the locks, the body,
   the outputs, the `Store` (awaited: a dependent that sees the task finished sees its result).
@@ -192,7 +198,7 @@ letter, are normalised the same way, so the matcher compares Xake's forms only.
 
 `File`, `Target` and rule matching compare ordinally on every OS. Filesets and `Path.matches`
 ignore case by default; `FilesetOptions.CaseSensitive` (`casesensitive`) makes a fileset's search
-ordinal, and files found keep their spelling on disk. Per run `ExecContext.Spellings` maps the
+ordinal, and files found keep their spelling on disk. Per run `ExecContext.Run.Spellings` maps the
 upper-cased path to its first spelling: a second spelling of one file is an error when both are
 targets that matched a rule and a warning (once per pair) otherwise.
 

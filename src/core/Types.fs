@@ -289,6 +289,15 @@ module DomainTypes =
         /// The order of request (`--schedule=as-requested`).
         | AsRequested
 
+    /// Creates a new build result
+    let makeResult target =
+        { Targets = target
+          Built = System.DateTime.Now
+          Epoch = 0
+          Depends = []
+          Steps = []
+          StaticCount = 0 }
+
     /// Defines common exception type
     exception XakeException of string
 
@@ -372,3 +381,29 @@ module internal Secrets =
         | EnvVar (name, value) when isSecret name -> toDependency SecretEnv name value
         | Var (name, value) when isSecret name -> toDependency SecretArg name value
         | d -> d
+
+/// Utility methods to manipulate build stats
+module internal Step =
+
+    type DateTime = System.DateTime
+
+    let start name = {StepInfo.Empty with Name = name; Start = DateTime.Now}
+
+    /// <summary>
+    /// Updated last (current) build step
+    /// </summary>
+    let updateLastStep fn = function
+        | {Steps = current :: rest} as result -> {result with Steps = (fn current) :: rest}
+        | result -> result
+
+    /// <summary>
+    /// Adds specific amount to a wait time
+    /// </summary>
+    let updateWaitTime delta = updateLastStep (fun c -> {c with WaitTime = c.WaitTime + delta})
+    /// The milliseconds since `startTime`.
+    let msSince (startTime: DateTime) = int (DateTime.Now - startTime).TotalMilliseconds * 1<ms>
+    let updateTotalDuration =
+        updateLastStep (fun c -> {c with OwnTime = (msSince c.Start) - c.WaitTime})
+    let lastStep = function
+        | {Steps = current :: _} -> current
+        | _ -> start "dummy"

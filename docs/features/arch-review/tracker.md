@@ -12,3 +12,4 @@
 | 8 | Two verdict entry points, `Of` and `Fresh` (candidate 2) | done: `Verdicts.Planned`, `Verdicts.ForTask` |
 | 9 | `FastGate` (candidate 13) | done: kept, reason stated, in `RunState` with `TaskWaits` |
 | 10 | Test gaps (candidate 16); C12 hole: a failed stat in `claim` leaves claims open | done: C12 fixed (43d81e6); tests for C2, C4, C6, C13, `--dryrun` |
+| 11 | Two epochs (candidate 12); finding: overlapping runs can miss a change | proposed, [epochs.md](epochs.md); waiting for the owner |

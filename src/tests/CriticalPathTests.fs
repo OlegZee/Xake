@@ -120,8 +120,9 @@ type ``Critical path``() =
         let ia = List.findIndex ((=) "a") order
         // as above: the first waves, with room for a slow runner (as-requested: after 20)
         Assert.That(ia, Is.LessThan 16, "a among the first holders")
-        // b waits for a (2 units); meanwhile the other 3 units serve about 6 short tasks
-        Assert.That(List.findIndex ((=) "b") order, Is.LessThan (ia + 13), "b on the first unit after a")
+        // b waits for a (2 units); meanwhile the other 3 units serve 5-12 short tasks here, 14 on a
+        // slow CI runner (as-requested b comes after every short task: about 40)
+        Assert.That(List.findIndex ((=) "b") order, Is.LessThan (ia + 18), "b on the first unit after a")
         x.Clean ()
         let order, asRequested = x.Run 16 AsRequested (x.Locked lock)
         Assert.That(List.findIndex ((=) "a") order, Is.GreaterThan 20, "as-requested")

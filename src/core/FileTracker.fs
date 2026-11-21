@@ -31,7 +31,7 @@ module internal FileTracker =
     /// The decision about one observation of a file, without I/O or state (docs/features/idle-perf,
     /// L1): the rules of decision 1c, A1 and content cut-off (docs/implnotes.md, "Epochs"). One
     /// pair of functions per kind of observation, the rule before hashing and the one after it;
-    /// no rule depends on another mode's (docs/features/arch-review/decide.md).
+    /// no rule depends on another mode's.
     module internal FileRule =
         /// What the run knows about the file besides its record.
         type RuleContext = {
@@ -155,7 +155,7 @@ module internal FileTracker =
     /// from the record as it is then (a rule may have rewritten the file in this run since), taking
     /// only `File.exists` instead of a full stat. `Recording` and `Output` claim too, so that a
     /// verdict after them waits for their write, but never wait themselves: they follow writes made
-    /// in this run and must stat again (docs/features/arch-review/observe.md).
+    /// in this run and must stat again.
     [<Sealed>]
     type RunFiles internal () =
         let observed = System.Collections.Concurrent.ConcurrentDictionary<File, System.Threading.Tasks.Task>()
@@ -217,7 +217,7 @@ module internal FileTracker =
     /// The epoch a change observed now is stamped with. Normally the newest handed out, which is
     /// the observing run's own. When a newer run has started (overlapping engine runs), a fresh one:
     /// the newest may be the epoch of a result that run built from the file's previous content,
-    /// and `changed > epoch` would miss the change (docs/features/arch-review/epochs.md). A context
+    /// and `changed > epoch` would miss the change. A context
     /// without a run epoch (0) keeps the newest.
     let private changeEpoch (oc: Context) =
         let newest = oc.Db.Snapshot.Epoch

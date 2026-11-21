@@ -1,7 +1,7 @@
 # How the engine observes files and decides (as of v5.0.0-preview.3)
 
 This describes the system as it is at `v5.0.0-preview.3` (407765f, feature/idle-perf), with the
-file layout of the architecture review (feature/arch-review, topic 1), not the history of the
+file layout of the architecture review, not the history of the
 change. The history and the measurements are in [brief.md](brief.md),
 [design.md](design.md) and [cold-hot.md](cold-hot.md). Section 7 lists candidates for review.
 
@@ -73,7 +73,7 @@ is running (`Scheduler.query`), and L7 submits tasks to it.
 
 ### The observation sequence (`FileTracker.observe oc mode since files`)
 
-Three private steps, joined by `observe` (arch-review, topic 6):
+Three steps, joined by `observe`:
 
 1. **`claim`.** Each distinct file is claimed in `RunFiles`, except in `PreHash` mode (its record
    is the one before the rule runs; a verdict waiting for it would read a stale record).
@@ -116,8 +116,7 @@ Three private steps, joined by `observe` (arch-review, topic 6):
   a running dependee) in `ctx.Run.TaskWaits`; verdicts wait for verdicts in `verdictWaits`.
   Both are a `WaitFor` (ExecTypes.fs: edges by target name, `TryAdd` refuses a cycle). A verdict
   never waits for a task (it only queries the scheduler, and takes a dependee into the transitive
-  rule only when its task has not started), so no cycle runs through both maps
-  ([arch-review/wait-for.md](../arch-review/wait-for.md)).
+  rule only when its task has not started), so no cycle runs through both maps.
 - **`Warm goals`** decides, in parallel, the verdicts of the graph the estimate visits: each
   target, then the dependees named in its reasons.
 - **`Ready t` / `Estimate t`** read synchronously what `Warm` decided. Durations are the last
@@ -201,11 +200,11 @@ Close: agent -> Drain -> writer flushes the rest, closes, releases the lock
 | C12 | a failed stat, hash or caller between claim and completion | claims never completed, so verdicts wait forever | `claim` completes its claims when a stat throws; `finally` completes them after `settle`; the hasher releases its slot in `finally`; `Content.hash` never throws | `a failed observation completes the claims it took` |
 | C13 | overlapping engine runs | one run clears another's per-run state | `RunFiles` and `Verdicts` per run; a change is stamped with the newest epoch, or a fresh one when the observing run is not the newest (else a change seen first by the older run could equal the newer run's result epoch and be missed); the cost is at most one extra build | `overlapping demands of different targets keep their own runs`; `a change seen first by the older overlapping run rebuilds what the newer one built`; EpochTests (epochs) |
 | C14 | hold-and-wait on resources | a silent hang | `need` of a rule target while holding a resource is refused | ResourceGuardTests (existing) |
-| C15 | the fast path floods the pool | too many verdicts at once; a verdict `Warm` did not decide stats files synchronously on a pool thread | `ctx.Run.FastGate` (a semaphore of cores); measured in arch-review/fastgate.md | none |
+| C15 | the fast path floods the pool | too many verdicts at once; a verdict `Warm` did not decide stats files synchronously on a pool thread | `ctx.Run.FastGate` (a semaphore of cores; measured: no gain without it) | none |
 
 ## 5. Public API and internals
 
-The database, the tracker and the probe are engine internals (arch-review, topic 2). Public are
+The database, the tracker and the probe are engine internals. Public are
 the read API and one opaque handle. A module is public or internal as a whole; `EngineState` has an
 internal representation, so nothing internal shows through it:
 
@@ -214,7 +213,7 @@ internal representation, so nothing internal shows through it:
 - **Public elsewhere:** `ExecContext` (a record, frozen within 5.x by `RecordShapeTests`):
   `Engine`, `Run`, `Vars`, `Targets`, `RuleMatches`, `Ordinal`, `Logger`, `HeldResources`;
   `EngineState` and `RunState` (records with internal fields: the engine's and the run's state,
-  so per-run state changes without changing `ExecContext`; topic 7); `RunSummary`;
+  so per-run state changes without changing `ExecContext`); `RunSummary`;
   `Scheduler`, `TaskState`, `ExecMessage`.
 - **Internal:** all of `FileProbe` and `FileTracker`; `RunState`'s fields (with `TaskWaits`, `FastGate`); `RunCounters`; `Db` (the handle and its module); `ExecContext.Db`; `DatabaseApi`, `Db.Post*`, `Db.openWith`/`openFile`/`memoryOnly`/`delete`,
   `Db.apply`/`store`/`newRun`/`keepInMemory`/`close`, `Persist`, `DbFile`, `DbAgent`, `LegacyRead`;
@@ -228,45 +227,17 @@ There are no new keywords and no new options. Behaviour is the same as preview.2
 admitted change: overlapping engine runs keep their own per-run sets. The release notes list the
 API changes for code that used `DatabaseApi` directly.
 
-## 7. Candidates for review (looks accidental, over-complex or hard to explain)
+## 7. Open candidates
 
-1. **Two wait-for maps.** Done (arch-review, topic 4): two maps by design, one `WaitFor`
-   primitive, `TaskWaits` and `verdictWaits`; `fresh` registers no edges (section 1).
-2. **Two verdict entry points.** Done (arch-review, topic 8): `Planned` and `ForTask`, both in
-   `Verdicts`, with the reason for two in its doc comment.
-3. **`RunFiles` claims do two jobs.** Settled (arch-review, topic 6): a claim is an ordering
-   barrier, not a cache of answers; a memo of the first answer would be stale when a rule rewrites
-   the file in the run. The reasons are now in the comments on `RunFiles` and `claim`.
-4. **Two kinds of stat in one call.** Settled with 3: the later verdict needs only existence.
-   `answerLater` is its own step.
-5. **`Database.fs` holds everything.** Done (arch-review, topic 1): `DatabaseFormat.fs`,
-   `Database.fs`, `FileProbe.fs`, `FileTracker.fs`, section 1.
-6. **`Db` exposes its raw mailbox.** Done (arch-review, topic 2): `DatabaseApi` and `Db.Post*`
-   are internal; the engine uses `Db.apply`, `Db.store`, `Db.newRun`, `Db.keepInMemory`,
-   `Db.close`.
-7. **Engine internals in a public record.** Done (arch-review, topic 7): they are in
-   `ExecContext.Run` (`RunState`, internal fields).
-8. **`ExecContext.Observe`** (internal) builds a `FileTracker.Context` on every call. The A3 observation in
-   `ExecCore.storeResult` overrides `Hashing = false` and uses `Verdict` mode, so it claims the
-   files in `RunFiles` as a verdict would. This is correct, but subtle.
-9. **The conflict retry limit of 3 is arbitrary.** Done (topic 6): `maxRounds`, and a Debug line
-   when it is reached.
-10. **`prepareOne` returns `Choice<File, Async<...>>`.** A named union (`PlainFile` | `Task`)
-    would read better.
-11. **The `Store`-before-`Done` ordering (C2) is implicit.** It holds because `storeResult` is
-    awaited inside the task's action. Nothing enforces it, and no test targets it.
-12. **Two epochs.** Done (arch-review, topic 11): results take the run's own epoch
-    (`ctx.Run.RunEpoch`), changes the newest handed out (`RuleContext.ChangeEpoch`) or, in a run
-    that is not the newest, a fresh one. The newest alone missed a change seen first by the older
-    of two overlapping runs (fixed; arch-review/epochs.md).
-13. **`FastGate`** Settled (arch-review, topic 9): kept, measured (no gain without it; full builds
-    slower and less stable); the reason is the synchronous stats of a verdict `Warm` did not
-    decide. It and `TaskWaits` are in `RunState`, not in the counters.
-14. **`getDurationDeps`** still carries the comment "No clue why one method does both".
-    `Estimate` wraps it, and a target that was not warmed reads as 0.
-15. **Lifetime and log wording.** The hasher is never stopped (its semaphore is not disposed),
-    and the writer's failure messages still say "Database agent".
-16. **Test gaps.** Done (arch-review, topic 10): C2, C4, C6, C12, C13 and `--dryrun` have
-    tests; C12 had a hole (a failed stat in `claim` left claims open), fixed. The as-requested
-    estimate is not schedule-dependent in the code (`Warm` runs whatever the schedule), so no
-    test of its own.
+Decided and done in the architecture review: see `docs/features/arch-review/brief.md`. Open:
+
+1. **The A3 observation** in `ExecCore.storeResult` uses `Verdict` mode without hashing, so it
+   claims the files as a verdict would. Correct but subtle: a named step with a comment.
+2. **`prepareOne` returns `Choice<File, Async<...>>`.** A named union (`PlainFile` | `Scheduled`)
+   would read better.
+3. **The `Store`-before-`Done` ordering (C2)** holds because `storeResult` is awaited inside the
+   task's action. It has a test; a comment at the call sites would name the order.
+4. **`getDurationDeps`** still says "No clue why one method does both" (the estimate's view of a
+   target: its last own time and the dependees its verdict names). A target not warmed reads 0.
+5. **Lifetime and log wording.** The hasher is never stopped (its semaphore is not disposed), and
+   the writer's failure messages still say "Database agent".

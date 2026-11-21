@@ -232,9 +232,9 @@ let getDurationDeps ctx getDeps t =
 /// dependee's verdict still in progress registers the edge in `verdictWaits`; an edge that would
 /// close a cycle is refused and the dependee counts as changed (two entries into one cycle cannot
 /// wait for each other). A verdict never waits for a task, so these edges and the tasks' own
-/// (`TaskWaits`) cannot form one cycle (docs/features/arch-review/wait-for.md).
+/// (`TaskWaits`) cannot form one cycle.
 ///
-/// Two entry points (docs/features/arch-review/of-fresh.md): `Planned` is decided early, often
+/// Two entry points: `Planned` is decided early, often
 /// before any task runs, and never waits for a task; `ForTask` is a starting task's own verdict,
 /// after the dependees running now have finished. With content cut-off a dependee rebuilt to the
 /// same content is not a change, so the planned verdict can be stale by the time the task

@@ -85,7 +85,7 @@ type IRunSummarySink =
 
 /// Who waits for whom, by target name: edges `waiter -> awaited`, each with a payload. A pure
 /// data structure without a lock: its owner locks. Used twice, for two kinds of waiter that can
-/// never form one cycle together (docs/features/arch-review/wait-for.md): tasks (`TaskWaits`) and
+/// never form one cycle together: tasks (`TaskWaits`) and
 /// verdict computations (`Verdicts`).
 [<Sealed>]
 type internal WaitFor<'p>() =
@@ -224,7 +224,7 @@ and EngineState = internal {
 
 /// The state of one run that the engine keeps for a recipe's context: an opaque part of
 /// `ExecContext`, so per-run state can change within a major without changing the public record
-/// (docs/features/arch-review/engine-state.md). `beginRun` replaces it.
+/// (the record is frozen within a major). `beginRun` replaces it.
 and RunState = internal {
     /// The progress sink of the run (`openProgress`), or the empty one.
     Progress: Agent<Progress.ProgressReport>
@@ -251,7 +251,7 @@ and RunState = internal {
     TaskWaits: TaskWaits
     /// Bounds the fast path's verdicts at once (at most the cores): a verdict `Warm` did not decide
     /// is decided there, and its observation takes the stats synchronously on a pool thread
-    /// (docs/features/arch-review/fastgate.md).
+    /// (measured: no gain without it, full builds slower and less stable).
     FastGate: System.Threading.SemaphoreSlim
 }
 

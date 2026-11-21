@@ -239,9 +239,8 @@ type ``XakeEngine tests``() =
         Assert.AreNotEqual(epochOf "c13a.txt", epochOf "c13b.txt")
 
     /// A change seen first by the older of two overlapping runs is not lost: it is stamped with a
-    /// fresh epoch, above the result the newer run built from the file's previous content
-    /// (docs/features/arch-review/epochs.md; it was stamped with the newer run's epoch, and the
-    /// stale result was kept).
+    /// fresh epoch, above the result the newer run built from the file's previous content (it was
+    /// stamped with the newer run's epoch, and the stale result was kept).
     [<Test>]
     member x.``a change seen first by the older overlapping run rebuilds what the newer one built``() =
         let root = x.TestOptions.ProjectRoot

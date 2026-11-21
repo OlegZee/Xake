@@ -63,7 +63,7 @@ let ``the estimate reads the warmed verdicts``() =
         Assert.AreEqual((300<ms>, ([]: Target list)), verdicts.Estimate out)
     finally finalize ()
 
-/// The wait-for primitive both maps use (docs/features/arch-review/wait-for.md).
+/// The wait-for primitive both maps use.
 [<Test>]
 let ``a wait-for edge closing a cycle is refused``() =
     let g = WaitFor<unit>()

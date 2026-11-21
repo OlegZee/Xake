@@ -188,18 +188,18 @@ Close: agent -> Drain -> writer flushes the rest, closes, releases the lock
 | # | Point | Risk | How it is closed | Test |
 |---|---|---|---|---|
 | C1 | snapshot readers vs the agent | a torn or half-updated view | immutable maps behind a volatile field, replaced whole | `the snapshot holds a stored result once Store replies` |
-| C2 | a dependent reads a dependee's result | sees `Finished` before the result is in the snapshot | `Store` is awaited inside the task action, before the pool's `Done` | covered by every engine test that rebuilds dependents; no dedicated test |
+| C2 | a dependent reads a dependee's result | sees `Finished` before the result is in the snapshot | `Store` is awaited inside the task action, before the pool's `Done` | `a dependent sees its dependee's result once need returns` |
 | C3 | two callers decide one file | both write; a lost update | `Apply` compare-and-set; the loser re-stats and decides against the winner's record | `racing observations of a new file write one record...` |
-| C4 | an older stat after a newer record | the stamp moves back, so dependents rebuild once more | the conflict path re-stats; a stale `expected` never applies | **no direct test** (reverse-order stats) |
+| C4 | an older stat after a newer record | the stamp moves back, so dependents rebuild once more | the conflict path re-stats; a stale `expected` never applies | `an older stat does not move a newer record back` (`settle` with a stale `Pending`) |
 | C5 | a verdict's later observation vs the first | answers from a record the first has not written yet | `RunFiles` claim: later verdicts wait for the first's completion, then read the snapshot | `a verdict's later observation sees a deleted file` (sequential only) |
-| C6 | deadlock between claims | A waits for B's claim while B waits for A's | a call completes all its own claims (`finally`) before it waits for others | **no direct test** |
+| C6 | deadlock between claims | A waits for B's claim while B waits for A's | a call completes all its own claims (`finally`) before it waits for others | `observations of overlapping groups in opposite orders do not deadlock` |
 | C7 | one file hashed twice | wasted work; different answers | the hasher shares one computation per (file, stat) | `the hasher computes a (file, stat) once while it runs` |
 | C8 | verdicts waiting on each other (memo) | deadlock on a cycle in the records | `verdictWaits` (`WaitFor`); an edge closing a cycle is refused (= changed) | `two entries into one cycle finish`, `a target depending on itself finishes` (both hang without the guard) |
 | C9 | a task's verdict waits for a running dependee | deadlock with `need` waits | `ctx.Run.TaskWaits` (`WaitFor`): refuse or cancel a wait that closes a cycle | ContentCutoffTests (existing); `WaitFor` unit tests |
 | C10 | one target requested twice | built twice | the pool's queued/running/finished maps; `NewRun` clears finished | `builds a target requested twice in one run only once` (existing) |
 | C11 | writer order and close | records lost or reordered at exit | the agent posts in order; `Close` awaits `Drain` | `closing drains the writer, in order` |
 | C12 | a failed stat, hash or caller between claim and completion | claims never completed, so verdicts wait forever | `claim` completes its claims when a stat throws; `finally` completes them after `settle`; the hasher releases its slot in `finally`; `Content.hash` never throws | `a failed observation completes the claims it took` |
-| C13 | overlapping engine runs | one run clears another's per-run state | `RunFiles` and `Verdicts` per run; the epoch is shared (the newest handed out) | **no direct test** |
+| C13 | overlapping engine runs | one run clears another's per-run state | `RunFiles` and `Verdicts` per run; the epoch is shared (the newest handed out), so the run with the older epoch may build once more on its next demand, never miss a change | `overlapping demands of different targets keep their own runs`; EpochTests (epochs) |
 | C14 | hold-and-wait on resources | a silent hang | `need` of a rule target while holding a resource is refused | ResourceGuardTests (existing) |
 | C15 | the fast path floods the pool | too many verdicts at once; a verdict `Warm` did not decide stats files synchronously on a pool thread | `ctx.Run.FastGate` (a semaphore of cores); measured in arch-review/fastgate.md | none |
 
@@ -264,5 +264,7 @@ API changes for code that used `DatabaseApi` directly.
     `Estimate` wraps it, and a target that was not warmed reads as 0.
 15. **Lifetime and log wording.** The hasher is never stopped (its semaphore is not disposed),
     and the writer's failure messages still say "Database agent".
-16. **Test gaps:** C4, C6, C12 and C13 have no direct test. The as-requested estimate and
-    `--dryrun` on `Verdicts` are tested only at the `Verdicts` level.
+16. **Test gaps.** Done (arch-review, topic 10): C2, C4, C6, C12, C13 and `--dryrun` have
+    tests; C12 had a hole (a failed stat in `claim` left claims open), fixed. The as-requested
+    estimate is not schedule-dependent in the code (`Warm` runs whatever the schedule), so no
+    test of its own.

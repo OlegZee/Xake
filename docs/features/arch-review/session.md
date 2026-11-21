@@ -43,5 +43,10 @@
   are `RunState` fields, `RunCounters` holds only counters. Full suite 1,893 passed, 0 failed;
   bench (Xake's own time) full 0.63-0.71 s, no-change 0.14-0.20 s.
 
-**Next step.** The owner picks from architecture.md section 7 (open: 8, 10-12, 14-16). PR into
+- Topic 10 done: the C12 hole fixed (`claim` completes its claims when a stat throws); tests for
+  C2, C4, C6, C13, `--dryrun`. The C13 test shows the admitted cost of the shared epoch: the run
+  with the older epoch may build once more, then settles. Full suite 1,899 passed, 0 failed (four
+  runs).
+
+**Next step.** The owner picks from architecture.md section 7 (open: 8, 10-12, 14, 15). PR into
 `feature/idle-perf` only on the owner's word.

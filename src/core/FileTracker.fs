@@ -177,7 +177,7 @@ module internal FileTracker =
 
     /// A file this observation decides: whether another body recorded it in this run (A1), the
     /// record it is decided against, and its stat.
-    type private Pending = { File: File; RecordedBefore: bool; Known: FileState option; Stat: FileStat }
+    type internal Pending = { File: File; RecordedBefore: bool; Known: FileState option; Stat: FileStat }
 
     /// The rounds of deciding and writing before the current record is taken as the answer: a
     /// conflict needs another observer to write the same file between our read and our write.
@@ -188,7 +188,7 @@ module internal FileTracker =
     /// claims taken are completed before the exception leaves. `PreHash` claims nothing:
     /// its record is the one before the rule runs, and a verdict waiting for it would read a stale
     /// record.
-    let private claim (oc: Context) (mode: ObserveMode) (files: File list) =
+    let internal claim (oc: Context) (mode: ObserveMode) (files: File list) =
         let firsts = ResizeArray<System.Threading.Tasks.TaskCompletionSource<unit>>()
         let waits = ResizeArray<File * System.Threading.Tasks.Task>()
         let pending = ResizeArray<Pending>()
@@ -217,7 +217,7 @@ module internal FileTracker =
     /// hashes the rule asks for (in parallel), every write in one `Db.apply`; a conflict is decided
     /// again on a fresh stat against the current record, for at most `maxRounds` rounds. The
     /// answer per file.
-    let private settle (oc: Context) (mode: ObserveMode) (pending: Pending list) = async {
+    let internal settle (oc: Context) (mode: ObserveMode) (pending: Pending list) = async {
         let answers = System.Collections.Generic.Dictionary<File, FileState option>()
         let rec round n (pending: Pending list) = async {
             if not pending.IsEmpty then

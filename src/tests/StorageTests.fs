@@ -617,3 +617,39 @@ let ``a failed observation completes the claims it took``() =
     let later = FileTracker.observe oc Verdict 0 [ good ] |> Async.StartAsTask
     Assert.IsTrue(later.Wait(System.TimeSpan.FromSeconds 10.0), "the claim of good.c was left open")
     db.PostAndReply CloseWait
+
+/// Two observations of the same files in opposite orders at once do not wait for each other (C6):
+/// each completes its own claims before it waits for another's.
+[<Test>]
+let ``observations of overlapping groups in opposite orders do not deadlock``() =
+    File.WriteAllText("c6f.c", "f")
+    File.WriteAllText("c6g.c", "g")
+    let f, g = File.make "c6f.c", File.make "c6g.c"
+    let db = openDb () logger
+    let all = async {
+        for _ in 1 .. 500 do
+            let _, run = newRun db
+            let oc = { Db = db; Hasher = hasher; Run = run; Hashing = false; OnHashed = ignore; Log = logger }
+            do! [ FileTracker.observe oc Verdict 0 [ f; g ]; FileTracker.observe oc Verdict 0 [ g; f ] ]
+                |> Async.Parallel |> Async.Ignore }
+    Assert.IsTrue((Async.StartAsTask all).Wait(System.TimeSpan.FromSeconds 60.0), "the observations deadlocked")
+    db.PostAndReply CloseWait
+
+/// An observation decided on an older stat than the current record conflicts, is decided again
+/// on a fresh stat, and leaves the newer record in place (C4).
+[<Test>]
+let ``an older stat does not move a newer record back``() =
+    File.WriteAllText("c4.c", "x")
+    let f = File.make "c4.c"
+    let db = openDb () logger
+    let _, run = newRun db
+    let oc = { Db = db; Hasher = hasher; Run = run; Hashing = false; OnHashed = ignore; Log = logger }
+    observeIn db run false Recording 0 f |> ignore
+    let current = db.Snapshot.Files.[f]
+    // an observer that read no record and took its stat before the file was last written
+    let stale = { FileTracker.Pending.File = f; FileTracker.Pending.RecordedBefore = false; FileTracker.Pending.Known = None
+                  FileTracker.Pending.Stat = Present (current.Stamp.AddSeconds -5.0, current.Size) }
+    let answers = FileTracker.settle oc Recording [ stale ] |> Async.RunSynchronously
+    Assert.AreEqual(Some current, answers.[f], "the answer is the newer record")
+    Assert.AreEqual(current, db.Snapshot.Files.[f], "the record was not moved back")
+    db.PostAndReply CloseWait

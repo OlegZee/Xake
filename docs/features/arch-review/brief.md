@@ -63,3 +63,6 @@ section 7. One decision per line, with its date. Decisions are not re-litigated.
 - 2026-11-21 (topic 10, [test-gaps.md](test-gaps.md)): fix the C12 hole (`claim` completes the
   claims it took when it fails) with its test; tests for C6, C4 (`claim`/`settle` internal), C13,
   C2, `--dryrun`, the as-requested estimate.
+- 2026-11-21 (topic 11, [epochs.md](epochs.md)): option a: in a run that is not the newest (and
+  has a run epoch), a settle round stamps changes with a fresh epoch from the agent; test from the
+  reproduction; `RuleContext.Epoch` -> `ChangeEpoch`.

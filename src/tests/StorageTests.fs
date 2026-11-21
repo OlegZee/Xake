@@ -37,7 +37,7 @@ module private impl =
     let hasher = Hasher()
     /// Observes one file through the facade (L5).
     let observeIn (a : Db) run hashing mode since f =
-        (FileTracker.observe { Db = a; Hasher = hasher; Run = run; Hashing = hashing; OnHashed = ignore; Log = logger } mode since [ f ] |> Async.RunSynchronously).[0]
+        (FileTracker.observe { Db = a; Hasher = hasher; Run = run; RunEpoch = 0; Hashing = hashing; OnHashed = ignore; Log = logger } mode since [ f ] |> Async.RunSynchronously).[0]
     // Is.Any predicate for assertions
     let IsAny() = Is.Not.All.Not
 
@@ -520,7 +520,7 @@ let ``a batch observes like single observations``() =
         for f in [ dbname; dbname + ".bak" ] do try File.Delete f with _ -> ()
         let db = openDb () logger
         let epoch, run = newRun db
-        let oc = { Db = db; Hasher = Hasher(); Run = run; Hashing = false; OnHashed = ignore; Log = logger }
+        let oc = { Db = db; Hasher = Hasher(); Run = run; RunEpoch = 0; Hashing = false; OnHashed = ignore; Log = logger }
         let replies =
             if single then [ for f in files -> (FileTracker.observe oc Recording 0 [ f ] |> Async.RunSynchronously).[0] ]
             else FileTracker.observe oc Recording 0 files |> Async.RunSynchronously |> List.ofArray
@@ -539,7 +539,7 @@ let ``racing observations of a new file write one record, and an unchanged file 
     let f = File.make "race.c"
     let db = openDb () logger
     let _, run = newRun db
-    let oc = { Db = db; Hasher = Hasher(); Run = run; Hashing = false; OnHashed = ignore; Log = logger }
+    let oc = { Db = db; Hasher = Hasher(); Run = run; RunEpoch = 0; Hashing = false; OnHashed = ignore; Log = logger }
     [ for _ in 1 .. 16 -> FileTracker.observe oc Recording 0 [ f ] ] |> Async.Parallel |> Async.RunSynchronously |> ignore
     let _, run2 = newRun db
     FileTracker.observe { oc with Run = run2 } Verdict 0 [ f ] |> Async.RunSynchronously |> ignore
@@ -611,7 +611,7 @@ let ``a failed observation completes the claims it took``() =
     File.WriteAllText("good.c", "x")
     let db = openDb () logger
     let _, run = newRun db
-    let oc = { Db = db; Hasher = hasher; Run = run; Hashing = false; OnHashed = ignore; Log = logger }
+    let oc = { Db = db; Hasher = hasher; Run = run; RunEpoch = 0; Hashing = false; OnHashed = ignore; Log = logger }
     let good, bad = File.make "good.c", File.make "bad\000.c"
     Assert.Catch(fun () -> FileTracker.observe oc Verdict 0 [ good; bad ] |> Async.RunSynchronously |> ignore) |> ignore
     let later = FileTracker.observe oc Verdict 0 [ good ] |> Async.StartAsTask
@@ -629,7 +629,7 @@ let ``observations of overlapping groups in opposite orders do not deadlock``() 
     let all = async {
         for _ in 1 .. 500 do
             let _, run = newRun db
-            let oc = { Db = db; Hasher = hasher; Run = run; Hashing = false; OnHashed = ignore; Log = logger }
+            let oc = { Db = db; Hasher = hasher; Run = run; RunEpoch = 0; Hashing = false; OnHashed = ignore; Log = logger }
             do! [ FileTracker.observe oc Verdict 0 [ f; g ]; FileTracker.observe oc Verdict 0 [ g; f ] ]
                 |> Async.Parallel |> Async.Ignore }
     Assert.IsTrue((Async.StartAsTask all).Wait(System.TimeSpan.FromSeconds 60.0), "the observations deadlocked")
@@ -643,7 +643,7 @@ let ``an older stat does not move a newer record back``() =
     let f = File.make "c4.c"
     let db = openDb () logger
     let _, run = newRun db
-    let oc = { Db = db; Hasher = hasher; Run = run; Hashing = false; OnHashed = ignore; Log = logger }
+    let oc = { Db = db; Hasher = hasher; Run = run; RunEpoch = 0; Hashing = false; OnHashed = ignore; Log = logger }
     observeIn db run false Recording 0 f |> ignore
     let current = db.Snapshot.Files.[f]
     // an observer that read no record and took its stat before the file was last written

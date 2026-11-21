@@ -104,8 +104,12 @@ The file starts with a version header (`Storage.DbReader.formatVersion`, `0.7`; 
   seen changed in run `r` has `changed = r`, so a target that `need`s a dependee rebuilt in the
   same run (a dynamic need) is up to date on the next run (`r <= r`). A per-event counter would
   make it look out of date on every run.
-- Runs may overlap in engine mode (`Demand` of different names): an observation is stamped with
-  the newest epoch handed out, a result with the epoch its task started in. A delegated result
+- Runs may overlap in engine mode (`Demand` of different names): a change is stamped with the
+  newest epoch handed out, a result with the epoch its task started in. A run that is not the
+  newest stamps a change with a fresh epoch from the agent: with the newest, a change seen first
+  by the older run could equal the epoch of a result the newer run built from the previous
+  content, and `changed > epoch` would keep that stale result. The cost, with overlapping runs
+  only: a round trip per observation round, and at most one extra build. A delegated result
   that did not run its body keeps the local result's epoch; a foreign epoch is never stored.
 - A file is observed through `FileTracker.observe` (`DependencyAnalysis.observeMany`), a group
   of files at a time, in a mode: by a verdict once per run, then answered from the record; when a

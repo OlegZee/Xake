@@ -279,7 +279,7 @@ and ExecContext = {
     /// Where this context's file observations run: its database, its run, whether it hashes.
     member internal ctx.Observe =
         { FileTracker.Context.Db = ctx.Engine.Db; FileTracker.Context.Hasher = ctx.Engine.Hasher
-          FileTracker.Context.Run = ctx.Run.RunFiles; FileTracker.Context.Hashing = ctx.Engine.Options.ContentCutoff
+          FileTracker.Context.Run = ctx.Run.RunFiles; FileTracker.Context.RunEpoch = ctx.Run.RunEpoch; FileTracker.Context.Hashing = ctx.Engine.Options.ContentCutoff
           FileTracker.Context.OnHashed = match ctx.Run.Counters with null -> ignore | c -> c.FileHashed
           FileTracker.Context.Log = ctx.Logger }
 

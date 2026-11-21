@@ -48,5 +48,9 @@
   with the older epoch may build once more, then settles. Full suite 1,899 passed, 0 failed (four
   runs).
 
-**Next step.** The owner picks from architecture.md section 7 (open: 8, 10-12, 14, 15). PR into
+- Topic 11 done: a change observed in a run that is not the newest gets a fresh epoch (it was
+  missed when the older of two overlapping runs saw it first; reproduced, fixed, tested);
+  `RuleContext.ChangeEpoch`. Full suite 1,900 passed, 0 failed (three runs); bench unchanged.
+
+**Next step.** The owner picks from architecture.md section 7 (open: 8, 10, 11, 14, 15). PR into
 `feature/idle-perf` only on the owner's word.

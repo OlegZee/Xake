@@ -35,8 +35,9 @@ module internal FileTracker =
     module internal FileRule =
         /// What the run knows about the file besides its record.
         type RuleContext = {
-            /// The epoch a change is stamped with (the newest run handed out).
-            Epoch: int
+            /// The epoch a change is stamped with: the newest handed out, or a fresh one when the
+            /// observing run is not the newest (overlapping engine runs).
+            ChangeEpoch: int
             /// The run hashes (`--content-cutoff` on).
             Hashing: bool
             /// A body already recorded the file in this run (A1): a moved stat is not a change.
@@ -63,7 +64,7 @@ module internal FileTracker =
         let private write (known: FileState option) state = if Some state = known then Keep known else Write state
 
         /// A change in this run, without a hash.
-        let private changed stamp size (rc: RuleContext) = { Stamp = stamp; Size = size; Hash = None; Changed = rc.Epoch }
+        let private changed stamp size (rc: RuleContext) = { Stamp = stamp; Size = size; Hash = None; Changed = rc.ChangeEpoch }
 
         /// After hashing failed: absent when the file is gone, else a change without a hash.
         let private unreadable known stat rc =
@@ -88,7 +89,7 @@ module internal FileTracker =
             match hashed with
             | Unreadable stat -> unreadable known stat rc
             | Hashed (stamp, size, h) ->
-                let state = { Stamp = stamp; Size = size; Hash = Some h; Changed = rc.Epoch }
+                let state = { Stamp = stamp; Size = size; Hash = Some h; Changed = rc.ChangeEpoch }
                 match known with
                 | Some k when k.Hash = Some h -> write known { state with Changed = k.Changed }
                 | _ -> write known state
@@ -173,7 +174,7 @@ module internal FileTracker =
 
     /// Where an observation runs: the database, the hasher, the run's files, whether the run
     /// hashes, the counter of hashes computed, and the log.
-    type internal Context = { Db: Db; Hasher: Hasher; Run: RunFiles; Hashing: bool; OnHashed: System.TimeSpan -> unit; Log: ILogger }
+    type internal Context = { Db: Db; Hasher: Hasher; Run: RunFiles; RunEpoch: int; Hashing: bool; OnHashed: System.TimeSpan -> unit; Log: ILogger }
 
     /// A file this observation decides: whether another body recorded it in this run (A1), the
     /// record it is decided against, and its stat.
@@ -213,6 +214,15 @@ module internal FileTracker =
             reraise ()
         List.ofSeq firsts, List.ofSeq waits, List.ofSeq pending
 
+    /// The epoch a change observed now is stamped with. Normally the newest handed out, which is
+    /// the observing run's own. When a newer run has started (overlapping engine runs), a fresh one:
+    /// the newest may be the epoch of a result that run built from the file's previous content,
+    /// and `changed > epoch` would miss the change (docs/features/arch-review/epochs.md). A context
+    /// without a run epoch (0) keeps the newest.
+    let private changeEpoch (oc: Context) =
+        let newest = oc.Db.Snapshot.Epoch
+        if oc.RunEpoch > 0 && newest > oc.RunEpoch then Db.newRun oc.Db else async.Return newest
+
     /// Decides the files and writes the changed ones (step 3): the rule against each record, the
     /// hashes the rule asks for (in parallel), every write in one `Db.apply`; a conflict is decided
     /// again on a fresh stat against the current record, for at most `maxRounds` rounds. The
@@ -221,8 +231,8 @@ module internal FileTracker =
         let answers = System.Collections.Generic.Dictionary<File, FileState option>()
         let rec round n (pending: Pending list) = async {
             if not pending.IsEmpty then
-                let epoch = oc.Db.Snapshot.Epoch
-                let rc (p: Pending) = { FileRule.Epoch = epoch; FileRule.Hashing = oc.Hashing; FileRule.RecordedBefore = p.RecordedBefore }
+                let! epoch = changeEpoch oc
+                let rc (p: Pending) = { FileRule.ChangeEpoch = epoch; FileRule.Hashing = oc.Hashing; FileRule.RecordedBefore = p.RecordedBefore }
                 let decided = [ for p in pending -> p, FileRule.decide p.Known p.Stat mode (rc p) ]
                 // only the files to hash go through the hasher, in parallel
                 let! hashed =

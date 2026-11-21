@@ -15,7 +15,7 @@ let private t0 = System.DateTime(2026, 1, 1)
 let private record changed hash = { Stamp = t0; Size = 10L; Hash = hash; Changed = changed }
 let private same = Present (t0.AddMilliseconds 5.0, 10L)        // within 10 ms, the same size
 let private moved = Present (t0.AddSeconds 1.0, 12L)
-let private rc = { Epoch = 7; Hashing = false; RecordedBefore = false }
+let private rc = { ChangeEpoch = 7; Hashing = false; RecordedBefore = false }
 let private hashing = { rc with Hashing = true }
 let private movedState hash changed = { Stamp = t0.AddSeconds 1.0; Size = 12L; Hash = hash; Changed = changed }
 

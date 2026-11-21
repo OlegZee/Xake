@@ -5,8 +5,9 @@ open System.Threading.Tasks
 open NUnit.Framework
 
 open Xake
-open Xake.BuildLog
 open Xake.Storage
+open Xake.FileProbe
+open Xake.FileTracker
 
 /// An exception inside a MailboxProcessor loop used to kill the agent silently, leaving every
 /// later request waiting forever at 0 % CPU. These tests inject such a failure and require the
@@ -50,17 +51,15 @@ type AgentFailureTests() =
         Directory.CreateDirectory dir |> ignore
         let dbpath = dir </> ".xake"
         let mkTarget name = name |> File.make |> FileTarget
-        let get (db: Agent<DatabaseApi>) t = db.PostAndReply((fun ch -> GetResult(t, ch)), timeoutMs)
+        let get (db: Db) t = Storage.Db.tryGetResult db t
         try
-            let db = openDb dir dbpath logger
+            let db = Db.openFile dir dbpath logger
             let good1 = { makeResult [mkTarget "good1.dll"] with Depends = [ Var("A", Some "1") ] }
             // a null variable name makes the pickler throw (BinaryWriter.Write(null: string))
             // half way through the record
             let bad = { makeResult [mkTarget "bad.dll"] with Depends = [ Var("B", Some "2"); Var(null, None) ] }
             let good2 = { makeResult [mkTarget "good2.dll"] with Depends = [ Var("C", Some "3") ] }
-            Store good1 |> db.Post
-            Store bad |> db.Post
-            Store good2 |> db.Post
+            for r in [ good1; bad; good2 ] do db.PostAndReply((fun ch -> Store (r, ch)), timeoutMs)
 
             Assert.IsTrue((get db (mkTarget "bad.dll")).IsSome, "the result is kept in memory for this run")
             db.PostAndReply(CloseWait, timeoutMs)
@@ -73,7 +72,7 @@ type AgentFailureTests() =
 
             // reopen: the good records read back, the failed one left nothing in the file
             logged.Clear()
-            let db2 = openDb dir dbpath logger
+            let db2 = Db.openFile dir dbpath logger
             Assert.AreEqual(Some good1.Depends, get db2 (mkTarget "good1.dll") |> Option.map (fun r -> r.Depends))
             Assert.AreEqual(Some good2.Depends, get db2 (mkTarget "good2.dll") |> Option.map (fun r -> r.Depends))
             Assert.IsTrue((get db2 (mkTarget "bad.dll")).IsNone)

@@ -3,6 +3,7 @@ namespace Tests
 open System.IO
 open NUnit.Framework
 open Xake
+open Xake.Tasks
 
 [<TestFixture>]
 type ``XakeEngine tests``() =
@@ -175,4 +176,100 @@ type ``XakeEngine tests``() =
         eng.StopAsync().Wait()
 
         Assert.AreEqual(2, !count, "recipe must run twice; second demand triggered by changed var")
+
+    /// A dependent's recipe, after its `need`, sees the dependee's result in the database with
+    /// this run's epoch: the result is stored before the dependee's task is done (C2).
+    [<Test>]
+    member x.``a dependent sees its dependee's result once need returns``() =
+        let seen = ref None
+        let eng = xakeEngine {
+            phony "c2a" (recipe { do () })
+            phony "c2b" (recipe {
+                do! need [ "c2a" ]
+                let! ctx = getCtx ()
+                seen.Value <- Some (Storage.Db.tryGetResult ctx.Db (PhonyAction "c2a") |> Option.map (fun r -> r.Epoch), ctx.Run.RunEpoch) })
+            start
+        }
+        eng.Demand("c2b").Wait()
+        eng.StopAsync().Wait()
+        match seen.Value with
+        | Some (Some epoch, run) -> Assert.AreEqual(run, epoch)
+        | other -> Assert.Fail(sprintf "no result of c2a: %A" other)
+
+    /// Two Demands of different targets at once are two overlapping runs: each builds, each result
+    /// carries its own run's epoch, and the demands settle: at most one more build each, then
+    /// none (C13; EpochTests checks the
+    /// epochs of two overlapping phony runs).
+    [<Test>]
+    member x.``overlapping demands of different targets keep their own runs``() =
+        let root = x.TestOptions.ProjectRoot
+        File.WriteAllText(root </> "c13.c", "s")
+        let runs = ref 0
+        let current = ref 0
+        let overlap = ref 0
+        let body name = recipe {
+            do! need [ "c13.c" ]
+            System.Threading.Interlocked.Increment runs |> ignore
+            let n = System.Threading.Interlocked.Increment current
+            lock overlap (fun () -> if n > overlap.Value then overlap.Value <- n)
+            do! Async.Sleep 200
+            System.Threading.Interlocked.Decrement current |> ignore
+            do! writeText name }
+        let eng =
+            RulesBuilder { x.TestOptions with IgnoreCommandLine = true; Progress = false; Threads = 4 } {
+                rules [ "c13a.txt" ..> body "a"
+                        "c13b.txt" ..> body "b" ]
+                start
+            }
+        let demandBoth () = System.Threading.Tasks.Task.WaitAll(eng.Demand "c13a.txt", eng.Demand "c13b.txt")
+        demandBoth ()
+        Assert.AreEqual(2, runs.Value, "each target built once")
+        Assert.AreEqual(2, overlap.Value, "the two runs overlapped")
+        // a change is stamped with the newest epoch (or a fresh one in a run that is not the newest),
+        // so the run with the older epoch may see its shared source as changed after its result,
+        // and build once more (never a missed change; docs/implnotes.md, "Epochs")
+        demandBoth ()
+        Assert.That(runs.Value, Is.InRange(2, 4))
+        let settled = runs.Value
+        demandBoth ()
+        eng.StopAsync().Wait()
+        Assert.AreEqual(settled, runs.Value, "then both are up to date")
+        let db = Storage.DbReader.readDatabase root (root </> x.TestOptions.DbFileName)
+        let epochOf name = db.Status.[FileTarget (File.make (root </> name))].Epoch
+        Assert.AreNotEqual(epochOf "c13a.txt", epochOf "c13b.txt")
+
+    /// A change seen first by the older of two overlapping runs is not lost: it is stamped with a
+    /// fresh epoch, above the result the newer run built from the file's previous content (it was
+    /// stamped with the newer run's epoch, and the stale result was kept).
+    [<Test>]
+    member x.``a change seen first by the older overlapping run rebuilds what the newer one built``() =
+        let root = x.TestOptions.ProjectRoot
+        let f = root </> "e12.c"
+        File.WriteAllText(f, "v1")
+        let dBuilds = ref 0
+        let edited = new System.Threading.ManualResetEventSlim(false)
+        let eng =
+            RulesBuilder { x.TestOptions with IgnoreCommandLine = true; Progress = false; Threads = 4 } {
+                rules [ "e12d.txt" ..> recipe {
+                            do! need [ "e12.c" ]
+                            System.Threading.Interlocked.Increment dBuilds |> ignore
+                            do! writeText (File.ReadAllText f) }
+                        "slow" => recipe {
+                            do! Async.AwaitWaitHandle edited.WaitHandle |> Async.Ignore
+                            do! need [ "e12.c" ]
+                            do! alwaysRerun () } ]
+                start
+            }
+        let slow = eng.Demand "slow"          // run e1, waits
+        System.Threading.Thread.Sleep 100
+        eng.Demand("e12d.txt").Wait()          // run e2 builds d from v1
+        File.WriteAllText(f, "v2")
+        File.SetLastWriteTime(f, System.DateTime.Now.AddSeconds 5.0)
+        edited.Set()
+        slow.Wait()                            // run e1 observes the change first
+        eng.Demand("e12d.txt").Wait()          // run e3: d read v1, so it must rebuild
+        eng.StopAsync().Wait()
+        let content = File.ReadAllText(root </> "e12d.txt")
+        Assert.AreEqual("v2", content, "d.txt was rebuilt from the changed source")
+        Assert.AreEqual(2, dBuilds.Value)
 

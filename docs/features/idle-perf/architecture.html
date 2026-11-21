@@ -1,0 +1,432 @@
+<title>Xake: зависимости и база</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one reading column (~72ch) with wide figures and tables that scroll inside their own boxes. */
+:root {
+  --bg: #f6f7f9;
+  --surface: #ffffff;
+  --fg: #1b2230;
+  --muted: #5a6475;
+  --line: #d9dee6;
+  --accent: #2456b8;      /* the agent boundary, messages */
+  --caller: #1d7a5a;      /* work on the caller's thread */
+  --warn: #a6531a;        /* cost, regression */
+  --code-bg: #eef1f5;
+  --font-body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --font-head: "IBM Plex Sans Condensed", "IBM Plex Sans", "Arial Narrow", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #12161d; --surface: #1a2029; --fg: #e3e8ef; --muted: #9aa5b5; --line: #2e3744;
+    --accent: #7ea6ff; --caller: #5ccf9f; --warn: #f0a46a; --code-bg: #212833; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #12161d; --surface: #1a2029; --fg: #e3e8ef; --muted: #9aa5b5; --line: #2e3744;
+  --accent: #7ea6ff; --caller: #5ccf9f; --warn: #f0a46a; --code-bg: #212833; color-scheme: dark;
+}
+body {
+  background: var(--bg); color: var(--fg); font-family: var(--font-body); font-size: 16px; line-height: 1.55;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 32px 64px;
+}
+main { max-width: 980px; margin: 0 auto; display: flex; flex-direction: column; gap: 40px; }
+.prose { max-width: 72ch; }
+h1, h2, h3 { font-family: var(--font-head); font-weight: 600; text-wrap: balance; line-height: 1.2; margin: 0; }
+h1 { font-size: 2.1rem; letter-spacing: -0.01em; }
+h2 { font-size: 1.5rem; padding-top: 8px; border-top: 1px solid var(--line); }
+h3 { font-size: 1.15rem; margin-top: 8px; }
+section { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+p { margin: 0; }
+.lead { font-size: 1.1rem; color: var(--muted); max-width: 72ch; }
+.eyebrow { font-family: var(--font-mono); font-size: 0.8rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+code { font-family: var(--font-mono); font-size: 0.88em; background: var(--code-bg); padding: 0.05em 0.35em; border-radius: 3px; }
+pre.code {
+  font-family: var(--font-mono); font-size: 0.85rem; line-height: 1.5; background: var(--surface);
+  border: 1px solid var(--line); border-radius: 6px; padding: 14px 16px; margin: 0; overflow-x: auto;
+}
+pre.code .c { color: var(--muted); }
+.figure { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 16px; overflow-x: auto; }
+.figure pre.mermaid { margin: 0; background: transparent; min-width: 640px; }
+.caption { font-size: 0.88rem; color: var(--muted); }
+.tbl { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; }
+table { border-collapse: collapse; width: 100%; font-size: 0.92rem; }
+th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-weight: 600; color: var(--muted); font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.04em; }
+tr:last-child td { border-bottom: none; }
+td.n { font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; font-family: var(--font-mono); }
+.tag { display: inline-block; font-family: var(--font-mono); font-size: 0.75rem; padding: 1px 7px; border-radius: 10px; white-space: nowrap; border: 1px solid currentColor; }
+.tag.agent { color: var(--accent); }
+.tag.caller { color: var(--caller); }
+.tag.warn { color: var(--warn); }
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
+.stat { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; display: flex; flex-direction: column; gap: 4px; }
+.stat .v { font-family: var(--font-mono); font-size: 1.5rem; font-variant-numeric: tabular-nums; }
+.stat .v .was { color: var(--warn); }
+.stat .v .now { color: var(--caller); }
+.stat .k { font-size: 0.88rem; color: var(--muted); }
+.cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; }
+.cols > div { min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+ul { margin: 0; padding-left: 1.2em; display: flex; flex-direction: column; gap: 4px; }
+.note { border-left: 3px solid var(--warn); padding: 4px 0 4px 14px; max-width: 72ch; }
+a { color: var(--accent); }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+</style>
+
+<main>
+  <header style="display:flex;flex-direction:column;gap:10px">
+    <div class="eyebrow">Xake 5.0 · feature/idle-perf · дизайн по слоям, не принят</div>
+    <h1>Анализ зависимостей и агент базы: как сейчас и как предлагается</h1>
+    <p class="lead">Кто кого вызывает, какие сообщения пересекают границу агента базы, сколько их за запуск и кто делает файловый ввод-вывод. Ниже то же самое для предложенного разделения обязанностей. Числа сняты на бенчмарке <code>bench/build.fsx</code>: 1 188 файловых целей по 150 зависимостей, 6 групп, <code>-t 16</code>.</p>
+  </header>
+
+  <section>
+    <div class="stats">
+      <div class="stat"><span class="v"><span class="was">185 000</span> → <span class="now">~8</span></span><span class="k">сообщений агенту за холостой запуск</span></div>
+      <div class="stat"><span class="v"><span class="was">189 000</span> → <span class="now">~3 600</span></span><span class="k">сообщений агенту за полную сборку</span></div>
+      <div class="stat"><span class="v"><span class="was">181 764</span> → <span class="now">0</span></span><span class="k">stat файлов внутри агента за холостой запуск</span></div>
+      <div class="stat"><span class="v"><span class="was">2.3 с</span> / 0.6 с</span><span class="k">холостой запуск: 5.0 против 4.0 (полная сборка: 5.5–8 с против 0.4 с)</span></div>
+    </div>
+    <p class="caption">Значения «после» — расчёт по дизайну, их ещё нужно подтвердить прототипом. Значения «сейчас» измерены.</p>
+  </section>
+
+  <section>
+    <h2>1. Как устроено сейчас</h2>
+    <p class="prose">Есть четыре модуля движка и один агент. Агент базы (<code>Storage</code>, <code>Database.fs</code>) — это <code>MailboxProcessor</code>: он владеет таблицей результатов, таблицей файлов (<code>FileRec</code>), эпохой и файлом <code>.xake</code>. Сообщения ему посылают напрямую из трёх модулей, через <code>ctx.Db</code>; у базы нет своего API-слоя.</p>
+    <div class="figure">
+<pre class="mermaid">
+flowchart LR
+  subgraph callers["Потоки сборки (пул)"]
+    EC["ExecCore&lt;br/&gt;задачи, need, fast path,&lt;br/&gt;выходы, Store"]
+    DA["DependencyAnalysis&lt;br/&gt;вердикт, оценка,&lt;br/&gt;хэширование"]
+    PR["Progress&lt;br/&gt;оценка времени"]
+    SR["ScriptRunner&lt;br/&gt;dry run, dump, NewRun"]
+  end
+  subgraph agent["Агент базы (один поток в пуле)"]
+    DB["Storage agent&lt;br/&gt;Status · Files · Epoch&lt;br/&gt;observed · recorded · pending"]
+    FS[(".xake")]
+    DISK[("файлы проекта")]
+  end
+  EC -- "Observe Recording / Output / PreHash / Verdict&lt;br/&gt;Store · GetResult" --> DB
+  DA -- "Observe Verdict (на каждый файл)&lt;br/&gt;Settle · GetResult" --> DB
+  PR -. "getDurationDeps → GetResult" .-> DA
+  SR -- "NewRun · InMemory · GetResult" --> DB
+  DB -- "stat (FileInfo / File.Exists)" --> DISK
+  DB -- "Write + Flush на запись" --> FS
+  DA -- "чтение для хэша" --> DISK
+</pre>
+    </div>
+    <p class="caption">Синие стрелки — сообщения через границу агента. Агент сам ходит на диск дважды: stat файлов и запись в <code>.xake</code>.</p>
+
+    <h3>Сообщения агента и их трафик</h3>
+    <div class="tbl"><table>
+      <thead><tr><th>Сообщение</th><th>Кто посылает</th><th>Ожидание</th><th>Холостой</th><th>Полная сборка</th><th>Ввод-вывод в агенте</th></tr></thead>
+      <tbody>
+        <tr><td><code>Observe Verdict</code></td><td>вердикт (<code>getChangeReasons</code>), <code>ExecCore</code> после зависимой задачи</td><td><span class="tag warn">RunSynchronously</span> в вердикте</td><td class="n">181 764</td><td class="n">1 188</td><td>stat: <code>FileInfo</code> первый раз, потом <code>File.Exists</code></td></tr>
+        <tr><td><code>Observe Recording</code></td><td><code>ExecCore.execOne</code>, на каждый файл в <code>need</code></td><td>async</td><td class="n">0</td><td class="n">178 200</td><td>stat каждый раз</td></tr>
+        <tr><td><code>Observe Output</code> / <code>PreHash</code></td><td><code>observeOutputs</code>, <code>preHash</code></td><td>async</td><td class="n">0</td><td class="n">1 188 + 1 188</td><td>stat</td></tr>
+        <tr><td><code>Settle</code></td><td>после хэширования (<code>observeSince</code>)</td><td>async</td><td class="n">0</td><td class="n">1 188</td><td>повторный stat</td></tr>
+        <tr><td><code>GetResult</code></td><td>вердикт, <code>getExecTime</code>, <code>verdict</code>, <code>runDelegated</code>, dump</td><td><span class="tag warn">PostAndReply</span> в вердикте и оценке</td><td class="n">1 256</td><td class="n">4 783</td><td>—</td></tr>
+        <tr><td><code>Store</code></td><td><code>run</code>, <code>runDelegated</code></td><td>Post, без ожидания</td><td class="n">7</td><td class="n">1 195</td><td>stat зависимостей без записи; <code>Write + Flush</code></td></tr>
+        <tr><td><code>NewRun</code>, <code>InMemory</code>, <code>Close</code></td><td><code>beginRun</code>, <code>ScriptRunner</code></td><td>по одному на запуск</td><td class="n">1</td><td class="n">1</td><td>—</td></tr>
+      </tbody>
+    </table></div>
+    <p class="caption">181 764 = 178 200 (вердикты файловых целей) + 2 376 (вердикты 6 групп: обход и собственный вердикт задачи) + 1 188 (файл зависимой цели после её задачи).</p>
+
+    <h3>Холостой запуск: один файл — одна поездка к агенту</h3>
+    <div class="figure">
+<pre class="mermaid">
+sequenceDiagram
+  participant W as Поток вердикта (обход группы)
+  participant A as Агент базы
+  participant D as Диск
+  W->>A: GetResult(target)
+  A-->>W: BuildResult (150 зависимостей)
+  loop на каждую из 150 зависимостей
+    W->>A: Observe(file, Verdict, epoch)
+    Note over W: Async.RunSynchronously: поток ждёт
+    A->>D: File.Exists(file)
+    A-->>W: Unchanged / Changed / Absent
+  end
+  Note over W,A: 12.4 мкс на зависимость: ~8 мкс доставка, ~3 мкс stat, ~1.2 мкс поиск в Map
+</pre>
+    </div>
+
+    <h3>Полная сборка: агент ждёт свой поток</h3>
+    <div class="figure">
+<pre class="mermaid">
+sequenceDiagram
+  participant T as Тело рецепта (need 150 файлов)
+  participant P as Пул потоков
+  participant A as Агент базы
+  T->>P: 150 параллельных execOne
+  P->>A: 150 × Observe Recording
+  Note over A: своя работа ~4 мкс на файл
+  A->>P: продолжение цикла агента уходит в пул
+  Note over P,A: 118–184 паузы по 25–40 мс: в очереди пула тысячи продолжений сборки
+  A-->>T: ответы: в среднем 1.9–3.0 мс на файл
+</pre>
+    </div>
+    <p class="prose">Собственная работа агента в полной сборке — 1.1–1.3 с. Ещё 4.1–4.7 с он готов работать, у него в очереди 100–140 сообщений, но поток пула ему не достаётся. В 4.0 этих сообщений не было: время файла читалось в вызывающем потоке.</p>
+
+    <h3>Интерфейс DependencyAnalysis сейчас</h3>
+    <div class="tbl"><table>
+      <thead><tr><th>Функция</th><th>Что делает</th><th>Кто вызывает</th><th>Связь с базой</th></tr></thead>
+      <tbody>
+        <tr><td><code>getChangeReasons ctx current getDeps target</code><br/><code>: ChangeReason list</code></td><td>вердикт цели: причины пересборки, пусто — актуальна</td><td><code>beginRun</code> (через <code>memoizeRec</code>), <code>verdict</code>, <code>dryRun</code></td><td><span class="tag warn">PostAndReply</span> GetResult; <span class="tag warn">RunSynchronously</span> Observe на файл</td></tr>
+        <tr><td><code>getDepState …</code></td><td>одна зависимость: файл, цель, переменная, fileset</td><td>только <code>getChangeReasons</code></td><td>через переданные функции</td></tr>
+        <tr><td><code>getDurationDeps ctx getDeps t</code><br/><code>: int&lt;ms&gt; * Target list</code></td><td>длительность и цели, которые будут пересобраны</td><td><code>planRun</code>, <code>Progress</code>, <code>dryRun</code></td><td><span class="tag warn">PostAndReply</span> GetResult (<code>getExecTime</code>)</td></tr>
+        <tr><td><code>criticalPath getDurationDeps goals</code></td><td>ключи критического пути</td><td><code>planRun</code></td><td>нет, чистая функция</td></tr>
+        <tr><td><code>observeSince ctx mode since file</code>, <code>observe</code></td><td>одно наблюдение файла, хэш и Settle</td><td>вердикт, <code>ExecCore</code> (Recording, Output, PreHash, Verdict)</td><td>Observe, Settle</td></tr>
+        <tr><td><code>Content.hash file</code></td><td>stat, SHA-256, stat</td><td><code>observeSince</code></td><td>читает файл</td></tr>
+        <tr><td><code>staticKeys</code>, <code>dumpDeps</code></td><td>статический набор заголовка; <code>--dump</code></td><td><code>ExecCore</code>, <code>ScriptRunner</code></td><td><code>dumpDeps</code>: GetResult, Observe</td></tr>
+      </tbody>
+    </table></div>
+    <p class="prose">Получается, что анализ зависимостей и <code>ExecCore</code> знают протокол агента (сообщения, каналы ответа, хэширование и <code>Settle</code>), а агент делает файловый ввод-вывод. Вердикт синхронный, а мемо держит один замок на весь обход.</p>
+  </section>
+
+  <section>
+    <h2>2. Предлагаемые слои</h2>
+    <p class="prose">Решение «изменился ли файл» становится чистым правилом и выполняется в вызывающем потоке, как в 4.0 сравнение по списку зависимостей. База ничего не решает: хранит записи, применяет изменения атомарно (compare-and-set) и пишет их в <code>.xake</code>. Читают её без сообщений, из опубликованного снимка. Хэши считаются за отдельным мейлбоксом. Состояние «что уже видели в этом запуске» принадлежит запуску. Каждый слой вызывает только слои ниже себя.</p>
+    <div class="figure">
+<pre class="mermaid">
+flowchart TB
+  L7["L7 ExecCore&lt;br/&gt;задачи · need · выходы · store"]
+  L6["L6 Verdicts (DependencyAnalysis)&lt;br/&gt;Of · Warm · Estimate · мемо на запуск"]
+  L5["L5 Фасад Storage.observe&lt;br/&gt;stat → правило → хэш → один Apply"]
+  L4["L4 RunFiles&lt;br/&gt;SeenByVerdict · RecordedBefore"]
+  L3["L3 Hasher (мейлбокс)&lt;br/&gt;один хэш на (файл, stat)"]
+  L2["L2 Агент базы&lt;br/&gt;снимок · Apply (CAS) · Store · .xake"]
+  L1["L1 FileRule (чистый)&lt;br/&gt;decide · decideHashed · classify"]
+  L0["L0 Диск&lt;br/&gt;FileStat.take · Content.hash"]
+  L7 --> L6
+  L7 --> L5
+  L6 --> L5
+  L5 --> L4
+  L5 --> L3
+  L5 --> L2
+  L5 --> L1
+  L5 --> L0
+  L3 --> L0
+</pre>
+    </div>
+    <div class="tbl"><table>
+      <thead><tr><th>Слой</th><th>Владеет</th><th>Не делает</th></tr></thead>
+      <tbody>
+        <tr><td><strong>L0 Диск</strong></td><td>stat (<code>FileStat</code>), хэш содержимого</td><td>не хранит состояние</td></tr>
+        <tr><td><strong>L1 FileRule</strong></td><td>правило: запись + stat + режим → оставить / записать / нужен хэш; классификация относительно <code>since</code></td><td>никакого ввода-вывода и изменяемого состояния</td></tr>
+        <tr><td><strong>L2 Агент базы</strong></td><td>таблицы результатов и файлов, эпоха, снимок для чтения, <code>Apply</code> пачкой с CAS, <code>.xake</code></td><td>не читает файлы проекта, не решает, никого не ждёт</td></tr>
+        <tr><td><strong>L3 Hasher</strong></td><td>хэши «в работе»: один на (файл, stat), остальные ждут его же; параллельно, не больше числа ядер</td><td>не знает записей и эпох</td></tr>
+        <tr><td><strong>L4 RunFiles</strong></td><td>что в этом запуске уже видел вердикт и что записали тела рецептов (A1)</td><td>не хранит записи</td></tr>
+        <tr><td><strong>L5 Фасад</strong></td><td>последовательность для группы файлов; единственное место, где встречаются L0–L4</td><td>своего состояния нет</td></tr>
+        <tr><td><strong>L6 Verdicts</strong></td><td>вердикт цели, мемо на запуск с защитой от циклов, прогрев, оценка</td><td>не делает stat и хэш, не пишет агенту</td></tr>
+        <tr><td><strong>L7 ExecCore</strong></td><td>задачи, <code>need</code>, выходы, сохранение результата</td><td>не решает, актуальна ли цель</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <section>
+    <h2>3. Интерфейсы по слоям</h2>
+    <div class="cols">
+      <div>
+        <h3>L0–L1: диск и правило</h3>
+<pre class="code">type FileStat =
+  | Missing
+  | Present of stamp * size
+val FileStat.take : File -&gt; FileStat
+val Content.hash  : File -&gt; HashResult
+
+type Decision =
+  | Keep of FileState option
+  | Write of FileState
+  | NeedHash
+<span class="c">// чистые функции: сегодняшние правила</span>
+<span class="c">// observe и settle агента, без изменений</span>
+val decide : known -&gt; FileStat
+   -&gt; ObserveMode -&gt; RuleContext -&gt; Decision
+val decideHashed : known -&gt; HashResult
+   -&gt; ObserveMode -&gt; RuleContext -&gt; Decision
+val classify : since -&gt; FileState option
+   -&gt; Observation</pre>
+      </div>
+      <div>
+        <h3>L2–L3: база и хэши</h3>
+<pre class="code">type Snapshot =
+  { Status : Map&lt;Target, BuildResult&gt;
+    Files  : Map&lt;File, FileState&gt;
+    Epoch  : int }
+<span class="c">// чтение без сообщений</span>
+val snapshot : Db -&gt; Snapshot
+
+<span class="c">// запись: CAS по каждому файлу,</span>
+<span class="c">// ответ — конфликты с текущей записью</span>
+Apply of (File * expected * new) list
+Store of BuildResult   <span class="c">// с ответом</span>
+NewRun · InMemory · Close
+
+<span class="c">// L3: один хэш на (файл, stat)</span>
+val Hasher.hash : File -&gt; FileStat
+   -&gt; Async&lt;HashResult&gt;</pre>
+      </div>
+      <div>
+        <h3>L4–L6: запуск, фасад, вердикты</h3>
+<pre class="code">type RunFiles =
+  member SeenByVerdict  : File -&gt; bool
+  member RecordedBefore : File -&gt; bool
+
+<span class="c">// L5: stat → правило → хэш → Apply</span>
+val observe : ctx -&gt; ObserveMode
+   -&gt; since -&gt; File list
+   -&gt; Async&lt;Observation[]&gt;
+val getResult : Db -&gt; Target
+   -&gt; BuildResult option
+val store : Db -&gt; BuildResult
+   -&gt; Async&lt;unit&gt;
+
+<span class="c">// L6</span>
+type Verdicts =
+  member Of : Target
+     -&gt; Async&lt;ChangeReason list&gt;
+  member Warm : Target list -&gt; Async&lt;unit&gt;
+  member Estimate : Target
+     -&gt; int&lt;ms&gt; * Target list</pre>
+      </div>
+    </div>
+    <h3>Правило L1: сегодняшние решения агента, вынесенные наружу</h3>
+    <div class="tbl"><table>
+      <thead><tr><th>Режим</th><th>Когда</th><th>Решение</th></tr></thead>
+      <tbody>
+        <tr><td>любой</td><td>stat: файла нет</td><td><code>Keep None</code> → Absent</td></tr>
+        <tr><td>Verdict</td><td>вердикт уже видел файл в этом запуске</td><td><code>Keep known</code>; существование — по свежему stat</td></tr>
+        <tr><td>любой</td><td>stat совпал с записью (10 мс, размер)</td><td><code>Keep</code>; <code>Write</code> только чтобы дописать размер</td></tr>
+        <tr><td>Recording</td><td>файл уже записан другим телом в этом запуске (A1)</td><td><code>Keep</code></td></tr>
+        <tr><td>Verdict, Recording, Output true</td><td>stat сдвинулся, хэши включены</td><td><code>NeedHash</code></td></tr>
+        <tr><td>PreHash</td><td>хэша нет, stat совпал, хэши включены</td><td><code>NeedHash</code></td></tr>
+        <tr><td>любой</td><td>записи нет; или сдвинулся при выключенных хэшах; Output false</td><td><code>Write</code>, <code>changed</code> = эпоха</td></tr>
+        <tr><td>после хэша</td><td>хэш тот же / другой / не прочитался</td><td>тот же — <code>changed</code> прежний; другой или не прочитался — <code>changed</code> = эпоха</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <section>
+    <h2>4. Потоки после изменения</h2>
+    <h3>Наблюдение группы файлов (L5)</h3>
+    <div class="figure">
+<pre class="mermaid">
+sequenceDiagram
+  participant C as Вызывающий (вердикт или need)
+  participant S as Снимок базы
+  participant H as Hasher
+  participant A as Агент базы
+  C->>C: stat каждого файла (L0)
+  C->>S: записи файлов, эпоха (без сообщения)
+  C->>C: decide для каждого файла (L1, RunFiles)
+  opt есть NeedHash
+    C->>H: hash(file, stat), параллельно
+    H-->>C: HashResult (один расчёт на файл и stat)
+    C->>C: decideHashed
+  end
+  opt есть Write
+    C->>A: Apply [(file, ожидаемая запись, новая) × N]
+    Note over A: CAS по каждому файлу, один Write в .xake
+    A-->>C: конфликты
+    C->>C: по конфликту: свежий stat, решить заново (до 3 раз)
+  end
+  C->>C: classify since → Observation[]
+</pre>
+    </div>
+    <p class="caption">В холостом запуске все stat совпадают с записями: решения <code>Keep</code>, хэшей нет, <code>Apply</code> не отправляется. Агент не получает ни одного сообщения на файл.</p>
+
+    <h3>Вердикт цели (L6)</h3>
+    <div class="figure">
+<pre class="mermaid">
+sequenceDiagram
+  participant V as Verdicts.Of(target)
+  participant S as Снимок базы
+  participant O as Фасад observe (L5)
+  participant M as Мемо вердиктов
+  V->>S: результат цели
+  V->>O: observe Verdict epoch [150 файлов]
+  O-->>V: Observation[]
+  V->>M: вердикты зависимых целей (async, параллельно)
+  Note over M: Lazy Task на цель, ребро, замыкающее цикл, считается изменением
+  M-->>V: причины зависимых
+  V->>V: getDepState (чистая) → причины
+</pre>
+    </div>
+
+    <h3>Конфликт записи: два вызывающих, новый файл</h3>
+    <div class="figure">
+<pre class="mermaid">
+sequenceDiagram
+  participant X as Вызывающий 1
+  participant Y as Вызывающий 2
+  participant A as Агент базы
+  X->>X: записи нет → Write R1
+  Y->>Y: записи нет → Write R1'
+  X->>A: Apply [f: None → R1]
+  A-->>X: применено
+  Y->>A: Apply [f: None → R1']
+  A-->>Y: конфликт: текущая R1
+  Y->>Y: свежий stat, decide против R1 → Keep
+</pre>
+    </div>
+  </section>
+
+  <section>
+    <h2>5. Трафик через границу агента</h2>
+    <div class="tbl"><table>
+      <thead><tr><th>Что</th><th>Холостой сейчас</th><th>Холостой после</th><th>Полная сейчас</th><th>Полная после</th></tr></thead>
+      <tbody>
+        <tr><td>Наблюдения файлов</td><td class="n">181 764</td><td class="n">0</td><td class="n">~183 000</td><td class="n">~2 400 Apply</td></tr>
+        <tr><td>GetResult</td><td class="n">1 256</td><td class="n">0 (снимок)</td><td class="n">4 783</td><td class="n">0</td></tr>
+        <tr><td>Store</td><td class="n">7</td><td class="n">7</td><td class="n">1 195</td><td class="n">1 195 (с ответом)</td></tr>
+        <tr><td><strong>Всего сообщений агенту</strong></td><td class="n">~185 000</td><td class="n">~8</td><td class="n">~189 000</td><td class="n">~3 600</td></tr>
+        <tr><td>Хэши</td><td class="n">0</td><td class="n">0</td><td class="n">1 188 (Settle)</td><td class="n">1 188 (Hasher)</td></tr>
+        <tr><td>stat в агенте</td><td class="n">181 764</td><td class="n">0</td><td class="n">~183 000</td><td class="n">0</td></tr>
+        <tr><td>stat в вызывающих потоках</td><td class="n">0</td><td class="n">~181 800</td><td class="n">1 188</td><td class="n">~183 000</td></tr>
+      </tbody>
+    </table></div>
+    <div class="cols">
+      <div><h3>Ожидаемое время</h3><ul>
+        <li>Холостой горячий: ~0.1–0.2 с (4.0: 0.56–0.64 с). На зависимость: stat 1.1–1.7 мкс, поиск в <code>Map</code> ~0.5 мкс и правило, на нескольких потоках.</li>
+        <li>Полная сборка: сообщений агенту в ~50 раз меньше. Нужно измерить, перестанет ли агент простаивать в очереди пула.</li>
+      </ul></div>
+      <div><h3>Что не меняется</h3><ul>
+        <li>Формат <code>.xake</code> и какие записи пишутся: правило L1 — сегодняшнее.</li>
+        <li>Эпохи, <code>since</code>, cut-off, один хэш на (файл, stat).</li>
+        <li><code>--dryrun</code>, <code>--dump</code>, причины вердикта и их порядок.</li>
+      </ul></div>
+      <div><h3>Что меняется в поведении</h3><ul>
+        <li>У пересекающихся запусков движка свои RunFiles; сейчас <code>NewRun</code> второго очищает множества первого.</li>
+        <li>Задача ждёт ответа <code>Store</code>: иначе зависимая цель может прочитать старый снимок.</li>
+        <li>API: <code>UpToDate</code> async; у агента остаются <code>Apply</code>, <code>Store</code>, <code>NewRun</code> и служебные сообщения.</li>
+      </ul></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>6. Порядок работы и открытые вопросы</h2>
+    <ul class="prose">
+      <li><strong>Шаг 1, L0–L1.</strong> Чистое правило и табличные тесты, перенесённые из <code>StorageTests</code>. Агент пока вызывает правило сам, поведение не меняется.</li>
+      <li><strong>Шаг 2, L2–L5.</strong> Снимок, <code>Apply</code>, Hasher, RunFiles, фасад. Затем замер холостого запуска и полной сборки.</li>
+      <li><strong>Шаг 3, L6–L7.</strong> Асинхронный вердикт и мемо, прогрев, вызывающие.</li>
+      <li>Открыто: свой поток для агента (по замеру после шага 2); структура быстрее <code>Map</code> для таблицы файлов.</li>
+    </ul>
+    <p class="note">Объём: ~600 строк кода (агент теряет ~150) и ~400 строк тестов. Каждый шаг проверяется и ревьюится отдельно. Подробности по слоям — в <code>docs/features/idle-perf/design.md</code>.</p>
+  </section>
+</main>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
+<script>
+(function () {
+  if (!window.mermaid) return;
+  var root = document.documentElement, t = root.getAttribute("data-theme");
+  var dark = t === "dark" || (t !== "light" && window.matchMedia && matchMedia("(prefers-color-scheme: dark)").matches);
+  mermaid.initialize({ startOnLoad: false, theme: dark ? "dark" : "neutral", securityLevel: "strict",
+                       fontFamily: "IBM Plex Sans, Segoe UI, sans-serif", sequence: { mirrorActors: false } });
+  mermaid.run({ querySelector: "pre.mermaid" });
+})();
+</script>

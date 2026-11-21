@@ -5,7 +5,7 @@ open NUnit.Framework
 
 open Xake
 open Xake.Tasks
-open Storage
+open Xake.Storage
 open System
 
 type Runtime = {Ver: string; Folder: string}
@@ -525,9 +525,9 @@ type ``XakeScript tests``() =
             ]
         }
 
-        use testee = Storage.openDb x.TestOptions.ProjectRoot "./.xake" (ConsoleLogger Verbosity.Diag)
+        use testee = Storage.Db.openFile x.TestOptions.ProjectRoot "./.xake" (ConsoleLogger Verbosity.Diag)
         try
-            match testee.PostAndReply <| fun ch -> DatabaseApi.GetResult ((PhonyAction "test"), ch) with
+            match Storage.Db.tryGetResult testee (PhonyAction "test") with
             | Some {
                     BuildResult.Targets = [PhonyAction "test"]
                     Depends = [
@@ -540,7 +540,7 @@ type ``XakeScript tests``() =
             | _ -> false
             |> Assert.True
 
-            match testee.PostAndReply <| fun ch -> DatabaseApi.GetResult ((PhonyAction "test1"), ch) with
+            match Storage.Db.tryGetResult testee (PhonyAction "test1") with
             | Some {
                     Targets = [PhonyAction "test1"]
                     Depends = [TargetDep (PhonyAction "aaa")]
@@ -576,10 +576,10 @@ type ``XakeScript tests``() =
             ]
         }
 
-        let (<-*) (a:Agent<DatabaseApi>) t = a.PostAndReply(fun ch -> GetResult (t,ch))
+        let (<-*) (a: Storage.Db) t = Storage.Db.tryGetResult a t
         let logger = ConsoleLogger Verbosity.Diag
 
-        use db = Storage.openDb x.TestOptions.ProjectRoot "./.xake" logger
+        use db = Storage.Db.openFile x.TestOptions.ProjectRoot "./.xake" logger
         try
             match db <-* (PhonyAction "main") with
             | Some {Steps = step1::_} ->

@@ -32,11 +32,11 @@ let createScriptContext (opts: ExecOptions) rules =
     let engineOpts = toEngineOptions opts rules variables
     let db =
         if opts.NoPersist then
-            Storage.noopDb ()
+            Storage.Db.memoryOnly ()
         else
             let dbPath = engineOpts.ProjectRoot </> opts.DbFileName
             // the lock first: --resetdb runs under it (A5)
-            Storage.openDbWith (System.TimeSpan.FromSeconds 30.0) opts.ResetDb engineOpts.ProjectRoot dbPath engineOpts.Logger
+            Storage.Db.openWith (System.TimeSpan.FromSeconds 30.0) opts.ResetDb engineOpts.ProjectRoot dbPath engineOpts.Logger
     let ctx, finalize = ExecCore.createContextCore engineOpts db (VarEvaluation.flatVars variables) opts.Progress
     ctx, finalize, launchErrors
 
@@ -98,7 +98,13 @@ let bannerLines (options: ExecOptions) (variables: Map<string, VarEntry>) (targe
 /// Displays estimated build time and parallelism degree.
 let dryRun (ctx: ExecContext) (setup: string list) (groups: string list list) =
     let options = ctx.Options
-    let getDeps = getChangeReasons ctx (ExecCore.currentRule ctx) |> memoizeRec
+    // the verdicts of every group, decided in parallel before anything is printed (dry run: the
+    // top level, not a build's dependency path)
+    let verdicts = Verdicts(ctx, ExecCore.currentRule ctx)
+    let getDeps t =
+        match verdicts.Ready t with
+        | Some reasons -> reasons
+        | None -> verdicts.Planned t |> Async.RunSynchronously
 
     // getPlainDeps getDeps (getExecTime ctx)
     if not setup.IsEmpty then
@@ -139,6 +145,7 @@ let dryRun (ctx: ExecContext) (setup: string list) (groups: string list list) =
                 deps |> List.iter (displayNestedDeps (ii+1))
 
     let targetGroups = ExecCore.makeTarget ctx |> List.map |> List.map <| groups
+    verdicts.Warm (List.concat targetGroups) |> Async.RunSynchronously
     let toSec v = float (v / 1<ms>) * 0.001
     let endTime = Progress.estimateEndTime (getDurationDeps ctx getDeps) options.Threads targetGroups |> toSec
 
@@ -201,13 +208,13 @@ let runScript options rules =
             exitCode <- 2
             if options.ThrowOnError then raise (XakeException errorText)
         | Dump ->
-            Storage.InMemory |> ctx.Db.Post
-            ctx.Db.PostAndReply(fun ch -> Storage.NewRun (ctx.Options.ContentCutoff, ch)) |> ignore
+            Storage.Db.keepInMemory ctx.Db
+            Storage.Db.newRun ctx.Db |> Async.RunSynchronously |> ignore
             do logger.Log Level.Command "Dumping dependencies for targets %A" targetLists
             targetLists |> List.iter (List.map (ExecCore.makeTarget ctx) >> (dumpDeps ctx (ExecCore.currentRule ctx)))
         | Dryrun ->
-            Storage.InMemory |> ctx.Db.Post
-            ctx.Db.PostAndReply(fun ch -> Storage.NewRun (ctx.Options.ContentCutoff, ch)) |> ignore
+            Storage.Db.keepInMemory ctx.Db
+            Storage.Db.newRun ctx.Db |> Async.RunSynchronously |> ignore
             targetLists |> dryRun ctx options.Setup
         | _ ->
             let mutable reraisedError = None
@@ -232,7 +239,7 @@ let runScript options rules =
                 let start = System.DateTime.Now
                 // one summary per script run (docs/content-cutoff.md), also when the build fails
                 let reportSummary () =
-                    let summary = ctx.Counters.Summary
+                    let summary = ctx.Run.Counters.Summary
                     ctx.Logger.Log Message "%s, schedule %s" (RunSummary.format summary) (scheduleName options.Schedule)
                     ctx.Options.SummarySink |> Option.iter (fun sink -> sink.Report summary)
                 try

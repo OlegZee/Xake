@@ -26,13 +26,22 @@ Breaking changes:
    to be removed in a later release.
 3. **`Dependency`.** `FileDep of File` and `TargetDep of Target` carry no stamp; `ArtifactDep` and
    `ArtifactDep2` are removed. `BuildResult` gains `Epoch` and `StaticCount` (`Built` stays the
-   time). `BuildLog.Database` gains `Files` and `FileState` is added.
-4. **Storage API.** `Storage.openDb root dbpath logger` takes the project root; the database is
-   exclusive (`.xake.lock`); `DatabaseApi` gains `Observe`, `NewRun` and `InMemory`.
-   `Storage.resultPU` is replaced by the public read API `Storage.readRecords` and
-   `Storage.readDatabase` (the database with its last epoch, `BuildLog.Database.Epoch`).
+   time). The database record (`Storage.Database`, was `BuildLog.Database`) gains `Files` and `FileState` is added.
+4. **Storage API.** `Xake.Storage` is a namespace and the database is engine-internal. Public
+   is the read API, `Storage.DbReader.readRecords root dbpath` (every `Storage.DbRecord`),
+   `Storage.DbReader.readDatabase root dbpath` (a `Storage.Database` with its last epoch) and
+   `Storage.DbReader.formatVersion`; and the handle `FileTracker.RunFiles` (in `ExecContext`).
+   `EngineState`'s fields are internal (the record is public; its identity is still usable),
+   so `Storage.Db`, `ExecContext.Db` and `FileProbe` are internal.
+   Opening, storing, the agent's messages (`DatabaseApi`, `Db.Post*`), file observation and
+   hashing are internal. Removed: `BuildLog` (its contents are in `Storage`), `Storage.openDb`,
+   `noopDb`, `cleanupDb`, `storeResult`, `GetResult`, `Storage.resultPU`; `BuildLog.makeResult`
+   is `makeResult` (`DomainTypes`).
 5. **Filesets.** `FilesetOptions.CaseSensitive` and the `casesensitive` operation are added.
-6. **`ExecContext`** gains `Spellings` and `RunEpoch`.
+6. **`ExecContext`** keeps what a recipe reads (`Targets`, `RuleMatches`, `Vars`, `Logger`,
+   `Ordinal`, `HeldResources`, `Engine`) and gains `Run`, an opaque `RunState`: the engine's
+   per-run state (`Progress`, `ShowProgress`, `NeedRebuild`, `UpToDate`, and the new `Spellings`,
+   `RunFiles`, `RunEpoch`, `Counters`) moved there, so it can change within 5.x.
 7. **Database 0.7.** Xake 4.x cannot read it. Databases 0.4-0.6 are upgraded on open, and a
    no-change run after the upgrade rebuilds nothing. The 0.4-0.6 databases are upgraded by a legacy reader that will
    be removed in a later release.
@@ -96,11 +105,10 @@ The rule header ([rule-header.md](rule-header.md)):
   hashed); `onSummary` in `xakeScript`, `XakeEngine.LastSummary`, the `RunSummary` record. A run
   where nothing moved schedules no task.
 - API: `ExecOptions.ContentCutoff`, `ExecOptions.SummarySink`, `IRunSummarySink`;
-  `DatabaseApi.NewRun` takes the run's `hashing` flag; `DatabaseApi.Observe` takes `since` and replies `Observation` (`Absent`, `Unchanged`,
-  `Changed`, `HashNeeded` with an opaque `HashRequest`); `Settle (request, HashResult)` is added,
-  `ObserveMode.Output` takes the cut-off flag and `PreHash` is added; `WorkerPool.TaskState` and
-  `Scheduler.query` are added; `ExecContext.NeedRebuild` is asynchronous and `ExecContext` gains
-  `UpToDate` and `Counters`.
+  file observation (`FileTracker.observe`) and hashing (`FileProbe.Hasher`) are internal;
+  `WorkerPool.TaskState` and
+  `Scheduler.query` are added; the run's verdicts (`NeedRebuild`,
+  `UpToDate`) are asynchronous and internal (`ExecContext.Run`).
 
 Also:
 
@@ -120,11 +128,31 @@ Also:
 - **Progress with several target groups:** the status line names the group (`[2/3 test]`), each
   finished group logs its time, and a task skipped by content cut-off leaves the estimate.
 
+- **Speed of a run where nothing changed** (preview.2 regression, docs/features/idle-perf): a
+  no-change run of a large build took about twice as long as on 4.x, because every file
+  dependency was a round trip to the database agent, which also read the file. Now the build's
+  own threads read the files and decide (a pure rule), the database only keeps and writes the
+  records (one request per group of files, and only for changes), hashes have their own queue, and
+  the verdicts at a group's start are decided in parallel. On a synthetic build of 1,188 targets
+  with 150 file dependencies each, a no-change run takes 0.19-0.22 s (4.0: 0.59-0.64 s, preview.2:
+  2.3 s) and a full build 0.59-0.83 s (4.0: 0.47-0.54 s, preview.2: 5.5-8 s).
+- **Opening the database** (preview.1-3 regression, docs/features/startup-perf): the path table
+  counted its entries with `Map.Count` once per path, so the load grew with the square of the
+  number of files; a 12.5 MB database of 28,000 files took 1.3-1.8 s to open (a 4.x database of
+  88 MB about 0.3 s). It now keeps the counts, and reading looks a file up by its id in an array:
+  0.5-0.6 s to the first recipe for that database (a script with one rule), 0.3 s once it is
+  compacted; the compaction rewrite and the upgrade of a 4.x database gain too.
 - **Critical path:** when more tasks are ready than `-t` allows, the one with the longest expected
   remaining chain starts first (its own time plus the longest chain of its dependents, from the
   last run's times); the same order applies to resource waiters and to `need [..]`. Without
   history the order is as before. `--schedule=as-requested` (`ExecOptions.Schedule = AsRequested`)
   keeps the order of request. The banner and the run summary name the mode.
+
+- **A recursive recipe may need a type annotation.** `recipe { }` has more `Bind` overloads in
+  5.0 (a header, `matched`, tasks), so a recipe that calls itself, such as
+  `let rec f n = recipe { if n < 3 then do! f (n + 1) }`, can fail with FS0041 ("A unique
+  overload for method 'Bind' could not be determined"). Annotate its return type:
+  `let rec f n : Recipe<ExecContext, unit> = recipe { ... }`.
 
 For `Xake.Dotnet` users: `File.undefined` is removed; `Xake.Dotnet` moves to `File option` at its
 5.0.

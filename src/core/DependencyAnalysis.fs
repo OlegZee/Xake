@@ -2,7 +2,8 @@
 
 open Xake
 open Xake.WorkerPool
-open Storage
+open Xake.Storage
+open FileTracker
 
 /// <summary>
 /// Dependency state.
@@ -21,45 +22,22 @@ type ChangeReason =
 /// <param name="ctx"></param>
 /// <param name="target"></param>
 let getExecTime (ctx: ExecContext) target =
-    (fun ch -> Storage.GetResult(target, ch)) |> ctx.Db.PostAndReply
+    Db.tryGetResult ctx.Db target
     |> Option.fold (fun _ r -> r.Steps |> List.sumBy (fun s -> s.OwnTime)) 0<ms>
 
-/// Content hashes (docs/content-cutoff.md).
-module Content =
-    /// The file's stat and the first 8 bytes of the SHA-256 of its content, taken together: stat,
-    /// hash, stat. `Unreadable` when the stat moved meanwhile, or the file cannot be read.
-    let hash (file: File) =
-        try
-            let before = File.getFileInfo file
-            if not before.Exists then Unreadable
-            else
-                let bytes =
-                    use sha = System.Security.Cryptography.SHA256.Create()
-                    use stream = new System.IO.FileStream(before.FullName, System.IO.FileMode.Open, System.IO.FileAccess.Read,
-                                                          System.IO.FileShare.ReadWrite ||| System.IO.FileShare.Delete)
-                    sha.ComputeHash stream
-                let after = File.getFileInfo file
-                if after.Exists && after.LastWriteTime = before.LastWriteTime && after.Length = before.Length
-                then Hashed (before.LastWriteTime, before.Length, System.BitConverter.ToUInt64(bytes, 0))
-                else Unreadable
-        with _ -> Unreadable
+/// Observes a group of files (FileTracker.observe) in the context's run: per file, in the
+/// order given, missing or whether its content changed after the run `since`.
+let observeMany (ctx: ExecContext) (mode: ObserveMode) (since: int) (files: File list) =
+    if files.IsEmpty then async.Return [||] else FileTracker.observe ctx.Observe mode since files
 
-/// Observes a file through the database (decisions 1c, A1): missing, or its state and whether its
-/// content changed after the run `since`. A file the agent asks to hash (`HashNeeded`) is hashed
-/// here, off the agent, and settled.
+/// Observes one file (docs/features/idle-perf, L5).
 let observeSince (ctx: ExecContext) (mode: ObserveMode) (since: int) (file: File) = async {
-    let! o = ctx.Db.PostAndAsyncReply(fun ch -> Observe(file, mode, since, ch))
-    match o with
-    | HashNeeded request ->
-        let watch = System.Diagnostics.Stopwatch.StartNew()
-        let hashed = Content.hash request.File
-        match ctx.Counters with null -> () | c -> c.FileHashed watch.Elapsed
-        return! ctx.Db.PostAndAsyncReply(fun ch -> Settle(request, hashed, ch))
-    | o -> return o }
+    let! o = observeMany ctx mode since [ file ]
+    return o.[0] }
 
-/// Observes a file where only the record matters, not the reply.
-let observe (ctx: ExecContext) (mode: ObserveMode) (file: File) =
-    observeSince ctx mode System.Int32.MaxValue file |> Async.Ignore
+/// Observes files where only the record matters, not the reply.
+let observe (ctx: ExecContext) (mode: ObserveMode) (files: File list) =
+    observeMany ctx mode System.Int32.MaxValue files |> Async.Ignore
 
 /// Gets single dependency state and reason of a change, for a dependent built in run `epoch`
 /// (decision 1c): a file or target dependency changed when it was seen to change after that run.
@@ -87,14 +65,14 @@ let rec getDepState getVar getFileList (getChangedDeps: Target -> ChangeReason l
          | Changed st ->
             ChangeReason.FilesChanged [show file], Some (sprintf "changed in run %d, after run %d (stamp %A, size %d)" st.Changed epoch st.Stamp st.Size)
          | Unchanged _ -> NotChanged, None
-         | Absent | HashNeeded _ -> ChangeReason.FilesChanged [show file], Some "file does not exist")
+         | Absent -> ChangeReason.FilesChanged [show file], Some "file does not exist")
 
     | TargetDep (FileTarget file as t) ->
         (match observe epoch file with
          | Changed st ->
             ChangeReason.Depends t, Some (sprintf "dependee changed in run %d, after run %d" st.Changed epoch)
          | Unchanged _ -> transitive t
-         | Absent | HashNeeded _ -> ChangeReason.DependsMissingTarget t, None)
+         | Absent -> ChangeReason.DependsMissingTarget t, None)
 
     | TargetDep (PhonyAction _ as t) ->
         (match getResult t with
@@ -159,7 +137,8 @@ let staticKeys (deps: Dependency list) =
 /// <param name="getTargetDeps">gets state for nested dependency</param>
 /// <param name="target">The target to analyze</param>
 /// `current` gives the target's rule now: its outputs and static set (None without a rule).
-let getChangeReasons (ctx: ExecContext) (current: Target -> (Target list * Set<StaticKey>) option) getTargetDeps target =
+let getChangeReasons (ctx: ExecContext) (current: Target -> (Target list * Set<StaticKey>) option)
+                     (getTargetDeps: Target -> Async<ChangeReason list>) target : Async<ChangeReason list> = async {
 
     // separates change reason into two lists and collabses FilesChanged all into one
     let collapseFilesChanged reasons =
@@ -170,19 +149,43 @@ let getChangeReasons (ctx: ExecContext) (current: Target -> (Target list * Set<S
         filesChanged @ other |> List.rev
 
 
-    let lastBuild = (fun ch -> GetResult(target, ch)) |> ctx.Db.PostAndReply
+    let lastBuild = Db.tryGetResult ctx.Db target
 
-    match lastBuild with
-    | Some {BuildResult.Depends = []} ->
-        [ChangeReason.Other "No dependencies", Some "It means target is not \"pure\" and depends on something beyond our control (oracle)"]
+    let! reasons = async {
+      match lastBuild with
+      | Some {BuildResult.Depends = []} ->
+        return [ChangeReason.Other "No dependencies", Some "It means target is not \"pure\" and depends on something beyond our control (oracle)"]
 
-    | Some ({BuildResult.Depends = depends; Targets = result; Epoch = epoch} as built) ->
-        let getResult t = (fun ch -> GetResult(t, ch)) |> ctx.Db.PostAndReply
-        // with cut-off off every dependee goes through the transitive rule, as in phase 1 (4.0)
-        let taskState t = if ctx.Options.ContentCutoff then Scheduler.query ctx.Engine.Scheduler t else NotStarted
+      | Some ({BuildResult.Depends = depends; Targets = result; Epoch = epoch} as built) ->
+        let getResult t = Db.tryGetResult ctx.Db t
+        // with cut-off off every dependee goes through the transitive rule, as in phase 1 (4.0);
+        // each dependee's state is taken once, so both phases below see the same one
+        let states = System.Collections.Generic.Dictionary<Target, TaskState<ExecStatus>>()
+        let taskState t =
+            match states.TryGetValue t with
+            | true, st -> st
+            | _ ->
+                let st = if ctx.Options.ContentCutoff then Scheduler.query ctx.Engine.Scheduler t else NotStarted
+                states.[t] <- st
+                st
+        // the first phase gathers what the rule needs: the target's files in one observation
+        // (docs/features/idle-perf, L5), then the dependees' own verdicts that the transitive rule
+        // asks for, in parallel
+        let files = depends |> List.choose (function FileDep f | TargetDep (FileTarget f) -> Some f | _ -> None) |> List.distinct
+        let! replies = observeMany ctx Verdict epoch files
+        let observed = Seq.zip files replies |> dict
+        let transitive =
+            depends |> List.choose (function
+                | TargetDep (FileTarget f as t) when (match observed.[f] with Unchanged _ -> true | _ -> false) && (match taskState t with NotStarted -> true | _ -> false) -> Some t
+                | TargetDep (PhonyAction _ as t) when (match getResult t with Some r -> r.Epoch <= epoch | None -> false) && (match taskState t with NotStarted -> true | _ -> false) -> Some t
+                | _ -> None)
+            |> List.distinct
+        let! dependees = transitive |> List.map (fun t -> async { let! r = getTargetDeps t in return t, r }) |> Async.Parallel
+        let byDependee = dict dependees
+        // the second phase is the rule itself, pure over what was gathered
         let depState =
-            getDepState (Util.getVar ctx.Vars) (toFileList ctx.Options.ProjectRoot) getTargetDeps taskState
-                        (fun since f -> observeSince ctx Verdict since f |> Async.RunSynchronously) getResult (File.display ctx.Options.ProjectRoot) epoch
+            getDepState (Util.getVar ctx.Vars) (toFileList ctx.Options.ProjectRoot) (fun t -> byDependee.[t]) taskState
+                        (fun _ f -> observed.[f]) getResult (File.display ctx.Options.ProjectRoot) epoch
 
         // the rule now (M9): a current output missing (an `also` added since included), or a static
         // set other than the recorded one
@@ -195,7 +198,8 @@ let getChangeReasons (ctx: ExecContext) (current: Target -> (Target list * Set<S
                   | None -> ()
                   if keys <> staticKeys (List.truncate built.StaticCount depends) then
                       yield ChangeReason.Other "its static needs changed", None ]
-        depends
+        return
+            depends
             |> List.map depState
             |> List.filter (fst >> (<>) ChangeReason.NotChanged)
             |> collapseFilesChanged
@@ -208,9 +212,9 @@ let getChangeReasons (ctx: ExecContext) (current: Target -> (Target list * Set<S
                 | _ -> []
             | ls -> ls
 
-    | _ ->
-        [ChangeReason.Other "Not built yet", Some "Target was not built before or build results were cleaned so we don't know dependencies."]
-    |> List.map fst
+      | _ ->
+        return [ChangeReason.Other "Not built yet", Some "Target was not built before or build results were cleaned so we don't know dependencies."] }
+    return reasons |> List.map fst }
 
 // gets task duration and list of targets it depends on. No clue why one method does both.
 let getDurationDeps ctx getDeps t =
@@ -222,6 +226,105 @@ let getDurationDeps ctx getDeps t =
 //    |> fun (tt,dd) ->
 //        printfn "For task %A duration:%A deps:%A" t tt dd
 //        (tt,dd)
+
+/// The verdicts of one run (docs/features/idle-perf, L6): each target's no-build verdict is
+/// decided once, and everyone who asks awaits the same task. A verdict that waits for a
+/// dependee's verdict still in progress registers the edge in `verdictWaits`; an edge that would
+/// close a cycle is refused and the dependee counts as changed (two entries into one cycle cannot
+/// wait for each other). A verdict never waits for a task, so these edges and the tasks' own
+/// (`TaskWaits`) cannot form one cycle.
+///
+/// Two entry points: `Planned` is decided early, often
+/// before any task runs, and never waits for a task; `ForTask` is a starting task's own verdict,
+/// after the dependees running now have finished. With content cut-off a dependee rebuilt to the
+/// same content is not a change, so the planned verdict can be stale by the time the task
+/// starts, and `ForTask` decides again.
+[<Sealed>]
+type Verdicts(ctx: ExecContext, current: Target -> (Target list * Set<StaticKey>) option) =
+    let memo = System.Collections.Concurrent.ConcurrentDictionary<Target, Lazy<System.Threading.Tasks.Task<ChangeReason list>>>()
+    let verdictWaits = WaitFor<unit>()
+    let rec taskOf (t: Target) =
+        memo.GetOrAdd(t, fun t -> lazy (Async.StartAsTask (getChangeReasons ctx current (dependee t) t))).Value
+    and dependee (waiter: Target) (d: Target) = async {
+        let task = taskOf d
+        if task.IsCompleted then return! Async.AwaitTask task
+        else
+            let edge = lock verdictWaits (fun () -> verdictWaits.TryAdd [ waiter.Name ] d.Name ())
+            if not edge then return [ ChangeReason.Depends d ]
+            else
+                try return! Async.AwaitTask task
+                finally lock verdictWaits (fun () -> verdictWaits.Remove [ waiter.Name ] d.Name) }
+    /// The decision afresh, the dependees through the memo: the second half of `ForTask`. Nothing
+    /// waits for it, so its waits close no cycle and are not registered.
+    let fresh (target: Target) = getChangeReasons ctx current (taskOf >> Async.AwaitTask) target
+    /// The run's no-build verdict of a target, memoised: never waits for a task. For planning
+    /// (`Warm`, the estimate), the fast path (`ctx.Run.UpToDate`) and `--dryrun`.
+    member _.Planned (target: Target) = Async.AwaitTask (taskOf target)
+    /// A starting task's verdict (`ctx.Run.NeedRebuild`): true to build. With content cut-off it
+    /// first waits for the dependees its last result recorded that are running now (through
+    /// `TaskWaits`, refused or cancelled when the wait would close a cycle), then decides afresh,
+    /// the dependees through the memo.
+    member this.ForTask (targets: Target list) = async {
+        let names = targets |> List.map (fun t -> t.Name)
+        let primary = List.head targets
+        if ctx.Options.ContentCutoff then
+            let last = Db.tryGetResult ctx.Db primary
+            let dependees = last |> Option.map (fun r -> r.Depends |> List.choose (function TargetDep t -> Some t | _ -> None)) |> Option.defaultValue []
+            for d in dependees do
+                match Scheduler.query ctx.Engine.Scheduler d with
+                | Running task ->
+                    match ctx.Run.TaskWaits.Verdict names d.Name with
+                    | None ->
+                        do ctx.Logger.Log Info "%s: not waiting for %s, which waits for it" (primary.Display ctx.Options.ProjectRoot) (d.Display ctx.Options.ProjectRoot)
+                    | Some (cancel, unregister) ->
+                        try
+                            do! Scheduler.withYieldedSlot ctx.Engine.Scheduler targets (async {
+                                    let! _ = System.Threading.Tasks.Task.WhenAny(Async.StartAsTask task :> System.Threading.Tasks.Task, cancel.Task :> System.Threading.Tasks.Task) |> Async.AwaitTask
+                                    return () })
+                        finally unregister ()
+                        if cancel.Task.IsCompleted then
+                            do ctx.Logger.Log Info "%s: stopped waiting for %s, which waits for it" (primary.Display ctx.Options.ProjectRoot) (d.Display ctx.Options.ProjectRoot)
+                        else
+                            // a failed dependee fails the dependent, as its body would
+                            do! task |> Async.Ignore
+                | _ -> ()
+        let rebuild (target: Target) = async {
+            let! reasons = fresh target
+            match reasons with
+            | [] -> return false
+            | reasons ->
+                let reason =
+                    match reasons with
+                    | Other reason :: _ -> reason
+                    | Depends t :: _ -> "Depends on target " + t.Display ctx.Options.ProjectRoot
+                    | DependsMissingTarget t :: _ -> sprintf "Depends on target %s (missing)" (t.Display ctx.Options.ProjectRoot)
+                    | FilesChanged (file :: _) :: _ -> "File(s) changed " + file
+                    | reasons -> sprintf "Some reason %A" reasons
+                do ctx.Logger.Log Info "Rebuild %A: %s" (target.Display ctx.Options.ProjectRoot) reason
+                return true }
+        let rec anyRebuild = function
+            | [] -> async.Return false
+            | t :: rest -> async { let! r = rebuild t in if r then return true else return! anyRebuild rest }
+        return! anyRebuild targets }
+    /// The verdict when it is decided already.
+    member _.Ready (target: Target) =
+        match memo.TryGetValue target with
+        | true, lz when lz.IsValueCreated && lz.Value.Status = System.Threading.Tasks.TaskStatus.RanToCompletion -> Some lz.Value.Result
+        | _ -> None
+    /// Decides, in parallel, the verdicts of the targets the estimate visits from `goals`: each
+    /// target, then the dependees named by its reasons (as `getDurationDeps`).
+    member this.Warm (goals: Target list) = async {
+        let visited = System.Collections.Concurrent.ConcurrentDictionary<Target, byte>()
+        let rec visit t = async {
+            if visited.TryAdd(t, 0uy) then
+                let! reasons = this.Planned t
+                let dependees = reasons |> List.collect (function Depends d | DependsMissingTarget d -> [d] | _ -> [])
+                do! dependees |> List.map visit |> Async.Parallel |> Async.Ignore }
+        do! goals |> List.map visit |> Async.Parallel |> Async.Ignore }
+    /// The estimate's duration and dependees of a target, from the verdicts `Warm` decided (a
+    /// target not warmed counts as up to date).
+    member this.Estimate (target: Target) =
+        getDurationDeps ctx (fun t -> this.Ready t |> Option.defaultValue []) target
 
 /// The critical-path key (ms) of every target the run's estimate reaches from `goals`: its own
 /// time plus the largest key of the targets that depend on it in this run (docs/implnotes.md).
@@ -257,8 +360,6 @@ let criticalPath (getDurationDeps: Target -> int<ms> * Target list) (goals: Targ
 /// Dumps all dependencies for particular target
 let dumpDeps (ctx: ExecContext) current (target: Target list) =
 
-    let getDeps = getChangeReasons ctx current |> memoizeRec
-
     let doneTargets = System.Collections.Hashtable()
     let indent i = String.replicate i "  "
     // the dump goes to stdout, past the loggers: mask the values of secret variables here
@@ -268,7 +369,7 @@ let dumpDeps (ctx: ExecContext) current (target: Target list) =
     let state (f: File) =
         match observeSince ctx Verdict System.Int32.MaxValue f |> Async.RunSynchronously with
         | Unchanged st | Changed st -> sprintf "stamp %A, size %d, changed in run %d" st.Stamp st.Size st.Changed
-        | Absent | HashNeeded _ -> "NOT EXISTS"
+        | Absent -> "NOT EXISTS"
 
     let rec displayNestedDeps ii =
         function
@@ -314,7 +415,7 @@ let dumpDeps (ctx: ExecContext) current (target: Target list) =
         if not <| doneTargets.ContainsKey(target) then
             doneTargets.Add(target, 1)
 
-            let lastResult = (fun ch -> GetResult(target, ch)) |> ctx.Db.PostAndReply
+            let lastResult = Db.tryGetResult ctx.Db target
             let built = match lastResult with Some r -> sprintf " (built in run %d)" r.Epoch | None -> ""
             printfn "%sTarget %A%s" (indent ii) (target.Display ctx.Options.ProjectRoot) built
 

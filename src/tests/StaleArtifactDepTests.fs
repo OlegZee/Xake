@@ -24,7 +24,7 @@ module internal OldDatabase =
     /// header version and the results in file order (an older version: converted)
     let read (path: string) =
         version path,
-        Storage.readRecords (root ()) path |> Seq.choose (function Storage.DbRecord.Result r -> Some r | _ -> None) |> List.ofSeq
+        Storage.DbReader.readRecords (root ()) path |> Seq.choose (function Storage.DbRecord.Result r -> Some r | _ -> None) |> List.ofSeq
 
     /// writes a 0.4-0.6 file of the given results with their old dependencies
     let writeOld (path: string) (ver: string) (results: OldResult list) =
@@ -243,7 +243,7 @@ type ``StaleArtifactDep tests``() =
         OldDatabase.writeOld ".xake" "0.6" (old06 artifact2)
         do script x.TestOptions "up_" aRuns bRuns ["deploy"]
         Assert.AreEqual((1, 1), (aRuns.Value, bRuns.Value), "a no-change run after the upgrade rebuilds nothing")
-        Assert.AreEqual(BuildLog.XakeDbVersion, OldDatabase.version ".xake")
+        Assert.AreEqual(Storage.DbReader.formatVersion, OldDatabase.version ".xake")
 
         // a 0.6 result that saw an older stamp reruns
         let older t = match t with FileTarget f -> LegacyRead.OldArtifact2 (t, (stamp (Xake.File.getSysFileName f)).AddSeconds -5.0) | _ -> failwith "file"

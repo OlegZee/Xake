@@ -56,7 +56,7 @@ type ``Critical path``() =
         List.ofSeq started, watch.ElapsedMilliseconds
 
     member private x.Records () =
-        (Storage.readDatabase x.TestOptions.ProjectRoot ".xake").Status
+        (Storage.DbReader.readDatabase x.TestOptions.ProjectRoot ".xake").Status
         |> Map.toList |> List.map (fun (t, r) -> t.Name, (r.Targets, r.Depends, r.StaticCount))
 
     /// Phony tasks under the pool alone, `-t 4`.
@@ -102,7 +102,9 @@ type ``Critical path``() =
         let first, _ = x.Run 4 CriticalPath x.Phony
         Assert.That(List.findIndex ((=) "a") first, Is.GreaterThan 30, "no history: the order of request")
         let order, cp = x.Run 4 CriticalPath x.Phony
-        Assert.That(List.findIndex ((=) "a") order, Is.LessThan 8, "a as soon as b asks for it")
+        // a starts in the first waves (as-requested: after 30); a slow runner may let a few more
+        // shorts start before b's `need` queues it, so the bound leaves room (CI saw 8)
+        Assert.That(List.findIndex ((=) "a") order, Is.LessThan 16, "a as soon as b asks for it")
         let order, asRequested = x.Run 4 AsRequested x.Phony
         Assert.That(List.findIndex ((=) "a") order, Is.GreaterThan 30, "as-requested")
         TestContext.WriteLine("critical-path {0} ms, as-requested {1} ms", cp, asRequested)
@@ -116,9 +118,11 @@ type ``Critical path``() =
         x.Clean ()
         let order, cp = x.Run 16 CriticalPath (x.Locked lock)
         let ia = List.findIndex ((=) "a") order
-        Assert.That(ia, Is.LessThan 8, "a among the first holders")
-        // b waits for a (2 units); meanwhile the other 3 units serve about 6 short tasks
-        Assert.That(List.findIndex ((=) "b") order, Is.LessThan (ia + 13), "b on the first unit after a")
+        // as above: the first waves, with room for a slow runner (as-requested: after 20)
+        Assert.That(ia, Is.LessThan 16, "a among the first holders")
+        // b waits for a (2 units); meanwhile the other 3 units serve 5-12 short tasks here, 14 on a
+        // slow CI runner (as-requested b comes after every short task: about 40)
+        Assert.That(List.findIndex ((=) "b") order, Is.LessThan (ia + 18), "b on the first unit after a")
         x.Clean ()
         let order, asRequested = x.Run 16 AsRequested (x.Locked lock)
         Assert.That(List.findIndex ((=) "a") order, Is.GreaterThan 20, "as-requested")

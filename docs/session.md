@@ -6,8 +6,17 @@
 (`File`, database 0.7, epochs) is OlegZee/Xake#141, folder
 [features/db-paths-simple](features/db-paths-simple/session.md); phase 2 (rule header, `also`,
 `StaticCount`, M9 in the verdict) is in [features/rule-header](features/rule-header/session.md);
-phase 3 (hashing and content cut-off) follows. The release notes collect it under "5.0.0
-(unreleased)".
+phase 3 (hashing and content cut-off) followed. The release notes collect it under "5.0.0
+(2026-11-21)".
+
+**Release state (5.0):** Xake **5.0.0** (2026-11-21, tag `v5.0.0` on the `dev` commit that dates
+the release notes; `master` follows by `--ff-only`). Previews `5.0.0-preview.1..5` are published;
+preview.3-5 were tagged on `feature/idle-perf` before its merge (#148, with #149-#151): the
+no-change-run and database-open regressions of preview.1-2 (docs/features/idle-perf,
+docs/features/startup-perf) and the architecture review of the database, observation and
+verdicts (docs/features/arch-review), checked by a consumer on preview.3-5. Database format 0.7.
+`build.fsx` still bootstraps on 3.15.0: bump it only to a published version. OlegZee/Xake.Dotnet
+moves its `XakeVersion` floor to `[5.0.0, 6.0)` for its own 5.0.0.
 
 ## State of `dev`: the 4.0 line (2026-10-31, pattern module 2026-11-03)
 

@@ -1,7 +1,7 @@
 # Session: arch-review
 
 **Where things stand (2026-11-20).** Worktree `.claude/worktrees/arch-review-b79de6`, branch
-`feature/arch-review` (from 6f39dbb, `feature/idle-perf`); local commits only, nothing pushed.
+`feature/arch-review` (from 6f39dbb, `feature/idle-perf`); pushed for the PR into `feature/idle-perf` (2026-11-21).
 
 - Topic 1 done: `DatabaseFormat.fs`, `Database.fs`, `FileProbe.fs`, `FileTracker.fs` (renamed
   from `FileStaleness`); the hasher in `EngineState.Hasher`; `makeResult`/`Step` in Types.fs,
@@ -52,5 +52,6 @@
   missed when the older of two overlapping runs saw it first; reproduced, fixed, tested);
   `RuleContext.ChangeEpoch`. Full suite 1,900 passed, 0 failed (three runs); bench unchanged.
 
-**Next step.** The owner picks from architecture.md section 7 (open: 8, 10, 11, 14, 15). PR into
-`feature/idle-perf` only on the owner's word.
+**Next step.** The owner said to merge (2026-11-21): PR from `feature/arch-review` into
+`feature/idle-perf`, squash. Open after it: the remaining candidates 8, 10, 11, 14, 15
+([remaining.md](remaining.md), proposed, not decided).
